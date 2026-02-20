@@ -169,6 +169,8 @@ data:
             "llm_parse_error_total",
             "llm_validation_error_total",
             "llm_circuit_open_total",
+            "llm_fail_mode_override_total",
+            "llm_stage_policy_violation_total",
             "llm_shadow_total",
             "llm_guardrail_block_total",
             "llm_guardrail_shadow_total",

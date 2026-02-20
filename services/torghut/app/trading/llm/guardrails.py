@@ -29,7 +29,7 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
     effective_fail_mode = (
         "veto" if settings.trading_mode == "live" else settings.llm_fail_mode
     )
-    rollout_stage = settings.llm_rollout_stage
+    rollout_stage = _normalize_rollout_stage(settings.llm_rollout_stage)
 
     if settings.llm_max_tokens > settings.llm_token_budget_max:
         allow_requests = False
@@ -124,6 +124,18 @@ def _matches_model_version_lock(model: str, version_lock: str) -> bool:
         locked_model = version_lock.split("@", 1)[0].strip()
         return bool(locked_model) and model == locked_model
     return False
+
+
+def _normalize_rollout_stage(stage: str) -> str:
+    if stage.startswith("stage0"):
+        return "stage0"
+    if stage.startswith("stage1"):
+        return "stage1"
+    if stage.startswith("stage2"):
+        return "stage2"
+    if stage.startswith("stage3"):
+        return "stage3"
+    return "stage3"
 
 
 __all__ = ["LLMRiskGuardrails", "evaluate_llm_guardrails"]

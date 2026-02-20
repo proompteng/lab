@@ -428,7 +428,16 @@ class Settings(BaseSettings):
     llm_max_qty_multiplier: float = Field(default=1.25, alias="LLM_MAX_QTY_MULTIPLIER")
     llm_min_qty_multiplier: float = Field(default=0.5, alias="LLM_MIN_QTY_MULTIPLIER")
     llm_shadow_mode: bool = Field(default=False, alias="LLM_SHADOW_MODE")
-    llm_rollout_stage: Literal["stage0", "stage1", "stage2", "stage3"] = Field(default="stage3", alias="LLM_ROLLOUT_STAGE")
+    llm_rollout_stage: Literal[
+        "stage0",
+        "stage1",
+        "stage2",
+        "stage3",
+        "stage0_baseline",
+        "stage1_shadow_pilot",
+        "stage2_paper_advisory",
+        "stage3_controlled_live",
+    ] = Field(default="stage3", alias="LLM_ROLLOUT_STAGE")
     llm_recent_decisions: int = Field(default=5, alias="LLM_RECENT_DECISIONS")
     llm_circuit_max_errors: int = Field(default=3, alias="LLM_CIRCUIT_MAX_ERRORS")
     llm_circuit_window_seconds: int = Field(default=300, alias="LLM_CIRCUIT_WINDOW_SECONDS")

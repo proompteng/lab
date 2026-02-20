@@ -99,6 +99,8 @@ class TradingMetrics:
     llm_parse_error_total: int = 0
     llm_validation_error_total: int = 0
     llm_circuit_open_total: int = 0
+    llm_fail_mode_override_total: int = 0
+    llm_stage_policy_violation_total: int = 0
     llm_shadow_total: int = 0
     llm_guardrail_block_total: int = 0
     llm_guardrail_shadow_total: int = 0
@@ -837,6 +839,10 @@ class TradingPipeline:
             return decision, None
 
         guardrails = evaluate_llm_guardrails()
+        if _is_llm_stage_policy_violation(guardrails.rollout_stage):
+            self.state.metrics.llm_stage_policy_violation_total += 1
+        if guardrails.effective_fail_mode != settings.llm_fail_mode:
+            self.state.metrics.llm_fail_mode_override_total += 1
         if not guardrails.allow_requests:
             self.state.metrics.llm_guardrail_block_total += 1
             return self._handle_llm_unavailable(
@@ -1415,6 +1421,19 @@ def _optional_decimal(value: Any) -> Optional[Decimal]:
         return Decimal(str(value))
     except (ArithmeticError, ValueError):
         return None
+
+
+def _is_llm_stage_policy_violation(rollout_stage: str) -> bool:
+    if rollout_stage == "stage0":
+        return settings.llm_enabled or not settings.llm_shadow_mode or settings.llm_adjustment_allowed
+    if rollout_stage == "stage1":
+        if not settings.llm_shadow_mode or settings.llm_adjustment_allowed:
+            return True
+        expected_fail_mode = "veto" if settings.trading_mode == "live" else "pass_through"
+        return settings.llm_fail_mode != expected_fail_mode
+    if rollout_stage == "stage2":
+        return settings.llm_fail_mode != "pass_through"
+    return False
 
 
 class TradingScheduler:
