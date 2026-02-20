@@ -111,7 +111,7 @@ spec:
                 namespace: jangar
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: agents
                 path: argocd/applications/agents
