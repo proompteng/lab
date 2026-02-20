@@ -50,3 +50,16 @@ class TestConfig(TestCase):
                 LLM_FAIL_MODE_ENFORCEMENT="strict_veto",
                 DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
             )
+
+    def test_allows_mode_coupled_configured_with_pass_through_fail_mode(self) -> None:
+        settings = Settings(
+            TRADING_MODE="live",
+            TRADING_LIVE_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="jangar",
+            LLM_FAIL_MODE="pass_through",
+            LLM_FAIL_MODE_ENFORCEMENT="configured",
+            TRADING_PARITY_POLICY="mode_coupled",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+
+        self.assertEqual(settings.llm_effective_fail_mode(), "veto")
