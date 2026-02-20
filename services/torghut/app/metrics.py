@@ -25,6 +25,18 @@ def _render_labeled_metric(
     return [f"{metric_name}{{{label_text}}} {value}"]
 
 
+def _coerce_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, Decimal):
+        return int(value)
+    return 0
+
+
 def render_trading_metrics(metrics: Mapping[str, object]) -> str:
     lines: list[str] = []
     for key, value in metrics.items():
@@ -167,6 +179,75 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                                 metric_name=metric_name,
                                 labels={"reason": reason},
                                 value=count,
+                            )
+                        )
+                    continue
+                if key == "route_provenance":
+                    summary = cast(dict[str, object], value)
+                    total = _coerce_int(summary.get("total"))
+                    missing = _coerce_int(summary.get("missing"))
+                    unknown = _coerce_int(summary.get("unknown"))
+                    mismatch = _coerce_int(summary.get("mismatch"))
+
+                    ratio_metrics: list[tuple[str, str]] = [
+                        (
+                            "coverage_ratio",
+                            "torghut_trading_route_provenance_coverage_ratio",
+                        ),
+                        (
+                            "unknown_ratio",
+                            "torghut_trading_route_provenance_unknown_ratio",
+                        ),
+                        (
+                            "mismatch_ratio",
+                            "torghut_trading_route_provenance_mismatch_ratio",
+                        ),
+                    ]
+                    for source_key, metric_name in ratio_metrics:
+                        lines.append(
+                            f"# HELP {metric_name} Route provenance continuity ratio for recent executions."
+                        )
+                        lines.append(f"# TYPE {metric_name} gauge")
+                        ratio = summary.get(source_key)
+                        if isinstance(ratio, (int, float, Decimal)):
+                            lines.extend(
+                                _render_labeled_metric(
+                                    metric_name=metric_name,
+                                    labels={},
+                                    value=float(ratio),
+                                )
+                            )
+
+                    count_metrics: list[tuple[str, int, str]] = [
+                        (
+                            "torghut_trading_route_provenance_total",
+                            total,
+                            "Total recent executions considered for route provenance.",
+                        ),
+                        (
+                            "torghut_trading_route_provenance_missing_total",
+                            missing,
+                            "Recent executions missing expected/actual route metadata.",
+                        ),
+                        (
+                            "torghut_trading_route_provenance_unknown_total",
+                            unknown,
+                            "Recent executions with unknown expected/actual route metadata.",
+                        ),
+                        (
+                            "torghut_trading_route_provenance_mismatch_total",
+                            mismatch,
+                            "Recent executions where expected and actual routes diverged.",
+                        ),
+                    ]
+                    for metric_name, metric_value, help_text in count_metrics:
+                        lines.append(f"# HELP {metric_name} {help_text}")
+                        lines.append(f"# TYPE {metric_name} gauge")
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={},
+                                value=metric_value,
                             )
                         )
                     continue

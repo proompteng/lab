@@ -5,7 +5,7 @@ import os
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
@@ -269,7 +269,11 @@ def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
     payload = render_trading_metrics(
-        {**metrics.__dict__, "tca_summary": _load_tca_summary(session)}
+        {
+            **metrics.__dict__,
+            "tca_summary": _load_tca_summary(session),
+            "route_provenance": _load_route_provenance_summary(session),
+        }
     )
     return Response(content=payload, media_type="text/plain; version=0.0.4")
 
@@ -556,6 +560,54 @@ def _load_tca_summary(session: Session) -> dict[str, object]:
         "avg_shortfall_notional": row[2],
         "avg_churn_ratio": row[3],
         "last_computed_at": row[4],
+    }
+
+
+def _load_route_provenance_summary(session: Session) -> dict[str, object]:
+    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
+    row = session.execute(
+        select(
+            func.count(Execution.id),
+            func.count(Execution.id).filter(
+                (Execution.execution_expected_adapter.is_(None))
+                | (func.btrim(Execution.execution_expected_adapter) == '')
+                | (Execution.execution_actual_adapter.is_(None))
+                | (func.btrim(Execution.execution_actual_adapter) == '')
+            ),
+            func.count(Execution.id).filter(
+                (func.lower(Execution.execution_expected_adapter) == 'unknown')
+                | (func.lower(Execution.execution_actual_adapter) == 'unknown')
+            ),
+            func.count(Execution.id).filter(
+                func.lower(Execution.execution_expected_adapter)
+                != func.lower(Execution.execution_actual_adapter)
+            ),
+        ).where(Execution.created_at >= window_start)
+    ).one()
+    total = int(row[0] or 0)
+    missing = int(row[1] or 0)
+    unknown = int(row[2] or 0)
+    mismatch = int(row[3] or 0)
+    if total <= 0:
+        return {
+            "total": 0,
+            "missing": 0,
+            "unknown": 0,
+            "mismatch": 0,
+            "coverage_ratio": 0.0,
+            "unknown_ratio": 0.0,
+            "mismatch_ratio": 0.0,
+        }
+    safe_total = float(total)
+    coverage = max(0.0, (total - missing) / safe_total)
+    return {
+        "total": total,
+        "missing": missing,
+        "unknown": unknown,
+        "mismatch": mismatch,
+        "coverage_ratio": coverage,
+        "unknown_ratio": unknown / safe_total,
+        "mismatch_ratio": mismatch / safe_total,
     }
 
 

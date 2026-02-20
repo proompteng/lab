@@ -31,4 +31,78 @@ describe('torghut quant metrics helpers', () => {
     expect(dd.maxDrawdown).toBeCloseTo(-0.1, 6)
     expect(dd.drawdownDurationMinutes).toBe(1)
   })
+
+  it('computes route provenance continuity ratios from execution metadata', () => {
+    const route = __private.computeRouteProvenance([
+      {
+        executionId: 'e-1',
+        tradeDecisionId: 'd-1',
+        strategyId: 's-1',
+        strategyName: 's',
+        createdAt: '2026-02-18T15:00:00.000Z',
+        symbol: 'AAPL',
+        side: 'buy',
+        filledQty: 1,
+        avgFillPrice: 100,
+        timeframe: '1m',
+        alpacaAccountLabel: 'paper',
+        executionExpectedAdapter: 'lean',
+        executionActualAdapter: 'lean',
+        executionFallbackCount: 0,
+      },
+      {
+        executionId: 'e-2',
+        tradeDecisionId: 'd-2',
+        strategyId: 's-1',
+        strategyName: 's',
+        createdAt: '2026-02-18T15:01:00.000Z',
+        symbol: 'MSFT',
+        side: 'buy',
+        filledQty: 1,
+        avgFillPrice: 100,
+        timeframe: '1m',
+        alpacaAccountLabel: 'paper',
+        executionExpectedAdapter: 'lean',
+        executionActualAdapter: 'alpaca',
+        executionFallbackCount: 1,
+      },
+      {
+        executionId: 'e-3',
+        tradeDecisionId: 'd-3',
+        strategyId: 's-1',
+        strategyName: 's',
+        createdAt: '2026-02-18T15:02:00.000Z',
+        symbol: 'NVDA',
+        side: 'buy',
+        filledQty: 1,
+        avgFillPrice: 100,
+        timeframe: '1m',
+        alpacaAccountLabel: 'paper',
+        executionExpectedAdapter: 'unknown',
+        executionActualAdapter: 'unknown',
+        executionFallbackCount: 0,
+      },
+      {
+        executionId: 'e-4',
+        tradeDecisionId: 'd-4',
+        strategyId: 's-1',
+        strategyName: 's',
+        createdAt: '2026-02-18T15:03:00.000Z',
+        symbol: 'TSLA',
+        side: 'buy',
+        filledQty: 1,
+        avgFillPrice: 100,
+        timeframe: '1m',
+        alpacaAccountLabel: 'paper',
+        executionExpectedAdapter: null,
+        executionActualAdapter: 'lean',
+        executionFallbackCount: 0,
+      },
+    ])
+
+    expect(route.routeTotal).toBe(4)
+    expect(route.routeCoverageRatio).toBeCloseTo(0.75, 6)
+    expect(route.routeUnknownRatio).toBeCloseTo(0.25, 6)
+    expect(route.routeFallbackRatio).toBeCloseTo(0.25, 6)
+  })
 })

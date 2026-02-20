@@ -65,6 +65,8 @@ type RuntimeConfig = {
     maxRejectRate15m: number
     maxPipelineLagSeconds: number
     maxTaFreshnessSeconds: number
+    minRouteCoverage15m: number
+    maxRouteUnknownRatio15m: number
   }
 }
 
@@ -143,6 +145,8 @@ const loadConfig = (overrides?: { enabled?: boolean; alertsEnabled?: boolean }):
       maxRejectRate15m: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MAX_REJECT_RATE_15M, 0.02),
       maxPipelineLagSeconds: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MAX_PIPELINE_LAG_SECONDS, 15),
       maxTaFreshnessSeconds: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MAX_TA_FRESHNESS_SECONDS, 120),
+      minRouteCoverage15m: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MIN_ROUTE_COVERAGE_15M, 0.99),
+      maxRouteUnknownRatio15m: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MAX_ROUTE_UNKNOWN_RATIO_15M, 0.02),
     },
   }
 }
@@ -199,7 +203,7 @@ const evaluateAlerts = (params: {
   policy: RuntimeConfig['policy']
 }): AlertEvaluationCandidate[] => {
   const alerts: AlertEvaluationCandidate[] = []
-  const marketHours = isMarketHoursNy()
+  const marketHours = isMarketHoursNy(new Date(params.nowIso))
 
   const metricByName = new Map(params.frame.metrics.map((metric) => [metric.metricName, metric]))
   const maxDrawdown = metricByName.get('max_drawdown')
@@ -350,6 +354,60 @@ const evaluateAlerts = (params: {
           state: 'open',
         },
       })
+    }
+    const routeCoverage = metricByName.get('route_provenance_coverage_ratio')
+    if (routeCoverage?.valueNumeric != null && params.frame.window === '15m') {
+      if (routeCoverage.valueNumeric < params.policy.minRouteCoverage15m) {
+        alerts.push({
+          breachKey: 'route_provenance_coverage_ratio',
+          minConsecutive: 2,
+          alert: {
+            alertId: makeAlertId(
+              params.frame.strategyId,
+              params.frame.account,
+              'route_provenance_coverage_ratio',
+              params.frame.window,
+            ),
+            strategyId: params.frame.strategyId,
+            account: params.frame.account,
+            severity: 'critical',
+            metricName: 'route_provenance_coverage_ratio',
+            window: params.frame.window,
+            threshold: { min: params.policy.minRouteCoverage15m, consecutive_frames: 2 },
+            observed: { value: routeCoverage.valueNumeric, asOf: routeCoverage.asOf },
+            openedAt: params.nowIso,
+            resolvedAt: null,
+            state: 'open',
+          },
+        })
+      }
+    }
+    const routeUnknown = metricByName.get('route_unknown_ratio')
+    if (routeUnknown?.valueNumeric != null && params.frame.window === '15m') {
+      if (routeUnknown.valueNumeric > params.policy.maxRouteUnknownRatio15m) {
+        alerts.push({
+          breachKey: 'route_unknown_ratio',
+          minConsecutive: 1,
+          alert: {
+            alertId: makeAlertId(
+              params.frame.strategyId,
+              params.frame.account,
+              'route_unknown_ratio',
+              params.frame.window,
+            ),
+            strategyId: params.frame.strategyId,
+            account: params.frame.account,
+            severity: 'warning',
+            metricName: 'route_unknown_ratio',
+            window: params.frame.window,
+            threshold: { max: params.policy.maxRouteUnknownRatio15m },
+            observed: { value: routeUnknown.valueNumeric, asOf: routeUnknown.asOf },
+            openedAt: params.nowIso,
+            resolvedAt: null,
+            state: 'open',
+          },
+        })
+      }
     }
   }
 

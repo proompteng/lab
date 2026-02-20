@@ -2,7 +2,11 @@ import type { Pool } from 'pg'
 import { resolveClickHouseClient } from './clickhouse'
 import type { QuantMetric, QuantMetricQuality, QuantMetricStatus, QuantWindow } from './torghut-quant-contract'
 import { computeWindowBoundsUtc } from './torghut-quant-windows'
-import { listTorghutTradingFilledExecutions, type TorghutStrategyRow } from './torghut-trading'
+import {
+  listTorghutTradingFilledExecutions,
+  type TorghutFilledExecutionRow,
+  type TorghutStrategyRow,
+} from './torghut-trading'
 import { computeRealizedPnlAverageCostLongOnly } from './torghut-trading-pnl'
 
 export const TORGHUT_QUANT_FORMULA_VERSION = 'v1.0.0'
@@ -350,9 +354,56 @@ const computeUnrealizedPnl = (positions: unknown) => {
   return { unrealizedPnl: okCount > 0 ? unrealized : null, positionRows: okCount }
 }
 
+const computeRouteProvenance = (executions: TorghutFilledExecutionRow[]) => {
+  const total = executions.length
+  if (total === 0) {
+    return {
+      routeTotal: 0,
+      routeCoverageRatio: null,
+      routeUnknownRatio: null,
+      routeFallbackRatio: null,
+      routeFallbackCount: 0,
+      routeMissingCount: 0,
+      routeUnknownCount: 0,
+    }
+  }
+
+  let missingCount = 0
+  let unknownCount = 0
+  let fallbackCount = 0
+
+  for (const execution of executions) {
+    const expected = (execution.executionExpectedAdapter ?? '').trim().toLowerCase()
+    const actual = (execution.executionActualAdapter ?? '').trim().toLowerCase()
+    const hasExpected = expected.length > 0
+    const hasActual = actual.length > 0
+    if (!hasExpected || !hasActual) {
+      missingCount += 1
+      continue
+    }
+    if (expected === 'unknown' || actual === 'unknown') {
+      unknownCount += 1
+    }
+    if (expected !== actual || execution.executionFallbackCount > 0) {
+      fallbackCount += 1
+    }
+  }
+
+  return {
+    routeTotal: total,
+    routeCoverageRatio: (total - missingCount) / total,
+    routeUnknownRatio: unknownCount / total,
+    routeFallbackRatio: fallbackCount / total,
+    routeFallbackCount: fallbackCount,
+    routeMissingCount: missingCount,
+    routeUnknownCount: unknownCount,
+  }
+}
+
 export const __private = {
   computeExposure,
   computeMaxDrawdown,
+  computeRouteProvenance,
 }
 
 export const computeTorghutQuantMetrics = async (params: {
@@ -381,6 +432,7 @@ export const computeTorghutQuantMetrics = async (params: {
     : executions
 
   const realized = computeRealizedPnlAverageCostLongOnly(filteredExecutions)
+  const routeProvenance = computeRouteProvenance(filteredExecutions)
   const tradeCount = filteredExecutions.length
   const latestExecutionTs = filteredExecutions.at(-1)?.createdAt ?? bounds.startUtc
 
@@ -443,6 +495,54 @@ export const computeTorghutQuantMetrics = async (params: {
       valueNumeric: Number.isFinite(realized.realizedPnl) ? realized.realizedPnl : null,
       valueJson: { winRate: realized.winRate, winCount: realized.winCount, lossCount: realized.lossCount },
       asOf: latestExecutionTs,
+      nowMs,
+      maxStalenessSeconds: params.maxStalenessSeconds,
+    }),
+  )
+
+  metrics.push(
+    buildMetric({
+      metricName: 'route_provenance_coverage_ratio',
+      window: params.window,
+      unit: 'ratio',
+      valueNumeric: routeProvenance.routeCoverageRatio,
+      asOf: latestExecutionTs,
+      valueJson: {
+        routeTotal: routeProvenance.routeTotal,
+        missingRouteRows: routeProvenance.routeMissingCount,
+      },
+      nowMs,
+      maxStalenessSeconds: params.maxStalenessSeconds,
+    }),
+  )
+
+  metrics.push(
+    buildMetric({
+      metricName: 'route_unknown_ratio',
+      window: params.window,
+      unit: 'ratio',
+      valueNumeric: routeProvenance.routeUnknownRatio,
+      asOf: latestExecutionTs,
+      valueJson: {
+        routeTotal: routeProvenance.routeTotal,
+        unknownRouteRows: routeProvenance.routeUnknownCount,
+      },
+      nowMs,
+      maxStalenessSeconds: params.maxStalenessSeconds,
+    }),
+  )
+
+  metrics.push(
+    buildMetric({
+      metricName: 'route_fallback_ratio',
+      window: params.window,
+      unit: 'ratio',
+      valueNumeric: routeProvenance.routeFallbackRatio,
+      asOf: latestExecutionTs,
+      valueJson: {
+        routeTotal: routeProvenance.routeTotal,
+        fallbackRows: routeProvenance.routeFallbackCount,
+      },
       nowMs,
       maxStalenessSeconds: params.maxStalenessSeconds,
     }),

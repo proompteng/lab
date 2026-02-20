@@ -13,6 +13,9 @@ export type TorghutStrategyRow = {
 export type TorghutFilledExecutionRow = FilledExecutionForPnl & {
   timeframe: string | null
   alpacaAccountLabel: string | null
+  executionExpectedAdapter: string | null
+  executionActualAdapter: string | null
+  executionFallbackCount: number
 }
 
 export type TorghutRejectedDecisionRow = {
@@ -109,6 +112,9 @@ export const listTorghutTradingFilledExecutions = async (params: {
         td.id::text as trade_decision_id,
         td.timeframe as timeframe,
         td.alpaca_account_label as alpaca_account_label,
+        e.execution_expected_adapter as execution_expected_adapter,
+        e.execution_actual_adapter as execution_actual_adapter,
+        e.execution_fallback_count as execution_fallback_count,
         s.id::text as strategy_id,
         s.name as strategy_name
       from executions e
@@ -140,6 +146,9 @@ export const listTorghutTradingFilledExecutions = async (params: {
         avgFillPrice,
         timeframe: row.timeframe ? String(row.timeframe) : null,
         alpacaAccountLabel: row.alpaca_account_label ? String(row.alpaca_account_label) : null,
+        executionExpectedAdapter: row.execution_expected_adapter ? String(row.execution_expected_adapter) : null,
+        executionActualAdapter: row.execution_actual_adapter ? String(row.execution_actual_adapter) : null,
+        executionFallbackCount: Math.max(0, toNumber(row.execution_fallback_count) ?? 0),
       }
     })
     .filter((row) => row.filledQty > 0 && row.avgFillPrice !== null) satisfies TorghutFilledExecutionRow[]
