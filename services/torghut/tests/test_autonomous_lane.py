@@ -380,12 +380,53 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(gate0["status"], "pass")
 
     def test_intraday_strategy_candidate_uses_intraday_universe_type(self) -> None:
-        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
         with tempfile.TemporaryDirectory() as tmpdir:
             config_dir = Path(tmpdir) / "configs"
             config_dir.mkdir(parents=True, exist_ok=True)
+            signals_path = config_dir / "intraday_signals.json"
             strategy_config_path = config_dir / "intraday_strategy_candidate.json"
             gate_policy_path = config_dir / "autonomous_gate_policy_short.json"
+            signals_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "event_ts": datetime(
+                                2026, 1, 1, 0, 1, tzinfo=timezone.utc
+                            ).isoformat(),
+                            "symbol": "AAPL",
+                            "timeframe": "1Min",
+                            "payload": {
+                                "macd": {"macd": "0.12", "signal": "0.03"},
+                                "rsi14": "56",
+                                "price": "101.5",
+                                "ema12": "101.0",
+                                "ema26": "100.5",
+                                "vol_realized_w60s": "0.008",
+                            },
+                            "seq": 1,
+                            "source": "fixture",
+                        },
+                        {
+                            "event_ts": datetime(
+                                2026, 1, 1, 0, 2, tzinfo=timezone.utc
+                            ).isoformat(),
+                            "symbol": "AAPL",
+                            "timeframe": "1Min",
+                            "payload": {
+                                "macd": {"macd": "-0.22", "signal": "-0.10"},
+                                "rsi14": "72",
+                                "price": "100.0",
+                                "ema12": "100.3",
+                                "ema26": "100.8",
+                                "vol_realized_w60s": "0.006",
+                            },
+                            "seq": 2,
+                            "source": "fixture",
+                        },
+                    ]
+                ),
+                encoding="utf-8",
+            )
 
             strategy_config_path.write_text(
                 json.dumps(
@@ -417,12 +458,7 @@ class TestAutonomousLane(TestCase):
                         "gate2_max_turnover_ratio": "1000",
                         "gate2_max_cost_bps": "1000",
                         "gate3_max_llm_error_ratio": "1",
-                        "gate6_min_market_net_pnl_delta": "-100000",
-                        "gate6_min_regime_slice_pass_ratio": "0",
-                        "gate6_min_return_over_drawdown": "-100000",
-                        "gate6_max_calibration_error": "1",
-                        "gate6_min_confidence_samples": 0,
-                        "gate6_min_reproducibility_hashes": 1,
+                        "gate6_require_profitability_evidence": False,
                         "gate5_live_enabled": False,
                     },
                     sort_keys=True,
@@ -432,7 +468,7 @@ class TestAutonomousLane(TestCase):
 
             output_dir = Path(tmpdir) / "lane-tsmom"
             result = run_autonomous_lane(
-                signals_path=fixture_path,
+                signals_path=signals_path,
                 strategy_config_path=strategy_config_path,
                 gate_policy_path=gate_policy_path,
                 output_dir=output_dir,
