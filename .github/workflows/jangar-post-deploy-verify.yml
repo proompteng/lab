@@ -1,0 +1,87 @@
+name: jangar-post-deploy-verify
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'argocd/applications/jangar/**'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: arc-arm64
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.2
+
+      - name: Validate kubectl context
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl config current-context
+
+      - name: Wait for Argo application to be Synced and Healthy
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            STATUS="$(kubectl -n argocd get application jangar -o jsonpath='{.status.sync.status} {.status.health.status}' || true)"
+            SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
+            HEALTH_STATUS="$(echo "${STATUS}" | awk '{print $2}')"
+            echo "Attempt ${attempt}: sync=${SYNC_STATUS:-unknown} health=${HEALTH_STATUS:-unknown}"
+
+            if [ "${SYNC_STATUS}" = "Synced" ] && [ "${HEALTH_STATUS}" = "Healthy" ]; then
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "Jangar Argo application did not reach Synced/Healthy within timeout"
+          exit 1
+
+      - name: Wait for deployment rollouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl rollout status deployment/jangar -n jangar --timeout=10m
+          kubectl rollout status deployment/jangar-worker -n jangar --timeout=10m
+
+      - name: Verify deployed image digest matches manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_DIGEST="$(
+            awk '
+              $0 ~ /name: registry\\.ide-newton\\.ts\\.net\\/lab\\/jangar/ { found=1; next }
+              found && $0 ~ /digest:/ { print $2; exit }
+            ' argocd/applications/jangar/kustomization.yaml
+          )"
+          if [ -z "${EXPECTED_DIGEST}" ]; then
+            echo "Unable to parse expected digest from argocd/applications/jangar/kustomization.yaml"
+            exit 1
+          fi
+
+          API_IMAGES="$(kubectl -n jangar get deployment jangar -o jsonpath='{..image}')"
+          WORKER_IMAGES="$(kubectl -n jangar get deployment jangar-worker -o jsonpath='{..image}')"
+
+          echo "Expected digest: ${EXPECTED_DIGEST}"
+          echo "API images: ${API_IMAGES}"
+          echo "Worker images: ${WORKER_IMAGES}"
+
+          if [[ "${API_IMAGES}" != *"${EXPECTED_DIGEST}"* ]]; then
+            echo "API deployment image digest does not match expected digest"
+            exit 1
+          fi
+          if [[ "${WORKER_IMAGES}" != *"${EXPECTED_DIGEST}"* ]]; then
+            echo "Worker deployment image digest does not match expected digest"
+            exit 1
+          fi
