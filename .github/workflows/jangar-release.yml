@@ -21,6 +21,10 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: jangar-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   promote:
     if: >-
@@ -48,57 +52,115 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Resolve release metadata
-        id: meta
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            SOURCE_SHA="${{ github.event.workflow_run.head_sha }}"
-          elif [ -n "${{ inputs.commit_sha }}" ]; then
-            SOURCE_SHA="${{ inputs.commit_sha }}"
-          else
-            SOURCE_SHA="$(git rev-parse HEAD)"
-          fi
-
-          TAG_INPUT='${{ inputs.image_tag }}'
-          if [ -n "$TAG_INPUT" ]; then
-            TAG="$TAG_INPUT"
-          else
-            TAG="${SOURCE_SHA:0:8}"
-          fi
-
-          git checkout --force "$SOURCE_SHA"
-          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Download digest artifact from triggering build
+      - name: Download release contract artifact from triggering build
         if: github.event_name == 'workflow_run'
         uses: actions/download-artifact@v4
         with:
-          name: jangar-image-${{ steps.meta.outputs.tag }}
+          name: jangar-release-contract
           path: .artifacts/jangar
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          COMMIT_SHA_INPUT: ${{ inputs.commit_sha }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+
+          MAIN_HEAD="$(git rev-parse origin/main)"
+          IMAGE="registry.ide-newton.ts.net/lab/jangar"
+          SOURCE_SHA=""
+          TAG=""
+          CONTRACT_DIGEST=""
+          PROMOTE="true"
+
+          if [ "${EVENT_NAME}" = "workflow_run" ]; then
+            CONTRACT_PATH=".artifacts/jangar/jangar-release-contract.json"
+            if [ ! -f "${CONTRACT_PATH}" ]; then
+              echo "Release contract artifact is missing at ${CONTRACT_PATH}"
+              exit 1
+            fi
+
+            SOURCE_SHA="$(bun run packages/scripts/src/jangar/release-contract.ts get --path "${CONTRACT_PATH}" --field sourceSha)"
+            TAG="$(bun run packages/scripts/src/jangar/release-contract.ts get --path "${CONTRACT_PATH}" --field tag)"
+            CONTRACT_DIGEST="$(bun run packages/scripts/src/jangar/release-contract.ts get --path "${CONTRACT_PATH}" --field digest)"
+            CONTRACT_IMAGE="$(bun run packages/scripts/src/jangar/release-contract.ts get --path "${CONTRACT_PATH}" --field image)"
+
+            if [ "${CONTRACT_IMAGE}" != "${IMAGE}" ]; then
+              echo "Release contract image mismatch: expected ${IMAGE}, got ${CONTRACT_IMAGE}"
+              exit 1
+            fi
+
+            if [ "${SOURCE_SHA}" != "${WORKFLOW_RUN_HEAD_SHA}" ]; then
+              echo "Release contract source SHA ${SOURCE_SHA} does not match workflow_run head ${WORKFLOW_RUN_HEAD_SHA}"
+              exit 1
+            fi
+
+            if [ "${SOURCE_SHA}" != "${MAIN_HEAD}" ]; then
+              echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; latest main is ${MAIN_HEAD}"
+              PROMOTE="false"
+            fi
+          else
+            if [ -n "${COMMIT_SHA_INPUT}" ]; then
+              SOURCE_SHA="${COMMIT_SHA_INPUT}"
+            else
+              SOURCE_SHA="${MAIN_HEAD}"
+            fi
+
+            if [ -n "${IMAGE_TAG_INPUT}" ]; then
+              TAG="${IMAGE_TAG_INPUT}"
+            else
+              TAG="${SOURCE_SHA:0:8}"
+            fi
+          fi
+
+          if [ "${PROMOTE}" = "true" ] && ! git cat-file -e "${SOURCE_SHA}^{commit}" >/dev/null 2>&1; then
+            echo "Source SHA ${SOURCE_SHA} is not present in local git history"
+            exit 1
+          fi
+
+          {
+            echo "main_head=${MAIN_HEAD}"
+            echo "source_sha=${SOURCE_SHA}"
+            echo "tag=${TAG}"
+            echo "contract_digest=${CONTRACT_DIGEST}"
+            echo "image=${IMAGE}"
+            echo "promote=${PROMOTE}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source revision
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --force "${{ steps.meta.outputs.source_sha }}"
+
       - name: Resolve image digest
+        if: steps.meta.outputs.promote == 'true'
         id: digest
         shell: bash
         env:
+          IMAGE_NAME: ${{ steps.meta.outputs.image }}
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          CONTRACT_DIGEST: ${{ steps.meta.outputs.contract_digest }}
           DIGEST_INPUT: ${{ inputs.image_digest }}
         run: |
           set -euo pipefail
-          ARTIFACT_DIGEST_FILE=".artifacts/jangar/jangar-image-digest.txt"
+
           if [ -n "${DIGEST_INPUT}" ]; then
             DIGEST="${DIGEST_INPUT}"
-          elif [ -f "${ARTIFACT_DIGEST_FILE}" ]; then
-            DIGEST="$(cat "${ARTIFACT_DIGEST_FILE}")"
+          elif [ -n "${CONTRACT_DIGEST}" ]; then
+            DIGEST="${CONTRACT_DIGEST}"
           else
             DIGEST="$(
               bun --eval "
                 import { inspectImageDigest } from './packages/scripts/src/shared/docker.ts'
-                const image = 'registry.ide-newton.ts.net/lab/jangar:' + process.env.IMAGE_TAG
+                const image = process.env.IMAGE_NAME + ':' + process.env.IMAGE_TAG
                 const repoDigest = inspectImageDigest(image)
                 const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
                 console.log(digest)
@@ -111,13 +173,14 @@ jobs:
             echo "Resolved digest is empty"
             exit 1
           fi
-          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Update Jangar manifests
+        if: steps.meta.outputs.promote == 'true'
         env:
           JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           JANGAR_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
-          JANGAR_ROLLOUT_TIMESTAMP: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           bun run packages/scripts/src/jangar/update-manifests.ts \
@@ -126,6 +189,7 @@ jobs:
             --rollout-timestamp "${TIMESTAMP}"
 
       - name: Check for manifest changes
+        if: steps.meta.outputs.promote == 'true'
         id: changes
         shell: bash
         run: |
@@ -140,7 +204,7 @@ jobs:
           fi
 
       - name: Create deploy pull request
-        if: steps.changes.outputs.changed == 'true'
+        if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
@@ -163,5 +227,9 @@ jobs:
             - Updated API and worker rollout annotations
 
       - name: No manifest changes detected
-        if: steps.changes.outputs.changed != 'true'
+        if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'
         run: echo 'No Jangar manifest changes detected.'
+
+      - name: Promotion skipped (stale workflow_run)
+        if: steps.meta.outputs.promote != 'true'
+        run: echo 'Skipping stale workflow_run promotion because source SHA is not current main.'

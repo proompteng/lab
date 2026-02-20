@@ -1,0 +1,61 @@
+name: jangar-guardrails
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/jangar-build-push.yaml'
+      - '.github/workflows/jangar-release.yml'
+      - '.github/workflows/jangar-deploy-automerge.yml'
+      - '.github/workflows/jangar-post-deploy-verify.yml'
+      - '.github/workflows/jangar-guardrails.yml'
+      - 'argocd/applicationsets/product.yaml'
+      - 'packages/scripts/src/jangar/check-automation-policy.ts'
+  pull_request:
+    paths:
+      - '.github/workflows/jangar-build-push.yaml'
+      - '.github/workflows/jangar-release.yml'
+      - '.github/workflows/jangar-deploy-automerge.yml'
+      - '.github/workflows/jangar-post-deploy-verify.yml'
+      - '.github/workflows/jangar-guardrails.yml'
+      - 'argocd/applicationsets/product.yaml'
+      - 'packages/scripts/src/jangar/check-automation-policy.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install ShellCheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest
+
+      - name: Run actionlint
+        run: ./actionlint -color -ignore 'label "arc-arm64" is unknown'
+
+  automation-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Enforce Jangar automation mode
+        run: bun run packages/scripts/src/jangar/check-automation-policy.ts --require jangar=auto

@@ -20,6 +20,10 @@ on:
       - '.github/workflows/jangar-build-push.yaml'
   workflow_dispatch:
 
+concurrency:
+  group: jangar-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-push:
     runs-on: arc-arm64
@@ -64,11 +68,22 @@ jobs:
           echo "${DIGEST}" > jangar-image-digest.txt
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload image digest artifact
+      - name: Write release contract artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun run packages/scripts/src/jangar/release-contract.ts write \
+            --path jangar-release-contract.json \
+            --source-sha "${GITHUB_SHA}" \
+            --tag "${{ steps.meta.outputs.tag }}" \
+            --digest "${{ steps.digest.outputs.digest }}" \
+            --image "registry.ide-newton.ts.net/lab/jangar"
+
+      - name: Upload release contract artifact
         uses: actions/upload-artifact@v4
         with:
-          name: jangar-image-${{ steps.meta.outputs.tag }}
-          path: jangar-image-digest.txt
+          name: jangar-release-contract
+          path: jangar-release-contract.json
           if-no-files-found: error
           retention-days: 3
 
