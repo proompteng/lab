@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 
 import { createTemporalClient } from '@proompteng/temporal-bun-sdk'
+import { VersioningBehavior } from '@proompteng/temporal-bun-sdk/worker'
 
 import { repoRoot as defaultRepoRoot, fatal } from '../shared/cli'
 
@@ -239,6 +240,7 @@ const main = async () => {
     workflowId,
     workflowType: 'enrichFile',
     taskQueue: options.taskQueue,
+    versioningBehavior: VersioningBehavior.AUTO_UPGRADE,
     args: [
       {
         repoRoot,

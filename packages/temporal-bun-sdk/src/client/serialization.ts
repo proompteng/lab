@@ -31,8 +31,10 @@ import {
 import { QueryRejectCondition } from '../proto/temporal/api/enums/v1/query_pb'
 import { TaskQueueKind } from '../proto/temporal/api/enums/v1/task_queue_pb'
 import type { UpdateWorkflowExecutionLifecycleStage } from '../proto/temporal/api/enums/v1/update_pb'
+import { VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
 import { type TaskQueue, TaskQueueSchema } from '../proto/temporal/api/taskqueue/v1/message_pb'
 import { type Outcome, WaitPolicySchema } from '../proto/temporal/api/update/v1/message_pb'
+import { VersioningOverrideSchema } from '../proto/temporal/api/workflow/v1/message_pb'
 import {
   type PollWorkflowExecutionUpdateRequest,
   PollWorkflowExecutionUpdateRequestSchema,
@@ -206,6 +208,12 @@ export const buildStartWorkflowRequest = async (
   const headers = await serializeHeader(dataConverter, options.headers)
   const searchAttributes = await encodeSearchAttributes(dataConverter, options.searchAttributes)
   const retryPolicy = serializeRetryPolicy(options.retryPolicy)
+  const versioningOverride =
+    options.versioningBehavior === undefined || options.versioningBehavior === VersioningBehavior.UNSPECIFIED
+      ? undefined
+      : create(VersioningOverrideSchema, {
+          behavior: options.versioningBehavior,
+        })
 
   return create(StartWorkflowExecutionRequestSchema, {
     namespace,
@@ -213,6 +221,7 @@ export const buildStartWorkflowRequest = async (
     workflowType,
     taskQueue,
     identity,
+    versioningOverride,
     requestId: options.requestId ?? '',
     input,
     cronSchedule: options.cronSchedule ?? '',
