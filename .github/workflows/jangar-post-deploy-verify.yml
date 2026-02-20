@@ -113,8 +113,8 @@ jobs:
           set -euo pipefail
           EXPECTED_DIGEST="$(
             awk '
-              $0 ~ /name: registry\\.ide-newton\\.ts\\.net\\/lab\\/jangar/ { found=1; next }
-              found && $0 ~ /digest:/ { print $2; exit }
+              index($0, "name: registry.ide-newton.ts.net/lab/jangar") { found=1; next }
+              found && $1 == "digest:" { print $2; exit }
             ' argocd/applications/jangar/kustomization.yaml
           )"
           if [ -z "${EXPECTED_DIGEST}" ]; then
