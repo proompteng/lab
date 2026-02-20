@@ -1,4 +1,5 @@
 import { type ClickHouseClient, resolveClickHouseClient } from '~/server/clickhouse'
+import { getBooleanFeatureFlag } from '~/server/feature-flags'
 import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
 
 type MarketContextDomainState = 'ok' | 'stale' | 'missing' | 'error'
@@ -88,6 +89,7 @@ const FALLBACK_TECHNICAL_FRESHNESS_SECONDS = 60
 const FALLBACK_NEWS_FRESHNESS_SECONDS = 300
 const FALLBACK_FUNDAMENTALS_FRESHNESS_SECONDS = 24 * 60 * 60
 const FALLBACK_REGIME_FRESHNESS_SECONDS = 120
+const DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY = 'jangar.market_context.enabled'
 
 const toBoolean = (value: string | undefined, fallback: boolean) => {
   if (!value) return fallback
@@ -125,8 +127,10 @@ const resolveSettings = () => {
     FALLBACK_REGIME_FRESHNESS_SECONDS
 
   return {
-    enabled: toBoolean(process.env.JANGAR_MARKET_CONTEXT_ENABLED, true),
     requireTechnicalsSourceHealth: toBoolean(process.env.JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH, true),
+    enabledFallback: toBoolean(process.env.JANGAR_MARKET_CONTEXT_ENABLED, true),
+    enabledFlagKey:
+      process.env.JANGAR_MARKET_CONTEXT_ENABLED_FLAG_KEY?.trim() || DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY,
     cacheSeconds: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_CACHE_SECONDS, 60),
     maxStalenessSeconds: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS, 300),
     providerTimeoutMs: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS, 2000),
@@ -138,6 +142,12 @@ const resolveSettings = () => {
     regimeMaxFreshnessSeconds,
   }
 }
+
+const resolveMarketContextEnabled = (params: { settings: ReturnType<typeof resolveSettings> }) =>
+  getBooleanFeatureFlag({
+    key: params.settings.enabledFlagKey,
+    defaultValue: params.settings.enabledFallback,
+  })
 
 type CacheEntry = {
   value: TorghutMarketContextBundle
@@ -608,7 +618,8 @@ export const getTorghutMarketContext = async (
   const symbol = normalizeTorghutSymbol(symbolInput)
   const now = options.asOf ?? new Date()
   const maxStalenessSeconds = options.maxStalenessSeconds ?? settings.maxStalenessSeconds
-  if (!settings.enabled) {
+  const enabled = await resolveMarketContextEnabled({ settings })
+  if (!enabled) {
     const domains = {
       technicals: technicalDomain({ now, row: null, maxFreshnessSeconds: settings.technicalsMaxFreshnessSeconds }),
       fundamentals: emptyDomain({
@@ -732,6 +743,7 @@ export const getTorghutMarketContext = async (
 export const getTorghutMarketContextHealth = async (symbol = 'SPY', options: MarketContextOptions = {}) => {
   const settings = resolveSettings()
   const bundle = await getTorghutMarketContext(symbol, options)
+  const enabled = !bundle.riskFlags.includes('market_context_disabled')
   const domainHealth = domainSetFrom(bundle.domains).map((domain) => ({
     domain: domain.domain,
     state: domain.state,
@@ -742,12 +754,12 @@ export const getTorghutMarketContextHealth = async (symbol = 'SPY', options: Mar
   }))
 
   let overallState: TorghutMarketContextHealth['overallState'] = 'ok'
-  if (!settings.enabled) overallState = 'down'
+  if (!enabled) overallState = 'down'
   else if (domainHealth.some((domain) => domain.state === 'error')) overallState = 'down'
   else if (domainHealth.some((domain) => domain.state !== 'ok')) overallState = 'degraded'
 
   return {
-    enabled: settings.enabled,
+    enabled,
     cacheSeconds: settings.cacheSeconds,
     maxStalenessSeconds: settings.maxStalenessSeconds,
     bundleFreshnessSeconds: bundle.freshnessSeconds,

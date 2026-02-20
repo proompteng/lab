@@ -41,11 +41,6 @@ const globalState = globalThis as typeof globalThis & {
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
-    promptTuningEnabled: boolean
-    promptTuningRepo: string | null
-    promptTuningFailureThreshold: number
-    promptTuningWindowHours: number
-    promptTuningCooldownHours: number
     rerunOrchestrationName: string | null
     rerunOrchestrationNamespace: string
     systemImprovementOrchestrationName: string | null
@@ -127,8 +122,6 @@ if (!globalState.__codexJudgeStoreMock) {
     listIssueSummaries: vi.fn(),
     enqueueRerunSubmission: vi.fn(),
     listRerunSubmissions: vi.fn(),
-    getLatestPromptTuningByIssue: vi.fn(),
-    createPromptTuning: vi.fn(),
     close: vi.fn(),
   }
 }
@@ -164,11 +157,6 @@ if (!globalState.__codexJudgeConfigMock) {
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
-    promptTuningEnabled: false,
-    promptTuningRepo: null,
-    promptTuningFailureThreshold: 3,
-    promptTuningWindowHours: 24,
-    promptTuningCooldownHours: 6,
     rerunOrchestrationName: null,
     rerunOrchestrationNamespace: 'jangar',
     systemImprovementOrchestrationName: null,
@@ -313,7 +301,6 @@ const harness = (() => {
         missingItems?: Record<string, unknown>
         suggestedFixes?: Record<string, unknown>
         nextPrompt?: string | null
-        promptTuning?: Record<string, unknown>
         systemSuggestions?: Record<string, unknown>
       }) => {
         const evaluation: CodexEvaluationRecord = {
@@ -325,7 +312,6 @@ const harness = (() => {
           missingItems: input.missingItems ?? {},
           suggestedFixes: input.suggestedFixes ?? {},
           nextPrompt: input.nextPrompt ?? null,
-          promptTuning: input.promptTuning ?? {},
           systemSuggestions: input.systemSuggestions ?? {},
           createdAt: now,
         }
@@ -386,7 +372,6 @@ const harness = (() => {
       updatedAt: now,
       submittedAt: submittedAt ?? null,
     })),
-    getLatestPromptTuningByIssue: vi.fn(async () => null),
     getRunHistory: vi.fn(async () => ({
       runs: [],
       stats: {
@@ -396,14 +381,6 @@ const harness = (() => {
         avgCiDurationSeconds: null,
         avgJudgeConfidence: null,
       },
-    })),
-    createPromptTuning: vi.fn(async () => ({
-      id: 'prompt-1',
-      runId: run.id,
-      prUrl: 'https://github.com/proompteng/lab/pull/1',
-      status: 'open',
-      metadata: {},
-      createdAt: now,
     })),
   }
 
@@ -478,11 +455,6 @@ const harness = (() => {
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
-    promptTuningEnabled: false,
-    promptTuningRepo: null,
-    promptTuningFailureThreshold: 3,
-    promptTuningWindowHours: 24,
-    promptTuningCooldownHours: 6,
     rerunOrchestrationName: null,
     rerunOrchestrationNamespace: 'jangar',
     systemImprovementOrchestrationName: null,
@@ -599,7 +571,6 @@ describe('codex judge guardrails', () => {
           missing_items: [],
           suggested_fixes: [],
           next_prompt: null,
-          prompt_tuning_suggestions: [],
           system_improvement_suggestions: [],
         },
       },

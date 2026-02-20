@@ -91,17 +91,7 @@ export type CodexEvaluationRecord = {
   missingItems: Record<string, unknown>
   suggestedFixes: Record<string, unknown>
   nextPrompt: string | null
-  promptTuning: Record<string, unknown>
   systemSuggestions: Record<string, unknown>
-  createdAt: string
-}
-
-export type CodexPromptTuningRecord = {
-  id: string
-  runId: string
-  prUrl: string
-  status: string
-  metadata: Record<string, unknown>
   createdAt: string
 }
 
@@ -221,7 +211,6 @@ export type UpdateDecisionInput = {
   missingItems?: Record<string, unknown>
   suggestedFixes?: Record<string, unknown>
   nextPrompt?: string | null
-  promptTuning?: Record<string, unknown>
   systemSuggestions?: Record<string, unknown>
 }
 
@@ -295,13 +284,6 @@ export type CodexJudgeStore = {
   listRecentRuns: (input: ListRecentRunsInput) => Promise<CodexRunSummaryRecord[]>
   listRunsPage: (input: ListRunsPageInput) => Promise<ListRunsPageResult>
   listIssueSummaries: (repository: string, limit?: number) => Promise<CodexIssueSummaryRecord[]>
-  getLatestPromptTuningByIssue: (repository: string, issueNumber: number) => Promise<CodexPromptTuningRecord | null>
-  createPromptTuning: (
-    runId: string,
-    prUrl: string,
-    status: string,
-    metadata?: Record<string, unknown>,
-  ) => Promise<CodexPromptTuningRecord>
   close: () => Promise<void>
 }
 
@@ -518,17 +500,7 @@ const rowToEvaluation = (row: Record<string, unknown>): CodexEvaluationRecord =>
   missingItems: (row.missing_items as Record<string, unknown>) ?? {},
   suggestedFixes: (row.suggested_fixes as Record<string, unknown>) ?? {},
   nextPrompt: row.next_prompt ? String(row.next_prompt) : null,
-  promptTuning: (row.prompt_tuning as Record<string, unknown>) ?? {},
   systemSuggestions: (row.system_suggestions as Record<string, unknown>) ?? {},
-  createdAt: String(row.created_at),
-})
-
-const rowToPromptTuning = (row: Record<string, unknown>): CodexPromptTuningRecord => ({
-  id: String(row.id),
-  runId: String(row.run_id),
-  prUrl: String(row.pr_url),
-  status: String(row.status),
-  metadata: (row.metadata as Record<string, unknown>) ?? {},
   createdAt: String(row.created_at),
 })
 
@@ -817,18 +789,6 @@ export const createCodexJudgeStore = (
     }))
   }
 
-  const getLatestPromptTuningByIssue = async (repository: string, issueNumber: number) => {
-    const row = await db
-      .selectFrom('codex_judge.prompt_tuning')
-      .innerJoin('codex_judge.runs', 'codex_judge.prompt_tuning.run_id', 'codex_judge.runs.id')
-      .selectAll('codex_judge.prompt_tuning')
-      .where('codex_judge.runs.repository', '=', repository)
-      .where('codex_judge.runs.issue_number', '=', issueNumber)
-      .orderBy('codex_judge.prompt_tuning.created_at desc')
-      .executeTakeFirst()
-    return row ? rowToPromptTuning(row as Record<string, unknown>) : null
-  }
-
   const enforceSingleActiveRun = async (run: CodexRunRecord) => {
     if (isTerminalRunStatus(run.status)) return run
 
@@ -1073,7 +1033,6 @@ export const createCodexJudgeStore = (
         missing_items: input.missingItems ?? {},
         suggested_fixes: input.suggestedFixes ?? {},
         next_prompt: input.nextPrompt ?? null,
-        prompt_tuning: input.promptTuning ?? {},
         system_suggestions: input.systemSuggestions ?? {},
       })
       .returningAll()
@@ -1323,25 +1282,6 @@ export const createCodexJudgeStore = (
     return updated ? rowToRerunSubmission(updated as Record<string, unknown>) : null
   }
 
-  const createPromptTuning = async (
-    runId: string,
-    prUrl: string,
-    status: string,
-    metadata: Record<string, unknown> = {},
-  ) => {
-    const inserted = await db
-      .insertInto('codex_judge.prompt_tuning')
-      .values({
-        run_id: runId,
-        pr_url: prUrl,
-        status,
-        metadata,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow()
-    return rowToPromptTuning(inserted as Record<string, unknown>)
-  }
-
   const close = async () => {
     await db.destroy()
   }
@@ -1372,8 +1312,6 @@ export const createCodexJudgeStore = (
     listRecentRuns,
     listRunsPage,
     listIssueSummaries,
-    getLatestPromptTuningByIssue,
-    createPromptTuning,
     listRerunSubmissions,
     close,
   }

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 
+import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { startResourceWatch } from '~/server/kube-watch'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
@@ -24,17 +25,29 @@ type OrchestrationRunStatus = {
 }
 
 const DEFAULT_NAMESPACES = ['jangar']
+const DEFAULT_PRIMITIVES_RECONCILER_ENABLED_FLAG_KEY = 'jangar.primitives_reconciler.enabled'
 
 let started = false
+let starting = false
 let reconciling = false
 let watchHandles: Array<{ stop: () => void }> = []
 const namespaceQueues = new Map<string, Promise<void>>()
 let storeRef: ReturnType<typeof createPrimitivesStore> | null = null
 
-const shouldStart = () => {
+const shouldStartFallback = () => {
   if (process.env.NODE_ENV === 'test') return false
   const flag = (process.env.JANGAR_PRIMITIVES_RECONCILER ?? '1').trim().toLowerCase()
   return flag !== '0' && flag !== 'false'
+}
+
+const shouldStart = async () => {
+  if (process.env.NODE_ENV === 'test') return false
+  return resolveBooleanFeatureToggle({
+    key: DEFAULT_PRIMITIVES_RECONCILER_ENABLED_FLAG_KEY,
+    keyEnvVar: 'JANGAR_PRIMITIVES_RECONCILER_FLAG_KEY',
+    fallbackEnvVar: 'JANGAR_PRIMITIVES_RECONCILER',
+    defaultValue: shouldStartFallback(),
+  })
 }
 
 const parseNamespaces = () => {
@@ -311,12 +324,14 @@ const reconcileOnce = async (
 }
 
 export const startPrimitivesReconciler = () => {
-  if (started || !shouldStart()) return
-  started = true
-  const store = createPrimitivesStore()
-  storeRef = store
-  const kube = createKubernetesClient()
+  if (started || starting) return
+  starting = true
   void (async () => {
+    if (!(await shouldStart()) || started || !starting) return
+    started = true
+    const store = createPrimitivesStore()
+    storeRef = store
+    const kube = createKubernetesClient()
     const namespaces = await resolveNamespaces()
     console.info('[jangar] primitives reconciler namespace scope:', JSON.stringify(namespaces))
 
@@ -362,16 +377,21 @@ export const startPrimitivesReconciler = () => {
         }),
       )
     }
-  })().catch((error) => {
-    console.error('[jangar] primitives reconciler failed to start', error)
-    if (error instanceof Error && error.name === 'NamespaceScopeConfigError') {
-      process.exitCode = 1
-      throw error
-    }
-  })
+  })()
+    .catch((error) => {
+      console.error('[jangar] primitives reconciler failed to start', error)
+      if (error instanceof Error && error.name === 'NamespaceScopeConfigError') {
+        process.exitCode = 1
+        throw error
+      }
+    })
+    .finally(() => {
+      starting = false
+    })
 }
 
 export const stopPrimitivesReconciler = () => {
+  starting = false
   for (const handle of watchHandles) {
     handle.stop()
   }

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { resolveBooleanFeatureToggle } from './feature-flags'
 import { recordTorghutQuantComputeDurationMs, recordTorghutQuantComputeError, recordTorghutQuantFrame } from './metrics'
 import type { QuantAlert, QuantSnapshotFrame, QuantWindow } from './torghut-quant-contract'
 import { computeTorghutQuantMetrics, listTorghutStrategyAccounts } from './torghut-quant-metrics'
@@ -67,6 +68,9 @@ type RuntimeConfig = {
   }
 }
 
+const DEFAULT_QUANT_CONTROL_PLANE_ENABLED_FLAG_KEY = 'jangar.torghut.quant_control_plane.enabled'
+const DEFAULT_QUANT_ALERTS_ENABLED_FLAG_KEY = 'jangar.torghut.quant_alerts.enabled'
+
 const globalState = globalThis as typeof globalThis & {
   __torghutQuantRuntime?: {
     started: boolean
@@ -110,8 +114,8 @@ const resolveWindows = (raw: string | undefined, fallback: QuantWindow[]) => {
   return normalized.length > 0 ? normalized : fallback
 }
 
-const loadConfig = (): RuntimeConfig => {
-  const enabled = resolveBoolean(process.env.JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED, false)
+const loadConfig = (overrides?: { enabled?: boolean; alertsEnabled?: boolean }): RuntimeConfig => {
+  const enabled = overrides?.enabled ?? resolveBoolean(process.env.JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED, false)
   const computeIntervalMs = parsePositiveInt(process.env.JANGAR_TORGHUT_QUANT_COMPUTE_INTERVAL_MS, 1000)
   const heavyComputeIntervalMs = parsePositiveInt(process.env.JANGAR_TORGHUT_QUANT_HEAVY_COMPUTE_INTERVAL_MS, 30_000)
   const seriesSamplingMs = parsePositiveInt(process.env.JANGAR_TORGHUT_QUANT_SERIES_SAMPLING_MS, 5000)
@@ -119,7 +123,8 @@ const loadConfig = (): RuntimeConfig => {
   const maxStalenessSeconds = parsePositiveInt(process.env.JANGAR_TORGHUT_QUANT_MAX_STALENESS_SECONDS, 15)
   const windowsLight = resolveWindows(process.env.JANGAR_TORGHUT_QUANT_WINDOWS_LIGHT, ['1m', '5m', '15m', '1h', '1d'])
   const windowsHeavy = resolveWindows(process.env.JANGAR_TORGHUT_QUANT_WINDOWS_HEAVY, ['5d', '20d'])
-  const alertsEnabled = resolveBoolean(process.env.JANGAR_TORGHUT_QUANT_ALERTS_ENABLED, true)
+  const alertsEnabled =
+    overrides?.alertsEnabled ?? resolveBoolean(process.env.JANGAR_TORGHUT_QUANT_ALERTS_ENABLED, true)
 
   return {
     enabled,
@@ -140,6 +145,25 @@ const loadConfig = (): RuntimeConfig => {
       maxTaFreshnessSeconds: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MAX_TA_FRESHNESS_SECONDS, 120),
     },
   }
+}
+
+const loadFlagDrivenConfig = async () => {
+  const fallback = loadConfig()
+  const [enabled, alertsEnabled] = await Promise.all([
+    resolveBooleanFeatureToggle({
+      key: DEFAULT_QUANT_CONTROL_PLANE_ENABLED_FLAG_KEY,
+      keyEnvVar: 'JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED_FLAG_KEY',
+      fallbackEnvVar: 'JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED',
+      defaultValue: fallback.enabled,
+    }),
+    resolveBooleanFeatureToggle({
+      key: DEFAULT_QUANT_ALERTS_ENABLED_FLAG_KEY,
+      keyEnvVar: 'JANGAR_TORGHUT_QUANT_ALERTS_ENABLED_FLAG_KEY',
+      fallbackEnvVar: 'JANGAR_TORGHUT_QUANT_ALERTS_ENABLED',
+      defaultValue: fallback.alertsEnabled,
+    }),
+  ])
+  return loadConfig({ enabled, alertsEnabled })
 }
 
 const isMarketHoursNy = (now = new Date()) => {
@@ -591,37 +615,42 @@ export const startTorghutQuantRuntime = () => {
   state.config = loadConfig()
 
   if (process.env.NODE_ENV === 'test' || process.env.VITEST) return
-  if (!state.config.enabled) return
+  void (async () => {
+    state.config = await loadFlagDrivenConfig()
+    if (!state.config.enabled) return
 
-  let lightInFlight = false
-  setInterval(() => {
-    if (lightInFlight) return
-    lightInFlight = true
-    void runComputeCycle(state.config.windowsLight)
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error)
-        recordTorghutQuantComputeError('light-cycle')
-        state.emitter.emit('event', { type: 'error', message } satisfies QuantStreamErrorEvent)
-      })
-      .finally(() => {
-        lightInFlight = false
-      })
-  }, state.config.computeIntervalMs)
+    let lightInFlight = false
+    setInterval(() => {
+      if (lightInFlight) return
+      lightInFlight = true
+      void runComputeCycle(state.config.windowsLight)
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error)
+          recordTorghutQuantComputeError('light-cycle')
+          state.emitter.emit('event', { type: 'error', message } satisfies QuantStreamErrorEvent)
+        })
+        .finally(() => {
+          lightInFlight = false
+        })
+    }, state.config.computeIntervalMs)
 
-  let heavyInFlight = false
-  setInterval(() => {
-    if (heavyInFlight) return
-    heavyInFlight = true
-    void runComputeCycle(state.config.windowsHeavy)
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error)
-        recordTorghutQuantComputeError('heavy-cycle')
-        state.emitter.emit('event', { type: 'error', message } satisfies QuantStreamErrorEvent)
-      })
-      .finally(() => {
-        heavyInFlight = false
-      })
-  }, state.config.heavyComputeIntervalMs)
+    let heavyInFlight = false
+    setInterval(() => {
+      if (heavyInFlight) return
+      heavyInFlight = true
+      void runComputeCycle(state.config.windowsHeavy)
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error)
+          recordTorghutQuantComputeError('heavy-cycle')
+          state.emitter.emit('event', { type: 'error', message } satisfies QuantStreamErrorEvent)
+        })
+        .finally(() => {
+          heavyInFlight = false
+        })
+    }, state.config.heavyComputeIntervalMs)
+  })().catch((error) => {
+    console.warn('[torghut-quant-runtime] failed to initialize', error)
+  })
 }
 
 export const __private = {

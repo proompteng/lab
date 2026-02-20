@@ -326,7 +326,6 @@ jangar_env = {
     'NODE_ENV': 'development',
     'PORT': str(jangar_port),
     'UI_PORT': str(jangar_port),
-    'JANGAR_WEBSOCKETS_ENABLED': 'true',
     'JANGAR_SKIP_MIGRATIONS': '1',
     # Jangar defaults to require; keep it explicit.
     'PGSSLMODE': 'require',

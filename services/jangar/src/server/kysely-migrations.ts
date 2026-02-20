@@ -16,6 +16,7 @@ import * as agentsControlPlaneCacheMigration from '~/server/migrations/20260205_
 import * as jangarAgentRunIdempotencyMigration from '~/server/migrations/20260208_jangar_agentrun_idempotency'
 import * as atlasChunkSearchMigration from '~/server/migrations/20260209_atlas_chunk_search'
 import * as torghutQuantControlPlaneMigration from '~/server/migrations/20260212_torghut_quant_control_plane'
+import * as removePromptTuningMigration from '~/server/migrations/20260220_remove_prompt_tuning'
 
 type MigrationMap = Record<string, Migration>
 
@@ -45,6 +46,7 @@ const migrations: MigrationMap = {
   '20260208_jangar_agentrun_idempotency': jangarAgentRunIdempotencyMigration,
   '20260209_atlas_chunk_search': atlasChunkSearchMigration,
   '20260212_torghut_quant_control_plane': torghutQuantControlPlaneMigration,
+  '20260220_remove_prompt_tuning': removePromptTuningMigration,
 }
 
 const migrationProvider = new StaticMigrationProvider(migrations)

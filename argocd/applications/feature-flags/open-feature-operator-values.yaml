@@ -1,0 +1,12 @@
+defaultNamespace: feature-flags
+
+namespace:
+  create: false
+
+sidecarConfiguration:
+  image:
+    tag: v0.13.3
+
+flagdConfiguration:
+  image:
+    tag: v0.13.3

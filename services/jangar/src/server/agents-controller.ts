@@ -3,6 +3,7 @@ import { createHash, createPrivateKey, createSign } from 'node:crypto'
 
 import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 
+import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { startResourceWatch } from '~/server/kube-watch'
 import {
   recordAgentConcurrency,
@@ -59,6 +60,7 @@ const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
 const MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 30
 const QUEUED_PHASES = new Set(['pending', 'queued', 'progressing', 'inprogress'])
 const DEFAULT_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS = 30
+const DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.agents_controller.enabled'
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -285,8 +287,17 @@ const isJobFailed = (job: Record<string, unknown>) => hasJobCondition(job, 'Fail
 
 const shouldStart = () => {
   if (process.env.NODE_ENV === 'test') return false
-  const flag = (process.env.JANGAR_AGENTS_CONTROLLER_ENABLED ?? '1').trim().toLowerCase()
-  return flag !== '0' && flag !== 'false'
+  return parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_ENABLED, true)
+}
+
+const shouldStartWithFeatureFlag = async () => {
+  if (process.env.NODE_ENV === 'test') return false
+  return resolveBooleanFeatureToggle({
+    key: DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY,
+    keyEnvVar: 'JANGAR_AGENTS_CONTROLLER_ENABLED_FLAG_KEY',
+    fallbackEnvVar: 'JANGAR_AGENTS_CONTROLLER_ENABLED',
+    defaultValue: true,
+  })
 }
 
 const parseNamespaces = () => {
@@ -6183,10 +6194,25 @@ const startNamespaceWatches = (
 }
 
 export const startAgentsController = async () => {
-  if (started || starting || !shouldStart()) return
+  if (started || starting) return
   starting = true
   lifecycleToken += 1
   const token = lifecycleToken
+  let featureEnabled = false
+  try {
+    featureEnabled = await shouldStartWithFeatureFlag()
+  } catch (error) {
+    if (lifecycleToken === token) {
+      starting = false
+    }
+    throw error
+  }
+  if (!featureEnabled) {
+    if (lifecycleToken === token) {
+      starting = false
+    }
+    return
+  }
   let crdsReady: CrdCheckState
   try {
     crdsReady = await checkCrds()
