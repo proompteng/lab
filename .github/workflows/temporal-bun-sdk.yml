@@ -47,6 +47,7 @@ jobs:
       TEMPORAL_INTEGRATION_TESTS: '1'
       TEMPORAL_ADDRESS: temporal-grpc:7233
       TEMPORAL_NAMESPACE: default
+      TEMPORAL_ENFORCE_REMOTE_ADDRESS: '1'
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
@@ -90,6 +91,20 @@ jobs:
 
       - name: Verify Temporal CLI
         run: temporal --version
+
+      - name: Enforce ArgoCD Temporal target
+        run: |
+          if [[ "${TEMPORAL_TEST_SERVER}" != "1" ]]; then
+            echo "TEMPORAL_TEST_SERVER must be 1 in CI (reuse ArgoCD Temporal endpoint)."
+            exit 1
+          fi
+
+          case "${TEMPORAL_ADDRESS}" in
+            127.0.0.1:*|localhost:*|[::1]:*)
+              echo "TEMPORAL_ADDRESS must not point to localhost in CI."
+              exit 1
+              ;;
+          esac
 
       - name: Run Biome check (temporal-bun-sdk)
         run: bunx biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests

@@ -53,6 +53,7 @@ import { WorkerVersioningMode } from '../proto/temporal/api/enums/v1/deployment_
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
 import { WorkflowTaskFailedCause } from '../proto/temporal/api/enums/v1/failed_cause_pb'
 import { QueryResultType } from '../proto/temporal/api/enums/v1/query_pb'
+import { TaskQueueKind } from '../proto/temporal/api/enums/v1/task_queue_pb'
 import { HistoryEventFilterType, TimeoutType, VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
 import type {
   ChildWorkflowExecutionCanceledEventAttributes,
@@ -691,7 +692,7 @@ export class WorkerRuntime {
     this.#plugins = params.plugins
     this.#tuner = params.tuner
     this.#stickyAttributes = create(StickyExecutionAttributesSchema, {
-      workerTaskQueue: create(TaskQueueSchema, { name: this.#stickyQueue }),
+      workerTaskQueue: this.#buildStickyTaskQueue(this.#stickyQueue),
       scheduleToStartTimeout: durationFromMillis(params.stickyScheduleToStartTimeoutMs),
     })
   }
@@ -1058,7 +1059,7 @@ export class WorkerRuntime {
   #workflowPollerEffect(queueName: string): Effect.Effect<void, never, never> {
     const request = create(PollWorkflowTaskQueueRequestSchema, {
       namespace: this.#namespace,
-      taskQueue: create(TaskQueueSchema, { name: queueName }),
+      taskQueue: this.#buildWorkflowPollTaskQueue(queueName),
       identity: this.#identity,
       deploymentOptions: this.#rpcDeploymentOptions,
     })
@@ -1101,7 +1102,7 @@ export class WorkerRuntime {
     }
     const request = create(PollActivityTaskQueueRequestSchema, {
       namespace: this.#namespace,
-      taskQueue: create(TaskQueueSchema, { name: this.#taskQueue }),
+      taskQueue: this.#buildNormalTaskQueue(this.#taskQueue),
       identity: this.#identity,
       deploymentOptions: this.#rpcDeploymentOptions,
     })
@@ -1141,6 +1142,28 @@ export class WorkerRuntime {
 
   #isRpcAbortError(error: unknown): boolean {
     return isAbortError(error) || (error instanceof ConnectError && error.code === Code.Canceled)
+  }
+
+  #buildNormalTaskQueue(name: string) {
+    return create(TaskQueueSchema, {
+      name,
+      kind: TaskQueueKind.NORMAL,
+      normalName: '',
+    })
+  }
+
+  #buildStickyTaskQueue(name: string) {
+    return create(TaskQueueSchema, {
+      name,
+      kind: TaskQueueKind.STICKY,
+      normalName: this.#taskQueue,
+    })
+  }
+
+  #buildWorkflowPollTaskQueue(queueName: string) {
+    return queueName === this.#stickyQueue
+      ? this.#buildStickyTaskQueue(queueName)
+      : this.#buildNormalTaskQueue(queueName)
   }
 
   #isBenignPollTimeout(error: unknown): boolean {

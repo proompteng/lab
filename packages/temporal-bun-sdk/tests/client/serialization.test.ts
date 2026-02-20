@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test'
 
 import { createDefaultDataConverter } from '../../src/common/payloads'
-import { computeSignalRequestId } from '../../src/client/serialization'
+import { buildStartWorkflowRequest, computeSignalRequestId } from '../../src/client/serialization'
+import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
 
 const dataConverter = createDefaultDataConverter()
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -49,4 +50,43 @@ test('computeSignalRequestId remains deterministic for identical inputs', async 
   )
 
   expect(first).toBe(second)
+})
+
+test('buildStartWorkflowRequest sets versioning behavior when provided', async () => {
+  const request = await buildStartWorkflowRequest(
+    {
+      options: {
+        workflowId: 'wf-versioned',
+        workflowType: 'exampleWorkflow',
+        versioningBehavior: VersioningBehavior.PINNED,
+      },
+      defaults: {
+        namespace: 'default',
+        identity: 'test-worker',
+        taskQueue: 'example',
+      },
+    },
+    dataConverter,
+  )
+
+  expect(request.versioningOverride?.behavior).toBe(VersioningBehavior.PINNED)
+})
+
+test('buildStartWorkflowRequest defaults to unversioned behavior', async () => {
+  const request = await buildStartWorkflowRequest(
+    {
+      options: {
+        workflowId: 'wf-unversioned',
+        workflowType: 'exampleWorkflow',
+      },
+      defaults: {
+        namespace: 'default',
+        identity: 'test-worker',
+        taskQueue: 'example',
+      },
+    },
+    dataConverter,
+  )
+
+  expect(request.versioningOverride).toBeUndefined()
 })

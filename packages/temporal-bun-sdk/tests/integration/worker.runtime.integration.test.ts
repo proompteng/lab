@@ -6,6 +6,7 @@ import * as Schema from 'effect/Schema'
 
 import { buildTransportOptions, createTemporalClient, normalizeTemporalAddress } from '../../src/client'
 import { loadTemporalConfig, type TemporalConfig } from '../../src/config'
+import { TaskQueueKind } from '../../src/proto/temporal/api/enums/v1/task_queue_pb'
 import { WorkerVersioningMode } from '../../src/proto/temporal/api/enums/v1/deployment_pb'
 import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
 import {
@@ -334,6 +335,7 @@ describeIntegration('Temporal worker runtime integration', () => {
           return {
             deploymentName,
             buildId,
+            taskQueue,
             stickyQueueName,
             completions,
             polls,
@@ -347,6 +349,8 @@ describeIntegration('Temporal worker runtime integration', () => {
       const workerTaskQueue = request.stickyAttributes?.workerTaskQueue?.name ?? ''
       if (request.stickyAttributes) {
         expect(workerTaskQueue).toBe(result.stickyQueueName)
+        expect(request.stickyAttributes.workerTaskQueue?.kind).toBe(TaskQueueKind.STICKY)
+        expect(request.stickyAttributes.workerTaskQueue?.normalName).toBe(result.taskQueue)
       } else {
         expect(workerTaskQueue).toBe('')
       }
@@ -356,6 +360,9 @@ describeIntegration('Temporal worker runtime integration', () => {
 
     expect(result.polls.length).toBeGreaterThan(0)
     for (const poll of result.polls) {
+      const isStickyPoll = poll.taskQueue?.name === result.stickyQueueName
+      expect(poll.taskQueue?.kind).toBe(isStickyPoll ? TaskQueueKind.STICKY : TaskQueueKind.NORMAL)
+      expect(poll.taskQueue?.normalName ?? '').toBe(isStickyPoll ? result.taskQueue : '')
       expect(poll.deploymentOptions).toBeUndefined()
     }
   })

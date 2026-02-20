@@ -28,6 +28,15 @@ export const CLI_CONFIG = {
   taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration',
 }
 
+const isLoopbackTemporalAddress = (address: string): boolean => {
+  const normalized = address.trim().toLowerCase()
+  return (
+    normalized.startsWith('127.0.0.1:') ||
+    normalized.startsWith('localhost:') ||
+    normalized.startsWith('[::1]:')
+  )
+}
+
 let sharedEnvPromise: Promise<IntegrationTestEnv> | null = null
 let refCount = 0
 
@@ -49,6 +58,12 @@ export const releaseIntegrationTestEnv = async (): Promise<void> => {
 }
 
 const setupIntegrationTestEnv = async (): Promise<IntegrationTestEnv> => {
+  if (process.env.TEMPORAL_ENFORCE_REMOTE_ADDRESS === '1' && isLoopbackTemporalAddress(CLI_CONFIG.address)) {
+    throw new Error(
+      `Integration tests are configured to require a remote Temporal endpoint, but TEMPORAL_ADDRESS is ${CLI_CONFIG.address}`,
+    )
+  }
+
   let harness: IntegrationHarness | null = null
   let cliUnavailable = false
 

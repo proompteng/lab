@@ -69,7 +69,7 @@ import {
 } from './proto/temporal/api/common/v1/message_pb'
 import type { QueryRejectCondition } from './proto/temporal/api/enums/v1/query_pb'
 import { UpdateWorkflowExecutionLifecycleStage } from './proto/temporal/api/enums/v1/update_pb'
-import { HistoryEventFilterType } from './proto/temporal/api/enums/v1/workflow_pb'
+import { HistoryEventFilterType, VersioningBehavior } from './proto/temporal/api/enums/v1/workflow_pb'
 import type { HistoryEvent } from './proto/temporal/api/history/v1/message_pb'
 import {
   type AddSearchAttributesRequest,
@@ -3236,6 +3236,21 @@ const sanitizeRetryPolicy = (policy?: RetryPolicyOptions): RetryPolicyOptions | 
   return sanitized
 }
 
+const isVersioningBehavior = (value: number): value is VersioningBehavior =>
+  value === VersioningBehavior.UNSPECIFIED ||
+  value === VersioningBehavior.PINNED ||
+  value === VersioningBehavior.AUTO_UPGRADE
+
+const sanitizeVersioningBehavior = (value: unknown): VersioningBehavior | undefined => {
+  if (value === undefined) {
+    return undefined
+  }
+  if (typeof value !== 'number' || !isVersioningBehavior(value)) {
+    throw new Error('versioningBehavior must be one of UNSPECIFIED, PINNED, or AUTO_UPGRADE')
+  }
+  return value
+}
+
 const sanitizeStartWorkflowOptions = (options: StartWorkflowOptions): StartWorkflowOptions => {
   const sanitized: StartWorkflowOptions = {
     ...options,
@@ -3246,6 +3261,7 @@ const sanitizeStartWorkflowOptions = (options: StartWorkflowOptions): StartWorkf
   sanitized.taskQueue = ensureOptionalTrimmedString(options.taskQueue, 'taskQueue', 1)
   sanitized.namespace = ensureOptionalTrimmedString(options.namespace, 'namespace', 1)
   sanitized.identity = ensureOptionalTrimmedString(options.identity, 'identity', 1)
+  sanitized.versioningBehavior = sanitizeVersioningBehavior(options.versioningBehavior)
   sanitized.cronSchedule = ensureOptionalTrimmedString(options.cronSchedule, 'cronSchedule', 1)
   sanitized.requestId = ensureOptionalTrimmedString(options.requestId, 'requestId', 1)
 

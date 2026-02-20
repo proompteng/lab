@@ -3,6 +3,7 @@ import { mkdir, rm, stat } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
 import { createTemporalClient, type TemporalClient } from '@proompteng/temporal-bun-sdk/client'
 import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk/config'
+import { VersioningBehavior } from '@proompteng/temporal-bun-sdk/worker'
 import { Context, Effect, Layer, pipe } from 'effect'
 import * as TSemaphore from 'effect/TSemaphore'
 
@@ -367,6 +368,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
                       workflowId,
                       workflowType: 'enrichFile',
                       taskQueue,
+                      versioningBehavior: VersioningBehavior.AUTO_UPGRADE,
                       args: [
                         {
                           repoRoot,
@@ -421,6 +423,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
                       workflowId,
                       workflowType: 'enrichRepository',
                       taskQueue,
+                      versioningBehavior: VersioningBehavior.AUTO_UPGRADE,
                       args: [
                         {
                           repoRoot,
