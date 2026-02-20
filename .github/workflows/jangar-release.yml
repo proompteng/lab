@@ -85,7 +85,7 @@ jobs:
             DIGEST="$(
               bun --eval "
                 import { inspectImageDigest } from './packages/scripts/src/shared/docker.ts'
-                const image = \`registry.ide-newton.ts.net/lab/jangar:${process.env.IMAGE_TAG}\`
+                const image = 'registry.ide-newton.ts.net/lab/jangar:' + process.env.IMAGE_TAG
                 const repoDigest = inspectImageDigest(image)
                 const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
                 console.log(digest)
