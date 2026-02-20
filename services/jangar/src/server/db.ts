@@ -427,17 +427,7 @@ type CodexJudgeEvaluations = {
   missing_items: JsonValue
   suggested_fixes: JsonValue
   next_prompt: string | null
-  prompt_tuning: JsonValue
   system_suggestions: JsonValue
-  created_at: Generated<Timestamp>
-}
-
-type CodexJudgePromptTuning = {
-  id: Generated<string>
-  run_id: string
-  pr_url: string
-  status: string
-  metadata: JsonValue
   created_at: Generated<Timestamp>
 }
 
@@ -666,7 +656,6 @@ export type Database = {
   'codex_judge.runs': CodexJudgeRuns
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations
-  'codex_judge.prompt_tuning': CodexJudgePromptTuning
   'codex_judge.rerun_submissions': CodexJudgeRerunSubmissions
   'workflow_comms.agent_messages': WorkflowCommsAgentMessage
 }

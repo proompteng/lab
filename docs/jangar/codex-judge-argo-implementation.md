@@ -219,7 +219,6 @@ Tables (or collections):
 - runs(id, issue_id, workflow_id, attempt, branch, status, turn_id, thread_id, timestamps)
 - artifacts(run_id, type, url, sha256)
 - judge_evaluations(run_id, decision, confidence, reasons, missing_items, next_prompt)
-- prompt_tuning(id, source_run_id, diff, pr_url, status)
 
 Use the existing Postgres wiring in `services/jangar/src/server/db.ts` (jangar-db).
 
@@ -363,7 +362,6 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
   "missing_items": ["..."],
   "suggested_fixes": ["..."],
   "next_prompt": "...",
-  "prompt_tuning_suggestions": ["..."],
   "system_improvement_suggestions": ["..."]
 }
 
@@ -505,14 +503,14 @@ Agent 5: PR review gate (Workstream E)
 Agent 6: Judge engine (Workstream F)
 Agent 7: Orchestration (Workstream G)
 Agent 8: Discord integration (Workstream H)
-Agent 9: Prompt auto-tuning PRs (Workstream I)
+Agent 9: System-improvement PRs (Workstream I)
 Agent 10: Memory snapshots (Workstream J)
 
 ## Minimal Blocking Sequence
 1) Complete A, B, C, D, E in parallel.
 2) Once C + D + E complete, implement F.
 3) G + H depend on F.
-4) I depends on F (optional if prompt tuning is deferred).
+4) I depends on F.
 5) J depends on F.
 
 ## Validation Checklist

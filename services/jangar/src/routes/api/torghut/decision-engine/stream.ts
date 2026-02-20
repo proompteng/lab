@@ -33,7 +33,7 @@ const jsonResponse = (payload: unknown, status = 200) => {
 const isTerminalType = (type: string) => type === 'decision.final' || type === 'decision.error'
 
 export const streamDecisionRun = async (request: Request) => {
-  if (!isTorghutDecisionEngineEnabled()) {
+  if (!(await isTorghutDecisionEngineEnabled())) {
     return jsonResponse({ ok: false, message: 'torghut decision engine disabled' }, 503)
   }
 

@@ -13,11 +13,6 @@ export type CodexJudgeConfig = {
   discordBotToken: string | null
   discordChannelId: string | null
   discordApiBaseUrl: string
-  promptTuningEnabled: boolean
-  promptTuningRepo: string | null
-  promptTuningFailureThreshold: number
-  promptTuningWindowHours: number
-  promptTuningCooldownHours: number
   rerunOrchestrationName: string | null
   rerunOrchestrationNamespace: string
   systemImprovementOrchestrationName: string | null
@@ -56,10 +51,7 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const githubToken = (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? '').trim() || null
   const githubApiBaseUrl = (process.env.GITHUB_API_BASE_URL ?? DEFAULT_GITHUB_API_BASE).trim()
   const codexReviewers = parseList(process.env.JANGAR_CODEX_REVIEWERS ?? process.env.CODEX_REVIEWERS)
-  const ciEventStreamEnabled =
-    (process.env.JANGAR_CI_EVENT_STREAM_ENABLED ?? process.env.JANGAR_GITHUB_EVENT_STREAM_ENABLED ?? 'false')
-      .trim()
-      .toLowerCase() === 'true'
+  const ciEventStreamEnabled = (process.env.JANGAR_CI_EVENT_STREAM_ENABLED ?? 'false').trim().toLowerCase() === 'true'
   const ciMaxWaitMs = parseNumber(process.env.JANGAR_CI_MAX_WAIT_MS, 60 * 60_000)
   const reviewMaxWaitMs = parseNumber(process.env.JANGAR_REVIEW_MAX_WAIT_MS, 60 * 60_000)
   const maxAttempts = parseNumber(process.env.JANGAR_CODEX_MAX_ATTEMPTS, 3)
@@ -77,11 +69,6 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const discordBotToken = (process.env.DISCORD_BOT_TOKEN ?? '').trim() || null
   const discordChannelId = (process.env.DISCORD_SUCCESS_CHANNEL_ID ?? '').trim() || null
   const discordApiBaseUrl = (process.env.DISCORD_API_BASE_URL ?? DEFAULT_DISCORD_API_BASE).trim()
-  const promptTuningEnabled = (process.env.JANGAR_PROMPT_TUNING_ENABLED ?? 'true').trim().toLowerCase() === 'true'
-  const promptTuningRepo = (process.env.JANGAR_PROMPT_TUNING_REPO ?? '').trim() || null
-  const promptTuningFailureThreshold = parseNumber(process.env.JANGAR_PROMPT_TUNING_FAILURE_THRESHOLD, 3)
-  const promptTuningWindowHours = parseNumber(process.env.JANGAR_PROMPT_TUNING_WINDOW_HOURS, 24)
-  const promptTuningCooldownHours = parseNumber(process.env.JANGAR_PROMPT_TUNING_COOLDOWN_HOURS, 6)
   const rerunOrchestrationName = (process.env.JANGAR_CODEX_RERUN_ORCHESTRATION ?? '').trim() || null
   const rerunOrchestrationNamespace = (
     process.env.JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE ??
@@ -116,11 +103,6 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     discordBotToken,
     discordChannelId,
     discordApiBaseUrl,
-    promptTuningEnabled,
-    promptTuningRepo,
-    promptTuningFailureThreshold,
-    promptTuningWindowHours,
-    promptTuningCooldownHours,
     rerunOrchestrationName,
     rerunOrchestrationNamespace,
     systemImprovementOrchestrationName,

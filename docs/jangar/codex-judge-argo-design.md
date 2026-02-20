@@ -253,19 +253,19 @@ Fail:
   - repeated infra failure
   - repeated identical failure beyond threshold
 - For needs_iteration and needs_human, the judge must emit system-level improvement suggestions
-  (system prompt tuning and broader system changes) and open a PR with those recommendations.
+  (broader system changes) and open a PR with those recommendations.
 - Review-driven iterations must include Codex comment summaries in `next_prompt`.
 - If the workflow failed before producing artifacts or a commit SHA, classify as infra failure and
   rerun automatically until the infra-failure threshold is exceeded.
 
-## Prompt Auto-tuning
+## System Improvement Follow-up
 - Aggregate failure reasons across runs.
-- Generate prompt improvements automatically.
-- Create PRs to update prompt templates.
+- Generate improvement proposals automatically.
+- Create PRs to update workflows, prompts, and guardrails.
 - Human reviews/merges PRs.
 - For needs_iteration and needs_human outcomes, always produce a PR with system prompt and
   system improvement suggestions.
-- Use the repository PR template for auto-tuning PRs.
+- Use the repository PR template for follow-up PRs.
 
 ## State Machine
 issue status: queued -> running -> run_complete -> judging -> completed | needs_iteration | needs_human
@@ -292,7 +292,7 @@ stateDiagram-v2
 ## Observability
 - Metrics: completion rate, avg attempts, failure reasons, CI duration, judge confidence.
 - Run history per issue with artifact links.
-- Memory snapshots per run (10 entries) for retrieval and prompt tuning.
+- Memory snapshots per run (10 entries) for retrieval and postmortems.
 
 ## Memories + Embeddings
 - Jangar persists 10 memory snapshots per run and generates embeddings on write.

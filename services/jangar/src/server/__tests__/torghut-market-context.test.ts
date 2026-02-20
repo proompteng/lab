@@ -8,6 +8,7 @@ import {
 
 const restoreEnv = () => {
   delete process.env.JANGAR_MARKET_CONTEXT_ENABLED
+  delete process.env.JANGAR_MARKET_CONTEXT_ENABLED_FLAG_KEY
   delete process.env.JANGAR_MARKET_CONTEXT_CACHE_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS
@@ -18,6 +19,9 @@ const restoreEnv = () => {
   delete process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS
+  delete process.env.JANGAR_FEATURE_FLAGS_ENABLED
+  delete process.env.JANGAR_FEATURE_FLAGS_URL
+  delete process.env.JANGAR_FEATURE_FLAGS_TIMEOUT_MS
 }
 
 afterEach(() => {
@@ -87,6 +91,28 @@ describe('torghut market context', () => {
     expect(context.riskFlags).toContain('market_context_disabled')
     expect(health.enabled).toBe(false)
     expect(health.overallState).toBe('down')
+  })
+
+  it('uses flagd for market context enablement when configured', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_ENABLED = 'true'
+    process.env.JANGAR_MARKET_CONTEXT_ENABLED_FLAG_KEY = 'jangar.market_context.enabled'
+    process.env.JANGAR_FEATURE_FLAGS_URL = 'http://feature-flags.feature-flags.svc.cluster.local:8013'
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ value: false }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const context = await getTorghutMarketContext('SPY', { asOf: new Date('2026-02-19T12:00:00.000Z') })
+
+    expect(context.riskFlags).toContain('market_context_disabled')
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://feature-flags.feature-flags.svc.cluster.local:8013/schema.v1.Service/ResolveBoolean',
+      expect.objectContaining({
+        method: 'POST',
+      }),
+    )
   })
 
   it('scopes cache entries by asOf and staleness options', async () => {

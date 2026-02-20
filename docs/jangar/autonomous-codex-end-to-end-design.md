@@ -27,7 +27,6 @@ This design is grounded in the current cluster and the `jangar` database.
  codex_judge.runs              88
  codex_judge.evaluations       60
  codex_judge.artifacts         120
- codex_judge.prompt_tuning     9
  codex_judge.rerun_submissions 13
 
  jangar_github.events          513
@@ -99,13 +98,13 @@ If any gate fails, the system must record why and either rerun or escalate to `n
 
 The autonomous run depends on these environment variables already present in the Jangar deployment:
 - GitHub: `GITHUB_TOKEN`, `JANGAR_GITHUB_REPOS_ALLOWED`, `JANGAR_GITHUB_REVIEWS_WRITE`, `JANGAR_GITHUB_MERGE_WRITE`, `JANGAR_GITHUB_MERGE_FORCE`
-- Codex judge: `JANGAR_CI_EVENT_STREAM_ENABLED`, `JANGAR_CI_MAX_WAIT_MS`, `JANGAR_REVIEW_MAX_WAIT_MS`, `JANGAR_CODEX_MAX_ATTEMPTS`, `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`, `JANGAR_CODEX_JUDGE_MODEL`, `JANGAR_CODEX_JUDGE_MODE`
-- Argo and artifacts: `ARGO_SERVER_URL`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`
+- Codex judge: `JANGAR_CI_EVENT_STREAM_ENABLED`, `JANGAR_CI_MAX_WAIT_MS`, `JANGAR_REVIEW_MAX_WAIT_MS`, `JANGAR_CODEX_MAX_ATTEMPTS`, `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`, `JANGAR_CODEX_REVIEWERS`, `JANGAR_CODEX_RERUN_ORCHESTRATION`, `JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE`, `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION`, `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE`
+- Argo artifacts: `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`
 - Facteur reruns: `FACTEUR_INTERNAL_URL`
 - Infra: `DATABASE_URL`, `JANGAR_REDIS_URL`, `NATS_URL`, `NATS_USER`, `NATS_PASSWORD`
 
 Required guarantee: the workflow image has `git` and the repo checkout at `${CODEX_CWD}`.
-Production requirement: local judge mode is deprecated. Set `JANGAR_CODEX_JUDGE_MODE=argo` so Jangar only hosts the UI and stores results from the Argo judge workflow.
+Production requirement: judge processing is Argo/event-driven; Jangar hosts UI and persists run/evaluation state.
 
 ## 6) Architecture Overview
 

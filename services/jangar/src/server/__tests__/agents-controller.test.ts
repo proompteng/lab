@@ -10,11 +10,16 @@ const metricsMocks = vi.hoisted(() => ({
   recordAgentRateLimitRejection: vi.fn(),
 }))
 
+const featureFlagsMocks = vi.hoisted(() => ({
+  resolveBooleanFeatureToggle: vi.fn(async () => true),
+}))
+
 vi.mock('~/server/metrics', () => metricsMocks)
+vi.mock('~/server/feature-flags', () => featureFlagsMocks)
 
 const { recordReconcileDurationMs } = metricsMocks
 
-import { __test } from '~/server/agents-controller'
+import { __test, startAgentsController, stopAgentsController } from '~/server/agents-controller'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
 
 const finalizer = 'agents.proompteng.ai/runtime-cleanup'
@@ -164,6 +169,33 @@ const buildVcsProvider = (overrides: Record<string, unknown> = {}) => ({
   },
   status: {},
   ...overrides,
+})
+
+describe('agents controller startup', () => {
+  it('avoids duplicate startup when feature flag lookup is pending', async () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'development'
+    let resolveFlag!: (value: boolean) => void
+    const flagPromise = new Promise<boolean>((resolve) => {
+      resolveFlag = resolve
+    })
+    featureFlagsMocks.resolveBooleanFeatureToggle.mockReturnValueOnce(flagPromise)
+
+    const first = startAgentsController()
+    const second = startAgentsController()
+    try {
+      expect(featureFlagsMocks.resolveBooleanFeatureToggle).toHaveBeenCalledTimes(1)
+    } finally {
+      resolveFlag(false)
+      await Promise.all([first, second])
+      stopAgentsController()
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+    }
+  })
 })
 
 describe('AgentRun artifacts limits', () => {

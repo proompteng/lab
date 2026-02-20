@@ -474,7 +474,6 @@ Required fields:
 - `missing_items`
 - `suggested_fixes`
 - `next_prompt`
-- `prompt_tuning_suggestions`
 - `system_improvement_suggestions`
 
 ## 7.4 Run-Complete Payload (DB/Kafka)

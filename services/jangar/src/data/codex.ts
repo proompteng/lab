@@ -86,7 +86,6 @@ export type CodexEvaluationRecord = {
   missingItems: Record<string, unknown>
   suggestedFixes: Record<string, unknown>
   nextPrompt: string | null
-  promptTuning: Record<string, unknown>
   systemSuggestions: Record<string, unknown>
   createdAt: string
 }

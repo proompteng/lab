@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { handleChatCompletion } from './chat'
 import { safeJsonStringify } from './chat-text'
+import { resolveBooleanFeatureToggle } from './feature-flags'
 
 type JsonRecord = Record<string, unknown>
 
@@ -94,6 +95,8 @@ type DecisionEngineConfig = {
   heartbeatMs: number
   retentionMs: number
 }
+
+const DEFAULT_TORGHUT_DECISION_ENGINE_ENABLED_FLAG_KEY = 'jangar.torghut.decision_engine.enabled'
 
 const globalState = globalThis as typeof globalThis & {
   __torghutDecisionEngine?: {
@@ -553,7 +556,12 @@ const runDefaultDecisionExecutor = async (input: DecisionExecutorInput): Promise
 }
 
 export const isTorghutDecisionEngineEnabled = () =>
-  resolveBoolean(process.env.JANGAR_TORGHUT_DECISION_ENGINE_ENABLED, true)
+  resolveBooleanFeatureToggle({
+    key: DEFAULT_TORGHUT_DECISION_ENGINE_ENABLED_FLAG_KEY,
+    keyEnvVar: 'JANGAR_TORGHUT_DECISION_ENGINE_ENABLED_FLAG_KEY',
+    fallbackEnvVar: 'JANGAR_TORGHUT_DECISION_ENGINE_ENABLED',
+    defaultValue: resolveBoolean(process.env.JANGAR_TORGHUT_DECISION_ENGINE_ENABLED, true),
+  })
 
 export const setTorghutDecisionExecutorForTests = (
   executor: (input: DecisionExecutorInput) => Promise<DecisionExecutorResult>,

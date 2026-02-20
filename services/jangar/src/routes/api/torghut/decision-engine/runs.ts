@@ -26,7 +26,7 @@ const jsonResponse = (payload: unknown, status = 200) => {
 }
 
 export const submitDecisionRun = async (request: Request) => {
-  if (!isTorghutDecisionEngineEnabled()) {
+  if (!(await isTorghutDecisionEngineEnabled())) {
     return jsonResponse({ ok: false, message: 'torghut decision engine disabled' }, 503)
   }
 

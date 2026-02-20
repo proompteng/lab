@@ -20,6 +20,7 @@ import {
   createCodexJudgeStore,
   type UpdateDecisionInput,
 } from '~/server/codex-judge-store'
+import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { createGitHubClient, GitHubRateLimitError, type PullRequest } from '~/server/github-client'
 import { ingestGithubReviewEvent } from '~/server/github-review-ingest'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
@@ -87,6 +88,7 @@ const _RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.e
 const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
 const RERUN_WORKER_POLL_MS = 10_000
 const RERUN_WORKER_BATCH_SIZE = 10
+const DEFAULT_CI_EVENT_STREAM_ENABLED_FLAG_KEY = 'jangar.ci_event_stream.enabled'
 
 const safeParseJson = (value: string) => {
   try {
@@ -968,13 +970,21 @@ const fetchCiStatus = async (run: CodexRunRecord, commitSha?: string | null) => 
   }
 }
 
+const isCiEventStreamEnabled = () =>
+  resolveBooleanFeatureToggle({
+    key: DEFAULT_CI_EVENT_STREAM_ENABLED_FLAG_KEY,
+    keyEnvVar: 'JANGAR_CI_EVENT_STREAM_ENABLED_FLAG_KEY',
+    fallbackEnvVar: 'JANGAR_CI_EVENT_STREAM_ENABLED',
+    defaultValue: getConfig().ciEventStreamEnabled,
+  })
+
 const resolveCiContext = async (run: CodexRunRecord, pr: PullRequest | null) => {
   const prSha = pr?.headSha ?? null
   const artifactSha = prSha ? null : extractCommitShaFromRun(run)
   const existingSha = prSha ? null : run.commitSha
   const commitSha = prSha ?? artifactSha ?? existingSha ?? null
 
-  if (!getConfig().ciEventStreamEnabled) {
+  if (!(await isCiEventStreamEnabled())) {
     const ci = await fetchCiStatus(run, commitSha)
     return { commitSha, ci, updatedRun: null as CodexRunRecord | null }
   }
@@ -1430,7 +1440,7 @@ const handleReviewStreamEvent = async (event: GithubWebhookStreamEvent) => {
 }
 
 export const handleGithubWebhookEvent = async (payload: Record<string, unknown>) => {
-  if (!getConfig().ciEventStreamEnabled) {
+  if (!(await isCiEventStreamEnabled())) {
     return { ok: false, reason: 'event_stream_disabled' }
   }
 
@@ -1845,7 +1855,6 @@ const evaluateRun = async (runId: string) => {
           fix: 'Ensure the workflow metadata includes repository, issue number, and head branch.',
         },
         nextPrompt: null,
-        promptTuning: {},
         systemSuggestions: {
           suggestions: ['Attach codex repository/issue/head/base metadata to workflow labels or annotations.'],
         },
@@ -1890,7 +1899,6 @@ const evaluateRun = async (runId: string) => {
           reasons: { error: 'infra_failure', detail: 'missing_judge_output' },
           suggestedFixes: { fix: 'Ensure judge output JSON is persisted in run-complete artifacts.' },
           nextPrompt: 'Judge output missing. Re-run judge and emit JSON output.',
-          promptTuning: {},
           systemSuggestions: {},
         },
         run,
@@ -1913,7 +1921,6 @@ const evaluateRun = async (runId: string) => {
         missingItems: { missing_items: judgeOutput.missing_items ?? [] },
         suggestedFixes: { suggested_fixes: judgeOutput.suggested_fixes ?? [] },
         nextPrompt,
-        promptTuning: { suggestions: judgeOutput.prompt_tuning_suggestions ?? [] },
         systemSuggestions: { suggestions: judgeOutput.system_improvement_suggestions ?? [] },
       },
       run,
@@ -2128,7 +2135,6 @@ const processRerunQueue = async () => {
         reasons: { error: 'rerun_submission_failed', detail: result.error ?? null },
         suggestedFixes: { fix: 'Check Facteur availability and requeue the rerun.' },
         nextPrompt: null,
-        promptTuning: {},
         systemSuggestions: {},
       })
       const updated = await store.updateRunStatus(run.id, 'needs_human')

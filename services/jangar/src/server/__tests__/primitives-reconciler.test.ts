@@ -1,6 +1,17 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const featureFlagsMocks = vi.hoisted(() => ({
+  resolveBooleanFeatureToggle: vi.fn(async () => true),
+}))
+
+const kubeWatchMocks = vi.hoisted(() => ({
+  startResourceWatch: vi.fn(() => ({ stop: vi.fn() })),
+}))
 
 import { startPrimitivesReconciler, stopPrimitivesReconciler } from '~/server/primitives-reconciler'
+
+vi.mock('~/server/feature-flags', () => featureFlagsMocks)
+vi.mock('~/server/kube-watch', () => kubeWatchMocks)
 
 vi.mock('~/server/primitives-store', () => {
   return {
@@ -74,9 +85,43 @@ vi.mock('~/server/primitives-memory', () => {
   }
 })
 
+afterEach(() => {
+  stopPrimitivesReconciler()
+  vi.clearAllMocks()
+})
+
 describe('primitives reconciler', () => {
   it('starts and stops without throwing', () => {
     expect(() => startPrimitivesReconciler()).not.toThrow()
     expect(() => stopPrimitivesReconciler()).not.toThrow()
+  })
+
+  it('does not duplicate startup while flag lookup is pending', async () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'development'
+    try {
+      let resolveFlag!: (value: boolean) => void
+      const flagPromise = new Promise<boolean>((resolve) => {
+        resolveFlag = resolve
+      })
+      featureFlagsMocks.resolveBooleanFeatureToggle.mockReturnValueOnce(flagPromise)
+
+      startPrimitivesReconciler()
+      startPrimitivesReconciler()
+
+      expect(featureFlagsMocks.resolveBooleanFeatureToggle).toHaveBeenCalledTimes(1)
+
+      resolveFlag(true)
+
+      await vi.waitFor(() => {
+        expect(kubeWatchMocks.startResourceWatch).toHaveBeenCalledTimes(3)
+      })
+    } finally {
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+    }
   })
 })

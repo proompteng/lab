@@ -47,12 +47,8 @@ spec:
           env:
             - name: NODE_ENV
               value: production
-            - name: CONVEX_URL
-              value: https://convex.proompteng.ai
             - name: UI_PORT
               value: "8080"
-            - name: ENABLE_TEMPORAL_WORKER
-              value: "0"
             - name: JANGAR_BUMBA_TASK_QUEUE
               value: jangar
             - name: TEMPORAL_OTEL_ENABLED
@@ -89,7 +85,7 @@ spec:
               value: "20000"
             - name: OTEL_LOGS_EXPORTER
               value: none
-            - name: CODEX_BIN
+            - name: CODEX_BINARY
               value: /usr/local/bin/codex
             - name: CODEX_CWD
               value: /workspace/lab
@@ -109,8 +105,8 @@ spec:
               value: codex,codex[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot],gregkonush
             - name: JANGAR_CI_EVENT_STREAM_ENABLED
               value: "true"
-            - name: JANGAR_WEBSOCKETS_ENABLED
-              value: "true"
+            - name: JANGAR_CI_EVENT_STREAM_ENABLED_FLAG_KEY
+              value: jangar.ci_event_stream.enabled
             - name: JANGAR_MODELS
               value: gpt-5.3-codex
             - name: JANGAR_DEFAULT_MODEL
@@ -131,12 +127,14 @@ spec:
               value: "false"
             - name: JANGAR_GITHUB_MERGE_FORCE
               value: "false"
-            - name: JANGAR_GITHUB_FILES_BACKFILL_ENABLED
-              value: "false"
             - name: JANGAR_AGENTS_CONTROLLER_ENABLED
               value: "false"
             - name: JANGAR_PRIMITIVES_RECONCILER
               value: "false"
+            - name: JANGAR_AGENTS_CONTROLLER_ENABLED_FLAG_KEY
+              value: jangar.agents_controller.enabled
+            - name: JANGAR_PRIMITIVES_RECONCILER_FLAG_KEY
+              value: jangar.primitives_reconciler.enabled
             - name: JANGAR_CI_MAX_WAIT_MS
               value: "3600000"
             - name: JANGAR_REVIEW_MAX_WAIT_MS
@@ -147,8 +145,6 @@ spec:
               value: "300000,900000,2700000"
             - name: FACTEUR_INTERNAL_URL
               value: http://facteur-internal.facteur.svc.cluster.local
-            - name: ARGO_SERVER_URL
-              value: http://argo-workflows-server.argo-workflows.svc.cluster.local:2746
             - name: MINIO_ENDPOINT
               value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
             - name: MINIO_ACCESS_KEY
@@ -165,17 +161,13 @@ spec:
                   optional: true
             - name: MINIO_SECURE
               value: "false"
-            - name: JANGAR_PROMPT_TUNING_ENABLED
-              value: "true"
-            - name: JANGAR_PROMPT_TUNING_REPO
-              value: proompteng/lab
-            - name: JANGAR_CODEX_RERUN_TEMPLATE
+            - name: JANGAR_CODEX_RERUN_ORCHESTRATION
               value: codex-autonomous
-            - name: JANGAR_CODEX_RERUN_NAMESPACE
+            - name: JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE
               value: jangar
-            - name: JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE
+            - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION
               value: codex-autonomous
-            - name: JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE
+            - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
               value: jangar
             - name: DISCORD_BOT_TOKEN
               valueFrom:
@@ -234,6 +226,8 @@ spec:
               value: /etc/ssl/certs/jangar-db/ca.crt
             - name: JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED
               value: "true"
+            - name: JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED_FLAG_KEY
+              value: jangar.torghut.quant_control_plane.enabled
             - name: JANGAR_TORGHUT_QUANT_COMPUTE_INTERVAL_MS
               value: "1000"
             - name: JANGAR_TORGHUT_QUANT_HEAVY_COMPUTE_INTERVAL_MS
@@ -246,6 +240,8 @@ spec:
               value: "15"
             - name: JANGAR_TORGHUT_QUANT_ALERTS_ENABLED
               value: "true"
+            - name: JANGAR_TORGHUT_QUANT_ALERTS_ENABLED_FLAG_KEY
+              value: jangar.torghut.quant_alerts.enabled
             - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_DRAWDOWN_1D
               value: "0.05"
             - name: JANGAR_TORGHUT_QUANT_POLICY_MIN_SHARPE_5D
@@ -260,8 +256,14 @@ spec:
               value: "120"
             - name: JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS
               value: "15"
+            - name: JANGAR_FEATURE_FLAGS_URL
+              value: http://feature-flags.feature-flags.svc.cluster.local:8013
+            - name: JANGAR_FEATURE_FLAGS_TIMEOUT_MS
+              value: "500"
             - name: JANGAR_MARKET_CONTEXT_ENABLED
               value: "true"
+            - name: JANGAR_MARKET_CONTEXT_ENABLED_FLAG_KEY
+              value: jangar.market_context.enabled
             - name: JANGAR_MARKET_CONTEXT_CACHE_SECONDS
               value: "60"
             - name: JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
@@ -292,6 +294,8 @@ spec:
                   optional: true
             - name: JANGAR_TORGHUT_DECISION_ENGINE_ENABLED
               value: "true"
+            - name: JANGAR_TORGHUT_DECISION_ENGINE_ENABLED_FLAG_KEY
+              value: jangar.torghut.decision_engine.enabled
             - name: JANGAR_TORGHUT_DECISION_RUN_TIMEOUT_MS
               value: "120000"
             - name: JANGAR_TORGHUT_DECISION_STREAM_HEARTBEAT_MS

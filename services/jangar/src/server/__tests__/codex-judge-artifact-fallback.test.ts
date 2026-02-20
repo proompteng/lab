@@ -59,11 +59,6 @@ const globalState = globalThis as typeof globalThis & {
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
-    promptTuningEnabled: boolean
-    promptTuningRepo: string | null
-    promptTuningFailureThreshold: number
-    promptTuningWindowHours: number
-    promptTuningCooldownHours: number
     rerunOrchestrationName: string | null
     rerunOrchestrationNamespace: string
     systemImprovementOrchestrationName: string | null
@@ -102,8 +97,6 @@ if (!globalState.__codexJudgeStoreMock) {
     listRecentRuns: vi.fn(),
     listRunsPage: vi.fn(),
     listIssueSummaries: vi.fn(),
-    getLatestPromptTuningByIssue: vi.fn(),
-    createPromptTuning: vi.fn(),
     close: vi.fn(),
   }
 }
@@ -139,11 +132,6 @@ if (!globalState.__codexJudgeConfigMock) {
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
-    promptTuningEnabled: false,
-    promptTuningRepo: null,
-    promptTuningFailureThreshold: 3,
-    promptTuningWindowHours: 24,
-    promptTuningCooldownHours: 6,
     rerunOrchestrationName: null,
     rerunOrchestrationNamespace: 'jangar',
     systemImprovementOrchestrationName: null,

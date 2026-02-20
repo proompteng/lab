@@ -37,6 +37,13 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "true"
+              - name: feature-flags
+                path: argocd/applications/feature-flags
+                namespace: feature-flags
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
               - name: kubevirt
                 path: argocd/applications/kubevirt
                 namespace: kubevirt
