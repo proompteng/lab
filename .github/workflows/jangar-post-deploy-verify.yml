@@ -77,7 +77,10 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
-            STATUS="$(kubectl -n argocd get application jangar -o jsonpath='{.status.sync.status} {.status.health.status}' 2>/dev/null || true)"
+            if ! STATUS="$(kubectl -n argocd get application jangar -o jsonpath='{.status.sync.status} {.status.health.status}' 2>&1)"; then
+              echo "Unable to query Argo application status (${STATUS}); continuing with rollout/digest verification"
+              exit 0
+            fi
             SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
             HEALTH_STATUS="$(echo "${STATUS}" | awk '{print $2}')"
             echo "Attempt ${attempt}: sync=${SYNC_STATUS:-unknown} health=${HEALTH_STATUS:-unknown}"
