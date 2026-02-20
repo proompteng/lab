@@ -40,7 +40,12 @@ from .market_context import (
     evaluate_market_context,
 )
 from .models import SignalEnvelope, StrategyDecision
-from .portfolio import PortfolioSizingResult, sizer_from_settings
+from .portfolio import (
+    AllocationResult,
+    PortfolioSizingResult,
+    allocator_from_settings,
+    sizer_from_settings,
+)
 from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
 from .order_feed import OrderFeedIngestor
 from .reconcile import Reconciler
@@ -177,6 +182,16 @@ class TradingMetrics:
     evidence_continuity_last_checked_ts_seconds: float = 0
     evidence_continuity_last_success_ts_seconds: float = 0
     evidence_continuity_last_failed_runs: int = 0
+    allocator_requests_total: int = 0
+    allocator_approved_total: int = 0
+    allocator_rejected_total: int = 0
+    allocator_clipped_total: int = 0
+    allocator_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    allocator_regime_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
 
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
@@ -262,6 +277,22 @@ class TradingMetrics:
         self.strategy_runtime_isolated_failures_total += (
             observation.isolated_failures_total
         )
+
+    def record_allocator_result(self, result: AllocationResult) -> None:
+        self.allocator_requests_total += 1
+        self.allocator_regime_total[result.regime_label] = (
+            self.allocator_regime_total.get(result.regime_label, 0) + 1
+        )
+        if result.approved:
+            self.allocator_approved_total += 1
+        else:
+            self.allocator_rejected_total += 1
+        if result.clipped:
+            self.allocator_clipped_total += 1
+        for reason_code in result.reason_codes:
+            self.allocator_reason_total[reason_code] = (
+                self.allocator_reason_total.get(reason_code, 0) + 1
+            )
 
 
 @dataclass
@@ -461,7 +492,17 @@ class TradingPipeline:
                 if not decisions:
                     continue
 
-                for decision in decisions:
+                regime_label = _resolve_signal_regime(signal)
+                allocator = allocator_from_settings(account_snapshot.equity)
+                allocation_results = allocator.allocate(
+                    decisions,
+                    account=account,
+                    positions=positions,
+                    regime_label=regime_label,
+                )
+                for allocation_result in allocation_results:
+                    self.state.metrics.record_allocator_result(allocation_result)
+                    decision = allocation_result.decision
                     self.state.metrics.decisions_total += 1
                     try:
                         self._handle_decision(
@@ -588,6 +629,21 @@ class TradingPipeline:
             if decision_row.status != "planned":
                 return
             if self.executor.execution_exists(session, decision_row):
+                return
+
+            allocator_rejection = _allocator_rejection_reasons(decision)
+            if allocator_rejection:
+                self.state.metrics.orders_rejected_total += 1
+                for reason in allocator_rejection:
+                    logger.info(
+                        "Decision rejected by allocator strategy_id=%s symbol=%s reason=%s",
+                        decision.strategy_id,
+                        decision.symbol,
+                        reason,
+                    )
+                self.executor.mark_rejected(
+                    session, decision_row, ";".join(allocator_rejection)
+                )
                 return
 
             decision, snapshot = self._ensure_decision_price(
@@ -1402,6 +1458,37 @@ def _load_recent_decisions(
             )
         )
     return summaries
+
+
+def _resolve_signal_regime(signal: SignalEnvelope) -> Optional[str]:
+    payload = signal.payload
+    payload_map = cast(Mapping[str, Any], payload)
+    direct = payload_map.get("regime_label")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip().lower()
+    regime = payload_map.get("regime")
+    if isinstance(regime, Mapping):
+        regime_map = cast(Mapping[str, Any], regime)
+        label = regime_map.get("label")
+        if isinstance(label, str) and label.strip():
+            return label.strip().lower()
+    return None
+
+
+def _allocator_rejection_reasons(decision: StrategyDecision) -> list[str]:
+    allocator = decision.params.get("allocator")
+    if not isinstance(allocator, Mapping):
+        return []
+    allocator_map = cast(Mapping[str, Any], allocator)
+    if str(allocator_map.get("status") or "").lower() != "rejected":
+        return []
+    raw_codes = allocator_map.get("reason_codes")
+    if isinstance(raw_codes, list):
+        codes = cast(list[Any], raw_codes)
+        reason_codes = [str(item).strip() for item in codes if str(item).strip()]
+        if reason_codes:
+            return reason_codes
+    return ["allocator_rejected"]
 
 
 def _coerce_strategy_symbols(raw: object) -> set[str]:

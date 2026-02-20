@@ -80,6 +80,15 @@ SLO targets:
 - use PyPortfolioOpt/cvxportfolio offline for policy calibration, then encode runtime policy explicitly in Torghut code.
 - avoid runtime dependence on external optimizers for deterministic path.
 
+## Runtime Flags (v3 allocator path)
+- `TRADING_ALLOCATOR_ENABLED` (default `false`): enables deterministic intent aggregation + pre-risk allocation clipping.
+- `TRADING_ALLOCATOR_DEFAULT_REGIME` (default `neutral`): fallback regime label when no regime context is provided.
+- `TRADING_ALLOCATOR_REGIME_BUDGET_MULTIPLIERS`: JSON map `regime_label -> multiplier` for budget scaling.
+- `TRADING_ALLOCATOR_REGIME_CAPACITY_MULTIPLIERS`: JSON map `regime_label -> multiplier` for symbol-capacity scaling.
+- `TRADING_ALLOCATOR_MAX_SYMBOL_PCT_EQUITY` / `TRADING_ALLOCATOR_MAX_SYMBOL_NOTIONAL`: optional allocator symbol caps.
+- `TRADING_ALLOCATOR_DEFAULT_BUDGET_MULTIPLIER` and `TRADING_ALLOCATOR_DEFAULT_CAPACITY_MULTIPLIER` default to `1.0`.
+- `TRADING_ALLOCATOR_MIN_MULTIPLIER` / `TRADING_ALLOCATOR_MAX_MULTIPLIER` clamp runtime multipliers deterministically.
+
 ## AgentRun Handoff Bundle
 - `ImplementationSpec`: `torghut-v3-allocator-risk-impl-v1`.
 - Required keys:
