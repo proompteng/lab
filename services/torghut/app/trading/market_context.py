@@ -14,7 +14,13 @@ from .llm.schema import MarketContextBundle
 
 logger = logging.getLogger(__name__)
 
-_BLOCKING_RISK_FLAGS = {"market_context_stale", "market_context_quality_low"}
+_BLOCKING_RISK_FLAGS = {
+    "market_context_stale",
+    "market_context_quality_low",
+    "market_context_disabled",
+    "fundamentals_error",
+    "news_error",
+}
 
 
 @dataclass(frozen=True)
@@ -63,7 +69,16 @@ def evaluate_market_context(bundle: Optional[MarketContextBundle]) -> MarketCont
         return MarketContextStatus(allow_llm=True, reason=None, risk_flags=[])
 
     risk_flags = sorted(set(bundle.risk_flags))
+    domain_states = {
+        "technicals": bundle.domains.technicals.state,
+        "fundamentals": bundle.domains.fundamentals.state,
+        "news": bundle.domains.news.state,
+        "regime": bundle.domains.regime.state,
+    }
     blocking_flags = [flag for flag in risk_flags if flag in _BLOCKING_RISK_FLAGS]
+    if any(state == "error" for state in domain_states.values()):
+        risk_flags.append("market_context_domain_error")
+        blocking_flags.append("market_context_domain_error")
     if bundle.freshness_seconds > settings.trading_market_context_max_staleness_seconds:
         risk_flags.append("market_context_stale")
         blocking_flags.append("market_context_stale")

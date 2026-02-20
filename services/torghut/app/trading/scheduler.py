@@ -100,6 +100,12 @@ class TradingMetrics:
     llm_guardrail_shadow_total: int = 0
     llm_market_context_block_total: int = 0
     llm_market_context_error_total: int = 0
+    llm_market_context_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    llm_market_context_shadow_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     llm_tokens_prompt_total: int = 0
     llm_tokens_completion_total: int = 0
     execution_requests_total: dict[str, int] = field(
@@ -200,6 +206,16 @@ class TradingMetrics:
             normalized = "unknown"
         current = self.signal_staleness_alert_total.get(normalized, 0)
         self.signal_staleness_alert_total[normalized] = current + 1
+
+    def record_market_context_result(self, reason: str | None, *, shadow_mode: bool) -> None:
+        normalized = reason.strip() if isinstance(reason, str) else ""
+        if not normalized:
+            normalized = "unknown"
+        current_reason = self.llm_market_context_reason_total.get(normalized, 0)
+        self.llm_market_context_reason_total[normalized] = current_reason + 1
+        if shadow_mode:
+            current_shadow = self.llm_market_context_shadow_total.get(normalized, 0)
+            self.llm_market_context_shadow_total[normalized] = current_shadow + 1
 
     def record_strategy_runtime(self, telemetry: DecisionRuntimeTelemetry) -> None:
         if not telemetry.runtime_enabled:
@@ -810,6 +826,11 @@ class TradingPipeline:
                 )
             if not market_context_status.allow_llm:
                 self.state.metrics.llm_market_context_block_total += 1
+                fail_mode_shadow = settings.trading_market_context_fail_mode == "shadow_only"
+                self.state.metrics.record_market_context_result(
+                    market_context_status.reason,
+                    shadow_mode=fail_mode_shadow,
+                )
                 return self._handle_llm_unavailable(
                     session,
                     decision,
@@ -817,7 +838,7 @@ class TradingPipeline:
                     account,
                     positions,
                     reason=market_context_status.reason or "market_context_unavailable",
-                    shadow_mode=settings.trading_market_context_fail_mode == "shadow_only",
+                    shadow_mode=fail_mode_shadow,
                     risk_flags=market_context_status.risk_flags,
                     market_context=market_context,
                 )

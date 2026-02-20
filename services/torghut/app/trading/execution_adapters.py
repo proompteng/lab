@@ -113,6 +113,7 @@ class LeanExecutionAdapter:
 
     name = 'lean'
     _required_order_keys = {'id', 'status', 'symbol', 'qty'}
+    _required_read_order_keys = {'id', 'status'}
 
     def __init__(
         self,
@@ -199,7 +200,10 @@ class LeanExecutionAdapter:
     def get_order(self, order_id: str) -> dict[str, Any]:
         payload = self._with_fallback(
             op='get_order',
-            request=lambda: self._request_json('GET', f'/v1/orders/{quote(order_id)}'),
+            request=lambda: self._validate_read_order_payload(
+                self._request_json('GET', f'/v1/orders/{quote(order_id)}'),
+                adapter='lean',
+            ),
             fallback=lambda: self._fallback_get_order(order_id),
         )
         return self._coerce_order_dict(payload)
@@ -208,7 +212,7 @@ class LeanExecutionAdapter:
         try:
             payload = self._request_json('GET', f'/v1/orders/client/{quote(client_order_id)}')
             self.last_route = self.name
-            return self._coerce_order_dict(payload)
+            return self._validate_read_order_payload(payload, adapter='lean')
         except HTTPError as exc:
             if exc.code == 404:
                 self.last_route = self.name
@@ -224,7 +228,7 @@ class LeanExecutionAdapter:
             path = f'{path}?{query}'
         payload = self._with_fallback(
             op='list_orders',
-            request=lambda: self._request_json('GET', path),
+            request=lambda: self._request_and_validate_order_list(path),
             fallback=lambda: self._fallback_list_orders(status),
         )
         if isinstance(payload, list):
@@ -361,6 +365,39 @@ class LeanExecutionAdapter:
         order['_execution_adapter'] = adapter
         order['_execution_parity_check'] = 'contract_v1'
         return order
+
+    def _validate_read_order_payload(
+        self,
+        payload: Any,
+        *,
+        adapter: str,
+    ) -> dict[str, Any]:
+        order = self._coerce_order_dict(payload)
+        missing_keys = [key for key in sorted(self._required_read_order_keys) if order.get(key) in (None, '')]
+        if missing_keys:
+            raise RuntimeError(f'lean_read_order_payload_missing_keys:{",".join(missing_keys)}')
+        order['_execution_adapter'] = order.get('_execution_adapter') or adapter
+        return order
+
+    def _request_and_validate_order_list(self, path: str) -> list[dict[str, Any]]:
+        payload = self._request_json('GET', path)
+        if isinstance(payload, list):
+            items = cast(list[Any], payload)
+            return [
+                self._validate_read_order_payload(item, adapter='lean')
+                for item in items
+                if isinstance(item, Mapping)
+            ]
+        if isinstance(payload, Mapping):
+            orders = cast(Mapping[str, Any], payload).get('orders')
+            if isinstance(orders, list):
+                items = cast(list[Any], orders)
+                return [
+                    self._validate_read_order_payload(item, adapter='lean')
+                    for item in items
+                    if isinstance(item, Mapping)
+                ]
+        return []
 
 
 def build_execution_adapter(

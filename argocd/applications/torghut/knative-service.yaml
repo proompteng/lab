@@ -95,7 +95,9 @@ spec:
             - name: TRADING_EXECUTION_FALLBACK_ADAPTER
               value: alpaca
             - name: TRADING_EXECUTION_ADAPTER_POLICY
-              value: all
+              value: allowlist
+            - name: TRADING_EXECUTION_ADAPTER_SYMBOLS
+              value: SPY,QQQ,IWM,NVDA,MSFT,AAPL
             - name: TRADING_LEAN_RUNNER_URL
               value: http://torghut-lean-runner.torghut.svc.cluster.local:8088
             - name: TRADING_LEAN_RUNNER_TIMEOUT_SECONDS
@@ -117,11 +119,11 @@ spec:
             - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
               value: "3"
             - name: TRADING_MARKET_CONTEXT_REQUIRED
-              value: "false"
+              value: "true"
             - name: TRADING_MARKET_CONTEXT_FAIL_MODE
               value: shadow_only
             - name: TRADING_MARKET_CONTEXT_MIN_QUALITY
-              value: "0.4"
+              value: "0.55"
             - name: TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: "300"
             - name: LLM_PROVIDER
