@@ -1,6 +1,13 @@
 @import "@proompteng/design/globals.css";
 @import "@xterm/xterm/css/xterm.css";
 
+@source "./**/*.{js,jsx,ts,tsx}";
+@source not "../node_modules";
+@source not "../.output";
+@source not "../.nitro";
+@source not "../../../.pnpm-store";
+@source not "../../../.bun";
+
 @font-face {
   font-family: "JetBrains Mono Nerd Font";
   font-style: normal;

@@ -1,5 +1,11 @@
 @import "@proompteng/design/globals.css";
 
+@source "../**/*.{js,jsx,ts,tsx,mdx}";
+@source not "../../node_modules";
+@source not "../../.next";
+@source not "../../../../.pnpm-store";
+@source not "../../../../.bun";
+
 @keyframes hero-glow {
   0%,
   100% {

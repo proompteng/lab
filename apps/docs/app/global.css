@@ -1,3 +1,10 @@
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
 @import "@proompteng/design/globals.css";
+
+@source "./**/*.{js,jsx,ts,tsx,mdx}";
+@source "../content/**/*.{md,mdx}";
+@source not "../../node_modules";
+@source not "../../.next";
+@source not "../../../../.pnpm-store";
+@source not "../../../../.bun";

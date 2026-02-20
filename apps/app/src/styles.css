@@ -1,1 +1,8 @@
 @import "@proompteng/design/globals.css";
+
+@source "./**/*.{js,jsx,ts,tsx}";
+@source not "../node_modules";
+@source not "../.output";
+@source not "../.next";
+@source not "../../../.pnpm-store";
+@source not "../../../.bun";
