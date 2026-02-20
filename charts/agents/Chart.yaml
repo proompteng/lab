@@ -14,8 +14,8 @@ keywords:
   - control-plane
   - codex
 maintainers:
-  - name: ProomptEng
-    email: eng@proompt.com
+  - name: Greg Konush
+    email: greg@proompteng.ai
 annotations:
   artifacthub.io/license: Apache-2.0
   artifacthub.io/links: |
