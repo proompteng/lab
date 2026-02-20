@@ -5,7 +5,7 @@ metadata:
 spec:
   replicas: 2
   serviceType: ClusterIP
-  serviceAccountName: default
+  serviceAccountName: open-feature-operator-flagd-proxy
   featureFlagSource: platform-flags
   ingress:
     enabled: false
