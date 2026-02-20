@@ -263,7 +263,9 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
-    def test_trading_autonomy_evidence_continuity_endpoint_returns_state_report(self) -> None:
+    def test_trading_autonomy_evidence_continuity_endpoint_returns_state_report(
+        self,
+    ) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
         try:
             scheduler = TradingScheduler()
@@ -285,8 +287,12 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
-    def test_trading_autonomy_evidence_continuity_endpoint_supports_refresh(self) -> None:
-        response = self.client.get("/trading/autonomy/evidence-continuity?refresh=true&run_limit=5")
+    def test_trading_autonomy_evidence_continuity_endpoint_supports_refresh(
+        self,
+    ) -> None:
+        response = self.client.get(
+            "/trading/autonomy/evidence-continuity?refresh=true&run_limit=5"
+        )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("report", payload)
@@ -298,6 +304,8 @@ class TestTradingApi(TestCase):
             "llm_shadow_mode": settings.llm_shadow_mode,
             "llm_enabled": settings.llm_enabled,
             "llm_rollout_stage": settings.llm_rollout_stage,
+            "trading_parity_policy": settings.trading_parity_policy,
+            "llm_fail_mode_enforcement": settings.llm_fail_mode_enforcement,
             "llm_allowed_models_raw": settings.llm_allowed_models_raw,
             "llm_evaluation_report": settings.llm_evaluation_report,
             "llm_effective_challenge_id": settings.llm_effective_challenge_id,
@@ -307,6 +315,8 @@ class TestTradingApi(TestCase):
         settings.llm_enabled = True
         settings.llm_rollout_stage = "stage3"
         settings.llm_shadow_mode = False
+        settings.trading_parity_policy = "mode_coupled"
+        settings.llm_fail_mode_enforcement = "configured"
         settings.llm_allowed_models_raw = None
         settings.llm_evaluation_report = None
         settings.llm_effective_challenge_id = None
@@ -321,6 +331,9 @@ class TestTradingApi(TestCase):
             self.assertEqual(llm["rollout_stage"], "stage3")
             self.assertFalse(llm["shadow_mode"])
             self.assertTrue(llm["effective_shadow_mode"])
+            self.assertEqual(llm["parity_policy"], "mode_coupled")
+            self.assertEqual(llm["fail_mode_enforcement"], "configured")
+            self.assertIn("mode_coupled_behavior_enabled", llm["policy_exceptions"])
             self.assertIn("guardrails", llm)
             self.assertTrue(llm["guardrails"]["allow_requests"])
             self.assertIn("llm_evaluation_report_missing", llm["guardrails"]["reasons"])
@@ -331,6 +344,8 @@ class TestTradingApi(TestCase):
             settings.llm_shadow_mode = original["llm_shadow_mode"]
             settings.llm_enabled = original["llm_enabled"]
             settings.llm_rollout_stage = original["llm_rollout_stage"]
+            settings.trading_parity_policy = original["trading_parity_policy"]
+            settings.llm_fail_mode_enforcement = original["llm_fail_mode_enforcement"]
             settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             settings.llm_evaluation_report = original["llm_evaluation_report"]
             settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]

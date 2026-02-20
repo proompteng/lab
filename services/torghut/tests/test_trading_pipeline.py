@@ -887,6 +887,9 @@ class TestTradingPipeline(TestCase):
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
             "llm_evaluation_report": config.settings.llm_evaluation_report,
@@ -900,6 +903,9 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_shadow_mode = False
         config.settings.llm_min_confidence = 0.0
         _set_llm_guardrails(config)
 
@@ -964,6 +970,11 @@ class TestTradingPipeline(TestCase):
                 "trading_static_symbols_raw"
             ]
             config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
@@ -1286,6 +1297,9 @@ class TestTradingPipeline(TestCase):
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
             "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "trading_parity_policy": config.settings.trading_parity_policy,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
             "llm_evaluation_report": config.settings.llm_evaluation_report,
@@ -1298,6 +1312,9 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
         config.settings.llm_fail_mode = "pass_through"
+        config.settings.llm_fail_mode_enforcement = "configured"
+        config.settings.trading_parity_policy = "mode_coupled"
+        config.settings.llm_shadow_mode = False
         config.settings.llm_min_confidence = 0.0
         _set_llm_guardrails(config)
 
@@ -1405,6 +1422,11 @@ class TestTradingPipeline(TestCase):
             ]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.trading_parity_policy = original["trading_parity_policy"]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
@@ -1429,6 +1451,7 @@ class TestTradingPipeline(TestCase):
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
             "llm_min_confidence": config.settings.llm_min_confidence,
         }
         config.settings.trading_enabled = True
@@ -1503,6 +1526,9 @@ class TestTradingPipeline(TestCase):
                 "trading_static_symbols_raw"
             ]
             config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
 
@@ -1627,6 +1653,7 @@ class TestTradingPipeline(TestCase):
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
             "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
             "llm_evaluation_report": config.settings.llm_evaluation_report,
             "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
@@ -1640,6 +1667,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
         config.settings.llm_fail_mode = "pass_through"
+        config.settings.llm_fail_mode_enforcement = "configured"
         _set_llm_guardrails(config)
 
         try:
@@ -1705,6 +1733,9 @@ class TestTradingPipeline(TestCase):
             ]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
             config.settings.llm_effective_challenge_id = original[
@@ -1730,6 +1761,8 @@ class TestTradingPipeline(TestCase):
             "llm_rollout_stage": config.settings.llm_rollout_stage,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "trading_parity_policy": config.settings.trading_parity_policy,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
             "llm_evaluation_report": config.settings.llm_evaluation_report,
             "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
@@ -1745,6 +1778,8 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_rollout_stage = "stage1_shadow_pilot"
         config.settings.llm_shadow_mode = False
         config.settings.llm_fail_mode = "pass_through"
+        config.settings.llm_fail_mode_enforcement = "configured"
+        config.settings.trading_parity_policy = "mode_coupled"
         _set_llm_guardrails(config)
 
         try:
@@ -1814,6 +1849,10 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_rollout_stage = original["llm_rollout_stage"]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.trading_parity_policy = original["trading_parity_policy"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
             config.settings.llm_effective_challenge_id = original[
@@ -1840,6 +1879,8 @@ class TestTradingPipeline(TestCase):
             "llm_rollout_stage": config.settings.llm_rollout_stage,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "trading_parity_policy": config.settings.trading_parity_policy,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
             "llm_evaluation_report": config.settings.llm_evaluation_report,
             "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
@@ -1856,6 +1897,8 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_rollout_stage = "stage1_shadow_pilot"
         config.settings.llm_shadow_mode = False
         config.settings.llm_fail_mode = "pass_through"
+        config.settings.llm_fail_mode_enforcement = "configured"
+        config.settings.trading_parity_policy = "mode_coupled"
         _set_llm_guardrails(config)
 
         try:
@@ -1921,7 +1964,9 @@ class TestTradingPipeline(TestCase):
                 # Stage1 rollout must stay shadow-only even when fail mode is configured as fail_closed.
                 self.assertEqual(decisions[0].status, "submitted")
                 self.assertEqual(len(executions), 1)
-                self.assertEqual(pipeline.state.metrics.llm_market_context_block_total, 1)
+                self.assertEqual(
+                    pipeline.state.metrics.llm_market_context_block_total, 1
+                )
                 self.assertEqual(pipeline.state.metrics.llm_guardrail_shadow_total, 1)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
@@ -1940,6 +1985,10 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_rollout_stage = original["llm_rollout_stage"]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.trading_parity_policy = original["trading_parity_policy"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
             config.settings.llm_effective_challenge_id = original[
@@ -1965,6 +2014,7 @@ class TestTradingPipeline(TestCase):
             "llm_rollout_stage": config.settings.llm_rollout_stage,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
             "llm_evaluation_report": config.settings.llm_evaluation_report,
             "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
@@ -1981,6 +2031,7 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_rollout_stage = "stage2"
         config.settings.llm_shadow_mode = False
         config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "configured"
         _set_llm_guardrails(config)
 
         try:
@@ -2000,7 +2051,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -2029,25 +2084,40 @@ class TestTradingPipeline(TestCase):
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
-                self.assertEqual(reviews[0].response_json.get("fallback"), "pass_through")
+                self.assertEqual(
+                    reviews[0].response_json.get("fallback"), "pass_through"
+                )
                 self.assertEqual(decisions[0].status, "submitted")
                 self.assertEqual(len(executions), 1)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_rollout_stage = original["llm_rollout_stage"]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
-            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
-            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
             config.settings.llm_model_version_lock = original["llm_model_version_lock"]
-            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
 
     def test_pipeline_llm_min_confidence(self) -> None:
         from app import config

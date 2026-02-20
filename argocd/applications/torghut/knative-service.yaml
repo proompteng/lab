@@ -164,6 +164,10 @@ spec:
               value: 2026-02-12T06:45:00Z
             - name: LLM_FAIL_MODE
               value: pass_through
+            - name: LLM_FAIL_MODE_ENFORCEMENT
+              value: configured
+            - name: TRADING_PARITY_POLICY
+              value: mode_coupled
             - name: LLM_TOKEN_BUDGET_MAX
               value: "1200"
             - name: LLM_TIMEOUT_SECONDS
