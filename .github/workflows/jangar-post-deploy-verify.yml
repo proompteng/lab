@@ -32,6 +32,17 @@ jobs:
         with:
           version: v1.31.2
 
+      - name: Install Temporal CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL https://temporal.download/cli.sh | bash -s -- -b "${HOME}/.temporalio/bin"
+          echo "${HOME}/.temporalio/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Temporal CLI
+        shell: bash
+        run: temporal --version
+
       - name: Configure in-cluster kubeconfig when context is missing
         shell: bash
         run: |
@@ -87,6 +98,18 @@ jobs:
         run: |
           set -euo pipefail
           bun run packages/scripts/src/jangar/verify-deployment.ts
+
+      - name: Sync Temporal routing after rollout
+        shell: bash
+        env:
+          TEMPORAL_ADDRESS: temporal-frontend.temporal.svc.cluster.local:7233
+          TEMPORAL_NAMESPACE: default
+        run: |
+          set -euo pipefail
+          bun run packages/scripts/src/jangar/sync-temporal-routing.ts \
+            --task-queue jangar \
+            --deployment-name jangar-deployment \
+            --migrate-stale-running
 
       - name: Prepare rollback manifests
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'

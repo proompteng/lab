@@ -290,7 +290,7 @@ Response (shape):
       "repository": "proompteng/lab",
       "ref": "main",
       "commit": "91a766394ea8d8469071d8463ec8979f7da80956",
-      "path": "argocd/applications/bumba/deployment-model.yaml",
+      "path": "argocd/applications/bumba/deployment.yaml",
       "startLine": 35,
       "endLine": 75,
       "symbol": null,
@@ -300,7 +300,7 @@ Response (shape):
         "lexicalScore": 0.22,
         "matchedIdentifiers": ["TEMPORAL_TASK_QUEUE"]
       },
-      "snippet": "...\n- name: TEMPORAL_TASK_QUEUE\n  value: bumba-model\n..."
+      "snippet": "...\n- name: TEMPORAL_TASK_QUEUE\n  value: bumba\n..."
     }
   ]
 }

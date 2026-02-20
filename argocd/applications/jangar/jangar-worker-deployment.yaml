@@ -60,8 +60,6 @@ spec:
               value: default
             - name: TEMPORAL_TASK_QUEUE
               value: jangar
-            - name: TEMPORAL_WORKER_BUILD_ID
-              value: jangar@dev
             - name: JANGAR_WORKER_TEMPORAL_TASK_QUEUE
               value: jangar
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
