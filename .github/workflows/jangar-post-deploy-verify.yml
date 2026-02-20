@@ -22,6 +22,50 @@ jobs:
         with:
           version: v1.31.2
 
+      - name: Configure in-cluster kubeconfig when context is missing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if kubectl config current-context >/dev/null 2>&1; then
+            echo "Kubectl context already configured"
+            exit 0
+          fi
+
+          if [ -z "${KUBERNETES_SERVICE_HOST:-}" ] || [ -z "${KUBERNETES_SERVICE_PORT:-}" ]; then
+            echo "KUBERNETES_SERVICE_HOST/PORT are not set and no kubectl context exists"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
+            echo "Service account token is missing"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt ]; then
+            echo "Service account CA cert is missing"
+            exit 1
+          fi
+
+          KUBECONFIG_PATH="${RUNNER_TEMP}/kubeconfig"
+          echo "KUBECONFIG=${KUBECONFIG_PATH}" >> "${GITHUB_ENV}"
+
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-credentials gha-runner \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=gha-runner \
+            --namespace=jangar \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config use-context in-cluster --kubeconfig="${KUBECONFIG_PATH}"
+
       - name: Validate kubectl context
         shell: bash
         run: |
