@@ -98,7 +98,15 @@ bun --cwd services/jangar run preview
 bun --cwd services/jangar run test
 bun --cwd services/jangar run lint
 bun --cwd services/jangar run tsc
+bun --cwd services/jangar run dev:worker
+bun --cwd services/jangar run start:worker
 ```
+
+## Temporal worker split
+
+- API enqueue path: `JANGAR_BUMBA_TASK_QUEUE` (falls back to `TEMPORAL_TASK_QUEUE`, then `bumba`).
+- Worker consume path: `JANGAR_WORKER_TEMPORAL_TASK_QUEUE` (falls back to `TEMPORAL_TASK_QUEUE`, then `jangar`).
+- Decoupled rollout: run API and `jangar-worker` as separate deployments and point both queue vars to the same queue (for example `jangar`).
 
 ## Deployment
 
@@ -202,6 +210,9 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
 - `OPENAI_EMBEDDING_DIMENSION` (optional; defaults to `1536` on OpenAI, or `1024` for the self-hosted model)
 - `OPENAI_EMBEDDING_TIMEOUT_MS` (optional; defaults to `15000`)
 - `OPENAI_EMBEDDING_MAX_INPUT_CHARS` (optional; defaults to `60000`)
+- `JANGAR_BUMBA_TASK_QUEUE` (optional; API queue for enqueued Bumba workflows)
+- `JANGAR_WORKER_TEMPORAL_TASK_QUEUE` (optional; worker queue override)
+- `JANGAR_WORKER_HEALTH_PORT` (optional; defaults to `3002`)
 
 ### Ollama embeddings (saigak)
 

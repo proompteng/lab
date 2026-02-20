@@ -291,7 +291,10 @@ const buildRepositoryWorkflowId = (repository?: string, ref?: string, commit?: s
   return `bumba-repo-${base}-${randomUUID()}`
 }
 
-const resolveTaskQueue = () => normalizeOptionalText(process.env.TEMPORAL_TASK_QUEUE) ?? DEFAULT_TASK_QUEUE
+const resolveTaskQueue = () =>
+  normalizeOptionalText(process.env.JANGAR_BUMBA_TASK_QUEUE) ??
+  normalizeOptionalText(process.env.TEMPORAL_TASK_QUEUE) ??
+  DEFAULT_TASK_QUEUE
 
 const normalizeError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
@@ -453,4 +456,5 @@ export const BumbaWorkflowsLive = Layer.scoped(
 
 export const __test__ = {
   resolveRepoRootForCommit,
+  resolveTaskQueue,
 }

@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-02-19T22:43:57.885Z"
+    deploy.knative.dev/rollout: "2026-02-20T00:28:22.000Z"
 spec:
   replicas: 1
   strategy:
@@ -53,6 +53,8 @@ spec:
               value: "8080"
             - name: ENABLE_TEMPORAL_WORKER
               value: "0"
+            - name: JANGAR_BUMBA_TASK_QUEUE
+              value: jangar
             - name: TEMPORAL_OTEL_ENABLED
               value: "true"
             - name: TEMPORAL_METRICS_EXPORTER

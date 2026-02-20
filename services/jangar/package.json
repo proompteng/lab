@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "bun --bun vite dev --host --port 3000",
+    "dev:worker": "bun --hot src/worker.ts",
     "build": "bun --bun vite build && bun run copy:grpc-proto",
     "pretest": "bun run --filter @proompteng/otel build && bun run --filter @proompteng/temporal-bun-sdk build",
+    "start:worker": "bun src/worker.ts",
     "start:build": "bun run build",
     "preview": "bun --bun vite preview",
     "test": "bunx vitest run --config vitest.config.ts",
@@ -29,6 +31,7 @@
     "@grpc/proto-loader": "^0.8.0",
     "@kubernetes/client-node": "^1.0.0",
     "@opentelemetry/exporter-prometheus": "^0.203.0",
+    "@proompteng/bumba": "workspace:*",
     "@proompteng/codex": "workspace:*",
     "@proompteng/design": "workspace:*",
     "@proompteng/discord": "workspace:*",
