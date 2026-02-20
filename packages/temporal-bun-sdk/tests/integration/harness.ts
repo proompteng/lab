@@ -152,15 +152,20 @@ export const createIntegrationHarness = (
       TEMPORAL_WORKER_LOAD_ARTIFACTS_DIR: workerLoadArtifacts.root,
       TEMPORAL_CLI_LOG_PATH: temporalCliLogPath,
     }
+    const cliEnv = compactStringEnv(scenarioEnv)
 
     const runTemporalCli = (args: readonly string[]) => {
-      const command = [cliExecutable, ...args]
+      const command = [cliExecutable, '--address', config.address, ...args]
       return Effect.tryPromise({
         try: async () => {
           console.info('[temporal-bun-sdk] running CLI command', command.join(' '))
           const child = Bun.spawn(command, {
             stdout: 'pipe',
             stderr: 'pipe',
+            env: {
+              ...process.env,
+              ...cliEnv,
+            },
           })
           const exitCode = await child.exited
           const stdout = child.stdout ? await readStream(child.stdout) : ''
@@ -188,7 +193,9 @@ export const createIntegrationHarness = (
     }
 
     const waitForNamespaceReady = async () => {
-      const maxAttempts = 20
+      const maxAttempts = Number.parseInt(process.env.TEMPORAL_NAMESPACE_READY_MAX_ATTEMPTS ?? '120', 10)
+      const retryDelayMs = Number.parseInt(process.env.TEMPORAL_NAMESPACE_READY_RETRY_MS ?? '500', 10)
+      let lastError: unknown
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
           await Effect.runPromise(
@@ -196,12 +203,36 @@ export const createIntegrationHarness = (
           )
           return
         } catch (error) {
+          lastError = error
           if (attempt === maxAttempts) {
-            throw error
+            break
           }
-          await Bun.sleep(500)
+          if (attempt === 1 || attempt % 10 === 0) {
+            console.warn('[temporal-bun-sdk] waiting for Temporal namespace readiness', {
+              address: config.address,
+              namespace: config.namespace,
+              attempt,
+              maxAttempts,
+              delayMs: retryDelayMs,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          }
+          await Bun.sleep(retryDelayMs)
         }
       }
+      if (isTemporalEndpointUnavailable(lastError)) {
+        const detail =
+          lastError instanceof TemporalCliCommandError
+            ? lastError.stderr || lastError.stdout || lastError.message
+            : lastError instanceof Error
+              ? lastError.message
+              : String(lastError)
+        throw new TemporalCliUnavailableError(
+          `Temporal endpoint ${config.address} is unavailable after ${maxAttempts} readiness attempts`,
+          [{ candidate: config.address, error: detail }],
+        )
+      }
+      throw lastError
     }
 
     const setup = Effect.tryPromise(async () => {
@@ -388,6 +419,39 @@ const readRefcount = (path: string): number => {
 
 const writeRefcount = (path: string, next: number) => {
   writeFileSync(path, String(next), 'utf8')
+}
+
+const compactStringEnv = (values: Record<string, string | undefined>): Record<string, string> => {
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(values)) {
+    if (typeof value === 'string' && value.length > 0) {
+      env[key] = value
+    }
+  }
+  return env
+}
+
+const isTemporalEndpointUnavailable = (error: unknown): boolean => {
+  if (error instanceof TemporalCliUnavailableError) {
+    return true
+  }
+  const detail =
+    error instanceof TemporalCliCommandError
+      ? `${error.stderr}\n${error.stdout}\n${error.message}`
+      : error instanceof Error
+        ? error.message
+        : String(error)
+
+  const normalized = detail.toLowerCase()
+  return (
+    normalized.includes('failed reaching server') ||
+    normalized.includes('no children to pick from') ||
+    normalized.includes('connection refused') ||
+    normalized.includes('context deadline exceeded') ||
+    normalized.includes('getaddrinfo') ||
+    normalized.includes('transport: error while dialing') ||
+    normalized.includes('unavailable')
+  )
 }
 
 const withTestLock = async <T>(lockDir: string, lockFile: string, fn: () => Promise<T>): Promise<T> => {

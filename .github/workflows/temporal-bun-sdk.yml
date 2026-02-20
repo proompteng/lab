@@ -42,10 +42,10 @@ jobs:
     runs-on: arc-arm64
 
     env:
-      TEMPORAL_TEST_SERVER: '0'
+      TEMPORAL_TEST_SERVER: '1'
       TEMPORAL_TEST_TIMEOUT: '5000'
       TEMPORAL_INTEGRATION_TESTS: '1'
-      TEMPORAL_ADDRESS: 127.0.0.1:7233
+      TEMPORAL_ADDRESS: temporal-grpc:7233
       TEMPORAL_NAMESPACE: default
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -112,11 +112,11 @@ jobs:
 
       - name: Run Temporal Bun SDK tests
         run: |
-          TEMPORAL_TEST_SERVER=0 bun run --filter @proompteng/temporal-bun-sdk test
+          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test
 
       - name: Run worker load suite
         run: |
-          TEMPORAL_TEST_SERVER=0 bun run --filter @proompteng/temporal-bun-sdk test:load
+          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
 
       - name: Upload worker load artifacts
         if: always()
