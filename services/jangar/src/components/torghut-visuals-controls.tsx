@@ -46,9 +46,18 @@ export function TorghutVisualsControls({
     <section className="space-y-3 rounded-none border bg-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Controls</div>
-        <Button variant="outline" size="sm" onClick={onRefresh} disabled={disabled || isRefreshing}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRefresh}
+          disabled={disabled || isRefreshing}
+          aria-busy={isRefreshing}
+        >
           {isRefreshing ? (
-            <span className="mr-2 size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none" />
+            <span
+              className="mr-2 size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none"
+              aria-hidden="true"
+            />
           ) : null}
           <span>Refresh</span>
         </Button>

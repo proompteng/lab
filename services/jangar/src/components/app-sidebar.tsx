@@ -291,7 +291,9 @@ function SidebarNavButton({
     <SidebarMenuButton
       isActive={isActive}
       className={isCollapsed ? 'justify-center' : undefined}
-      render={<Link to={to} />}
+      title={isCollapsed ? label : undefined}
+      aria-label={label}
+      render={<Link to={to} aria-label={label} aria-current={isActive ? 'page' : undefined} />}
     >
       <Icon />
       {isCollapsed ? null : <span>{label}</span>}

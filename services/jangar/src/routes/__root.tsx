@@ -27,7 +27,10 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body className="min-h-screen bg-background text-foreground antialiased overflow-hidden">
-        <a href={`#${mainId}`} className="sr-only focus:not-sr-only">
+        <a
+          href={`#${mainId}`}
+          className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-none focus:border focus:bg-card focus:px-3 focus:py-2 focus:text-xs"
+        >
           Skip to content
         </a>
         <AppShell mainId={mainId}>{children}</AppShell>

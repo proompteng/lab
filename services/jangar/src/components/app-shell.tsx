@@ -15,9 +15,9 @@ import * as React from 'react'
 import { AppSidebar } from '@/components/app-sidebar'
 
 export function AppShell({ mainId, children }: { mainId: string; children: React.ReactNode }) {
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const searchStr = useRouterState({ select: (state) => state.location.searchStr })
-  const breadcrumbs = buildBreadcrumbs(pathname, searchStr)
+  const location = useRouterState({ select: (state) => state.location })
+  const { pathname, searchStr } = location
+  const breadcrumbs = React.useMemo(() => buildBreadcrumbs(pathname, searchStr), [pathname, searchStr])
   const isFullscreen = pathname.endsWith('/fullscreen')
 
   React.useEffect(() => {
@@ -30,9 +30,9 @@ export function AppShell({ mainId, children }: { mainId: string; children: React
   if (isFullscreen) {
     return (
       <SidebarProvider>
-        <div id={mainId} className="h-svh w-full overflow-hidden" tabIndex={-1}>
+        <section id={mainId} className="h-svh w-full overflow-hidden" tabIndex={-1} aria-label="Page content">
           {children}
-        </div>
+        </section>
         <Toaster richColors position="top-right" />
       </SidebarProvider>
     )
@@ -44,29 +44,31 @@ export function AppShell({ mainId, children }: { mainId: string; children: React
       <div className="flex h-svh min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex h-12 items-center gap-3 border-b px-3">
           <SidebarTrigger />
-          <Breadcrumb className="min-w-0 flex-1">
-            <BreadcrumbList>
-              {breadcrumbs.map((crumb, index) => {
-                const isLast = index === breadcrumbs.length - 1
-                return (
-                  <React.Fragment key={crumb.to}>
-                    <BreadcrumbItem>
-                      {isLast ? (
-                        <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
-                      ) : (
-                        <BreadcrumbLink render={<Link to={crumb.to} />}>{crumb.label}</BreadcrumbLink>
-                      )}
-                    </BreadcrumbItem>
-                    {!isLast ? <BreadcrumbSeparator /> : null}
-                  </React.Fragment>
-                )
-              })}
-            </BreadcrumbList>
-          </Breadcrumb>
+          <nav className="min-w-0 flex-1" aria-label="Breadcrumb">
+            <Breadcrumb className="min-w-0">
+              <BreadcrumbList>
+                {breadcrumbs.map((crumb, index) => {
+                  const isLast = index === breadcrumbs.length - 1
+                  return (
+                    <React.Fragment key={crumb.to}>
+                      <BreadcrumbItem>
+                        {isLast ? (
+                          <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
+                        ) : (
+                          <BreadcrumbLink render={<Link to={crumb.to} />}>{crumb.label}</BreadcrumbLink>
+                        )}
+                      </BreadcrumbItem>
+                      {!isLast ? <BreadcrumbSeparator /> : null}
+                    </React.Fragment>
+                  )
+                })}
+              </BreadcrumbList>
+            </Breadcrumb>
+          </nav>
         </header>
-        <div id={mainId} className="flex-1 min-h-0" tabIndex={-1}>
+        <section id={mainId} className="flex-1 min-h-0" tabIndex={-1} aria-label="Page content">
           <ScrollArea className="h-full">{children}</ScrollArea>
-        </div>
+        </section>
       </div>
       <Toaster richColors position="top-right" />
     </SidebarProvider>

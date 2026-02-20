@@ -197,7 +197,7 @@ function TorghutCharts() {
   const lagTone = lagMs === null ? 'neutral' : lagMs < 60_000 ? 'good' : lagMs < 180_000 ? 'warn' : 'bad'
 
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-6 p-6">
+    <main className="mx-auto flex flex-col gap-6 p-6 h-full min-h-0 w-full max-w-6xl">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-2">
           <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Torghut</p>
@@ -238,7 +238,7 @@ function TorghutCharts() {
           enable the charts.
         </section>
       ) : (
-        <>
+        <div className="flex flex-col gap-6 flex-1 min-h-0">
           {symbolsError ? (
             <section className="rounded-none border border-destructive/40 bg-card p-4 text-xs text-destructive">
               {symbolsError}
@@ -273,7 +273,7 @@ function TorghutCharts() {
               to load charts.
             </section>
           ) : (
-            <section className="space-y-4 rounded-none border bg-card p-4">
+            <section className="flex flex-col gap-4 p-4 flex-1 min-h-0 rounded-none border bg-card">
               {dataError ? (
                 <div className="rounded-none border border-destructive/40 bg-background p-3 text-xs text-destructive">
                   {dataError}
@@ -285,13 +285,13 @@ function TorghutCharts() {
                   {selectedSymbol} · {range.label} · {resolution.label}
                 </span>
               </div>
-              <TorghutVisualsChart bars={bars} signals={signals} indicators={indicators} />
+              <TorghutVisualsChart bars={bars} signals={signals} indicators={indicators} className="min-h-0 flex-1" />
               {bars.length === 0 && !isLoading ? (
                 <div className="text-xs text-muted-foreground">No bar data returned for this range.</div>
               ) : null}
             </section>
           )}
-        </>
+        </div>
       )}
     </main>
   )
