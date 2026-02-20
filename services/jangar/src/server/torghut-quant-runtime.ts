@@ -431,7 +431,8 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
           now,
           maxStalenessSeconds: config.maxStalenessSeconds,
         })
-        recordTorghutQuantComputeDurationMs(Date.now() - startedAt, { window })
+        const computeDurationMs = Date.now() - startedAt
+        recordTorghutQuantComputeDurationMs(computeDurationMs, { window })
 
         const frame: QuantSnapshotFrame = {
           strategyId: computed.strategyId,
@@ -475,6 +476,8 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
         }
 
         const healthAsOf = frame.frameAsOf
+        const computeLagSeconds = Math.max(0, Math.ceil(computeDurationMs / 1000))
+        const materializationLagSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(frame.frameAsOf)) / 1000))
         await appendQuantPipelineHealth({
           rows: [
             {
@@ -490,17 +493,22 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
               strategyId: frame.strategyId,
               account: frame.account,
               stage: 'compute',
-              ok: true,
-              lagSeconds: 0,
+              ok: computeLagSeconds <= Math.ceil(config.computeIntervalMs / 1000) + 2,
+              lagSeconds: computeLagSeconds,
               asOf: healthAsOf,
-              details: { window: frame.window, metricsCount: frame.metrics.length },
+              details: {
+                window: frame.window,
+                metricsCount: frame.metrics.length,
+                compute_interval_ms: config.computeIntervalMs,
+                heavy_compute_interval_ms: config.heavyComputeIntervalMs,
+              },
             },
             {
               strategyId: frame.strategyId,
               account: frame.account,
               stage: 'materialization',
-              ok: true,
-              lagSeconds: 0,
+              ok: materializationLagSeconds <= config.maxStalenessSeconds,
+              lagSeconds: materializationLagSeconds,
               asOf: healthAsOf,
               details: { window: frame.window, seriesAppended: shouldAppendSeries },
             },

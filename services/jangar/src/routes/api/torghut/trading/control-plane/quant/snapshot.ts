@@ -40,11 +40,18 @@ export const getQuantSnapshotHandler = async (request: Request) => {
       listQuantAlerts({ strategyId: strategyIdResult.value, state: 'open', limit: 1000 }),
     ])
 
+    const frameAsOf =
+      metrics.reduce<string | null>((latest, metric) => {
+        if (!metric.asOf) return latest
+        if (!latest) return metric.asOf
+        return Date.parse(metric.asOf) > Date.parse(latest) ? metric.asOf : latest
+      }, null) ?? new Date().toISOString()
+
     const frame = {
       strategyId: strategyIdResult.value,
       account: accountResult.value,
       window: windowResult.value,
-      frameAsOf: new Date().toISOString(),
+      frameAsOf,
       metrics,
       alerts: alerts.filter((alert) => alert.window === windowResult.value && alert.account === accountResult.value),
     }

@@ -70,4 +70,30 @@ describe('getQuantSeriesHandler', () => {
     expect(body.series.net_pnl).toHaveLength(2)
     expect(body.series.sharpe_annualized).toHaveLength(1)
   })
+
+  it('returns 400 when from is invalid ISO timestamp', async () => {
+    const { getQuantSeriesHandler } = await import('./series')
+
+    const response = await getQuantSeriesHandler(
+      new Request(
+        'http://localhost/api/torghut/trading/control-plane/quant/series?strategy_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&window=1d&metrics=net_pnl&from=not-a-date',
+      ),
+    )
+
+    expect(response.status).toBe(400)
+    expect(listQuantSeriesMetrics).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when from is after to', async () => {
+    const { getQuantSeriesHandler } = await import('./series')
+
+    const response = await getQuantSeriesHandler(
+      new Request(
+        'http://localhost/api/torghut/trading/control-plane/quant/series?strategy_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&window=1d&metrics=net_pnl&from=2026-02-19T13:00:00.000Z&to=2026-02-19T12:00:00.000Z',
+      ),
+    )
+
+    expect(response.status).toBe(400)
+    expect(listQuantSeriesMetrics).not.toHaveBeenCalled()
+  })
 })
