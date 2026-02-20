@@ -18,7 +18,9 @@ class TestRiskEngine(TestCase):
     def setUp(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)
-        self.session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        self.session_local = sessionmaker(
+            bind=engine, expire_on_commit=False, future=True
+        )
         self.risk_engine = RiskEngine()
         self.strategy = Strategy(
             name="test",
@@ -55,7 +57,9 @@ class TestRiskEngine(TestCase):
         account = {"equity": "10000", "cash": "100", "buying_power": "10"}
         positions = [{"symbol": "AAPL", "qty": "10", "market_value": "1000"}]
         with self.session_local() as session:
-            verdict = self.risk_engine.evaluate(session, decision, self.strategy, account, positions, {"AAPL"})
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
         self.assertTrue(verdict.approved)
         self.assertNotIn("insufficient_buying_power", verdict.reasons)
 
@@ -74,7 +78,9 @@ class TestRiskEngine(TestCase):
         account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
         positions: list[dict[str, str]] = []
         with self.session_local() as session:
-            verdict = self.risk_engine.evaluate(session, decision, self.strategy, account, positions, {"AAPL"})
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
         self.assertFalse(verdict.approved)
         self.assertIn("shorts_not_allowed", verdict.reasons)
 
@@ -94,7 +100,9 @@ class TestRiskEngine(TestCase):
         account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
         positions: list[dict[str, str]] = []
         with self.session_local() as session:
-            verdict = self.risk_engine.evaluate(session, decision, self.strategy, account, positions, {"AAPL"})
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
         self.assertTrue(verdict.approved)
 
     def test_max_position_pct_counts_short_exposure(self) -> None:
@@ -113,7 +121,9 @@ class TestRiskEngine(TestCase):
         account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
         positions = [{"symbol": "AAPL", "qty": "-40", "market_value": "-4000"}]
         with self.session_local() as session:
-            verdict = self.risk_engine.evaluate(session, decision, self.strategy, account, positions, {"AAPL"})
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
         self.assertFalse(verdict.approved)
         self.assertIn("max_position_pct_exceeded", verdict.reasons)
 
@@ -146,7 +156,9 @@ class TestRiskEngine(TestCase):
                 )
             )
             session.commit()
-            verdict = self.risk_engine.evaluate(session, decision, self.strategy, account, positions, {"AAPL"})
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
         self.assertTrue(verdict.approved)
         self.assertNotIn("cooldown_active", verdict.reasons)
 
@@ -179,6 +191,36 @@ class TestRiskEngine(TestCase):
                 )
             )
             session.commit()
-            verdict = self.risk_engine.evaluate(session, decision, self.strategy, account, positions, {"AAPL"})
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
         self.assertFalse(verdict.approved)
         self.assertIn("cooldown_active", verdict.reasons)
+
+    def test_hard_notional_limit_still_enforced_with_allocator_metadata(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("500"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "allocator": {
+                    "status": "approved",
+                    "reason_codes": [],
+                    "approved_qty": "500",
+                },
+            },
+        )
+        account = {"equity": "100000", "cash": "100000", "buying_power": "100000"}
+        positions: list[dict[str, str]] = []
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
+        self.assertFalse(verdict.approved)
+        self.assertIn("max_notional_exceeded", verdict.reasons)

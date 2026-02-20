@@ -91,3 +91,19 @@ class TestConfig(TestCase):
         self.assertEqual(
             settings.llm_effective_fail_mode_for_current_rollout(), "pass_through"
         )
+
+    def test_allocator_regime_maps_are_normalized(self) -> None:
+        settings = Settings(
+            TRADING_UNIVERSE_SOURCE="static",
+            TRADING_ENABLED=False,
+            TRADING_ALLOCATOR_ENABLED=True,
+            TRADING_ALLOCATOR_REGIME_BUDGET_MULTIPLIERS={
+                "vol=high|trend=flat|liq=liquid": 0.5
+            },
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertTrue(settings.trading_allocator_enabled)
+        self.assertIn(
+            "vol=high|trend=flat|liq=liquid",
+            settings.trading_allocator_regime_budget_multipliers,
+        )

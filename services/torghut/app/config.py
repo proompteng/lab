@@ -363,6 +363,56 @@ class Settings(BaseSettings):
         alias="TRADING_PORTFOLIO_MAX_NET_EXPOSURE_PCT_EQUITY",
         description="Net exposure cap as a pct of equity (optional).",
     )
+    trading_allocator_enabled: bool = Field(
+        default=False,
+        alias="TRADING_ALLOCATOR_ENABLED",
+        description="Enable deterministic portfolio allocator before execution policy and risk checks.",
+    )
+    trading_allocator_default_regime: str = Field(
+        default="neutral",
+        alias="TRADING_ALLOCATOR_DEFAULT_REGIME",
+        description="Fallback regime label used when no regime context is present on a signal/decision.",
+    )
+    trading_allocator_default_budget_multiplier: float = Field(
+        default=1.0,
+        alias="TRADING_ALLOCATOR_DEFAULT_BUDGET_MULTIPLIER",
+        description="Default budget multiplier applied when regime-specific override is absent.",
+    )
+    trading_allocator_default_capacity_multiplier: float = Field(
+        default=1.0,
+        alias="TRADING_ALLOCATOR_DEFAULT_CAPACITY_MULTIPLIER",
+        description="Default symbol-capacity multiplier when regime-specific override is absent.",
+    )
+    trading_allocator_min_multiplier: float = Field(
+        default=0.0,
+        alias="TRADING_ALLOCATOR_MIN_MULTIPLIER",
+        description="Lower bound clamp for allocator multipliers to preserve deterministic behavior.",
+    )
+    trading_allocator_max_multiplier: float = Field(
+        default=2.0,
+        alias="TRADING_ALLOCATOR_MAX_MULTIPLIER",
+        description="Upper bound clamp for allocator multipliers to preserve deterministic behavior.",
+    )
+    trading_allocator_max_symbol_pct_equity: Optional[float] = Field(
+        default=None,
+        alias="TRADING_ALLOCATOR_MAX_SYMBOL_PCT_EQUITY",
+        description="Allocator pre-risk concentration cap as percent of equity per symbol (optional).",
+    )
+    trading_allocator_max_symbol_notional: Optional[float] = Field(
+        default=None,
+        alias="TRADING_ALLOCATOR_MAX_SYMBOL_NOTIONAL",
+        description="Allocator pre-risk concentration cap as absolute notional per symbol (optional).",
+    )
+    trading_allocator_regime_budget_multipliers: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_REGIME_BUDGET_MULTIPLIERS",
+        description="Regime->budget multiplier map used by allocator (JSON object).",
+    )
+    trading_allocator_regime_capacity_multipliers: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_REGIME_CAPACITY_MULTIPLIERS",
+        description="Regime->symbol capacity multiplier map used by allocator (JSON object).",
+    )
     trading_cooldown_seconds: int = Field(default=0, alias="TRADING_COOLDOWN_SECONDS")
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
@@ -623,6 +673,34 @@ class Settings(BaseSettings):
             normalized_model_version_lock = self.llm_model_version_lock.strip()
             # Model lock evidence must be explicitly configured; never backfill from llm_model.
             self.llm_model_version_lock = normalized_model_version_lock or None
+        self.trading_allocator_default_regime = (
+            self.trading_allocator_default_regime.strip() or "neutral"
+        )
+        if self.trading_allocator_default_budget_multiplier < 0:
+            raise ValueError("TRADING_ALLOCATOR_DEFAULT_BUDGET_MULTIPLIER must be >= 0")
+        if self.trading_allocator_default_capacity_multiplier < 0:
+            raise ValueError(
+                "TRADING_ALLOCATOR_DEFAULT_CAPACITY_MULTIPLIER must be >= 0"
+            )
+        if self.trading_allocator_min_multiplier < 0:
+            raise ValueError("TRADING_ALLOCATOR_MIN_MULTIPLIER must be >= 0")
+        if (
+            self.trading_allocator_max_multiplier
+            < self.trading_allocator_min_multiplier
+        ):
+            raise ValueError(
+                "TRADING_ALLOCATOR_MAX_MULTIPLIER must be >= TRADING_ALLOCATOR_MIN_MULTIPLIER"
+            )
+        for key, value in self.trading_allocator_regime_budget_multipliers.items():
+            if value < 0:
+                raise ValueError(
+                    f"TRADING_ALLOCATOR_REGIME_BUDGET_MULTIPLIERS[{key}] must be >= 0"
+                )
+        for key, value in self.trading_allocator_regime_capacity_multipliers.items():
+            if value < 0:
+                raise ValueError(
+                    f"TRADING_ALLOCATOR_REGIME_CAPACITY_MULTIPLIERS[{key}] must be >= 0"
+                )
         if (
             self.llm_fail_mode_enforcement == "strict_veto"
             and self.llm_fail_mode != "veto"
