@@ -55,8 +55,14 @@ def evaluate_promotion_prerequisites(
 ) -> PromotionPrerequisiteResult:
     reasons: list[str] = []
     reason_details: list[dict[str, object]] = []
+    profitability_required = _requires_profitability_evidence(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     required_artifacts = _required_artifacts_for_target(
-        policy_payload, promotion_target
+        policy_payload,
+        promotion_target,
+        include_profitability_artifacts=profitability_required,
     )
     missing_artifacts = [
         item for item in required_artifacts if not (artifact_root / item).exists()
@@ -133,70 +139,71 @@ def evaluate_promotion_prerequisites(
                 }
             )
 
-    evidence_validation_relpath = str(
-        policy_payload.get(
-            "promotion_profitability_validation_artifact",
-            "gates/profitability-evidence-validation.json",
+    if profitability_required:
+        evidence_validation_relpath = str(
+            policy_payload.get(
+                "promotion_profitability_validation_artifact",
+                "gates/profitability-evidence-validation.json",
+            )
         )
-    )
-    evidence_validation_path = artifact_root / evidence_validation_relpath
-    evidence_validation_payload = _load_json_if_exists(evidence_validation_path)
-    if evidence_validation_payload is None:
-        reasons.append("profitability_evidence_validation_missing")
-        reason_details.append(
-            {
-                "reason": "profitability_evidence_validation_missing",
-                "artifact_ref": str(evidence_validation_path),
-            }
-        )
-    elif not bool(evidence_validation_payload.get("passed", False)):
-        reasons.append("profitability_evidence_validation_failed")
-        reason_details.append(
-            {
-                "reason": "profitability_evidence_validation_failed",
-                "artifact_ref": str(evidence_validation_path),
-                "validation_reasons": _list_of_strings(
-                    evidence_validation_payload.get("reasons")
-                ),
-            }
-        )
-
-    benchmark_relpath = str(
-        policy_payload.get(
-            "promotion_profitability_benchmark_artifact",
-            "gates/profitability-benchmark-v4.json",
-        )
-    )
-    benchmark_path = artifact_root / benchmark_relpath
-    benchmark_payload = _load_json_if_exists(benchmark_path)
-    minimum_regime_slices = int(
-        policy_payload.get("promotion_profitability_min_regime_slices", 1)
-    )
-    if benchmark_payload is None:
-        reasons.append("profitability_benchmark_missing")
-        reason_details.append(
-            {
-                "reason": "profitability_benchmark_missing",
-                "artifact_ref": str(benchmark_path),
-            }
-        )
-    else:
-        regime_slices = 0
-        for item in _list_from_any(benchmark_payload.get("slices")):
-            if isinstance(item, dict):
-                payload = cast(dict[str, Any], item)
-                if str(payload.get("slice_type", "")).strip() == "regime":
-                    regime_slices += 1
-        if regime_slices < minimum_regime_slices:
-            reasons.append("profitability_benchmark_regime_coverage_insufficient")
+        evidence_validation_path = artifact_root / evidence_validation_relpath
+        evidence_validation_payload = _load_json_if_exists(evidence_validation_path)
+        if evidence_validation_payload is None:
+            reasons.append("profitability_evidence_validation_missing")
             reason_details.append(
                 {
-                    "reason": "profitability_benchmark_regime_coverage_insufficient",
-                    "artifact_ref": str(benchmark_path),
-                    "actual_regime_slices": regime_slices,
-                    "minimum_regime_slices": minimum_regime_slices,
+                    "reason": "profitability_evidence_validation_missing",
+                    "artifact_ref": str(evidence_validation_path),
                 }
             )
+        elif not bool(evidence_validation_payload.get("passed", False)):
+            reasons.append("profitability_evidence_validation_failed")
+            reason_details.append(
+                {
+                    "reason": "profitability_evidence_validation_failed",
+                    "artifact_ref": str(evidence_validation_path),
+                    "validation_reasons": _list_of_strings(
+                        evidence_validation_payload.get("reasons")
+                    ),
+                }
+            )
+
+        benchmark_relpath = str(
+            policy_payload.get(
+                "promotion_profitability_benchmark_artifact",
+                "gates/profitability-benchmark-v4.json",
+            )
+        )
+        benchmark_path = artifact_root / benchmark_relpath
+        benchmark_payload = _load_json_if_exists(benchmark_path)
+        minimum_regime_slices = int(
+            policy_payload.get("promotion_profitability_min_regime_slices", 1)
+        )
+        if benchmark_payload is None:
+            reasons.append("profitability_benchmark_missing")
+            reason_details.append(
+                {
+                    "reason": "profitability_benchmark_missing",
+                    "artifact_ref": str(benchmark_path),
+                }
+            )
+        else:
+            regime_slices = 0
+            for item in _list_from_any(benchmark_payload.get("slices")):
+                if isinstance(item, dict):
+                    payload = cast(dict[str, Any], item)
+                    if str(payload.get("slice_type", "")).strip() == "regime":
+                        regime_slices += 1
+            if regime_slices < minimum_regime_slices:
+                reasons.append("profitability_benchmark_regime_coverage_insufficient")
+                reason_details.append(
+                    {
+                        "reason": "profitability_benchmark_regime_coverage_insufficient",
+                        "artifact_ref": str(benchmark_path),
+                        "actual_regime_slices": regime_slices,
+                        "minimum_regime_slices": minimum_regime_slices,
+                    }
+                )
 
     return PromotionPrerequisiteResult(
         allowed=not reasons,
@@ -257,7 +264,10 @@ def evaluate_rollback_readiness(
 
 
 def _required_artifacts_for_target(
-    policy_payload: dict[str, Any], promotion_target: str
+    policy_payload: dict[str, Any],
+    promotion_target: str,
+    *,
+    include_profitability_artifacts: bool,
 ) -> list[str]:
     base_raw = policy_payload.get(
         "promotion_required_artifacts",
@@ -275,19 +285,40 @@ def _required_artifacts_for_target(
     patch_targets = _list_from_any(patch_targets_raw)
     if promotion_target in patch_targets:
         required.append("paper-candidate/strategy-configmap-patch.yaml")
-    profitability_artifacts_raw = policy_payload.get(
-        "promotion_profitability_required_artifacts",
-        [
-            "gates/profitability-evidence-v4.json",
-            "gates/profitability-benchmark-v4.json",
-            "gates/profitability-evidence-validation.json",
-        ],
-    )
-    profitability_artifacts = _list_from_any(profitability_artifacts_raw)
-    for artifact in profitability_artifacts:
-        if isinstance(artifact, str):
-            required.append(artifact)
+    if include_profitability_artifacts:
+        profitability_artifacts_raw = policy_payload.get(
+            "promotion_profitability_required_artifacts",
+            [
+                "gates/profitability-evidence-v4.json",
+                "gates/profitability-benchmark-v4.json",
+                "gates/profitability-evidence-validation.json",
+            ],
+        )
+        profitability_artifacts = _list_from_any(profitability_artifacts_raw)
+        for artifact in profitability_artifacts:
+            if isinstance(artifact, str):
+                required.append(artifact)
     return sorted(set(required))
+
+
+def _requires_profitability_evidence(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("gate6_require_profitability_evidence", True)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_profitability_required_targets", ["paper", "live"]
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
 
 
 def _required_rollback_checks(policy_payload: dict[str, Any]) -> list[str]:

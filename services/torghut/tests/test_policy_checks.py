@@ -181,6 +181,80 @@ class TestPolicyChecks(TestCase):
             )
         )
 
+    def test_shadow_target_does_not_require_profitability_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={},
+                gate_report_payload={
+                    "run_id": "run-test",
+                    "promotion_allowed": True,
+                    "recommended_mode": "shadow",
+                    "gates": [
+                        {"gate_id": "gate0_data_integrity", "status": "pass"},
+                        {"gate_id": "gate1_statistical_robustness", "status": "pass"},
+                        {"gate_id": "gate2_risk_capacity", "status": "pass"},
+                    ],
+                },
+                candidate_state_payload=_candidate_state(),
+                promotion_target="shadow",
+                artifact_root=root,
+            )
+
+        self.assertTrue(promotion.allowed)
+        self.assertNotIn("required_artifacts_missing", promotion.reasons)
+        self.assertNotIn(
+            "gates/profitability-evidence-v4.json",
+            promotion.required_artifacts,
+        )
+
+    def test_profitability_requirements_can_be_disabled_for_paper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={"gate6_require_profitability_evidence": False},
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertTrue(promotion.allowed)
+        self.assertNotIn(
+            "profitability_evidence_validation_missing",
+            promotion.reasons,
+        )
+        self.assertNotIn(
+            "gates/profitability-evidence-v4.json",
+            promotion.required_artifacts,
+        )
+
 
 def _candidate_state() -> dict[str, object]:
     return {
