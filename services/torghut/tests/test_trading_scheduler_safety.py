@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import tempfile
 from pathlib import Path
@@ -60,6 +61,7 @@ class TestTradingSchedulerSafety(TestCase):
             config.settings.trading_rollback_signal_lag_seconds_limit = 5
             scheduler = TradingScheduler()
             scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
             scheduler.state.metrics.signal_lag_seconds = 7
 
             scheduler._evaluate_safety_controls()
@@ -72,6 +74,22 @@ class TestTradingSchedulerSafety(TestCase):
             self.assertTrue(evidence_path.exists())
             payload = json.loads(evidence_path.read_text(encoding='utf-8'))
             self.assertEqual(payload['signal_lag_seconds'], 7)
+
+    def test_signal_lag_does_not_trigger_when_market_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config.settings.trading_autonomy_artifact_dir = tmpdir
+            config.settings.trading_emergency_stop_enabled = True
+            config.settings.trading_rollback_signal_lag_seconds_limit = 5
+            scheduler = TradingScheduler()
+            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler._is_market_session_open = lambda _now=None: False  # type: ignore[method-assign]
+            scheduler.state.metrics.signal_lag_seconds = 7
+
+            scheduler._evaluate_safety_controls()
+
+            self.assertFalse(scheduler.state.emergency_stop_active)
+            self.assertEqual(scheduler.state.rollback_incidents_total, 0)
+            self.assertEqual(scheduler._pipeline.order_firewall.cancel_all_calls, 0)  # type: ignore[union-attr]
 
     def test_emergency_stop_triggers_on_drawdown_from_gate_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -88,3 +106,21 @@ class TestTradingSchedulerSafety(TestCase):
 
             self.assertTrue(scheduler.state.emergency_stop_active)
             self.assertIn('max_drawdown_exceeded', scheduler.state.emergency_stop_reason or '')
+
+    def test_disabled_emergency_stop_clears_latched_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config.settings.trading_autonomy_artifact_dir = tmpdir
+            config.settings.trading_emergency_stop_enabled = False
+            scheduler = TradingScheduler()
+            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler.state.emergency_stop_active = True
+            scheduler.state.emergency_stop_reason = 'signal_lag_exceeded:1234'
+            scheduler.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
+            scheduler.state.metrics.signal_lag_seconds = 9999
+
+            scheduler._evaluate_safety_controls()
+
+            self.assertFalse(scheduler.state.emergency_stop_active)
+            self.assertIsNone(scheduler.state.emergency_stop_reason)
+            self.assertIsNone(scheduler.state.emergency_stop_triggered_at)
+            self.assertEqual(scheduler._pipeline.order_firewall.cancel_all_calls, 0)  # type: ignore[union-attr]

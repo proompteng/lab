@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, Optional, cast
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -749,7 +750,7 @@ class TradingPipeline:
 
             if not settings.trading_enabled:
                 return
-            if self.state.emergency_stop_active:
+            if settings.trading_emergency_stop_enabled and self.state.emergency_stop_active:
                 self.state.metrics.orders_rejected_total += 1
                 reason = self.state.emergency_stop_reason or "emergency_stop_active"
                 self.executor.mark_rejected(session, decision_row, reason)
@@ -1725,7 +1726,17 @@ class TradingScheduler:
         )
 
     def _evaluate_safety_controls(self) -> None:
-        if self._pipeline is None or not settings.trading_emergency_stop_enabled:
+        if self._pipeline is None:
+            return
+        if not settings.trading_emergency_stop_enabled:
+            if self.state.emergency_stop_active:
+                logger.warning(
+                    "Emergency stop disabled; clearing latched state reason=%s",
+                    self.state.emergency_stop_reason,
+                )
+                self.state.emergency_stop_active = False
+                self.state.emergency_stop_reason = None
+                self.state.emergency_stop_triggered_at = None
             return
         if self.state.emergency_stop_active:
             return
@@ -1736,7 +1747,13 @@ class TradingScheduler:
             isinstance(lag_seconds, int)
             and lag_seconds >= settings.trading_rollback_signal_lag_seconds_limit
         ):
-            reasons.append(f"signal_lag_exceeded:{lag_seconds}")
+            if self._is_market_session_open():
+                reasons.append(f"signal_lag_exceeded:{lag_seconds}")
+            else:
+                logger.info(
+                    "Signal lag threshold exceeded outside market session; suppressing emergency stop lag_seconds=%s",
+                    lag_seconds,
+                )
         critical_reasons = settings.trading_signal_staleness_alert_critical_reasons
         critical_staleness_limit = max(
             1, settings.trading_rollback_signal_staleness_alert_streak_limit
@@ -1779,6 +1796,34 @@ class TradingScheduler:
             self._trigger_emergency_stop(
                 reasons=reasons, fallback_ratio=fallback_ratio, drawdown=drawdown
             )
+
+    def _is_market_session_open(self, now: datetime | None = None) -> bool:
+        trading_client: Any | None = None
+        if self._pipeline is not None:
+            alpaca_client = cast(Any, self._pipeline.alpaca_client)
+            trading_client = getattr(alpaca_client, "trading", None)
+        get_clock = cast(
+            Callable[[], Any] | None, getattr(trading_client, "get_clock", None)
+        )
+        if callable(get_clock):
+            try:
+                clock = get_clock()
+                is_open = getattr(clock, "is_open", None)
+                if isinstance(is_open, bool):
+                    return is_open
+                if is_open is not None:
+                    return bool(is_open)
+            except Exception:
+                logger.exception("Failed to resolve Alpaca market clock state")
+
+        current = (now or datetime.now(timezone.utc)).astimezone(
+            ZoneInfo("America/New_York")
+        )
+        if current.weekday() >= 5:
+            return False
+        session_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
+        session_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
+        return session_open <= current < session_close
 
     def _load_latest_drawdown_from_gate(self) -> float | None:
         gate_path_raw = self.state.last_autonomy_gates
