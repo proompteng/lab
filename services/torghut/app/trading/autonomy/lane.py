@@ -189,6 +189,7 @@ def run_autonomous_lane(
     strategy_configmap_path: Path | None = None,
     code_version: str = "local",
     approval_token: str | None = None,
+    drift_promotion_evidence: dict[str, Any] | None = None,
     evaluated_at: datetime | None = None,
     persist_results: bool = False,
     session_factory: Callable[[], Session] | None = None,
@@ -530,11 +531,16 @@ def run_autonomous_lane(
         rollback_check_path.write_text(
             json.dumps(rollback_check.to_payload(), indent=2), encoding="utf-8"
         )
+        drift_gate_check = _evaluate_drift_promotion_gate(
+            promotion_target=promotion_target,
+            drift_promotion_evidence=drift_promotion_evidence,
+        )
 
         promotion_allowed = (
             gate_report.promotion_allowed
             and promotion_check.allowed
             and rollback_check.ready
+            and drift_gate_check["allowed"]
         )
         promotion_reasons = sorted(
             set(
@@ -542,6 +548,11 @@ def run_autonomous_lane(
                     *gate_report.reasons,
                     *promotion_check.reasons,
                     *rollback_check.reasons,
+                    *[
+                        str(item)
+                        for item in drift_gate_check.get("reasons", [])
+                        if str(item).strip()
+                    ],
                 ]
             )
         )
@@ -561,6 +572,7 @@ def run_autonomous_lane(
                 "promotion_prerequisites": promotion_check.to_payload(),
                 "rollback_readiness": rollback_check.to_payload(),
                 "profitability_validation": profitability_validation.to_payload(),
+                "drift_governance": drift_gate_check,
             },
             "artifact_refs": sorted(
                 set(
@@ -571,6 +583,11 @@ def run_autonomous_lane(
                         str(profitability_benchmark_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        *[
+                            str(item)
+                            for item in drift_gate_check.get("artifact_refs", [])
+                            if str(item).strip()
+                        ],
                     ]
                 )
             ),
@@ -1281,6 +1298,60 @@ def _strategy_universe_type(strategy_type: str) -> str:
     if normalized in {"intraday_tsmom", "intraday_tsmom_v1", "tsmom_intraday"}:
         return "intraday_tsmom_v1"
     return strategy_type
+
+
+def _evaluate_drift_promotion_gate(
+    *,
+    promotion_target: PromotionTarget,
+    drift_promotion_evidence: dict[str, Any] | None,
+) -> dict[str, Any]:
+    evidence = drift_promotion_evidence or {}
+    artifact_refs_raw = evidence.get("evidence_artifact_refs")
+    artifact_refs = (
+        [str(item) for item in artifact_refs_raw if str(item).strip()]
+        if isinstance(artifact_refs_raw, list)
+        else []
+    )
+    if promotion_target != "live":
+        return {
+            "allowed": True,
+            "reasons": [],
+            "eligible_for_live_promotion": bool(
+                evidence.get("eligible_for_live_promotion", False)
+            ),
+            "artifact_refs": sorted(set(artifact_refs)),
+        }
+
+    if not evidence:
+        return {
+            "allowed": False,
+            "reasons": ["drift_promotion_evidence_missing"],
+            "eligible_for_live_promotion": False,
+            "artifact_refs": [],
+        }
+
+    reasons_raw = evidence.get("reasons")
+    reasons = (
+        [str(item) for item in reasons_raw if str(item).strip()]
+        if isinstance(reasons_raw, list)
+        else []
+    )
+    eligible = bool(evidence.get("eligible_for_live_promotion", False))
+    if not eligible:
+        if not reasons:
+            reasons.append("drift_promotion_evidence_not_eligible")
+        return {
+            "allowed": False,
+            "reasons": sorted(set(reasons)),
+            "eligible_for_live_promotion": False,
+            "artifact_refs": sorted(set(artifact_refs)),
+        }
+    return {
+        "allowed": True,
+        "reasons": [],
+        "eligible_for_live_promotion": True,
+        "artifact_refs": sorted(set(artifact_refs)),
+    }
 
 
 def _write_paper_candidate_patch(

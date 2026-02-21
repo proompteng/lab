@@ -5,7 +5,12 @@ export type KubernetesClient = {
   applyManifest: (manifest: string, namespace?: string | null) => Promise<Record<string, unknown>>
   applyStatus: (resource: Record<string, unknown>) => Promise<Record<string, unknown>>
   createManifest: (manifest: string, namespace?: string | null) => Promise<Record<string, unknown>>
-  delete: (resource: string, name: string, namespace: string) => Promise<Record<string, unknown> | null>
+  delete: (
+    resource: string,
+    name: string,
+    namespace: string,
+    options?: { wait?: boolean; timeoutSeconds?: number },
+  ) => Promise<Record<string, unknown> | null>
   patch: (
     resource: string,
     name: string,
@@ -105,23 +110,32 @@ export const createKubernetesClient = (): KubernetesClient => ({
     const output = await kubectl(args, manifest, 'kubectl create')
     return parseJson(output, 'kubectl create')
   },
-  delete: async (resource, name, namespace) => {
+  delete: async (resource, name, namespace, options) => {
+    const wait = options?.wait ?? true
+    const timeoutSecondsRaw = options?.timeoutSeconds
+    const timeoutSeconds =
+      timeoutSecondsRaw !== undefined && Number.isFinite(timeoutSecondsRaw)
+        ? Math.max(1, Math.floor(timeoutSecondsRaw))
+        : null
+    const buildDeleteArgs = (outputMode: 'json' | 'name') => {
+      const args = ['delete', resource, name, '-n', namespace]
+      if (!wait) {
+        args.push('--wait=false')
+      }
+      if (timeoutSeconds !== null) {
+        args.push(`--timeout=${timeoutSeconds}s`)
+      }
+      args.push('-o', outputMode)
+      return args
+    }
     try {
-      const output = await kubectl(
-        ['delete', resource, name, '-n', namespace, '-o', 'json'],
-        undefined,
-        'kubectl delete',
-      )
+      const output = await kubectl(buildDeleteArgs('json'), undefined, 'kubectl delete')
       return parseJson(output, 'kubectl delete')
     } catch (error) {
       if (notFound(error)) return null
       const message = error instanceof Error ? error.message : String(error)
       if (message.includes("only support '-o name'") || message.includes('unexpected -o output mode')) {
-        const output = await kubectl(
-          ['delete', resource, name, '-n', namespace, '-o', 'name'],
-          undefined,
-          'kubectl delete',
-        )
+        const output = await kubectl(buildDeleteArgs('name'), undefined, 'kubectl delete')
         return { name, namespace, resource, output }
       }
       throw error

@@ -177,6 +177,21 @@ class Settings(BaseSettings):
         alias="TRADING_FEATURE_NORMALIZATION_VERSION",
         description="Feature normalization implementation version.",
     )
+    trading_forecast_router_enabled: bool = Field(
+        default=True,
+        alias='TRADING_FORECAST_ROUTER_ENABLED',
+        description='Enable deterministic forecast routing and uncertainty contract emission.',
+    )
+    trading_forecast_router_policy_path: Optional[str] = Field(
+        default=None,
+        alias='TRADING_FORECAST_ROUTER_POLICY_PATH',
+        description='Optional path to forecast router policy JSON.',
+    )
+    trading_forecast_router_refinement_enabled: bool = Field(
+        default=True,
+        alias='TRADING_FORECAST_ROUTER_REFINEMENT_ENABLED',
+        description='Enable deterministic forecast refinement for eligible routes.',
+    )
     trading_feature_quality_enabled: bool = Field(
         default=True,
         alias="TRADING_FEATURE_QUALITY_ENABLED",
@@ -227,6 +242,110 @@ class Settings(BaseSettings):
         default="/tmp/torghut-autonomy",
         alias="TRADING_AUTONOMY_ARTIFACT_DIR",
         description="Output directory for autonomous lane artifacts.",
+    )
+    trading_drift_governance_enabled: bool = Field(
+        default=True,
+        alias="TRADING_DRIFT_GOVERNANCE_ENABLED",
+        description="Enable autonomous drift detection, trigger decisions, and audited governance artifacts.",
+    )
+    trading_drift_max_required_null_rate: float = Field(
+        default=0.02,
+        alias="TRADING_DRIFT_MAX_REQUIRED_NULL_RATE",
+        description="Drift threshold for maximum required feature null-rate.",
+    )
+    trading_drift_max_staleness_ms_p95: int = Field(
+        default=180000,
+        alias="TRADING_DRIFT_MAX_STALENESS_MS_P95",
+        description="Drift threshold for p95 feature staleness in milliseconds.",
+    )
+    trading_drift_max_duplicate_ratio: float = Field(
+        default=0.05,
+        alias="TRADING_DRIFT_MAX_DUPLICATE_RATIO",
+        description="Drift threshold for duplicate event ratio.",
+    )
+    trading_drift_max_schema_mismatch_total: int = Field(
+        default=0,
+        alias="TRADING_DRIFT_MAX_SCHEMA_MISMATCH_TOTAL",
+        description="Drift threshold for schema mismatch count.",
+    )
+    trading_drift_max_model_calibration_error: float = Field(
+        default=0.45,
+        alias="TRADING_DRIFT_MAX_MODEL_CALIBRATION_ERROR",
+        description="Drift threshold for model calibration error from profitability evidence.",
+    )
+    trading_drift_max_model_llm_error_ratio: float = Field(
+        default=0.10,
+        alias="TRADING_DRIFT_MAX_MODEL_LLM_ERROR_RATIO",
+        description="Drift threshold for LLM runtime error ratio.",
+    )
+    trading_drift_min_performance_net_pnl: float = Field(
+        default=0.0,
+        alias="TRADING_DRIFT_MIN_PERFORMANCE_NET_PNL",
+        description="Drift floor for net PnL.",
+    )
+    trading_drift_max_performance_drawdown: float = Field(
+        default=0.08,
+        alias="TRADING_DRIFT_MAX_PERFORMANCE_DRAWDOWN",
+        description="Drift threshold for absolute drawdown.",
+    )
+    trading_drift_max_performance_cost_bps: float = Field(
+        default=35.0,
+        alias="TRADING_DRIFT_MAX_PERFORMANCE_COST_BPS",
+        description="Drift threshold for execution cost in bps.",
+    )
+    trading_drift_max_execution_fallback_ratio: float = Field(
+        default=0.25,
+        alias="TRADING_DRIFT_MAX_EXECUTION_FALLBACK_RATIO",
+        description="Drift threshold for execution fallback ratio.",
+    )
+    trading_drift_trigger_retrain_reason_codes_raw: Optional[str] = Field(
+        default=(
+            "data_required_null_rate_exceeded,data_staleness_p95_exceeded,data_duplicate_ratio_exceeded,"
+            "data_schema_mismatch_detected,model_calibration_error_exceeded,model_llm_error_ratio_exceeded"
+        ),
+        alias="TRADING_DRIFT_TRIGGER_RETRAIN_REASON_CODES",
+        description="Comma-separated reason codes that trigger retraining workflows.",
+    )
+    trading_drift_trigger_reselection_reason_codes_raw: Optional[str] = Field(
+        default=(
+            "performance_net_pnl_below_floor,performance_drawdown_exceeded,performance_cost_bps_exceeded,"
+            "performance_execution_fallback_ratio_exceeded"
+        ),
+        alias="TRADING_DRIFT_TRIGGER_RESELECTION_REASON_CODES",
+        description="Comma-separated reason codes that trigger reselection workflows.",
+    )
+    trading_drift_retrain_cooldown_seconds: int = Field(
+        default=3600,
+        alias="TRADING_DRIFT_RETRAIN_COOLDOWN_SECONDS",
+        description="Cooldown between retraining triggers for repeated drift incidents.",
+    )
+    trading_drift_reselection_cooldown_seconds: int = Field(
+        default=3600,
+        alias="TRADING_DRIFT_RESELECTION_COOLDOWN_SECONDS",
+        description="Cooldown between reselection triggers for repeated drift incidents.",
+    )
+    trading_drift_live_promotion_requires_evidence: bool = Field(
+        default=True,
+        alias="TRADING_DRIFT_LIVE_PROMOTION_REQUIRES_EVIDENCE",
+        description="Require explicit drift-governance evidence before autonomous live promotion.",
+    )
+    trading_drift_live_promotion_max_evidence_age_seconds: int = Field(
+        default=1800,
+        alias="TRADING_DRIFT_LIVE_PROMOTION_MAX_EVIDENCE_AGE_SECONDS",
+        description="Maximum age for drift evidence used to authorize live promotion.",
+    )
+    trading_drift_rollback_on_performance: bool = Field(
+        default=True,
+        alias="TRADING_DRIFT_ROLLBACK_ON_PERFORMANCE",
+        description="Trigger emergency rollback hooks when configured performance drift reason codes are detected.",
+    )
+    trading_drift_rollback_reason_codes_raw: Optional[str] = Field(
+        default=(
+            "performance_net_pnl_below_floor,performance_drawdown_exceeded,performance_cost_bps_exceeded,"
+            "performance_execution_fallback_ratio_exceeded"
+        ),
+        alias="TRADING_DRIFT_ROLLBACK_REASON_CODES",
+        description="Comma-separated drift reason codes that trigger rollback hooks.",
     )
     trading_evidence_continuity_enabled: bool = Field(
         default=True,
@@ -651,6 +770,19 @@ class Settings(BaseSettings):
     llm_adjustment_approved: bool = Field(
         default=False, alias="LLM_ADJUSTMENT_APPROVED"
     )
+    llm_committee_enabled: bool = Field(default=True, alias="LLM_COMMITTEE_ENABLED")
+    llm_committee_roles_raw: str = Field(
+        default="researcher,risk_critic,execution_critic,policy_judge",
+        alias="LLM_COMMITTEE_ROLES",
+    )
+    llm_committee_mandatory_roles_raw: str = Field(
+        default="risk_critic,execution_critic,policy_judge",
+        alias="LLM_COMMITTEE_MANDATORY_ROLES",
+    )
+    llm_committee_fail_closed_verdict: Literal["veto", "abstain"] = Field(
+        default="veto",
+        alias="LLM_COMMITTEE_FAIL_CLOSED_VERDICT",
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -700,6 +832,36 @@ class Settings(BaseSettings):
                     if item.strip()
                 ]
             )
+        if self.trading_drift_trigger_retrain_reason_codes_raw:
+            self.trading_drift_trigger_retrain_reason_codes_raw = ",".join(
+                [
+                    item.strip()
+                    for item in self.trading_drift_trigger_retrain_reason_codes_raw.split(
+                        ","
+                    )
+                    if item.strip()
+                ]
+            )
+        if self.trading_drift_trigger_reselection_reason_codes_raw:
+            self.trading_drift_trigger_reselection_reason_codes_raw = ",".join(
+                [
+                    item.strip()
+                    for item in self.trading_drift_trigger_reselection_reason_codes_raw.split(
+                        ","
+                    )
+                    if item.strip()
+                ]
+            )
+        if self.trading_drift_rollback_reason_codes_raw:
+            self.trading_drift_rollback_reason_codes_raw = ",".join(
+                [
+                    item.strip()
+                    for item in self.trading_drift_rollback_reason_codes_raw.split(
+                        ","
+                    )
+                    if item.strip()
+                ]
+            )
         if self.trading_autonomy_approval_token:
             self.trading_autonomy_approval_token = (
                 self.trading_autonomy_approval_token.strip() or None
@@ -740,6 +902,20 @@ class Settings(BaseSettings):
             normalized_model_version_lock = self.llm_model_version_lock.strip()
             # Model lock evidence must be explicitly configured; never backfill from llm_model.
             self.llm_model_version_lock = normalized_model_version_lock or None
+        self.llm_committee_roles_raw = ",".join(
+            [
+                item.strip()
+                for item in self.llm_committee_roles_raw.split(",")
+                if item.strip()
+            ]
+        )
+        self.llm_committee_mandatory_roles_raw = ",".join(
+            [
+                item.strip()
+                for item in self.llm_committee_mandatory_roles_raw.split(",")
+                if item.strip()
+            ]
+        )
         self.trading_allocator_default_regime = (
             self.trading_allocator_default_regime.strip() or "neutral"
         )
@@ -748,6 +924,22 @@ class Settings(BaseSettings):
         if self.trading_allocator_default_capacity_multiplier < 0:
             raise ValueError(
                 "TRADING_ALLOCATOR_DEFAULT_CAPACITY_MULTIPLIER must be >= 0"
+            )
+        if self.trading_drift_max_required_null_rate < 0:
+            raise ValueError("TRADING_DRIFT_MAX_REQUIRED_NULL_RATE must be >= 0")
+        if self.trading_drift_max_staleness_ms_p95 < 0:
+            raise ValueError("TRADING_DRIFT_MAX_STALENESS_MS_P95 must be >= 0")
+        if self.trading_drift_max_duplicate_ratio < 0:
+            raise ValueError("TRADING_DRIFT_MAX_DUPLICATE_RATIO must be >= 0")
+        if self.trading_drift_max_schema_mismatch_total < 0:
+            raise ValueError("TRADING_DRIFT_MAX_SCHEMA_MISMATCH_TOTAL must be >= 0")
+        if self.trading_drift_retrain_cooldown_seconds < 0:
+            raise ValueError("TRADING_DRIFT_RETRAIN_COOLDOWN_SECONDS must be >= 0")
+        if self.trading_drift_reselection_cooldown_seconds < 0:
+            raise ValueError("TRADING_DRIFT_RESELECTION_COOLDOWN_SECONDS must be >= 0")
+        if self.trading_drift_live_promotion_max_evidence_age_seconds < 0:
+            raise ValueError(
+                "TRADING_DRIFT_LIVE_PROMOTION_MAX_EVIDENCE_AGE_SECONDS must be >= 0"
             )
         if self.trading_allocator_min_multiplier < 0:
             raise ValueError("TRADING_ALLOCATOR_MIN_MULTIPLIER must be >= 0")
@@ -838,6 +1030,38 @@ class Settings(BaseSettings):
         }
 
     @property
+    def trading_drift_trigger_retrain_reason_codes(self) -> set[str]:
+        if not self.trading_drift_trigger_retrain_reason_codes_raw:
+            return set()
+        return {
+            reason.strip()
+            for reason in self.trading_drift_trigger_retrain_reason_codes_raw.split(",")
+            if reason.strip()
+        }
+
+    @property
+    def trading_drift_trigger_reselection_reason_codes(self) -> set[str]:
+        if not self.trading_drift_trigger_reselection_reason_codes_raw:
+            return set()
+        return {
+            reason.strip()
+            for reason in self.trading_drift_trigger_reselection_reason_codes_raw.split(
+                ","
+            )
+            if reason.strip()
+        }
+
+    @property
+    def trading_drift_rollback_reason_codes(self) -> set[str]:
+        if not self.trading_drift_rollback_reason_codes_raw:
+            return set()
+        return {
+            reason.strip()
+            for reason in self.trading_drift_rollback_reason_codes_raw.split(",")
+            if reason.strip()
+        }
+
+    @property
     def llm_allowed_models(self) -> set[str]:
         if not self.llm_allowed_models_raw:
             return set()
@@ -867,6 +1091,14 @@ class Settings(BaseSettings):
         if self.llm_live_fail_open_requested and self.llm_fail_open_live_approved:
             exceptions.append("live_fail_open_approved")
         return exceptions
+
+    @property
+    def llm_committee_roles(self) -> list[str]:
+        return [item.strip() for item in self.llm_committee_roles_raw.split(",") if item.strip()]
+
+    @property
+    def llm_committee_mandatory_roles(self) -> list[str]:
+        return [item.strip() for item in self.llm_committee_mandatory_roles_raw.split(",") if item.strip()]
 
     @property
     def llm_live_fail_open_requested(self) -> bool:

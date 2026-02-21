@@ -30,6 +30,7 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'imbalance_spread',
     'spread',
     'signal_quality_flag',
+    'route_regime_label',
     'staleness_ms',
 )
 FEATURE_VECTOR_V3_IDENTITY_FIELDS = (
@@ -192,6 +193,7 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         'imbalance_spread': optional_decimal(payload.get('imbalance_spread') or _nested(payload, 'imbalance', 'spread')),
         'spread': optional_decimal(payload.get('spread')),
         'signal_quality_flag': payload.get('signal_quality_flag'),
+        'route_regime_label': _route_regime_label(payload, macd=macd, macd_signal=macd_signal),
         'staleness_ms': _staleness_ms(signal.event_ts, signal.ingest_ts),
     }
 
@@ -238,6 +240,25 @@ def _nested(payload: dict[str, Any], block: str, key: str) -> Any:
         item_map = cast(dict[str, Any], item)
         return item_map.get(key)
     return None
+
+
+def _route_regime_label(
+    payload: dict[str, Any],
+    *,
+    macd: Decimal | None,
+    macd_signal: Decimal | None,
+) -> str:
+    explicit = payload.get('regime_label')
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    if macd is None or macd_signal is None:
+        return 'unknown'
+    delta = macd - macd_signal
+    if delta >= Decimal('0.02'):
+        return 'trend'
+    if delta <= Decimal('-0.02'):
+        return 'mean_revert'
+    return 'range'
 
 
 def _validate_signal_schema_version(signal: SignalEnvelope) -> None:

@@ -91,6 +91,42 @@ class TestTradingMetrics(TestCase):
         self.assertIn("torghut_trading_llm_escalate_total 1", payload)
         self.assertIn("torghut_trading_llm_policy_fallback_total 2", payload)
 
+    def test_committee_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.record_llm_committee_member(
+            role="risk_critic",
+            verdict="veto",
+            latency_ms=42,
+            schema_error=False,
+        )
+        metrics.record_llm_committee_member(
+            role="policy_judge",
+            verdict="approve",
+            latency_ms=17,
+            schema_error=True,
+        )
+        metrics.record_llm_committee_veto_alignment(
+            committee_veto=True,
+            deterministic_veto=True,
+        )
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_llm_committee_requests_total{role="risk_critic"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_llm_committee_latency_ms{role="risk_critic"} 42', payload
+        )
+        self.assertIn(
+            'torghut_trading_llm_committee_verdict_total{role="risk_critic",verdict="veto"} 1',
+            payload,
+        )
+        self.assertIn("torghut_trading_llm_committee_schema_error_total 1", payload)
+        self.assertIn("torghut_trading_llm_committee_veto_alignment_total 1", payload)
+        self.assertIn("torghut_trading_llm_committee_veto_alignment_rate 1.0", payload)
+
     def test_order_feed_counters_are_exported(self) -> None:
         metrics = TradingMetrics()
         metrics.order_feed_messages_total = 3
@@ -172,6 +208,32 @@ class TestTradingMetrics(TestCase):
             "torghut_trading_strategy_runtime_isolated_failures_total 1", payload
         )
         self.assertIn("torghut_trading_strategy_runtime_fallback_total 2", payload)
+
+    def test_forecast_router_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.forecast_router_inference_latency_ms['chronos'] = 98
+        metrics.forecast_router_fallback_total['calibration_below_threshold'] = 3
+        metrics.forecast_calibration_error['chronos|AAPL|1m'] = '0.07'
+        metrics.forecast_route_selection_total['chronos|AAPL|1m|trend'] = 5
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_forecast_router_inference_latency_ms{model_family="chronos"} 98',
+            payload,
+        )
+        self.assertIn(
+            'torghut_forecast_router_fallback_total{reason="calibration_below_threshold"} 3',
+            payload,
+        )
+        self.assertIn(
+            'torghut_forecast_calibration_error{model_family="chronos",symbol="AAPL",horizon="1m"} 0.07',
+            payload,
+        )
+        self.assertIn(
+            'torghut_forecast_route_selection_total{model_family="chronos",route_key="AAPL|1m|trend"} 5',
+            payload,
+        )
 
     def test_record_strategy_runtime_telemetry_updates_counters(self) -> None:
         metrics = TradingMetrics()

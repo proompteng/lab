@@ -130,6 +130,7 @@ jobs:
             echo "tag=${TAG}"
             echo "contract_digest=${CONTRACT_DIGEST}"
             echo "image=${IMAGE}"
+            echo "control_plane_image=registry.ide-newton.ts.net/lab/jangar-control-plane"
             echo "promote=${PROMOTE}"
           } >> "$GITHUB_OUTPUT"
 
@@ -176,17 +177,50 @@ jobs:
 
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve control-plane image digest
+        if: steps.meta.outputs.promote == 'true'
+        id: control_plane_digest
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.meta.outputs.control_plane_image }}
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          DIGEST="$(
+            bun --eval "
+              import { inspectImageDigest } from './packages/scripts/src/shared/docker.ts'
+              const image = process.env.IMAGE_NAME + ':' + process.env.IMAGE_TAG
+              const repoDigest = inspectImageDigest(image)
+              const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
+              console.log(digest)
+            "
+          )"
+
+          DIGEST="${DIGEST#*@}"
+          if [ -z "${DIGEST}" ]; then
+            echo "Resolved control-plane digest is empty"
+            exit 1
+          fi
+
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
       - name: Update Jangar manifests
         if: steps.meta.outputs.promote == 'true'
         env:
           JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           JANGAR_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+          JANGAR_CONTROL_PLANE_IMAGE_NAME: ${{ steps.meta.outputs.control_plane_image }}
+          JANGAR_CONTROL_PLANE_IMAGE_DIGEST: ${{ steps.control_plane_digest.outputs.digest }}
         run: |
           TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           bun run packages/scripts/src/jangar/update-manifests.ts \
             --tag "${JANGAR_IMAGE_TAG}" \
             --digest "${JANGAR_IMAGE_DIGEST}" \
-            --rollout-timestamp "${TIMESTAMP}"
+            --control-plane-image-name "${JANGAR_CONTROL_PLANE_IMAGE_NAME}" \
+            --control-plane-digest "${JANGAR_CONTROL_PLANE_IMAGE_DIGEST}" \
+            --rollout-timestamp "${TIMESTAMP}" \
+            --agents-values-path "argocd/applications/agents/values.yaml"
 
       - name: Check for manifest changes
         if: steps.meta.outputs.promote == 'true'
@@ -197,7 +231,8 @@ jobs:
           if git diff --quiet -- \
             argocd/applications/jangar/kustomization.yaml \
             argocd/applications/jangar/deployment.yaml \
-            argocd/applications/jangar/jangar-worker-deployment.yaml; then
+            argocd/applications/jangar/jangar-worker-deployment.yaml \
+            argocd/applications/agents/values.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -217,14 +252,16 @@ jobs:
             argocd/applications/jangar/kustomization.yaml
             argocd/applications/jangar/deployment.yaml
             argocd/applications/jangar/jangar-worker-deployment.yaml
+            argocd/applications/agents/values.yaml
           body: |
             ## Summary
-            Promote Jangar image into GitOps manifests.
+            Promote Jangar image into GitOps manifests, including the Agents namespace release.
 
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Image digest: `${{ steps.digest.outputs.digest }}`
             - Updated API and worker rollout annotations
+            - Updated `argocd/applications/agents/values.yaml` for automated sync to namespace `agents`
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'

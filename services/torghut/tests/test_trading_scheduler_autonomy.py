@@ -29,7 +29,9 @@ class _PipelineStub:
         self.ingestor = self
         self.order_firewall = _OrderFirewallStub()
 
-    def fetch_signals_between(self, start: datetime, end: datetime) -> list[SignalEnvelope]:
+    def fetch_signals_between(
+        self, start: datetime, end: datetime
+    ) -> list[SignalEnvelope]:
         return list(self.signals)
 
     def fetch_signals_with_reason(
@@ -65,16 +67,21 @@ class _PipelineStub:
             self.state.metrics.signal_lag_seconds = None
         self.state.metrics.record_no_signal(reason)
         streak = self.state.metrics.no_signal_reason_streak.get(reason or "unknown", 0)
-        if reason in {
-            "no_signals_in_window",
-            "cursor_tail_stable",
-            "cursor_ahead_of_stream",
-            "empty_batch_advanced",
-        } and streak >= settings.trading_signal_no_signal_streak_alert_threshold:
+        if (
+            reason
+            in {
+                "no_signals_in_window",
+                "cursor_tail_stable",
+                "cursor_ahead_of_stream",
+                "empty_batch_advanced",
+            }
+            and streak >= settings.trading_signal_no_signal_streak_alert_threshold
+        ):
             self.state.metrics.record_signal_staleness_alert(reason)
         elif (
             batch.signal_lag_seconds is not None
-            and batch.signal_lag_seconds >= settings.trading_signal_stale_lag_alert_seconds
+            and batch.signal_lag_seconds
+            >= settings.trading_signal_stale_lag_alert_seconds
         ):
             self.state.metrics.record_signal_staleness_alert(reason)
 
@@ -82,6 +89,7 @@ class _PipelineStub:
 class _SchedulerDependencies:
     def __init__(self) -> None:
         self.call_kwargs: dict[str, Any] = {}
+        self.gate_payload: dict[str, Any] = {"recommended_mode": "paper", "gates": []}
 
 
 class _OrderFirewallStub:
@@ -98,7 +106,11 @@ def _signal_batch() -> list[SignalEnvelope]:
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
             symbol="AAPL",
             timeframe="1Min",
-            payload={"macd": {"macd": "1", "signal": "0"}, "rsi14": "58", "price": "100"},
+            payload={
+                "macd": {"macd": "1", "signal": "0"},
+                "rsi14": "58",
+                "price": "100",
+            },
         ),
     ]
 
@@ -123,36 +135,80 @@ class TestTradingSchedulerAutonomy(TestCase):
             "trading_universe_source": settings.trading_universe_source,
             "trading_emergency_stop_enabled": settings.trading_emergency_stop_enabled,
             "trading_autonomy_enabled": settings.trading_autonomy_enabled,
+            "trading_drift_governance_enabled": settings.trading_drift_governance_enabled,
+            "trading_drift_live_promotion_requires_evidence": settings.trading_drift_live_promotion_requires_evidence,
+            "trading_drift_live_promotion_max_evidence_age_seconds": (
+                settings.trading_drift_live_promotion_max_evidence_age_seconds
+            ),
+            "trading_drift_rollback_on_performance": settings.trading_drift_rollback_on_performance,
+            "trading_drift_rollback_reason_codes_raw": settings.trading_drift_rollback_reason_codes_raw,
+            "trading_drift_max_performance_drawdown": settings.trading_drift_max_performance_drawdown,
         }
 
     def tearDown(self) -> None:
         settings.trading_autonomy_allow_live_promotion = self._settings_snapshot[
             "trading_autonomy_allow_live_promotion"
         ]
-        settings.trading_autonomy_approval_token = self._settings_snapshot["trading_autonomy_approval_token"]
-        settings.trading_strategy_config_path = self._settings_snapshot["trading_strategy_config_path"]
-        settings.trading_autonomy_gate_policy_path = self._settings_snapshot["trading_autonomy_gate_policy_path"]
-        settings.trading_autonomy_artifact_dir = self._settings_snapshot["trading_autonomy_artifact_dir"]
-        settings.trading_signal_no_signal_streak_alert_threshold = self._settings_snapshot[
-            "trading_signal_no_signal_streak_alert_threshold"
+        settings.trading_autonomy_approval_token = self._settings_snapshot[
+            "trading_autonomy_approval_token"
         ]
+        settings.trading_strategy_config_path = self._settings_snapshot[
+            "trading_strategy_config_path"
+        ]
+        settings.trading_autonomy_gate_policy_path = self._settings_snapshot[
+            "trading_autonomy_gate_policy_path"
+        ]
+        settings.trading_autonomy_artifact_dir = self._settings_snapshot[
+            "trading_autonomy_artifact_dir"
+        ]
+        settings.trading_signal_no_signal_streak_alert_threshold = (
+            self._settings_snapshot["trading_signal_no_signal_streak_alert_threshold"]
+        )
         settings.trading_signal_stale_lag_alert_seconds = self._settings_snapshot[
             "trading_signal_stale_lag_alert_seconds"
         ]
-        settings.trading_signal_staleness_alert_critical_reasons_raw = self._settings_snapshot[
-            "trading_signal_staleness_alert_critical_reasons_raw"
-        ]
+        settings.trading_signal_staleness_alert_critical_reasons_raw = (
+            self._settings_snapshot[
+                "trading_signal_staleness_alert_critical_reasons_raw"
+            ]
+        )
         settings.trading_evidence_continuity_run_limit = self._settings_snapshot[
             "trading_evidence_continuity_run_limit"
         ]
-        settings.trading_rollback_signal_staleness_alert_streak_limit = self._settings_snapshot[
-            "trading_rollback_signal_staleness_alert_streak_limit"
+        settings.trading_rollback_signal_staleness_alert_streak_limit = (
+            self._settings_snapshot[
+                "trading_rollback_signal_staleness_alert_streak_limit"
+            ]
+        )
+        settings.trading_universe_source = self._settings_snapshot[
+            "trading_universe_source"
         ]
-        settings.trading_universe_source = self._settings_snapshot["trading_universe_source"]
         settings.trading_emergency_stop_enabled = self._settings_snapshot[
             "trading_emergency_stop_enabled"
         ]
-        settings.trading_autonomy_enabled = self._settings_snapshot["trading_autonomy_enabled"]
+        settings.trading_autonomy_enabled = self._settings_snapshot[
+            "trading_autonomy_enabled"
+        ]
+        settings.trading_drift_governance_enabled = self._settings_snapshot[
+            "trading_drift_governance_enabled"
+        ]
+        settings.trading_drift_live_promotion_requires_evidence = (
+            self._settings_snapshot["trading_drift_live_promotion_requires_evidence"]
+        )
+        settings.trading_drift_live_promotion_max_evidence_age_seconds = (
+            self._settings_snapshot[
+                "trading_drift_live_promotion_max_evidence_age_seconds"
+            ]
+        )
+        settings.trading_drift_rollback_on_performance = self._settings_snapshot[
+            "trading_drift_rollback_on_performance"
+        ]
+        settings.trading_drift_rollback_reason_codes_raw = self._settings_snapshot[
+            "trading_drift_rollback_reason_codes_raw"
+        ]
+        settings.trading_drift_max_performance_drawdown = self._settings_snapshot[
+            "trading_drift_max_performance_drawdown"
+        ]
 
     def test_run_autonomous_cycle_uses_live_promotion_when_token_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -161,7 +217,22 @@ class TestTradingSchedulerAutonomy(TestCase):
                 allow_live=True,
                 approval_token="live-approve-token",
             )
-            with patch("app.trading.scheduler.run_autonomous_lane", side_effect=self._fake_run_autonomous_lane(deps)):
+            outcome_path = Path(tmpdir) / "drift-outcome.json"
+            outcome_path.write_text(
+                json.dumps(
+                    {
+                        "checked_at": datetime.now(timezone.utc).isoformat(),
+                        "eligible_for_live_promotion": True,
+                        "reasons": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            scheduler.state.drift_last_outcome_path = str(outcome_path)
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
                 scheduler._run_autonomous_cycle()
 
             self.assertEqual(deps.call_kwargs["promotion_target"], "live")
@@ -174,20 +245,46 @@ class TestTradingSchedulerAutonomy(TestCase):
                 allow_live=False,
                 approval_token=None,
             )
-            with patch("app.trading.scheduler.run_autonomous_lane", side_effect=self._fake_run_autonomous_lane(deps)):
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
                 scheduler._run_autonomous_cycle()
 
             self.assertEqual(deps.call_kwargs["promotion_target"], "paper")
             self.assertIsNone(deps.call_kwargs["approval_token"])
 
-    def test_run_autonomous_cycle_falls_back_to_paper_when_live_token_missing(self) -> None:
+    def test_run_autonomous_cycle_falls_back_to_paper_when_drift_evidence_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=True,
+                approval_token="live-approve-token",
+            )
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
+                scheduler._run_autonomous_cycle()
+
+            self.assertEqual(deps.call_kwargs["promotion_target"], "paper")
+            self.assertIsNone(deps.call_kwargs["approval_token"])
+
+    def test_run_autonomous_cycle_falls_back_to_paper_when_live_token_missing(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, deps = self._build_scheduler_with_fixtures(
                 tmpdir,
                 allow_live=True,
                 approval_token=None,
             )
-            with patch("app.trading.scheduler.run_autonomous_lane", side_effect=self._fake_run_autonomous_lane(deps)):
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
                 scheduler._run_autonomous_cycle()
 
             self.assertEqual(deps.call_kwargs["promotion_target"], "paper")
@@ -200,11 +297,20 @@ class TestTradingSchedulerAutonomy(TestCase):
                 allow_live=False,
                 approval_token=None,
             )
-            with patch("app.trading.scheduler.run_autonomous_lane", side_effect=self._fake_run_autonomous_lane(deps)):
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
                 scheduler._run_autonomous_cycle()
 
-            self.assertEqual(deps.call_kwargs["strategy_config_path"], Path(settings.trading_strategy_config_path))
-            self.assertEqual(deps.call_kwargs["gate_policy_path"], Path(settings.trading_autonomy_gate_policy_path))
+            self.assertEqual(
+                deps.call_kwargs["strategy_config_path"],
+                Path(settings.trading_strategy_config_path),
+            )
+            self.assertEqual(
+                deps.call_kwargs["gate_policy_path"],
+                Path(settings.trading_autonomy_gate_policy_path),
+            )
 
     def test_run_autonomous_cycle_passes_persistence_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -213,7 +319,10 @@ class TestTradingSchedulerAutonomy(TestCase):
                 allow_live=False,
                 approval_token=None,
             )
-            with patch("app.trading.scheduler.run_autonomous_lane", side_effect=self._fake_run_autonomous_lane(deps)):
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
                 scheduler._run_autonomous_cycle()
 
             self.assertTrue(deps.call_kwargs["persist_results"])
@@ -227,12 +336,18 @@ class TestTradingSchedulerAutonomy(TestCase):
                 allow_live=False,
                 approval_token=None,
             )
-            with patch("app.trading.scheduler.run_autonomous_lane", side_effect=self._fake_run_autonomous_lane(deps)):
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
                 scheduler._run_autonomous_cycle()
 
-            self.assertEqual(scheduler.state.last_autonomy_gates, str(deps.gate_report_path))
+            self.assertEqual(
+                scheduler.state.last_autonomy_gates, str(deps.gate_report_path)
+            )
             self.assertEqual(scheduler.state.last_autonomy_run_id, "test-run-id")
             self.assertEqual(scheduler.state.last_autonomy_recommendation, "paper")
+            self.assertIn("drift_promotion_evidence", deps.call_kwargs)
 
     def test_run_autonomous_cycle_records_ingest_reason_when_no_signals(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -247,7 +362,10 @@ class TestTradingSchedulerAutonomy(TestCase):
                 "app.trading.scheduler.upsert_autonomy_no_signal_run",
                 return_value="no-signal-run-id",
             ) as persist_no_signal:
-                with patch("app.trading.scheduler.run_autonomous_lane", side_effect=RuntimeError("should_not_run")):
+                with patch(
+                    "app.trading.scheduler.run_autonomous_lane",
+                    side_effect=RuntimeError("should_not_run"),
+                ):
                     scheduler._run_autonomous_cycle()
 
             persist_no_signal.assert_called_once()
@@ -256,8 +374,12 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertIsNotNone(args["query_start"])
             self.assertIsNotNone(args["query_end"])
 
-            self.assertEqual(scheduler.state.last_ingest_reason, "cursor_ahead_of_stream")
-            self.assertEqual(scheduler.state.last_autonomy_reason, "cursor_ahead_of_stream")
+            self.assertEqual(
+                scheduler.state.last_ingest_reason, "cursor_ahead_of_stream"
+            )
+            self.assertEqual(
+                scheduler.state.last_autonomy_reason, "cursor_ahead_of_stream"
+            )
             self.assertEqual(scheduler.state.last_autonomy_run_id, "no-signal-run-id")
             self.assertIn("no-signals.json", scheduler.state.last_autonomy_gates or "")
 
@@ -273,7 +395,10 @@ class TestTradingSchedulerAutonomy(TestCase):
             scheduler.state.last_ingest_window_end = stale_time
             scheduler.state.last_ingest_reason = "stale-no-signal"
 
-            with patch("app.trading.scheduler.run_autonomous_lane", side_effect=self._fake_run_autonomous_lane(deps)):
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
                 scheduler._run_autonomous_cycle()
 
             self.assertIsNone(scheduler.state.last_ingest_reason)
@@ -294,20 +419,36 @@ class TestTradingSchedulerAutonomy(TestCase):
                 no_signals=True,
                 no_signal_reason="cursor_ahead_of_stream",
             )
-            with patch("app.trading.scheduler.upsert_autonomy_no_signal_run", return_value="no-signal-run-id"):
+            with patch(
+                "app.trading.scheduler.upsert_autonomy_no_signal_run",
+                return_value="no-signal-run-id",
+            ):
                 scheduler._run_autonomous_cycle()
 
-            self.assertEqual(scheduler.state.metrics.no_signal_reason_streak, {"cursor_ahead_of_stream": 1})
+            self.assertEqual(
+                scheduler.state.metrics.no_signal_reason_streak,
+                {"cursor_ahead_of_stream": 1},
+            )
             self.assertIsNone(
-                scheduler.state.metrics.signal_staleness_alert_total.get("cursor_ahead_of_stream"),
+                scheduler.state.metrics.signal_staleness_alert_total.get(
+                    "cursor_ahead_of_stream"
+                ),
             )
 
-            with patch("app.trading.scheduler.upsert_autonomy_no_signal_run", return_value="no-signal-run-id"):
+            with patch(
+                "app.trading.scheduler.upsert_autonomy_no_signal_run",
+                return_value="no-signal-run-id",
+            ):
                 scheduler._run_autonomous_cycle()
 
-            self.assertEqual(scheduler.state.metrics.no_signal_reason_streak, {"cursor_ahead_of_stream": 2})
             self.assertEqual(
-                scheduler.state.metrics.signal_staleness_alert_total.get("cursor_ahead_of_stream"),
+                scheduler.state.metrics.no_signal_reason_streak,
+                {"cursor_ahead_of_stream": 2},
+            )
+            self.assertEqual(
+                scheduler.state.metrics.signal_staleness_alert_total.get(
+                    "cursor_ahead_of_stream"
+                ),
                 1,
             )
 
@@ -323,16 +464,23 @@ class TestTradingSchedulerAutonomy(TestCase):
                 no_signal_reason="empty_batch_advanced",
                 no_signal_lag_seconds=61.2,
             )
-            with patch("app.trading.scheduler.upsert_autonomy_no_signal_run", return_value="no-signal-run-id"):
+            with patch(
+                "app.trading.scheduler.upsert_autonomy_no_signal_run",
+                return_value="no-signal-run-id",
+            ):
                 scheduler._run_autonomous_cycle()
 
             self.assertEqual(scheduler.state.metrics.signal_lag_seconds, 61)
             self.assertEqual(
-                scheduler.state.metrics.signal_staleness_alert_total.get("empty_batch_advanced"),
+                scheduler.state.metrics.signal_staleness_alert_total.get(
+                    "empty_batch_advanced"
+                ),
                 1,
             )
             self.assertEqual(
-                scheduler.state.metrics.no_signal_reason_streak.get("empty_batch_advanced"),
+                scheduler.state.metrics.no_signal_reason_streak.get(
+                    "empty_batch_advanced"
+                ),
                 1,
             )
 
@@ -343,10 +491,15 @@ class TestTradingSchedulerAutonomy(TestCase):
                 allow_live=False,
                 approval_token=None,
             )
-            with patch("app.trading.scheduler.run_autonomous_lane", side_effect=RuntimeError("lane_failed")):
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=RuntimeError("lane_failed"),
+            ):
                 scheduler._run_autonomous_cycle()
 
-            self.assertEqual(scheduler.state.last_autonomy_reason, "lane_execution_failed")
+            self.assertEqual(
+                scheduler.state.last_autonomy_reason, "lane_execution_failed"
+            )
             self.assertEqual(scheduler.state.last_autonomy_error, "lane_failed")
             self.assertIsNone(scheduler.state.last_autonomy_run_id)
 
@@ -358,26 +511,40 @@ class TestTradingSchedulerAutonomy(TestCase):
                 approval_token=None,
             )
             settings.trading_evidence_continuity_run_limit = 3
-            with patch("app.trading.scheduler.evaluate_evidence_continuity") as mock_check:
+            with patch(
+                "app.trading.scheduler.evaluate_evidence_continuity"
+            ) as mock_check:
                 mock_check.return_value = SimpleNamespace(
                     checked_at=datetime(2026, 2, 19, 1, 0, tzinfo=timezone.utc),
                     checked_runs=2,
                     failed_runs=1,
                     run_ids=["run-1", "run-2"],
-                    to_payload=lambda: {"checked_runs": 2, "failed_runs": 1, "ok": False},
+                    to_payload=lambda: {
+                        "checked_runs": 2,
+                        "failed_runs": 1,
+                        "ok": False,
+                    },
                 )
                 scheduler._run_evidence_continuity_check()
 
             mock_check.assert_called_once()
-            self.assertEqual(scheduler.state.metrics.evidence_continuity_checks_total, 1)
-            self.assertEqual(scheduler.state.metrics.evidence_continuity_failures_total, 1)
-            self.assertEqual(scheduler.state.metrics.evidence_continuity_last_failed_runs, 1)
+            self.assertEqual(
+                scheduler.state.metrics.evidence_continuity_checks_total, 1
+            )
+            self.assertEqual(
+                scheduler.state.metrics.evidence_continuity_failures_total, 1
+            )
+            self.assertEqual(
+                scheduler.state.metrics.evidence_continuity_last_failed_runs, 1
+            )
             self.assertEqual(
                 scheduler.state.last_evidence_continuity_report,
                 {"checked_runs": 2, "failed_runs": 1, "ok": False},
             )
 
-    def test_safety_controls_trigger_emergency_stop_on_critical_staleness_streak(self) -> None:
+    def test_safety_controls_trigger_emergency_stop_on_critical_staleness_streak(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, _deps = self._build_scheduler_with_fixtures(
                 tmpdir,
@@ -386,8 +553,12 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             settings.trading_emergency_stop_enabled = True
             settings.trading_rollback_signal_staleness_alert_streak_limit = 2
-            settings.trading_signal_staleness_alert_critical_reasons_raw = "cursor_ahead_of_stream"
-            scheduler.state.metrics.no_signal_reason_streak = {"cursor_ahead_of_stream": 2}
+            settings.trading_signal_staleness_alert_critical_reasons_raw = (
+                "cursor_ahead_of_stream"
+            )
+            scheduler.state.metrics.no_signal_reason_streak = {
+                "cursor_ahead_of_stream": 2
+            }
             scheduler._evaluate_safety_controls()
 
             self.assertTrue(scheduler.state.emergency_stop_active)
@@ -397,7 +568,9 @@ class TestTradingSchedulerAutonomy(TestCase):
                 scheduler.state.emergency_stop_reason or "",
             )
 
-    def test_safety_controls_trigger_emergency_stop_when_universe_unavailable(self) -> None:
+    def test_safety_controls_trigger_emergency_stop_when_universe_unavailable(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, _deps = self._build_scheduler_with_fixtures(
                 tmpdir,
@@ -438,8 +611,12 @@ class TestTradingSchedulerAutonomy(TestCase):
                 encoding="utf-8",
             )
             scheduler.state.last_autonomy_gates = str(gate_path)
-            scheduler.state.metrics.no_signal_reason_streak = {"cursor_ahead_of_stream": 3}
-            scheduler.state.metrics.signal_staleness_alert_total = {"cursor_ahead_of_stream": 2}
+            scheduler.state.metrics.no_signal_reason_streak = {
+                "cursor_ahead_of_stream": 3
+            }
+            scheduler.state.metrics.signal_staleness_alert_total = {
+                "cursor_ahead_of_stream": 2
+            }
 
             scheduler._trigger_emergency_stop(
                 reasons=["signal_staleness_streak_exceeded:cursor_ahead_of_stream:3"],
@@ -450,10 +627,45 @@ class TestTradingSchedulerAutonomy(TestCase):
             incident_path = Path(scheduler.state.rollback_incident_evidence_path or "")
             self.assertTrue(incident_path.exists())
             payload = json.loads(incident_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["provenance"]["gate_report_trace_id"], "gate-trace-1")
-            self.assertEqual(payload["provenance"]["recommendation_trace_id"], "rec-trace-1")
+            self.assertEqual(
+                payload["provenance"]["gate_report_trace_id"], "gate-trace-1"
+            )
+            self.assertEqual(
+                payload["provenance"]["recommendation_trace_id"], "rec-trace-1"
+            )
             self.assertTrue(payload["rollback_hooks"]["order_submission_blocked"])
             self.assertTrue(payload["verification"]["incident_evidence_complete"])
+
+    def test_drift_governance_triggers_rollback_on_performance_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            settings.trading_drift_rollback_on_performance = True
+            settings.trading_emergency_stop_enabled = True
+            settings.trading_drift_rollback_reason_codes_raw = (
+                "performance_drawdown_exceeded"
+            )
+            settings.trading_drift_max_performance_drawdown = 0.01
+            deps.gate_payload = {
+                "recommended_mode": "paper",
+                "gates": [],
+                "metrics": {"max_drawdown": "0.25"},
+            }
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
+                scheduler._run_autonomous_cycle()
+
+            self.assertTrue(scheduler.state.emergency_stop_active)
+            self.assertIn(
+                "drift_reason_detected:performance_drawdown_exceeded",
+                scheduler.state.emergency_stop_reason or "",
+            )
+            self.assertIsNotNone(scheduler.state.rollback_incident_evidence_path)
 
     def _build_scheduler_with_fixtures(
         self,
@@ -510,9 +722,16 @@ class TestTradingSchedulerAutonomy(TestCase):
         settings.trading_autonomy_approval_token = approval_token
         settings.trading_strategy_config_path = str(strategy_config_path)
         settings.trading_autonomy_gate_policy_path = str(gate_policy_path)
-        settings.trading_autonomy_artifact_dir = str(Path(tmpdir) / "autonomy-artifacts")
+        settings.trading_autonomy_artifact_dir = str(
+            Path(tmpdir) / "autonomy-artifacts"
+        )
+        settings.trading_drift_governance_enabled = True
+        settings.trading_drift_live_promotion_requires_evidence = True
+        settings.trading_drift_live_promotion_max_evidence_age_seconds = 1800
+        settings.trading_drift_rollback_on_performance = True
 
         scheduler = TradingScheduler()
+
         @contextmanager
         def _session_factory():
             yield None
@@ -551,7 +770,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
 
             gate_report_path = output_dir / "gate-evaluation.json"
-            gate_report_path.write_text('{"recommended_mode": "paper", "gates": []}', encoding='utf-8')
+            gate_report_path.write_text(json.dumps(deps.gate_payload), encoding="utf-8")
             deps.gate_report_path = gate_report_path
 
             return SimpleNamespace(

@@ -183,6 +183,7 @@ class LLMReviewResponse(BaseModel):
     escalate_reason: Optional[str] = None
     rationale: str
     risk_flags: list[str] = Field(default_factory=list)
+    committee: Optional["LLMCommitteeTrace"] = None
 
     @field_validator("rationale")
     @classmethod
@@ -254,6 +255,8 @@ __all__ = [
     "RecentDecisionSummary",
     "LLMPolicyContext",
     "LLMReviewRequest",
+    "LLMCommitteeMemberResponse",
+    "LLMCommitteeTrace",
     "LLMReviewResponse",
     "LLMCalibratedProbabilities",
     "LLMUncertainty",

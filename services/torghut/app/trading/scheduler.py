@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import Callable, Mapping
@@ -52,6 +53,11 @@ from .order_feed import OrderFeedIngestor
 from .reconcile import Reconciler
 from .risk import RiskEngine
 from .autonomy import (
+    DriftThresholds,
+    DriftTriggerPolicy,
+    decide_drift_action,
+    detect_drift,
+    evaluate_live_promotion_evidence,
     evaluate_evidence_continuity,
     run_autonomous_lane,
     upsert_autonomy_no_signal_run,
@@ -152,6 +158,18 @@ class TradingMetrics:
     )
     llm_tokens_prompt_total: int = 0
     llm_tokens_completion_total: int = 0
+    llm_committee_requests_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    llm_committee_latency_ms: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    llm_committee_verdict_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    llm_committee_schema_error_total: int = 0
+    llm_committee_veto_alignment_total: int = 0
+    llm_committee_veto_total: int = 0
     execution_requests_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
@@ -197,6 +215,18 @@ class TradingMetrics:
     strategy_runtime_isolated_failures_total: int = 0
     strategy_runtime_fallback_total: int = 0
     strategy_runtime_legacy_path_total: int = 0
+    forecast_router_inference_latency_ms: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    forecast_router_fallback_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    forecast_calibration_error: dict[str, str] = field(
+        default_factory=lambda: cast(dict[str, str], {})
+    )
+    forecast_route_selection_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     feature_batch_rows_total: int = 0
     feature_null_rate: dict[str, float] = field(
         default_factory=lambda: cast(dict[str, float], {})
@@ -206,6 +236,17 @@ class TradingMetrics:
     feature_schema_mismatch_total: int = 0
     feature_quality_rejections_total: int = 0
     feature_parity_drift_total: int = 0
+    drift_detection_checks_total: int = 0
+    drift_incidents_total: int = 0
+    drift_incident_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    drift_action_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    drift_action_cooldown_skip_total: int = 0
+    drift_promotion_block_total: int = 0
+    drift_rollback_trigger_total: int = 0
     evidence_continuity_checks_total: int = 0
     evidence_continuity_failures_total: int = 0
     evidence_continuity_last_checked_ts_seconds: float = 0
@@ -286,6 +327,38 @@ class TradingMetrics:
         current = self.llm_policy_resolution_total.get(normalized, 0)
         self.llm_policy_resolution_total[normalized] = current + 1
 
+    def record_llm_committee_member(
+        self,
+        *,
+        role: str,
+        verdict: str,
+        latency_ms: int | None,
+        schema_error: bool,
+    ) -> None:
+        self.llm_committee_requests_total[role] = (
+            self.llm_committee_requests_total.get(role, 0) + 1
+        )
+        if latency_ms is not None:
+            self.llm_committee_latency_ms[role] = latency_ms
+        verdict_key = f"{role}:{verdict}"
+        self.llm_committee_verdict_total[verdict_key] = (
+            self.llm_committee_verdict_total.get(verdict_key, 0) + 1
+        )
+        if schema_error:
+            self.llm_committee_schema_error_total += 1
+
+    def record_llm_committee_veto_alignment(
+        self,
+        *,
+        committee_veto: bool,
+        deterministic_veto: bool,
+    ) -> None:
+        if not committee_veto:
+            return
+        self.llm_committee_veto_total += 1
+        if deterministic_veto:
+            self.llm_committee_veto_alignment_total += 1
+
     def record_strategy_runtime(self, telemetry: DecisionRuntimeTelemetry) -> None:
         if not telemetry.runtime_enabled:
             self.strategy_runtime_legacy_path_total += 1
@@ -330,6 +403,33 @@ class TradingMetrics:
                 self.allocator_reason_total.get(reason_code, 0) + 1
             )
 
+    def record_forecast_telemetry(self, payload: Mapping[str, Any]) -> None:
+        family = str(payload.get('model_family') or 'unknown').strip() or 'unknown'
+        route_key = str(payload.get('route_key') or 'unknown').strip() or 'unknown'
+        symbol = str(payload.get('symbol') or 'unknown').strip() or 'unknown'
+        horizon = str(payload.get('horizon') or 'unknown').strip() or 'unknown'
+        latency = payload.get('inference_latency_ms')
+        calibration_error = payload.get('calibration_error')
+        fallback_reason = payload.get('fallback_reason')
+
+        if isinstance(latency, int):
+            self.forecast_router_inference_latency_ms[family] = latency
+
+        if isinstance(fallback_reason, str) and fallback_reason.strip():
+            normalized_reason = fallback_reason.strip()
+            self.forecast_router_fallback_total[normalized_reason] = (
+                self.forecast_router_fallback_total.get(normalized_reason, 0) + 1
+            )
+
+        route_counter_key = f'{family}|{route_key}'
+        self.forecast_route_selection_total[route_counter_key] = (
+            self.forecast_route_selection_total.get(route_counter_key, 0) + 1
+        )
+
+        if calibration_error is not None:
+            key = f'{family}|{symbol}|{horizon}'
+            self.forecast_calibration_error[key] = str(calibration_error)
+
 
 @dataclass
 class TradingState:
@@ -365,6 +465,21 @@ class TradingState:
     emergency_stop_recovery_streak: int = 0
     rollback_incidents_total: int = 0
     rollback_incident_evidence_path: Optional[str] = None
+    drift_status: str = "unknown"
+    drift_active_incident_id: Optional[str] = None
+    drift_active_reason_codes: list[str] = field(
+        default_factory=lambda: cast(list[str], [])
+    )
+    drift_last_detection_at: Optional[datetime] = None
+    drift_last_detection_path: Optional[str] = None
+    drift_last_action_type: Optional[str] = None
+    drift_last_action_at: Optional[datetime] = None
+    drift_last_action_path: Optional[str] = None
+    drift_last_outcome_path: Optional[str] = None
+    drift_live_promotion_eligible: bool = False
+    drift_live_promotion_reasons: list[str] = field(
+        default_factory=lambda: cast(list[str], [])
+    )
     metrics: TradingMetrics = field(default_factory=TradingMetrics)
 
 
@@ -519,6 +634,10 @@ class TradingPipeline:
                     self.state.metrics.record_strategy_runtime(
                         self.decision_engine.consume_runtime_telemetry()
                     )
+                    for telemetry in self.decision_engine.consume_forecast_telemetry():
+                        self.state.metrics.record_forecast_telemetry(
+                            telemetry.to_payload()
+                        )
                 except Exception:
                     logger.exception(
                         "Decision evaluation failed symbol=%s timeframe=%s",
@@ -776,7 +895,10 @@ class TradingPipeline:
 
             if not settings.trading_enabled:
                 return
-            if settings.trading_emergency_stop_enabled and self.state.emergency_stop_active:
+            if (
+                settings.trading_emergency_stop_enabled
+                and self.state.emergency_stop_active
+            ):
                 self.state.metrics.orders_rejected_total += 1
                 reason = self.state.emergency_stop_reason or "emergency_stop_active"
                 self.executor.mark_rejected(session, decision_row, reason)
@@ -1079,6 +1201,9 @@ class TradingPipeline:
             )
 
             response_json: dict[str, Any] = dict(outcome.response_json)
+            response_json["advisory_only"] = True
+            response_json["request_hash"] = outcome.request_hash
+            response_json["response_hash"] = outcome.response_hash
             if policy_outcome.reason:
                 response_json["policy_override"] = policy_outcome.reason
                 response_json["policy_verdict"] = policy_outcome.verdict
@@ -1092,6 +1217,25 @@ class TradingPipeline:
                 response_json["mrm_guardrails"] = list(guardrails.reasons)
             response_json["policy_resolution"] = policy_resolution
             response_json["guardrail_controls"] = _llm_guardrail_controls_snapshot()
+
+            committee_payload = response_json.get("committee")
+            if isinstance(committee_payload, Mapping):
+                committee_roles = cast(Mapping[str, Any], committee_payload).get(
+                    "roles", {}
+                )
+                if isinstance(committee_roles, Mapping):
+                    for role, role_payload in cast(
+                        Mapping[str, Any], committee_roles
+                    ).items():
+                        if not isinstance(role_payload, Mapping):
+                            continue
+                        role_data = cast(Mapping[str, Any], role_payload)
+                        self.state.metrics.record_llm_committee_member(
+                            role=str(role),
+                            verdict=str(role_data.get("verdict", "unknown")),
+                            latency_ms=_optional_int(role_data.get("latency_ms")),
+                            schema_error=bool(role_data.get("schema_error", False)),
+                        )
 
             if outcome.tokens_prompt is not None:
                 self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
@@ -1145,6 +1289,10 @@ class TradingPipeline:
                     self.state.metrics.llm_guardrail_shadow_total += 1
                 return decision, None
             if policy_outcome.verdict == "veto":
+                self.state.metrics.record_llm_committee_veto_alignment(
+                    committee_veto=bool(outcome.response.committee),
+                    deterministic_veto=True,
+                )
                 return decision, policy_outcome.reason or "llm_veto"
 
             return policy_outcome.decision, None
@@ -1169,6 +1317,9 @@ class TradingPipeline:
                 response_json["mrm_guardrails"] = list(guardrails.reasons)
             if not request_json:
                 request_json = {"decision": decision.model_dump(mode="json")}
+            response_json["advisory_only"] = True
+            response_json["request_hash"] = _hash_payload(request_json)
+            response_json["response_hash"] = _hash_payload(response_json)
             self._persist_llm_review(
                 session=session,
                 decision_row=decision_row,
@@ -1237,6 +1388,20 @@ class TradingPipeline:
             market_context=market_context,
             recent_decisions=recent_decisions,
         ).model_dump(mode="json")
+        response_payload = {
+            "error": reason,
+            "fallback": fallback,
+            "effective_verdict": effective_verdict,
+            "policy_resolution": policy_resolution
+            or _build_llm_policy_resolution(
+                rollout_stage=_normalize_rollout_stage(settings.llm_rollout_stage),
+                effective_fail_mode=fallback,
+                guardrail_reasons=risk_flags or [],
+            ),
+            "advisory_only": True,
+        }
+        response_payload["request_hash"] = _hash_payload(request_payload)
+        response_payload["response_hash"] = _hash_payload(response_payload)
         self._persist_llm_review(
             session=session,
             decision_row=decision_row,
@@ -1607,6 +1772,22 @@ def _optional_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
+def _optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hash_payload(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _is_llm_stage_policy_violation(rollout_stage: str) -> bool:
     if rollout_stage == "stage0":
         return (
@@ -1695,7 +1876,9 @@ def _build_llm_policy_resolution(
             "trading_mode": settings.trading_mode,
             "trading_parity_policy": settings.trading_parity_policy,
             "llm_fail_mode_enforcement": settings.llm_fail_mode_enforcement,
-            "llm_live_fail_open_requested": settings.llm_live_fail_open_requested_for_stage(normalized_stage),
+            "llm_live_fail_open_requested": settings.llm_live_fail_open_requested_for_stage(
+                normalized_stage
+            ),
             "llm_fail_open_live_approved": settings.llm_fail_open_live_approved,
         },
     }
@@ -1758,6 +1941,7 @@ class TradingScheduler:
                 "allow_requests": guardrails.allow_requests,
                 "governance_evidence_complete": guardrails.governance_evidence_complete,
                 "effective_adjustment_allowed": guardrails.adjustment_allowed,
+                "committee_enabled": guardrails.committee_enabled,
                 "reasons": list(guardrails.reasons),
             },
         }
@@ -1786,6 +1970,255 @@ class TradingScheduler:
             strategy_catalog=strategy_catalog,
             order_feed_ingestor=OrderFeedIngestor(),
         )
+
+    def _drift_thresholds(self) -> DriftThresholds:
+        return DriftThresholds(
+            max_required_null_rate=Decimal(
+                str(settings.trading_drift_max_required_null_rate)
+            ),
+            max_staleness_ms_p95=max(
+                0, int(settings.trading_drift_max_staleness_ms_p95)
+            ),
+            max_duplicate_ratio=Decimal(
+                str(settings.trading_drift_max_duplicate_ratio)
+            ),
+            max_schema_mismatch_total=max(
+                0, int(settings.trading_drift_max_schema_mismatch_total)
+            ),
+            max_model_calibration_error=Decimal(
+                str(settings.trading_drift_max_model_calibration_error)
+            ),
+            max_model_llm_error_ratio=Decimal(
+                str(settings.trading_drift_max_model_llm_error_ratio)
+            ),
+            min_performance_net_pnl=Decimal(
+                str(settings.trading_drift_min_performance_net_pnl)
+            ),
+            max_performance_drawdown=Decimal(
+                str(settings.trading_drift_max_performance_drawdown)
+            ),
+            max_performance_cost_bps=Decimal(
+                str(settings.trading_drift_max_performance_cost_bps)
+            ),
+            max_execution_fallback_ratio=Decimal(
+                str(settings.trading_drift_max_execution_fallback_ratio)
+            ),
+        )
+
+    def _drift_trigger_policy(self) -> DriftTriggerPolicy:
+        return DriftTriggerPolicy(
+            retrain_reason_codes=set(
+                settings.trading_drift_trigger_retrain_reason_codes
+            ),
+            reselection_reason_codes=set(
+                settings.trading_drift_trigger_reselection_reason_codes
+            ),
+            retrain_cooldown_seconds=max(
+                0, int(settings.trading_drift_retrain_cooldown_seconds)
+            ),
+            reselection_cooldown_seconds=max(
+                0, int(settings.trading_drift_reselection_cooldown_seconds)
+            ),
+        )
+
+    def _current_drift_gate_evidence(self, *, now: datetime) -> dict[str, Any]:
+        refs: list[str] = []
+        reasons = list(self.state.drift_live_promotion_reasons)
+        eligible = bool(self.state.drift_live_promotion_eligible)
+        checked_at_raw: str | None = None
+        if self.state.drift_last_detection_path:
+            refs.append(self.state.drift_last_detection_path)
+        if self.state.drift_last_action_path:
+            refs.append(self.state.drift_last_action_path)
+        if self.state.drift_last_outcome_path:
+            refs.append(self.state.drift_last_outcome_path)
+            try:
+                payload = json.loads(
+                    Path(self.state.drift_last_outcome_path).read_text(encoding="utf-8")
+                )
+            except Exception:
+                payload = {}
+            if isinstance(payload, Mapping):
+                payload_mapping = cast(Mapping[str, Any], payload)
+                checked_at_raw = (
+                    str(payload_mapping.get("checked_at") or "").strip() or None
+                )
+                eligible = bool(
+                    payload_mapping.get("eligible_for_live_promotion", eligible)
+                )
+                raw_reasons = payload_mapping.get("reasons")
+                if isinstance(raw_reasons, list):
+                    reasons = [
+                        str(item)
+                        for item in cast(list[Any], raw_reasons)
+                        if str(item).strip()
+                    ]
+
+        max_age_seconds = max(
+            0, settings.trading_drift_live_promotion_max_evidence_age_seconds
+        )
+        if checked_at_raw:
+            parsed_checked_at = _parse_iso_datetime(checked_at_raw)
+            if parsed_checked_at is not None and max_age_seconds > 0:
+                age_seconds = (now - parsed_checked_at).total_seconds()
+                if age_seconds > max_age_seconds:
+                    eligible = False
+                    reasons.append("drift_evidence_stale")
+        else:
+            eligible = False
+            reasons.append("drift_evidence_missing")
+
+        return {
+            "checked_at": checked_at_raw,
+            "eligible_for_live_promotion": eligible,
+            "reasons": sorted(set(reasons)),
+            "reason_codes": list(self.state.drift_active_reason_codes),
+            "evidence_artifact_refs": sorted(set(refs)),
+        }
+
+    def _evaluate_drift_governance(
+        self,
+        *,
+        run_output_dir: Path,
+        run_id: str,
+        signals: list[SignalEnvelope],
+        gate_report_payload: Mapping[str, Any],
+        now: datetime,
+    ) -> dict[str, Any]:
+        drift_dir = run_output_dir / "drift"
+        drift_dir.mkdir(parents=True, exist_ok=True)
+
+        feature_report = evaluate_feature_batch_quality(
+            signals,
+            thresholds=FeatureQualityThresholds(
+                max_required_null_rate=settings.trading_feature_max_required_null_rate,
+                max_staleness_ms=settings.trading_feature_max_staleness_ms,
+                max_duplicate_ratio=settings.trading_feature_max_duplicate_ratio,
+            ),
+        )
+        fallback_total = sum(self.state.metrics.execution_fallback_total.values())
+        submitted_total = max(1, self.state.metrics.orders_submitted_total)
+        fallback_ratio = Decimal(str(fallback_total / submitted_total))
+
+        thresholds = self._drift_thresholds()
+        detection = detect_drift(
+            run_id=run_id,
+            feature_quality_report=feature_report,
+            gate_report_payload=gate_report_payload,
+            fallback_ratio=fallback_ratio,
+            thresholds=thresholds,
+            detected_at=now,
+        )
+        self.state.metrics.drift_detection_checks_total += 1
+        detection_payload = detection.to_payload()
+        detection_payload["governance_enabled"] = (
+            settings.trading_drift_governance_enabled
+        )
+        detection_payload["feature_quality"] = feature_report.to_payload()
+        detection_path = drift_dir / "drift-detection.json"
+        detection_path.write_text(
+            json.dumps(detection_payload, indent=2), encoding="utf-8"
+        )
+        self.state.drift_last_detection_path = str(detection_path)
+        self.state.drift_last_detection_at = detection.detected_at
+
+        if detection.drift_detected:
+            self.state.metrics.drift_incidents_total += 1
+            self.state.drift_active_incident_id = detection.incident_id
+            self.state.drift_active_reason_codes = list(detection.reason_codes)
+            for reason_code in detection.reason_codes:
+                self.state.metrics.drift_incident_reason_total[reason_code] = (
+                    self.state.metrics.drift_incident_reason_total.get(reason_code, 0)
+                    + 1
+                )
+        else:
+            self.state.drift_active_incident_id = None
+            self.state.drift_active_reason_codes = []
+
+        action = decide_drift_action(
+            detection=detection,
+            policy=self._drift_trigger_policy(),
+            last_action_type=self.state.drift_last_action_type,
+            last_action_at=self.state.drift_last_action_at,
+            now=now,
+        )
+        action_payload = action.to_payload()
+        action_payload["run_id"] = run_id
+        action_payload["incident_id"] = detection.incident_id
+        action_payload["governance_enabled"] = settings.trading_drift_governance_enabled
+        action_path = drift_dir / "drift-action.json"
+        action_path.write_text(json.dumps(action_payload, indent=2), encoding="utf-8")
+        self.state.drift_last_action_path = str(action_path)
+        self.state.drift_last_action_type = action.action_type
+        if action.triggered and action.action_type != "none":
+            self.state.drift_last_action_at = now
+            self.state.metrics.drift_action_total[action.action_type] = (
+                self.state.metrics.drift_action_total.get(action.action_type, 0) + 1
+            )
+        if action.cooldown_active:
+            self.state.metrics.drift_action_cooldown_skip_total += 1
+
+        evidence = evaluate_live_promotion_evidence(
+            detection=detection,
+            action=action,
+            evidence_refs=[str(detection_path), str(action_path)],
+            now=now,
+        )
+        outcome_payload = evidence.to_payload()
+        outcome_payload["run_id"] = run_id
+        outcome_payload["governance_enabled"] = (
+            settings.trading_drift_governance_enabled
+        )
+        outcome_payload["action"] = action.to_payload()
+        outcome_payload["detection"] = detection.to_payload()
+        outcome_payload["drift_status"] = (
+            "cooldown"
+            if action.cooldown_active
+            else ("drift_detected" if detection.drift_detected else "stable")
+        )
+        outcome_path = drift_dir / "drift-outcome.json"
+        outcome_path.write_text(json.dumps(outcome_payload, indent=2), encoding="utf-8")
+        self.state.drift_last_outcome_path = str(outcome_path)
+        self.state.drift_live_promotion_eligible = evidence.eligible_for_live_promotion
+        self.state.drift_live_promotion_reasons = list(evidence.reasons)
+        self.state.drift_status = str(outcome_payload["drift_status"])
+        if not evidence.eligible_for_live_promotion:
+            self.state.metrics.drift_promotion_block_total += 1
+
+        rollback_reasons = settings.trading_drift_rollback_reason_codes
+        has_rollback_reason = any(
+            code in rollback_reasons for code in detection.reason_codes
+        )
+        if (
+            settings.trading_drift_rollback_on_performance
+            and detection.drift_detected
+            and has_rollback_reason
+            and not self.state.emergency_stop_active
+        ):
+            self.state.metrics.drift_rollback_trigger_total += 1
+            self._trigger_emergency_stop(
+                reasons=[
+                    f"drift_reason_detected:{code}"
+                    for code in detection.reason_codes
+                    if code in rollback_reasons
+                ],
+                fallback_ratio=float(fallback_ratio),
+                drawdown=self._drawdown_from_gate_payload(gate_report_payload),
+            )
+        return outcome_payload
+
+    def _drawdown_from_gate_payload(self, payload: Mapping[str, Any]) -> float | None:
+        metrics_raw = payload.get("metrics")
+        if not isinstance(metrics_raw, Mapping):
+            return None
+        metrics_payload = cast(Mapping[str, Any], metrics_raw)
+        drawdown_raw = metrics_payload.get("max_drawdown")
+        if drawdown_raw is None:
+            return None
+        try:
+            return abs(float(drawdown_raw))
+        except (TypeError, ValueError):
+            return None
 
     def _evaluate_safety_controls(self) -> None:
         if self._pipeline is None:
@@ -1859,13 +2292,16 @@ class TradingScheduler:
             )
 
     def _evaluate_emergency_stop_recovery(self, current_reasons: list[str]) -> None:
-        latched_reasons = _split_emergency_stop_reasons(self.state.emergency_stop_reason)
+        latched_reasons = _split_emergency_stop_reasons(
+            self.state.emergency_stop_reason
+        )
         if not latched_reasons:
             self.state.emergency_stop_recovery_streak = 0
             return
 
         has_nonrecoverable_latched_reason = any(
-            not _is_recoverable_emergency_stop_reason(reason) for reason in latched_reasons
+            not _is_recoverable_emergency_stop_reason(reason)
+            for reason in latched_reasons
         )
         if has_nonrecoverable_latched_reason:
             self.state.emergency_stop_recovery_streak = 0
@@ -1877,7 +2313,9 @@ class TradingScheduler:
             if not _is_recoverable_emergency_stop_reason(reason)
         ]
         if nonrecoverable_current_reasons:
-            merged_reasons = sorted(set(latched_reasons + nonrecoverable_current_reasons))
+            merged_reasons = sorted(
+                set(latched_reasons + nonrecoverable_current_reasons)
+            )
             self.state.emergency_stop_reason = ";".join(merged_reasons)
             self.state.emergency_stop_recovery_streak = 0
             logger.error(
@@ -1887,7 +2325,9 @@ class TradingScheduler:
             return
 
         recoverable_current_reasons = [
-            reason for reason in current_reasons if _is_recoverable_emergency_stop_reason(reason)
+            reason
+            for reason in current_reasons
+            if _is_recoverable_emergency_stop_reason(reason)
         ]
         if recoverable_current_reasons:
             self.state.emergency_stop_recovery_streak = 0
@@ -1896,7 +2336,9 @@ class TradingScheduler:
                 self.state.emergency_stop_reason = refreshed
             return
 
-        required_recovery_cycles = max(1, settings.trading_emergency_stop_recovery_cycles)
+        required_recovery_cycles = max(
+            1, settings.trading_emergency_stop_recovery_cycles
+        )
         self.state.emergency_stop_recovery_streak += 1
         if self.state.emergency_stop_recovery_streak < required_recovery_cycles:
             logger.info(
@@ -1924,7 +2366,9 @@ class TradingScheduler:
         self.state.emergency_stop_triggered_at = None
         self.state.emergency_stop_resolved_at = now
         self.state.emergency_stop_recovery_streak = 0
-        logger.info("Emergency stop cleared reason=%s resolved_at=%s", reason, now.isoformat())
+        logger.info(
+            "Emergency stop cleared reason=%s resolved_at=%s", reason, now.isoformat()
+        )
 
     def _is_market_session_open(self, now: datetime | None = None) -> bool:
         trading_client: Any | None = None
@@ -2014,9 +2458,15 @@ class TradingScheduler:
             "triggered_at": now.isoformat(),
             "reasons": reasons,
             "safety_snapshot": {
-                "no_signal_reason_streak": dict(self.state.metrics.no_signal_reason_streak),
-                "signal_staleness_alert_total": dict(self.state.metrics.signal_staleness_alert_total),
-                "execution_fallback_total": dict(self.state.metrics.execution_fallback_total),
+                "no_signal_reason_streak": dict(
+                    self.state.metrics.no_signal_reason_streak
+                ),
+                "signal_staleness_alert_total": dict(
+                    self.state.metrics.signal_staleness_alert_total
+                ),
+                "execution_fallback_total": dict(
+                    self.state.metrics.execution_fallback_total
+                ),
             },
             "signal_lag_seconds": self.state.metrics.signal_lag_seconds,
             "autonomy_failure_streak": self.state.autonomy_failure_streak,
@@ -2063,13 +2513,13 @@ class TradingScheduler:
                 payload = {}
         provenance_raw = payload.get("provenance")
         provenance: dict[str, Any] = (
-            cast(dict[str, Any], provenance_raw) if isinstance(provenance_raw, dict) else {}
+            cast(dict[str, Any], provenance_raw)
+            if isinstance(provenance_raw, dict)
+            else {}
         )
         return {
             "run_id": str(payload.get("run_id")).strip() or None,
-            "gate_report_trace_id": str(
-                provenance.get("gate_report_trace_id")
-            ).strip()
+            "gate_report_trace_id": str(provenance.get("gate_report_trace_id")).strip()
             or None,
             "recommendation_trace_id": str(
                 provenance.get("recommendation_trace_id")
@@ -2307,6 +2757,7 @@ class TradingScheduler:
         self.state.metrics.no_signal_reason_streak = {}
         self.state.metrics.signal_lag_seconds = None
         self.state.autonomy_signals_total = len(signals)
+        drift_gate_evidence = self._current_drift_gate_evidence(now=now)
 
         promotion_target: Literal["paper", "live"]
         approval_token: str | None
@@ -2314,8 +2765,19 @@ class TradingScheduler:
             settings.trading_autonomy_allow_live_promotion
             and settings.trading_autonomy_approval_token
         ):
-            promotion_target = "live"
-            approval_token = settings.trading_autonomy_approval_token
+            if settings.trading_drift_live_promotion_requires_evidence and not bool(
+                drift_gate_evidence.get("eligible_for_live_promotion", False)
+            ):
+                logger.warning(
+                    "Autonomy live promotion denied by drift evidence gate reasons=%s; fallback to paper target.",
+                    drift_gate_evidence.get("reasons"),
+                )
+                self.state.metrics.drift_promotion_block_total += 1
+                promotion_target = "paper"
+                approval_token = None
+            else:
+                promotion_target = "live"
+                approval_token = settings.trading_autonomy_approval_token
         elif (
             settings.trading_autonomy_allow_live_promotion
             and not settings.trading_autonomy_approval_token
@@ -2339,6 +2801,7 @@ class TradingScheduler:
                 strategy_configmap_path=Path("/etc/torghut/strategies.yaml"),
                 code_version="live",
                 approval_token=approval_token,
+                drift_promotion_evidence=drift_gate_evidence,
                 persist_results=True,
                 session_factory=self._pipeline.session_factory,
             )
@@ -2361,6 +2824,18 @@ class TradingScheduler:
             gate_report.get("recommended_mode")
         )
         self.state.last_autonomy_error = None
+        if settings.trading_drift_governance_enabled:
+            self._evaluate_drift_governance(
+                run_output_dir=run_output_dir,
+                run_id=result.run_id,
+                signals=signals,
+                gate_report_payload=gate_report,
+                now=now,
+            )
+        else:
+            self.state.drift_status = "disabled"
+            self.state.drift_live_promotion_eligible = False
+            self.state.drift_live_promotion_reasons = ["drift_governance_disabled"]
 
         if result.paper_patch_path is not None:
             self.state.last_autonomy_patch = str(result.paper_patch_path)
@@ -2397,3 +2872,17 @@ def _incident_payload_complete(payload: Mapping[str, Any]) -> bool:
     if not isinstance(safety_snapshot, Mapping):
         return False
     return True
+
+
+def _parse_iso_datetime(raw: str) -> datetime | None:
+    text = raw.strip()
+    if not text:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed

@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import process from 'node:process'
+import YAML from 'yaml'
 
 import { fatal, repoRoot } from '../shared/cli'
 import { inspectImageDigest } from '../shared/docker'
@@ -18,10 +19,13 @@ export type UpdateManifestsOptions = {
   imageName: string
   tag: string
   digest?: string
+  controlPlaneImageName?: string
+  controlPlaneDigest?: string
   rolloutTimestamp: string
   kustomizationPath?: string
   serviceManifestPath?: string
   workerManifestPath?: string
+  agentsValuesPath?: string
 }
 
 type CliOptions = {
@@ -29,10 +33,13 @@ type CliOptions = {
   repository?: string
   tag?: string
   digest?: string
+  controlPlaneImageName?: string
+  controlPlaneDigest?: string
   rolloutTimestamp?: string
   kustomizationPath?: string
   serviceManifestPath?: string
   workerManifestPath?: string
+  agentsValuesPath?: string
 }
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -44,6 +51,11 @@ const normalizeDigest = (digest: string): string => {
   if (!trimmed) return trimmed
   const atIndex = trimmed.lastIndexOf('@')
   return atIndex >= 0 ? trimmed.slice(atIndex + 1) : trimmed
+}
+
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
+  return null
 }
 
 const updateKustomizationManifest = (
@@ -100,11 +112,66 @@ const updateRolloutAnnotation = (
   return true
 }
 
+const updateAgentsValuesManifest = (
+  valuesPath: string,
+  imageName: string,
+  tag: string,
+  digest: string,
+  controlPlaneImageName?: string,
+  controlPlaneDigest?: string,
+): boolean => {
+  const source = readFileSync(valuesPath, 'utf8')
+  const parsed = YAML.parse(source)
+  const doc = asRecord(parsed) ?? {}
+
+  const image = asRecord(doc.image) ?? {}
+  image.repository = imageName
+  image.tag = tag
+  image.digest = digest
+  doc.image = image
+
+  const runner = asRecord(doc.runner) ?? {}
+  const runnerImage = asRecord(runner.image) ?? {}
+  runnerImage.repository = imageName
+  runnerImage.tag = tag
+  runnerImage.digest = digest
+  runner.image = runnerImage
+  doc.runner = runner
+
+  if (controlPlaneDigest) {
+    const controlPlane = asRecord(doc.controlPlane) ?? {}
+    const controlPlaneImage = asRecord(controlPlane.image) ?? {}
+    const fallbackControlPlaneRepository = imageName.endsWith('/jangar')
+      ? `${imageName.slice(0, -'/jangar'.length)}/jangar-control-plane`
+      : `${imageName}-control-plane`
+    const existingControlPlaneRepository =
+      typeof controlPlaneImage.repository === 'string' ? controlPlaneImage.repository.trim() : ''
+    controlPlaneImage.repository =
+      controlPlaneImageName ?? (existingControlPlaneRepository || fallbackControlPlaneRepository)
+    controlPlaneImage.tag = tag
+    controlPlaneImage.digest = normalizeDigest(controlPlaneDigest)
+    controlPlane.image = controlPlaneImage
+    doc.controlPlane = controlPlane
+  }
+
+  const updated = YAML.stringify(doc, { lineWidth: 120 })
+  if (source === updated) {
+    console.warn('Warning: agents values were not updated; values already match requested image.')
+    return false
+  }
+
+  writeFileSync(valuesPath, updated)
+  console.log(`Updated ${valuesPath} with ${imageName}:${tag}@${digest}`)
+  return true
+}
+
 export const updateJangarManifests = (options: UpdateManifestsOptions) => {
   const kustomizationPath = resolvePath(options.kustomizationPath ?? defaultKustomizationPath)
   const serviceManifestPath = resolvePath(options.serviceManifestPath ?? defaultServiceManifestPath)
   const workerManifestPath = resolvePath(options.workerManifestPath ?? defaultWorkerManifestPath)
   const digest = normalizeDigest(options.digest ?? inspectImageDigest(`${options.imageName}:${options.tag}`))
+  const controlPlaneDigest = options.controlPlaneDigest ? normalizeDigest(options.controlPlaneDigest) : undefined
+  const agentsValuesPath = options.agentsValuesPath ? resolvePath(options.agentsValuesPath) : null
 
   const kustomizationChanged = updateKustomizationManifest(kustomizationPath, options.imageName, options.tag, digest)
   const serviceChanged = updateRolloutAnnotation(
@@ -119,15 +186,27 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
     options.rolloutTimestamp,
     'worker rollout',
   )
+  const agentsValuesChanged = agentsValuesPath
+    ? updateAgentsValuesManifest(
+        agentsValuesPath,
+        options.imageName,
+        options.tag,
+        digest,
+        options.controlPlaneImageName,
+        controlPlaneDigest,
+      )
+    : false
 
   return {
     tag: options.tag,
     digest,
+    controlPlaneDigest,
     rolloutTimestamp: options.rolloutTimestamp,
     changed: {
       kustomization: kustomizationChanged,
       service: serviceChanged,
       worker: workerChanged,
+      agentsValues: agentsValuesChanged,
     },
   }
 }
@@ -144,10 +223,13 @@ Options:
   --repository <value>
   --tag <value>
   --digest <value>
+  --control-plane-image-name <value>
+  --control-plane-digest <value>
   --rollout-timestamp <ISO8601>
   --kustomization-path <path>
   --service-manifest-path <path>
-  --worker-manifest-path <path>`)
+  --worker-manifest-path <path>
+  --agents-values-path <path>`)
       process.exit(0)
     }
 
@@ -177,6 +259,12 @@ Options:
       case '--digest':
         options.digest = value
         break
+      case '--control-plane-image-name':
+        options.controlPlaneImageName = value
+        break
+      case '--control-plane-digest':
+        options.controlPlaneDigest = value
+        break
       case '--rollout-timestamp':
         options.rolloutTimestamp = value
         break
@@ -188,6 +276,9 @@ Options:
         break
       case '--worker-manifest-path':
         options.workerManifestPath = value
+        break
+      case '--agents-values-path':
+        options.agentsValuesPath = value
         break
       default:
         throw new Error(`Unknown option: ${flag}`)
@@ -210,10 +301,13 @@ export const main = (cliOptions?: CliOptions) => {
     imageName: `${registry}/${repository}`,
     tag,
     digest,
+    controlPlaneImageName: parsed.controlPlaneImageName ?? process.env.JANGAR_CONTROL_PLANE_IMAGE_NAME,
+    controlPlaneDigest: parsed.controlPlaneDigest ?? process.env.JANGAR_CONTROL_PLANE_IMAGE_DIGEST,
     rolloutTimestamp,
     kustomizationPath: parsed.kustomizationPath ?? process.env.JANGAR_KUSTOMIZATION_PATH,
     serviceManifestPath: parsed.serviceManifestPath ?? process.env.JANGAR_SERVICE_MANIFEST,
     workerManifestPath: parsed.workerManifestPath ?? process.env.JANGAR_WORKER_MANIFEST,
+    agentsValuesPath: parsed.agentsValuesPath ?? process.env.JANGAR_AGENTS_VALUES_PATH,
   })
 
   console.log(
@@ -234,4 +328,5 @@ export const __private = {
   normalizeDigest,
   updateKustomizationManifest,
   updateRolloutAnnotation,
+  updateAgentsValuesManifest,
 }

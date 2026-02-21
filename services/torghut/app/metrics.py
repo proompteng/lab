@@ -251,6 +251,112 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key == "forecast_router_inference_latency_ms":
+                    metric_name = "torghut_forecast_router_inference_latency_ms"
+                    lines.append(
+                        f"# HELP {metric_name} Deterministic forecast inference latency by model family."
+                    )
+                    lines.append(f"# TYPE {metric_name} gauge")
+                    sorted_items = sorted(
+                        [
+                            (str(family), int(latency))
+                            for family, latency in cast(dict[str, object], value).items()
+                            if isinstance(latency, int)
+                        ]
+                    )
+                    for family, latency in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"model_family": family},
+                                value=latency,
+                            )
+                        )
+                    continue
+                if key == "forecast_router_fallback_total":
+                    metric_name = "torghut_forecast_router_fallback_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of forecast router fallbacks by reason."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(reason), int(count))
+                            for reason, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for reason, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"reason": reason},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "forecast_calibration_error":
+                    metric_name = "torghut_forecast_calibration_error"
+                    lines.append(
+                        f"# HELP {metric_name} Forecast calibration error by model family, symbol, and horizon."
+                    )
+                    lines.append(f"# TYPE {metric_name} gauge")
+                    sorted_items = sorted(
+                        [
+                            (str(route_key), str(error_value))
+                            for route_key, error_value in cast(dict[str, object], value).items()
+                        ]
+                    )
+                    for route_key, error_value in sorted_items:
+                        parts = route_key.split("|", 2)
+                        if len(parts) != 3:
+                            continue
+                        family, symbol, horizon = parts
+                        try:
+                            parsed_error = float(error_value)
+                        except (ValueError, TypeError):
+                            continue
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={
+                                    "model_family": family,
+                                    "symbol": symbol,
+                                    "horizon": horizon,
+                                },
+                                value=parsed_error,
+                            )
+                        )
+                    continue
+                if key == "forecast_route_selection_total":
+                    metric_name = "torghut_forecast_route_selection_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of forecast route selections by model family and route key."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(route_key), int(count))
+                            for route_key, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for route_key, count in sorted_items:
+                        parts = route_key.split("|", 1)
+                        if len(parts) != 2:
+                            continue
+                        family, route_label = parts
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={
+                                    "model_family": family,
+                                    "route_key": route_label,
+                                },
+                                value=count,
+                            )
+                        )
+                    continue
                 if key in {"llm_market_context_reason_total", "llm_market_context_shadow_total"}:
                     metric_name = (
                         "torghut_trading_llm_market_context_reason_total"
@@ -295,6 +401,73 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             _render_labeled_metric(
                                 metric_name=metric_name,
                                 labels={"classification": classification},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "llm_committee_requests_total":
+                    metric_name = "torghut_trading_llm_committee_requests_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of LLM committee role requests."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(role), int(count))
+                            for role, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for role, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"role": role},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "llm_committee_latency_ms":
+                    metric_name = "torghut_trading_llm_committee_latency_ms"
+                    lines.append(
+                        f"# HELP {metric_name} Last observed LLM committee role latency in milliseconds."
+                    )
+                    lines.append(f"# TYPE {metric_name} gauge")
+                    sorted_items = sorted(
+                        [
+                            (str(role), int(value_ms))
+                            for role, value_ms in cast(dict[str, object], value).items()
+                            if isinstance(value_ms, int)
+                        ]
+                    )
+                    for role, value_ms in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"role": role},
+                                value=value_ms,
+                            )
+                        )
+                    continue
+                if key == "llm_committee_verdict_total":
+                    metric_name = "torghut_trading_llm_committee_verdict_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of committee role verdicts."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(label), int(count))
+                            for label, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for label, count in sorted_items:
+                        role, verdict = (label.split(":", 1) + ["unknown"])[:2]
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"role": role, "verdict": verdict},
                                 value=count,
                             )
                         )
@@ -422,6 +595,22 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
             lines.append(f"# HELP {metric_name} Torghut trading metric {key.replace('_', ' ')}.")
             lines.append(f"# TYPE {metric_name} gauge")
             lines.append(f"{metric_name} {value}")
+            continue
+        if key == "llm_committee_veto_alignment_total":
+            metric_name = "torghut_trading_llm_committee_veto_alignment_total"
+            lines.append(
+                f"# HELP {metric_name} Count of committee vetoes aligned with deterministic veto outcomes."
+            )
+            lines.append(f"# TYPE {metric_name} counter")
+            lines.append(f"{metric_name} {value}")
+            veto_total = _coerce_int(metrics.get("llm_committee_veto_total"))
+            rate_name = "torghut_trading_llm_committee_veto_alignment_rate"
+            lines.append(
+                f"# HELP {rate_name} Ratio of committee vetoes aligned with deterministic veto outcomes."
+            )
+            lines.append(f"# TYPE {rate_name} gauge")
+            rate = float(value) / veto_total if veto_total > 0 else 1.0
+            lines.append(f"{rate_name} {rate}")
             continue
         metric_name = f"torghut_trading_{key}"
         help_text = f"Torghut trading metric {key.replace('_', ' ')}."

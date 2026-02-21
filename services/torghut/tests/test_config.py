@@ -160,3 +160,18 @@ class TestConfig(TestCase):
             settings.trading_signal_staleness_alert_critical_reasons,
             {"cursor_ahead_of_stream", "universe_source_unavailable"},
         )
+
+    def test_parses_drift_reason_code_sets(self) -> None:
+        settings = Settings(
+            TRADING_DRIFT_TRIGGER_RETRAIN_REASON_CODES="a,b",
+            TRADING_DRIFT_TRIGGER_RESELECTION_REASON_CODES="c,d",
+            TRADING_DRIFT_ROLLBACK_REASON_CODES="x,y",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(
+            settings.trading_drift_trigger_retrain_reason_codes, {"a", "b"}
+        )
+        self.assertEqual(
+            settings.trading_drift_trigger_reselection_reason_codes, {"c", "d"}
+        )
+        self.assertEqual(settings.trading_drift_rollback_reason_codes, {"x", "y"})
