@@ -1,36 +1,36 @@
 namespace: default
 flags:
-  - key: jangar.market_context.enabled
+  - key: jangar_market_context_enabled
     name: Jangar Market Context
     description: Enables market context fetching and health checks in Jangar.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
-  - key: jangar.orchestration_controller.enabled
+  - key: jangar_orchestration_controller_enabled
     name: Jangar Orchestration Controller
     description: Enables orchestration controller startup in Jangar.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
-  - key: jangar.supporting_controller.enabled
+  - key: jangar_supporting_controller_enabled
     name: Jangar Supporting Controller
     description: Enables supporting controller startup in Jangar.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
-  - key: jangar.agents_controller.enabled
+  - key: jangar_agents_controller_enabled
     name: Jangar Agents Controller
     description: Enables agents controller startup in Jangar.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
-  - key: jangar.primitives_reconciler.enabled
+  - key: jangar_primitives_reconciler_enabled
     name: Jangar Primitives Reconciler
     description: Enables primitives reconciler startup in Jangar.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
-  - key: jangar.ci_event_stream.enabled
+  - key: jangar_ci_event_stream_enabled
     name: Jangar CI Event Stream
     description: Enables CI event stream updates in Codex judge.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
-  - key: jangar.torghut.decision_engine.enabled
+  - key: jangar_torghut_decision_engine_enabled
     name: Jangar Torghut Decision Engine
     description: Enables Torghut decision engine execution in Jangar.
     type: BOOLEAN_FLAG_TYPE
