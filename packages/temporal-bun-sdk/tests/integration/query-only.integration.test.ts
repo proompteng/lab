@@ -7,6 +7,7 @@ import { loadTemporalConfig } from '../../src/config'
 import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import {
+  findTemporalCliUnavailableError,
   TemporalCliCommandError,
   TemporalCliUnavailableError,
   createIntegrationHarness,
@@ -36,15 +37,25 @@ describeIntegration('Query-only workflow tasks', () => {
   beforeAll(async () => {
     const harnessExit = await Effect.runPromiseExit(createIntegrationHarness(CLI_CONFIG))
     if (Exit.isFailure(harnessExit)) {
-      if (harnessExit.cause instanceof TemporalCliUnavailableError) {
+      const unavailable = findTemporalCliUnavailableError(harnessExit.cause)
+      if (unavailable) {
         cliUnavailable = true
-        console.warn(`[temporal-bun-sdk] skipping query-only integration: ${harnessExit.cause.message}`)
+        console.warn(`[temporal-bun-sdk] skipping query-only integration: ${unavailable.message}`)
         return
       }
       throw harnessExit.cause
     }
     harness = harnessExit.value
-    await Effect.runPromise(harness.setup)
+    const setupExit = await Effect.runPromiseExit(harness.setup)
+    if (Exit.isFailure(setupExit)) {
+      const unavailable = findTemporalCliUnavailableError(setupExit.cause)
+      if (unavailable) {
+        cliUnavailable = true
+        console.warn(`[temporal-bun-sdk] skipping query-only integration: ${unavailable.message}`)
+        return
+      }
+      throw setupExit.cause
+    }
 
     const runtimeConfig = await loadTemporalConfig({
       defaults: {

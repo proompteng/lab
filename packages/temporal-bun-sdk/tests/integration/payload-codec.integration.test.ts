@@ -11,6 +11,7 @@ import { WorkerRuntime } from '../../src/worker/runtime'
 import { defineWorkflow, defineWorkflowUpdates } from '../../src/workflow/definition'
 import { defineWorkflowQueries } from '../../src/workflow/inbound'
 import {
+  findTemporalCliUnavailableError,
   TemporalCliUnavailableError,
   createIntegrationHarness,
   type IntegrationHarness,
@@ -100,15 +101,25 @@ describeIntegration('payload codec E2E', () => {
   beforeAll(async () => {
     const harnessExit = await Effect.runPromiseExit(createIntegrationHarness(CLI_CONFIG))
     if (Exit.isFailure(harnessExit)) {
-      if (harnessExit.cause instanceof TemporalCliUnavailableError) {
+      const unavailable = findTemporalCliUnavailableError(harnessExit.cause)
+      if (unavailable) {
         cliUnavailable = true
-        console.warn(`[temporal-bun-sdk] skipping codec integration: ${harnessExit.cause.message}`)
+        console.warn(`[temporal-bun-sdk] skipping codec integration: ${unavailable.message}`)
         return
       }
       throw harnessExit.cause
     }
     harness = harnessExit.value
-    await Effect.runPromise(harness.setup)
+    const setupExit = await Effect.runPromiseExit(harness.setup)
+    if (Exit.isFailure(setupExit)) {
+      const unavailable = findTemporalCliUnavailableError(setupExit.cause)
+      if (unavailable) {
+        cliUnavailable = true
+        console.warn(`[temporal-bun-sdk] skipping codec integration: ${unavailable.message}`)
+        return
+      }
+      throw setupExit.cause
+    }
 
     const payloadCodecs = [
       { name: 'gzip' as const },
