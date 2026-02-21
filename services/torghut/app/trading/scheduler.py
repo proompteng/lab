@@ -1046,7 +1046,13 @@ class TradingPipeline:
                 return
 
             verdict = self.risk_engine.evaluate(
-                session, decision, strategy, account, positions, symbol_allowlist
+                session,
+                decision,
+                strategy,
+                account,
+                positions,
+                symbol_allowlist,
+                execution_advisor=policy_outcome.advisor_metadata,
             )
             if not verdict.approved:
                 self.state.metrics.orders_rejected_total += 1

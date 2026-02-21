@@ -409,6 +409,21 @@ class Settings(BaseSettings):
     trading_execution_backoff_max_seconds: float = Field(
         default=2.0, alias="TRADING_EXECUTION_BACKOFF_MAX_SECONDS"
     )
+    trading_execution_advisor_enabled: bool = Field(
+        default=False,
+        alias="TRADING_EXECUTION_ADVISOR_ENABLED",
+        description="Enable bounded microstructure execution advisor integration.",
+    )
+    trading_execution_advisor_max_staleness_seconds: int = Field(
+        default=15,
+        alias="TRADING_EXECUTION_ADVISOR_MAX_STALENESS_SECONDS",
+        description="Maximum tolerated age for advisor microstructure/advice payloads.",
+    )
+    trading_execution_advisor_timeout_ms: int = Field(
+        default=250,
+        alias="TRADING_EXECUTION_ADVISOR_TIMEOUT_MS",
+        description="Maximum tolerated advisor inference latency before deterministic fallback.",
+    )
     trading_execution_adapter: Literal["alpaca", "lean"] = Field(
         default="alpaca",
         alias="TRADING_EXECUTION_ADAPTER",

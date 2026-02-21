@@ -228,31 +228,29 @@ class TestRiskEngine(TestCase):
         self.assertFalse(verdict.approved)
         self.assertIn("max_notional_exceeded", verdict.reasons)
 
-    def test_allocator_notional_invariant_breach_is_rejected(self) -> None:
+    def test_rejects_high_adverse_selection_risk_from_advisor(self) -> None:
         decision = StrategyDecision(
             strategy_id="s1",
             symbol="AAPL",
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
             timeframe="1Min",
             action="buy",
-            qty=Decimal("5"),
+            qty=Decimal("1"),
             order_type="market",
             time_in_force="day",
-            params={
-                "price": Decimal("100"),
-                "allocator": {
-                    "status": "approved",
-                    "approved_notional": "300",
-                    "approved_qty": "3",
-                    "reason_codes": ["allocator_clip_symbol_capacity"],
-                },
-            },
+            params={"price": Decimal("100")},
         )
-        account = {"equity": "100000", "cash": "100000", "buying_power": "100000"}
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
         positions: list[dict[str, str]] = []
         with self.session_local() as session:
             verdict = self.risk_engine.evaluate(
-                session, decision, self.strategy, account, positions, {"AAPL"}
+                session,
+                decision,
+                self.strategy,
+                account,
+                positions,
+                {"AAPL"},
+                execution_advisor={"adverse_selection_risk": "0.95"},
             )
         self.assertFalse(verdict.approved)
-        self.assertIn("allocator_notional_invariant_breached", verdict.reasons)
+        self.assertIn("adverse_selection_risk_exceeds_maximum", verdict.reasons)

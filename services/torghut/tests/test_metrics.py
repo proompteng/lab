@@ -149,6 +149,7 @@ class TestTradingMetrics(TestCase):
                     "avg_slippage_bps": 12.5,
                     "avg_shortfall_notional": 1.25,
                     "avg_churn_ratio": 0.4,
+                    "avg_divergence_bps": 2.1,
                 },
             }
         )
@@ -156,6 +157,7 @@ class TestTradingMetrics(TestCase):
         self.assertIn("torghut_trading_tca_avg_slippage_bps 12.5", payload)
         self.assertIn("torghut_trading_tca_avg_shortfall_notional 1.25", payload)
         self.assertIn("torghut_trading_tca_avg_churn_ratio 0.4", payload)
+        self.assertIn("torghut_trading_tca_avg_divergence_bps 2.1", payload)
 
     def test_allocator_multiplier_metrics_preserve_pipe_delimited_regime_labels(self) -> None:
         metrics = TradingMetrics()

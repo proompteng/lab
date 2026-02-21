@@ -536,6 +536,11 @@ def _tca_row_payload(row: ExecutionTCAMetric | None) -> dict[str, object] | None
         "avg_fill_price": row.avg_fill_price,
         "slippage_bps": row.slippage_bps,
         "shortfall_notional": row.shortfall_notional,
+        "expected_shortfall_bps_p50": row.expected_shortfall_bps_p50,
+        "expected_shortfall_bps_p95": row.expected_shortfall_bps_p95,
+        "realized_shortfall_bps": row.realized_shortfall_bps,
+        "divergence_bps": row.divergence_bps,
+        "simulator_version": row.simulator_version,
         "churn_qty": row.churn_qty,
         "churn_ratio": row.churn_ratio,
         "computed_at": row.computed_at,
@@ -549,6 +554,7 @@ def _load_tca_summary(session: Session) -> dict[str, object]:
             func.avg(ExecutionTCAMetric.slippage_bps),
             func.avg(ExecutionTCAMetric.shortfall_notional),
             func.avg(ExecutionTCAMetric.churn_ratio),
+            func.avg(ExecutionTCAMetric.divergence_bps),
             func.max(ExecutionTCAMetric.computed_at),
         )
     ).one()
@@ -563,7 +569,8 @@ def _load_tca_summary(session: Session) -> dict[str, object]:
         "avg_slippage_bps": row[1],
         "avg_shortfall_notional": row[2],
         "avg_churn_ratio": row[3],
-        "last_computed_at": row[4],
+        "avg_divergence_bps": row[4],
+        "last_computed_at": row[5],
     }
 
 
@@ -574,13 +581,13 @@ def _load_route_provenance_summary(session: Session) -> dict[str, object]:
             func.count(Execution.id),
             func.count(Execution.id).filter(
                 (Execution.execution_expected_adapter.is_(None))
-                | (func.btrim(Execution.execution_expected_adapter) == '')
+                | (func.btrim(Execution.execution_expected_adapter) == "")
                 | (Execution.execution_actual_adapter.is_(None))
-                | (func.btrim(Execution.execution_actual_adapter) == '')
+                | (func.btrim(Execution.execution_actual_adapter) == "")
             ),
             func.count(Execution.id).filter(
-                (func.lower(Execution.execution_expected_adapter) == 'unknown')
-                | (func.lower(Execution.execution_actual_adapter) == 'unknown')
+                (func.lower(Execution.execution_expected_adapter) == "unknown")
+                | (func.lower(Execution.execution_actual_adapter) == "unknown")
             ),
             func.count(Execution.id).filter(
                 func.lower(Execution.execution_expected_adapter)

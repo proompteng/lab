@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Iterable, Mapping, Optional, cast
+from typing import Any, Iterable, Mapping, Optional, cast
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -14,6 +14,7 @@ from ..models import Strategy, TradeDecision
 from .models import RiskCheckResult, StrategyDecision
 
 FINAL_STATUSES = {"filled", "canceled", "rejected", "expired"}
+MAX_ADVERSE_SELECTION_RISK = Decimal("0.85")
 
 
 class RiskEngine:
@@ -27,6 +28,7 @@ class RiskEngine:
         account: dict[str, str],
         positions: Iterable[dict[str, str]],
         allowed_symbols: Optional[set[str]] = None,
+        execution_advisor: Mapping[str, Any] | None = None,
     ) -> RiskCheckResult:
         reasons: list[str] = []
 
@@ -60,21 +62,31 @@ class RiskEngine:
             ):
                 reasons.append("fragility_crisis_entry_blocked")
 
-        max_notional = _resolve_decimal(strategy.max_notional_per_trade) or _resolve_decimal(
-            settings.trading_max_notional_per_trade
-        )
+        max_notional = _resolve_decimal(
+            strategy.max_notional_per_trade
+        ) or _resolve_decimal(settings.trading_max_notional_per_trade)
         enforce_notional = decision.action == "buy" or short_increasing
-        if enforce_notional and notional is not None and max_notional is not None and notional > max_notional:
+        if (
+            enforce_notional
+            and notional is not None
+            and max_notional is not None
+            and notional > max_notional
+        ):
             reasons.append("max_notional_exceeded")
 
         equity = _resolve_decimal(account.get("equity"))
         buying_power = _resolve_decimal(account.get("buying_power"))
-        if enforce_notional and notional is not None and buying_power is not None and notional > buying_power:
+        if (
+            enforce_notional
+            and notional is not None
+            and buying_power is not None
+            and notional > buying_power
+        ):
             reasons.append("insufficient_buying_power")
 
-        max_pct = _resolve_decimal(strategy.max_position_pct_equity) or _resolve_decimal(
-            settings.trading_max_position_pct_equity
-        )
+        max_pct = _resolve_decimal(
+            strategy.max_position_pct_equity
+        ) or _resolve_decimal(settings.trading_max_position_pct_equity)
         if max_pct is not None and equity is not None and notional is not None:
             delta = notional if decision.action == "buy" else -notional
             projected_value = position_value + delta
@@ -97,7 +109,9 @@ class RiskEngine:
 
         cooldown_seconds = settings.trading_cooldown_seconds
         if cooldown_seconds > 0:
-            recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=cooldown_seconds)
+            recent_cutoff = datetime.now(timezone.utc) - timedelta(
+                seconds=cooldown_seconds
+            )
             stmt = (
                 select(TradeDecision)
                 .where(TradeDecision.symbol == decision.symbol)
@@ -108,6 +122,10 @@ class RiskEngine:
             recent = session.execute(stmt).scalar_one_or_none()
             if recent and recent.status != "rejected":
                 reasons.append("cooldown_active")
+
+        adverse_selection = _extract_adverse_selection_risk(execution_advisor)
+        if adverse_selection is not None and adverse_selection > MAX_ADVERSE_SELECTION_RISK:
+            reasons.append("adverse_selection_risk_exceeds_maximum")
 
         return RiskCheckResult(approved=len(reasons) == 0, reasons=reasons)
 
@@ -136,7 +154,9 @@ def _resolve_decimal(value: Optional[Decimal | str | float]) -> Optional[Decimal
         return None
 
 
-def _position_summary(symbol: str, positions: Iterable[dict[str, str]]) -> tuple[Decimal, Decimal]:
+def _position_summary(
+    symbol: str, positions: Iterable[dict[str, str]]
+) -> tuple[Decimal, Decimal]:
     total_qty = Decimal("0")
     total_value = Decimal("0")
     for position in positions:
@@ -211,6 +231,15 @@ def _allocator_approved_notional(decision: StrategyDecision) -> Optional[Decimal
         return None
     payload = cast(Mapping[str, object], allocator)
     return _resolve_decimal(cast(Decimal | str | float | None, payload.get("approved_notional")))
+
+
+def _extract_adverse_selection_risk(
+    payload: Mapping[str, Any] | None,
+) -> Decimal | None:
+    if payload is None:
+        return None
+    raw = payload.get("adverse_selection_risk")
+    return _resolve_decimal(raw)
 
 
 __all__ = ["RiskEngine", "FINAL_STATUSES"]
