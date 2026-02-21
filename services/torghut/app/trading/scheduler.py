@@ -1726,6 +1726,12 @@ def _resolve_signal_regime(signal: SignalEnvelope) -> Optional[str]:
 
 def _resolve_decision_regime_label(decision: StrategyDecision) -> Optional[str]:
     params = decision.params
+    allocator = params.get("allocator")
+    if isinstance(allocator, Mapping):
+        allocator_map = cast(Mapping[str, Any], allocator)
+        allocator_regime = allocator_map.get("regime_label")
+        if isinstance(allocator_regime, str) and allocator_regime.strip():
+            return allocator_regime.strip().lower()
     direct = params.get("regime_label")
     if isinstance(direct, str) and direct.strip():
         return direct.strip().lower()

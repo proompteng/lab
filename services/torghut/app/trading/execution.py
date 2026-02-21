@@ -83,7 +83,9 @@ class OrderExecutor:
         if existing_execution is not None:
             logger.info('Execution already exists for decision %s', decision_row.id)
             return None
-        execution_policy_context = _extract_execution_policy_context(decision)
+        execution_policy_context = _extract_execution_policy_context(
+            decision, decision_row=decision_row
+        )
 
         existing_order = self._fetch_existing_order(execution_client, decision_row.decision_hash)
         if existing_order is not None:
@@ -315,8 +317,20 @@ def _coerce_json(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _extract_execution_policy_context(decision: StrategyDecision) -> dict[str, Any]:
-    execution_policy = decision.params.get('execution_policy')
+def _extract_execution_policy_context(
+    decision: StrategyDecision,
+    *,
+    decision_row: Optional[TradeDecision] = None,
+) -> dict[str, Any]:
+    execution_policy: Any = None
+    if decision_row is not None:
+        decision_json = _coerce_json(decision_row.decision_json)
+        params_value = decision_json.get('params')
+        if isinstance(params_value, Mapping):
+            params_map = cast(Mapping[str, Any], params_value)
+            execution_policy = params_map.get('execution_policy')
+    if not isinstance(execution_policy, Mapping):
+        execution_policy = decision.params.get('execution_policy')
     if not isinstance(execution_policy, Mapping):
         return {}
     policy_map = cast(Mapping[str, Any], execution_policy)
