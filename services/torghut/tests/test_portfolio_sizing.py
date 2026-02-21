@@ -6,6 +6,7 @@ from unittest import TestCase
 
 from app import config
 from app.trading.models import StrategyDecision
+from app.trading.fragility import FragilityMonitor, FragilityMonitorConfig
 from app.trading.portfolio import (
     ALLOCATOR_CLIP_CORRELATION_CAPACITY,
     ALLOCATOR_CLIP_SYMBOL_CAPACITY,
@@ -88,7 +89,14 @@ class TestPortfolioSizing(TestCase):
             qty=Decimal("20"),
             order_type="market",
             time_in_force="day",
-            params={"price": Decimal("100")},
+            params={
+                "price": Decimal("100"),
+                "fragility_state": "normal",
+                "spread_acceleration": Decimal("0"),
+                "liquidity_compression": Decimal("0"),
+                "crowding_proxy": Decimal("0"),
+                "correlation_concentration": Decimal("0"),
+            },
         )
 
         results = allocator.allocate(

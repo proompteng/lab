@@ -55,6 +55,9 @@ class GateInputs:
     llm_metrics: dict[str, Any] = field(default_factory=_empty_dict)
     forecast_metrics: dict[str, Any] = field(default_factory=_empty_dict)
     profitability_evidence: dict[str, Any] = field(default_factory=_empty_dict)
+    fragility_state: str = "elevated"
+    fragility_score: Decimal = Decimal("0.5")
+    stability_mode_active: bool = False
     operational_ready: bool = True
     runbook_validated: bool = True
     kill_switch_dry_run_passed: bool = True
@@ -82,6 +85,9 @@ class GatePolicyMatrix:
     gate2_max_tca_slippage_bps: Decimal = Decimal("25")
     gate2_max_tca_shortfall_notional: Decimal = Decimal("25")
     gate2_max_tca_churn_ratio: Decimal = Decimal("0.75")
+    gate2_max_fragility_score: Decimal = Decimal("0.85")
+    gate2_max_fragility_state_rank: int = 2
+    gate2_require_stability_mode_under_stress: bool = True
 
     gate3_max_llm_error_ratio: Decimal = Decimal("0.10")
     gate3_max_forecast_fallback_rate: Decimal = Decimal("0.05")
@@ -150,6 +156,15 @@ class GatePolicyMatrix:
             ),
             gate2_max_tca_churn_ratio=_decimal_or_default(
                 payload.get("gate2_max_tca_churn_ratio"), Decimal("0.75")
+            ),
+            gate2_max_fragility_score=_decimal_or_default(
+                payload.get("gate2_max_fragility_score"), Decimal("0.85")
+            ),
+            gate2_max_fragility_state_rank=int(
+                payload.get("gate2_max_fragility_state_rank", 2)
+            ),
+            gate2_require_stability_mode_under_stress=bool(
+                payload.get("gate2_require_stability_mode_under_stress", True)
             ),
             gate3_max_llm_error_ratio=_decimal_or_default(
                 payload.get("gate3_max_llm_error_ratio"), Decimal("0.10")
@@ -250,6 +265,9 @@ class GatePolicyMatrix:
                 self.gate2_max_tca_shortfall_notional
             ),
             "gate2_max_tca_churn_ratio": str(self.gate2_max_tca_churn_ratio),
+            "gate2_max_fragility_score": str(self.gate2_max_fragility_score),
+            "gate2_max_fragility_state_rank": self.gate2_max_fragility_state_rank,
+            "gate2_require_stability_mode_under_stress": self.gate2_require_stability_mode_under_stress,
             "gate3_max_llm_error_ratio": str(self.gate3_max_llm_error_ratio),
             "gate3_max_forecast_fallback_rate": str(
                 self.gate3_max_forecast_fallback_rate
@@ -487,6 +505,17 @@ def _gate2_risk_and_capacity(
         reasons.append("turnover_ratio_exceeds_maximum")
     if cost_bps > policy.gate2_max_cost_bps:
         reasons.append("cost_bps_exceeds_maximum")
+    if inputs.fragility_score > policy.gate2_max_fragility_score:
+        reasons.append("fragility_score_exceeds_maximum")
+    fragility_rank = _fragility_state_rank(inputs.fragility_state)
+    if fragility_rank > policy.gate2_max_fragility_state_rank:
+        reasons.append("fragility_state_exceeds_maximum")
+    if (
+        policy.gate2_require_stability_mode_under_stress
+        and fragility_rank >= _fragility_state_rank("stress")
+        and not inputs.stability_mode_active
+    ):
+        reasons.append("fragility_stability_mode_inactive")
     tca_order_count = int(inputs.tca_metrics.get("order_count", 0))
     if tca_order_count > 0:
         avg_tca_slippage = _decimal(
@@ -804,6 +833,12 @@ def _dict_from_any(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
     return cast(dict[str, Any], value)
+
+
+def _fragility_state_rank(state: str) -> int:
+    normalized = state.strip().lower()
+    ranks = {"normal": 0, "elevated": 1, "stress": 2, "crisis": 3}
+    return ranks.get(normalized, 1)
 
 
 __all__ = [

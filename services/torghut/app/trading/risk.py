@@ -49,6 +49,16 @@ class RiskEngine:
         notional = price * qty if price is not None else None
         position_qty, position_value = _position_summary(decision.symbol, positions)
         short_increasing = _is_short_increasing(decision.action, qty, position_qty)
+        allocator_meta = _allocator_payload(decision)
+        fragility_state = _fragility_state_from_allocator(allocator_meta)
+        stability_mode_active = bool(allocator_meta.get("stability_mode_active", False))
+        if settings.trading_fragility_mode == "enforce":
+            if fragility_state in {"stress", "crisis"} and not stability_mode_active:
+                reasons.append("fragility_stability_mode_mismatch")
+            if fragility_state == "crisis" and _is_risk_increasing_trade(
+                decision.action, short_increasing
+            ):
+                reasons.append("fragility_crisis_entry_blocked")
 
         max_notional = _resolve_decimal(strategy.max_notional_per_trade) or _resolve_decimal(
             settings.trading_max_notional_per_trade

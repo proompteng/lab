@@ -453,11 +453,16 @@ def run_autonomous_lane(
             required_feature_null_rate=_required_feature_null_rate(signals),
             staleness_ms_p95=0,
             symbol_coverage=len({signal.symbol for signal in signals}),
-            metrics=report.metrics.to_payload(),
+            metrics=metrics_payload,
             robustness=report.robustness.to_payload(),
             tca_metrics=_load_tca_gate_inputs(factory),
             llm_metrics={"error_ratio": "0"},
             profitability_evidence=profitability_evidence_payload,
+            fragility_state=_coerce_fragility_state(metrics_payload.get("fragility_state")),
+            fragility_score=_decimal_or_default(
+                metrics_payload.get("fragility_score"), Decimal("0.5")
+            ),
+            stability_mode_active=bool(metrics_payload.get("stability_mode_active", False)),
             operational_ready=True,
             runbook_validated=True,
             kill_switch_dry_run_passed=True,
@@ -1496,6 +1501,22 @@ def _required_feature_null_rate(signals: list[SignalEnvelope]) -> Decimal:
     if total == 0:
         return Decimal("1")
     return Decimal(missing) / Decimal(total)
+
+
+def _coerce_fragility_state(value: object) -> str:
+    if not isinstance(value, str):
+        return "elevated"
+    normalized = value.strip().lower()
+    if normalized in {"normal", "elevated", "stress", "crisis"}:
+        return normalized
+    return "elevated"
+
+
+def _decimal_or_default(value: object, default: Decimal) -> Decimal:
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
+        return default
 
 
 def _load_tca_gate_inputs(

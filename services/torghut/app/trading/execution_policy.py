@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Optional, cast
 
 from ..config import settings
 from ..models import Strategy
@@ -98,6 +98,19 @@ class ExecutionPolicy:
     ) -> ExecutionPolicyOutcome:
         config = self._sanitize_config(self._resolve_config(strategy=strategy, kill_switch_enabled=kill_switch_enabled))
         reasons: list[str] = []
+        allocator_meta = _allocator_payload(decision)
+        participation_override = _optional_decimal(
+            allocator_meta.get("max_participation_rate_override")
+        )
+        if participation_override is not None:
+            config = self._sanitize_config(
+                config_from_update(
+                    config,
+                    max_participation_rate=min(
+                        config.max_participation_rate, participation_override
+                    ),
+                )
+            )
 
         if config.kill_switch_enabled:
             reasons.append('kill_switch_enabled')

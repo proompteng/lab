@@ -436,12 +436,25 @@ class TradingMetrics:
         self.allocator_regime_total[result.regime_label] = (
             self.allocator_regime_total.get(result.regime_label, 0) + 1
         )
+        self.allocator_fragility_state_total[result.fragility_state] = (
+            self.allocator_fragility_state_total.get(result.fragility_state, 0) + 1
+        )
+        multiplier_key = (
+            f"{result.regime_label}|{result.fragility_state}|"
+            f"{result.budget_multiplier}:{result.capacity_multiplier}"
+        )
+        self.allocator_multiplier_total[multiplier_key] = (
+            self.allocator_multiplier_total.get(multiplier_key, 0) + 1
+        )
+        self.fragility_score[result.decision.symbol] = float(result.fragility_score)
         if result.approved:
             self.allocator_approved_total += 1
         else:
             self.allocator_rejected_total += 1
         if result.clipped:
             self.allocator_clipped_total += 1
+        if result.stability_mode_active:
+            self.stability_mode_active_total += 1
         for reason_code in result.reason_codes:
             self.allocator_reason_total[reason_code] = (
                 self.allocator_reason_total.get(reason_code, 0) + 1

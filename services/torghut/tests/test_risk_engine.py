@@ -35,12 +35,15 @@ class TestRiskEngine(TestCase):
         self._original_allow_shorts = config.settings.trading_allow_shorts
         self._original_trading_enabled = config.settings.trading_enabled
         self._original_cooldown = config.settings.trading_cooldown_seconds
+        self._original_fragility_mode = config.settings.trading_fragility_mode
         config.settings.trading_enabled = True
+        config.settings.trading_fragility_mode = "enforce"
 
     def tearDown(self) -> None:
         config.settings.trading_allow_shorts = self._original_allow_shorts
         config.settings.trading_enabled = self._original_trading_enabled
         config.settings.trading_cooldown_seconds = self._original_cooldown
+        config.settings.trading_fragility_mode = self._original_fragility_mode
 
     def test_sell_reduces_position_bypasses_buying_power(self) -> None:
         decision = StrategyDecision(

@@ -138,6 +138,24 @@ class TestExecutionPolicy(TestCase):
         self.assertFalse(outcome.approved)
         self.assertIn("participation_exceeds_max", outcome.reasons)
 
+    def test_allocator_participation_override_only_tightens(self) -> None:
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.5")))
+        decision = _decision(qty=Decimal("200"), price=Decimal("10"))
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("10"),
+                    "adv": Decimal("1000"),
+                    "allocator": {"max_participation_rate_override": "0.1"},
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertFalse(outcome.approved)
+        self.assertIn("participation_exceeds_max", outcome.reasons)
+
     def test_sell_to_reduce_long_position_allowed_with_no_shorts(self) -> None:
         policy = ExecutionPolicy(config=_config(allow_shorts=False))
         outcome = policy.evaluate(

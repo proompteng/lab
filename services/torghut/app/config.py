@@ -1268,6 +1268,12 @@ class Settings(BaseSettings):
         return "stage3"
 
 
+def _validate_fragility_map(name: str, values: dict[str, float]) -> None:
+    for state, value in values.items():
+        if value < 0 or value > 1:
+            raise ValueError(f"{name}[{state}] must be within [0, 1]")
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Return a cached Settings instance so values are loaded once."""
