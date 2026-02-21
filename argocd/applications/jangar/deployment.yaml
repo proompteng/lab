@@ -106,7 +106,7 @@ spec:
             - name: JANGAR_CI_EVENT_STREAM_ENABLED
               value: "true"
             - name: JANGAR_CI_EVENT_STREAM_ENABLED_FLAG_KEY
-              value: jangar.ci_event_stream.enabled
+              value: jangar_ci_event_stream_enabled
             - name: JANGAR_MODELS
               value: gpt-5.3-codex
             - name: JANGAR_DEFAULT_MODEL
@@ -132,13 +132,13 @@ spec:
             - name: JANGAR_PRIMITIVES_RECONCILER
               value: "false"
             - name: JANGAR_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY
-              value: jangar.orchestration_controller.enabled
+              value: jangar_orchestration_controller_enabled
             - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
-              value: jangar.supporting_controller.enabled
+              value: jangar_supporting_controller_enabled
             - name: JANGAR_AGENTS_CONTROLLER_ENABLED_FLAG_KEY
-              value: jangar.agents_controller.enabled
+              value: jangar_agents_controller_enabled
             - name: JANGAR_PRIMITIVES_RECONCILER_FLAG_KEY
-              value: jangar.primitives_reconciler.enabled
+              value: jangar_primitives_reconciler_enabled
             - name: JANGAR_CI_MAX_WAIT_MS
               value: "3600000"
             - name: JANGAR_REVIEW_MAX_WAIT_MS
@@ -267,7 +267,7 @@ spec:
             - name: JANGAR_MARKET_CONTEXT_ENABLED
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_ENABLED_FLAG_KEY
-              value: jangar.market_context.enabled
+              value: jangar_market_context_enabled
             - name: JANGAR_MARKET_CONTEXT_CACHE_SECONDS
               value: "60"
             - name: JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
@@ -299,7 +299,7 @@ spec:
             - name: JANGAR_TORGHUT_DECISION_ENGINE_ENABLED
               value: "true"
             - name: JANGAR_TORGHUT_DECISION_ENGINE_ENABLED_FLAG_KEY
-              value: jangar.torghut.decision_engine.enabled
+              value: jangar_torghut_decision_engine_enabled
             - name: JANGAR_TORGHUT_DECISION_RUN_TIMEOUT_MS
               value: "120000"
             - name: JANGAR_TORGHUT_DECISION_STREAM_HEARTBEAT_MS
