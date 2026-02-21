@@ -352,6 +352,45 @@ def _coerce_json(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _extract_execution_policy_context(
+    decision: StrategyDecision,
+    *,
+    decision_row: Optional[TradeDecision] = None,
+) -> dict[str, Any]:
+    execution_policy: Any = None
+    if decision_row is not None:
+        decision_json = _coerce_json(decision_row.decision_json)
+        params_value = decision_json.get('params')
+        if isinstance(params_value, Mapping):
+            params_map = cast(Mapping[str, Any], params_value)
+            execution_policy = params_map.get('execution_policy')
+    if not isinstance(execution_policy, Mapping):
+        execution_policy = decision.params.get('execution_policy')
+    if not isinstance(execution_policy, Mapping):
+        return {}
+    policy_map = cast(Mapping[str, Any], execution_policy)
+    adaptive = policy_map.get('adaptive')
+    adaptive_payload: dict[str, Any] = {}
+    if isinstance(adaptive, Mapping):
+        adaptive_payload = {
+            str(key): value for key, value in cast(Mapping[str, Any], adaptive).items()
+        }
+    return {
+        'selected_order_type': str(
+            policy_map.get('selected_order_type') or decision.order_type
+        ),
+        'adaptive': adaptive_payload,
+    }
+
+
+def _attach_execution_policy_context(execution: Execution, context: dict[str, Any]) -> None:
+    if not context:
+        return
+    raw_order = _coerce_json(execution.raw_order)
+    raw_order['execution_policy'] = context
+    execution.raw_order = raw_order
+
+
 def _extract_execution_advice_provenance(
     decision: StrategyDecision,
 ) -> dict[str, Any] | None:

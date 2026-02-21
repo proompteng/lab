@@ -417,6 +417,87 @@ def _load_trade_decision(
     ).scalar_one_or_none()
 
 
+def _load_recent_tca_rows(
+    session: Session,
+    *,
+    symbol: str,
+    regime_label: str,
+) -> list[dict[str, Any]]:
+    stmt = (
+        select(ExecutionTCAMetric, TradeDecision.decision_json)
+        .outerjoin(TradeDecision, TradeDecision.id == ExecutionTCAMetric.trade_decision_id)
+        .where(ExecutionTCAMetric.symbol == symbol)
+        .order_by(ExecutionTCAMetric.computed_at.desc())
+        .limit(ADAPTIVE_LOOKBACK_WINDOW * 3)
+    )
+    rows = session.execute(stmt).all()
+
+    filtered: list[dict[str, Any]] = []
+    for metric, decision_json in rows:
+        params = _decision_params(decision_json)
+        row_regime = _normalize_regime_label(
+            params.get('regime_label') or params.get('regime')
+        )
+        if regime_label != 'all' and row_regime != regime_label:
+            continue
+        execution_policy = params.get('execution_policy')
+        execution_policy_map: Mapping[str, Any] = (
+            cast(Mapping[str, Any], execution_policy)
+            if isinstance(execution_policy, Mapping)
+            else {}
+        )
+        adaptive = execution_policy_map.get('adaptive')
+        adaptive_map: Mapping[str, Any] = (
+            cast(Mapping[str, Any], adaptive) if isinstance(adaptive, Mapping) else {}
+        )
+        filtered.append(
+            {
+                'slippage_bps': _decimal_or_none(metric.slippage_bps),
+                'shortfall_notional': _decimal_or_none(metric.shortfall_notional),
+                'adaptive_applied': bool(adaptive_map.get('applied', False)),
+            }
+        )
+        if len(filtered) >= ADAPTIVE_LOOKBACK_WINDOW:
+            break
+    return filtered
+
+
+def _decision_params(raw_decision_json: Any) -> dict[str, Any]:
+    if not isinstance(raw_decision_json, Mapping):
+        return {}
+    decision_map = cast(Mapping[str, Any], raw_decision_json)
+    raw_params = decision_map.get('params')
+    if not isinstance(raw_params, Mapping):
+        return {}
+    params = cast(Mapping[str, Any], raw_params)
+    return {str(key): value for key, value in params.items()}
+
+
+def _split_window_average(values: list[Decimal]) -> tuple[Decimal | None, Decimal | None]:
+    if len(values) < ADAPTIVE_MIN_SAMPLE_SIZE:
+        return None, None
+    midpoint = len(values) // 2
+    if midpoint == 0 or midpoint == len(values):
+        return None, None
+    recent = values[:midpoint]
+    baseline = values[midpoint:]
+    if not recent or not baseline:
+        return None, None
+    return _mean(baseline), _mean(recent)
+
+
+def _mean(values: list[Decimal]) -> Decimal | None:
+    if not values:
+        return None
+    total = sum(values, start=Decimal('0'))
+    return total / Decimal(len(values))
+
+
+def _normalize_regime_label(value: Any) -> str:
+    text = str(value).strip().lower() if value is not None else ''
+    return text or 'all'
+
+
 def _resolve_simulator_expectations(
     decision: TradeDecision | None,
 ) -> tuple[Decimal | None, Decimal | None, str | None]:

@@ -227,6 +227,62 @@ class ExecutionPolicy:
             advisor_metadata=advisor_metadata,
         )
 
+    def _resolve_adaptive_application(
+        self,
+        adaptive_policy: AdaptiveExecutionPolicyDecision | None,
+    ) -> AdaptiveExecutionApplication | None:
+        if adaptive_policy is None:
+            return None
+        if adaptive_policy.fallback_active:
+            reason = adaptive_policy.fallback_reason or 'adaptive_policy_fallback'
+            return AdaptiveExecutionApplication(
+                decision=adaptive_policy,
+                applied=False,
+                reason=reason,
+            )
+        if not adaptive_policy.has_override:
+            return AdaptiveExecutionApplication(
+                decision=adaptive_policy,
+                applied=False,
+                reason='insufficient_signal',
+            )
+        return AdaptiveExecutionApplication(
+            decision=adaptive_policy,
+            applied=True,
+            reason='applied',
+        )
+
+    def _apply_adaptive_config(
+        self,
+        config: ExecutionPolicyConfig,
+        adaptive_policy: AdaptiveExecutionPolicyDecision,
+    ) -> ExecutionPolicyConfig:
+        participation_scale = adaptive_policy.participation_rate_scale
+        if participation_scale <= 0:
+            participation_scale = Decimal('1')
+        adjusted_participation = config.max_participation_rate * participation_scale
+        if adjusted_participation < ADAPTIVE_PARTICIPATION_RATE_FLOOR:
+            adjusted_participation = ADAPTIVE_PARTICIPATION_RATE_FLOOR
+        if adjusted_participation > config.max_participation_rate:
+            adjusted_participation = config.max_participation_rate
+
+        prefer_limit = config.prefer_limit
+        if adaptive_policy.prefer_limit is not None:
+            prefer_limit = adaptive_policy.prefer_limit
+
+        return ExecutionPolicyConfig(
+            min_notional=config.min_notional,
+            max_notional=config.max_notional,
+            max_participation_rate=adjusted_participation,
+            allow_shorts=config.allow_shorts,
+            kill_switch_enabled=config.kill_switch_enabled,
+            prefer_limit=prefer_limit,
+            max_retries=config.max_retries,
+            backoff_base_seconds=config.backoff_base_seconds,
+            backoff_multiplier=config.backoff_multiplier,
+            backoff_max_seconds=config.backoff_max_seconds,
+        )
+
     def _evaluate_advisor(
         self,
         *,
