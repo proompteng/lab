@@ -226,7 +226,8 @@ export const createIntegrationHarness = (
     }
 
     const waitForNamespaceReady = async () => {
-      const maxAttempts = Number.parseInt(process.env.TEMPORAL_NAMESPACE_READY_MAX_ATTEMPTS ?? '120', 10)
+      // Keep readiness retries below the default 60s bun hook timeout so suites can catch and skip cleanly.
+      const maxAttempts = Number.parseInt(process.env.TEMPORAL_NAMESPACE_READY_MAX_ATTEMPTS ?? '90', 10)
       const retryDelayMs = Number.parseInt(process.env.TEMPORAL_NAMESPACE_READY_RETRY_MS ?? '500', 10)
       let lastError: unknown
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {

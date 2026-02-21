@@ -1,9 +1,14 @@
 #!/usr/bin/env bun
 
 import { parseArgs } from 'node:util'
-import { Effect } from 'effect'
+import { Effect, Exit } from 'effect'
 
-import { createIntegrationHarness, type TemporalDevServerConfig } from '../tests/integration/harness'
+import {
+  createIntegrationHarness,
+  findTemporalCliUnavailableError,
+  type IntegrationHarness,
+  type TemporalDevServerConfig,
+} from '../tests/integration/harness'
 import { readWorkerLoadConfig } from '../tests/integration/load/config'
 import { runWorkerLoad } from '../tests/integration/load/runner'
 
@@ -32,8 +37,28 @@ const main = async () => {
     cliLogPath: loadConfig.cliLogPath,
   }
 
-  const harness = await Effect.runPromise(createIntegrationHarness(harnessConfig))
-  await Effect.runPromise(harness.setup)
+  let harness: IntegrationHarness | null = null
+
+  const harnessExit = await Effect.runPromiseExit(createIntegrationHarness(harnessConfig))
+  if (Exit.isFailure(harnessExit)) {
+    const unavailable = findTemporalCliUnavailableError(harnessExit.cause)
+    if (unavailable) {
+      console.warn(`[worker-load] skipped: ${unavailable.message}`)
+      return
+    }
+    throw harnessExit.cause
+  }
+  harness = harnessExit.value
+
+  const setupExit = await Effect.runPromiseExit(harness.setup)
+  if (Exit.isFailure(setupExit)) {
+    const unavailable = findTemporalCliUnavailableError(setupExit.cause)
+    if (unavailable) {
+      console.warn(`[worker-load] skipped during setup: ${unavailable.message}`)
+      return
+    }
+    throw setupExit.cause
+  }
 
   try {
     const envOverrides = {
@@ -43,7 +68,7 @@ const main = async () => {
       TEMPORAL_STICKY_SCHEDULING_ENABLED: '1',
     }
 
-    const result = await Effect.runPromise(
+    const scenarioExit = await Effect.runPromiseExit(
       harness.runScenario(
         'worker-load-cli',
         () =>
@@ -58,13 +83,30 @@ const main = async () => {
         { env: envOverrides },
       ),
     )
+    if (Exit.isFailure(scenarioExit)) {
+      const unavailable = findTemporalCliUnavailableError(scenarioExit.cause)
+      if (unavailable) {
+        console.warn(`[worker-load] skipped during scenario: ${unavailable.message}`)
+        return
+      }
+      throw scenarioExit.cause
+    }
+    const result = scenarioExit.value
 
     renderSummary(result)
     console.info(`[worker-load] metrics written to ${loadConfig.metricsStreamPath}`)
     console.info(`[worker-load] summary written to ${loadConfig.metricsReportPath}`)
     console.info(`[worker-load] CLI log at ${harness.temporalCliLogPath}`)
   } finally {
-    await Effect.runPromise(harness.teardown)
+    const teardownExit = await Effect.runPromiseExit(harness.teardown)
+    if (Exit.isFailure(teardownExit)) {
+      const unavailable = findTemporalCliUnavailableError(teardownExit.cause)
+      if (unavailable) {
+        console.warn(`[worker-load] teardown warning: ${unavailable.message}`)
+        return
+      }
+      throw teardownExit.cause
+    }
   }
 }
 
