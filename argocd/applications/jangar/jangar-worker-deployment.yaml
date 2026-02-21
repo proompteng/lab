@@ -29,11 +29,25 @@ spec:
           args:
             - |
               set -eu
+              repo_url="https://github.com/proompteng/lab.git"
+              if [ -n "${GITHUB_TOKEN:-}" ]; then
+                repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/proompteng/lab.git"
+              fi
               if [ ! -d /workspace/lab/.git ]; then
                 rm -rf /workspace/lab
-                git clone --depth 1 https://github.com/proompteng/lab.git /workspace/lab
+                git clone --depth 1 "$repo_url" /workspace/lab
+                if [ -n "${GITHUB_TOKEN:-}" ]; then
+                  git -C /workspace/lab remote set-url origin https://github.com/proompteng/lab.git
+                fi
               fi
-              mkdir -p /workspace/lab/.worktrees /workspace/.bun-install-cache
+              mkdir -p /workspace/lab/.worktrees /workspace/.bun-install-cache /workspace/.ovscode
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+                  optional: true
           volumeMounts:
             - name: workspace
               mountPath: /workspace
@@ -116,6 +130,12 @@ spec:
               value: /workspace/lab
             - name: BUN_INSTALL_CACHE_DIR
               value: /workspace/.bun-install-cache
+            - name: CODEX_CWD
+              value: /workspace/lab
+            - name: CODEX_REPO_SLUG
+              value: proompteng/lab
+            - name: CODEX_REPO_URL
+              value: https://github.com/proompteng/lab.git
             - name: JANGAR_WORKER_HEALTH_PORT
               value: "3002"
             - name: REPOSITORY
