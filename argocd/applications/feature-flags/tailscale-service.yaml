@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: feature-flags-tailscale
+  namespace: feature-flags
+  annotations:
+    tailscale.com/hostname: feature-flags
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/instance: feature-flags
+    app.kubernetes.io/name: flipt-v2
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
