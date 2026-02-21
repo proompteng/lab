@@ -28,7 +28,7 @@ flipt:
     storage:
       default:
         remote: https://github.com/proompteng/lab.git
-        branch: main
+        branch: feature-flags-state
         poll_interval: 30s
         credentials: github
         backend:
