@@ -704,6 +704,11 @@ class TestAutonomousLane(TestCase):
                     GateResult(gate_id="gate5_live_ramp_readiness", status="pass"),
                 ],
                 reasons=[],
+                uncertainty_gate_action="pass",
+                coverage_error="0.02",
+                conformal_interval_width="1.00",
+                shift_score="0.10",
+                recalibration_run_id=None,
                 evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
                 code_version="test-sha",
             )
@@ -809,6 +814,11 @@ class TestAutonomousLane(TestCase):
                 GateResult(gate_id="gate5_live_ramp_readiness", status="pass"),
             ],
             reasons=[],
+            uncertainty_gate_action="pass",
+            coverage_error="0.02",
+            conformal_interval_width="1.00",
+            shift_score="0.10",
+            recalibration_run_id=None,
             evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
             code_version="test-sha",
         )

@@ -295,6 +295,8 @@ class TradingMetrics:
         default_factory=lambda: cast(dict[str, int], {})
     )
     autonomy_outcome_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     calibration_coverage_error: float = 0
     conformal_interval_width: float = 0
     regime_shift_score: float = 0
