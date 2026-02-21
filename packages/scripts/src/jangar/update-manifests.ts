@@ -127,6 +127,21 @@ const updateAgentsValuesManifest = (valuesPath: string, imageName: string, tag: 
   runner.image = runnerImage
   doc.runner = runner
 
+  const controlPlane = asRecord(doc.controlPlane) ?? {}
+  const controlPlaneImage = asRecord(controlPlane.image) ?? {}
+  const fallbackControlPlaneRepository = imageName.endsWith('/jangar')
+    ? `${imageName.slice(0, -'/jangar'.length)}/jangar-control-plane`
+    : `${imageName}-control-plane`
+  const currentControlPlaneRepository = controlPlaneImage.repository
+  controlPlaneImage.repository =
+    typeof currentControlPlaneRepository === 'string' && currentControlPlaneRepository.trim().length > 0
+      ? currentControlPlaneRepository
+      : fallbackControlPlaneRepository
+  controlPlaneImage.tag = tag
+  controlPlaneImage.digest = digest
+  controlPlane.image = controlPlaneImage
+  doc.controlPlane = controlPlane
+
   const updated = YAML.stringify(doc, { lineWidth: 120 })
   if (source === updated) {
     console.warn('Warning: agents values were not updated; values already match requested image.')
