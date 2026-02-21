@@ -107,6 +107,8 @@ bun --cwd services/jangar run start:worker
 - API enqueue path: `JANGAR_BUMBA_TASK_QUEUE` (falls back to `TEMPORAL_TASK_QUEUE`, then `bumba`).
 - Worker consume path: `JANGAR_WORKER_TEMPORAL_TASK_QUEUE` (falls back to `TEMPORAL_TASK_QUEUE`, then `jangar`).
 - Decoupled rollout: run API and `jangar-worker` as separate deployments and point both queue vars to the same queue (for example `jangar`).
+- Storage isolation: `jangar` and `jangar-worker` should not share one `ReadWriteOnce` workspace PVC. Give each deployment its own workspace claim (for example `jangar-workspace` and `jangar-worker-workspace`) to avoid multi-attach rollout failures.
+- Worker bootstrap should mirror the app workspace layout (`/workspace/lab`, `.worktrees`, `.bun-install-cache`, `.ovscode`) and use `GITHUB_TOKEN` (when present) for authenticated clone access.
 - Bumba starts now set workflow `versioningOverride=auto_upgrade`; keep worker deployment current versions configured or workflows can remain at history length `2` (`WORKFLOW_TASK_SCHEDULED` with no dispatch).
 - Do not pin `TEMPORAL_WORKER_BUILD_ID` in manifests. Let the worker derive `workflow-code@<digest>` from workflow code and then sync deployment routing after rollout.
 - Post-rollout routing command:
