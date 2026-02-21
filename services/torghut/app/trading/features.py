@@ -65,6 +65,19 @@ class FeatureVectorV3:
     normalization_hash: str
 
 
+@dataclass(frozen=True)
+class MicrostructureFeaturesV1:
+    schema_version: str
+    symbol: str
+    event_ts: datetime
+    spread_bps: Decimal
+    depth_top5_usd: Decimal
+    order_flow_imbalance: Decimal
+    latency_ms_estimate: int
+    fill_hazard: Decimal
+    liquidity_regime: str
+
+
 class FeatureNormalizationError(ValueError):
     """Raised when signal payload cannot satisfy the v3 feature contract."""
 
@@ -136,6 +149,48 @@ def extract_volatility(payload: dict[str, Any]) -> Optional[Decimal]:
         if key in payload:
             return optional_decimal(payload.get(key))
     return None
+
+
+def extract_microstructure_features_v1(signal: SignalEnvelope) -> MicrostructureFeaturesV1:
+    payload = signal.payload or {}
+    spread_bps = optional_decimal(payload.get('spread_bps'))
+    if spread_bps is None:
+        spread = optional_decimal(payload.get('spread') or _nested(payload, 'imbalance', 'spread'))
+        price = extract_price(payload)
+        if spread is not None and price is not None and price > 0:
+            spread_bps = (spread / price) * Decimal('10000')
+        else:
+            spread_bps = Decimal('0')
+
+    depth_top5_usd = optional_decimal(payload.get('depth_top5_usd'))
+    if depth_top5_usd is None:
+        depth_top5_usd = optional_decimal(_nested(payload, 'depth', 'top5_usd')) or Decimal('0')
+
+    imbalance = optional_decimal(payload.get('order_flow_imbalance'))
+    if imbalance is None:
+        imbalance = optional_decimal(payload.get('imbalance_spread') or _nested(payload, 'imbalance', 'value'))
+    order_flow_imbalance = imbalance or Decimal('0')
+
+    latency_ms_estimate = _optional_int(payload.get('latency_ms_estimate') or payload.get('latency_ms')) or 0
+    fill_hazard = optional_decimal(payload.get('fill_hazard') or _nested(payload, 'execution', 'fill_hazard'))
+    if fill_hazard is None:
+        fill_hazard = optional_decimal(payload.get('signal_quality_flag')) or Decimal('0.5')
+
+    liquidity_regime = str(payload.get('liquidity_regime') or '').strip().lower()
+    if liquidity_regime not in {'normal', 'compressed', 'stressed'}:
+        liquidity_regime = 'normal'
+
+    return MicrostructureFeaturesV1(
+        schema_version='microstructure_state_v1',
+        symbol=signal.symbol.upper(),
+        event_ts=signal.event_ts,
+        spread_bps=spread_bps,
+        depth_top5_usd=depth_top5_usd,
+        order_flow_imbalance=order_flow_imbalance,
+        latency_ms_estimate=latency_ms_estimate,
+        fill_hazard=fill_hazard,
+        liquidity_regime=liquidity_regime,
+    )
 
 
 def normalize_feature_vector_v3(signal: SignalEnvelope) -> FeatureVectorV3:
@@ -227,6 +282,15 @@ def optional_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _staleness_ms(event_ts: datetime, ingest_ts: datetime | None) -> int:
     # Use event/ingest timestamps only so replayed inputs remain deterministic.
     reference = ingest_ts.astimezone(timezone.utc) if ingest_ts is not None else event_ts.astimezone(timezone.utc)
@@ -293,7 +357,9 @@ __all__ = [
     'FEATURE_VECTOR_V3_VALUE_FIELDS',
     'FeatureNormalizationError',
     'FeatureVectorV3',
+    'MicrostructureFeaturesV1',
     'SignalFeatures',
+    'extract_microstructure_features_v1',
     'extract_signal_features',
     'extract_macd',
     'extract_price',

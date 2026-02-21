@@ -27,7 +27,11 @@ class OrderExecutor:
     """Submit orders to a broker adapter with idempotency guards."""
 
     def ensure_decision(
-        self, session: Session, decision: StrategyDecision, strategy: Strategy, account_label: str
+        self,
+        session: Session,
+        decision: StrategyDecision,
+        strategy: Strategy,
+        account_label: str,
     ) -> TradeDecision:
         digest = decision_hash(decision)
         stmt = select(TradeDecision).where(TradeDecision.decision_hash == digest)
@@ -35,7 +39,7 @@ class OrderExecutor:
         if existing:
             return existing
 
-        decision_payload = coerce_json_payload(decision.model_dump(mode='json'))
+        decision_payload = coerce_json_payload(decision.model_dump(mode="json"))
         decision_row = TradeDecision(
             strategy_id=strategy.id,
             alpaca_account_label=account_label,
@@ -43,7 +47,7 @@ class OrderExecutor:
             timeframe=decision.timeframe,
             decision_json=decision_payload,
             rationale=decision.rationale,
-            status='planned',
+            status="planned",
             decision_hash=digest,
         )
         session.add(decision_row)
@@ -61,7 +65,9 @@ class OrderExecutor:
     def execution_exists(self, session: Session, decision_row: TradeDecision) -> bool:
         return self._fetch_execution(session, decision_row) is not None
 
-    def _fetch_execution(self, session: Session, decision_row: TradeDecision) -> Optional[Execution]:
+    def _fetch_execution(
+        self, session: Session, decision_row: TradeDecision
+    ) -> Optional[Execution]:
         conditions = [Execution.trade_decision_id == decision_row.id]
         if decision_row.decision_hash:
             conditions.append(Execution.client_order_id == decision_row.decision_hash)
@@ -81,22 +87,30 @@ class OrderExecutor:
     ) -> Optional[Execution]:
         existing_execution = self._fetch_execution(session, decision_row)
         if existing_execution is not None:
-            logger.info('Execution already exists for decision %s', decision_row.id)
+            logger.info("Execution already exists for decision %s", decision_row.id)
             return None
         execution_policy_context = _extract_execution_policy_context(
             decision, decision_row=decision_row
         )
 
-        existing_order = self._fetch_existing_order(execution_client, decision_row.decision_hash)
+        existing_order = self._fetch_existing_order(
+            execution_client, decision_row.decision_hash
+        )
         if existing_order is not None:
-            route_expected, route_actual, fallback_reason, fallback_count = resolve_order_route_metadata(
-                expected_adapter=execution_expected_adapter,
-                execution_client=execution_client,
-                order_response=existing_order,
+            existing_payload = dict(existing_order)
+            advice_provenance = _extract_execution_advice_provenance(decision)
+            if advice_provenance is not None:
+                existing_payload["_execution_advice_provenance"] = advice_provenance
+            route_expected, route_actual, fallback_reason, fallback_count = (
+                resolve_order_route_metadata(
+                    expected_adapter=execution_expected_adapter,
+                    execution_client=execution_client,
+                    order_response=existing_payload,
+                )
             )
             execution = sync_order_to_db(
                 session,
-                existing_order,
+                existing_payload,
                 trade_decision_id=str(decision_row.id),
                 execution_expected_adapter=route_expected,
                 execution_actual_adapter=route_actual,
@@ -108,7 +122,10 @@ class OrderExecutor:
             _apply_execution_status(decision_row, execution, account_label)
             session.add(decision_row)
             session.commit()
-            logger.info('Backfilled execution for decision %s from broker state', decision_row.id)
+            logger.info(
+                "Backfilled execution for decision %s from broker state",
+                decision_row.id,
+            )
             return None
 
         request = ExecutionRequest(
@@ -138,7 +155,9 @@ class OrderExecutor:
                 or conflicting_order.get("order_type")
                 or "unknown"
             ).lower()
-            existing_order_side = str(conflicting_order.get("side") or "unknown").lower()
+            existing_order_side = str(
+                conflicting_order.get("side") or "unknown"
+            ).lower()
             payload = {
                 "source": "broker_precheck",
                 "code": "precheck_opposite_side_open_order",
@@ -158,9 +177,13 @@ class OrderExecutor:
                     qty=float(request.qty),
                     order_type=request.order_type,
                     time_in_force=request.time_in_force,
-                    limit_price=float(request.limit_price) if request.limit_price is not None else None,
-                    stop_price=float(request.stop_price) if request.stop_price is not None else None,
-                    extra_params={'client_order_id': request.client_order_id},
+                    limit_price=float(request.limit_price)
+                    if request.limit_price is not None
+                    else None,
+                    stop_price=float(request.stop_price)
+                    if request.stop_price is not None
+                    else None,
+                    extra_params={"client_order_id": request.client_order_id},
                 )
                 break
             except Exception as exc:
@@ -169,21 +192,27 @@ class OrderExecutor:
                 delay = retry_delays[attempt]
                 attempt += 1
                 logger.warning(
-                    'Retrying order submission attempt=%s decision_id=%s error=%s',
+                    "Retrying order submission attempt=%s decision_id=%s error=%s",
                     attempt,
                     decision_row.id,
                     exc,
                 )
                 time.sleep(delay)
 
-        route_expected, route_actual, fallback_reason, fallback_count = resolve_order_route_metadata(
-            expected_adapter=execution_expected_adapter,
-            execution_client=execution_client,
-            order_response=order_response,
+        route_expected, route_actual, fallback_reason, fallback_count = (
+            resolve_order_route_metadata(
+                expected_adapter=execution_expected_adapter,
+                execution_client=execution_client,
+                order_response=order_response,
+            )
         )
+        order_payload = dict(order_response)
+        advice_provenance = _extract_execution_advice_provenance(decision)
+        if advice_provenance is not None:
+            order_payload["_execution_advice_provenance"] = advice_provenance
         execution = sync_order_to_db(
             session,
-            order_response,
+            order_payload,
             trade_decision_id=str(decision_row.id),
             execution_expected_adapter=route_expected,
             execution_actual_adapter=route_actual,
@@ -197,22 +226,24 @@ class OrderExecutor:
             execution,
             account_label,
             submitted_at=datetime.now(timezone.utc),
-            status_override='submitted',
+            status_override="submitted",
         )
         session.add(decision_row)
         session.commit()
         return execution
 
-    def mark_rejected(self, session: Session, decision_row: TradeDecision, reason: str) -> None:
-        decision_row.status = 'rejected'
+    def mark_rejected(
+        self, session: Session, decision_row: TradeDecision, reason: str
+    ) -> None:
+        decision_row.status = "rejected"
         decision_json = _coerce_json(decision_row.decision_json)
-        existing = decision_json.get('risk_reasons')
+        existing = decision_json.get("risk_reasons")
         if isinstance(existing, list):
             risk_reasons = [str(item) for item in cast(list[Any], existing)]
         else:
             risk_reasons = []
         risk_reasons.append(reason)
-        decision_json['risk_reasons'] = risk_reasons
+        decision_json["risk_reasons"] = risk_reasons
         decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()
@@ -224,13 +255,13 @@ class OrderExecutor:
         params_update: Mapping[str, Any],
     ) -> None:
         decision_json = _coerce_json(decision_row.decision_json)
-        params_value = decision_json.get('params')
+        params_value = decision_json.get("params")
         if isinstance(params_value, Mapping):
             params = dict(cast(Mapping[str, Any], params_value))
         else:
             params = {}
         params.update(params_update)
-        decision_json['params'] = params
+        decision_json["params"] = params
         decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()
@@ -243,12 +274,12 @@ class OrderExecutor:
         if not decision_hash_value:
             return None
         try:
-            getter = getattr(execution_client, 'get_order_by_client_order_id', None)
+            getter = getattr(execution_client, "get_order_by_client_order_id", None)
             if getter is None:
                 return None
             order = getter(decision_hash_value)
         except Exception as exc:  # pragma: no cover - external failure
-            logger.warning('Failed to fetch broker order for client_order_id: %s', exc)
+            logger.warning("Failed to fetch broker order for client_order_id: %s", exc)
             return None
         if not order:
             return None
@@ -271,7 +302,9 @@ class OrderExecutor:
             side = str(order.get("side") or "").strip().lower()
             if side not in {"buy", "sell"} or side == request_side:
                 continue
-            order_type = str(order.get("type") or order.get("order_type") or "").strip().lower()
+            order_type = (
+                str(order.get("type") or order.get("order_type") or "").strip().lower()
+            )
             if order_type not in {"market", "stop", "stop_limit"}:
                 continue
             status = str(order.get("status") or "").strip().lower()
@@ -292,7 +325,9 @@ class OrderExecutor:
             try:
                 orders = lister()
             except Exception as exc:
-                logger.warning("Failed to list open orders for broker precheck: %s", exc)
+                logger.warning(
+                    "Failed to list open orders for broker precheck: %s", exc
+                )
                 return []
         except Exception as exc:
             logger.warning("Failed to list open orders for broker precheck: %s", exc)
@@ -317,41 +352,16 @@ def _coerce_json(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _extract_execution_policy_context(
+def _extract_execution_advice_provenance(
     decision: StrategyDecision,
-    *,
-    decision_row: Optional[TradeDecision] = None,
-) -> dict[str, Any]:
-    execution_policy: Any = None
-    if decision_row is not None:
-        decision_json = _coerce_json(decision_row.decision_json)
-        params_value = decision_json.get('params')
-        if isinstance(params_value, Mapping):
-            params_map = cast(Mapping[str, Any], params_value)
-            execution_policy = params_map.get('execution_policy')
-    if not isinstance(execution_policy, Mapping):
-        execution_policy = decision.params.get('execution_policy')
-    if not isinstance(execution_policy, Mapping):
-        return {}
-    policy_map = cast(Mapping[str, Any], execution_policy)
-    adaptive = policy_map.get('adaptive')
-    adaptive_payload: dict[str, Any] = {}
-    if isinstance(adaptive, Mapping):
-        adaptive_payload = {
-            str(key): value for key, value in cast(Mapping[str, Any], adaptive).items()
+) -> dict[str, Any] | None:
+    payload = decision.params.get("execution_advisor")
+    if isinstance(payload, Mapping):
+        return {
+            str(key): value
+            for key, value in cast(Mapping[object, object], payload).items()
         }
-    return {
-        'selected_order_type': str(policy_map.get('selected_order_type') or decision.order_type),
-        'adaptive': adaptive_payload,
-    }
-
-
-def _attach_execution_policy_context(execution: Execution, context: dict[str, Any]) -> None:
-    if not context:
-        return
-    raw_order = _coerce_json(execution.raw_order)
-    raw_order['execution_policy'] = context
-    execution.raw_order = raw_order
+    return None
 
 
 def _apply_execution_status(
@@ -361,12 +371,12 @@ def _apply_execution_status(
     submitted_at: Optional[datetime] = None,
     status_override: Optional[str] = None,
 ) -> None:
-    decision_row.status = status_override or execution.status or 'submitted'
+    decision_row.status = status_override or execution.status or "submitted"
     decision_row.alpaca_account_label = account_label
     if submitted_at is not None and decision_row.executed_at is None:
         decision_row.executed_at = submitted_at
-    if execution.status == 'filled' and decision_row.executed_at is None:
+    if execution.status == "filled" and decision_row.executed_at is None:
         decision_row.executed_at = datetime.now(timezone.utc)
 
 
-__all__ = ['OrderExecutor']
+__all__ = ["OrderExecutor"]

@@ -73,7 +73,9 @@ class AdaptiveExecutionPolicyDecision:
         }
 
 
-def upsert_execution_tca_metric(session: Session, execution: Execution) -> ExecutionTCAMetric:
+def upsert_execution_tca_metric(
+    session: Session, execution: Execution
+) -> ExecutionTCAMetric:
     """Derive deterministic TCA metrics for an execution and upsert a single row."""
 
     decision = _load_trade_decision(session, execution)
@@ -87,11 +89,24 @@ def upsert_execution_tca_metric(session: Session, execution: Execution) -> Execu
 
     slippage_bps: Decimal | None = None
     shortfall_notional: Decimal | None = None
-    if arrival_price is not None and avg_fill_price is not None and filled_qty > 0 and signed_qty != 0:
+    realized_shortfall_bps: Decimal | None = None
+    if (
+        arrival_price is not None
+        and avg_fill_price is not None
+        and filled_qty > 0
+        and signed_qty != 0
+    ):
         price_delta = avg_fill_price - arrival_price
-        direction = Decimal('1') if signed_qty > 0 else Decimal('-1')
-        slippage_bps = (direction * price_delta / arrival_price) * Decimal('10000')
+        direction = Decimal("1") if signed_qty > 0 else Decimal("-1")
+        slippage_bps = (direction * price_delta / arrival_price) * Decimal("10000")
+        realized_shortfall_bps = slippage_bps
         shortfall_notional = direction * price_delta * filled_qty
+    expected_shortfall_bps_p50, expected_shortfall_bps_p95, simulator_version = (
+        _resolve_simulator_expectations(decision)
+    )
+    divergence_bps: Decimal | None = None
+    if realized_shortfall_bps is not None and expected_shortfall_bps_p50 is not None:
+        divergence_bps = realized_shortfall_bps - expected_shortfall_bps_p50
 
     churn_qty, churn_ratio = _derive_churn(
         session=session,
@@ -103,7 +118,9 @@ def upsert_execution_tca_metric(session: Session, execution: Execution) -> Execu
     )
 
     existing = session.execute(
-        select(ExecutionTCAMetric).where(ExecutionTCAMetric.execution_id == execution.id)
+        select(ExecutionTCAMetric).where(
+            ExecutionTCAMetric.execution_id == execution.id
+        )
     ).scalar_one_or_none()
     if existing is None:
         row = ExecutionTCAMetric(
@@ -119,6 +136,11 @@ def upsert_execution_tca_metric(session: Session, execution: Execution) -> Execu
             signed_qty=signed_qty,
             slippage_bps=slippage_bps,
             shortfall_notional=shortfall_notional,
+            expected_shortfall_bps_p50=expected_shortfall_bps_p50,
+            expected_shortfall_bps_p95=expected_shortfall_bps_p95,
+            realized_shortfall_bps=realized_shortfall_bps,
+            divergence_bps=divergence_bps,
+            simulator_version=simulator_version,
             churn_qty=churn_qty,
             churn_ratio=churn_ratio,
         )
@@ -136,13 +158,20 @@ def upsert_execution_tca_metric(session: Session, execution: Execution) -> Execu
     existing.signed_qty = signed_qty
     existing.slippage_bps = slippage_bps
     existing.shortfall_notional = shortfall_notional
+    existing.expected_shortfall_bps_p50 = expected_shortfall_bps_p50
+    existing.expected_shortfall_bps_p95 = expected_shortfall_bps_p95
+    existing.realized_shortfall_bps = realized_shortfall_bps
+    existing.divergence_bps = divergence_bps
+    existing.simulator_version = simulator_version
     existing.churn_qty = churn_qty
     existing.churn_ratio = churn_ratio
     session.add(existing)
     return existing
 
 
-def build_tca_gate_inputs(session: Session, *, strategy_id: str | None = None) -> dict[str, Decimal | int]:
+def build_tca_gate_inputs(
+    session: Session, *, strategy_id: str | None = None
+) -> dict[str, Decimal | int]:
     """Build aggregate TCA inputs used by autonomy gate thresholds."""
 
     stmt = select(
@@ -150,6 +179,7 @@ def build_tca_gate_inputs(session: Session, *, strategy_id: str | None = None) -
         func.avg(ExecutionTCAMetric.slippage_bps),
         func.avg(ExecutionTCAMetric.shortfall_notional),
         func.avg(ExecutionTCAMetric.churn_ratio),
+        func.avg(ExecutionTCAMetric.divergence_bps),
     )
     if strategy_id:
         stmt = stmt.where(ExecutionTCAMetric.strategy_id == strategy_id)
@@ -159,11 +189,17 @@ def build_tca_gate_inputs(session: Session, *, strategy_id: str | None = None) -
     avg_slippage = _decimal_or_none(row[1])
     avg_shortfall = _decimal_or_none(row[2])
     avg_churn = _decimal_or_none(row[3])
+    avg_divergence = _decimal_or_none(row[4])
     return {
-        'order_count': order_count,
-        'avg_slippage_bps': avg_slippage if avg_slippage is not None else Decimal('0'),
-        'avg_shortfall_notional': avg_shortfall if avg_shortfall is not None else Decimal('0'),
-        'avg_churn_ratio': avg_churn if avg_churn is not None else Decimal('0'),
+        "order_count": order_count,
+        "avg_slippage_bps": avg_slippage if avg_slippage is not None else Decimal("0"),
+        "avg_shortfall_notional": avg_shortfall
+        if avg_shortfall is not None
+        else Decimal("0"),
+        "avg_churn_ratio": avg_churn if avg_churn is not None else Decimal("0"),
+        "avg_divergence_bps": avg_divergence
+        if avg_divergence is not None
+        else Decimal("0"),
     }
 
 
@@ -309,7 +345,9 @@ def _derive_churn(
         .join(Execution, Execution.id == ExecutionTCAMetric.execution_id)
         .where(*prior_where)
     )
-    prior_signed = _decimal_or_none(session.execute(prior_signed_sum_stmt).scalar_one()) or Decimal('0')
+    prior_signed = _decimal_or_none(
+        session.execute(prior_signed_sum_stmt).scalar_one()
+    ) or Decimal("0")
 
     if prior_signed == 0:
         return Decimal('0'), Decimal('0')
@@ -321,23 +359,30 @@ def _derive_churn(
     return churn_qty, churn_ratio
 
 
-def _resolve_arrival_price(*, decision: TradeDecision | None, execution: Execution) -> Decimal | None:
+def _resolve_arrival_price(
+    *, decision: TradeDecision | None, execution: Execution
+) -> Decimal | None:
     decision_payload: dict[str, Any] = {}
     decision_json = decision.decision_json if decision is not None else None
     if isinstance(decision_json, Mapping):
         decision_payload = {
-            str(key): value for key, value in cast(Mapping[object, object], decision_json).items()
+            str(key): value
+            for key, value in cast(Mapping[object, object], decision_json).items()
         }
     params = decision_payload.get('params')
     params_payload: dict[str, Any] = {}
     if isinstance(params, Mapping):
-        params_payload = {str(key): value for key, value in cast(Mapping[object, object], params).items()}
+        params_payload = {
+            str(key): value
+            for key, value in cast(Mapping[object, object], params).items()
+        }
 
     raw_order_payload: dict[str, Any] = {}
     raw_order = execution.raw_order
     if isinstance(raw_order, Mapping):
         raw_order_payload = {
-            str(key): value for key, value in cast(Mapping[object, object], raw_order).items()
+            str(key): value
+            for key, value in cast(Mapping[object, object], raw_order).items()
         }
 
     for candidate in (
@@ -356,7 +401,9 @@ def _resolve_arrival_price(*, decision: TradeDecision | None, execution: Executi
     return None
 
 
-def _load_trade_decision(session: Session, execution: Execution) -> TradeDecision | None:
+def _load_trade_decision(
+    session: Session, execution: Execution
+) -> TradeDecision | None:
     if execution.trade_decision_id is not None:
         decision = session.get(TradeDecision, execution.trade_decision_id)
         if decision is not None:
@@ -364,85 +411,36 @@ def _load_trade_decision(session: Session, execution: Execution) -> TradeDecisio
     if execution.client_order_id is None:
         return None
     return session.execute(
-        select(TradeDecision).where(TradeDecision.decision_hash == execution.client_order_id)
+        select(TradeDecision).where(
+            TradeDecision.decision_hash == execution.client_order_id
+        )
     ).scalar_one_or_none()
 
 
-def _load_recent_tca_rows(
-    session: Session,
-    *,
-    symbol: str,
-    regime_label: str,
-) -> list[dict[str, Any]]:
-    stmt = (
-        select(ExecutionTCAMetric, TradeDecision.decision_json)
-        .outerjoin(TradeDecision, TradeDecision.id == ExecutionTCAMetric.trade_decision_id)
-        .where(ExecutionTCAMetric.symbol == symbol)
-        .order_by(ExecutionTCAMetric.computed_at.desc())
-        .limit(ADAPTIVE_LOOKBACK_WINDOW * 3)
-    )
-    rows = session.execute(stmt).all()
-
-    filtered: list[dict[str, Any]] = []
-    for metric, decision_json in rows:
-        params = _decision_params(decision_json)
-        row_regime = _normalize_regime_label(params.get('regime_label') or params.get('regime'))
-        if regime_label != 'all' and row_regime != regime_label:
-            continue
-        execution_policy = params.get('execution_policy')
-        execution_policy_map: Mapping[str, Any] = (
-            cast(Mapping[str, Any], execution_policy) if isinstance(execution_policy, Mapping) else {}
-        )
-        adaptive = execution_policy_map.get('adaptive')
-        adaptive_map: Mapping[str, Any] = (
-            cast(Mapping[str, Any], adaptive) if isinstance(adaptive, Mapping) else {}
-        )
-        filtered.append(
-            {
-                'slippage_bps': _decimal_or_none(metric.slippage_bps),
-                'shortfall_notional': _decimal_or_none(metric.shortfall_notional),
-                'adaptive_applied': bool(adaptive_map.get('applied', False)),
-            }
-        )
-        if len(filtered) >= ADAPTIVE_LOOKBACK_WINDOW:
-            break
-    return filtered
-
-
-def _decision_params(raw_decision_json: Any) -> dict[str, Any]:
-    if not isinstance(raw_decision_json, Mapping):
-        return {}
-    decision_map = cast(Mapping[str, Any], raw_decision_json)
-    raw_params = decision_map.get('params')
-    if not isinstance(raw_params, Mapping):
-        return {}
-    params = cast(Mapping[str, Any], raw_params)
-    return {str(key): value for key, value in params.items()}
-
-
-def _split_window_average(values: list[Decimal]) -> tuple[Decimal | None, Decimal | None]:
-    if len(values) < ADAPTIVE_MIN_SAMPLE_SIZE:
-        return None, None
-    midpoint = len(values) // 2
-    if midpoint == 0 or midpoint == len(values):
-        return None, None
-    recent = values[:midpoint]
-    baseline = values[midpoint:]
-    if not recent or not baseline:
-        return None, None
-    return _mean(baseline), _mean(recent)
-
-
-def _mean(values: list[Decimal]) -> Decimal | None:
-    if not values:
-        return None
-    total = sum(values, start=Decimal('0'))
-    return total / Decimal(len(values))
-
-
-def _normalize_regime_label(value: Any) -> str:
-    text = str(value).strip().lower() if value is not None else ''
-    return text or 'all'
+def _resolve_simulator_expectations(
+    decision: TradeDecision | None,
+) -> tuple[Decimal | None, Decimal | None, str | None]:
+    if decision is None:
+        return None, None, None
+    decision_json = decision.decision_json
+    if not isinstance(decision_json, Mapping):
+        return None, None, None
+    params_raw = cast(Mapping[object, object], decision_json).get("params")
+    if not isinstance(params_raw, Mapping):
+        return None, None, None
+    params = cast(Mapping[object, object], params_raw)
+    advice_raw = params.get("execution_advice")
+    if not isinstance(advice_raw, Mapping):
+        return None, None, None
+    advice = cast(Mapping[object, object], advice_raw)
+    expected_p50 = _decimal_or_none(advice.get("expected_shortfall_bps_p50"))
+    expected_p95 = _decimal_or_none(advice.get("expected_shortfall_bps_p95"))
+    simulator_version_raw = advice.get("simulator_version")
+    simulator_version = None
+    if simulator_version_raw is not None:
+        text = str(simulator_version_raw).strip()
+        simulator_version = text or None
+    return expected_p50, expected_p95, simulator_version
 
 
 def _signed_qty(*, side: str, qty: Decimal) -> Decimal:

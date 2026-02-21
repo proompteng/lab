@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
 
+from app import config
 from app.trading.execution_policy import ExecutionPolicy, ExecutionPolicyConfig
 from app.trading.models import StrategyDecision
 from app.trading.tca import AdaptiveExecutionPolicyDecision
@@ -46,6 +47,23 @@ def _decision(
 
 
 class TestExecutionPolicy(TestCase):
+    def setUp(self) -> None:
+        self._advisor_enabled = config.settings.trading_execution_advisor_enabled
+        self._advisor_staleness = (
+            config.settings.trading_execution_advisor_max_staleness_seconds
+        )
+        self._advisor_timeout_ms = config.settings.trading_execution_advisor_timeout_ms
+        config.settings.trading_execution_advisor_enabled = False
+        config.settings.trading_execution_advisor_max_staleness_seconds = 15
+        config.settings.trading_execution_advisor_timeout_ms = 250
+
+    def tearDown(self) -> None:
+        config.settings.trading_execution_advisor_enabled = self._advisor_enabled
+        config.settings.trading_execution_advisor_max_staleness_seconds = (
+            self._advisor_staleness
+        )
+        config.settings.trading_execution_advisor_timeout_ms = self._advisor_timeout_ms
+
     def test_kill_switch_blocks(self) -> None:
         policy = ExecutionPolicy(config=_config(kill_switch_enabled=True))
         outcome = policy.evaluate(
@@ -249,83 +267,78 @@ class TestExecutionPolicy(TestCase):
         self.assertEqual(outcome.decision.order_type, "limit")
         self.assertEqual(outcome.decision.limit_price, Decimal("120.12"))
 
-    def test_adaptive_policy_tightens_participation_and_prefers_limit(self) -> None:
-        policy = ExecutionPolicy(
-            config=_config(
-                prefer_limit=False,
-                max_participation_rate=Decimal("0.2"),
-            )
+    def test_advisor_tightens_participation_and_order_type_only(self) -> None:
+        config.settings.trading_execution_advisor_enabled = True
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
         )
-        adaptive = AdaptiveExecutionPolicyDecision(
-            key="AAPL:trend",
-            symbol="AAPL",
-            regime_label="trend",
-            sample_size=8,
-            adaptive_samples=4,
-            baseline_slippage_bps=Decimal("10"),
-            recent_slippage_bps=Decimal("22"),
-            baseline_shortfall_notional=Decimal("2"),
-            recent_shortfall_notional=Decimal("8"),
-            effect_size_bps=Decimal("-12"),
-            degradation_bps=Decimal("12"),
-            fallback_active=False,
-            fallback_reason=None,
-            prefer_limit=True,
-            participation_rate_scale=Decimal("0.5"),
-            execution_seconds_scale=Decimal("1.4"),
-            aggressiveness="defensive",
-            generated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
-        )
-        decision = _decision(order_type="market")
         decision = decision.model_copy(
-            update={"params": {"price": Decimal("100"), "adv": Decimal("1000")}}
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "adv": Decimal("100000"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "3.2",
+                        "depth_top5_usd": "1500000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 20,
+                        "fill_hazard": "0.8",
+                        "liquidity_regime": "normal",
+                    },
+                    "execution_advice": {
+                        "urgency_tier": "normal",
+                        "max_participation_rate": "0.05",
+                        "preferred_order_type": "limit",
+                        "adverse_selection_risk": "0.20",
+                    },
+                }
+            }
         )
         outcome = policy.evaluate(
-            decision,
-            strategy=None,
-            positions=[],
-            market_snapshot=None,
-            adaptive_policy=adaptive,
+            decision, strategy=None, positions=[], market_snapshot=None
         )
+        self.assertTrue(outcome.approved)
         self.assertEqual(outcome.decision.order_type, "limit")
-        self.assertEqual(outcome.adaptive is not None, True)
-        assert outcome.adaptive is not None
-        self.assertTrue(outcome.adaptive.applied)
-        self.assertLessEqual(
-            Decimal(outcome.impact_assumptions["model"]["max_participation_rate"]),
-            Decimal("0.2"),
-        )
+        self.assertEqual(outcome.advisor_metadata["applied"], True)
+        self.assertEqual(outcome.advisor_metadata["max_participation_rate"], "0.05")
 
-    def test_adaptive_policy_fallback_disables_override(self) -> None:
-        policy = ExecutionPolicy(config=_config(prefer_limit=False))
-        adaptive = AdaptiveExecutionPolicyDecision(
-            key="AAPL:all",
-            symbol="AAPL",
-            regime_label="all",
-            sample_size=12,
-            adaptive_samples=8,
-            baseline_slippage_bps=Decimal("8"),
-            recent_slippage_bps=Decimal("16"),
-            baseline_shortfall_notional=Decimal("1"),
-            recent_shortfall_notional=Decimal("4"),
-            effect_size_bps=Decimal("-8"),
-            degradation_bps=Decimal("8"),
-            fallback_active=True,
-            fallback_reason="adaptive_policy_degraded",
-            prefer_limit=True,
-            participation_rate_scale=Decimal("0.75"),
-            execution_seconds_scale=Decimal("1.2"),
-            aggressiveness="defensive",
-            generated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+    def test_advisor_timeout_falls_back_to_baseline(self) -> None:
+        config.settings.trading_execution_advisor_enabled = True
+        config.settings.trading_execution_advisor_timeout_ms = 10
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "3.2",
+                        "depth_top5_usd": "1500000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 20,
+                        "fill_hazard": "0.8",
+                        "liquidity_regime": "normal",
+                    },
+                    "execution_advice": {
+                        "urgency_tier": "normal",
+                        "latency_ms": 50,
+                        "max_participation_rate": "0.01",
+                        "preferred_order_type": "limit",
+                    },
+                }
+            }
         )
         outcome = policy.evaluate(
-            _decision(order_type="market"),
-            strategy=None,
-            positions=[],
-            market_snapshot=None,
-            adaptive_policy=adaptive,
+            decision, strategy=None, positions=[], market_snapshot=None
         )
-        self.assertEqual(outcome.decision.order_type, "market")
-        assert outcome.adaptive is not None
-        self.assertFalse(outcome.adaptive.applied)
-        self.assertEqual(outcome.adaptive.reason, "adaptive_policy_degraded")
+        self.assertEqual(outcome.advisor_metadata["applied"], False)
+        self.assertEqual(outcome.advisor_metadata["fallback_reason"], "advisor_timeout")

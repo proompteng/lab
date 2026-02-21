@@ -536,12 +536,13 @@ class ExecutionTCAMetric(Base, TimestampMixin):
     signed_qty: Mapped[Decimal] = mapped_column(
         Numeric(20, 8), nullable=False, default=Decimal("0"), server_default=text("0")
     )
-    slippage_bps: Mapped[Optional[Decimal]] = mapped_column(
-        Numeric(20, 8), nullable=True
-    )
-    shortfall_notional: Mapped[Optional[Decimal]] = mapped_column(
-        Numeric(20, 8), nullable=True
-    )
+    slippage_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    shortfall_notional: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    expected_shortfall_bps_p50: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    expected_shortfall_bps_p95: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    realized_shortfall_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    divergence_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    simulator_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
     churn_qty: Mapped[Decimal] = mapped_column(
         Numeric(20, 8), nullable=False, default=Decimal("0"), server_default=text("0")
     )

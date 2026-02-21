@@ -357,13 +357,18 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
-                if key in {"llm_market_context_reason_total", "llm_market_context_shadow_total"}:
+                if key in {
+                    "llm_market_context_reason_total",
+                    "llm_market_context_shadow_total",
+                }:
                     metric_name = (
                         "torghut_trading_llm_market_context_reason_total"
                         if key == "llm_market_context_reason_total"
                         else "torghut_trading_llm_market_context_shadow_total"
                     )
-                    lines.append(f"# HELP {metric_name} Count of LLM market-context fallbacks by reason.")
+                    lines.append(
+                        f"# HELP {metric_name} Count of LLM market-context fallbacks by reason."
+                    )
                     lines.append(f"# TYPE {metric_name} counter")
                     sorted_items = sorted(
                         [
@@ -552,12 +557,16 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                     continue
                 if key == "feature_null_rate":
                     metric_name = "torghut_trading_feature_null_rate"
-                    lines.append(f"# HELP {metric_name} Required feature null-rate by field.")
+                    lines.append(
+                        f"# HELP {metric_name} Required feature null-rate by field."
+                    )
                     lines.append(f"# TYPE {metric_name} gauge")
                     sorted_items = sorted(
                         [
                             (str(field), float(null_rate))
-                            for field, null_rate in cast(dict[str, object], value).items()
+                            for field, null_rate in cast(
+                                dict[str, object], value
+                            ).items()
                             if isinstance(null_rate, (int, float, Decimal))
                         ]
                     )
@@ -656,6 +665,10 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             "torghut_trading_tca_avg_shortfall_notional",
                         ),
                         ("avg_churn_ratio", "torghut_trading_tca_avg_churn_ratio"),
+                        (
+                            "avg_divergence_bps",
+                            "torghut_trading_tca_avg_divergence_bps",
+                        ),
                     ]
                     for summary_key, metric_name in scalar_metrics:
                         metric_value = summary.get(summary_key)
@@ -696,13 +709,17 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
             continue
         if key == "feature_staleness_ms_p95":
             metric_name = "torghut_trading_feature_staleness_ms_p95"
-            lines.append(f"# HELP {metric_name} Feature staleness p95 for the latest ingest batch.")
+            lines.append(
+                f"# HELP {metric_name} Feature staleness p95 for the latest ingest batch."
+            )
             lines.append(f"# TYPE {metric_name} gauge")
             lines.append(f"{metric_name} {value}")
             continue
         if key == "feature_duplicate_ratio":
             metric_name = "torghut_trading_feature_duplicate_ratio"
-            lines.append(f"# HELP {metric_name} Duplicate event ratio in the latest ingest batch.")
+            lines.append(
+                f"# HELP {metric_name} Duplicate event ratio in the latest ingest batch."
+            )
             lines.append(f"# TYPE {metric_name} gauge")
             lines.append(f"{metric_name} {value}")
             continue
@@ -712,7 +729,9 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
             "evidence_continuity_last_failed_runs",
         }:
             metric_name = f"torghut_trading_{key}"
-            lines.append(f"# HELP {metric_name} Torghut trading metric {key.replace('_', ' ')}.")
+            lines.append(
+                f"# HELP {metric_name} Torghut trading metric {key.replace('_', ' ')}."
+            )
             lines.append(f"# TYPE {metric_name} gauge")
             lines.append(f"{metric_name} {value}")
             continue
