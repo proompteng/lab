@@ -130,7 +130,7 @@ spec:
             - name: OPENAI_API_BASE_URL
               value: http://saigak.saigak.svc.cluster.local:11434/v1
             - name: OPENAI_COMPLETION_MODEL
-              value: qwen3-coder-saigak:30b-a3b-q4_K_M
+              value: qwen3-coder-saigak:30b
             - name: OPENAI_COMPLETION_MAX_ATTEMPTS
               value: "1"
             - name: OPENAI_COMPLETION_TIMEOUT_MS
