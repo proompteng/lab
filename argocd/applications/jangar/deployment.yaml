@@ -131,6 +131,10 @@ spec:
               value: "false"
             - name: JANGAR_PRIMITIVES_RECONCILER
               value: "false"
+            - name: JANGAR_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY
+              value: jangar.orchestration_controller.enabled
+            - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
+              value: jangar.supporting_controller.enabled
             - name: JANGAR_AGENTS_CONTROLLER_ENABLED_FLAG_KEY
               value: jangar.agents_controller.enabled
             - name: JANGAR_PRIMITIVES_RECONCILER_FLAG_KEY

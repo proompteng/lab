@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 
+import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { startResourceWatch } from '~/server/kube-watch'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
@@ -7,6 +8,7 @@ import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { shouldApplyStatus } from '~/server/status-utils'
 
 const DEFAULT_NAMESPACES = ['agents']
+const DEFAULT_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.supporting_controller.enabled'
 
 const REQUIRED_CRDS = [
   RESOURCE_MAP.Tool,
@@ -65,6 +67,16 @@ const shouldStart = () => {
   if (process.env.NODE_ENV === 'test') return false
   const flag = (process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED ?? '1').trim().toLowerCase()
   return flag !== '0' && flag !== 'false'
+}
+
+const shouldStartWithFeatureFlag = async () => {
+  if (process.env.NODE_ENV === 'test') return false
+  return resolveBooleanFeatureToggle({
+    key: DEFAULT_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY,
+    keyEnvVar: 'JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY',
+    fallbackEnvVar: 'JANGAR_SUPPORTING_CONTROLLER_ENABLED',
+    defaultValue: shouldStart(),
+  })
 }
 
 const parseNamespaces = () => {
@@ -955,10 +967,25 @@ const handleWorkspaceVolumeEvent = async (
 }
 
 export const startSupportingPrimitivesController = async () => {
-  if (started || starting || !shouldStart()) return
+  if (started || starting) return
   starting = true
   lifecycleToken += 1
   const token = lifecycleToken
+  let featureEnabled = false
+  try {
+    featureEnabled = await shouldStartWithFeatureFlag()
+  } catch (error) {
+    if (lifecycleToken === token) {
+      starting = false
+    }
+    throw error
+  }
+  if (!featureEnabled) {
+    if (lifecycleToken === token) {
+      starting = false
+    }
+    return
+  }
   const crdsReady = await checkCrds()
   if (!crdsReady.ok) {
     console.error('[jangar] supporting controller will not start without CRDs')
@@ -1097,4 +1124,5 @@ export const stopSupportingPrimitivesController = () => {
 
 export const __test__ = {
   reconcileTool,
+  shouldStartWithFeatureFlag,
 }

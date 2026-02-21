@@ -1,0 +1,21 @@
+fullnameOverride: feature-flags
+
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  httpPort: 8013
+
+persistence:
+  enabled: true
+  size: 5Gi
+
+flipt:
+  config:
+    authentication:
+      required: false
+    storage:
+      default:
+        backend:
+          type: local
+          path: /var/opt/flipt
