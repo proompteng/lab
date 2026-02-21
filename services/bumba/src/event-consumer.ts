@@ -10,6 +10,7 @@ const DEFAULT_REF = 'main'
 const DEFAULT_POLL_INTERVAL_MS = 10_000
 const DEFAULT_BATCH_SIZE = 20
 const DEFAULT_MAX_EVENT_FILE_TARGETS = 200
+const DEFAULT_MAX_DISPATCH_FAILURES = 6
 
 const LOCK_FILENAMES = new Set([
   'bun.lock',
@@ -93,6 +94,7 @@ type GithubEventConsumerConfig = {
   pollIntervalMs: number
   batchSize: number
   maxEventFileTargets: number
+  maxDispatchFailures: number
   taskQueue: string
   repoRoot: string
 }
@@ -100,6 +102,13 @@ type GithubEventConsumerConfig = {
 type IngestionCounts = {
   total: number
   terminal: number
+}
+
+type ProcessEventResult = {
+  processed: boolean
+  waitingOnIngestion: boolean
+  dispatchStarted: number
+  dispatchFailed: number
 }
 
 export type GithubEventConsumer = {
@@ -138,6 +147,10 @@ const resolveConsumerConfig = (): GithubEventConsumerConfig => ({
   maxEventFileTargets: parsePositiveInt(
     process.env.BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS,
     DEFAULT_MAX_EVENT_FILE_TARGETS,
+  ),
+  maxDispatchFailures: parsePositiveInt(
+    process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES,
+    DEFAULT_MAX_DISPATCH_FAILURES,
   ),
   taskQueue: normalizeOptionalText(process.env.TEMPORAL_TASK_QUEUE) ?? DEFAULT_TASK_QUEUE,
   repoRoot: resolve(
@@ -356,10 +369,15 @@ const processEvent = async (
   client: TemporalClient,
   config: GithubEventConsumerConfig,
   event: GithubEventRow,
-) => {
+): Promise<ProcessEventResult> => {
   if (event.event_type !== 'push') {
     await markEventProcessed(db, event.delivery_id)
-    return
+    return {
+      processed: true,
+      waitingOnIngestion: false,
+      dispatchStarted: 0,
+      dispatchFailed: 0,
+    }
   }
 
   const payload = resolveEventPayload(event.payload)
@@ -370,7 +388,12 @@ const processEvent = async (
       repository: event.repository,
     })
     await markEventProcessed(db, event.delivery_id)
-    return
+    return {
+      processed: true,
+      waitingOnIngestion: false,
+      dispatchStarted: 0,
+      dispatchFailed: 0,
+    }
   }
 
   const files = extractEventFilePaths(payload, config.maxEventFileTargets)
@@ -380,15 +403,31 @@ const processEvent = async (
       repository: event.repository,
     })
     await markEventProcessed(db, event.delivery_id)
-    return
+    return {
+      processed: true,
+      waitingOnIngestion: false,
+      dispatchStarted: 0,
+      dispatchFailed: 0,
+    }
   }
 
   const ingestionCounts = await getIngestionCounts(db, event.id)
   if (ingestionCounts.total > 0) {
     if (ingestionCounts.total === ingestionCounts.terminal) {
       await markEventProcessed(db, event.delivery_id)
+      return {
+        processed: true,
+        waitingOnIngestion: false,
+        dispatchStarted: 0,
+        dispatchFailed: 0,
+      }
     }
-    return
+    return {
+      processed: false,
+      waitingOnIngestion: true,
+      dispatchStarted: 0,
+      dispatchFailed: 0,
+    }
   }
 
   const ref = resolveEventRef(payload)
@@ -424,7 +463,12 @@ const processEvent = async (
       failed,
       files: files.length,
     })
-    return
+    return {
+      processed: false,
+      waitingOnIngestion: false,
+      dispatchStarted: started,
+      dispatchFailed: failed,
+    }
   }
 
   console.warn('[bumba][event-consumer] no workflows dispatched for event', {
@@ -432,6 +476,13 @@ const processEvent = async (
     repository: event.repository,
     files: files.length,
   })
+
+  return {
+    processed: false,
+    waitingOnIngestion: false,
+    dispatchStarted: 0,
+    dispatchFailed: failed,
+  }
 }
 
 const createSqlClient = () => {
@@ -455,6 +506,7 @@ export const createGithubEventConsumer = (
   let started = false
   let tickPromise: Promise<void> = Promise.resolve()
   const inFlightDeliveries = new Set<string>()
+  const dispatchFailureCounts = new Map<string, number>()
 
   const runTick = async () => {
     if (!started || !db || !client) return
@@ -467,7 +519,35 @@ export const createGithubEventConsumer = (
 
       inFlightDeliveries.add(event.delivery_id)
       try {
-        await processEvent(db, client, config, event)
+        const result = await processEvent(db, client, config, event)
+
+        if (result.processed || result.waitingOnIngestion || result.dispatchStarted > 0) {
+          dispatchFailureCounts.delete(event.delivery_id)
+          continue
+        }
+
+        if (result.dispatchFailed > 0) {
+          const failures = (dispatchFailureCounts.get(event.delivery_id) ?? 0) + 1
+          if (failures >= config.maxDispatchFailures) {
+            console.error('[bumba][event-consumer] giving up on event after repeated dispatch failures', {
+              deliveryId: event.delivery_id,
+              repository: event.repository,
+              dispatchFailed: result.dispatchFailed,
+              attempts: failures,
+            })
+            await markEventProcessed(db, event.delivery_id)
+            dispatchFailureCounts.delete(event.delivery_id)
+          } else {
+            dispatchFailureCounts.set(event.delivery_id, failures)
+            console.warn('[bumba][event-consumer] retaining event for retry after dispatch failures', {
+              deliveryId: event.delivery_id,
+              repository: event.repository,
+              dispatchFailed: result.dispatchFailed,
+              attempts: failures,
+              maxAttempts: config.maxDispatchFailures,
+            })
+          }
+        }
       } finally {
         inFlightDeliveries.delete(event.delivery_id)
       }
@@ -496,8 +576,7 @@ export const createGithubEventConsumer = (
 
       db = createSqlClient()
       if (!db) {
-        console.warn('[bumba][event-consumer] disabled because DATABASE_URL is not set')
-        return
+        throw new Error('DATABASE_URL is required when BUMBA_GITHUB_EVENT_CONSUMER_ENABLED is true')
       }
 
       const temporal = await createTemporalClient({ config: temporalConfig })
@@ -507,6 +586,7 @@ export const createGithubEventConsumer = (
       console.info('[bumba][event-consumer] started', {
         pollIntervalMs: config.pollIntervalMs,
         batchSize: config.batchSize,
+        maxDispatchFailures: config.maxDispatchFailures,
         taskQueue: config.taskQueue,
         repoRoot: config.repoRoot,
       })

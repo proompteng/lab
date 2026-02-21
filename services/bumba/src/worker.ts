@@ -12,6 +12,8 @@ type HealthState = {
   startedAt: number
   running: boolean
   shuttingDown: boolean
+  consumerRequired: boolean
+  consumerRunning: boolean
   lastHeartbeatAt: number
   lastTemporalSuccessAt: number | null
   lastTemporalFailureAt: number | null
@@ -21,6 +23,7 @@ type HealthState = {
 type HealthServer = {
   port: number
   setRunning: (running: boolean) => void
+  setConsumerState: (required: boolean, running: boolean) => void
   markShuttingDown: () => void
   stop: () => Promise<void>
 }
@@ -28,6 +31,14 @@ type HealthServer = {
 const parseIntEnv = (value: string | undefined, fallback: number): number => {
   const parsed = Number.parseInt(value ?? '', 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const parseBooleanEnv = (value: string | undefined, fallback: boolean): boolean => {
+  if (!value) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  return fallback
 }
 
 const resolveHealthConfig = () => {
@@ -52,6 +63,8 @@ const startHealthServer = async (config: TemporalConfig): Promise<HealthServer> 
     startedAt: Date.now(),
     running: false,
     shuttingDown: false,
+    consumerRequired: true,
+    consumerRunning: false,
     lastHeartbeatAt: Date.now(),
     lastTemporalSuccessAt: null,
     lastTemporalFailureAt: null,
@@ -94,7 +107,8 @@ const startHealthServer = async (config: TemporalConfig): Promise<HealthServer> 
     const uptimeMs = now - state.startedAt
     const live = !state.shuttingDown && now - state.lastHeartbeatAt <= liveTtlMs
     const temporalOk = state.lastTemporalSuccessAt !== null && now - state.lastTemporalSuccessAt <= readyTtlMs
-    const ready = live && state.running && temporalOk
+    const consumerOk = !state.consumerRequired || state.consumerRunning
+    const ready = live && state.running && temporalOk && consumerOk
 
     res.setHeader('Content-Type', 'application/json')
     res.setHeader('Cache-Control', 'no-store')
@@ -127,6 +141,11 @@ const startHealthServer = async (config: TemporalConfig): Promise<HealthServer> 
             lastFailureAt: state.lastTemporalFailureAt,
             lastError: state.lastTemporalError,
           },
+          consumer: {
+            required: state.consumerRequired,
+            running: state.consumerRunning,
+            ok: consumerOk,
+          },
         }),
       )
       return
@@ -147,6 +166,10 @@ const startHealthServer = async (config: TemporalConfig): Promise<HealthServer> 
     port,
     setRunning: (running) => {
       state.running = running
+    },
+    setConsumerState: (required, running) => {
+      state.consumerRequired = required
+      state.consumerRunning = running
     },
     markShuttingDown: () => {
       state.shuttingDown = true
@@ -172,12 +195,19 @@ const main = async () => {
 
   const health = await startHealthServer(config)
   const eventConsumer = createGithubEventConsumer(config)
+  const consumerRequired = parseBooleanEnv(process.env.BUMBA_GITHUB_EVENT_CONSUMER_ENABLED, true)
+  health.setConsumerState(consumerRequired, false)
   await eventConsumer.start()
+  health.setConsumerState(consumerRequired, eventConsumer.isRunning())
+  if (consumerRequired && !eventConsumer.isRunning()) {
+    throw new Error('GitHub event consumer did not start while it is required')
+  }
 
   const shutdown = async (signal: string) => {
     console.log(`Received ${signal}. Shutting down worker...`)
     health.markShuttingDown()
     await eventConsumer.stop()
+    health.setConsumerState(consumerRequired, false)
     await worker.shutdown()
     await health.stop()
     process.exit(0)
@@ -192,6 +222,7 @@ const main = async () => {
   } finally {
     health.setRunning(false)
     await eventConsumer.stop()
+    health.setConsumerState(consumerRequired, false)
     await health.stop()
   }
 }

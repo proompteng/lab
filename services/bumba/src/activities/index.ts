@@ -207,6 +207,7 @@ const DEFAULT_EMBEDDING_RETRY_INITIAL_MS = 500
 const DEFAULT_EMBEDDING_RETRY_MAX_MS = 8_000
 const DEFAULT_EMBEDDING_RETRY_BACKOFF = 2
 const DEFAULT_EMBEDDING_BATCH_WINDOW_MS = 0
+const DEFAULT_REPO_SYNC_INTERVAL_MS = 120_000
 const DEFAULT_MAX_REPO_FILES = 5_000
 const MAX_REPO_FILES = 20_000
 
@@ -673,6 +674,76 @@ const fetchCommitFromOrigin = async (repoRoot: string, commit: string) => {
   return result.exitCode === 0
 }
 
+const fetchFromOrigin = async (repoRoot: string, ref?: string) => {
+  const token = resolveGithubToken()
+  const args = ['git', '-C', repoRoot, ...buildGitAuthArgs(token), 'fetch', '--quiet', '--depth=1', 'origin']
+  if (ref) {
+    args.push(ref)
+  }
+  const result = await runCommandResult(args, repoRoot, { GIT_TERMINAL_PROMPT: '0' })
+  return result.exitCode === 0
+}
+
+const refExistsLocally = async (repoRoot: string, ref: string) => {
+  const result = await runCommandResult(
+    ['git', '-C', repoRoot, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`],
+    repoRoot,
+    {
+      GIT_TERMINAL_PROMPT: '0',
+    },
+  )
+  return result.exitCode === 0
+}
+
+const isCommitLikeRef = (value: string) => /^[0-9a-f]{7,40}$/i.test(value.trim())
+
+const shouldSyncRepository = (repoRoot: string) => {
+  if (repoSyncIntervalMs === 0) return false
+  const lastSyncedAt = lastRepoSyncAt.get(repoRoot) ?? 0
+  return Date.now() - lastSyncedAt >= repoSyncIntervalMs
+}
+
+const syncRepositoryForRef = async (repoRoot: string, ref: string) => {
+  const normalizedRef = ref.trim()
+  if (normalizedRef.length === 0) return ref
+
+  if (normalizedRef === 'HEAD') {
+    if (!shouldSyncRepository(repoRoot)) return ref
+
+    const fetched = await fetchFromOrigin(repoRoot)
+    if (!fetched) return ref
+
+    lastRepoSyncAt.set(repoRoot, Date.now())
+    const remoteHeadRef = await runCommand(
+      ['git', '-C', repoRoot, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'],
+      repoRoot,
+    )
+    return remoteHeadRef ?? ref
+  }
+
+  if (isCommitLikeRef(normalizedRef)) {
+    if (await commitExistsLocally(repoRoot, normalizedRef)) {
+      return ref
+    }
+    const fetched = await fetchCommitFromOrigin(repoRoot, normalizedRef)
+    if (fetched) {
+      lastRepoSyncAt.set(repoRoot, Date.now())
+    }
+    return ref
+  }
+
+  const existsLocally = await refExistsLocally(repoRoot, normalizedRef)
+  if (existsLocally && !shouldSyncRepository(repoRoot)) {
+    return ref
+  }
+
+  const fetched = await fetchFromOrigin(repoRoot, normalizedRef)
+  if (fetched) {
+    lastRepoSyncAt.set(repoRoot, Date.now())
+  }
+  return ref
+}
+
 const readGitFile = async (repoRoot: string, ref: string, filePath: string) => {
   const result = await runCommandRaw(['git', '-C', repoRoot, 'show', `${ref}:${filePath}`], repoRoot, {
     GIT_TERMINAL_PROMPT: '0',
@@ -1033,6 +1104,12 @@ const clampNumber = (value: number, fallback: number) => (Number.isFinite(value)
 const clampNonNegativeNumber = (value: number, fallback: number) =>
   Number.isFinite(value) && value >= 0 ? value : fallback
 const toError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
+
+const repoSyncIntervalMs = clampNonNegativeNumber(
+  Number.parseInt(process.env.BUMBA_REPO_SYNC_INTERVAL_MS ?? '', 10),
+  DEFAULT_REPO_SYNC_INTERVAL_MS,
+)
+const lastRepoSyncAt = new Map<string, number>()
 
 const completionConcurrency = clampNumber(
   Number.parseInt(process.env.BUMBA_COMPLETION_CONCURRENCY ?? '', 10),
@@ -2464,19 +2541,20 @@ const resolveGithubEventId = async (db: SQL, deliveryId: string) => {
 export const activities = {
   async listRepoFiles(input: ListRepoFilesInput): Promise<ListRepoFilesOutput> {
     const repoRoot = resolve(input.repoRoot)
-    const ref = normalizeOptionalText(input.ref) ?? 'HEAD'
+    const requestedRef = normalizeOptionalText(input.ref) ?? 'HEAD'
     const pathPrefix = normalizePathPrefix(input.pathPrefix)
     const maxFiles = loadRepoListLimit(input.maxFiles)
     const startedAt = Date.now()
 
     logActivity('info', 'started', 'listRepoFiles', {
       repoRoot,
-      ref,
+      ref: requestedRef,
       pathPrefix: pathPrefix ?? null,
       maxFiles,
     })
 
     try {
+      const ref = await syncRepositoryForRef(repoRoot, requestedRef)
       const args = ['git', 'ls-tree', '-r', '-z', ref]
       if (pathPrefix) {
         args.push('--', pathPrefix)
@@ -2526,6 +2604,7 @@ export const activities = {
       logActivity('info', 'completed', 'listRepoFiles', {
         repoRoot,
         ref,
+        requestedRef,
         pathPrefix: pathPrefix ?? null,
         maxFiles,
         durationMs: Date.now() - startedAt,
@@ -2538,7 +2617,7 @@ export const activities = {
     } catch (error) {
       logActivity('error', 'failed', 'listRepoFiles', {
         repoRoot,
-        ref,
+        ref: requestedRef,
         pathPrefix: pathPrefix ?? null,
         maxFiles,
         durationMs: Date.now() - startedAt,

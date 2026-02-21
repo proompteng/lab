@@ -1,15 +1,18 @@
 import { afterEach, expect, test } from 'bun:test'
+import type { TemporalConfig } from '@proompteng/temporal-bun-sdk'
 
-import { __test__ } from './event-consumer'
+import { __test__, createGithubEventConsumer } from './event-consumer'
 
 const ENV_KEYS = [
   'BUMBA_GITHUB_EVENT_CONSUMER_ENABLED',
   'BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS',
   'BUMBA_GITHUB_EVENT_BATCH_SIZE',
   'BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS',
+  'BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES',
   'TEMPORAL_TASK_QUEUE',
   'BUMBA_WORKSPACE_ROOT',
   'CODEX_CWD',
+  'DATABASE_URL',
 ] as const
 
 const envSnapshot = new Map<string, string | undefined>()
@@ -97,6 +100,7 @@ test('resolveConsumerConfig reads environment overrides', () => {
   process.env.BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS = '2500'
   process.env.BUMBA_GITHUB_EVENT_BATCH_SIZE = '11'
   process.env.BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS = '55'
+  process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES = '3'
   process.env.TEMPORAL_TASK_QUEUE = 'jangar'
   process.env.BUMBA_WORKSPACE_ROOT = '/workspace/lab'
 
@@ -106,6 +110,7 @@ test('resolveConsumerConfig reads environment overrides', () => {
   expect(config.pollIntervalMs).toBe(2500)
   expect(config.batchSize).toBe(11)
   expect(config.maxEventFileTargets).toBe(55)
+  expect(config.maxDispatchFailures).toBe(3)
   expect(config.taskQueue).toBe('jangar')
   expect(config.repoRoot).toBe('/workspace/lab')
 })
@@ -114,4 +119,17 @@ test('isWorkflowAlreadyStartedError recognizes Temporal already-started errors',
   expect(__test__.isWorkflowAlreadyStartedError(new Error('WorkflowExecutionAlreadyStarted'))).toBe(true)
   expect(__test__.isWorkflowAlreadyStartedError(new Error('workflow already started for id'))).toBe(true)
   expect(__test__.isWorkflowAlreadyStartedError(new Error('deadline exceeded'))).toBe(false)
+})
+
+test('start fails fast when event consumer is enabled and DATABASE_URL is missing', async () => {
+  delete process.env.DATABASE_URL
+  process.env.BUMBA_GITHUB_EVENT_CONSUMER_ENABLED = 'true'
+
+  const consumer = createGithubEventConsumer({
+    address: 'temporal-frontend.temporal.svc.cluster.local:7233',
+    namespace: 'default',
+  } as TemporalConfig)
+
+  await expect(consumer.start()).rejects.toThrow('DATABASE_URL is required')
+  expect(consumer.isRunning()).toBe(false)
 })
