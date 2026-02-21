@@ -65,6 +65,19 @@ spec:
           manifestTargets:
             kustomize:
               name: registry.ide-newton.ts.net/lab/docs
+    - namePattern: khoshut
+      writeBackConfig:
+        method: git:secret:argocd/image-updater-git-ssh
+        gitConfig:
+          repository: git@github.com:proompteng/lab.git
+          branch: main:release/{{.SHA256}}
+          writeBackTarget: kustomization:/argocd/applications/khoshut
+      images:
+        - alias: khoshut
+          imageName: registry.ide-newton.ts.net/lab/khoshut:0.x
+          manifestTargets:
+            kustomize:
+              name: registry.ide-newton.ts.net/lab/khoshut
     - namePattern: dernier
       writeBackConfig:
         method: git:secret:argocd/image-updater-git-ssh

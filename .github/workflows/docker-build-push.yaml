@@ -33,6 +33,7 @@ jobs:
       reviseur: ${{ steps.filter.outputs.reviseur }}
       alchimie: ${{ steps.filter.outputs.alchimie }}
       bonjour: ${{ steps.filter.outputs.bonjour }}
+      khoshut: ${{ steps.filter.outputs.khoshut }}
 
     steps:
       - name: Checkout
@@ -63,6 +64,8 @@ jobs:
               - 'apps/alchimie/**'
             bonjour:
               - 'services/bonjour/**'
+            khoshut:
+              - 'services/khoshut/**'
 
       - name: Manual build selection
         id: manual
@@ -79,7 +82,7 @@ jobs:
     permissions:
       contents: write
     needs: changes
-    if: ${{ needs.changes.outputs.proompteng == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.cms == 'true' || needs.changes.outputs.docs == 'true' || needs.changes.outputs.kitty-krew == 'true' || needs.changes.outputs.reviseur == 'true' || needs.changes.outputs.alchimie == 'true' || needs.changes.outputs.bonjour == 'true' }}
+    if: ${{ needs.changes.outputs.proompteng == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.cms == 'true' || needs.changes.outputs.docs == 'true' || needs.changes.outputs.kitty-krew == 'true' || needs.changes.outputs.reviseur == 'true' || needs.changes.outputs.alchimie == 'true' || needs.changes.outputs.bonjour == 'true' || needs.changes.outputs.khoshut == 'true' }}
     outputs:
       new_tag: ${{ steps.tag_version.outputs.new_tag }}
       changelog: ${{ steps.tag_version.outputs.changelog }}
@@ -182,6 +185,19 @@ jobs:
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
 
+  build-khoshut:
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.khoshut == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: khoshut
+      dockerfile: ./services/khoshut/Dockerfile
+      context: .
+      new_tag: ${{ needs.version.outputs.new_tag }}
+      turbo_scope: '@proompteng/khoshut'
+      turbo_copy: 'tsconfig.base.json'
+      bun_version: 1.3.9
+
   cleanup-release:
     runs-on: arc-arm64
     permissions:
@@ -197,6 +213,7 @@ jobs:
         build-reviseur,
         build-alchimie,
         build-bonjour,
+        build-khoshut,
       ]
     if: failure()
     steps:

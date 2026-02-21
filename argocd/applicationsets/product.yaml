@@ -141,6 +141,13 @@ spec:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
                 enabled: "true"
+              - name: khoshut
+                path: argocd/applications/khoshut
+                namespace: khoshut
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: "true"
               - name: galette
                 path: argocd/applications/galette
                 namespace: galette

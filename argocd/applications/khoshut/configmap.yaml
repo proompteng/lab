@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: khoshut-config
+  labels:
+    app.kubernetes.io/name: khoshut
+    app.kubernetes.io/part-of: lab
+data:
+  HOST: 0.0.0.0
+  PORT: "3000"
+  INNGEST_APP_ID: khoshut-bun
+  INNGEST_BASE_URL: http://inngest.inngest.svc.cluster.local:8288
