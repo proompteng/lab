@@ -42,6 +42,13 @@ Health checks:
 - Canonical flag inventory is in `argocd/applications/feature-flags/gitops/default/features.yaml` (`torghut_*` keys).
 - Migration and rollout runbook: `docs/torghut/feature-flags-rollout.md`.
 
+## Deploy automation (main -> Argo CD)
+- `torghut-ci` validates code changes on PR and push.
+- `torghut-build-push` runs on `main` merges touching Torghut sources/scripts, builds/pushes image, and emits a release contract artifact.
+- `torghut-release` consumes that artifact, updates `argocd/applications/torghut/knative-service.yaml` digest/version metadata, and opens a release PR (`codex/torghut-release-<tag>`).
+- `torghut-deploy-automerge` enables squash auto-merge for eligible release PRs.
+- Migration safety gate: if the promoted source commit touches `services/torghut/migrations/**`, the release PR is created as draft with `do-not-automerge` and requires manual approval before merge.
+
 ## Order-feed ingestion (v3 execution accuracy)
 - `TRADING_ORDER_FEED_ENABLED=true` enables Kafka order-update ingestion in the main trading runtime.
 - `TRADING_ORDER_FEED_BOOTSTRAP_SERVERS=<host:port,...>` must be set when enabled.
