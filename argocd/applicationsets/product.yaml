@@ -197,11 +197,11 @@ spec:
                   - group: serving.knative.dev
                     kind: Service
                     jsonPointers:
+                      # Keep metadata ignores granular; ignoring /spec/template/metadata can block SSA reconciliation.
                       - /metadata/annotations
                       - /metadata/labels
                       - /spec/traffic
                       - /spec/template/metadata/annotations
-                      - /spec/template/metadata
                       - /spec/template/metadata/creationTimestamp
                       - /spec/template/metadata/labels
                       - /spec/template/spec/containers/0/ports/0/protocol
