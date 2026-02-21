@@ -398,7 +398,11 @@ def _normalize_llm_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if "confidence_band" not in payload:
         payload = dict(payload)
         payload["confidence_band"] = _confidence_band_from_score(confidence)
-    confidence_band = str(payload.get("confidence_band") or "")
+    normalized_confidence_band = _normalize_confidence_band(payload.get("confidence_band"), confidence)
+    if payload.get("confidence_band") != normalized_confidence_band:
+        payload = dict(payload)
+        payload["confidence_band"] = normalized_confidence_band
+    confidence_band = normalized_confidence_band
     if "uncertainty" not in payload:
         payload = dict(payload)
         payload["uncertainty"] = {
@@ -432,6 +436,138 @@ def _normalize_llm_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _committee_system_prompt(role: str) -> str:
+    role_instructions: dict[str, str] = {
+        "researcher": "Explain thesis quality and expected edge.",
+        "risk_critic": "Stress-test downside and risk/policy violations.",
+        "execution_critic": "Check feasibility under market microstructure and execution constraints.",
+        "policy_judge": "Validate schema, confidence calibration, and required deterministic checks.",
+    }
+    role_instruction = role_instructions.get(role, "Provide bounded committee review.")
+    return (
+        "You are an automated trading committee member. "
+        f"Role: {role}. {role_instruction} "
+        "Output must be advisory-only and cannot directly execute trades. "
+        "Respond ONLY with a JSON object containing exactly these keys: "
+        "verdict, confidence, uncertainty, rationale_short, required_checks, adjusted_qty, adjusted_order_type, "
+        "limit_price, risk_flags. "
+        "verdict must be one of approve|adjust|veto|abstain|escalate. "
+        "confidence must be between 0 and 1. uncertainty must be low|medium|high. "
+        "rationale_short must be <= 280 chars. required_checks must list deterministic policy check IDs. "
+        "Do not include chain-of-thought or extra keys."
+    )
+
+
+def _aggregate_committee(
+    *,
+    role_outputs: dict[str, LLMCommitteeMemberResponse],
+    mandatory_roles: list[str],
+    fail_closed_verdict: str,
+) -> dict[str, Any]:
+    mandatory_veto = any(
+        role_outputs.get(role) is None or role_outputs[role].verdict == "veto"
+        for role in mandatory_roles
+    )
+    aggregated_checks = sorted(
+        {
+            check
+            for item in role_outputs.values()
+            for check in item.required_checks
+        }
+    )
+    aggregated_risk_flags = sorted(
+        {
+            flag
+            for item in role_outputs.values()
+            for flag in item.risk_flags
+        }
+    )
+
+    if mandatory_veto:
+        verdict = "veto"
+        confidence = 1.0
+        confidence_band = "high"
+        rationale = "mandatory_committee_veto"
+        risk_flags = sorted([*aggregated_risk_flags, "mandatory_committee_veto"])
+        return {
+            "verdict": verdict,
+            "confidence": confidence,
+            "confidence_band": confidence_band,
+            "calibrated_probabilities": _default_calibrated_probabilities(verdict, confidence),
+            "uncertainty": {"score": 0.0, "band": "low"},
+            "calibration_metadata": {},
+            "rationale_short": rationale,
+            "required_checks": aggregated_checks,
+            "rationale": rationale,
+            "risk_flags": risk_flags,
+        }
+
+    votes = [member.verdict for member in role_outputs.values()]
+    if any(vote == "escalate" for vote in votes):
+        verdict = "escalate"
+    elif any(vote == "abstain" for vote in votes):
+        verdict = fail_closed_verdict
+    elif any(vote == "adjust" for vote in votes):
+        verdict = "adjust"
+    elif any(vote == "approve" for vote in votes):
+        verdict = "approve"
+    else:
+        verdict = fail_closed_verdict
+
+    confidence_values = [member.confidence for member in role_outputs.values()]
+    confidence = round(
+        (sum(confidence_values) / len(confidence_values)) if confidence_values else 0.0,
+        4,
+    )
+    confidence_band = _confidence_band_from_score(confidence)
+
+    uncertainty_rank = {"low": 1, "medium": 2, "high": 3}
+    uncertainty = "low"
+    for member in role_outputs.values():
+        if uncertainty_rank[member.uncertainty] > uncertainty_rank[uncertainty]:
+            uncertainty = member.uncertainty
+    uncertainty_score = round(1.0 - confidence, 4)
+
+    adjusted_source = next(
+        (member for member in role_outputs.values() if member.verdict == "adjust"),
+        None,
+    )
+
+    adjusted_qty = adjusted_source.adjusted_qty if adjusted_source else None
+    adjusted_order_type = adjusted_source.adjusted_order_type if adjusted_source else None
+    limit_price = adjusted_source.limit_price if adjusted_source else None
+
+    # Fail closed when an aggregate adjust proposal is structurally invalid.
+    if verdict == "adjust" and adjusted_qty is None:
+        verdict = fail_closed_verdict
+        adjusted_order_type = None
+        limit_price = None
+    if verdict == "adjust" and adjusted_order_type in {"limit", "stop_limit"} and limit_price is None:
+        verdict = fail_closed_verdict
+        adjusted_qty = None
+        adjusted_order_type = None
+
+    rationale = f"committee_aggregate_{verdict}"
+    payload: dict[str, Any] = {
+        "verdict": verdict,
+        "confidence": confidence,
+        "confidence_band": confidence_band,
+        "calibrated_probabilities": _default_calibrated_probabilities(verdict, confidence),
+        "uncertainty": {"score": uncertainty_score, "band": uncertainty},
+        "calibration_metadata": {},
+        "rationale_short": rationale,
+        "required_checks": aggregated_checks,
+        "adjusted_qty": adjusted_qty,
+        "adjusted_order_type": adjusted_order_type,
+        "limit_price": limit_price,
+        "rationale": rationale,
+        "risk_flags": aggregated_risk_flags,
+    }
+    if verdict == "escalate":
+        payload["escalate_reason"] = "committee_requested_escalation"
+    return payload
+
+
 def _clamp01(value: Any) -> float:
     try:
         score = float(value)
@@ -446,6 +582,27 @@ def _confidence_band_from_score(confidence: float) -> str:
     if confidence >= 0.5:
         return "medium"
     return "low"
+
+
+def _normalize_confidence_band(confidence_band: Any, confidence: float) -> str:
+    aliases = {
+        "l": "low",
+        "low-confidence": "low",
+        "low_confidence": "low",
+        "m": "medium",
+        "med": "medium",
+        "mid": "medium",
+        "moderate": "medium",
+        "medium-confidence": "medium",
+        "medium_confidence": "medium",
+        "h": "high",
+        "high-confidence": "high",
+        "high_confidence": "high",
+    }
+    normalized = aliases.get(str(confidence_band or "").strip().lower(), str(confidence_band or "").strip().lower())
+    if normalized in {"low", "medium", "high"}:
+        return normalized
+    return _confidence_band_from_score(confidence)
 
 
 def _uncertainty_band_from_confidence_band(confidence_band: str) -> str:
@@ -467,6 +624,11 @@ def _default_calibrated_probabilities(verdict: str, confidence: float) -> dict[s
     if total <= 0:
         return {label: 0.2 for label in labels}
     return {label: round(score / total, 6) for label, score in probabilities.items()}
+
+
+def _hash_payload(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def load_prompt_template(version: str) -> str:

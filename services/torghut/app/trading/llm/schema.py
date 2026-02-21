@@ -182,6 +182,8 @@ class LLMReviewResponse(BaseModel):
     limit_price: Optional[Decimal] = None
     escalate_reason: Optional[str] = None
     rationale: str
+    rationale_short: Optional[str] = None
+    required_checks: list[str] = Field(default_factory=list)
     risk_flags: list[str] = Field(default_factory=list)
     committee: Optional["LLMCommitteeTrace"] = None
 
@@ -195,10 +197,32 @@ class LLMReviewResponse(BaseModel):
             raise ValueError("rationale_too_long")
         return trimmed
 
+    @field_validator("escalate_reason")
+    @classmethod
+    def validate_escalate_reason(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        return trimmed or None
+
+    @field_validator("rationale_short")
+    @classmethod
+    def validate_rationale_short(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        if len(trimmed) > 280:
+            raise ValueError("rationale_short_too_long")
+        return trimmed
+
     @model_validator(mode="after")
     def validate_adjustment_requirements(self) -> "LLMReviewResponse":
         if self.verdict == "adjust" and self.adjusted_qty is None:
             raise ValueError("adjusted_qty_required_for_adjust_verdict")
+        if self.verdict == "escalate" and self.escalate_reason is None:
+            raise ValueError("escalate_reason_required_for_escalate_verdict")
         if self.adjusted_order_type in {"limit", "stop_limit"} and self.limit_price is None:
             raise ValueError("limit_price_required_for_limit_orders")
         return self
@@ -242,6 +266,59 @@ class LLMUncertainty(BaseModel):
         if self.confidence_interval_low > self.confidence_interval_high:
             raise ValueError("uncertainty_confidence_interval_invalid")
         return self
+
+
+class LLMCommitteeMemberResponse(BaseModel):
+    """Per-role committee verdict payload."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    role: Literal["researcher", "risk_critic", "execution_critic", "policy_judge"]
+    verdict: Literal["approve", "veto", "adjust", "abstain", "escalate"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    uncertainty: Literal["low", "medium", "high"] = "medium"
+    rationale_short: str
+    required_checks: list[str] = Field(default_factory=list)
+    adjusted_qty: Optional[Decimal] = None
+    adjusted_order_type: Optional[Literal["market", "limit", "stop", "stop_limit"]] = None
+    limit_price: Optional[Decimal] = None
+    risk_flags: list[str] = Field(default_factory=list)
+    latency_ms: Optional[int] = None
+    schema_error: bool = False
+
+    @field_validator("uncertainty", mode="before")
+    @classmethod
+    def normalize_uncertainty(cls, value: Any) -> str:
+        if isinstance(value, dict):
+            value = value.get("band")
+        normalized = str(value or "").strip().lower()
+        if normalized in {"low", "medium", "high"}:
+            return normalized
+        return "medium"
+
+    @field_validator("rationale_short")
+    @classmethod
+    def validate_member_rationale_short(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("rationale_short_required")
+        if len(trimmed) > 280:
+            raise ValueError("rationale_short_too_long")
+        return trimmed
+
+
+class LLMCommitteeTrace(BaseModel):
+    """Committee execution trace for persistence and auditing."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    roles: dict[
+        Literal["researcher", "risk_critic", "execution_critic", "policy_judge"],
+        LLMCommitteeMemberResponse,
+    ]
+    mandatory_roles: list[Literal["risk_critic", "execution_critic", "policy_judge"]]
+    fail_closed_verdict: Literal["veto", "abstain"]
+    schema_error_count: int = 0
 
 
 __all__ = [

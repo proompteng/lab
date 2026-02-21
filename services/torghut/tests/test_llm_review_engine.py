@@ -255,9 +255,13 @@ class TestLLMReviewEngine(TestCase):
         self.assertEqual(request.market_context.symbol, "AAPL")
 
     def test_review_normalizes_escalate_alias(self) -> None:
+        from app import config
+
+        config.settings.llm_committee_enabled = False
         engine = LLMReviewEngine(
             client=FakeLLMClient(
-                '{"decision":"escalate_to_human","confidence":0.2,"rationale":"need manual review"}'
+                '{"decision":"escalate_to_human","confidence":0.2,"confidence_band":"LOW",'
+                '"escalation_reason":"need manual review","rationale":"need manual review"}'
             )
         )
         account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
@@ -293,4 +297,48 @@ class TestLLMReviewEngine(TestCase):
         )
         self.assertEqual(outcome.response.verdict, "escalate")
         self.assertEqual(outcome.response.confidence_band, "low")
+        self.assertEqual(outcome.response.escalate_reason, "need manual review")
         self.assertEqual(outcome.response.uncertainty.band, "high")
+
+    def test_review_normalizes_confidence_band_alias(self) -> None:
+        from app import config
+
+        config.settings.llm_committee_enabled = False
+        engine = LLMReviewEngine(
+            client=FakeLLMClient(
+                '{"verdict":"approve","confidence":0.6,"confidence_band":"Moderate","rationale":"ok"}'
+            )
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, object]] = []
+        portfolio = PortfolioSnapshot(
+            equity=Decimal("10000"),
+            cash=Decimal("10000"),
+            buying_power=Decimal("10000"),
+            total_exposure=Decimal("0"),
+            exposure_by_symbol={},
+            positions=positions,
+        )
+        decision = StrategyDecision(
+            strategy_id="demo",
+            symbol="AAPL",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            rationale="demo",
+            params={},
+        )
+        outcome = engine.review(
+            decision=decision,
+            account=account,
+            positions=positions,
+            request=engine.build_request(decision, account, positions, portfolio, None, None, []),
+            portfolio=portfolio,
+            market=None,
+            recent_decisions=[],
+        )
+        self.assertEqual(outcome.response.confidence_band, "medium")
+        self.assertEqual(outcome.response.uncertainty.band, "medium")

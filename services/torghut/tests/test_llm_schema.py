@@ -68,3 +68,22 @@ class TestLlmSchema(TestCase):
                 rationale="missing limit price",
                 risk_flags=[],
             )
+
+    def test_escalate_verdict_requires_escalate_reason(self) -> None:
+        with self.assertRaises(ValidationError):
+            LLMReviewResponse(
+                verdict="escalate",
+                confidence=0.2,
+                confidence_band="low",
+                calibrated_probabilities={
+                    "approve": 0.1,
+                    "veto": 0.1,
+                    "adjust": 0.1,
+                    "abstain": 0.1,
+                    "escalate": 0.6,
+                },
+                uncertainty={"score": 0.8, "band": "high"},
+                calibration_metadata={},
+                rationale="requires operator review",
+                risk_flags=[],
+            )

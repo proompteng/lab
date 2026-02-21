@@ -35,6 +35,16 @@ class TestLLMPolicy(TestCase):
             review = LLMReviewResponse(
                 verdict="approve",
                 confidence=1.0,
+                confidence_band="high",
+                calibrated_probabilities={
+                    "approve": 1.0,
+                    "veto": 0.0,
+                    "adjust": 0.0,
+                    "abstain": 0.0,
+                    "escalate": 0.0,
+                },
+                uncertainty={"score": 0.0, "band": "low"},
+                calibration_metadata={},
                 rationale="committee",
                 rationale_short="committee",
                 required_checks=["risk_engine"],
@@ -91,6 +101,17 @@ class TestLLMPolicy(TestCase):
         review = LLMReviewResponse(
             verdict="escalate",
             confidence=1.0,
+            confidence_band="high",
+            calibrated_probabilities={
+                "approve": 0.0,
+                "veto": 0.0,
+                "adjust": 0.0,
+                "abstain": 0.0,
+                "escalate": 1.0,
+            },
+            uncertainty={"score": 0.0, "band": "low"},
+            calibration_metadata={},
+            escalate_reason="needs human",
             rationale="needs human",
             rationale_short="needs human",
             required_checks=["risk_engine"],
@@ -98,7 +119,7 @@ class TestLLMPolicy(TestCase):
         )
         outcome = apply_policy(decision, review, adjustment_allowed=False)
         self.assertEqual(outcome.verdict, "veto")
-        self.assertEqual(outcome.reason, "llm_escalate")
+        self.assertEqual(outcome.reason, "llm_escalate_fallback_veto")
 
     def test_adjust_to_limit_requires_limit_price(self) -> None:
         original = {
