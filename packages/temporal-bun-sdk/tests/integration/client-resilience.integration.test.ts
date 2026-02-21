@@ -8,7 +8,12 @@ import { createTemporalClient, type TemporalClient, TemporalTlsHandshakeError } 
 import { loadTemporalConfig } from '../../src/config'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import type { TemporalInterceptor } from '../../src/client/interceptors'
-import { TemporalCliUnavailableError, createIntegrationHarness, type IntegrationHarness } from './harness'
+import {
+  findTemporalCliUnavailableError,
+  TemporalCliUnavailableError,
+  createIntegrationHarness,
+  type IntegrationHarness,
+} from './harness'
 import { integrationActivities, integrationWorkflows } from './workflows'
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
@@ -47,15 +52,25 @@ describeIntegration('Temporal client resilience', () => {
   beforeAll(async () => {
     const harnessExit = await Effect.runPromiseExit(createIntegrationHarness(CLI_CONFIG))
     if (Exit.isFailure(harnessExit)) {
-      if (harnessExit.cause instanceof TemporalCliUnavailableError) {
+      const unavailable = findTemporalCliUnavailableError(harnessExit.cause)
+      if (unavailable) {
         cliUnavailable = true
-        console.warn(`[temporal-bun-sdk] skipping resilience integration: ${harnessExit.cause.message}`)
+        console.warn(`[temporal-bun-sdk] skipping resilience integration: ${unavailable.message}`)
         return
       }
       throw harnessExit.cause
     }
     harness = harnessExit.value
-    await Effect.runPromise(harness.setup)
+    const setupExit = await Effect.runPromiseExit(harness.setup)
+    if (Exit.isFailure(setupExit)) {
+      const unavailable = findTemporalCliUnavailableError(setupExit.cause)
+      if (unavailable) {
+        cliUnavailable = true
+        console.warn(`[temporal-bun-sdk] skipping resilience integration: ${unavailable.message}`)
+        return
+      }
+      throw setupExit.cause
+    }
 
     baseConfig = await loadTemporalConfig({
       defaults: {
@@ -97,7 +112,7 @@ describeIntegration('Temporal client resilience', () => {
     if (runtimePromise) {
       await runtimePromise
     }
-    if (harness && !cliUnavailable) {
+    if (harness) {
       await Effect.runPromise(harness.teardown)
     }
   }, { timeout: hookTimeoutMs })

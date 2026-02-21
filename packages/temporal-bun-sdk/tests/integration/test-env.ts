@@ -6,7 +6,12 @@ import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workfl
 import { WorkerRuntime } from '../../src/worker/runtime'
 import { makeStickyCache } from '../../src/worker/sticky-cache'
 import type { IntegrationHarness } from './harness'
-import { createIntegrationHarness, TemporalCliUnavailableError, TemporalCliCommandError } from './harness'
+import {
+  createIntegrationHarness,
+  findTemporalCliUnavailableError,
+  TemporalCliUnavailableError,
+  TemporalCliCommandError,
+} from './harness'
 import { integrationActivities, integrationWorkflows } from './workflows'
 
 type RunOrSkip = <T>(name: string, scenario: () => Promise<T>) => Promise<T | undefined>
@@ -69,16 +74,25 @@ const setupIntegrationTestEnv = async (): Promise<IntegrationTestEnv> => {
 
   const harnessExit = await Effect.runPromiseExit(createIntegrationHarness(CLI_CONFIG))
   if (Exit.isFailure(harnessExit)) {
-    const cause = harnessExit.cause
-    if (cause instanceof TemporalCliUnavailableError) {
+    const unavailable = findTemporalCliUnavailableError(harnessExit.cause)
+    if (unavailable) {
       cliUnavailable = true
-      console.warn(`[temporal-bun-sdk] Temporal CLI unavailable: ${cause.message}`)
+      console.warn(`[temporal-bun-sdk] Temporal CLI unavailable: ${unavailable.message}`)
     } else {
-      throw cause
+      throw harnessExit.cause
     }
   } else {
     harness = harnessExit.value
-    await Effect.runPromise(harness.setup)
+    const setupExit = await Effect.runPromiseExit(harness.setup)
+    if (Exit.isFailure(setupExit)) {
+      const unavailable = findTemporalCliUnavailableError(setupExit.cause)
+      if (unavailable) {
+        cliUnavailable = true
+        console.warn(`[temporal-bun-sdk] Temporal endpoint unavailable during setup: ${unavailable.message}`)
+      } else {
+        throw setupExit.cause
+      }
+    }
   }
 
   let runtime: WorkerRuntime | null = null

@@ -108,6 +108,30 @@ export class TemporalCliArtifactError extends Error {
   }
 }
 
+export const findTemporalCliUnavailableError = (
+  value: unknown,
+  visited: Set<unknown> = new Set(),
+): TemporalCliUnavailableError | null => {
+  if (value instanceof TemporalCliUnavailableError) {
+    return value
+  }
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  if (visited.has(value)) {
+    return null
+  }
+  visited.add(value)
+  const record = value as Record<string, unknown>
+  for (const key of ['error', 'cause', 'left', 'right']) {
+    const match = findTemporalCliUnavailableError(record[key], visited)
+    if (match) {
+      return match
+    }
+  }
+  return null
+}
+
 const textDecoder = new TextDecoder()
 const reuseExistingServer = process.env.TEMPORAL_TEST_SERVER === '1'
 
@@ -171,8 +195,15 @@ export const createIntegrationHarness = (
           const stdout = child.stdout ? await readStream(child.stdout) : ''
           const stderr = child.stderr ? await readStream(child.stderr) : ''
           if (exitCode !== 0) {
+            const cliError = new TemporalCliCommandError(command, exitCode, stdout, stderr)
             console.error('[temporal-bun-sdk] CLI command failed', { command, exitCode, stdout, stderr })
-            throw new TemporalCliCommandError(command, exitCode, stdout, stderr)
+            if (isTemporalEndpointUnavailable(cliError)) {
+              throw new TemporalCliUnavailableError(
+                `Temporal endpoint ${config.address} is unavailable while running "${command.join(' ')}"`,
+                [{ candidate: config.address, error: stderr || stdout || cliError.message }],
+              )
+            }
+            throw cliError
           }
           console.info('[temporal-bun-sdk] CLI command stdout', stdout)
           if (stderr.trim().length > 0) {
@@ -180,15 +211,17 @@ export const createIntegrationHarness = (
           }
           return stdout
         },
-        catch: (error) =>
-          error instanceof TemporalCliCommandError
-            ? error
-            : new TemporalCliCommandError(
-                command,
-                -1,
-                '',
-                error instanceof Error ? error.message : String(error),
-              ),
+        catch: (error) => {
+          if (error instanceof TemporalCliUnavailableError || error instanceof TemporalCliCommandError) {
+            return error
+          }
+          return new TemporalCliCommandError(
+            command,
+            -1,
+            '',
+            error instanceof Error ? error.message : String(error),
+          )
+        },
       })
     }
 
@@ -235,75 +268,81 @@ export const createIntegrationHarness = (
       throw lastError
     }
 
-    const setup = Effect.tryPromise(async () => {
-      if (started) {
-        return
-      }
-      await withTestLock(lockDir, testLockFile, async () => {
-        const currentRef = readRefcount(testRefcountFile)
-        if (currentRef === 0 && !reuseExistingServer) {
-          const child = Bun.spawn(['bun', startScript], {
-            cwd: projectRoot,
-            stdout: 'pipe',
-            stderr: 'pipe',
-            env: {
-              ...process.env,
-              TEMPORAL_NAMESPACE: config.namespace,
-              TEMPORAL_CLI_PATH: cliExecutable,
-              TEMPORAL_PORT: String(cliPort),
-              TEMPORAL_UI_PORT: String(cliUiPort),
-              TEMPORAL_ARTIFACTS_DIR: artifactsRoot,
-              TEMPORAL_WORKER_LOAD_ARTIFACTS_DIR: workerLoadArtifacts.root,
-              TEMPORAL_CLI_LOG_PATH: temporalCliLogPath,
-            },
-          })
-          const exitCode = await child.exited
-          const stdout = child.stdout ? await readStream(child.stdout) : ''
-          const stderr = child.stderr ? await readStream(child.stderr) : ''
-          if (exitCode !== 0 && !stderr.includes('Temporal CLI already running')) {
-            throw new TemporalCliCommandError(['bun', startScript], exitCode, stdout, stderr)
-          }
-          console.info(
-            `[temporal-bun-sdk] Temporal CLI dev server running at ${hostname}:${cliPort} (ui:${cliUiPort})`,
-          )
-        } else if (reuseExistingServer) {
-          console.info('[temporal-bun-sdk] reusing existing Temporal dev server')
+    const setup = Effect.tryPromise({
+      try: async () => {
+        if (started) {
+          return
         }
-        writeRefcount(testRefcountFile, currentRef + 1)
-      })
-      started = true
-      await waitForNamespaceReady()
-    })
-
-    const teardown = Effect.tryPromise(async () => {
-      if (!started) {
-        return
-      }
-      await withTestLock(lockDir, testLockFile, async () => {
-        const currentRef = readRefcount(testRefcountFile)
-        const nextRef = Math.max(0, currentRef - 1)
-        if (nextRef === 0) {
-          if (reuseExistingServer) {
-            console.info('[temporal-bun-sdk] leaving Temporal dev server running (reuse enabled)')
-          } else {
-            const child = Bun.spawn(['bun', stopScript], {
+        await withTestLock(lockDir, testLockFile, async () => {
+          const currentRef = readRefcount(testRefcountFile)
+          if (currentRef === 0 && !reuseExistingServer) {
+            const child = Bun.spawn(['bun', startScript], {
               cwd: projectRoot,
               stdout: 'pipe',
               stderr: 'pipe',
+              env: {
+                ...process.env,
+                TEMPORAL_NAMESPACE: config.namespace,
+                TEMPORAL_CLI_PATH: cliExecutable,
+                TEMPORAL_PORT: String(cliPort),
+                TEMPORAL_UI_PORT: String(cliUiPort),
+                TEMPORAL_ARTIFACTS_DIR: artifactsRoot,
+                TEMPORAL_WORKER_LOAD_ARTIFACTS_DIR: workerLoadArtifacts.root,
+                TEMPORAL_CLI_LOG_PATH: temporalCliLogPath,
+              },
             })
             const exitCode = await child.exited
             const stdout = child.stdout ? await readStream(child.stdout) : ''
             const stderr = child.stderr ? await readStream(child.stderr) : ''
-            if (exitCode !== 0) {
-              throw new TemporalCliCommandError(['bun', stopScript], exitCode, stdout, stderr)
+            if (exitCode !== 0 && !stderr.includes('Temporal CLI already running')) {
+              throw new TemporalCliCommandError(['bun', startScript], exitCode, stdout, stderr)
             }
+            console.info(
+              `[temporal-bun-sdk] Temporal CLI dev server running at ${hostname}:${cliPort} (ui:${cliUiPort})`,
+            )
+          } else if (reuseExistingServer) {
+            console.info('[temporal-bun-sdk] reusing existing Temporal dev server')
           }
-          rmSync(testRefcountFile, { force: true })
-        } else {
-          writeRefcount(testRefcountFile, nextRef)
+          writeRefcount(testRefcountFile, currentRef + 1)
+        })
+        started = true
+        await waitForNamespaceReady()
+      },
+      catch: (error) => normalizeTemporalCliError(error, ['harness.setup']),
+    })
+
+    const teardown = Effect.tryPromise({
+      try: async () => {
+        if (!started) {
+          return
         }
-      })
-      started = false
+        await withTestLock(lockDir, testLockFile, async () => {
+          const currentRef = readRefcount(testRefcountFile)
+          const nextRef = Math.max(0, currentRef - 1)
+          if (nextRef === 0) {
+            if (reuseExistingServer) {
+              console.info('[temporal-bun-sdk] leaving Temporal dev server running (reuse enabled)')
+            } else {
+              const child = Bun.spawn(['bun', stopScript], {
+                cwd: projectRoot,
+                stdout: 'pipe',
+                stderr: 'pipe',
+              })
+              const exitCode = await child.exited
+              const stdout = child.stdout ? await readStream(child.stdout) : ''
+              const stderr = child.stderr ? await readStream(child.stderr) : ''
+              if (exitCode !== 0) {
+                throw new TemporalCliCommandError(['bun', stopScript], exitCode, stdout, stderr)
+              }
+            }
+            rmSync(testRefcountFile, { force: true })
+          } else {
+            writeRefcount(testRefcountFile, nextRef)
+          }
+        })
+        started = false
+      },
+      catch: (error) => normalizeTemporalCliError(error, ['harness.teardown']),
     })
 
     const executeWorkflow = (
@@ -452,6 +491,17 @@ const isTemporalEndpointUnavailable = (error: unknown): boolean => {
     normalized.includes('transport: error while dialing') ||
     normalized.includes('unavailable')
   )
+}
+
+const normalizeTemporalCliError = (error: unknown, command: readonly string[]): TemporalCliError => {
+  if (
+    error instanceof TemporalCliUnavailableError ||
+    error instanceof TemporalCliCommandError ||
+    error instanceof TemporalCliArtifactError
+  ) {
+    return error
+  }
+  return new TemporalCliCommandError(command, -1, '', error instanceof Error ? error.message : String(error))
 }
 
 const withTestLock = async <T>(lockDir: string, lockFile: string, fn: () => Promise<T>): Promise<T> => {
