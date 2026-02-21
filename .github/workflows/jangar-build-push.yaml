@@ -27,7 +27,7 @@ concurrency:
 jobs:
   build-and-push:
     runs-on: arc-arm64
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -54,6 +54,13 @@ jobs:
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
         run: bun run packages/scripts/src/jangar/build-image.ts
 
+      - name: Build and push jangar control-plane image
+        env:
+          JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          JANGAR_IMAGE_PLATFORMS: linux/arm64
+          JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
+        run: bun run packages/scripts/src/jangar/build-control-plane-image.ts
+
       - name: Resolve pushed image digest
         id: digest
         shell: bash
@@ -67,6 +74,21 @@ jobs:
             exit 1
           fi
           echo "${DIGEST}" > jangar-image-digest.txt
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve pushed control-plane image digest
+        id: control_plane_digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="registry.ide-newton.ts.net/lab/jangar-control-plane"
+          TAG="${{ steps.meta.outputs.tag }}"
+          DIGEST="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" | awk '/^Digest:/ { print $2; exit }')"
+          if [ -z "${DIGEST}" ]; then
+            echo "Failed to resolve digest for ${IMAGE}:${TAG}"
+            exit 1
+          fi
+          echo "${DIGEST}" > jangar-control-plane-image-digest.txt
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Write release contract artifact
@@ -92,7 +114,11 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="registry.ide-newton.ts.net/lab/jangar"
+          CONTROL_PLANE_IMAGE="registry.ide-newton.ts.net/lab/jangar-control-plane"
           TAG="${{ steps.meta.outputs.tag }}"
           docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}:${TAG}"
+          docker buildx imagetools create -t "${CONTROL_PLANE_IMAGE}:latest" "${CONTROL_PLANE_IMAGE}:${TAG}"
           docker buildx imagetools inspect "${IMAGE}:${TAG}"
           docker buildx imagetools inspect "${IMAGE}:latest"
+          docker buildx imagetools inspect "${CONTROL_PLANE_IMAGE}:${TAG}"
+          docker buildx imagetools inspect "${CONTROL_PLANE_IMAGE}:latest"
