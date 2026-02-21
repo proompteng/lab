@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import patch
 from typing import Any
 
 from sqlalchemy import create_engine, select
@@ -29,6 +30,7 @@ from app.trading.ingest import SignalBatch
 from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
 from app.trading.scheduler import TradingPipeline, TradingState
+from app.trading.tca import AdaptiveExecutionPolicyDecision
 from app.trading.universe import UniverseResolver
 
 
@@ -685,6 +687,124 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(executions), 1)
                 self.assertIsNotNone(decisions[0].decision_hash)
                 self.assertEqual(len(alpaca_client.submitted), 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+
+    def test_pipeline_persists_adaptive_policy_and_records_fallback_metric(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="adaptive-metrics",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                    "regime_label": "trend",
+                },
+                timeframe="1Min",
+            )
+
+            fallback_policy = AdaptiveExecutionPolicyDecision(
+                key="AAPL:trend",
+                symbol="AAPL",
+                regime_label="trend",
+                sample_size=12,
+                adaptive_samples=8,
+                baseline_slippage_bps=Decimal("8"),
+                recent_slippage_bps=Decimal("16"),
+                baseline_shortfall_notional=Decimal("1"),
+                recent_shortfall_notional=Decimal("4"),
+                effect_size_bps=Decimal("-8"),
+                degradation_bps=Decimal("8"),
+                fallback_active=True,
+                fallback_reason="adaptive_policy_degraded",
+                prefer_limit=True,
+                participation_rate_scale=Decimal("0.8"),
+                execution_seconds_scale=Decimal("1.2"),
+                aggressiveness="defensive",
+                generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            )
+
+            state = TradingState()
+            alpaca_client = FakeAlpacaClient()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=alpaca_client,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            with patch(
+                "app.trading.scheduler.derive_adaptive_execution_policy",
+                return_value=fallback_policy,
+            ):
+                pipeline.run_once()
+
+            with self.session_local() as session:
+                decision_row = session.execute(select(TradeDecision)).scalar_one()
+                decision_json = decision_row.decision_json
+                assert isinstance(decision_json, dict)
+                params = decision_json.get("params")
+                assert isinstance(params, dict)
+                execution_policy = params.get("execution_policy")
+                assert isinstance(execution_policy, dict)
+                adaptive = execution_policy.get("adaptive")
+                assert isinstance(adaptive, dict)
+                self.assertFalse(adaptive.get("applied"))
+                self.assertEqual(adaptive.get("reason"), "adaptive_policy_degraded")
+
+            self.assertEqual(state.metrics.adaptive_policy_decisions_total, 1)
+            self.assertEqual(state.metrics.adaptive_policy_fallback_total, 1)
+            self.assertEqual(state.metrics.adaptive_policy_applied_total, 0)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]

@@ -83,6 +83,7 @@ class OrderExecutor:
         if existing_execution is not None:
             logger.info('Execution already exists for decision %s', decision_row.id)
             return None
+        execution_policy_context = _extract_execution_policy_context(decision)
 
         existing_order = self._fetch_existing_order(execution_client, decision_row.decision_hash)
         if existing_order is not None:
@@ -100,6 +101,7 @@ class OrderExecutor:
                 execution_fallback_reason=fallback_reason,
                 execution_fallback_count=fallback_count,
             )
+            _attach_execution_policy_context(execution, execution_policy_context)
             upsert_execution_tca_metric(session, execution)
             _apply_execution_status(decision_row, execution, account_label)
             session.add(decision_row)
@@ -186,6 +188,7 @@ class OrderExecutor:
             execution_fallback_reason=fallback_reason,
             execution_fallback_count=fallback_count,
         )
+        _attach_execution_policy_context(execution, execution_policy_context)
         upsert_execution_tca_metric(session, execution)
         _apply_execution_status(
             decision_row,
@@ -310,6 +313,31 @@ def _coerce_json(value: Any) -> dict[str, Any]:
         raw = cast(Mapping[str, Any], value)
         return {str(key): val for key, val in raw.items()}
     return {}
+
+
+def _extract_execution_policy_context(decision: StrategyDecision) -> dict[str, Any]:
+    execution_policy = decision.params.get('execution_policy')
+    if not isinstance(execution_policy, Mapping):
+        return {}
+    policy_map = cast(Mapping[str, Any], execution_policy)
+    adaptive = policy_map.get('adaptive')
+    adaptive_payload: dict[str, Any] = {}
+    if isinstance(adaptive, Mapping):
+        adaptive_payload = {
+            str(key): value for key, value in cast(Mapping[str, Any], adaptive).items()
+        }
+    return {
+        'selected_order_type': str(policy_map.get('selected_order_type') or decision.order_type),
+        'adaptive': adaptive_payload,
+    }
+
+
+def _attach_execution_policy_context(execution: Execution, context: dict[str, Any]) -> None:
+    if not context:
+        return
+    raw_order = _coerce_json(execution.raw_order)
+    raw_order['execution_policy'] = context
+    execution.raw_order = raw_order
 
 
 def _apply_execution_status(
