@@ -7,7 +7,6 @@ from unittest import TestCase
 from app import config
 from app.trading.execution_policy import ExecutionPolicy, ExecutionPolicyConfig
 from app.trading.models import StrategyDecision
-from app.trading.tca import AdaptiveExecutionPolicyDecision
 
 
 def _config(**overrides: object) -> ExecutionPolicyConfig:
