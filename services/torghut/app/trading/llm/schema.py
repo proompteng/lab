@@ -171,13 +171,17 @@ class LLMReviewResponse(BaseModel):
     # Ignore unknown fields but keep strict validation on required schema fields.
     model_config = ConfigDict(extra="ignore")
 
-    verdict: Literal["approve", "veto", "adjust"]
+    verdict: Literal["approve", "veto", "adjust", "abstain", "escalate"]
     confidence: float = Field(ge=0.0, le=1.0)
+    uncertainty: Literal["low", "medium", "high"] = "medium"
+    rationale_short: Optional[str] = None
+    required_checks: list[str] = Field(default_factory=list)
     adjusted_qty: Optional[Decimal] = None
     adjusted_order_type: Optional[Literal["market", "limit", "stop", "stop_limit"]] = None
     limit_price: Optional[Decimal] = None
     rationale: str
     risk_flags: list[str] = Field(default_factory=list)
+    committee: Optional["LLMCommitteeTrace"] = None
 
     @field_validator("rationale")
     @classmethod
@@ -188,6 +192,61 @@ class LLMReviewResponse(BaseModel):
         if len(trimmed) > 280:
             raise ValueError("rationale_too_long")
         return trimmed
+
+    @field_validator("rationale_short")
+    @classmethod
+    def validate_rationale_short(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        if len(trimmed) > 280:
+            raise ValueError("rationale_short_too_long")
+        return trimmed
+
+
+class LLMCommitteeMemberResponse(BaseModel):
+    """Per-role committee verdict payload."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    role: Literal["researcher", "risk_critic", "execution_critic", "policy_judge"]
+    verdict: Literal["approve", "veto", "adjust", "abstain", "escalate"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    uncertainty: Literal["low", "medium", "high"] = "medium"
+    rationale_short: str
+    required_checks: list[str] = Field(default_factory=list)
+    adjusted_qty: Optional[Decimal] = None
+    adjusted_order_type: Optional[Literal["market", "limit", "stop", "stop_limit"]] = None
+    limit_price: Optional[Decimal] = None
+    risk_flags: list[str] = Field(default_factory=list)
+    latency_ms: Optional[int] = None
+    schema_error: bool = False
+
+    @field_validator("rationale_short")
+    @classmethod
+    def validate_member_rationale_short(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("rationale_short_required")
+        if len(trimmed) > 280:
+            raise ValueError("rationale_short_too_long")
+        return trimmed
+
+
+class LLMCommitteeTrace(BaseModel):
+    """Committee execution trace for persistence and auditing."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    roles: dict[
+        Literal["researcher", "risk_critic", "execution_critic", "policy_judge"],
+        LLMCommitteeMemberResponse,
+    ]
+    mandatory_roles: list[Literal["risk_critic", "execution_critic", "policy_judge"]]
+    fail_closed_verdict: Literal["veto", "abstain"]
+    schema_error_count: int = 0
 
 
 __all__ = [
@@ -201,5 +260,7 @@ __all__ = [
     "RecentDecisionSummary",
     "LLMPolicyContext",
     "LLMReviewRequest",
+    "LLMCommitteeMemberResponse",
+    "LLMCommitteeTrace",
     "LLMReviewResponse",
 ]

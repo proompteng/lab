@@ -11,15 +11,34 @@ from app.trading.models import StrategyDecision
 
 
 class FakeLLMClient:
-    def __init__(self, content: str) -> None:
-        self.content = content
+    def __init__(self, content: str | list[str]) -> None:
+        self.contents = [content] if isinstance(content, str) else list(content)
+        self._idx = 0
 
     def request_review(self, messages, temperature, max_tokens):  # noqa: ANN001
-        return LLMClientResponse(content=self.content, usage=None)
+        if self._idx >= len(self.contents):
+            payload = self.contents[-1]
+        else:
+            payload = self.contents[self._idx]
+        self._idx += 1
+        return LLMClientResponse(content=payload, usage=None)
 
 
 class TestLLMReviewEngine(TestCase):
+    def setUp(self) -> None:
+        from app import config
+
+        self._orig_committee = config.settings.llm_committee_enabled
+
+    def tearDown(self) -> None:
+        from app import config
+
+        config.settings.llm_committee_enabled = self._orig_committee
+
     def test_review_normalizes_common_keys(self) -> None:
+        from app import config
+
+        config.settings.llm_committee_enabled = False
         engine = LLMReviewEngine(client=FakeLLMClient('{"decision":"approve","rationale":"ok"}'))
 
         account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
@@ -58,6 +77,58 @@ class TestLLMReviewEngine(TestCase):
         self.assertEqual(outcome.response.verdict, "approve")
         self.assertEqual(outcome.response.confidence, 0.5)
         self.assertEqual(outcome.response.risk_flags, [])
+
+    def test_committee_mandatory_veto_wins(self) -> None:
+        from app import config
+
+        config.settings.llm_committee_enabled = True
+        responses = [
+            '{"verdict":"approve","confidence":0.8,"uncertainty":"low","rationale_short":"edge","required_checks":["risk_engine"]}',
+            '{"verdict":"veto","confidence":0.9,"uncertainty":"low","rationale_short":"risk","required_checks":["risk_engine"]}',
+            '{"verdict":"approve","confidence":0.7,"uncertainty":"medium","rationale_short":"exec","required_checks":["execution_policy"]}',
+            '{"verdict":"approve","confidence":0.9,"uncertainty":"low","rationale_short":"policy","required_checks":["order_firewall"]}',
+        ]
+        engine = LLMReviewEngine(client=FakeLLMClient(responses))
+
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, object]] = []
+        portfolio = PortfolioSnapshot(
+            equity=Decimal("10000"),
+            cash=Decimal("10000"),
+            buying_power=Decimal("10000"),
+            total_exposure=Decimal("0"),
+            exposure_by_symbol={},
+            positions=positions,
+        )
+        decision = StrategyDecision(
+            strategy_id="demo",
+            symbol="AAPL",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            rationale="demo",
+            params={},
+        )
+
+        outcome = engine.review(
+            decision=decision,
+            account=account,
+            positions=positions,
+            request=engine.build_request(decision, account, positions, portfolio, None, None, []),
+            portfolio=portfolio,
+            market=None,
+            recent_decisions=[],
+        )
+
+        self.assertEqual(outcome.response.verdict, "veto")
+        self.assertIsNotNone(outcome.response.committee)
+        assert outcome.response.committee is not None
+        self.assertIn("risk_critic", outcome.response.committee.roles)
+        self.assertTrue(bool(outcome.request_hash))
+        self.assertTrue(bool(outcome.response_hash))
 
     def test_build_request_sanitizes_inputs(self) -> None:
         engine = LLMReviewEngine(client=FakeLLMClient('{"verdict":"approve","confidence":1,"rationale":"ok","risk_flags":[]}'))

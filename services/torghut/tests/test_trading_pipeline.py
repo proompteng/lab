@@ -280,6 +280,8 @@ class FakeLLMReviewEngine:
             prompt_version="test",
             tokens_prompt=12,
             tokens_completion=7,
+            request_hash="test-request-hash",
+            response_hash="test-response-hash",
         )
 
 

@@ -299,6 +299,73 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key == "llm_committee_requests_total":
+                    metric_name = "torghut_trading_llm_committee_requests_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of LLM committee role requests."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(role), int(count))
+                            for role, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for role, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"role": role},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "llm_committee_latency_ms":
+                    metric_name = "torghut_trading_llm_committee_latency_ms"
+                    lines.append(
+                        f"# HELP {metric_name} Last observed LLM committee role latency in milliseconds."
+                    )
+                    lines.append(f"# TYPE {metric_name} gauge")
+                    sorted_items = sorted(
+                        [
+                            (str(role), int(value_ms))
+                            for role, value_ms in cast(dict[str, object], value).items()
+                            if isinstance(value_ms, int)
+                        ]
+                    )
+                    for role, value_ms in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"role": role},
+                                value=value_ms,
+                            )
+                        )
+                    continue
+                if key == "llm_committee_verdict_total":
+                    metric_name = "torghut_trading_llm_committee_verdict_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of committee role verdicts."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(label), int(count))
+                            for label, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for label, count in sorted_items:
+                        role, verdict = (label.split(":", 1) + ["unknown"])[:2]
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"role": role, "verdict": verdict},
+                                value=count,
+                            )
+                        )
+                    continue
                 if key in {
                     "strategy_events_total",
                     "strategy_intents_total",
@@ -422,6 +489,22 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
             lines.append(f"# HELP {metric_name} Torghut trading metric {key.replace('_', ' ')}.")
             lines.append(f"# TYPE {metric_name} gauge")
             lines.append(f"{metric_name} {value}")
+            continue
+        if key == "llm_committee_veto_alignment_total":
+            metric_name = "torghut_trading_llm_committee_veto_alignment_total"
+            lines.append(
+                f"# HELP {metric_name} Count of committee vetoes aligned with deterministic veto outcomes."
+            )
+            lines.append(f"# TYPE {metric_name} counter")
+            lines.append(f"{metric_name} {value}")
+            veto_total = _coerce_int(metrics.get("llm_committee_veto_total"))
+            rate_name = "torghut_trading_llm_committee_veto_alignment_rate"
+            lines.append(
+                f"# HELP {rate_name} Ratio of committee vetoes aligned with deterministic veto outcomes."
+            )
+            lines.append(f"# TYPE {rate_name} gauge")
+            rate = float(value) / veto_total if veto_total > 0 else 1.0
+            lines.append(f"{rate_name} {rate}")
             continue
         metric_name = f"torghut_trading_{key}"
         help_text = f"Torghut trading metric {key.replace('_', ' ')}."

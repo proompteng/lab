@@ -11,6 +11,14 @@ from ..models import StrategyDecision
 from .schema import LLMReviewResponse
 
 _ALLOWED_LIMIT_TYPES = {"market", "limit"}
+_DETERMINISTIC_CHECK_ALLOWLIST = {
+    "execution_policy",
+    "risk_engine",
+    "order_firewall",
+    "portfolio_sizing",
+    "market_context",
+    "autonomy_policy_checks",
+}
 
 
 @dataclass
@@ -31,8 +39,31 @@ def apply_policy(
     if review.confidence < min_confidence:
         return PolicyOutcome("veto", decision, "llm_confidence_below_min")
 
+    unknown_checks = sorted(
+        {
+            check
+            for check in review.required_checks
+            if check not in _DETERMINISTIC_CHECK_ALLOWLIST
+        }
+    )
+    if unknown_checks:
+        return PolicyOutcome("veto", decision, "llm_required_checks_invalid")
+
+    committee = review.committee
+    if committee is not None:
+        for role in committee.mandatory_roles:
+            role_review = committee.roles.get(role)
+            if role_review is None or role_review.verdict == "veto":
+                return PolicyOutcome("veto", decision, "llm_committee_mandatory_veto")
+
     if review.verdict == "veto":
         return PolicyOutcome("veto", decision, "llm_veto")
+
+    if review.verdict == "abstain":
+        return PolicyOutcome("veto", decision, "llm_abstain")
+
+    if review.verdict == "escalate":
+        return PolicyOutcome("veto", decision, "llm_escalate")
 
     if review.verdict == "approve":
         return PolicyOutcome("approve", decision)
