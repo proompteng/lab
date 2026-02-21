@@ -5194,7 +5194,8 @@ const reconcileAgentRun = async (
       if (!Number.isNaN(finishedAtMs)) {
         const expiresAtMs = finishedAtMs + retentionSeconds * 1000
         if (Date.now() >= expiresAtMs) {
-          await kube.delete(RESOURCE_MAP.AgentRun, name, namespace)
+          // Use non-blocking delete to avoid stalling the namespace reconcile queue on finalizers.
+          await kube.delete(RESOURCE_MAP.AgentRun, name, namespace, { wait: false })
           return
         }
       }

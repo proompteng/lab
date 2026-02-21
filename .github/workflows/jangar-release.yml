@@ -186,7 +186,8 @@ jobs:
           bun run packages/scripts/src/jangar/update-manifests.ts \
             --tag "${JANGAR_IMAGE_TAG}" \
             --digest "${JANGAR_IMAGE_DIGEST}" \
-            --rollout-timestamp "${TIMESTAMP}"
+            --rollout-timestamp "${TIMESTAMP}" \
+            --agents-values-path "argocd/applications/agents/values.yaml"
 
       - name: Check for manifest changes
         if: steps.meta.outputs.promote == 'true'
@@ -197,7 +198,8 @@ jobs:
           if git diff --quiet -- \
             argocd/applications/jangar/kustomization.yaml \
             argocd/applications/jangar/deployment.yaml \
-            argocd/applications/jangar/jangar-worker-deployment.yaml; then
+            argocd/applications/jangar/jangar-worker-deployment.yaml \
+            argocd/applications/agents/values.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -217,14 +219,16 @@ jobs:
             argocd/applications/jangar/kustomization.yaml
             argocd/applications/jangar/deployment.yaml
             argocd/applications/jangar/jangar-worker-deployment.yaml
+            argocd/applications/agents/values.yaml
           body: |
             ## Summary
-            Promote Jangar image into GitOps manifests.
+            Promote Jangar image into GitOps manifests, including the Agents namespace release.
 
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Image digest: `${{ steps.digest.outputs.digest }}`
             - Updated API and worker rollout annotations
+            - Updated `argocd/applications/agents/values.yaml` for automated sync to namespace `agents`
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'

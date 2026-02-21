@@ -716,7 +716,7 @@ describe('agents controller reconcileAgentRun', () => {
 
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+      expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
       if (previousRetention === undefined) {
         delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
@@ -746,7 +746,7 @@ describe('agents controller reconcileAgentRun', () => {
 
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+      expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
       if (previousRetention === undefined) {
         delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
@@ -2185,7 +2185,7 @@ describe('agents controller reconcileAgentRun', () => {
 
     await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-    expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+    expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
   })
 
   it('uses controller retention default when spec override is missing', async () => {
@@ -2202,7 +2202,7 @@ describe('agents controller reconcileAgentRun', () => {
 
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+      expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
       if (previousRetention === undefined) {
         delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
