@@ -243,6 +243,110 @@ class Settings(BaseSettings):
         alias="TRADING_AUTONOMY_ARTIFACT_DIR",
         description="Output directory for autonomous lane artifacts.",
     )
+    trading_drift_governance_enabled: bool = Field(
+        default=True,
+        alias="TRADING_DRIFT_GOVERNANCE_ENABLED",
+        description="Enable autonomous drift detection, trigger decisions, and audited governance artifacts.",
+    )
+    trading_drift_max_required_null_rate: float = Field(
+        default=0.02,
+        alias="TRADING_DRIFT_MAX_REQUIRED_NULL_RATE",
+        description="Drift threshold for maximum required feature null-rate.",
+    )
+    trading_drift_max_staleness_ms_p95: int = Field(
+        default=180000,
+        alias="TRADING_DRIFT_MAX_STALENESS_MS_P95",
+        description="Drift threshold for p95 feature staleness in milliseconds.",
+    )
+    trading_drift_max_duplicate_ratio: float = Field(
+        default=0.05,
+        alias="TRADING_DRIFT_MAX_DUPLICATE_RATIO",
+        description="Drift threshold for duplicate event ratio.",
+    )
+    trading_drift_max_schema_mismatch_total: int = Field(
+        default=0,
+        alias="TRADING_DRIFT_MAX_SCHEMA_MISMATCH_TOTAL",
+        description="Drift threshold for schema mismatch count.",
+    )
+    trading_drift_max_model_calibration_error: float = Field(
+        default=0.45,
+        alias="TRADING_DRIFT_MAX_MODEL_CALIBRATION_ERROR",
+        description="Drift threshold for model calibration error from profitability evidence.",
+    )
+    trading_drift_max_model_llm_error_ratio: float = Field(
+        default=0.10,
+        alias="TRADING_DRIFT_MAX_MODEL_LLM_ERROR_RATIO",
+        description="Drift threshold for LLM runtime error ratio.",
+    )
+    trading_drift_min_performance_net_pnl: float = Field(
+        default=0.0,
+        alias="TRADING_DRIFT_MIN_PERFORMANCE_NET_PNL",
+        description="Drift floor for net PnL.",
+    )
+    trading_drift_max_performance_drawdown: float = Field(
+        default=0.08,
+        alias="TRADING_DRIFT_MAX_PERFORMANCE_DRAWDOWN",
+        description="Drift threshold for absolute drawdown.",
+    )
+    trading_drift_max_performance_cost_bps: float = Field(
+        default=35.0,
+        alias="TRADING_DRIFT_MAX_PERFORMANCE_COST_BPS",
+        description="Drift threshold for execution cost in bps.",
+    )
+    trading_drift_max_execution_fallback_ratio: float = Field(
+        default=0.25,
+        alias="TRADING_DRIFT_MAX_EXECUTION_FALLBACK_RATIO",
+        description="Drift threshold for execution fallback ratio.",
+    )
+    trading_drift_trigger_retrain_reason_codes_raw: Optional[str] = Field(
+        default=(
+            "data_required_null_rate_exceeded,data_staleness_p95_exceeded,data_duplicate_ratio_exceeded,"
+            "data_schema_mismatch_detected,model_calibration_error_exceeded,model_llm_error_ratio_exceeded"
+        ),
+        alias="TRADING_DRIFT_TRIGGER_RETRAIN_REASON_CODES",
+        description="Comma-separated reason codes that trigger retraining workflows.",
+    )
+    trading_drift_trigger_reselection_reason_codes_raw: Optional[str] = Field(
+        default=(
+            "performance_net_pnl_below_floor,performance_drawdown_exceeded,performance_cost_bps_exceeded,"
+            "performance_execution_fallback_ratio_exceeded"
+        ),
+        alias="TRADING_DRIFT_TRIGGER_RESELECTION_REASON_CODES",
+        description="Comma-separated reason codes that trigger reselection workflows.",
+    )
+    trading_drift_retrain_cooldown_seconds: int = Field(
+        default=3600,
+        alias="TRADING_DRIFT_RETRAIN_COOLDOWN_SECONDS",
+        description="Cooldown between retraining triggers for repeated drift incidents.",
+    )
+    trading_drift_reselection_cooldown_seconds: int = Field(
+        default=3600,
+        alias="TRADING_DRIFT_RESELECTION_COOLDOWN_SECONDS",
+        description="Cooldown between reselection triggers for repeated drift incidents.",
+    )
+    trading_drift_live_promotion_requires_evidence: bool = Field(
+        default=True,
+        alias="TRADING_DRIFT_LIVE_PROMOTION_REQUIRES_EVIDENCE",
+        description="Require explicit drift-governance evidence before autonomous live promotion.",
+    )
+    trading_drift_live_promotion_max_evidence_age_seconds: int = Field(
+        default=1800,
+        alias="TRADING_DRIFT_LIVE_PROMOTION_MAX_EVIDENCE_AGE_SECONDS",
+        description="Maximum age for drift evidence used to authorize live promotion.",
+    )
+    trading_drift_rollback_on_performance: bool = Field(
+        default=True,
+        alias="TRADING_DRIFT_ROLLBACK_ON_PERFORMANCE",
+        description="Trigger emergency rollback hooks when configured performance drift reason codes are detected.",
+    )
+    trading_drift_rollback_reason_codes_raw: Optional[str] = Field(
+        default=(
+            "performance_net_pnl_below_floor,performance_drawdown_exceeded,performance_cost_bps_exceeded,"
+            "performance_execution_fallback_ratio_exceeded"
+        ),
+        alias="TRADING_DRIFT_ROLLBACK_REASON_CODES",
+        description="Comma-separated drift reason codes that trigger rollback hooks.",
+    )
     trading_evidence_continuity_enabled: bool = Field(
         default=True,
         alias="TRADING_EVIDENCE_CONTINUITY_ENABLED",
@@ -704,6 +808,36 @@ class Settings(BaseSettings):
                     if item.strip()
                 ]
             )
+        if self.trading_drift_trigger_retrain_reason_codes_raw:
+            self.trading_drift_trigger_retrain_reason_codes_raw = ",".join(
+                [
+                    item.strip()
+                    for item in self.trading_drift_trigger_retrain_reason_codes_raw.split(
+                        ","
+                    )
+                    if item.strip()
+                ]
+            )
+        if self.trading_drift_trigger_reselection_reason_codes_raw:
+            self.trading_drift_trigger_reselection_reason_codes_raw = ",".join(
+                [
+                    item.strip()
+                    for item in self.trading_drift_trigger_reselection_reason_codes_raw.split(
+                        ","
+                    )
+                    if item.strip()
+                ]
+            )
+        if self.trading_drift_rollback_reason_codes_raw:
+            self.trading_drift_rollback_reason_codes_raw = ",".join(
+                [
+                    item.strip()
+                    for item in self.trading_drift_rollback_reason_codes_raw.split(
+                        ","
+                    )
+                    if item.strip()
+                ]
+            )
         if self.trading_autonomy_approval_token:
             self.trading_autonomy_approval_token = (
                 self.trading_autonomy_approval_token.strip() or None
@@ -766,6 +900,22 @@ class Settings(BaseSettings):
         if self.trading_allocator_default_capacity_multiplier < 0:
             raise ValueError(
                 "TRADING_ALLOCATOR_DEFAULT_CAPACITY_MULTIPLIER must be >= 0"
+            )
+        if self.trading_drift_max_required_null_rate < 0:
+            raise ValueError("TRADING_DRIFT_MAX_REQUIRED_NULL_RATE must be >= 0")
+        if self.trading_drift_max_staleness_ms_p95 < 0:
+            raise ValueError("TRADING_DRIFT_MAX_STALENESS_MS_P95 must be >= 0")
+        if self.trading_drift_max_duplicate_ratio < 0:
+            raise ValueError("TRADING_DRIFT_MAX_DUPLICATE_RATIO must be >= 0")
+        if self.trading_drift_max_schema_mismatch_total < 0:
+            raise ValueError("TRADING_DRIFT_MAX_SCHEMA_MISMATCH_TOTAL must be >= 0")
+        if self.trading_drift_retrain_cooldown_seconds < 0:
+            raise ValueError("TRADING_DRIFT_RETRAIN_COOLDOWN_SECONDS must be >= 0")
+        if self.trading_drift_reselection_cooldown_seconds < 0:
+            raise ValueError("TRADING_DRIFT_RESELECTION_COOLDOWN_SECONDS must be >= 0")
+        if self.trading_drift_live_promotion_max_evidence_age_seconds < 0:
+            raise ValueError(
+                "TRADING_DRIFT_LIVE_PROMOTION_MAX_EVIDENCE_AGE_SECONDS must be >= 0"
             )
         if self.trading_allocator_min_multiplier < 0:
             raise ValueError("TRADING_ALLOCATOR_MIN_MULTIPLIER must be >= 0")
@@ -842,6 +992,38 @@ class Settings(BaseSettings):
             for reason in self.trading_signal_staleness_alert_critical_reasons_raw.split(
                 ","
             )
+            if reason.strip()
+        }
+
+    @property
+    def trading_drift_trigger_retrain_reason_codes(self) -> set[str]:
+        if not self.trading_drift_trigger_retrain_reason_codes_raw:
+            return set()
+        return {
+            reason.strip()
+            for reason in self.trading_drift_trigger_retrain_reason_codes_raw.split(",")
+            if reason.strip()
+        }
+
+    @property
+    def trading_drift_trigger_reselection_reason_codes(self) -> set[str]:
+        if not self.trading_drift_trigger_reselection_reason_codes_raw:
+            return set()
+        return {
+            reason.strip()
+            for reason in self.trading_drift_trigger_reselection_reason_codes_raw.split(
+                ","
+            )
+            if reason.strip()
+        }
+
+    @property
+    def trading_drift_rollback_reason_codes(self) -> set[str]:
+        if not self.trading_drift_rollback_reason_codes_raw:
+            return set()
+        return {
+            reason.strip()
+            for reason in self.trading_drift_rollback_reason_codes_raw.split(",")
             if reason.strip()
         }
 

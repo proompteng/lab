@@ -1,6 +1,12 @@
 """Torghut v3 autonomous runtime and gate modules."""
 
-from .gates import GateEvaluationReport, GateInputs, GatePolicyMatrix, PromotionTarget, evaluate_gate_matrix
+from .gates import (
+    GateEvaluationReport,
+    GateInputs,
+    GatePolicyMatrix,
+    PromotionTarget,
+    evaluate_gate_matrix,
+)
 from .lane import (
     AutonomousLaneResult,
     load_runtime_strategy_config,
@@ -14,6 +20,17 @@ from .policy_checks import (
     evaluate_rollback_readiness,
 )
 from .evidence import EvidenceContinuityCheckReport, evaluate_evidence_continuity
+from .drift import (
+    DriftActionDecision,
+    DriftDetectionReport,
+    DriftPromotionEvidence,
+    DriftSignal,
+    DriftThresholds,
+    DriftTriggerPolicy,
+    decide_drift_action,
+    detect_drift,
+    evaluate_live_promotion_evidence,
+)
 from .runtime import (
     LegacyMacdRsiPlugin,
     RuntimeEvaluationResult,
@@ -27,28 +44,37 @@ from .runtime import (
 )
 
 __all__ = [
-    'AutonomousLaneResult',
-    'GateEvaluationReport',
-    'GateInputs',
-    'GatePolicyMatrix',
-    'LegacyMacdRsiPlugin',
-    'PromotionTarget',
-    'PromotionPrerequisiteResult',
-    'RuntimeEvaluationResult',
-    'RollbackReadinessResult',
-    'StrategyContext',
-    'StrategyIntent',
-    'StrategyPlugin',
-    'StrategyPluginRegistry',
-    'StrategyRuntime',
-    'StrategyRuntimeConfig',
-    'default_runtime_registry',
-    'EvidenceContinuityCheckReport',
-    'evaluate_gate_matrix',
-    'evaluate_evidence_continuity',
-    'load_runtime_strategy_config',
-    'evaluate_promotion_prerequisites',
-    'evaluate_rollback_readiness',
-    'upsert_autonomy_no_signal_run',
-    'run_autonomous_lane',
+    "AutonomousLaneResult",
+    "GateEvaluationReport",
+    "GateInputs",
+    "GatePolicyMatrix",
+    "LegacyMacdRsiPlugin",
+    "PromotionTarget",
+    "PromotionPrerequisiteResult",
+    "RuntimeEvaluationResult",
+    "RollbackReadinessResult",
+    "StrategyContext",
+    "StrategyIntent",
+    "StrategyPlugin",
+    "StrategyPluginRegistry",
+    "StrategyRuntime",
+    "StrategyRuntimeConfig",
+    "default_runtime_registry",
+    "EvidenceContinuityCheckReport",
+    "DriftActionDecision",
+    "DriftDetectionReport",
+    "DriftPromotionEvidence",
+    "DriftSignal",
+    "DriftThresholds",
+    "DriftTriggerPolicy",
+    "decide_drift_action",
+    "detect_drift",
+    "evaluate_live_promotion_evidence",
+    "evaluate_gate_matrix",
+    "evaluate_evidence_continuity",
+    "load_runtime_strategy_config",
+    "evaluate_promotion_prerequisites",
+    "evaluate_rollback_readiness",
+    "upsert_autonomy_no_signal_run",
+    "run_autonomous_lane",
 ]
