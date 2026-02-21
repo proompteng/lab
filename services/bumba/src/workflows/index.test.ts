@@ -340,8 +340,17 @@ test('enrichFile completes when all activities are resolved', async () => {
   const scheduleCommands = output.commands.filter(
     (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
   )
+  const modelSchedule = scheduleCommands.find(
+    (command) =>
+      command.attributes?.case === 'scheduleActivityTaskCommandAttributes' &&
+      command.attributes.value.activityType?.name === 'enrichWithModel',
+  )
 
   expect(scheduleCommands).toHaveLength(13)
+  if (!modelSchedule || modelSchedule.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
+    throw new Error('Expected enrichWithModel to be scheduled.')
+  }
+  expect(modelSchedule.attributes.value.taskQueue?.name).toBe('bumba')
   expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
   expect(output.completion).toBe('completed')
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })
