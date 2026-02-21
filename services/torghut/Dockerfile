@@ -8,6 +8,7 @@ FROM python:${PYTHON_VERSION}-slim AS builder
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
+    UV_PROJECT_ENVIRONMENT="/opt/venv" \
     PIP_DEFAULT_TIMEOUT=120 \
     PIP_RETRIES=10
 
@@ -19,9 +20,9 @@ RUN apt-get update \
  && /opt/venv/bin/pip install --no-cache-dir --retries 10 --timeout 120 --upgrade pip uv \
  && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml uv.lock* README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY app ./app
-RUN /opt/venv/bin/uv pip install --no-cache-dir --python /opt/venv/bin/python .
+RUN /opt/venv/bin/uv sync --frozen --no-dev
 
 
 FROM python:${PYTHON_VERSION}-slim AS runtime

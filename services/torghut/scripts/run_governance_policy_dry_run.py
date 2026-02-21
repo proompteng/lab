@@ -15,12 +15,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.trading.autonomy.policy_checks import (
-    evaluate_promotion_prerequisites,
-    evaluate_rollback_readiness,
-)
-
-
 def _json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -58,6 +52,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    from app.trading.autonomy.policy_checks import (
+        evaluate_promotion_prerequisites,
+        evaluate_rollback_readiness,
+    )
+
     parser = _build_parser()
     args = parser.parse_args()
     policy = _json(args.policy)

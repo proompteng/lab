@@ -1,10 +1,92 @@
 """Application configuration for the torghut service."""
 
+import json
+import logging
 from functools import lru_cache
-from typing import Any, List, Literal, Optional
+from typing import Any, List, Literal, Optional, cast
+from urllib.request import Request, urlopen
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
+    "trading_enabled": "torghut_trading_enabled",
+    "trading_live_enabled": "torghut_trading_live_enabled",
+    "trading_order_feed_enabled": "torghut_trading_order_feed_enabled",
+    "trading_strategy_scheduler_enabled": "torghut_trading_strategy_scheduler_enabled",
+    "trading_strategy_runtime_fallback_legacy": "torghut_trading_strategy_runtime_fallback_legacy",
+    "trading_feature_quality_enabled": "torghut_trading_feature_quality_enabled",
+    "trading_autonomy_enabled": "torghut_trading_autonomy_enabled",
+    "trading_autonomy_allow_live_promotion": "torghut_trading_autonomy_allow_live_promotion",
+    "trading_evidence_continuity_enabled": "torghut_trading_evidence_continuity_enabled",
+    "trading_universe_require_non_empty_jangar": "torghut_trading_universe_require_non_empty_jangar",
+    "trading_execution_prefer_limit": "torghut_trading_execution_prefer_limit",
+    "trading_lean_runner_healthcheck_enabled": "torghut_trading_lean_runner_healthcheck_enabled",
+    "trading_lean_runner_require_healthy": "torghut_trading_lean_runner_require_healthy",
+    "trading_allocator_enabled": "torghut_trading_allocator_enabled",
+    "trading_forecast_router_enabled": "torghut_trading_forecast_router_enabled",
+    "trading_forecast_router_refinement_enabled": "torghut_trading_forecast_router_refinement_enabled",
+    "trading_drift_governance_enabled": "torghut_trading_drift_governance_enabled",
+    "trading_drift_live_promotion_requires_evidence": "torghut_trading_drift_live_promotion_requires_evidence",
+    "trading_drift_rollback_on_performance": "torghut_trading_drift_rollback_on_performance",
+    "trading_execution_advisor_enabled": "torghut_trading_execution_advisor_enabled",
+    "trading_allow_shorts": "torghut_trading_allow_shorts",
+    "trading_kill_switch_enabled": "torghut_trading_kill_switch_enabled",
+    "trading_emergency_stop_enabled": "torghut_trading_emergency_stop_enabled",
+    "trading_market_context_required": "torghut_trading_market_context_required",
+    "llm_enabled": "torghut_llm_enabled",
+    "llm_jangar_bespoke_decision_enabled": "torghut_llm_jangar_bespoke_decision_enabled",
+    "llm_fail_open_live_approved": "torghut_llm_fail_open_live_approved",
+    "llm_adjustment_allowed": "torghut_llm_adjustment_allowed",
+    "llm_shadow_mode": "torghut_llm_shadow_mode",
+    "llm_committee_enabled": "torghut_llm_committee_enabled",
+    "llm_adjustment_approved": "torghut_llm_adjustment_approved",
+}
+
+
+def _resolve_boolean_feature_flag(
+    *,
+    endpoint: str,
+    namespace_key: str,
+    entity_id: str,
+    flag_key: str,
+    default_value: bool,
+    timeout_ms: int,
+) -> bool:
+    payload = json.dumps(
+        {
+            "namespaceKey": namespace_key,
+            "flagKey": flag_key,
+            "entityId": entity_id,
+            "context": {},
+        }
+    ).encode("utf-8")
+    request = Request(
+        f"{endpoint}/evaluate/v1/boolean",
+        data=payload,
+        method="POST",
+        headers={
+            "accept": "application/json",
+            "content-type": "application/json",
+        },
+    )
+    timeout_seconds = max(timeout_ms, 1) / 1000.0
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            status = int(getattr(response, "status", 200))
+            if status < 200 or status >= 300:
+                return default_value
+            raw_body = json.loads(response.read().decode("utf-8"))
+            if not isinstance(raw_body, dict):
+                return default_value
+            body = cast(dict[str, object], raw_body)
+            enabled = body.get("enabled")
+            return enabled if isinstance(enabled, bool) else default_value
+    except Exception:
+        logger.warning("Feature flag resolve failed for key=%s; using default.", flag_key)
+        return default_value
 
 
 class Settings(BaseSettings):
@@ -33,6 +115,31 @@ class Settings(BaseSettings):
         default="paper", alias="TRADING_MODE"
     )
     trading_live_enabled: bool = Field(default=False, alias="TRADING_LIVE_ENABLED")
+    trading_feature_flags_enabled: bool = Field(
+        default=False,
+        alias="TRADING_FEATURE_FLAGS_ENABLED",
+        description="Enable Flipt-backed overrides for selected Torghut runtime toggles.",
+    )
+    trading_feature_flags_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_FEATURE_FLAGS_URL",
+        description="Feature-flags service URL (for example http://feature-flags.feature-flags.svc.cluster.local:8013).",
+    )
+    trading_feature_flags_timeout_ms: int = Field(
+        default=500,
+        alias="TRADING_FEATURE_FLAGS_TIMEOUT_MS",
+        description="Timeout in milliseconds for feature-flag lookups.",
+    )
+    trading_feature_flags_namespace: str = Field(
+        default="default",
+        alias="TRADING_FEATURE_FLAGS_NAMESPACE",
+        description="Flipt namespace key used for feature-flag evaluation.",
+    )
+    trading_feature_flags_entity_id: str = Field(
+        default="torghut",
+        alias="TRADING_FEATURE_FLAGS_ENTITY_ID",
+        description="Entity id used for Flipt feature-flag evaluation context.",
+    )
     trading_parity_policy: Literal["live_equivalent", "mode_coupled"] = Field(
         default="live_equivalent",
         alias="TRADING_PARITY_POLICY",
@@ -913,7 +1020,38 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    def _apply_feature_flag_overrides(self) -> None:
+        if not self.trading_feature_flags_enabled:
+            return
+        if not self.trading_feature_flags_url:
+            return
+        endpoint = self.trading_feature_flags_url.strip().rstrip("/")
+        if not endpoint:
+            return
+        namespace_key = self.trading_feature_flags_namespace.strip()
+        if not namespace_key:
+            return
+        entity_id = self.trading_feature_flags_entity_id.strip()
+        if not entity_id:
+            return
+
+        self.trading_feature_flags_url = endpoint
+        self.trading_feature_flags_namespace = namespace_key
+        self.trading_feature_flags_entity_id = entity_id
+        for field_name, flag_key in FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD.items():
+            default_value = bool(getattr(self, field_name))
+            resolved = _resolve_boolean_feature_flag(
+                endpoint=endpoint,
+                namespace_key=namespace_key,
+                entity_id=entity_id,
+                flag_key=flag_key,
+                default_value=default_value,
+                timeout_ms=self.trading_feature_flags_timeout_ms,
+            )
+            setattr(self, field_name, resolved)
+
     def model_post_init(self, __context: Any) -> None:
+        self._apply_feature_flag_overrides()
         if "trading_account_label" not in self.model_fields_set:
             self.trading_account_label = self.trading_mode
         if self.trading_mode == "live" and not self.trading_live_enabled:

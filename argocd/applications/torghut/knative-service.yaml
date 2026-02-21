@@ -76,6 +76,16 @@ spec:
               value: "true"
             - name: TRADING_KILL_SWITCH_ENABLED
               value: "false"
+            - name: TRADING_FEATURE_FLAGS_ENABLED
+              value: "true"
+            - name: TRADING_FEATURE_FLAGS_URL
+              value: http://feature-flags.feature-flags.svc.cluster.local:8013
+            - name: TRADING_FEATURE_FLAGS_TIMEOUT_MS
+              value: "500"
+            - name: TRADING_FEATURE_FLAGS_NAMESPACE
+              value: default
+            - name: TRADING_FEATURE_FLAGS_ENTITY_ID
+              value: torghut
             - name: TRADING_MODE
               value: live
             - name: TRADING_LIVE_ENABLED
