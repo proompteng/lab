@@ -214,7 +214,7 @@ spec:
                       - /spec/template/spec/containers/0/ports/0/protocol
                       - /spec/template/spec/containers/0/readinessProbe
                       - /spec/template/spec/enableServiceLinks
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: miel
                 path: argocd/applications/miel
