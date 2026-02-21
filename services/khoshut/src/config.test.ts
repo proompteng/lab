@@ -45,7 +45,7 @@ describe('loadConfig', () => {
     const cfg = loadConfig()
     expect(cfg.host).toBe('0.0.0.0')
     expect(cfg.port).toBe(3000)
-    expect(cfg.appId).toBe('khoshut-bun')
+    expect(cfg.appId).toBe('khoshut')
   })
 
   it('rejects an invalid port', () => {

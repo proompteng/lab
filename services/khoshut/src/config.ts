@@ -9,7 +9,7 @@ export type KhoshutConfig = {
 
 const DEFAULT_HOST = '0.0.0.0'
 const DEFAULT_PORT = 3000
-const DEFAULT_APP_ID = 'khoshut-bun'
+const DEFAULT_APP_ID = 'khoshut'
 const DEFAULT_BASE_URL = 'http://inngest.inngest.svc.cluster.local:8288'
 
 const HEX_VALUE = /^[a-f0-9]+$/i
