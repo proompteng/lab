@@ -13,6 +13,7 @@ class LLMRiskGuardrails:
     allow_requests: bool
     shadow_mode: bool
     adjustment_allowed: bool
+    committee_enabled: bool
     effective_fail_mode: str
     rollout_stage: str
     governance_evidence_complete: bool
@@ -120,6 +121,7 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
         allow_requests=allow_requests,
         shadow_mode=shadow_mode,
         adjustment_allowed=adjustment_allowed,
+        committee_enabled=committee_enabled,
         effective_fail_mode=effective_fail_mode,
         rollout_stage=rollout_stage,
         governance_evidence_complete=governance_evidence_complete,

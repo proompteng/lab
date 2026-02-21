@@ -89,12 +89,6 @@ def apply_policy(
     if review.verdict == "veto":
         return PolicyOutcome("veto", decision, "llm_veto")
 
-    if review.verdict == "abstain":
-        return PolicyOutcome("veto", decision, "llm_abstain")
-
-    if review.verdict == "escalate":
-        return PolicyOutcome("veto", decision, "llm_escalate")
-
     if review.verdict == "approve":
         return PolicyOutcome("approve", decision)
 

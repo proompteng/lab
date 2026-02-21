@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -289,9 +289,11 @@ class LLMCommitteeMemberResponse(BaseModel):
     @field_validator("uncertainty", mode="before")
     @classmethod
     def normalize_uncertainty(cls, value: Any) -> str:
-        if isinstance(value, dict):
-            value = value.get("band")
-        normalized = str(value or "").strip().lower()
+        normalized_input: object = value
+        if isinstance(normalized_input, dict):
+            band = cast("dict[str, object]", normalized_input).get("band")
+            normalized_input = band if band is not None else ""
+        normalized = str(normalized_input).strip().lower()
         if normalized in {"low", "medium", "high"}:
             return normalized
         return "medium"
