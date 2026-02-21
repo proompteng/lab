@@ -156,8 +156,39 @@ describe('updateJangarManifests', () => {
     })
     expect(parsed.controlPlane?.image).toEqual({
       repository: 'registry.ide-newton.ts.net/lab/jangar-control-plane',
+      tag: 'keep-tag',
+      digest: 'sha256:keep',
+    })
+    expect(result.changed.agentsValues).toBe(true)
+
+    rmSync(fixture.dir, { recursive: true, force: true })
+  })
+
+  it('updates control-plane values when control-plane image metadata is provided', () => {
+    const fixture = createFixture()
+
+    const result = updateJangarManifests({
+      imageName,
       tag: 'agents-tag',
       digest: 'sha256:agentsdigest',
+      controlPlaneImageName: 'registry.ide-newton.ts.net/lab/jangar-control-plane',
+      controlPlaneDigest: 'sha256:controlplanedigest',
+      rolloutTimestamp: '2026-02-20T08:30:00.000Z',
+      kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
+      serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
+      workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
+      agentsValuesPath: relative(repoRoot, fixture.agentsValuesPath),
+    })
+
+    const values = readFileSync(fixture.agentsValuesPath, 'utf8')
+    const parsed = YAML.parse(values) as {
+      controlPlane?: { image?: { repository?: string; tag?: string; digest?: string } }
+    }
+
+    expect(parsed.controlPlane?.image).toEqual({
+      repository: 'registry.ide-newton.ts.net/lab/jangar-control-plane',
+      tag: 'agents-tag',
+      digest: 'sha256:controlplanedigest',
     })
     expect(result.changed.agentsValues).toBe(true)
 

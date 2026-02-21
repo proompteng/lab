@@ -19,6 +19,8 @@ export type UpdateManifestsOptions = {
   imageName: string
   tag: string
   digest?: string
+  controlPlaneImageName?: string
+  controlPlaneDigest?: string
   rolloutTimestamp: string
   kustomizationPath?: string
   serviceManifestPath?: string
@@ -31,6 +33,8 @@ type CliOptions = {
   repository?: string
   tag?: string
   digest?: string
+  controlPlaneImageName?: string
+  controlPlaneDigest?: string
   rolloutTimestamp?: string
   kustomizationPath?: string
   serviceManifestPath?: string
@@ -108,7 +112,14 @@ const updateRolloutAnnotation = (
   return true
 }
 
-const updateAgentsValuesManifest = (valuesPath: string, imageName: string, tag: string, digest: string): boolean => {
+const updateAgentsValuesManifest = (
+  valuesPath: string,
+  imageName: string,
+  tag: string,
+  digest: string,
+  controlPlaneImageName?: string,
+  controlPlaneDigest?: string,
+): boolean => {
   const source = readFileSync(valuesPath, 'utf8')
   const parsed = YAML.parse(source)
   const doc = asRecord(parsed) ?? {}
@@ -127,20 +138,21 @@ const updateAgentsValuesManifest = (valuesPath: string, imageName: string, tag: 
   runner.image = runnerImage
   doc.runner = runner
 
-  const controlPlane = asRecord(doc.controlPlane) ?? {}
-  const controlPlaneImage = asRecord(controlPlane.image) ?? {}
-  const fallbackControlPlaneRepository = imageName.endsWith('/jangar')
-    ? `${imageName.slice(0, -'/jangar'.length)}/jangar-control-plane`
-    : `${imageName}-control-plane`
-  const currentControlPlaneRepository = controlPlaneImage.repository
-  controlPlaneImage.repository =
-    typeof currentControlPlaneRepository === 'string' && currentControlPlaneRepository.trim().length > 0
-      ? currentControlPlaneRepository
-      : fallbackControlPlaneRepository
-  controlPlaneImage.tag = tag
-  controlPlaneImage.digest = digest
-  controlPlane.image = controlPlaneImage
-  doc.controlPlane = controlPlane
+  if (controlPlaneDigest) {
+    const controlPlane = asRecord(doc.controlPlane) ?? {}
+    const controlPlaneImage = asRecord(controlPlane.image) ?? {}
+    const fallbackControlPlaneRepository = imageName.endsWith('/jangar')
+      ? `${imageName.slice(0, -'/jangar'.length)}/jangar-control-plane`
+      : `${imageName}-control-plane`
+    const existingControlPlaneRepository =
+      typeof controlPlaneImage.repository === 'string' ? controlPlaneImage.repository.trim() : ''
+    controlPlaneImage.repository =
+      controlPlaneImageName ?? (existingControlPlaneRepository || fallbackControlPlaneRepository)
+    controlPlaneImage.tag = tag
+    controlPlaneImage.digest = normalizeDigest(controlPlaneDigest)
+    controlPlane.image = controlPlaneImage
+    doc.controlPlane = controlPlane
+  }
 
   const updated = YAML.stringify(doc, { lineWidth: 120 })
   if (source === updated) {
@@ -158,6 +170,7 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
   const serviceManifestPath = resolvePath(options.serviceManifestPath ?? defaultServiceManifestPath)
   const workerManifestPath = resolvePath(options.workerManifestPath ?? defaultWorkerManifestPath)
   const digest = normalizeDigest(options.digest ?? inspectImageDigest(`${options.imageName}:${options.tag}`))
+  const controlPlaneDigest = options.controlPlaneDigest ? normalizeDigest(options.controlPlaneDigest) : undefined
   const agentsValuesPath = options.agentsValuesPath ? resolvePath(options.agentsValuesPath) : null
 
   const kustomizationChanged = updateKustomizationManifest(kustomizationPath, options.imageName, options.tag, digest)
@@ -174,12 +187,20 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
     'worker rollout',
   )
   const agentsValuesChanged = agentsValuesPath
-    ? updateAgentsValuesManifest(agentsValuesPath, options.imageName, options.tag, digest)
+    ? updateAgentsValuesManifest(
+        agentsValuesPath,
+        options.imageName,
+        options.tag,
+        digest,
+        options.controlPlaneImageName,
+        controlPlaneDigest,
+      )
     : false
 
   return {
     tag: options.tag,
     digest,
+    controlPlaneDigest,
     rolloutTimestamp: options.rolloutTimestamp,
     changed: {
       kustomization: kustomizationChanged,
@@ -202,6 +223,8 @@ Options:
   --repository <value>
   --tag <value>
   --digest <value>
+  --control-plane-image-name <value>
+  --control-plane-digest <value>
   --rollout-timestamp <ISO8601>
   --kustomization-path <path>
   --service-manifest-path <path>
@@ -235,6 +258,12 @@ Options:
         break
       case '--digest':
         options.digest = value
+        break
+      case '--control-plane-image-name':
+        options.controlPlaneImageName = value
+        break
+      case '--control-plane-digest':
+        options.controlPlaneDigest = value
         break
       case '--rollout-timestamp':
         options.rolloutTimestamp = value
@@ -272,6 +301,8 @@ export const main = (cliOptions?: CliOptions) => {
     imageName: `${registry}/${repository}`,
     tag,
     digest,
+    controlPlaneImageName: parsed.controlPlaneImageName ?? process.env.JANGAR_CONTROL_PLANE_IMAGE_NAME,
+    controlPlaneDigest: parsed.controlPlaneDigest ?? process.env.JANGAR_CONTROL_PLANE_IMAGE_DIGEST,
     rolloutTimestamp,
     kustomizationPath: parsed.kustomizationPath ?? process.env.JANGAR_KUSTOMIZATION_PATH,
     serviceManifestPath: parsed.serviceManifestPath ?? process.env.JANGAR_SERVICE_MANIFEST,
