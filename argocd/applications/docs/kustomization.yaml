@@ -6,5 +6,5 @@ resources:
   - ingressroute.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/docs
-    newTag: 0.552.1
+    newTag: 0.558.1
     newName: registry.ide-newton.ts.net/lab/docs
