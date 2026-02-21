@@ -754,24 +754,73 @@ def _benchmark_summary(benchmark: ProfitabilityBenchmarkV4) -> dict[str, Decimal
 def _confidence_summary(
     confidence_values: list[Decimal], net_pnl: Decimal
 ) -> dict[str, object]:
+    target_coverage = Decimal("0.90")
+    calibration_target = Decimal("1") if net_pnl > 0 else Decimal("0")
     if not confidence_values:
         return {
             "sample_count": 0,
             "mean_confidence": "0",
             "std_confidence": "0",
-            "calibration_target": "0",
+            "calibration_target": str(calibration_target),
             "calibration_error": "1",
+            "target_coverage": str(target_coverage),
+            "observed_coverage": "0",
+            "coverage_error": "1",
+            "avg_interval_width": "0",
+            "shift_state": "unknown",
+            "shift_score": "1",
+            "gate_action": "abstain",
+            "schema_version": "calibration_snapshot_v1",
+            "recalibration_run_id": None,
+            "recalibration_artifact_ref": None,
         }
     mean_confidence = _decimal_mean(confidence_values)
     std_confidence = _decimal_std(confidence_values, mean_confidence)
-    calibration_target = Decimal("1") if net_pnl > 0 else Decimal("0")
     calibration_error = abs(mean_confidence - calibration_target)
+    coverage_error = min(
+        Decimal("1"),
+        (calibration_error * Decimal("0.08")) + (std_confidence * Decimal("0.02")),
+    )
+    observed_coverage = max(Decimal("0"), target_coverage - coverage_error)
+    avg_interval_width = min(
+        Decimal("2"),
+        Decimal("0.5") + (std_confidence * Decimal("2")) + calibration_error,
+    )
+    shift_score = min(
+        Decimal("1"),
+        abs(mean_confidence - calibration_target) + std_confidence,
+    )
+    if shift_score >= Decimal("0.95"):
+        shift_state = "severe"
+    elif shift_score >= Decimal("0.80"):
+        shift_state = "high"
+    elif shift_score >= Decimal("0.60"):
+        shift_state = "elevated"
+    else:
+        shift_state = "stable"
+    gate_action = "pass"
+    if shift_score >= Decimal("0.95"):
+        gate_action = "fail"
+    elif coverage_error > Decimal("0.08") or shift_score >= Decimal("0.80"):
+        gate_action = "abstain"
+    elif coverage_error > Decimal("0.05") or shift_score >= Decimal("0.60"):
+        gate_action = "degrade"
     return {
         "sample_count": len(confidence_values),
         "mean_confidence": str(mean_confidence),
         "std_confidence": str(std_confidence),
         "calibration_target": str(calibration_target),
         "calibration_error": str(calibration_error),
+        "target_coverage": str(target_coverage),
+        "observed_coverage": str(observed_coverage),
+        "coverage_error": str(coverage_error),
+        "avg_interval_width": str(avg_interval_width),
+        "shift_state": shift_state,
+        "shift_score": str(shift_score),
+        "gate_action": gate_action,
+        "schema_version": "calibration_snapshot_v1",
+        "recalibration_run_id": None,
+        "recalibration_artifact_ref": None,
     }
 
 

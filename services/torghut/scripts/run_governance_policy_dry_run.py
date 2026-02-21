@@ -91,6 +91,10 @@ def main() -> int:
             '{"passed":true,"reasons":[]}\n',
             encoding="utf-8",
         )
+        (root / "gates" / "recalibration-report.json").write_text(
+            '{"schema_version":"recalibration_report_v1","status":"not_required","recalibration_run_id":null}\n',
+            encoding="utf-8",
+        )
         (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
             "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dry-run\n",
             encoding="utf-8",

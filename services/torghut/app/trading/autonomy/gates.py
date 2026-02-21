@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 
 
 GateStatus = Literal["pass", "fail"]
+UncertaintyGateAction = Literal["pass", "degrade", "abstain", "fail"]
 PromotionTarget = Literal["shadow", "paper", "live"]
 
 
@@ -93,6 +94,15 @@ class GatePolicyMatrix:
     gate6_max_cost_bps: Decimal = Decimal("35")
     gate6_max_calibration_error: Decimal = Decimal("0.45")
     gate6_min_reproducibility_hashes: int = 5
+    gate7_target_coverage: Decimal = Decimal("0.90")
+    gate7_max_coverage_error_pass: Decimal = Decimal("0.03")
+    gate7_max_coverage_error_degrade: Decimal = Decimal("0.05")
+    gate7_max_coverage_error_abstain: Decimal = Decimal("0.08")
+    gate7_shift_score_degrade: Decimal = Decimal("0.60")
+    gate7_shift_score_abstain: Decimal = Decimal("0.80")
+    gate7_shift_score_fail: Decimal = Decimal("0.95")
+    gate7_max_interval_width_pass: Decimal = Decimal("1.25")
+    gate7_max_interval_width_degrade: Decimal = Decimal("1.75")
 
     gate5_live_enabled: bool = False
     gate5_require_approval_token: bool = True
@@ -178,6 +188,42 @@ class GatePolicyMatrix:
             gate6_min_reproducibility_hashes=int(
                 payload.get("gate6_min_reproducibility_hashes", 5)
             ),
+            gate7_target_coverage=_decimal_or_default(
+                payload.get("gate7_target_coverage"),
+                Decimal("0.90"),
+            ),
+            gate7_max_coverage_error_pass=_decimal_or_default(
+                payload.get("gate7_max_coverage_error_pass"),
+                Decimal("0.03"),
+            ),
+            gate7_max_coverage_error_degrade=_decimal_or_default(
+                payload.get("gate7_max_coverage_error_degrade"),
+                Decimal("0.05"),
+            ),
+            gate7_max_coverage_error_abstain=_decimal_or_default(
+                payload.get("gate7_max_coverage_error_abstain"),
+                Decimal("0.08"),
+            ),
+            gate7_shift_score_degrade=_decimal_or_default(
+                payload.get("gate7_shift_score_degrade"),
+                Decimal("0.60"),
+            ),
+            gate7_shift_score_abstain=_decimal_or_default(
+                payload.get("gate7_shift_score_abstain"),
+                Decimal("0.80"),
+            ),
+            gate7_shift_score_fail=_decimal_or_default(
+                payload.get("gate7_shift_score_fail"),
+                Decimal("0.95"),
+            ),
+            gate7_max_interval_width_pass=_decimal_or_default(
+                payload.get("gate7_max_interval_width_pass"),
+                Decimal("1.25"),
+            ),
+            gate7_max_interval_width_degrade=_decimal_or_default(
+                payload.get("gate7_max_interval_width_degrade"),
+                Decimal("1.75"),
+            ),
             gate5_live_enabled=bool(payload.get("gate5_live_enabled", False)),
             gate5_require_approval_token=bool(
                 payload.get("gate5_require_approval_token", True)
@@ -221,6 +267,21 @@ class GatePolicyMatrix:
             "gate6_max_cost_bps": str(self.gate6_max_cost_bps),
             "gate6_max_calibration_error": str(self.gate6_max_calibration_error),
             "gate6_min_reproducibility_hashes": self.gate6_min_reproducibility_hashes,
+            "gate7_target_coverage": str(self.gate7_target_coverage),
+            "gate7_max_coverage_error_pass": str(self.gate7_max_coverage_error_pass),
+            "gate7_max_coverage_error_degrade": str(
+                self.gate7_max_coverage_error_degrade
+            ),
+            "gate7_max_coverage_error_abstain": str(
+                self.gate7_max_coverage_error_abstain
+            ),
+            "gate7_shift_score_degrade": str(self.gate7_shift_score_degrade),
+            "gate7_shift_score_abstain": str(self.gate7_shift_score_abstain),
+            "gate7_shift_score_fail": str(self.gate7_shift_score_fail),
+            "gate7_max_interval_width_pass": str(self.gate7_max_interval_width_pass),
+            "gate7_max_interval_width_degrade": str(
+                self.gate7_max_interval_width_degrade
+            ),
             "gate5_live_enabled": self.gate5_live_enabled,
             "gate5_require_approval_token": self.gate5_require_approval_token,
         }
@@ -234,6 +295,11 @@ class GateEvaluationReport:
     recommended_mode: PromotionTarget
     gates: list[GateResult]
     reasons: list[str]
+    uncertainty_gate_action: UncertaintyGateAction
+    coverage_error: str | None
+    conformal_interval_width: str | None
+    shift_score: str | None
+    recalibration_run_id: str | None
     evaluated_at: datetime
     code_version: str
 
@@ -245,9 +311,23 @@ class GateEvaluationReport:
             "recommended_mode": self.recommended_mode,
             "gates": [item.to_payload() for item in self.gates],
             "reasons": list(self.reasons),
+            "uncertainty_gate_action": self.uncertainty_gate_action,
+            "coverage_error": self.coverage_error,
+            "conformal_interval_width": self.conformal_interval_width,
+            "shift_score": self.shift_score,
+            "recalibration_run_id": self.recalibration_run_id,
             "evaluated_at": self.evaluated_at.isoformat(),
             "code_version": self.code_version,
         }
+
+
+@dataclass(frozen=True)
+class UncertaintyGateOutcome:
+    action: UncertaintyGateAction
+    coverage_error: Decimal | None
+    shift_score: Decimal | None
+    avg_interval_width: Decimal | None
+    recalibration_run_id: str | None
 
 
 def evaluate_gate_matrix(
@@ -267,16 +347,42 @@ def evaluate_gate_matrix(
     gates.append(_gate3_shadow_paper_quality(inputs, policy))
     gates.append(_gate4_operational_readiness(inputs))
     gates.append(_gate6_profitability_evidence(inputs, policy, promotion_target))
+    uncertainty_gate, uncertainty_outcome = _gate7_uncertainty_calibration(
+        inputs, policy, promotion_target
+    )
+    gates.append(uncertainty_gate)
     gates.append(_gate5_live_ramp_readiness(inputs, policy, promotion_target))
 
-    all_required_pass = all(gate.status == "pass" for gate in gates[:6])
-    gate5_pass = gates[6].status == "pass"
+    gate_index = {gate.gate_id: gate for gate in gates}
+    all_required_pass = all(
+        gate_index.get(gate_id, GateResult(gate_id=gate_id, status="fail")).status
+        == "pass"
+        for gate_id in (
+            "gate0_data_integrity",
+            "gate1_statistical_robustness",
+            "gate2_risk_capacity",
+            "gate3_shadow_paper_quality",
+            "gate4_operational_readiness",
+            "gate6_profitability_evidence",
+            "gate7_uncertainty_calibration",
+        )
+    )
+    gate5_pass = (
+        gate_index.get(
+            "gate5_live_ramp_readiness",
+            GateResult(gate_id="gate5_live_ramp_readiness", status="fail"),
+        ).status
+        == "pass"
+    )
 
     reasons = [reason for gate in gates for reason in gate.reasons]
     recommended_mode: PromotionTarget = "shadow"
     promotion_allowed = False
 
-    if promotion_target == "shadow":
+    if uncertainty_outcome.action in ("abstain", "fail"):
+        promotion_allowed = False
+        recommended_mode = "shadow"
+    elif promotion_target == "shadow":
         promotion_allowed = all_required_pass
         recommended_mode = "shadow"
     elif promotion_target == "paper":
@@ -296,6 +402,23 @@ def evaluate_gate_matrix(
         recommended_mode=recommended_mode,
         gates=gates,
         reasons=reasons,
+        uncertainty_gate_action=uncertainty_outcome.action,
+        coverage_error=(
+            str(uncertainty_outcome.coverage_error)
+            if uncertainty_outcome.coverage_error is not None
+            else None
+        ),
+        conformal_interval_width=(
+            str(uncertainty_outcome.avg_interval_width)
+            if uncertainty_outcome.avg_interval_width is not None
+            else None
+        ),
+        shift_score=(
+            str(uncertainty_outcome.shift_score)
+            if uncertainty_outcome.shift_score is not None
+            else None
+        ),
+        recalibration_run_id=uncertainty_outcome.recalibration_run_id,
         evaluated_at=now,
         code_version=code_version,
     )
@@ -535,6 +658,128 @@ def _gate6_profitability_evidence(
         status="pass" if not reasons else "fail",
         reasons=reasons,
     )
+
+
+def _gate7_uncertainty_calibration(
+    inputs: GateInputs,
+    policy: GatePolicyMatrix,
+    promotion_target: PromotionTarget,
+) -> tuple[GateResult, UncertaintyGateOutcome]:
+    if not policy.gate6_require_profitability_evidence:
+        outcome = UncertaintyGateOutcome(
+            action="pass",
+            coverage_error=Decimal("0"),
+            shift_score=Decimal("0"),
+            avg_interval_width=Decimal("0"),
+            recalibration_run_id=None,
+        )
+        return (
+            GateResult(gate_id="gate7_uncertainty_calibration", status="pass"),
+            outcome,
+        )
+    if promotion_target == "shadow":
+        outcome = UncertaintyGateOutcome(
+            action="pass",
+            coverage_error=Decimal("0"),
+            shift_score=Decimal("0"),
+            avg_interval_width=Decimal("0"),
+            recalibration_run_id=None,
+        )
+        return (
+            GateResult(gate_id="gate7_uncertainty_calibration", status="pass"),
+            outcome,
+        )
+
+    confidence = _dict_from_any(
+        _dict_from_any(inputs.profitability_evidence).get("confidence_calibration")
+    )
+    reasons: list[str] = []
+
+    coverage_error = _decimal(confidence.get("coverage_error"))
+    shift_score = _decimal(confidence.get("shift_score"))
+    avg_interval_width = _decimal(confidence.get("avg_interval_width"))
+    target_coverage = _decimal(confidence.get("target_coverage"))
+    observed_coverage = _decimal(confidence.get("observed_coverage"))
+    recalibration_run_id_raw = confidence.get("recalibration_run_id")
+    recalibration_run_id = (
+        str(recalibration_run_id_raw).strip() if recalibration_run_id_raw else None
+    )
+    recalibration_artifact_ref = str(
+        confidence.get("recalibration_artifact_ref", "")
+    ).strip()
+
+    if (
+        coverage_error is None
+        or shift_score is None
+        or avg_interval_width is None
+        or target_coverage is None
+        or observed_coverage is None
+    ):
+        reasons.append("uncertainty_inputs_missing_or_invalid")
+    elif (
+        coverage_error < 0
+        or shift_score < 0
+        or shift_score > 1
+        or avg_interval_width < 0
+        or target_coverage < 0
+        or target_coverage > 1
+        or observed_coverage < 0
+        or observed_coverage > 1
+    ):
+        reasons.append("uncertainty_inputs_out_of_range")
+    if target_coverage is not None and target_coverage != policy.gate7_target_coverage:
+        reasons.append("uncertainty_target_coverage_mismatch")
+
+    action: UncertaintyGateAction = "pass"
+    if reasons:
+        action = "abstain"
+    else:
+        assert coverage_error is not None
+        assert shift_score is not None
+        assert avg_interval_width is not None
+        if shift_score >= policy.gate7_shift_score_fail:
+            action = "fail"
+            reasons.append("regime_shift_score_fail_threshold_exceeded")
+        elif (
+            coverage_error > policy.gate7_max_coverage_error_abstain
+            or shift_score >= policy.gate7_shift_score_abstain
+            or avg_interval_width > policy.gate7_max_interval_width_degrade
+        ):
+            action = "abstain"
+            reasons.append("uncertainty_abstain_threshold_exceeded")
+        elif (
+            coverage_error > policy.gate7_max_coverage_error_degrade
+            or shift_score >= policy.gate7_shift_score_degrade
+            or avg_interval_width > policy.gate7_max_interval_width_pass
+        ):
+            action = "degrade"
+            reasons.append("uncertainty_degrade_threshold_exceeded")
+        elif coverage_error > policy.gate7_max_coverage_error_pass:
+            action = "degrade"
+            reasons.append("coverage_error_slo_exceeded")
+
+    if action in ("degrade", "abstain", "fail") and not recalibration_run_id:
+        reasons.append("recalibration_run_id_missing")
+    if action in ("degrade", "abstain", "fail") and not recalibration_artifact_ref:
+        reasons.append("recalibration_artifact_missing")
+
+    if action in ("degrade", "abstain", "fail"):
+        reasons.append(f"uncertainty_gate_action_{action}")
+
+    gate = GateResult(
+        gate_id="gate7_uncertainty_calibration",
+        status="pass" if action == "pass" else "fail",
+        reasons=sorted(set(reasons)),
+        artifact_refs=[recalibration_artifact_ref] if recalibration_artifact_ref else [],
+    )
+    outcome = UncertaintyGateOutcome(
+        action=action,
+        coverage_error=coverage_error,
+        shift_score=shift_score,
+        avg_interval_width=avg_interval_width,
+        recalibration_run_id=recalibration_run_id,
+    )
+    return gate, outcome
 
 
 def _decimal(value: Any) -> Decimal | None:

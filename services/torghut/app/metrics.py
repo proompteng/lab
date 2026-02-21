@@ -427,6 +427,28 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key == "uncertainty_gate_action_total":
+                    metric_name = "torghut_trading_uncertainty_gate_action_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of uncertainty gate actions by action."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(action), int(count))
+                            for action, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for action, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"action": action},
+                                value=count,
+                            )
+                        )
+                    continue
                 if key == "llm_committee_latency_ms":
                     metric_name = "torghut_trading_llm_committee_latency_ms"
                     lines.append(
@@ -468,6 +490,28 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             _render_labeled_metric(
                                 metric_name=metric_name,
                                 labels={"role": role, "verdict": verdict},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "recalibration_runs_total":
+                    metric_name = "torghut_trading_recalibration_runs_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of recalibration runs by status."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(status), int(count))
+                            for status, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for status, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"status": status},
                                 value=count,
                             )
                         )
@@ -595,6 +639,48 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
             lines.append(f"# HELP {metric_name} Torghut trading metric {key.replace('_', ' ')}.")
             lines.append(f"# TYPE {metric_name} gauge")
             lines.append(f"{metric_name} {value}")
+            continue
+        if key == "calibration_coverage_error":
+            metric_name = "torghut_trading_calibration_coverage_error"
+            lines.append(
+                f"# HELP {metric_name} Absolute conformal coverage error for the latest autonomy window."
+            )
+            lines.append(f"# TYPE {metric_name} gauge")
+            lines.extend(
+                _render_labeled_metric(
+                    metric_name=metric_name,
+                    labels={"symbol": "all", "horizon": "autonomy"},
+                    value=value,
+                )
+            )
+            continue
+        if key == "conformal_interval_width":
+            metric_name = "torghut_trading_conformal_interval_width"
+            lines.append(
+                f"# HELP {metric_name} Average conformal interval width for the latest autonomy window."
+            )
+            lines.append(f"# TYPE {metric_name} gauge")
+            lines.extend(
+                _render_labeled_metric(
+                    metric_name=metric_name,
+                    labels={"symbol": "all", "horizon": "autonomy"},
+                    value=value,
+                )
+            )
+            continue
+        if key == "regime_shift_score":
+            metric_name = "torghut_trading_regime_shift_score"
+            lines.append(
+                f"# HELP {metric_name} Regime shift score for the latest autonomy window."
+            )
+            lines.append(f"# TYPE {metric_name} gauge")
+            lines.extend(
+                _render_labeled_metric(
+                    metric_name=metric_name,
+                    labels={"symbol": "all", "horizon": "autonomy"},
+                    value=value,
+                )
+            )
             continue
         if key == "llm_committee_veto_alignment_total":
             metric_name = "torghut_trading_llm_committee_veto_alignment_total"

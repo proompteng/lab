@@ -236,6 +236,7 @@ def run_autonomous_lane(
     profitability_benchmark_path = gates_dir / "profitability-benchmark-v4.json"
     profitability_evidence_path = gates_dir / "profitability-evidence-v4.json"
     profitability_validation_path = gates_dir / "profitability-evidence-validation.json"
+    recalibration_report_path = gates_dir / "recalibration-report.json"
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     run_row = None
 
@@ -401,6 +402,52 @@ def run_autonomous_lane(
         profitability_evidence_payload["validation"] = (
             profitability_validation.to_payload()
         )
+        confidence_calibration_raw = profitability_evidence_payload.get(
+            "confidence_calibration"
+        )
+        confidence_calibration: dict[str, Any]
+        if isinstance(confidence_calibration_raw, dict):
+            confidence_calibration = dict(confidence_calibration_raw)
+        else:
+            confidence_calibration = {}
+        uncertainty_action = str(
+            confidence_calibration.get("gate_action", "abstain")
+        ).strip()
+        recalibration_run_id: str | None = None
+        if uncertainty_action != "pass":
+            recalibration_run_id = f"recal-{run_id[:12]}"
+            confidence_calibration["recalibration_run_id"] = recalibration_run_id
+            confidence_calibration["recalibration_artifact_ref"] = str(
+                recalibration_report_path
+            )
+        profitability_evidence_payload["confidence_calibration"] = (
+            confidence_calibration
+        )
+        recalibration_report_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "recalibration_report_v1",
+                    "run_id": run_id,
+                    "candidate_id": candidate_id,
+                    "requested_at": now.isoformat(),
+                    "status": "queued" if recalibration_run_id else "not_required",
+                    "recalibration_run_id": recalibration_run_id,
+                    "uncertainty_gate_action": uncertainty_action,
+                    "coverage_error": confidence_calibration.get("coverage_error"),
+                    "shift_score": confidence_calibration.get("shift_score"),
+                    "artifact_refs": sorted(
+                        set(
+                            [
+                                str(profitability_evidence_path),
+                                str(profitability_validation_path),
+                            ]
+                        )
+                    ),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         gate_inputs = GateInputs(
             feature_schema_version="3.0.0",
             required_feature_null_rate=_required_feature_null_rate(signals),
@@ -505,6 +552,7 @@ def run_autonomous_lane(
                 "profitability_benchmark": str(profitability_benchmark_path),
                 "profitability_evidence": str(profitability_evidence_path),
                 "profitability_validation": str(profitability_validation_path),
+                "recalibration_report": str(recalibration_report_path),
             },
             "candidate_spec": {
                 "runtime_strategies": [
@@ -632,6 +680,7 @@ def run_autonomous_lane(
                         str(gate_report_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(recalibration_report_path),
                     ],
                 },
                 "promotion_prerequisites": promotion_check.to_payload(),
@@ -655,6 +704,7 @@ def run_autonomous_lane(
                             for item in drift_gate_check.get("artifact_refs", [])
                             if str(item).strip()
                         ],
+                        str(recalibration_report_path),
                     ]
                 )
             ),
@@ -700,6 +750,7 @@ def run_autonomous_lane(
             "profitability_benchmark_artifact": str(profitability_benchmark_path),
             "profitability_evidence_artifact": str(profitability_evidence_path),
             "profitability_validation_artifact": str(profitability_validation_path),
+            "recalibration_artifact": str(recalibration_report_path),
             "promotion_gate_artifact": str(promotion_gate_path),
         }
         gate_report_path.write_text(

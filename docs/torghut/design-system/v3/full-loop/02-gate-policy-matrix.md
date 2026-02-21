@@ -78,6 +78,23 @@ Fail criteria:
 - unresolved high severity findings,
 - drift between reviewed config and deploy target.
 
+### Gate 7: Conformal Uncertainty and Regime Shift
+Pass criteria:
+- conformal coverage SLO met (`|observed_coverage - target_coverage| <= 0.03`),
+- interval sharpness within policy envelope,
+- regime shift score remains below degrade thresholds.
+
+Deterministic actions:
+- `pass`: normal routing/sizing.
+- `degrade`: reduce sizing envelope and require recalibration run linkage.
+- `abstain`: skip new entries, allow risk-reducing exits only.
+- `fail`: hard promotion block and rollback-to-baseline recommendation.
+
+Fail criteria:
+- uncertainty inputs missing/invalid (fail-closed to `abstain`),
+- sustained coverage error or shift score above abstain/fail thresholds,
+- missing recalibration artifact chain when action is not `pass`.
+
 ## Decision Output Contract
 Each gate emits JSON:
 - `gate_id`

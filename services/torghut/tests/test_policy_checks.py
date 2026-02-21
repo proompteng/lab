@@ -50,6 +50,7 @@ class TestPolicyChecks(TestCase):
         self.assertIn(
             "paper-candidate/strategy-configmap-patch.yaml", result.missing_artifacts
         )
+        self.assertIn("gates/recalibration-report.json", result.missing_artifacts)
 
     def test_rollback_readiness_fails_when_dry_run_stale(self) -> None:
         state = _candidate_state()
@@ -99,6 +100,10 @@ class TestPolicyChecks(TestCase):
             )
             (root / "gates" / "profitability-evidence-validation.json").write_text(
                 json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "recalibration-report.json").write_text(
+                json.dumps({"status": "not_required"}),
                 encoding="utf-8",
             )
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
@@ -160,6 +165,10 @@ class TestPolicyChecks(TestCase):
                         "reasons": ["market_net_pnl_delta_below_threshold"],
                     }
                 ),
+                encoding="utf-8",
+            )
+            (root / "gates" / "recalibration-report.json").write_text(
+                json.dumps({"status": "queued", "recalibration_run_id": "recal-1"}),
                 encoding="utf-8",
             )
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
@@ -336,6 +345,57 @@ class TestPolicyChecks(TestCase):
         )
         self.assertIn("trade_count_below_minimum_for_progression", promotion.reasons)
 
+    def test_promotion_prerequisites_fail_when_uncertainty_slo_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "profitability-evidence-v4.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "gates" / "profitability-benchmark-v4.json").write_text(
+                json.dumps({"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "profitability-evidence-validation.json").write_text(
+                json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "recalibration-report.json").write_text(
+                json.dumps({"status": "queued", "recalibration_run_id": "recal-1"}),
+                encoding="utf-8",
+            )
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={"promotion_uncertainty_max_coverage_error": "0.03"},
+                gate_report_payload={
+                    **_gate_report(),
+                    "uncertainty_gate_action": "degrade",
+                    "coverage_error": "0.05",
+                    "recalibration_run_id": "recal-1",
+                },
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("uncertainty_gate_not_pass", promotion.reasons)
+        self.assertIn("uncertainty_calibration_slo_failed", promotion.reasons)
+
     def test_promotion_prerequisites_fail_when_fold_evidence_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -365,6 +425,10 @@ class TestPolicyChecks(TestCase):
             )
             (root / "gates" / "profitability-evidence-validation.json").write_text(
                 json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "recalibration-report.json").write_text(
+                json.dumps({"status": "not_required"}),
                 encoding="utf-8",
             )
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
@@ -415,6 +479,10 @@ class TestPolicyChecks(TestCase):
             )
             (root / "gates" / "profitability-evidence-validation.json").write_text(
                 json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "recalibration-report.json").write_text(
+                json.dumps({"status": "not_required"}),
                 encoding="utf-8",
             )
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
@@ -472,6 +540,7 @@ def _gate_report() -> dict[str, object]:
             {"gate_id": "gate0_data_integrity", "status": "pass"},
             {"gate_id": "gate1_statistical_robustness", "status": "pass"},
             {"gate_id": "gate2_risk_capacity", "status": "pass"},
+            {"gate_id": "gate7_uncertainty_calibration", "status": "pass"},
         ],
         "promotion_evidence": {
             "fold_metrics": {
@@ -495,4 +564,7 @@ def _gate_report() -> dict[str, object]:
                 "gate_reasons": ["gate_result_ok"],
             },
         },
+        "uncertainty_gate_action": "pass",
+        "coverage_error": "0.02",
+        "recalibration_run_id": None,
     }
