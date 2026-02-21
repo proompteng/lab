@@ -53,6 +53,7 @@ jobs:
           allowed_paths=(
             "argocd/applications/proompteng/kustomization.yaml"
             "argocd/applications/bumba/kustomization.yaml"
+            "argocd/applications/khoshut/kustomization.yaml"
           )
 
           contains() {

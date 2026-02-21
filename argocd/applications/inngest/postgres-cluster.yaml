@@ -1,0 +1,19 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: inngest-db
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    storageClass: rook-ceph-block
+    size: 10Gi
+  bootstrap:
+    initdb:
+      database: inngest
+      owner: inngest
+      encoding: 'UTF8'
+      dataChecksums: true
+  monitoring:
+    enablePodMonitor: true
+# CNPG emits application credentials in `inngest-db-app` (uri, user, password, host, port, dbname)

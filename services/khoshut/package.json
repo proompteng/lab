@@ -1,0 +1,23 @@
+{
+  "name": "@proompteng/khoshut",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "lint": "bunx biome check --config-path ../../biome.json src",
+    "tsc": "bunx tsc --noEmit",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json ."
+  },
+  "dependencies": {
+    "inngest": "3.52.3"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "bun@1.3.9"
+}
