@@ -3,8 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('~/server/audit-client', () => ({
   emitAuditEventBestEffort: vi.fn(async () => {}),
 }))
+vi.mock('~/server/feature-flags', () => ({
+  resolveBooleanFeatureToggle: vi.fn(async () => true),
+}))
 
 import { emitAuditEventBestEffort } from '~/server/audit-client'
+import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { __test__ } from '~/server/orchestration-controller'
 import type { KubernetesClient } from '~/server/primitives-kube'
 
@@ -13,6 +17,8 @@ describe('orchestration controller', () => {
     vi.clearAllMocks()
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:00:00Z'))
+    delete process.env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED
+    delete process.env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY
   })
 
   afterEach(() => {
@@ -333,5 +339,27 @@ describe('orchestration controller', () => {
     const conditions = Array.isArray(status.conditions) ? status.conditions : []
     const failed = conditions.find((condition) => condition.type === 'Failed')
     expect(failed?.status).toBe('True')
+  })
+
+  it('resolves startup gate from feature flags with env fallback default', async () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    try {
+      process.env.NODE_ENV = 'production'
+      process.env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED = 'false'
+      const resolveBooleanFeatureToggleMock = vi.mocked(resolveBooleanFeatureToggle)
+      resolveBooleanFeatureToggleMock.mockResolvedValueOnce(true)
+
+      const enabled = await __test__.shouldStartWithFeatureFlag()
+
+      expect(enabled).toBe(true)
+      expect(resolveBooleanFeatureToggleMock).toHaveBeenCalledWith({
+        key: 'jangar.orchestration_controller.enabled',
+        keyEnvVar: 'JANGAR_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY',
+        fallbackEnvVar: 'JANGAR_ORCHESTRATION_CONTROLLER_ENABLED',
+        defaultValue: false,
+      })
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv
+    }
   })
 })

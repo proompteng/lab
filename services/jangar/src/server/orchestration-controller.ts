@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 
 import { emitAuditEventBestEffort } from '~/server/audit-client'
 import { resolveRepositoryFromParameters } from '~/server/audit-logging'
+import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { startResourceWatch } from '~/server/kube-watch'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
@@ -10,6 +11,7 @@ import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { shouldApplyStatus } from '~/server/status-utils'
 
 const DEFAULT_NAMESPACES = ['agents']
+const DEFAULT_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.orchestration_controller.enabled'
 
 const REQUIRED_CRDS = [
   RESOURCE_MAP.Orchestration,
@@ -105,6 +107,16 @@ const shouldStart = () => {
   if (process.env.NODE_ENV === 'test') return false
   const flag = (process.env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED ?? '1').trim().toLowerCase()
   return flag !== '0' && flag !== 'false'
+}
+
+const shouldStartWithFeatureFlag = async () => {
+  if (process.env.NODE_ENV === 'test') return false
+  return resolveBooleanFeatureToggle({
+    key: DEFAULT_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY,
+    keyEnvVar: 'JANGAR_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY',
+    fallbackEnvVar: 'JANGAR_ORCHESTRATION_CONTROLLER_ENABLED',
+    defaultValue: shouldStart(),
+  })
 }
 
 const parseNamespaces = () => {
@@ -2084,10 +2096,25 @@ const startNamespaceWatches = (
 }
 
 export const startOrchestrationController = async () => {
-  if (started || starting || !shouldStart()) return
+  if (started || starting) return
   starting = true
   lifecycleToken += 1
   const token = lifecycleToken
+  let featureEnabled = false
+  try {
+    featureEnabled = await shouldStartWithFeatureFlag()
+  } catch (error) {
+    if (lifecycleToken === token) {
+      starting = false
+    }
+    throw error
+  }
+  if (!featureEnabled) {
+    if (lifecycleToken === token) {
+      starting = false
+    }
+    return
+  }
   const handles: Array<{ stop: () => void }> = []
   try {
     await checkCrds()
@@ -2138,4 +2165,5 @@ export const __test__ = {
   reconcileOrchestration,
   reconcileOrchestrationRun,
   emitRunEvent,
+  shouldStartWithFeatureFlag,
 }

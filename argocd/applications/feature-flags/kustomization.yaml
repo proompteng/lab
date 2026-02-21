@@ -3,15 +3,12 @@ kind: Kustomization
 namespace: feature-flags
 
 resources:
-  - feature-flag-jangar.yaml
-  - feature-flag-source.yaml
-  - flagd.yaml
+  - tailscale-service.yaml
 
 helmCharts:
-  - name: open-feature-operator
-    repo: https://open-feature.github.io/open-feature-operator/
-    version: v0.8.9
-    releaseName: open-feature-operator
+  - name: flipt-v2
+    repo: https://helm.flipt.io
+    version: 2.7.1
+    releaseName: feature-flags
     namespace: feature-flags
-    includeCRDs: true
-    valuesFile: open-feature-operator-values.yaml
+    valuesFile: flipt-values.yaml

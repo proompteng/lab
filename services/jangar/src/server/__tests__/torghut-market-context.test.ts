@@ -93,14 +93,14 @@ describe('torghut market context', () => {
     expect(health.overallState).toBe('down')
   })
 
-  it('uses flagd for market context enablement when configured', async () => {
+  it('uses feature-flags service for market context enablement when configured', async () => {
     process.env.JANGAR_MARKET_CONTEXT_ENABLED = 'true'
     process.env.JANGAR_MARKET_CONTEXT_ENABLED_FLAG_KEY = 'jangar.market_context.enabled'
     process.env.JANGAR_FEATURE_FLAGS_URL = 'http://feature-flags.feature-flags.svc.cluster.local:8013'
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ value: false }),
+      json: async () => ({ enabled: false }),
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -108,7 +108,7 @@ describe('torghut market context', () => {
 
     expect(context.riskFlags).toContain('market_context_disabled')
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://feature-flags.feature-flags.svc.cluster.local:8013/schema.v1.Service/ResolveBoolean',
+      'http://feature-flags.feature-flags.svc.cluster.local:8013/evaluate/v1/boolean',
       expect.objectContaining({
         method: 'POST',
       }),
