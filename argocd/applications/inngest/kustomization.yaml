@@ -44,7 +44,7 @@ patches:
                     value: redis://inngest-redis:6379/0
 helmCharts:
   - name: inngest
-    repo: oci://ghcr.io/inngest/inngest-helm/inngest
+    repo: oci://ghcr.io/inngest/inngest-helm
     version: 0.3.0
     releaseName: inngest
     namespace: inngest
