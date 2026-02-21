@@ -5,6 +5,7 @@ resources:
   - postgres-cluster.yaml
   - redis.yaml
   - sealed-secret.yaml
+  - tailscale-service.yaml
 patches:
   - target:
       kind: Secret
