@@ -99,14 +99,14 @@ class TestLLMPolicy(TestCase):
     def test_abstain_uses_explicit_pass_through_fallback(self) -> None:
         original = {
             "llm_abstain_fail_mode": config.settings.llm_abstain_fail_mode,
-            "llm_max_uncertainty_score": config.settings.llm_max_uncertainty_score,
+            "llm_max_uncertainty": config.settings.llm_max_uncertainty,
             "llm_max_uncertainty_band": config.settings.llm_max_uncertainty_band,
-            "llm_min_calibrated_probability": config.settings.llm_min_calibrated_probability,
+            "llm_min_calibrated_top_probability": config.settings.llm_min_calibrated_top_probability,
         }
         config.settings.llm_abstain_fail_mode = "pass_through"
-        config.settings.llm_max_uncertainty_score = 1.0
+        config.settings.llm_max_uncertainty = 1.0
         config.settings.llm_max_uncertainty_band = "high"
-        config.settings.llm_min_calibrated_probability = 0.0
+        config.settings.llm_min_calibrated_top_probability = 0.0
 
         try:
             decision = StrategyDecision(
@@ -140,28 +140,26 @@ class TestLLMPolicy(TestCase):
             self.assertEqual(outcome.reason, "llm_abstain_fallback_pass_through")
         finally:
             config.settings.llm_abstain_fail_mode = original["llm_abstain_fail_mode"]
-            config.settings.llm_max_uncertainty_score = original[
-                "llm_max_uncertainty_score"
-            ]
+            config.settings.llm_max_uncertainty = original["llm_max_uncertainty"]
             config.settings.llm_max_uncertainty_band = original[
                 "llm_max_uncertainty_band"
             ]
-            config.settings.llm_min_calibrated_probability = original[
-                "llm_min_calibrated_probability"
+            config.settings.llm_min_calibrated_top_probability = original[
+                "llm_min_calibrated_top_probability"
             ]
 
     def test_uncertainty_guardrails_force_configured_fallback(self) -> None:
         original = {
-            "llm_uncertainty_fail_mode": config.settings.llm_uncertainty_fail_mode,
-            "llm_max_uncertainty_score": config.settings.llm_max_uncertainty_score,
+            "llm_quality_fail_mode": config.settings.llm_quality_fail_mode,
+            "llm_max_uncertainty": config.settings.llm_max_uncertainty,
             "llm_max_uncertainty_band": config.settings.llm_max_uncertainty_band,
-            "llm_min_calibrated_probability": config.settings.llm_min_calibrated_probability,
+            "llm_min_calibrated_top_probability": config.settings.llm_min_calibrated_top_probability,
             "llm_min_confidence": config.settings.llm_min_confidence,
         }
-        config.settings.llm_uncertainty_fail_mode = "veto"
-        config.settings.llm_max_uncertainty_score = 0.2
+        config.settings.llm_quality_fail_mode = "veto"
+        config.settings.llm_max_uncertainty = 0.2
         config.settings.llm_max_uncertainty_band = "low"
-        config.settings.llm_min_calibrated_probability = 0.6
+        config.settings.llm_min_calibrated_top_probability = 0.6
         config.settings.llm_min_confidence = 0.0
 
         try:
@@ -204,16 +202,12 @@ class TestLLMPolicy(TestCase):
                 "llm_calibration_quality_below_min", outcome.guardrail_reasons or []
             )
         finally:
-            config.settings.llm_uncertainty_fail_mode = original[
-                "llm_uncertainty_fail_mode"
-            ]
-            config.settings.llm_max_uncertainty_score = original[
-                "llm_max_uncertainty_score"
-            ]
+            config.settings.llm_quality_fail_mode = original["llm_quality_fail_mode"]
+            config.settings.llm_max_uncertainty = original["llm_max_uncertainty"]
             config.settings.llm_max_uncertainty_band = original[
                 "llm_max_uncertainty_band"
             ]
-            config.settings.llm_min_calibrated_probability = original[
-                "llm_min_calibrated_probability"
+            config.settings.llm_min_calibrated_top_probability = original[
+                "llm_min_calibrated_top_probability"
             ]
             config.settings.llm_min_confidence = original["llm_min_confidence"]

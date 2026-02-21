@@ -583,11 +583,14 @@ class Settings(BaseSettings):
         ),
     )
     llm_min_confidence: float = Field(default=0.5, alias="LLM_MIN_CONFIDENCE")
-    llm_min_calibrated_probability: float = Field(
-        default=0.45, alias="LLM_MIN_CALIBRATED_PROBABILITY"
+    llm_min_calibrated_top_probability: float = Field(
+        default=0.45, alias="LLM_MIN_CALIBRATED_TOP_PROBABILITY"
     )
-    llm_max_uncertainty_score: float = Field(
-        default=0.6, alias="LLM_MAX_UNCERTAINTY_SCORE"
+    llm_min_probability_margin: float = Field(
+        default=0.05, alias="LLM_MIN_PROBABILITY_MARGIN"
+    )
+    llm_max_uncertainty: float = Field(
+        default=0.6, alias="LLM_MAX_UNCERTAINTY"
     )
     llm_max_uncertainty_band: Literal["low", "medium", "high"] = Field(
         default="medium", alias="LLM_MAX_UNCERTAINTY_BAND"
@@ -598,11 +601,11 @@ class Settings(BaseSettings):
     llm_abstain_fail_mode: Literal["veto", "pass_through"] = Field(
         default="pass_through", alias="LLM_ABSTAIN_FAIL_MODE"
     )
-    llm_escalation_fail_mode: Literal["veto", "pass_through"] = Field(
-        default="veto", alias="LLM_ESCALATION_FAIL_MODE"
+    llm_escalate_fail_mode: Literal["veto", "pass_through"] = Field(
+        default="veto", alias="LLM_ESCALATE_FAIL_MODE"
     )
-    llm_uncertainty_fail_mode: Literal["veto", "pass_through"] = Field(
-        default="veto", alias="LLM_UNCERTAINTY_FAIL_MODE"
+    llm_quality_fail_mode: Literal["veto", "pass_through"] = Field(
+        default="veto", alias="LLM_QUALITY_FAIL_MODE"
     )
     llm_adjustment_allowed: bool = Field(default=False, alias="LLM_ADJUSTMENT_ALLOWED")
     llm_max_qty_multiplier: float = Field(default=1.25, alias="LLM_MAX_QTY_MULTIPLIER")
@@ -774,10 +777,12 @@ class Settings(BaseSettings):
             )
         if not 0 <= self.llm_min_confidence <= 1:
             raise ValueError("LLM_MIN_CONFIDENCE must be within [0, 1]")
-        if not 0 <= self.llm_min_calibrated_probability <= 1:
-            raise ValueError("LLM_MIN_CALIBRATED_PROBABILITY must be within [0, 1]")
-        if not 0 <= self.llm_max_uncertainty_score <= 1:
-            raise ValueError("LLM_MAX_UNCERTAINTY_SCORE must be within [0, 1]")
+        if not 0 <= self.llm_min_calibrated_top_probability <= 1:
+            raise ValueError("LLM_MIN_CALIBRATED_TOP_PROBABILITY must be within [0, 1]")
+        if not 0 <= self.llm_min_probability_margin <= 1:
+            raise ValueError("LLM_MIN_PROBABILITY_MARGIN must be within [0, 1]")
+        if not 0 <= self.llm_max_uncertainty <= 1:
+            raise ValueError("LLM_MAX_UNCERTAINTY must be within [0, 1]")
         if not 0 <= self.llm_min_calibration_quality_score <= 1:
             raise ValueError("LLM_MIN_CALIBRATION_QUALITY_SCORE must be within [0, 1]")
         if self.llm_live_fail_open_requested and not self.llm_fail_open_live_approved:

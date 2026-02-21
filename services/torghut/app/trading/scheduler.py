@@ -1704,13 +1704,14 @@ def _build_llm_policy_resolution(
 def _llm_guardrail_controls_snapshot() -> dict[str, Any]:
     return {
         "min_confidence": settings.llm_min_confidence,
-        "min_calibrated_probability": settings.llm_min_calibrated_probability,
-        "max_uncertainty_score": settings.llm_max_uncertainty_score,
+        "min_calibrated_probability": settings.llm_min_calibrated_top_probability,
+        "min_probability_margin": settings.llm_min_probability_margin,
+        "max_uncertainty_score": settings.llm_max_uncertainty,
         "max_uncertainty_band": settings.llm_max_uncertainty_band,
         "min_calibration_quality_score": settings.llm_min_calibration_quality_score,
         "abstain_fail_mode": settings.llm_abstain_fail_mode,
-        "escalation_fail_mode": settings.llm_escalation_fail_mode,
-        "uncertainty_fail_mode": settings.llm_uncertainty_fail_mode,
+        "escalation_fail_mode": settings.llm_escalate_fail_mode,
+        "uncertainty_fail_mode": settings.llm_quality_fail_mode,
         "effective_fail_mode": settings.llm_effective_fail_mode_for_current_rollout(),
     }
 

@@ -104,47 +104,14 @@ def _query_llm_metrics(session: Session, start_utc: datetime, end_utc: datetime)
     )
 
     risk_flags_rows = session.execute(
-        select(
-            LLMDecisionReview.risk_flags,
-            LLMDecisionReview.response_json,
-            LLMDecisionReview.verdict,
-        )
+        select(LLMDecisionReview.risk_flags)
         .join(TradeDecision, TradeDecision.id == LLMDecisionReview.trade_decision_id)
         .where(*filter_clause)
     ).all()
     counter: Counter[str] = Counter()
-    calibration_rows: list[dict[str, Any]] = []
-    model_verdict_counts: dict[str, int] = {
-        "approve": 0,
-        "veto": 0,
-        "adjust": 0,
-        "abstain": 0,
-        "escalate": 0,
-        "unknown": 0,
-    }
-    policy_override_total = 0
-    llm_influence_total = 0
-    for raw_flags, response_json, effective_verdict in risk_flags_rows:
+    for (raw_flags,) in risk_flags_rows:
         for flag in _normalize_risk_flags(raw_flags):
             counter[flag] += 1
-        payload = _as_dict(response_json)
-        model_verdict = str(payload.get("verdict") or "").strip().lower()
-        if model_verdict not in model_verdict_counts:
-            model_verdict = "unknown"
-        model_verdict_counts[model_verdict] += 1
-        if payload.get("policy_override"):
-            policy_override_total += 1
-        if str(effective_verdict).lower() in {"veto", "adjust"}:
-            llm_influence_total += 1
-        calibration_rows.append(payload)
-
-    decision_contribution: dict[str, object] = {
-        "policy_override_total": policy_override_total,
-        "policy_override_rate": policy_override_total / total_reviews if total_reviews else 0.0,
-        "llm_influence_total": llm_influence_total,
-        "llm_influence_rate": llm_influence_total / total_reviews if total_reviews else 0.0,
-        "model_verdict_counts": model_verdict_counts,
-    }
     top_risk_flags = [
         {"flag": flag, "count": count}
         for flag, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:TOP_RISK_FLAGS_LIMIT]
@@ -166,7 +133,6 @@ def _query_llm_metrics(session: Session, start_utc: datetime, end_utc: datetime)
         "verdict_counts": verdict_counts,
         "error_rate": error_rate,
         "avg_confidence": avg_confidence_value,
-        "calibration_quality": _summarize_calibration_quality(calibration_rows),
         "decision_contribution": decision_contribution,
         "tokens": {
             "prompt": tokens_prompt,
@@ -175,7 +141,6 @@ def _query_llm_metrics(session: Session, start_utc: datetime, end_utc: datetime)
         },
         "top_risk_flags": top_risk_flags,
         "calibration_quality": calibration_quality,
-        "decision_contribution": decision_contribution,
     }
 
 
@@ -313,89 +278,6 @@ def _normalize_risk_flags(value: object) -> list[str]:
     if isinstance(value, dict):
         return [str(key).strip() for key in cast(dict[Any, Any], value).keys() if str(key).strip()]
     return [str(value)]
-
-
-def _as_dict(value: object) -> dict[str, Any]:
-    if isinstance(value, dict):
-        raw = cast(dict[Any, Any], value)
-        return {str(key): item for key, item in raw.items()}
-    return {}
-
-
-def _summarize_calibration_quality(rows: list[dict[str, Any]]) -> dict[str, object]:
-    if not rows:
-        return {
-            "count": 0,
-            "avg_uncertainty": None,
-            "avg_top_probability": None,
-            "avg_probability_margin": None,
-            "verdict_probability_alignment_rate": 0.0,
-        }
-
-    uncertainty_total = 0.0
-    top_probability_total = 0.0
-    margin_total = 0.0
-    aligned_total = 0
-    considered = 0
-    for row in rows:
-        probabilities = _calibrated_probabilities(row)
-        if not probabilities:
-            continue
-        considered += 1
-        uncertainty_total += _as_float(row.get("uncertainty"), default=0.0)
-        sorted_probs = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
-        top_verdict, top_probability = sorted_probs[0]
-        second_probability = sorted_probs[1][1] if len(sorted_probs) > 1 else 0.0
-        top_probability_total += top_probability
-        margin_total += max(top_probability - second_probability, 0.0)
-        selected_verdict = str(row.get("verdict") or "").strip().lower()
-        if selected_verdict == top_verdict:
-            aligned_total += 1
-
-    if considered == 0:
-        return {
-            "count": 0,
-            "avg_uncertainty": None,
-            "avg_top_probability": None,
-            "avg_probability_margin": None,
-            "verdict_probability_alignment_rate": 0.0,
-        }
-
-    return {
-        "count": considered,
-        "avg_uncertainty": uncertainty_total / considered,
-        "avg_top_probability": top_probability_total / considered,
-        "avg_probability_margin": margin_total / considered,
-        "verdict_probability_alignment_rate": aligned_total / considered,
-    }
-
-
-def _calibrated_probabilities(row: dict[str, Any]) -> dict[str, float]:
-    raw = row.get("calibrated_probabilities")
-    if not isinstance(raw, dict):
-        return {}
-    probability_payload = cast(dict[str, Any], raw)
-    verdict_keys = ["approve", "veto", "adjust", "abstain", "escalate"]
-    probs: dict[str, float] = {}
-    for key in verdict_keys:
-        probs[key] = _as_float(probability_payload.get(key), default=0.0)
-    total = sum(probs.values())
-    if total <= 0:
-        return {}
-    return {key: value / total for key, value in probs.items()}
-
-
-def _as_float(value: object, default: float) -> float:
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, Decimal):
-        return float(value)
-    try:
-        return float(str(value))
-    except (TypeError, ValueError):
-        return default
 
 
 def _as_int(value: object) -> int:

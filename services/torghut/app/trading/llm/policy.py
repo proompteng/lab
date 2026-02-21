@@ -40,7 +40,7 @@ def apply_policy(
         return _fallback_outcome(
             decision,
             reason="llm_escalate",
-            fail_mode=settings.llm_escalation_fail_mode,
+            fail_mode=settings.llm_escalate_fail_mode,
             guardrail_reasons=guardrail_reasons,
         )
 
@@ -48,7 +48,7 @@ def apply_policy(
         return _fallback_outcome(
             decision,
             reason="llm_uncertainty_guardrail",
-            fail_mode=settings.llm_uncertainty_fail_mode,
+            fail_mode=settings.llm_quality_fail_mode,
             guardrail_reasons=guardrail_reasons,
         )
 
@@ -57,7 +57,7 @@ def apply_policy(
         return _fallback_outcome(
             decision,
             reason="llm_confidence_below_min",
-            fail_mode=settings.llm_uncertainty_fail_mode,
+            fail_mode=settings.llm_quality_fail_mode,
             guardrail_reasons=guardrail_reasons,
         )
 
@@ -136,10 +136,14 @@ def _fallback_outcome(
 def _deterministic_guardrail_reasons(review: LLMReviewResponse) -> list[str]:
     reasons: list[str] = []
     calibrated = review.calibrated_probabilities.model_dump(mode="python")
-    top_probability = max(float(value) for value in calibrated.values())
-    if top_probability < settings.llm_min_calibrated_probability:
+    sorted_probabilities = sorted(float(value) for value in calibrated.values())
+    top_probability = sorted_probabilities[-1]
+    second_probability = sorted_probabilities[-2] if len(sorted_probabilities) > 1 else 0.0
+    if top_probability < settings.llm_min_calibrated_top_probability:
         reasons.append("llm_calibrated_probability_below_min")
-    if review.uncertainty.score > settings.llm_max_uncertainty_score:
+    if (top_probability - second_probability) < settings.llm_min_probability_margin:
+        reasons.append("llm_calibrated_probability_margin_below_min")
+    if review.uncertainty.score > settings.llm_max_uncertainty:
         reasons.append("llm_uncertainty_score_above_max")
     if _band_rank(review.uncertainty.band) > _band_rank(settings.llm_max_uncertainty_band):
         reasons.append("llm_uncertainty_band_above_max")
