@@ -52,6 +52,7 @@ from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
 from .order_feed import OrderFeedIngestor
 from .reconcile import Reconciler
 from .risk import RiskEngine
+from .tca import AdaptiveExecutionPolicyDecision, derive_adaptive_execution_policy
 from .autonomy import (
     DriftThresholds,
     DriftTriggerPolicy,
@@ -262,6 +263,18 @@ class TradingMetrics:
     allocator_regime_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
+    adaptive_policy_decisions_total: int = 0
+    adaptive_policy_applied_total: int = 0
+    adaptive_policy_fallback_total: int = 0
+    adaptive_policy_key_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    adaptive_policy_effect_size_bps: dict[str, float] = field(
+        default_factory=lambda: cast(dict[str, float], {})
+    )
+    adaptive_policy_degradation_bps: dict[str, float] = field(
+        default_factory=lambda: cast(dict[str, float], {})
+    )
 
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
@@ -430,6 +443,28 @@ class TradingMetrics:
             key = f'{family}|{symbol}|{horizon}'
             self.forecast_calibration_error[key] = str(calibration_error)
 
+    def record_adaptive_policy_result(
+        self,
+        decision: AdaptiveExecutionPolicyDecision,
+        *,
+        applied: bool,
+    ) -> None:
+        self.adaptive_policy_decisions_total += 1
+        self.adaptive_policy_key_total[decision.key] = (
+            self.adaptive_policy_key_total.get(decision.key, 0) + 1
+        )
+        if applied:
+            self.adaptive_policy_applied_total += 1
+        if decision.fallback_active:
+            self.adaptive_policy_fallback_total += 1
+        if decision.effect_size_bps is not None:
+            self.adaptive_policy_effect_size_bps[decision.key] = float(
+                decision.effect_size_bps
+            )
+        if decision.degradation_bps is not None:
+            self.adaptive_policy_degradation_bps[decision.key] = float(
+                decision.degradation_bps
+            )
 
 @dataclass
 class TradingState:
@@ -851,16 +886,29 @@ class TradingPipeline:
                 self.executor.mark_rejected(session, decision_row, llm_reject_reason)
                 return
 
+            adaptive_policy = derive_adaptive_execution_policy(
+                session,
+                symbol=decision.symbol,
+                regime_label=_resolve_decision_regime_label(decision),
+            )
             policy_outcome = self.execution_policy.evaluate(
                 decision,
                 strategy=strategy,
                 positions=positions,
                 market_snapshot=snapshot,
                 kill_switch_enabled=self.order_firewall.status().kill_switch_enabled,
+                adaptive_policy=adaptive_policy,
             )
             decision = policy_outcome.decision
             self.executor.update_decision_params(
                 session, decision_row, policy_outcome.params_update()
+            )
+            self.state.metrics.record_adaptive_policy_result(
+                adaptive_policy,
+                applied=bool(
+                    policy_outcome.adaptive is not None
+                    and policy_outcome.adaptive.applied
+                ),
             )
             if not policy_outcome.approved:
                 self.state.metrics.orders_rejected_total += 1
@@ -1694,6 +1742,26 @@ def _resolve_signal_regime(signal: SignalEnvelope) -> Optional[str]:
     if isinstance(direct, str) and direct.strip():
         return direct.strip().lower()
     regime = payload_map.get("regime")
+    if isinstance(regime, Mapping):
+        regime_map = cast(Mapping[str, Any], regime)
+        label = regime_map.get("label")
+        if isinstance(label, str) and label.strip():
+            return label.strip().lower()
+    return None
+
+
+def _resolve_decision_regime_label(decision: StrategyDecision) -> Optional[str]:
+    params = decision.params
+    allocator = params.get("allocator")
+    if isinstance(allocator, Mapping):
+        allocator_map = cast(Mapping[str, Any], allocator)
+        allocator_regime = allocator_map.get("regime_label")
+        if isinstance(allocator_regime, str) and allocator_regime.strip():
+            return allocator_regime.strip().lower()
+    direct = params.get("regime_label")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip().lower()
+    regime = params.get("regime")
     if isinstance(regime, Mapping):
         regime_map = cast(Mapping[str, Any], regime)
         label = regime_map.get("label")

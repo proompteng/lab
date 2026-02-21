@@ -11,8 +11,12 @@ from ..models import Strategy
 from .costs import CostModelConfig, CostModelInputs, OrderIntent, TransactionCostModel
 from .models import StrategyDecision
 from .prices import MarketSnapshot
+from .tca import AdaptiveExecutionPolicyDecision
 
 DEFAULT_EXECUTION_SECONDS = 60
+ADAPTIVE_PARTICIPATION_RATE_FLOOR = Decimal('0.05')
+ADAPTIVE_EXECUTION_SECONDS_MIN = 10
+ADAPTIVE_EXECUTION_SECONDS_MAX = 600
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,19 @@ class ExecutionPolicyConfig:
 
 
 @dataclass(frozen=True)
+class AdaptiveExecutionApplication:
+    decision: AdaptiveExecutionPolicyDecision
+    applied: bool
+    reason: str
+
+    def as_payload(self) -> dict[str, Any]:
+        payload = self.decision.as_payload()
+        payload['applied'] = self.applied
+        payload['reason'] = self.reason
+        return payload
+
+
+@dataclass(frozen=True)
 class ExecutionPolicyOutcome:
     approved: bool
     decision: StrategyDecision
@@ -39,19 +56,23 @@ class ExecutionPolicyOutcome:
     retry_delays: list[float]
     impact_assumptions: dict[str, Any]
     selected_order_type: str
+    adaptive: AdaptiveExecutionApplication | None
 
     def params_update(self) -> dict[str, Any]:
-        return {
-            "execution_policy": {
-                "approved": self.approved,
-                "reasons": list(self.reasons),
-                "notional": _stringify_decimal(self.notional),
-                "participation_rate": _stringify_decimal(self.participation_rate),
-                "selected_order_type": self.selected_order_type,
-                "retry_delays": self.retry_delays,
+        payload: dict[str, Any] = {
+            'execution_policy': {
+                'approved': self.approved,
+                'reasons': list(self.reasons),
+                'notional': _stringify_decimal(self.notional),
+                'participation_rate': _stringify_decimal(self.participation_rate),
+                'selected_order_type': self.selected_order_type,
+                'retry_delays': self.retry_delays,
             },
-            "impact_assumptions": self.impact_assumptions,
+            'impact_assumptions': self.impact_assumptions,
         }
+        if self.adaptive is not None:
+            payload['execution_policy']['adaptive'] = self.adaptive.as_payload()
+        return payload
 
 
 class ExecutionPolicy:
@@ -73,12 +94,17 @@ class ExecutionPolicy:
         positions: Iterable[dict[str, Any]],
         market_snapshot: Optional[MarketSnapshot],
         kill_switch_enabled: Optional[bool] = None,
+        adaptive_policy: AdaptiveExecutionPolicyDecision | None = None,
     ) -> ExecutionPolicyOutcome:
         config = self._sanitize_config(self._resolve_config(strategy=strategy, kill_switch_enabled=kill_switch_enabled))
         reasons: list[str] = []
 
         if config.kill_switch_enabled:
-            reasons.append("kill_switch_enabled")
+            reasons.append('kill_switch_enabled')
+
+        adaptive_application = self._resolve_adaptive_application(adaptive_policy)
+        if adaptive_application is not None and adaptive_application.applied:
+            config = self._apply_adaptive_config(config, adaptive_application.decision)
 
         decision, selected_order_type = self._select_order_type(
             decision,
@@ -92,30 +118,38 @@ class ExecutionPolicy:
 
         min_notional = config.min_notional
         if min_notional is not None and notional is not None and notional < min_notional:
-            reasons.append("min_notional_not_met")
+            reasons.append('min_notional_not_met')
 
         max_notional = config.max_notional
         if max_notional is not None and notional is not None and notional > max_notional:
-            reasons.append("max_notional_exceeded")
+            reasons.append('max_notional_exceeded')
 
         if _is_short_increasing(decision, positions) and not config.allow_shorts:
-            reasons.append("shorts_not_allowed")
+            reasons.append('shorts_not_allowed')
 
-        impact_inputs = _build_impact_inputs(decision, market_snapshot)
-        execution_seconds = impact_inputs["execution_seconds"]
+        impact_inputs = _build_impact_inputs(
+            decision,
+            market_snapshot,
+            execution_seconds_scale=(
+                adaptive_application.decision.execution_seconds_scale
+                if adaptive_application is not None and adaptive_application.applied
+                else None
+            ),
+        )
+        execution_seconds = impact_inputs['execution_seconds']
         cost_inputs = CostModelInputs(
-            price=impact_inputs["price"],
-            spread=impact_inputs.get("spread"),
-            volatility=impact_inputs.get("volatility"),
-            adv=impact_inputs.get("adv"),
+            price=impact_inputs['price'],
+            spread=impact_inputs.get('spread'),
+            volatility=impact_inputs.get('volatility'),
+            adv=impact_inputs.get('adv'),
             execution_seconds=execution_seconds,
         )
         estimate = self.cost_model.estimate_costs(
             OrderIntent(
                 symbol=decision.symbol,
-                side="buy" if decision.action == "buy" else "sell",
-                qty=qty or Decimal("0"),
-                price=impact_inputs["price"],
+                side='buy' if decision.action == 'buy' else 'sell',
+                qty=qty or Decimal('0'),
+                price=impact_inputs['price'],
                 order_type=decision.order_type,
                 time_in_force=decision.time_in_force,
             ),
@@ -125,7 +159,7 @@ class ExecutionPolicy:
         max_participation = config.max_participation_rate
         participation_rate = estimate.participation_rate
         if participation_rate is not None and participation_rate > max_participation:
-            reasons.append("participation_exceeds_max")
+            reasons.append('participation_exceeds_max')
 
         retry_delays = _build_retry_delays(config)
         impact_assumptions = _build_impact_assumptions(
@@ -146,6 +180,63 @@ class ExecutionPolicy:
             retry_delays=retry_delays,
             impact_assumptions=impact_assumptions,
             selected_order_type=selected_order_type,
+            adaptive=adaptive_application,
+        )
+
+    def _resolve_adaptive_application(
+        self,
+        adaptive_policy: AdaptiveExecutionPolicyDecision | None,
+    ) -> AdaptiveExecutionApplication | None:
+        if adaptive_policy is None:
+            return None
+        if adaptive_policy.fallback_active:
+            reason = adaptive_policy.fallback_reason or 'adaptive_policy_fallback'
+            return AdaptiveExecutionApplication(
+                decision=adaptive_policy,
+                applied=False,
+                reason=reason,
+            )
+        if not adaptive_policy.has_override:
+            return AdaptiveExecutionApplication(
+                decision=adaptive_policy,
+                applied=False,
+                reason='insufficient_signal',
+            )
+        return AdaptiveExecutionApplication(
+            decision=adaptive_policy,
+            applied=True,
+            reason='applied',
+        )
+
+    def _apply_adaptive_config(
+        self,
+        config: ExecutionPolicyConfig,
+        adaptive_policy: AdaptiveExecutionPolicyDecision,
+    ) -> ExecutionPolicyConfig:
+        participation_scale = adaptive_policy.participation_rate_scale
+        if participation_scale <= 0:
+            participation_scale = Decimal('1')
+        adjusted_participation = config.max_participation_rate * participation_scale
+        if adjusted_participation < ADAPTIVE_PARTICIPATION_RATE_FLOOR:
+            adjusted_participation = ADAPTIVE_PARTICIPATION_RATE_FLOOR
+        if adjusted_participation > config.max_participation_rate:
+            adjusted_participation = config.max_participation_rate
+
+        prefer_limit = config.prefer_limit
+        if adaptive_policy.prefer_limit is not None:
+            prefer_limit = adaptive_policy.prefer_limit
+
+        return ExecutionPolicyConfig(
+            min_notional=config.min_notional,
+            max_notional=config.max_notional,
+            max_participation_rate=adjusted_participation,
+            allow_shorts=config.allow_shorts,
+            kill_switch_enabled=config.kill_switch_enabled,
+            prefer_limit=prefer_limit,
+            max_retries=config.max_retries,
+            backoff_base_seconds=config.backoff_base_seconds,
+            backoff_multiplier=config.backoff_multiplier,
+            backoff_max_seconds=config.backoff_max_seconds,
         )
 
     def _sanitize_config(self, config: ExecutionPolicyConfig) -> ExecutionPolicyConfig:
@@ -153,7 +244,7 @@ class ExecutionPolicy:
         if max_participation_rate <= 0:
             max_participation_rate = self.cost_model.config.max_participation_rate
         if max_participation_rate > 1:
-            max_participation_rate = Decimal("1")
+            max_participation_rate = Decimal('1')
 
         max_retries = max(config.max_retries, 0)
         backoff_base_seconds = config.backoff_base_seconds if config.backoff_base_seconds > 0 else 0.1
@@ -214,7 +305,7 @@ class ExecutionPolicy:
         prefer_limit: bool,
     ) -> tuple[StrategyDecision, str]:
         price = _resolve_price(decision, market_snapshot)
-        spread = _optional_decimal(decision.params.get("spread"))
+        spread = _optional_decimal(decision.params.get('spread'))
         if spread is None and market_snapshot is not None:
             spread = market_snapshot.spread
 
@@ -222,25 +313,25 @@ class ExecutionPolicy:
         limit_price = decision.limit_price
         stop_price = decision.stop_price
 
-        if decision.order_type == "market" and prefer_limit and price is not None:
-            selected_order_type = "limit"
+        if decision.order_type == 'market' and prefer_limit and price is not None:
+            selected_order_type = 'limit'
             limit_price = _near_touch_limit_price(price, spread, decision.action)
 
-        if selected_order_type in {"limit", "stop_limit"} and limit_price is None and price is not None:
+        if selected_order_type in {'limit', 'stop_limit'} and limit_price is None and price is not None:
             limit_price = _normalize_price_for_trading(price)
         elif limit_price is not None:
             limit_price = _normalize_price_for_trading(limit_price)
 
-        if selected_order_type in {"stop", "stop_limit"} and stop_price is None and price is not None:
+        if selected_order_type in {'stop', 'stop_limit'} and stop_price is None and price is not None:
             stop_price = _normalize_price_for_trading(price)
         elif stop_price is not None:
             stop_price = _normalize_price_for_trading(stop_price)
 
         updated = decision.model_copy(
             update={
-                "order_type": selected_order_type,
-                "limit_price": limit_price,
-                "stop_price": stop_price,
+                'order_type': selected_order_type,
+                'limit_price': limit_price,
+                'stop_price': stop_price,
             }
         )
         return updated, selected_order_type
@@ -249,8 +340,8 @@ class ExecutionPolicy:
 def _near_touch_limit_price(price: Decimal, spread: Optional[Decimal], action: str) -> Decimal:
     if spread is None or spread <= 0:
         return _normalize_price_for_trading(price)
-    half_spread = spread / Decimal("2")
-    if action == "buy":
+    half_spread = spread / Decimal('2')
+    if action == 'buy':
         return _normalize_price_for_trading(price + half_spread)
     return _normalize_price_for_trading(price - half_spread)
 
@@ -267,9 +358,9 @@ def _normalize_price_for_trading(price: Decimal) -> Decimal:
 
 
 def _tick_size_for_price(price: Decimal) -> Decimal:
-    if price.copy_abs() < Decimal("1"):
-        return Decimal("0.0001")
-    return Decimal("0.01")
+    if price.copy_abs() < Decimal('1'):
+        return Decimal('0.0001')
+    return Decimal('0.01')
 
 
 def _build_retry_delays(config: ExecutionPolicyConfig) -> list[float]:
@@ -285,45 +376,53 @@ def _build_retry_delays(config: ExecutionPolicyConfig) -> list[float]:
 
 def should_retry_order_error(error: Exception) -> bool:
     name = type(error).__name__.lower()
-    if "timeout" in name or "connection" in name:
+    if 'timeout' in name or 'connection' in name:
         return True
     message = str(error).lower()
-    retryable_tokens = ("timeout", "temporarily", "try again", "connection", "503", "rate limit")
-    non_retryable_tokens = ("reject", "insufficient", "invalid", "unknown symbol", "not allowed")
+    retryable_tokens = ('timeout', 'temporarily', 'try again', 'connection', '503', 'rate limit')
+    non_retryable_tokens = ('reject', 'insufficient', 'invalid', 'unknown symbol', 'not allowed')
     if any(token in message for token in non_retryable_tokens):
         return False
     return any(token in message for token in retryable_tokens)
 
 
 def _build_impact_inputs(
-    decision: StrategyDecision, market_snapshot: Optional[MarketSnapshot]
+    decision: StrategyDecision,
+    market_snapshot: Optional[MarketSnapshot],
+    *,
+    execution_seconds_scale: Decimal | None = None,
 ) -> dict[str, Any]:
     resolved_price = _resolve_price(decision, market_snapshot)
-    price = resolved_price if resolved_price is not None else Decimal("0")
-    spread = _optional_decimal(decision.params.get("spread"))
+    price = resolved_price if resolved_price is not None else Decimal('0')
+    spread = _optional_decimal(decision.params.get('spread'))
     if spread is None and market_snapshot is not None:
         spread = market_snapshot.spread
-    volatility = _optional_decimal(decision.params.get("volatility"))
+    volatility = _optional_decimal(decision.params.get('volatility'))
     adv = _optional_decimal(
-        decision.params.get("adv")
-        or decision.params.get("avg_dollar_volume")
-        or decision.params.get("avg_daily_dollar_volume")
-        or decision.params.get("average_daily_volume")
+        decision.params.get('adv')
+        or decision.params.get('avg_dollar_volume')
+        or decision.params.get('avg_daily_dollar_volume')
+        or decision.params.get('average_daily_volume')
     )
-    execution_seconds = decision.params.get("execution_seconds")
+    execution_seconds = decision.params.get('execution_seconds')
     if execution_seconds is None:
         execution_seconds = DEFAULT_EXECUTION_SECONDS
     try:
         execution_seconds = int(execution_seconds)
     except (TypeError, ValueError):
         execution_seconds = DEFAULT_EXECUTION_SECONDS
+
+    if execution_seconds_scale is not None and execution_seconds_scale > 0:
+        scaled = int(round(float(execution_seconds) * float(execution_seconds_scale)))
+        execution_seconds = min(ADAPTIVE_EXECUTION_SECONDS_MAX, max(ADAPTIVE_EXECUTION_SECONDS_MIN, scaled))
+
     return {
-        "price": price,
-        "price_present": resolved_price is not None,
-        "spread": spread,
-        "volatility": volatility,
-        "adv": adv,
-        "execution_seconds": execution_seconds,
+        'price': price,
+        'price_present': resolved_price is not None,
+        'spread': spread,
+        'volatility': volatility,
+        'adv': adv,
+        'execution_seconds': execution_seconds,
     }
 
 
@@ -335,42 +434,42 @@ def _build_impact_assumptions(
     execution_seconds: int,
     impact_inputs: dict[str, Any],
 ) -> dict[str, Any]:
-    price = impact_inputs.get("price")
-    price_present = impact_inputs.get("price_present")
-    adv = impact_inputs.get("adv")
-    spread = impact_inputs.get("spread")
-    volatility = impact_inputs.get("volatility")
+    price = impact_inputs.get('price')
+    price_present = impact_inputs.get('price_present')
+    adv = impact_inputs.get('adv')
+    spread = impact_inputs.get('spread')
+    volatility = impact_inputs.get('volatility')
     return {
-        "inputs": {
-            "price": _stringify_decimal(price) if price_present else None,
-            "spread": _stringify_decimal(spread),
-            "volatility": _stringify_decimal(volatility),
-            "adv": _stringify_decimal(adv),
-            "execution_seconds": execution_seconds,
+        'inputs': {
+            'price': _stringify_decimal(price) if price_present else None,
+            'spread': _stringify_decimal(spread),
+            'volatility': _stringify_decimal(volatility),
+            'adv': _stringify_decimal(adv),
+            'execution_seconds': execution_seconds,
         },
-        "model": {
-            "commission_bps": str(config.commission_bps),
-            "commission_per_share": str(config.commission_per_share),
-            "min_commission": str(config.min_commission),
-            "max_participation_rate": str(max_participation),
-            "impact_bps_at_full_participation": str(config.impact_bps_at_full_participation),
+        'model': {
+            'commission_bps': str(config.commission_bps),
+            'commission_per_share': str(config.commission_per_share),
+            'min_commission': str(config.min_commission),
+            'max_participation_rate': str(max_participation),
+            'impact_bps_at_full_participation': str(config.impact_bps_at_full_participation),
         },
-        "estimate": {
-            "notional": str(estimate.notional),
-            "spread_cost_bps": str(estimate.spread_cost_bps),
-            "volatility_cost_bps": str(estimate.volatility_cost_bps),
-            "impact_cost_bps": str(estimate.impact_cost_bps),
-            "commission_cost_bps": str(estimate.commission_cost_bps),
-            "total_cost_bps": str(estimate.total_cost_bps),
-            "participation_rate": _stringify_decimal(estimate.participation_rate),
-            "capacity_ok": estimate.capacity_ok,
-            "warnings": list(estimate.warnings),
+        'estimate': {
+            'notional': str(estimate.notional),
+            'spread_cost_bps': str(estimate.spread_cost_bps),
+            'volatility_cost_bps': str(estimate.volatility_cost_bps),
+            'impact_cost_bps': str(estimate.impact_cost_bps),
+            'commission_cost_bps': str(estimate.commission_cost_bps),
+            'total_cost_bps': str(estimate.total_cost_bps),
+            'participation_rate': _stringify_decimal(estimate.participation_rate),
+            'capacity_ok': estimate.capacity_ok,
+            'warnings': list(estimate.warnings),
         },
     }
 
 
 def _resolve_price(decision: StrategyDecision, market_snapshot: Optional[MarketSnapshot]) -> Optional[Decimal]:
-    candidate = decision.params.get("price")
+    candidate = decision.params.get('price')
     if candidate is None:
         candidate = decision.limit_price
     if candidate is None:
@@ -381,13 +480,13 @@ def _resolve_price(decision: StrategyDecision, market_snapshot: Optional[MarketS
 
 
 def _position_summary(symbol: str, positions: Iterable[dict[str, Any]]) -> Decimal:
-    total_qty = Decimal("0")
+    total_qty = Decimal('0')
     for position in positions:
-        if position.get("symbol") != symbol:
+        if position.get('symbol') != symbol:
             continue
-        qty = _optional_decimal(position.get("qty")) or _optional_decimal(position.get("quantity"))
-        side = str(position.get("side") or "").lower()
-        if qty is not None and side == "short":
+        qty = _optional_decimal(position.get('qty')) or _optional_decimal(position.get('quantity'))
+        side = str(position.get('side') or '').lower()
+        if qty is not None and side == 'short':
             qty = -abs(qty)
         if qty is not None:
             total_qty += qty
@@ -395,7 +494,7 @@ def _position_summary(symbol: str, positions: Iterable[dict[str, Any]]) -> Decim
 
 
 def _is_short_increasing(decision: StrategyDecision, positions: Iterable[dict[str, Any]]) -> bool:
-    if decision.action == "buy":
+    if decision.action == 'buy':
         return False
     qty = _optional_decimal(decision.qty)
     if qty is None:
@@ -423,4 +522,10 @@ def _stringify_decimal(value: Optional[Decimal]) -> Optional[str]:
     return str(value)
 
 
-__all__ = ["ExecutionPolicy", "ExecutionPolicyOutcome", "ExecutionPolicyConfig", "should_retry_order_error"]
+__all__ = [
+    'AdaptiveExecutionApplication',
+    'ExecutionPolicy',
+    'ExecutionPolicyConfig',
+    'ExecutionPolicyOutcome',
+    'should_retry_order_error',
+]

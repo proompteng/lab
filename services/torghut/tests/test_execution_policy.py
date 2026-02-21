@@ -6,6 +6,7 @@ from unittest import TestCase
 
 from app.trading.execution_policy import ExecutionPolicy, ExecutionPolicyConfig
 from app.trading.models import StrategyDecision
+from app.trading.tca import AdaptiveExecutionPolicyDecision
 
 
 def _config(**overrides: object) -> ExecutionPolicyConfig:
@@ -229,3 +230,84 @@ class TestExecutionPolicy(TestCase):
         )
         self.assertEqual(outcome.decision.order_type, "limit")
         self.assertEqual(outcome.decision.limit_price, Decimal("120.12"))
+
+    def test_adaptive_policy_tightens_participation_and_prefers_limit(self) -> None:
+        policy = ExecutionPolicy(
+            config=_config(
+                prefer_limit=False,
+                max_participation_rate=Decimal("0.2"),
+            )
+        )
+        adaptive = AdaptiveExecutionPolicyDecision(
+            key="AAPL:trend",
+            symbol="AAPL",
+            regime_label="trend",
+            sample_size=8,
+            adaptive_samples=4,
+            baseline_slippage_bps=Decimal("10"),
+            recent_slippage_bps=Decimal("22"),
+            baseline_shortfall_notional=Decimal("2"),
+            recent_shortfall_notional=Decimal("8"),
+            effect_size_bps=Decimal("-12"),
+            degradation_bps=Decimal("12"),
+            fallback_active=False,
+            fallback_reason=None,
+            prefer_limit=True,
+            participation_rate_scale=Decimal("0.5"),
+            execution_seconds_scale=Decimal("1.4"),
+            aggressiveness="defensive",
+            generated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
+        decision = _decision(order_type="market")
+        decision = decision.model_copy(
+            update={"params": {"price": Decimal("100"), "adv": Decimal("1000")}}
+        )
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+            adaptive_policy=adaptive,
+        )
+        self.assertEqual(outcome.decision.order_type, "limit")
+        self.assertEqual(outcome.adaptive is not None, True)
+        assert outcome.adaptive is not None
+        self.assertTrue(outcome.adaptive.applied)
+        self.assertLessEqual(
+            Decimal(outcome.impact_assumptions["model"]["max_participation_rate"]),
+            Decimal("0.2"),
+        )
+
+    def test_adaptive_policy_fallback_disables_override(self) -> None:
+        policy = ExecutionPolicy(config=_config(prefer_limit=False))
+        adaptive = AdaptiveExecutionPolicyDecision(
+            key="AAPL:all",
+            symbol="AAPL",
+            regime_label="all",
+            sample_size=12,
+            adaptive_samples=8,
+            baseline_slippage_bps=Decimal("8"),
+            recent_slippage_bps=Decimal("16"),
+            baseline_shortfall_notional=Decimal("1"),
+            recent_shortfall_notional=Decimal("4"),
+            effect_size_bps=Decimal("-8"),
+            degradation_bps=Decimal("8"),
+            fallback_active=True,
+            fallback_reason="adaptive_policy_degraded",
+            prefer_limit=True,
+            participation_rate_scale=Decimal("0.75"),
+            execution_seconds_scale=Decimal("1.2"),
+            aggressiveness="defensive",
+            generated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
+        outcome = policy.evaluate(
+            _decision(order_type="market"),
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+            adaptive_policy=adaptive,
+        )
+        self.assertEqual(outcome.decision.order_type, "market")
+        assert outcome.adaptive is not None
+        self.assertFalse(outcome.adaptive.applied)
+        self.assertEqual(outcome.adaptive.reason, "adaptive_policy_degraded")

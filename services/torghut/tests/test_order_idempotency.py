@@ -192,6 +192,122 @@ class TestOrderIdempotency(TestCase):
             self.assertIsNone(tca.slippage_bps)
             self.assertIsNone(tca.shortfall_notional)
 
+    def test_submit_order_prefers_persisted_execution_policy_context(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol='AAPL',
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe='1Min',
+                action='buy',
+                qty=Decimal('1.0'),
+                params={
+                    'price': Decimal('100'),
+                    'execution_policy': {
+                        'selected_order_type': 'market',
+                        'adaptive': {'applied': True, 'reason': 'transient_policy'},
+                    },
+                },
+            )
+
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, 'paper')
+            executor.update_decision_params(
+                session,
+                decision_row,
+                {
+                    'execution_policy': {
+                        'selected_order_type': 'limit',
+                        'adaptive': {'applied': False, 'reason': 'persisted_policy'},
+                    }
+                },
+            )
+
+            execution = executor.submit_order(session, FakeAlpacaClient(), decision, decision_row, 'paper')
+            assert execution is not None
+            raw_order = execution.raw_order
+            assert isinstance(raw_order, dict)
+
+            execution_policy = raw_order.get('execution_policy')
+            assert isinstance(execution_policy, dict)
+            self.assertEqual(execution_policy.get('selected_order_type'), 'limit')
+            adaptive = execution_policy.get('adaptive')
+            assert isinstance(adaptive, dict)
+            self.assertEqual(adaptive.get('reason'), 'persisted_policy')
+
+    def test_submit_order_falls_back_to_transient_execution_policy_context(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            persisted_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol='AAPL',
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe='1Min',
+                action='buy',
+                qty=Decimal('1.0'),
+                params={'price': Decimal('100')},
+            )
+            transient_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol='AAPL',
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe='1Min',
+                action='buy',
+                qty=Decimal('1.0'),
+                params={
+                    'price': Decimal('100'),
+                    'execution_policy': {
+                        'selected_order_type': 'market',
+                        'adaptive': {'applied': True, 'reason': 'transient_policy'},
+                    },
+                },
+            )
+
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(
+                session, persisted_decision, strategy, 'paper'
+            )
+            execution = executor.submit_order(
+                session,
+                FakeAlpacaClient(),
+                transient_decision,
+                decision_row,
+                'paper',
+            )
+            assert execution is not None
+            raw_order = execution.raw_order
+            assert isinstance(raw_order, dict)
+
+            execution_policy = raw_order.get('execution_policy')
+            assert isinstance(execution_policy, dict)
+            self.assertEqual(execution_policy.get('selected_order_type'), 'market')
+            adaptive = execution_policy.get('adaptive')
+            assert isinstance(adaptive, dict)
+            self.assertEqual(adaptive.get('reason'), 'transient_policy')
+
     def test_submit_order_precheck_blocks_opposite_side_open_order(self) -> None:
         with self.session_local() as session:
             strategy = Strategy(
