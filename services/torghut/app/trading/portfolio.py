@@ -701,6 +701,12 @@ def allocator_from_settings(equity: Optional[Decimal]) -> PortfolioAllocator:
             equity,
         ),
     )
+    correlation_group_caps = dict(settings.trading_allocator_correlation_group_caps)
+    correlation_group_caps.update(
+        settings.trading_allocator_correlation_group_notional_caps
+    )
+    symbol_correlation_groups = dict(settings.trading_allocator_symbol_correlation_groups)
+    symbol_correlation_groups.update(settings.trading_allocator_correlation_symbol_groups)
     return PortfolioAllocator(
         AllocationConfig(
             enabled=settings.trading_allocator_enabled,
@@ -737,12 +743,12 @@ def allocator_from_settings(equity: Optional[Decimal]) -> PortfolioAllocator:
                 normalize_key=lambda key: key.strip().upper(),
             ),
             correlation_group_caps=_decimal_map(
-                settings.trading_allocator_correlation_group_caps,
+                correlation_group_caps,
                 normalize_key=lambda key: key.strip().lower(),
             ),
             symbol_correlation_groups={
                 str(key).strip().upper(): str(value).strip().lower()
-                for key, value in settings.trading_allocator_symbol_correlation_groups.items()
+                for key, value in symbol_correlation_groups.items()
                 if str(key).strip() and str(value).strip()
             },
             regime_budget_multipliers=_decimal_map(
@@ -1054,6 +1060,12 @@ def _apply_allocator_regime_multiplier(
     if not isinstance(allocator, Mapping):
         return notional, None
     payload = cast(Mapping[str, Any], allocator)
+    enabled = payload.get("enabled")
+    if isinstance(enabled, bool) and not enabled:
+        return notional, None
+    status = payload.get("status")
+    if isinstance(status, str) and status.strip() and status.strip().lower() != "approved":
+        return notional, None
     budget_multiplier = _optional_decimal(payload.get("budget_multiplier"))
     capacity_multiplier = _optional_decimal(payload.get("capacity_multiplier"))
     multiplier = Decimal("1")

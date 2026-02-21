@@ -18,6 +18,7 @@ from app.trading.portfolio import (
     PortfolioAllocator,
     PortfolioSizingConfig,
     PortfolioSizer,
+    allocator_from_settings,
 )
 
 
@@ -312,6 +313,93 @@ class TestPortfolioSizing(TestCase):
         self.assertFalse(rejected.approved)
         self.assertIn(ALLOCATOR_REJECT_CORRELATION_CAPACITY, rejected.reason_codes)
         self.assertEqual(rejected.decision.qty, Decimal("0"))
+
+    def test_disabled_allocator_metadata_does_not_apply_regime_multiplier(self) -> None:
+        sizer = PortfolioSizer(
+            PortfolioSizingConfig(
+                notional_per_position=None,
+                volatility_target=None,
+                volatility_floor=Decimal("0"),
+                max_positions=None,
+                max_notional_per_symbol=None,
+                max_position_pct_equity=None,
+                max_gross_exposure=None,
+                max_net_exposure=None,
+            )
+        )
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "allocator": {
+                    "enabled": False,
+                    "status": "approved",
+                    "budget_multiplier": "0.5",
+                    "capacity_multiplier": "0.5",
+                    "approved_notional": "1000",
+                },
+            },
+        )
+        result = sizer.size(decision, account={"equity": "50000"}, positions=[])
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("10"))
+        self.assertNotIn("allocator_regime_multiplier", result.audit["output"]["methods"])
+
+    def test_allocator_from_settings_consumes_normalized_correlation_maps(self) -> None:
+        original_values = {
+            "trading_allocator_correlation_group_caps": dict(
+                config.settings.trading_allocator_correlation_group_caps
+            ),
+            "trading_allocator_correlation_group_notional_caps": dict(
+                config.settings.trading_allocator_correlation_group_notional_caps
+            ),
+            "trading_allocator_symbol_correlation_groups": dict(
+                config.settings.trading_allocator_symbol_correlation_groups
+            ),
+            "trading_allocator_correlation_symbol_groups": dict(
+                config.settings.trading_allocator_correlation_symbol_groups
+            ),
+        }
+        try:
+            config.settings.trading_allocator_correlation_group_caps = {"legacy": 111.0}
+            config.settings.trading_allocator_correlation_group_notional_caps = {
+                " Tech ": 3000.0
+            }
+            config.settings.trading_allocator_symbol_correlation_groups = {
+                "MSFT": "legacy"
+            }
+            config.settings.trading_allocator_correlation_symbol_groups = {
+                " aapl ": " MegaCap "
+            }
+
+            allocator = allocator_from_settings(Decimal("10000"))
+
+            self.assertEqual(
+                allocator.config.correlation_group_caps.get("tech"), Decimal("3000.0")
+            )
+            self.assertEqual(
+                allocator.config.symbol_correlation_groups.get("AAPL"), "megacap"
+            )
+        finally:
+            config.settings.trading_allocator_correlation_group_caps = original_values[
+                "trading_allocator_correlation_group_caps"
+            ]
+            config.settings.trading_allocator_correlation_group_notional_caps = (
+                original_values["trading_allocator_correlation_group_notional_caps"]
+            )
+            config.settings.trading_allocator_symbol_correlation_groups = original_values[
+                "trading_allocator_symbol_correlation_groups"
+            ]
+            config.settings.trading_allocator_correlation_symbol_groups = original_values[
+                "trading_allocator_correlation_symbol_groups"
+            ]
 
     def test_volatility_scaling_and_symbol_cap(self) -> None:
         sizer = PortfolioSizer(
