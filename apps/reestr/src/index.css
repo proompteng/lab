@@ -1,6 +1,12 @@
 @import "@proompteng/design/tailwind.css";
 @import "@fontsource-variable/jetbrains-mono";
 
+@source "./**/*.{js,jsx,ts,tsx}";
+@source not "../node_modules";
+@source not "../dist";
+@source not "../../../.pnpm-store";
+@source not "../../../.bun";
+
 :root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
