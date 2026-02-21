@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: "95765432"
-  digest: sha256:44669d6e24474c9661977b3ad231caa532bc9548acd46ef5bca2905435394992
+  tag: eaf8d021
+  digest: sha256:dd81fd7225b7e805e50e34b01dedc0301388e22d46b2ee75a145e04d3ed2a2ab
   pullPolicy: IfNotPresent
 controlPlane:
   image:
@@ -15,8 +15,8 @@ controlPlane:
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: "95765432"
-    digest: sha256:44669d6e24474c9661977b3ad231caa532bc9548acd46ef5bca2905435394992
+    tag: eaf8d021
+    digest: sha256:dd81fd7225b7e805e50e34b01dedc0301388e22d46b2ee75a145e04d3ed2a2ab
 controllers:
   enabled: true
   replicaCount: 2
