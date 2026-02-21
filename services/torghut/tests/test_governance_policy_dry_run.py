@@ -45,6 +45,7 @@ class TestGovernancePolicyDryRun(TestCase):
                 {'gate_id': 'gate0_data_integrity', 'status': 'pass'},
                 {'gate_id': 'gate1_statistical_robustness', 'status': 'pass'},
                 {'gate_id': 'gate2_risk_capacity', 'status': 'pass'},
+                {'gate_id': 'gate7_uncertainty_calibration', 'status': 'pass'},
             ],
             'promotion_evidence': {
                 'fold_metrics': {
@@ -69,6 +70,9 @@ class TestGovernancePolicyDryRun(TestCase):
                     'rationale_text': 'Dry-run fixture rationale.',
                 },
             },
+            'uncertainty_gate_action': 'pass',
+            'coverage_error': '0.02',
+            'recalibration_run_id': None,
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
