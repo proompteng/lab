@@ -135,21 +135,19 @@ class FragilityMonitor:
         else:
             snapshot_map = {}
         spread_acceleration = _indicator(
-            snapshot_map.get("spread_acceleration") or params.get("spread_acceleration")
+            _resolve_snapshot_value(snapshot_map, params, "spread_acceleration")
         )
         liquidity_compression = _indicator(
-            snapshot_map.get("liquidity_compression")
-            or params.get("liquidity_compression")
+            _resolve_snapshot_value(snapshot_map, params, "liquidity_compression")
         )
         crowding_proxy = _indicator(
-            snapshot_map.get("crowding_proxy") or params.get("crowding_proxy")
+            _resolve_snapshot_value(snapshot_map, params, "crowding_proxy")
         )
         correlation_concentration = _indicator(
-            snapshot_map.get("correlation_concentration")
-            or params.get("correlation_concentration")
+            _resolve_snapshot_value(snapshot_map, params, "correlation_concentration")
         )
         provided_score = _optional_decimal(
-            snapshot_map.get("fragility_score") or params.get("fragility_score")
+            _resolve_snapshot_value(snapshot_map, params, "fragility_score")
         )
         if provided_score is not None:
             score = _clamp_unit_interval(provided_score)
@@ -167,7 +165,7 @@ class FragilityMonitor:
             crisis=self.config.crisis_threshold,
         )
         provided_state = _normalize_state(
-            snapshot_map.get("fragility_state") or params.get("fragility_state")
+            _resolve_snapshot_value(snapshot_map, params, "fragility_state")
         )
         if provided_state is None:
             state = _max_state(derived_state, self.config.unknown_state)
@@ -190,6 +188,14 @@ def _indicator(value: Any) -> Decimal:
     if parsed is None:
         return Decimal("0.5")
     return _clamp_unit_interval(parsed)
+
+
+def _resolve_snapshot_value(
+    snapshot_map: dict[str, Any], params: dict[str, Any], key: str
+) -> Any:
+    if key in snapshot_map and snapshot_map.get(key) is not None:
+        return snapshot_map.get(key)
+    return params.get(key)
 def _optional_decimal(value: Any) -> Optional[Decimal]:
     if value is None:
         return None

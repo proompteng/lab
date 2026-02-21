@@ -624,10 +624,16 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                         ]
                     )
                     for label, count in sorted_items:
-                        parts = label.split("|")
-                        regime = parts[0] if len(parts) > 0 else "unknown"
-                        fragility_state = parts[1] if len(parts) > 1 else "elevated"
-                        multiplier = parts[2] if len(parts) > 2 else "unknown"
+                        parts = label.rsplit("|", 2)
+                        if len(parts) == 3:
+                            regime, fragility_state, multiplier = parts
+                        elif len(parts) == 2:
+                            regime, fragility_state = parts
+                            multiplier = "unknown"
+                        else:
+                            regime = parts[0] if parts else "unknown"
+                            fragility_state = "elevated"
+                            multiplier = "unknown"
                         lines.extend(
                             _render_labeled_metric(
                                 metric_name=metric_name,

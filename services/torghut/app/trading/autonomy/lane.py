@@ -458,11 +458,9 @@ def run_autonomous_lane(
             tca_metrics=_load_tca_gate_inputs(factory),
             llm_metrics={"error_ratio": "0"},
             profitability_evidence=profitability_evidence_payload,
-            fragility_state=_coerce_fragility_state(metrics_payload.get("fragility_state")),
-            fragility_score=_decimal_or_default(
-                metrics_payload.get("fragility_score"), Decimal("0.5")
-            ),
-            stability_mode_active=bool(metrics_payload.get("stability_mode_active", False)),
+            fragility_state=fragility_state,
+            fragility_score=fragility_score,
+            stability_mode_active=stability_mode_active,
             operational_ready=True,
             runbook_validated=True,
             kill_switch_dry_run_passed=True,
@@ -1510,6 +1508,86 @@ def _coerce_fragility_state(value: object) -> str:
     if normalized in {"normal", "elevated", "stress", "crisis"}:
         return normalized
     return "elevated"
+
+
+def _fragility_state_rank(state: str) -> int:
+    normalized = _coerce_fragility_state(state)
+    if normalized == "normal":
+        return 0
+    if normalized == "elevated":
+        return 1
+    if normalized == "stress":
+        return 2
+    return 3
+
+
+def _coerce_bool(value: object, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float, Decimal)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    return default
+
+
+def _resolve_gate_fragility_inputs(
+    *,
+    metrics_payload: dict[str, object],
+    decisions: list[WalkForwardDecision],
+) -> tuple[str, Decimal, bool]:
+    fallback_state = _coerce_fragility_state(metrics_payload.get("fragility_state"))
+    fallback_score = _decimal_or_default(
+        metrics_payload.get("fragility_score"), Decimal("0.5")
+    )
+    fallback_stability = _coerce_bool(
+        metrics_payload.get("stability_mode_active"), default=False
+    )
+
+    selected_state = fallback_state
+    selected_score = fallback_score
+    selected_stability = fallback_stability
+    selected_rank = _fragility_state_rank(fallback_state)
+
+    for item in decisions:
+        params = item.decision.params
+        allocator_payload = params.get("allocator")
+        allocator = allocator_payload if isinstance(allocator_payload, dict) else {}
+        snapshot_payload = params.get("fragility_snapshot")
+        snapshot = snapshot_payload if isinstance(snapshot_payload, dict) else {}
+
+        raw_state = allocator.get("fragility_state")
+        if raw_state is None:
+            raw_state = snapshot.get("fragility_state")
+        if raw_state is None:
+            raw_state = params.get("fragility_state")
+
+        raw_score = allocator.get("fragility_score")
+        if raw_score is None:
+            raw_score = snapshot.get("fragility_score")
+        if raw_score is None:
+            raw_score = params.get("fragility_score")
+
+        raw_stability = allocator.get("stability_mode_active")
+        if raw_stability is None:
+            raw_stability = params.get("stability_mode_active")
+
+        state = _coerce_fragility_state(raw_state)
+        score = _decimal_or_default(raw_score, fallback_score)
+        stability = _coerce_bool(raw_stability, default=fallback_stability)
+        rank = _fragility_state_rank(state)
+
+        if rank > selected_rank or (rank == selected_rank and score > selected_score):
+            selected_state = state
+            selected_score = score
+            selected_stability = stability
+            selected_rank = rank
+
+    return selected_state, selected_score, selected_stability
 
 
 def _decimal_or_default(value: object, default: Decimal) -> Decimal:

@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 from unittest import TestCase
@@ -25,6 +26,49 @@ from app.models import (
 
 
 class TestAutonomousLane(TestCase):
+    def test_gate_fragility_inputs_are_derived_from_decision_payloads(self) -> None:
+        fallback_metrics = {
+            "fragility_state": "elevated",
+            "fragility_score": "0.40",
+            "stability_mode_active": False,
+        }
+        decisions = [
+            WalkForwardDecision(
+                decision=StrategyDecision(
+                    strategy_id="s1",
+                    symbol="AAPL",
+                    event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    timeframe="1Min",
+                    action="buy",
+                    qty=Decimal("1"),
+                    order_type="market",
+                    time_in_force="day",
+                    params={
+                        "allocator": {
+                            "fragility_state": "crisis",
+                            "fragility_score": "0.92",
+                            "stability_mode_active": True,
+                        }
+                    },
+                ),
+                features=SignalFeatures(
+                    macd=None,
+                    macd_signal=None,
+                    rsi=None,
+                    price=None,
+                    volatility=None,
+                ),
+            )
+        ]
+
+        state, score, stability = _resolve_gate_fragility_inputs(
+            metrics_payload=fallback_metrics, decisions=decisions
+        )
+
+        self.assertEqual(state, "crisis")
+        self.assertEqual(score, Decimal("0.92"))
+        self.assertTrue(stability)
+
     def test_lane_emits_gate_report_and_paper_patch(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
         strategy_config_path = (
