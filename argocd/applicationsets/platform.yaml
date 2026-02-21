@@ -418,6 +418,18 @@ spec:
             - .spec.volumeClaimTemplates[].kind
         - kind: StatefulSet
           group: apps
+          namespace: temporal
+          name: temporal-cassandra
+          jqPathExpressions:
+            - .spec.persistentVolumeClaimRetentionPolicy
+            - .spec.revisionHistoryLimit
+            - .spec.updateStrategy
+            - .spec.volumeClaimTemplates[].apiVersion
+            - .spec.volumeClaimTemplates[].kind
+            - .spec.volumeClaimTemplates[].spec.volumeMode
+            - .spec.volumeClaimTemplates[].status
+        - kind: StatefulSet
+          group: apps
           namespace: nats
           name: nats
           jqPathExpressions:
