@@ -64,6 +64,22 @@ from .route_metadata import coerce_route_text
 
 logger = logging.getLogger(__name__)
 
+_RECOVERABLE_EMERGENCY_STOP_PREFIXES: tuple[str, ...] = (
+    "signal_lag_exceeded:",
+    "signal_staleness_streak_exceeded:",
+)
+
+
+def _split_emergency_stop_reasons(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    parts = [part.strip() for part in raw.split(";")]
+    return [part for part in parts if part]
+
+
+def _is_recoverable_emergency_stop_reason(reason: str) -> bool:
+    return reason.startswith(_RECOVERABLE_EMERGENCY_STOP_PREFIXES)
+
 
 def _extract_json_error_payload(error: Exception) -> Optional[dict[str, Any]]:
     raw = str(error).strip()
@@ -81,10 +97,15 @@ def _extract_json_error_payload(error: Exception) -> Optional[dict[str, Any]]:
 def _format_order_submit_rejection(error: Exception) -> str:
     payload = _extract_json_error_payload(error)
     if payload:
+        source = str(payload.get("source") or "").strip().lower()
         code = payload.get("code")
         reject_reason = payload.get("reject_reason")
         existing_order_id = payload.get("existing_order_id")
-        parts: list[str] = ["alpaca_order_rejected"]
+        parts: list[str] = (
+            ["broker_precheck_rejected"]
+            if source == "broker_precheck"
+            else ["alpaca_order_rejected"]
+        )
         if code is not None:
             parts.append(f"code={code}")
         if reject_reason:
@@ -337,6 +358,8 @@ class TradingState:
     emergency_stop_active: bool = False
     emergency_stop_reason: Optional[str] = None
     emergency_stop_triggered_at: Optional[datetime] = None
+    emergency_stop_resolved_at: Optional[datetime] = None
+    emergency_stop_recovery_streak: int = 0
     rollback_incidents_total: int = 0
     rollback_incident_evidence_path: Optional[str] = None
     metrics: TradingMetrics = field(default_factory=TradingMetrics)
@@ -763,7 +786,10 @@ class TradingPipeline:
                 )
                 return
 
-            execution_client = self._execution_client_for_symbol(decision.symbol)
+            execution_client = self._execution_client_for_symbol(
+                decision.symbol,
+                symbol_allowlist=symbol_allowlist,
+            )
             selected_adapter_name = self._execution_client_name(execution_client)
             self.state.metrics.record_execution_request(selected_adapter_name)
             self.executor.update_decision_params(
@@ -880,8 +906,13 @@ class TradingPipeline:
                 )
             return
 
-    def _execution_client_for_symbol(self, symbol: str) -> Any:
-        if adapter_enabled_for_symbol(symbol):
+    def _execution_client_for_symbol(
+        self,
+        symbol: str,
+        *,
+        symbol_allowlist: set[str] | None = None,
+    ) -> Any:
+        if adapter_enabled_for_symbol(symbol, allowlist=symbol_allowlist):
             return self.execution_adapter
         return self.order_firewall
 
@@ -1734,11 +1765,7 @@ class TradingScheduler:
                     "Emergency stop disabled; clearing latched state reason=%s",
                     self.state.emergency_stop_reason,
                 )
-                self.state.emergency_stop_active = False
-                self.state.emergency_stop_reason = None
-                self.state.emergency_stop_triggered_at = None
-            return
-        if self.state.emergency_stop_active:
+                self._clear_emergency_stop(reason="disabled")
             return
 
         reasons: list[str] = []
@@ -1792,10 +1819,81 @@ class TradingScheduler:
         ):
             reasons.append(f"max_drawdown_exceeded:{drawdown:.4f}")
 
+        if self.state.emergency_stop_active:
+            self._evaluate_emergency_stop_recovery(reasons)
+            return
         if reasons:
             self._trigger_emergency_stop(
                 reasons=reasons, fallback_ratio=fallback_ratio, drawdown=drawdown
             )
+
+    def _evaluate_emergency_stop_recovery(self, current_reasons: list[str]) -> None:
+        latched_reasons = _split_emergency_stop_reasons(self.state.emergency_stop_reason)
+        if not latched_reasons:
+            self.state.emergency_stop_recovery_streak = 0
+            return
+
+        has_nonrecoverable_latched_reason = any(
+            not _is_recoverable_emergency_stop_reason(reason) for reason in latched_reasons
+        )
+        if has_nonrecoverable_latched_reason:
+            self.state.emergency_stop_recovery_streak = 0
+            return
+
+        nonrecoverable_current_reasons = [
+            reason
+            for reason in current_reasons
+            if not _is_recoverable_emergency_stop_reason(reason)
+        ]
+        if nonrecoverable_current_reasons:
+            merged_reasons = sorted(set(latched_reasons + nonrecoverable_current_reasons))
+            self.state.emergency_stop_reason = ";".join(merged_reasons)
+            self.state.emergency_stop_recovery_streak = 0
+            logger.error(
+                "Emergency stop remained latched and escalated due to non-recoverable reason(s): %s",
+                nonrecoverable_current_reasons,
+            )
+            return
+
+        recoverable_current_reasons = [
+            reason for reason in current_reasons if _is_recoverable_emergency_stop_reason(reason)
+        ]
+        if recoverable_current_reasons:
+            self.state.emergency_stop_recovery_streak = 0
+            refreshed = ";".join(sorted(set(recoverable_current_reasons)))
+            if refreshed and refreshed != self.state.emergency_stop_reason:
+                self.state.emergency_stop_reason = refreshed
+            return
+
+        required_recovery_cycles = max(1, settings.trading_emergency_stop_recovery_cycles)
+        self.state.emergency_stop_recovery_streak += 1
+        if self.state.emergency_stop_recovery_streak < required_recovery_cycles:
+            logger.info(
+                "Emergency stop recovery in progress streak=%s required=%s reason=%s",
+                self.state.emergency_stop_recovery_streak,
+                required_recovery_cycles,
+                self.state.emergency_stop_reason,
+            )
+            return
+
+        logger.warning(
+            "Emergency stop auto-cleared after freshness recovered streak=%s reason=%s",
+            self.state.emergency_stop_recovery_streak,
+            self.state.emergency_stop_reason,
+        )
+        self._clear_emergency_stop(reason="freshness_recovered")
+
+    def _clear_emergency_stop(self, *, reason: str) -> None:
+        if not self.state.emergency_stop_active:
+            self.state.emergency_stop_recovery_streak = 0
+            return
+        now = datetime.now(timezone.utc)
+        self.state.emergency_stop_active = False
+        self.state.emergency_stop_reason = None
+        self.state.emergency_stop_triggered_at = None
+        self.state.emergency_stop_resolved_at = now
+        self.state.emergency_stop_recovery_streak = 0
+        logger.info("Emergency stop cleared reason=%s resolved_at=%s", reason, now.isoformat())
 
     def _is_market_session_open(self, now: datetime | None = None) -> bool:
         trading_client: Any | None = None
@@ -1858,6 +1956,8 @@ class TradingScheduler:
         self.state.emergency_stop_active = True
         self.state.rollback_incidents_total += 1
         self.state.emergency_stop_triggered_at = now
+        self.state.emergency_stop_resolved_at = None
+        self.state.emergency_stop_recovery_streak = 0
         self.state.emergency_stop_reason = ";".join(reasons)
         self.state.metrics.signal_continuity_breach_total += 1
         self.state.last_error = (

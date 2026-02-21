@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
 
+from app import config
 from app.trading.models import StrategyDecision
 from app.trading.portfolio import (
     ALLOCATOR_CLIP_SYMBOL_CAPACITY,
@@ -229,3 +230,106 @@ class TestPortfolioSizing(TestCase):
         result = sizer.size(decision, account={"equity": "10000"}, positions=positions)
         self.assertTrue(result.approved)
         self.assertEqual(result.decision.qty, Decimal("10"))
+
+    def test_symbol_cap_uses_remaining_capacity_for_existing_position(self) -> None:
+        sizer = PortfolioSizer(
+            PortfolioSizingConfig(
+                notional_per_position=None,
+                volatility_target=None,
+                volatility_floor=Decimal("0"),
+                max_positions=None,
+                max_notional_per_symbol=None,
+                max_position_pct_equity=Decimal("0.10"),
+                max_gross_exposure=None,
+                max_net_exposure=None,
+            )
+        )
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="NVDA",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("20"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        positions = [{"symbol": "NVDA", "qty": "5", "market_value": "500"}]
+
+        result = sizer.size(decision, account={"equity": "10000"}, positions=positions)
+
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("5"))
+
+    def test_sell_without_inventory_rejected_when_shorts_disabled(self) -> None:
+        original_allow_shorts = config.settings.trading_allow_shorts
+        config.settings.trading_allow_shorts = False
+        try:
+            sizer = PortfolioSizer(
+                PortfolioSizingConfig(
+                    notional_per_position=None,
+                    volatility_target=None,
+                    volatility_floor=Decimal("0"),
+                    max_positions=None,
+                    max_notional_per_symbol=None,
+                    max_position_pct_equity=None,
+                    max_gross_exposure=None,
+                    max_net_exposure=None,
+                )
+            )
+            decision = StrategyDecision(
+                strategy_id="s1",
+                symbol="NVDA",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("5"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("100")},
+            )
+
+            result = sizer.size(decision, account={"equity": "10000"}, positions=[])
+
+            self.assertFalse(result.approved)
+            self.assertIn("shorts_not_allowed", result.reasons)
+            self.assertEqual(result.decision.qty, Decimal("0"))
+        finally:
+            config.settings.trading_allow_shorts = original_allow_shorts
+
+    def test_sell_clipped_to_inventory_when_shorts_disabled(self) -> None:
+        original_allow_shorts = config.settings.trading_allow_shorts
+        config.settings.trading_allow_shorts = False
+        try:
+            sizer = PortfolioSizer(
+                PortfolioSizingConfig(
+                    notional_per_position=None,
+                    volatility_target=None,
+                    volatility_floor=Decimal("0"),
+                    max_positions=None,
+                    max_notional_per_symbol=None,
+                    max_position_pct_equity=None,
+                    max_gross_exposure=None,
+                    max_net_exposure=None,
+                )
+            )
+            decision = StrategyDecision(
+                strategy_id="s1",
+                symbol="NVDA",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("10"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("100")},
+            )
+            positions = [{"symbol": "NVDA", "qty": "3", "market_value": "300"}]
+
+            result = sizer.size(decision, account={"equity": "10000"}, positions=positions)
+
+            self.assertTrue(result.approved)
+            self.assertEqual(result.decision.qty, Decimal("3"))
+        finally:
+            config.settings.trading_allow_shorts = original_allow_shorts

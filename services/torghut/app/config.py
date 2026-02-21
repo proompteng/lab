@@ -444,6 +444,14 @@ class Settings(BaseSettings):
         alias="TRADING_EMERGENCY_STOP_ENABLED",
         description="Enable autonomous emergency stop hooks that block order submission after critical safety breaches.",
     )
+    trading_emergency_stop_recovery_cycles: int = Field(
+        default=3,
+        alias="TRADING_EMERGENCY_STOP_RECOVERY_CYCLES",
+        description=(
+            "Consecutive safety-control cycles with no freshness breach before auto-clearing "
+            "a freshness-triggered emergency stop."
+        ),
+    )
     trading_rollback_signal_lag_seconds_limit: int = Field(
         default=600,
         alias="TRADING_ROLLBACK_SIGNAL_LAG_SECONDS_LIMIT",

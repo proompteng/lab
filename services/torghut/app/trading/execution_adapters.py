@@ -482,20 +482,29 @@ def build_execution_adapter(
     )
 
 
-def adapter_enabled_for_symbol(symbol: str) -> bool:
-    """Apply adapter routing policy constraints for symbol-level canaries."""
+def adapter_enabled_for_symbol(symbol: str, *, allowlist: set[str] | None = None) -> bool:
+    """Apply adapter routing policy constraints for symbol-level canaries.
+
+    When ``allowlist`` is provided, it is treated as the authoritative runtime
+    symbol set (for example, resolved universe symbols) and env fallback is bypassed.
+    """
 
     if settings.trading_execution_adapter != 'lean':
         return False
     if settings.trading_execution_adapter_policy == 'all':
         return True
-    allowlist = settings.trading_execution_adapter_symbols
-    # When the symbol allowlist is omitted, route all symbols through the primary adapter.
-    # This keeps WS/strategy-driven symbol onboarding as the canonical source of symbols
-    # and avoids an implicit LEAN-disable path from an empty env var.
-    if not allowlist:
+
+    if allowlist is not None:
+        if not allowlist:
+            return False
+        return symbol in allowlist
+
+    configured_allowlist = settings.trading_execution_adapter_symbols
+    # Backward-compatible fallback for deployments still relying on env-driven
+    # execution canary routing.
+    if not configured_allowlist:
         return True
-    return symbol in allowlist
+    return symbol in configured_allowlist
 
 
 def _error_summary(exc: Exception) -> str:

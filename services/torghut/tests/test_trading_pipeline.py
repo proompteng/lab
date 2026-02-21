@@ -168,6 +168,10 @@ class CountingAlpacaClient(FakeAlpacaClient):
         return super().list_positions()
 
 
+class FakeLeanAdapter(FakeAlpacaClient):
+    name = "lean"
+
+
 class FakeLLMReviewEngine:
     def __init__(
         self,
@@ -379,11 +383,57 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original[
-                "trading_universe_source"
+
+    def test_execution_routing_uses_runtime_symbol_allowlist(self) -> None:
+        from app import config
+
+        original = {
+            "trading_execution_adapter": config.settings.trading_execution_adapter,
+            "trading_execution_adapter_policy": config.settings.trading_execution_adapter_policy,
+            "trading_execution_adapter_symbols_raw": config.settings.trading_execution_adapter_symbols_raw,
+        }
+        config.settings.trading_execution_adapter = "lean"
+        config.settings.trading_execution_adapter_policy = "allowlist"
+        config.settings.trading_execution_adapter_symbols_raw = "SPY"
+
+        try:
+            alpaca_client = FakeAlpacaClient()
+            lean_adapter = FakeLeanAdapter()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=lean_adapter,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            self.assertIs(
+                pipeline._execution_client_for_symbol("MSFT", symbol_allowlist={"MSFT"}),
+                lean_adapter,
+            )
+            self.assertIs(
+                pipeline._execution_client_for_symbol("AAPL", symbol_allowlist={"MSFT"}),
+                pipeline.order_firewall,
+            )
+            # Legacy fallback remains env-driven only when runtime allowlist is omitted.
+            self.assertIs(
+                pipeline._execution_client_for_symbol("MSFT"),
+                pipeline.order_firewall,
+            )
+        finally:
+            config.settings.trading_execution_adapter = original["trading_execution_adapter"]
+            config.settings.trading_execution_adapter_policy = original[
+                "trading_execution_adapter_policy"
             ]
-            config.settings.trading_static_symbols_raw = original[
-                "trading_static_symbols_raw"
+            config.settings.trading_execution_adapter_symbols_raw = original[
+                "trading_execution_adapter_symbols_raw"
             ]
 
     def test_pipeline_rejects_batch_when_feature_quality_gate_fails(self) -> None:
