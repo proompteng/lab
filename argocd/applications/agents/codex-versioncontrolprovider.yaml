@@ -24,8 +24,8 @@ spec:
     baseBranch: main
     branchTemplate: codex/{{issueNumber}}
     branchConflictSuffixTemplate: "{{agentRun.name}}"
-    commitAuthorName: codex
-    commitAuthorEmail: codex@proompt.com
+    commitAuthorName: "Greg Konush"
+    commitAuthorEmail: 12027037+gregkonush@users.noreply.github.com
     pullRequest:
       enabled: true
       draft: false
