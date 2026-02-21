@@ -1,37 +1,41 @@
 namespace: default
 flags:
-  - key: jangar_market_context_enabled
-    name: Jangar Market Context
-    description: Enables market context fetching and health checks in Jangar.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
-  - key: jangar_orchestration_controller_enabled
-    name: Jangar Orchestration Controller
-    description: Enables orchestration controller startup in Jangar.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
-  - key: jangar_supporting_controller_enabled
-    name: Jangar Supporting Controller
-    description: Enables supporting controller startup in Jangar.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
-  - key: jangar_agents_controller_enabled
-    name: Jangar Agents Controller
-    description: Enables agents controller startup in Jangar.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: false
-  - key: jangar_primitives_reconciler_enabled
-    name: Jangar Primitives Reconciler
-    description: Enables primitives reconciler startup in Jangar.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: false
-  - key: jangar_ci_event_stream_enabled
-    name: Jangar CI Event Stream
-    description: Enables CI event stream updates in Codex judge.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
-  - key: jangar_torghut_decision_engine_enabled
-    name: Jangar Torghut Decision Engine
-    description: Enables Torghut decision engine execution in Jangar.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
+    - key: jangar_market_context_enabled
+      name: Jangar Market Context
+      type: BOOLEAN_FLAG_TYPE
+      description: Enables market context fetching and health checks in Jangar.
+      enabled: true
+    - key: jangar_orchestration_controller_enabled
+      name: Jangar Orchestration Controller
+      type: BOOLEAN_FLAG_TYPE
+      description: Enables orchestration controller startup in Jangar.
+      enabled: true
+    - key: jangar_supporting_controller_enabled
+      name: Jangar Supporting Controller
+      type: BOOLEAN_FLAG_TYPE
+      description: Enables supporting controller startup in Jangar.
+      enabled: true
+    - key: jangar_agents_controller_enabled
+      name: Jangar Agents Controller
+      type: BOOLEAN_FLAG_TYPE
+      description: Enables agents controller startup in Jangar.
+      enabled: false
+    - key: jangar_primitives_reconciler_enabled
+      name: Jangar Primitives Reconciler
+      type: BOOLEAN_FLAG_TYPE
+      description: Enables primitives reconciler startup in Jangar.
+      enabled: false
+    - key: jangar_ci_event_stream_enabled
+      name: Jangar CI Event Stream
+      type: BOOLEAN_FLAG_TYPE
+      description: Enables CI event stream updates in Codex judge.
+      enabled: true
+    - key: jangar_torghut_decision_engine_enabled
+      name: Jangar Torghut Decision Engine
+      type: BOOLEAN_FLAG_TYPE
+      description: Enables Torghut decision engine execution in Jangar.
+      enabled: true
+    - key: jangar_e2e_gitops_write_test
+      name: Jangar E2E GitOps Write Test
+      type: BOOLEAN_FLAG_TYPE
+      enabled: true
