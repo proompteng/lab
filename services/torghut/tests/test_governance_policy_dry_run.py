@@ -34,11 +34,41 @@ class TestGovernancePolicyDryRun(TestCase):
             'run_id': 'run-dry-run',
             'promotion_allowed': True,
             'recommended_mode': 'paper',
+            'throughput': {
+                'signal_count': 10,
+                'decision_count': 6,
+                'trade_count': 4,
+                'no_signal_window': False,
+                'no_signal_reason': None,
+            },
             'gates': [
                 {'gate_id': 'gate0_data_integrity', 'status': 'pass'},
                 {'gate_id': 'gate1_statistical_robustness', 'status': 'pass'},
                 {'gate_id': 'gate2_risk_capacity', 'status': 'pass'},
             ],
+            'promotion_evidence': {
+                'fold_metrics': {
+                    'count': 1,
+                    'items': [{'fold_name': 'autonomous_lane'}],
+                    'artifact_ref': 'backtest/evaluation-report.json',
+                },
+                'stress_metrics': {
+                    'count': 4,
+                    'items': [
+                        {'case': 'spread'},
+                        {'case': 'volatility'},
+                        {'case': 'liquidity'},
+                        {'case': 'halt'},
+                    ],
+                    'artifact_ref': 'db:research_stress_metrics',
+                },
+                'promotion_rationale': {
+                    'requested_target': 'paper',
+                    'gate_recommended_mode': 'paper',
+                    'gate_reasons': ['gate_result_ok'],
+                    'rationale_text': 'Dry-run fixture rationale.',
+                },
+            },
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:

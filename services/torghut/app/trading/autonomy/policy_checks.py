@@ -150,9 +150,7 @@ def evaluate_promotion_prerequisites(
                 {
                     "reason": "signal_count_below_minimum_for_progression",
                     "signal_count": signal_count,
-                    "minimum_signal_count": throughput_requirements[
-                        "min_signal_count"
-                    ],
+                    "minimum_signal_count": throughput_requirements["min_signal_count"],
                 }
             )
 
@@ -176,9 +174,7 @@ def evaluate_promotion_prerequisites(
                 {
                     "reason": "trade_count_below_minimum_for_progression",
                     "trade_count": trade_count,
-                    "minimum_trade_count": throughput_requirements[
-                        "min_trade_count"
-                    ],
+                    "minimum_trade_count": throughput_requirements["min_trade_count"],
                 }
             )
 
@@ -265,6 +261,18 @@ def evaluate_promotion_prerequisites(
                         "minimum_regime_slices": minimum_regime_slices,
                     }
                 )
+
+    evidence_reasons, evidence_details, evidence_refs = _evaluate_promotion_evidence(
+        policy_payload=policy_payload,
+        gate_report_payload=gate_report_payload,
+        promotion_target=promotion_target,
+    )
+    if evidence_reasons:
+        reasons.extend(evidence_reasons)
+    if evidence_details:
+        reason_details.extend(evidence_details)
+    if evidence_refs:
+        artifact_refs.extend(evidence_refs)
 
     return PromotionPrerequisiteResult(
         allowed=not reasons,
@@ -411,13 +419,123 @@ def _required_throughput(policy_payload: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _evaluate_promotion_evidence(
+    *,
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    refs: list[str] = []
+    if promotion_target == "shadow":
+        return reasons, details, refs
+
+    evidence_raw = gate_report_payload.get("promotion_evidence")
+    evidence = (
+        cast(dict[str, Any], evidence_raw) if isinstance(evidence_raw, dict) else {}
+    )
+    fold_raw = evidence.get("fold_metrics")
+    fold_metrics = cast(dict[str, Any], fold_raw) if isinstance(fold_raw, dict) else {}
+    fold_count = _int_or_default(fold_metrics.get("count"), 0)
+    min_fold_count = max(
+        1,
+        _int_or_default(policy_payload.get("promotion_min_fold_metrics_count"), 1),
+    )
+    if fold_count < min_fold_count:
+        reasons.append("fold_metrics_evidence_insufficient")
+        details.append(
+            {
+                "reason": "fold_metrics_evidence_insufficient",
+                "actual_fold_count": fold_count,
+                "minimum_fold_count": min_fold_count,
+            }
+        )
+    fold_ref = str(fold_metrics.get("artifact_ref") or "").strip()
+    if fold_ref:
+        refs.append(fold_ref)
+
+    stress_raw = evidence.get("stress_metrics")
+    stress_metrics = (
+        cast(dict[str, Any], stress_raw) if isinstance(stress_raw, dict) else {}
+    )
+    stress_count = _int_or_default(stress_metrics.get("count"), 0)
+    min_stress_count = max(
+        1,
+        _int_or_default(policy_payload.get("promotion_min_stress_case_count"), 4),
+    )
+    if stress_count < min_stress_count:
+        reasons.append("stress_metrics_evidence_insufficient")
+        details.append(
+            {
+                "reason": "stress_metrics_evidence_insufficient",
+                "actual_stress_case_count": stress_count,
+                "minimum_stress_case_count": min_stress_count,
+            }
+        )
+    stress_ref = str(stress_metrics.get("artifact_ref") or "").strip()
+    if stress_ref:
+        refs.append(stress_ref)
+
+    if bool(policy_payload.get("promotion_require_rationale", True)):
+        rationale_raw = evidence.get("promotion_rationale")
+        rationale = (
+            cast(dict[str, Any], rationale_raw)
+            if isinstance(rationale_raw, dict)
+            else {}
+        )
+        reason_codes = _list_of_strings(rationale.get("reason_codes"))
+        if not reason_codes:
+            reason_codes = _list_of_strings(rationale.get("gate_reasons"))
+        rationale_text = str(rationale.get("rationale_text") or "").strip()
+        if not rationale:
+            reasons.append("promotion_rationale_missing")
+            details.append({"reason": "promotion_rationale_missing"})
+        requested_target = str(rationale.get("requested_target") or "").strip()
+        if requested_target and requested_target != promotion_target:
+            reasons.append("promotion_rationale_target_mismatch")
+            details.append(
+                {
+                    "reason": "promotion_rationale_target_mismatch",
+                    "requested_target": promotion_target,
+                    "rationale_target": requested_target,
+                }
+            )
+        recommended_mode = str(rationale.get("recommended_mode") or "").strip()
+        if not recommended_mode:
+            recommended_mode = str(rationale.get("gate_recommended_mode") or "").strip()
+        gate_recommended_mode = str(
+            gate_report_payload.get("recommended_mode", "")
+        ).strip()
+        if (
+            recommended_mode
+            and gate_recommended_mode
+            and recommended_mode != gate_recommended_mode
+        ):
+            reasons.append("promotion_rationale_recommended_mode_mismatch")
+            details.append(
+                {
+                    "reason": "promotion_rationale_recommended_mode_mismatch",
+                    "rationale_recommended_mode": recommended_mode,
+                    "gate_recommended_mode": gate_recommended_mode,
+                }
+            )
+        if not reason_codes and not rationale_text:
+            reasons.append("promotion_rationale_missing")
+            details.append({"reason": "promotion_rationale_missing"})
+
+    return sorted(set(reasons)), details, sorted(set(refs))
+
+
 def _observed_throughput(
     *,
     gate_report_payload: dict[str, Any],
     candidate_state_payload: dict[str, Any],
 ) -> dict[str, int | bool | str | None]:
     throughput_raw = gate_report_payload.get("throughput")
-    throughput = cast(dict[str, Any], throughput_raw) if isinstance(throughput_raw, dict) else {}
+    throughput = (
+        cast(dict[str, Any], throughput_raw) if isinstance(throughput_raw, dict) else {}
+    )
     metrics_raw = gate_report_payload.get("metrics")
     metrics = cast(dict[str, Any], metrics_raw) if isinstance(metrics_raw, dict) else {}
 

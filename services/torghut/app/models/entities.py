@@ -7,7 +7,17 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, List, Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Numeric, String, Text, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy import func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,7 +31,10 @@ class TimestampMixin:
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 
@@ -41,12 +54,18 @@ class Strategy(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(length=255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=func.true())
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=func.true()
+    )
     base_timeframe: Mapped[str] = mapped_column(String(length=16), nullable=False)
     universe_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
     universe_symbols: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    max_position_pct_equity: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    max_notional_per_trade: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    max_position_pct_equity: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    max_notional_per_trade: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
 
     trade_decisions: Mapped[List["TradeDecision"]] = relationship(
         back_populates="strategy", cascade="all, delete-orphan"
@@ -72,14 +91,23 @@ class TradeDecision(Base, CreatedAtMixin):
     timeframe: Mapped[str] = mapped_column(String(length=16), nullable=False)
     decision_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
     rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    decision_hash: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    status: Mapped[str] = mapped_column(
-        String(length=32), nullable=False, default="planned", server_default=text("'planned'")
+    decision_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
     )
-    executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="planned",
+        server_default=text("'planned'"),
+    )
+    executed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     strategy: Mapped[Strategy] = relationship(back_populates="trade_decisions")
-    executions: Mapped[List["Execution"]] = relationship(back_populates="trade_decision")
+    executions: Mapped[List["Execution"]] = relationship(
+        back_populates="trade_decision"
+    )
     llm_reviews: Mapped[List["LLMDecisionReview"]] = relationship(
         back_populates="trade_decision", cascade="all, delete-orphan"
     )
@@ -100,8 +128,12 @@ class Execution(Base, TimestampMixin):
     trade_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), ForeignKey("trade_decisions.id", ondelete="SET NULL"), nullable=True
     )
-    alpaca_order_id: Mapped[str] = mapped_column(String(length=128), nullable=False, unique=True)
-    client_order_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True, unique=True)
+    alpaca_order_id: Mapped[str] = mapped_column(
+        String(length=128), nullable=False, unique=True
+    )
+    client_order_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True, unique=True
+    )
     symbol: Mapped[str] = mapped_column(String(length=16), nullable=False)
     side: Mapped[str] = mapped_column(String(length=8), nullable=False)
     order_type: Mapped[str] = mapped_column(String(length=32), nullable=False)
@@ -110,13 +142,21 @@ class Execution(Base, TimestampMixin):
     filled_qty: Mapped[Decimal] = mapped_column(
         Numeric(20, 8), nullable=False, default=Decimal("0"), server_default=text("0")
     )
-    avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(length=32), nullable=False)
     execution_expected_adapter: Mapped[str] = mapped_column(
-        String(length=32), nullable=False, default='unknown', server_default=text("'unknown'")
+        String(length=32),
+        nullable=False,
+        default="unknown",
+        server_default=text("'unknown'"),
     )
     execution_actual_adapter: Mapped[str] = mapped_column(
-        String(length=32), nullable=False, default='unknown', server_default=text("'unknown'")
+        String(length=32),
+        nullable=False,
+        default="unknown",
+        server_default=text("'unknown'"),
     )
     execution_fallback_reason: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True
@@ -125,12 +165,22 @@ class Execution(Base, TimestampMixin):
         BigInteger(), nullable=False, default=0, server_default=text("0")
     )
     raw_order: Mapped[Any] = mapped_column(JSONType, nullable=True)
-    last_update_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    order_feed_last_event_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    order_feed_last_seq: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    last_update_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    order_feed_last_event_ts: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    order_feed_last_seq: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True
+    )
 
-    trade_decision: Mapped[Optional[TradeDecision]] = relationship(back_populates="executions")
-    order_events: Mapped[List["ExecutionOrderEvent"]] = relationship(back_populates="execution")
+    trade_decision: Mapped[Optional[TradeDecision]] = relationship(
+        back_populates="executions"
+    )
+    order_events: Mapped[List["ExecutionOrderEvent"]] = relationship(
+        back_populates="execution"
+    )
 
     __table_args__ = (
         Index("ix_executions_alpaca_order_id", "alpaca_order_id"),
@@ -147,20 +197,30 @@ class ExecutionOrderEvent(Base, CreatedAtMixin):
     __tablename__ = "execution_order_events"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
-    event_fingerprint: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    event_fingerprint: Mapped[str] = mapped_column(
+        String(length=64), nullable=False, unique=True
+    )
     source_topic: Mapped[str] = mapped_column(String(length=128), nullable=False)
     source_partition: Mapped[Optional[int]] = mapped_column(nullable=True)
     source_offset: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     feed_seq: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    event_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    event_ts: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     symbol: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
-    alpaca_order_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    client_order_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    alpaca_order_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    client_order_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     event_type: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
     status: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
     qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     filled_qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
     raw_event: Mapped[Any] = mapped_column(JSONType, nullable=False)
     execution_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), ForeignKey("executions.id", ondelete="SET NULL"), nullable=True
@@ -196,25 +256,60 @@ class ResearchRun(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(
-        String(length=32), nullable=False, default="running", server_default=text("'running'")
+        String(length=32),
+        nullable=False,
+        default="running",
+        server_default=text("'running'"),
     )
     strategy_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    strategy_name: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
-    strategy_type: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    strategy_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    code_commit: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    feature_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    feature_schema_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    feature_spec_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    signal_source: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    dataset_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    dataset_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    dataset_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    dataset_snapshot_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
-    runner_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    runner_binary_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    gate_report_trace_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    recommendation_trace_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    strategy_name: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
+    strategy_type: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    strategy_version: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    code_commit: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    feature_version: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    feature_schema_version: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    feature_spec_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    signal_source: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    dataset_version: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    dataset_from: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dataset_to: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dataset_snapshot_ref: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
+    runner_version: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    runner_binary_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    gate_report_trace_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    recommendation_trace_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_research_runs_status", "status"),
@@ -231,18 +326,46 @@ class ResearchCandidate(Base, CreatedAtMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
-    candidate_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    candidate_id: Mapped[str] = mapped_column(
+        String(length=64), nullable=False, unique=True
+    )
+    candidate_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     parameter_set: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    decision_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, default=0, server_default=text("0"))
-    trade_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, default=0, server_default=text("0"))
+    decision_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    trade_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
     symbols_covered: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     universe_definition: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    promotion_target: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
+    promotion_target: Mapped[Optional[str]] = mapped_column(
+        String(length=16), nullable=True
+    )
+    lifecycle_role: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="challenger",
+        server_default=text("'challenger'"),
+    )
+    lifecycle_status: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="evaluated",
+        server_default=text("'evaluated'"),
+    )
+    metadata_bundle: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    recommendation_bundle: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
 
     __table_args__ = (
         Index("ix_research_candidates_run_id", "run_id"),
         Index("ix_research_candidates_candidate_id", "candidate_id"),
+        Index("ix_research_candidates_lifecycle_role", "lifecycle_role"),
+        Index("ix_research_candidates_lifecycle_status", "lifecycle_status"),
     )
 
 
@@ -254,20 +377,36 @@ class ResearchFoldMetrics(Base, CreatedAtMixin):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
     fold_name: Mapped[str] = mapped_column(String(length=128), nullable=False)
-    fold_order: Mapped[int] = mapped_column(BigInteger(), nullable=False, default=0, server_default=text("0"))
-    train_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fold_order: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    train_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     train_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    test_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    test_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     test_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    decision_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, default=0, server_default=text("0"))
-    trade_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, default=0, server_default=text("0"))
+    decision_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    trade_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
     gross_pnl: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     net_pnl: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    max_drawdown: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    turnover_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    max_drawdown: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    turnover_ratio: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
     cost_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     cost_assumptions: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    regime_label: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    regime_label: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_research_fold_metrics_candidate", "candidate_id"),
@@ -284,7 +423,9 @@ class ResearchStressMetrics(Base, CreatedAtMixin):
     candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
     stress_case: Mapped[str] = mapped_column(String(length=64), nullable=False)
     metric_bundle: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    pessimistic_pnl_delta: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    pessimistic_pnl_delta: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_research_stress_metrics_candidate", "candidate_id"),
@@ -299,19 +440,45 @@ class ResearchPromotion(Base, CreatedAtMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    requested_mode: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
-    approved_mode: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
+    requested_mode: Mapped[Optional[str]] = mapped_column(
+        String(length=16), nullable=True
+    )
+    approved_mode: Mapped[Optional[str]] = mapped_column(
+        String(length=16), nullable=True
+    )
     approver: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    approver_role: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    approver_role: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     approve_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     deny_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    paper_candidate_patch_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
-    effective_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    paper_candidate_patch_ref: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
+    effective_time: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    decision_action: Mapped[str] = mapped_column(
+        String(length=32), nullable=False, default="hold", server_default=text("'hold'")
+    )
+    decision_rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_bundle: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    recommendation_trace_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    successor_candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    rollback_candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_research_promotions_candidate", "candidate_id"),
         Index("ix_research_promotions_requested_mode", "requested_mode"),
         Index("ix_research_promotions_approved_mode", "approved_mode"),
+        Index("ix_research_promotions_action", "decision_action"),
+        Index("ix_research_promotions_recommendation_trace", "recommendation_trace_id"),
     )
 
 
@@ -341,7 +508,10 @@ class ExecutionTCAMetric(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     execution_id: Mapped[uuid.UUID] = mapped_column(
-        GUID(), ForeignKey("executions.id", ondelete="CASCADE"), nullable=False, unique=True
+        GUID(),
+        ForeignKey("executions.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
     )
     trade_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), ForeignKey("trade_decisions.id", ondelete="SET NULL"), nullable=True
@@ -349,24 +519,38 @@ class ExecutionTCAMetric(Base, TimestampMixin):
     strategy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), ForeignKey("strategies.id", ondelete="SET NULL"), nullable=True
     )
-    alpaca_account_label: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    alpaca_account_label: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     symbol: Mapped[str] = mapped_column(String(length=16), nullable=False)
     side: Mapped[str] = mapped_column(String(length=8), nullable=False)
-    arrival_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    arrival_price: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
     filled_qty: Mapped[Decimal] = mapped_column(
         Numeric(20, 8), nullable=False, default=Decimal("0"), server_default=text("0")
     )
     signed_qty: Mapped[Decimal] = mapped_column(
         Numeric(20, 8), nullable=False, default=Decimal("0"), server_default=text("0")
     )
-    slippage_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    shortfall_notional: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    slippage_bps: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    shortfall_notional: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
     churn_qty: Mapped[Decimal] = mapped_column(
         Numeric(20, 8), nullable=False, default=Decimal("0"), server_default=text("0")
     )
-    churn_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    churn_ratio: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
     __table_args__ = (
         Index("ix_execution_tca_metrics_strategy_symbol", "strategy_id", "symbol"),
@@ -385,11 +569,11 @@ class ToolRunLog(Base, CreatedAtMixin):
     tool_name: Mapped[str] = mapped_column(String(length=128), nullable=False)
     request_payload: Mapped[Any] = mapped_column(JSONType, nullable=False)
     response_payload: Mapped[Any] = mapped_column(JSONType, nullable=False)
-    success: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=func.true())
-
-    __table_args__ = (
-        Index("ix_tool_run_logs_codex_session", "codex_session_id"),
+    success: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=func.true()
     )
+
+    __table_args__ = (Index("ix_tool_run_logs_codex_session", "codex_session_id"),)
 
 
 class TradeCursor(Base, TimestampMixin):
@@ -401,7 +585,9 @@ class TradeCursor(Base, TimestampMixin):
     source: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
     cursor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     cursor_seq: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    cursor_symbol: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    cursor_symbol: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
 
 
 class LLMDecisionReview(Base, CreatedAtMixin):
@@ -419,8 +605,12 @@ class LLMDecisionReview(Base, CreatedAtMixin):
     response_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
     verdict: Mapped[str] = mapped_column(String(length=16), nullable=False)
     confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
-    adjusted_qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    adjusted_order_type: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    adjusted_qty: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    adjusted_order_type: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
     rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     risk_flags: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     tokens_prompt: Mapped[Optional[int]] = mapped_column(nullable=True)

@@ -12,6 +12,8 @@ from sqlalchemy.orm import sessionmaker
 from yaml import safe_load
 
 from app.trading.autonomy.lane import run_autonomous_lane, upsert_autonomy_no_signal_run
+from app.trading.autonomy.gates import GateEvaluationReport, GateResult
+from app.trading.reporting import PromotionEvidenceSummary, PromotionRecommendation
 from app.models import (
     Base,
     ResearchCandidate,
@@ -56,6 +58,14 @@ class TestAutonomousLane(TestCase):
             )
             self.assertIn("gates", gate_payload)
             self.assertEqual(gate_payload["recommended_mode"], "paper")
+            self.assertIn("promotion_evidence", gate_payload)
+            self.assertIn("promotion_decision", gate_payload)
+            evidence = gate_payload["promotion_evidence"]
+            self.assertEqual(evidence["fold_metrics"]["count"], 1)
+            self.assertEqual(evidence["stress_metrics"]["count"], 4)
+            self.assertTrue(
+                bool(evidence["promotion_rationale"].get("recommendation_trace_id"))
+            )
             self.assertTrue(
                 (output_dir / "gates" / "profitability-benchmark-v4.json").exists()
             )
@@ -208,10 +218,28 @@ class TestAutonomousLane(TestCase):
             self.assertIsNotNone(run_row.dataset_to)
             self.assertIsInstance(candidate.decision_count, int)
             self.assertGreaterEqual(candidate.decision_count, 0)
+            self.assertIsInstance(candidate.universe_definition, dict)
+            assert isinstance(candidate.universe_definition, dict)
+            lifecycle = candidate.universe_definition.get("autonomy_lifecycle")
+            self.assertIsInstance(lifecycle, dict)
+            assert isinstance(lifecycle, dict)
+            self.assertEqual(lifecycle.get("role"), "challenger")
+            self.assertIn(
+                lifecycle.get("status"), {"promoted_champion", "retained_challenger"}
+            )
             self.assertTrue(fold_rows)
             self.assertEqual(len(stress_rows), 4)
             self.assertEqual(promotion_row.requested_mode, "paper")
             self.assertIn(promotion_row.approved_mode, {"paper", None})
+            self.assertIn(candidate.lifecycle_role, {"champion", "challenger"})
+            self.assertIsInstance(candidate.metadata_bundle, dict)
+            self.assertIsInstance(candidate.recommendation_bundle, dict)
+            self.assertIsNotNone(promotion_row.decision_action)
+            self.assertTrue((promotion_row.decision_rationale or "").strip())
+            self.assertIsInstance(promotion_row.evidence_bundle, dict)
+            self.assertIsNotNone(
+                promotion_row.approve_reason or promotion_row.deny_reason
+            )
 
     def test_upsert_no_signal_run_records_skipped_research_run(self) -> None:
         strategy_config_path = (
@@ -306,6 +334,59 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(len(run_rows), 1)
             self.assertEqual(run_rows[0].status, "failed")
             self.assertEqual(len(candidate_rows), 0)
+
+    def test_lane_promotion_audit_rows_are_append_only_for_repeat_runs(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-ledger-repeat"
+            first = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir / "first",
+                promotion_target="paper",
+                code_version="test-sha",
+                persist_results=True,
+                session_factory=session_factory,
+            )
+            second = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir / "second",
+                promotion_target="paper",
+                code_version="test-sha",
+                persist_results=True,
+                session_factory=session_factory,
+            )
+
+        self.assertEqual(first.candidate_id, second.candidate_id)
+        with session_factory() as session:
+            promotion_rows = (
+                session.execute(
+                    select(ResearchPromotion).where(
+                        ResearchPromotion.candidate_id == first.candidate_id
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        self.assertGreaterEqual(len(promotion_rows), 2)
 
     def test_lane_counts_rsi_alias_for_gate_null_rate(self) -> None:
         strategy_config_path = (
@@ -539,3 +620,245 @@ class TestAutonomousLane(TestCase):
                 "profitability_evidence_validation_failed", gate_payload["reasons"]
             )
             self.assertIsNone(result.paper_patch_path)
+
+    def test_lane_promotion_demotes_previous_champion_with_audit(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            strategy_a = Path(tmpdir) / "strategy-a.json"
+            strategy_b = Path(tmpdir) / "strategy-b.json"
+            gate_policy_path = Path(tmpdir) / "permissive-gate-policy.json"
+            strategy_a.write_text(
+                json.dumps(
+                    {
+                        "strategies": [
+                            {
+                                "strategy_id": "candidate-a",
+                                "strategy_type": "legacy_macd_rsi",
+                                "version": "1.0.0",
+                                "enabled": True,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            gate_policy_path.write_text(
+                json.dumps(
+                    {
+                        "policy_version": "v3-gates-1",
+                        "required_feature_schema_version": "3.0.0",
+                        "gate0_max_null_rate": "1",
+                        "gate0_max_staleness_ms": 120000,
+                        "gate0_min_symbol_coverage": 1,
+                        "gate1_min_decision_count": 0,
+                        "gate1_min_trade_count": 0,
+                        "gate1_min_net_pnl": "-1000000",
+                        "gate1_max_negative_fold_ratio": "1",
+                        "gate1_max_net_pnl_cv": "999",
+                        "gate2_max_drawdown": "1000000",
+                        "gate2_max_turnover_ratio": "1000000",
+                        "gate2_max_cost_bps": "1000000",
+                        "gate3_max_llm_error_ratio": "1",
+                        "gate6_require_profitability_evidence": False,
+                        "gate5_live_enabled": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            strategy_b.write_text(
+                json.dumps(
+                    {
+                        "strategies": [
+                            {
+                                "strategy_id": "candidate-b",
+                                "strategy_type": "legacy_macd_rsi",
+                                "version": "1.0.1",
+                                "enabled": True,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            forced_gate = GateEvaluationReport(
+                policy_version="v3-gates-1",
+                promotion_target="paper",
+                promotion_allowed=True,
+                recommended_mode="paper",
+                gates=[
+                    GateResult(gate_id="gate0_data_integrity", status="pass"),
+                    GateResult(gate_id="gate1_statistical_robustness", status="pass"),
+                    GateResult(gate_id="gate2_risk_capacity", status="pass"),
+                    GateResult(gate_id="gate3_shadow_paper_quality", status="pass"),
+                    GateResult(gate_id="gate4_operational_readiness", status="pass"),
+                    GateResult(gate_id="gate6_profitability_evidence", status="pass"),
+                    GateResult(gate_id="gate5_live_ramp_readiness", status="pass"),
+                ],
+                reasons=[],
+                evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                code_version="test-sha",
+            )
+            with patch(
+                "app.trading.autonomy.lane.evaluate_gate_matrix",
+                return_value=forced_gate,
+            ):
+                with patch(
+                    "app.trading.autonomy.lane.build_promotion_recommendation",
+                    return_value=PromotionRecommendation(
+                        action="promote",
+                        requested_mode="paper",
+                        recommended_mode="paper",
+                        eligible=True,
+                        rationale="forced_test_rationale",
+                        reasons=[],
+                        evidence=PromotionEvidenceSummary(
+                            fold_metrics_count=1,
+                            stress_metrics_count=4,
+                            rationale_present=True,
+                            evidence_complete=True,
+                            reasons=[],
+                        ),
+                        trace_id="forced-trace",
+                    ),
+                ):
+                    first = run_autonomous_lane(
+                        signals_path=fixture_path,
+                        strategy_config_path=strategy_a,
+                        gate_policy_path=gate_policy_path,
+                        output_dir=Path(tmpdir) / "lane-a",
+                        promotion_target="paper",
+                        code_version="test-sha",
+                        persist_results=True,
+                        session_factory=session_factory,
+                    )
+                    second = run_autonomous_lane(
+                        signals_path=fixture_path,
+                        strategy_config_path=strategy_b,
+                        gate_policy_path=gate_policy_path,
+                        output_dir=Path(tmpdir) / "lane-b",
+                        promotion_target="paper",
+                        code_version="test-sha",
+                        persist_results=True,
+                        session_factory=session_factory,
+                    )
+
+            with session_factory() as session:
+                first_candidate = session.execute(
+                    select(ResearchCandidate).where(
+                        ResearchCandidate.candidate_id == first.candidate_id
+                    )
+                ).scalar_one()
+                second_candidate = session.execute(
+                    select(ResearchCandidate).where(
+                        ResearchCandidate.candidate_id == second.candidate_id
+                    )
+                ).scalar_one()
+                demotion_row = session.execute(
+                    select(ResearchPromotion).where(
+                        ResearchPromotion.candidate_id == first.candidate_id,
+                        ResearchPromotion.decision_action == "demote",
+                        ResearchPromotion.successor_candidate_id == second.candidate_id,
+                    )
+                ).scalar_one_or_none()
+
+            self.assertEqual(second_candidate.lifecycle_role, "champion")
+            self.assertEqual(second_candidate.lifecycle_status, "active")
+            self.assertEqual(first_candidate.lifecycle_role, "demoted")
+            self.assertEqual(first_candidate.lifecycle_status, "standby")
+            self.assertIsNotNone(demotion_row)
+            assert demotion_row is not None
+            self.assertEqual(demotion_row.rollback_candidate_id, first.candidate_id)
+
+    def test_lane_marks_hold_recommendation_as_retained_challenger(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        forced_gate = GateEvaluationReport(
+            policy_version="v3-gates-1",
+            promotion_target="paper",
+            promotion_allowed=True,
+            recommended_mode="paper",
+            gates=[
+                GateResult(gate_id="gate0_data_integrity", status="pass"),
+                GateResult(gate_id="gate1_statistical_robustness", status="pass"),
+                GateResult(gate_id="gate2_risk_capacity", status="pass"),
+                GateResult(gate_id="gate3_shadow_paper_quality", status="pass"),
+                GateResult(gate_id="gate4_operational_readiness", status="pass"),
+                GateResult(gate_id="gate6_profitability_evidence", status="pass"),
+                GateResult(gate_id="gate5_live_ramp_readiness", status="pass"),
+            ],
+            reasons=[],
+            evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            code_version="test-sha",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "app.trading.autonomy.lane.evaluate_gate_matrix",
+                return_value=forced_gate,
+            ):
+                with patch(
+                    "app.trading.autonomy.lane.build_promotion_recommendation",
+                    return_value=PromotionRecommendation(
+                        action="hold",
+                        requested_mode="paper",
+                        recommended_mode="shadow",
+                        eligible=True,
+                        rationale="hold_for_shadow_stage",
+                        reasons=["shadow_mode_recommended"],
+                        evidence=PromotionEvidenceSummary(
+                            fold_metrics_count=1,
+                            stress_metrics_count=4,
+                            rationale_present=True,
+                            evidence_complete=True,
+                            reasons=[],
+                        ),
+                        trace_id="forced-hold-trace",
+                    ),
+                ):
+                    result = run_autonomous_lane(
+                        signals_path=fixture_path,
+                        strategy_config_path=strategy_config_path,
+                        gate_policy_path=gate_policy_path,
+                        output_dir=Path(tmpdir) / "lane-hold",
+                        promotion_target="paper",
+                        code_version="test-sha",
+                        persist_results=True,
+                        session_factory=session_factory,
+                    )
+
+        with session_factory() as session:
+            candidate = session.execute(
+                select(ResearchCandidate).where(
+                    ResearchCandidate.candidate_id == result.candidate_id
+                )
+            ).scalar_one()
+
+        self.assertEqual(candidate.lifecycle_role, "challenger")
+        self.assertEqual(candidate.lifecycle_status, "evaluated")
+        self.assertIsInstance(candidate.universe_definition, dict)
+        assert isinstance(candidate.universe_definition, dict)
+        lifecycle = candidate.universe_definition.get("autonomy_lifecycle")
+        self.assertIsInstance(lifecycle, dict)
+        assert isinstance(lifecycle, dict)
+        self.assertEqual(lifecycle.get("status"), "retained_challenger")

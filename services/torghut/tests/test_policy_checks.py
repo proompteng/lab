@@ -336,6 +336,106 @@ class TestPolicyChecks(TestCase):
         )
         self.assertIn("trade_count_below_minimum_for_progression", promotion.reasons)
 
+    def test_promotion_prerequisites_fail_when_fold_evidence_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "profitability-evidence-v4.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "profitability-benchmark-v4.json").write_text(
+                json.dumps(
+                    {
+                        "slices": [
+                            {"slice_type": "regime", "slice_key": "regime:neutral"}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "gates" / "profitability-evidence-validation.json").write_text(
+                json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            gate_report = _gate_report()
+            evidence = gate_report.get("promotion_evidence", {})
+            if isinstance(evidence, dict):
+                evidence["fold_metrics"] = {"count": 0, "items": []}
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={},
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("fold_metrics_evidence_insufficient", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_rationale_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "profitability-evidence-v4.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "profitability-benchmark-v4.json").write_text(
+                json.dumps(
+                    {
+                        "slices": [
+                            {"slice_type": "regime", "slice_key": "regime:neutral"}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "gates" / "profitability-evidence-validation.json").write_text(
+                json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            gate_report = _gate_report()
+            evidence = gate_report.get("promotion_evidence", {})
+            if isinstance(evidence, dict):
+                evidence["promotion_rationale"] = {}
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={},
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("promotion_rationale_missing", promotion.reasons)
+
 
 def _candidate_state() -> dict[str, object]:
     return {
@@ -373,4 +473,26 @@ def _gate_report() -> dict[str, object]:
             {"gate_id": "gate1_statistical_robustness", "status": "pass"},
             {"gate_id": "gate2_risk_capacity", "status": "pass"},
         ],
+        "promotion_evidence": {
+            "fold_metrics": {
+                "count": 1,
+                "items": [{"fold_name": "fold-1"}],
+                "artifact_ref": "backtest/evaluation-report.json",
+            },
+            "stress_metrics": {
+                "count": 4,
+                "items": [
+                    {"case": "spread"},
+                    {"case": "volatility"},
+                    {"case": "liquidity"},
+                    {"case": "halt"},
+                ],
+                "artifact_ref": "db:research_stress_metrics",
+            },
+            "promotion_rationale": {
+                "requested_target": "paper",
+                "gate_recommended_mode": "paper",
+                "gate_reasons": ["gate_result_ok"],
+            },
+        },
     }

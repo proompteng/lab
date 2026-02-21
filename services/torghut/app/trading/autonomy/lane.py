@@ -43,6 +43,8 @@ from ..models import SignalEnvelope
 from ..reporting import (
     EvaluationReport,
     EvaluationReportConfig,
+    PromotionRecommendation,
+    build_promotion_recommendation,
     generate_evaluation_report,
     write_evaluation_report,
 )
@@ -226,6 +228,7 @@ def run_autonomous_lane(
     gate_report: GateEvaluationReport | None = None
     gate_report_trace_id: str | None = None
     recommendation_trace_id: str | None = None
+    promotion_recommendation: PromotionRecommendation | None = None
     gate_report_path = gates_dir / "gate-evaluation.json"
     promotion_check_path = gates_dir / "promotion-prerequisites.json"
     rollback_check_path = gates_dir / "rollback-readiness.json"
@@ -421,6 +424,22 @@ def run_autonomous_lane(
             code_version=code_version,
             evaluated_at=now,
         )
+        fold_evidence = [
+            {
+                "fold_name": fold.fold_name,
+                "decision_count": fold.decision_count,
+                "trade_count": fold.trade_count,
+                "net_pnl": str(fold.net_pnl),
+                "max_drawdown": str(fold.max_drawdown),
+                "cost_bps": str(fold.cost_bps),
+                "regime_label": fold.regime.label(),
+            }
+            for fold in report.robustness.folds
+        ]
+        stress_evidence = [
+            _build_stress_bundle(report, stress_case)
+            for stress_case in ("spread", "volatility", "liquidity", "halt")
+        ]
         gate_report_payload = gate_report.to_payload()
         gate_report_payload["run_id"] = run_id
         gate_report_payload["throughput"] = {
@@ -429,6 +448,26 @@ def run_autonomous_lane(
             "trade_count": report.metrics.trade_count,
             "no_signal_window": False,
             "no_signal_reason": None,
+            "fold_metrics_count": len(walk_results.folds),
+            "stress_metrics_count": 4,
+        }
+        gate_report_payload["promotion_evidence"] = {
+            "fold_metrics": {
+                "count": len(fold_evidence),
+                "items": fold_evidence,
+                "artifact_ref": str(evaluation_report_path),
+            },
+            "stress_metrics": {
+                "count": len(stress_evidence),
+                "items": stress_evidence,
+                "artifact_ref": "db:research_stress_metrics",
+            },
+            "promotion_rationale": {
+                "requested_target": promotion_target,
+                "gate_recommended_mode": gate_report.recommended_mode,
+                "gate_reasons": sorted(gate_report.reasons),
+                "rationale_text": "Gate matrix recommendation captured from deterministic evaluation artifacts.",
+            },
         }
         gate_report_trace_id = _trace_id(gate_report_payload)
         gate_report_payload["provenance"] = {
@@ -446,7 +485,7 @@ def run_autonomous_lane(
             strategy_config_path=strategy_config_path,
             gate_policy_path=gate_policy_path,
         )
-        research_spec = {
+        research_spec: dict[str, Any] = {
             "run_id": run_id,
             "candidate_id": candidate_id,
             "candidate_hash": candidate_hash,
@@ -535,29 +574,55 @@ def run_autonomous_lane(
             promotion_target=promotion_target,
             drift_promotion_evidence=drift_promotion_evidence,
         )
-
-        promotion_allowed = (
-            gate_report.promotion_allowed
-            and promotion_check.allowed
-            and rollback_check.ready
-            and drift_gate_check["allowed"]
+        fold_metrics_count = len(walk_results.folds)
+        stress_metrics_count = 4
+        promotion_rationale = _build_promotion_rationale(
+            gate_report=gate_report,
+            promotion_check_reasons=promotion_check.reasons,
+            rollback_check_reasons=rollback_check.reasons,
+            promotion_target=promotion_target,
         )
-        promotion_reasons = sorted(
-            set(
-                [
-                    *gate_report.reasons,
-                    *promotion_check.reasons,
-                    *rollback_check.reasons,
-                    *[
-                        str(item)
-                        for item in drift_gate_check.get("reasons", [])
-                        if str(item).strip()
-                    ],
-                ]
-            )
+        promotion_recommendation = build_promotion_recommendation(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            requested_mode=promotion_target,
+            recommended_mode=gate_report.recommended_mode,
+            gate_allowed=(
+                gate_report.promotion_allowed and bool(drift_gate_check["allowed"])
+            ),
+            prerequisite_allowed=promotion_check.allowed,
+            rollback_ready=rollback_check.ready,
+            fold_metrics_count=fold_metrics_count,
+            stress_metrics_count=stress_metrics_count,
+            rationale=promotion_rationale,
+            reasons=[
+                *gate_report.reasons,
+                *promotion_check.reasons,
+                *rollback_check.reasons,
+                *[
+                    str(item)
+                    for item in drift_gate_check.get("reasons", [])
+                    if str(item).strip()
+                ],
+            ],
+        )
+        promotion_allowed = promotion_recommendation.eligible
+        promotion_reasons = promotion_recommendation.reasons
+        recommended_mode = promotion_recommendation.recommended_mode
+        recommendation_trace_id = promotion_recommendation.trace_id
+        research_spec["promotion_recommendation"] = promotion_recommendation.to_payload()
+        research_spec["promotion_evidence_requirements"] = {
+            "fold_metrics_count": len(fold_evidence),
+            "stress_case_count": len(stress_evidence),
+            "rationale_required": True,
+            "rationale_reason_codes": promotion_reasons,
+        }
+        candidate_spec_path.write_text(
+            json.dumps(research_spec, indent=2), encoding="utf-8"
         )
         promotion_gate_payload = {
             "allowed": promotion_allowed,
+            "recommended_mode": recommended_mode,
             "reasons": promotion_reasons,
             "checks": {
                 "gate_matrix": {
@@ -573,7 +638,9 @@ def run_autonomous_lane(
                 "rollback_readiness": rollback_check.to_payload(),
                 "profitability_validation": profitability_validation.to_payload(),
                 "drift_governance": drift_gate_check,
+                "evidence_requirements": promotion_recommendation.evidence.to_payload(),
             },
+            "recommendation": promotion_recommendation.to_payload(),
             "artifact_refs": sorted(
                 set(
                     [
@@ -595,15 +662,38 @@ def run_autonomous_lane(
         promotion_gate_path.write_text(
             json.dumps(promotion_gate_payload, indent=2), encoding="utf-8"
         )
-        recommendation_trace_id = _trace_id(
-            {
-                "run_id": run_id,
-                "candidate_id": candidate_id,
-                "recommended_mode": gate_report.recommended_mode,
-                "promotion_allowed": promotion_allowed,
-                "reasons": promotion_reasons,
-            }
+        gate_report_payload["promotion_recommendation"] = (
+            promotion_recommendation.to_payload()
         )
+        gate_report_payload["promotion_evidence"] = {
+            "fold_metrics": {
+                "count": len(fold_evidence),
+                "items": fold_evidence,
+                "artifact_ref": str(evaluation_report_path),
+            },
+            "stress_metrics": {
+                "count": len(stress_evidence),
+                "items": stress_evidence,
+                "artifact_ref": "db:research_stress_metrics",
+            },
+            "promotion_rationale": {
+                "requested_target": promotion_target,
+                "gate_recommended_mode": gate_report.recommended_mode,
+                "recommended_mode": recommended_mode,
+                "promotion_allowed": promotion_allowed,
+                "reason_codes": promotion_reasons,
+                "recommendation_trace_id": recommendation_trace_id,
+                "rationale_text": "Promotion decision derives from gate, prerequisite, and rollback checks.",
+            },
+        }
+        gate_report_payload["promotion_decision"] = {
+            "candidate_id": candidate_id,
+            "promotion_target": promotion_target,
+            "recommended_mode": recommended_mode,
+            "promotion_allowed": promotion_allowed,
+            "reason_codes": promotion_reasons,
+            "promotion_gate_artifact": str(promotion_gate_path),
+        }
         gate_report_payload["provenance"] = {
             "gate_report_trace_id": gate_report_trace_id,
             "recommendation_trace_id": recommendation_trace_id,
@@ -628,7 +718,6 @@ def run_autonomous_lane(
                 signals=signals,
                 walk_results=walk_results,
                 report=report,
-                gate_report=gate_report,
                 candidate_spec_path=candidate_spec_path,
                 evaluation_report_path=evaluation_report_path,
                 gate_report_path=gate_report_path,
@@ -637,6 +726,9 @@ def run_autonomous_lane(
                 promotion_target=promotion_target,
                 promotion_allowed=promotion_allowed,
                 promotion_reasons=promotion_reasons,
+                promotion_recommendation=promotion_recommendation,
+                fold_metrics_count=fold_metrics_count,
+                stress_metrics_count=stress_metrics_count,
                 gate_report_trace_id=gate_report_trace_id,
                 recommendation_trace_id=recommendation_trace_id,
             )
@@ -815,7 +907,6 @@ def _persist_run_outputs(
     signals: list[SignalEnvelope],
     walk_results: WalkForwardResults,
     report: EvaluationReport,
-    gate_report: GateEvaluationReport,
     candidate_spec_path: Path,
     evaluation_report_path: Path,
     gate_report_path: Path,
@@ -824,6 +915,9 @@ def _persist_run_outputs(
     promotion_target: str,
     promotion_allowed: bool,
     promotion_reasons: list[str],
+    promotion_recommendation: PromotionRecommendation,
+    fold_metrics_count: int,
+    stress_metrics_count: int,
     gate_report_trace_id: str,
     recommendation_trace_id: str,
 ) -> None:
@@ -831,6 +925,20 @@ def _persist_run_outputs(
 
     with session_factory() as session:
         with session.begin():
+            existing_champion = (
+                session.execute(
+                    select(ResearchCandidate)
+                    .where(
+                        ResearchCandidate.lifecycle_role == "champion",
+                        ResearchCandidate.lifecycle_status == "active",
+                        ResearchCandidate.promotion_target == promotion_target,
+                        ResearchCandidate.candidate_id != candidate_id,
+                    )
+                    .order_by(ResearchCandidate.created_at.desc())
+                )
+                .scalars()
+                .first()
+            )
             session.execute(
                 delete(ResearchFoldMetrics).where(
                     ResearchFoldMetrics.candidate_id == candidate_id
@@ -842,15 +950,50 @@ def _persist_run_outputs(
                 )
             )
             session.execute(
-                delete(ResearchPromotion).where(
-                    ResearchPromotion.candidate_id == candidate_id
-                )
-            )
-            session.execute(
                 delete(ResearchCandidate).where(
                     ResearchCandidate.candidate_id == candidate_id
                 )
             )
+            should_promote = (
+                promotion_allowed
+                and promotion_recommendation.action == "promote"
+                and promotion_recommendation.recommended_mode in {"paper", "live"}
+            )
+            candidate_role = "champion" if should_promote else "challenger"
+            candidate_status = "active" if should_promote else "evaluated"
+            metadata_bundle = {
+                "promotion_gate_trace_id": gate_report_trace_id,
+                "recommendation_trace_id": recommendation_trace_id,
+                "throughput": {
+                    "signal_count": len(signals),
+                    "decision_count": report.metrics.decision_count,
+                    "trade_count": report.metrics.trade_count,
+                },
+                "gate_reasons": sorted(set(promotion_reasons)),
+                "existing_champion_candidate_id": (
+                    existing_champion.candidate_id
+                    if existing_champion is not None
+                    else None
+                ),
+            }
+            recommended_mode = promotion_recommendation.recommended_mode
+            lifecycle_payload = {
+                "role": "challenger",
+                "status": "promoted_champion"
+                if should_promote
+                else "retained_challenger",
+                "promotable": promotion_allowed,
+                "promotion_target": promotion_target,
+                "recommended_mode": recommended_mode,
+                "reason_codes": list(promotion_reasons),
+                "recommendation_trace_id": recommendation_trace_id,
+                "gate_report_trace_id": gate_report_trace_id,
+                "champion_before": (
+                    {"candidate_id": existing_champion.candidate_id}
+                    if existing_champion is not None
+                    else None
+                ),
+            }
 
             candidate = ResearchCandidate(
                 run_id=run_id,
@@ -860,8 +1003,15 @@ def _persist_run_outputs(
                 decision_count=report.metrics.decision_count,
                 trade_count=report.metrics.trade_count,
                 symbols_covered=sorted({signal.symbol for signal in signals}),
-                universe_definition=_strategy_universe_definition(runtime_strategies),
+                universe_definition=_strategy_universe_definition(
+                    runtime_strategies,
+                    lifecycle_payload=lifecycle_payload,
+                ),
                 promotion_target=promotion_target,
+                lifecycle_role=candidate_role,
+                lifecycle_status=candidate_status,
+                metadata_bundle=metadata_bundle,
+                recommendation_bundle=promotion_recommendation.to_payload(),
             )
             session.add(candidate)
 
@@ -925,23 +1075,105 @@ def _persist_run_outputs(
                     )
                 )
 
+            evidence_bundle = {
+                "fold_metrics_count": fold_metrics_count,
+                "stress_metrics_count": stress_metrics_count,
+                "rationale_present": bool(promotion_recommendation.rationale),
+                "evidence_complete": promotion_recommendation.evidence.evidence_complete,
+                "reasons": list(promotion_recommendation.evidence.reasons),
+            }
+            challenger_decision = {
+                "decision_type": "promotion",
+                "run_id": run_id,
+                "candidate_id": candidate_id,
+                "promotion_target": promotion_target,
+                "recommended_mode": recommended_mode,
+                "promotion_allowed": promotion_allowed,
+                "reason_codes": list(promotion_reasons),
+                "recommendation_trace_id": recommendation_trace_id,
+                "gate_report_trace_id": gate_report_trace_id,
+            }
             session.add(
                 ResearchPromotion(
                     candidate_id=candidate_id,
                     requested_mode=promotion_target,
-                    approved_mode=gate_report.recommended_mode
-                    if promotion_allowed
-                    else None,
+                    approved_mode=recommended_mode if promotion_allowed else None,
                     approver="autonomous_scheduler",
                     approver_role="system",
-                    approve_reason="promotion_allowed" if promotion_allowed else None,
+                    approve_reason=json.dumps(challenger_decision, sort_keys=True)
+                    if promotion_allowed
+                    else None,
                     deny_reason=None
                     if promotion_allowed
-                    else ";".join(promotion_reasons),
+                    else json.dumps(challenger_decision, sort_keys=True),
                     paper_candidate_patch_ref=str(patch_path) if patch_path else None,
                     effective_time=now if promotion_allowed else None,
+                    decision_action=promotion_recommendation.action,
+                    decision_rationale=promotion_recommendation.rationale,
+                    evidence_bundle=evidence_bundle,
+                    recommendation_trace_id=recommendation_trace_id,
+                    successor_candidate_id=(
+                        None
+                        if promotion_recommendation.action != "demote"
+                        else candidate_id
+                    ),
+                    rollback_candidate_id=(
+                        existing_champion.candidate_id
+                        if existing_champion is not None
+                        else None
+                    ),
                 )
             )
+            if should_promote and existing_champion is not None:
+                existing_champion.lifecycle_role = "demoted"
+                existing_champion.lifecycle_status = "standby"
+                existing_champion.metadata_bundle = {
+                    "demoted_at": now.isoformat(),
+                    "demoted_by_candidate_id": candidate_id,
+                    "rollback_safe": True,
+                    "gate_report_trace_id": gate_report_trace_id,
+                }
+                session.add(existing_champion)
+                demotion_trace_id = _trace_id(
+                    {
+                        "decision_action": "demote",
+                        "candidate_id": existing_champion.candidate_id,
+                        "successor_candidate_id": candidate_id,
+                        "run_id": run_id,
+                        "recommended_mode": promotion_recommendation.recommended_mode,
+                    }
+                )
+                demotion_decision = {
+                    "decision_type": "demotion",
+                    "run_id": run_id,
+                    "candidate_id": existing_champion.candidate_id,
+                    "successor_candidate_id": candidate_id,
+                    "recommended_mode": promotion_recommendation.recommended_mode,
+                    "rollback_safe": True,
+                    "recommendation_trace_id": demotion_trace_id,
+                    "gate_report_trace_id": gate_report_trace_id,
+                }
+                session.add(
+                    ResearchPromotion(
+                        candidate_id=existing_champion.candidate_id,
+                        requested_mode=promotion_target,
+                        approved_mode="shadow",
+                        approver="autonomous_scheduler",
+                        approver_role="system",
+                        approve_reason=json.dumps(demotion_decision, sort_keys=True),
+                        deny_reason=None,
+                        paper_candidate_patch_ref=None,
+                        effective_time=now,
+                        decision_action="demote",
+                        decision_rationale=(
+                            f"demoted_after_promotion_of_{candidate_id}_for_{promotion_target}"
+                        ),
+                        evidence_bundle=evidence_bundle,
+                        recommendation_trace_id=demotion_trace_id,
+                        successor_candidate_id=candidate_id,
+                        rollback_candidate_id=existing_champion.candidate_id,
+                    )
+                )
             run = session.execute(
                 select(ResearchRun).where(ResearchRun.run_id == run_id)
             ).scalar_one_or_none()
@@ -970,6 +1202,30 @@ def _compute_candidate_hash(
     hasher.update(gate_report.recommended_mode.encode("utf-8"))
     hasher.update(str(sorted(gate_report.reasons)).encode("utf-8"))
     return hasher.hexdigest()[:32]
+
+
+def _build_promotion_rationale(
+    *,
+    gate_report: GateEvaluationReport,
+    promotion_check_reasons: list[str],
+    rollback_check_reasons: list[str],
+    promotion_target: str,
+) -> str:
+    if (
+        gate_report.promotion_allowed
+        and not promotion_check_reasons
+        and not rollback_check_reasons
+    ):
+        return (
+            f"all_required_gates_passed_for_{promotion_target}_promotion_"
+            f"recommended_mode_{gate_report.recommended_mode}"
+        )
+    reasons = sorted(
+        set([*gate_report.reasons, *promotion_check_reasons, *rollback_check_reasons])
+    )
+    if not reasons:
+        return f"promotion_target_{promotion_target}_held_without_additional_reasons"
+    return f"promotion_blocked_or_held:{','.join(reasons)}"
 
 
 def _trace_id(payload: object) -> str:
@@ -1052,10 +1308,14 @@ def _strategy_parameter_set(
 
 def _strategy_universe_definition(
     runtime_strategies: list[StrategyRuntimeConfig],
+    *,
+    lifecycle_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not runtime_strategies:
-        return {}
-    return {
+        return {
+            "autonomy_lifecycle": lifecycle_payload or {},
+        }
+    payload: dict[str, Any] = {
         "strategies": [
             {
                 "strategy_id": item.strategy_id,
@@ -1066,6 +1326,8 @@ def _strategy_universe_definition(
         ],
         "count": len(runtime_strategies),
     }
+    payload["autonomy_lifecycle"] = lifecycle_payload or {}
+    return payload
 
 
 def _metric_counter_int(value: object) -> int:

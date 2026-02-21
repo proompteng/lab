@@ -271,7 +271,6 @@ class TestTradingSchedulerAutonomy(TestCase):
 
             self.assertEqual(deps.call_kwargs["promotion_target"], "paper")
             self.assertIsNone(deps.call_kwargs["approval_token"])
-
     def test_run_autonomous_cycle_falls_back_to_paper_when_live_token_missing(
         self,
     ) -> None:
@@ -348,6 +347,69 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertEqual(scheduler.state.last_autonomy_run_id, "test-run-id")
             self.assertEqual(scheduler.state.last_autonomy_recommendation, "paper")
             self.assertIn("drift_promotion_evidence", deps.call_kwargs)
+
+    def test_run_autonomous_cycle_tracks_promotion_and_throughput_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            deps.gate_payload = {
+                "recommended_mode": "paper",
+                "gates": [],
+                "promotion_recommendation": {
+                    "action": "promote",
+                    "eligible": True,
+                    "trace_id": "rec-trace-123",
+                },
+                "throughput": {
+                    "signal_count": 9,
+                    "decision_count": 7,
+                    "trade_count": 3,
+                    "fold_metrics_count": 1,
+                    "stress_metrics_count": 4,
+                    "no_signal_window": False,
+                    "no_signal_reason": None,
+                },
+                "promotion_decision": {
+                    "promotion_allowed": True,
+                    "recommended_mode": "paper",
+                    "reason_codes": [],
+                },
+            }
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
+                scheduler._run_autonomous_cycle()
+
+            self.assertEqual(scheduler.state.last_autonomy_promotion_action, "promote")
+            self.assertTrue(scheduler.state.last_autonomy_promotion_eligible)
+            self.assertEqual(
+                scheduler.state.last_autonomy_recommendation_trace_id, "rec-trace-123"
+            )
+            self.assertEqual(scheduler.state.metrics.autonomy_promotions_total, 1)
+            self.assertEqual(scheduler.state.metrics.autonomy_last_signal_count, 9)
+            self.assertEqual(scheduler.state.metrics.autonomy_last_decision_count, 7)
+            self.assertEqual(scheduler.state.metrics.autonomy_last_trade_count, 3)
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_last_fold_metrics_count, 1
+            )
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_last_stress_metrics_count, 4
+            )
+            self.assertEqual(scheduler.state.metrics.autonomy_signal_throughput_total, 9)
+            self.assertEqual(scheduler.state.metrics.autonomy_decision_throughput_total, 7)
+            self.assertEqual(scheduler.state.metrics.autonomy_trade_throughput_total, 3)
+            self.assertEqual(scheduler.state.metrics.autonomy_promotion_allowed_total, 1)
+            self.assertEqual(scheduler.state.metrics.autonomy_promotion_blocked_total, 0)
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_recommendation_total.get("paper"), 1
+            )
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_outcome_total.get("promoted_paper"), 1
+            )
 
     def test_run_autonomous_cycle_records_ingest_reason_when_no_signals(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -770,7 +832,22 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
 
             gate_report_path = output_dir / "gate-evaluation.json"
-            gate_report_path.write_text(json.dumps(deps.gate_payload), encoding="utf-8")
+            gate_payload = deps.gate_payload or {
+                "recommended_mode": "paper",
+                "gates": [],
+                "throughput": {
+                    "signal_count": 8,
+                    "decision_count": 5,
+                    "trade_count": 3,
+                    "fold_metrics_count": 1,
+                    "stress_metrics_count": 4,
+                },
+                "promotion_decision": {
+                    "promotion_allowed": True,
+                    "recommended_mode": "paper",
+                },
+            }
+            gate_report_path.write_text(json.dumps(gate_payload), encoding="utf-8")
             deps.gate_report_path = gate_report_path
 
             return SimpleNamespace(
