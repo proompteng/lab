@@ -314,7 +314,7 @@ def _route_regime_label(
 ) -> str:
     explicit = payload.get('regime_label')
     if isinstance(explicit, str) and explicit.strip():
-        return explicit.strip()
+        return _normalize_route_regime(explicit)
     if macd is None or macd_signal is None:
         return 'unknown'
     delta = macd - macd_signal
@@ -323,6 +323,10 @@ def _route_regime_label(
     if delta <= Decimal('-0.02'):
         return 'mean_revert'
     return 'range'
+
+
+def _normalize_route_regime(value: str) -> str:
+    return value.strip().lower()
 
 
 def _validate_signal_schema_version(signal: SignalEnvelope) -> None:

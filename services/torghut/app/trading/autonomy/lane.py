@@ -37,8 +37,14 @@ from ..evaluation import (
     validate_profitability_evidence_v4,
     write_walk_forward_results,
 )
-from ..features import extract_price, extract_rsi
-from ..features import extract_signal_features
+from ..features import (
+    FeatureNormalizationError,
+    extract_price,
+    extract_rsi,
+    extract_signal_features,
+    normalize_feature_vector_v3,
+)
+from ..forecasting import build_default_forecast_router
 from ..models import SignalEnvelope
 from ..reporting import (
     EvaluationReport,
@@ -408,6 +414,7 @@ def run_autonomous_lane(
                 metrics_payload=metrics_payload, decisions=walk_decisions
             )
         )
+        forecast_gate_metrics = _resolve_gate_forecast_metrics(signals=ordered_signals)
         confidence_calibration_raw = profitability_evidence_payload.get(
             "confidence_calibration"
         )
@@ -463,6 +470,7 @@ def run_autonomous_lane(
             robustness=report.robustness.to_payload(),
             tca_metrics=_load_tca_gate_inputs(factory),
             llm_metrics={"error_ratio": "0"},
+            forecast_metrics=forecast_gate_metrics,
             profitability_evidence=profitability_evidence_payload,
             fragility_state=fragility_state,
             fragility_score=fragility_score,
@@ -1594,6 +1602,73 @@ def _resolve_gate_fragility_inputs(
             selected_rank = rank
 
     return selected_state, selected_score, selected_stability
+
+
+def _resolve_gate_forecast_metrics(
+    *,
+    signals: list[SignalEnvelope],
+) -> dict[str, str]:
+    if not signals or not settings.trading_forecast_router_enabled:
+        return {}
+
+    try:
+        router = build_default_forecast_router(
+            policy_path=settings.trading_forecast_router_policy_path,
+            refinement_enabled=settings.trading_forecast_router_refinement_enabled,
+        )
+    except Exception:
+        return {}
+
+    fallback_total = 0
+    latency_samples_ms: list[int] = []
+    calibration_scores: list[Decimal] = []
+
+    for signal in signals:
+        try:
+            feature_vector = normalize_feature_vector_v3(signal)
+        except FeatureNormalizationError:
+            return {}
+
+        try:
+            route_result = router.route_and_forecast(
+                feature_vector=feature_vector,
+                horizon=signal.timeframe or "1Min",
+                event_ts=signal.event_ts,
+            )
+        except Exception:
+            return {}
+
+        if route_result.contract.fallback.applied:
+            fallback_total += 1
+        latency_samples_ms.append(route_result.contract.inference_latency_ms)
+        calibration_scores.append(route_result.contract.calibration_score)
+
+    expected_samples = len(signals)
+    if len(latency_samples_ms) != expected_samples or len(calibration_scores) != expected_samples:
+        return {}
+
+    fallback_rate = (Decimal(fallback_total) / Decimal(expected_samples)).quantize(
+        Decimal("0.0001")
+    )
+    calibration_score_min = min(calibration_scores).quantize(Decimal("0.0001"))
+    latency_ms_p95 = _nearest_rank_percentile(latency_samples_ms, 95)
+
+    return {
+        "fallback_rate": str(fallback_rate),
+        "inference_latency_ms_p95": str(latency_ms_p95),
+        "calibration_score_min": str(calibration_score_min),
+    }
+
+
+def _nearest_rank_percentile(values: list[int], percentile: int) -> int:
+    if not values:
+        return 0
+    bounded = max(1, min(100, percentile))
+    ordered = sorted(values)
+    index = ((len(ordered) * bounded) + 99) // 100 - 1
+    if index < 0:
+        index = 0
+    return ordered[index]
 
 
 def _decimal_or_default(value: object, default: Decimal) -> Decimal:

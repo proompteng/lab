@@ -34,6 +34,7 @@ class TestAutonomyGates(TestCase):
                 "negative_fold_count": 1,
                 "net_pnl_cv": "0.3",
             },
+            forecast_metrics=_healthy_forecast_metrics_payload(),
             profitability_evidence=_profitability_evidence_payload(),
         )
 
@@ -61,6 +62,7 @@ class TestAutonomyGates(TestCase):
                 "cost_bps": "5",
             },
             robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            forecast_metrics=_healthy_forecast_metrics_payload(),
             profitability_evidence=_profitability_evidence_payload(),
         )
 
@@ -120,6 +122,7 @@ class TestAutonomyGates(TestCase):
                 "avg_shortfall_notional": "7",
                 "avg_churn_ratio": "0.45",
             },
+            forecast_metrics=_healthy_forecast_metrics_payload(),
             profitability_evidence=_profitability_evidence_payload(),
         )
 
@@ -148,6 +151,7 @@ class TestAutonomyGates(TestCase):
                 "cost_bps": "5",
             },
             robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            forecast_metrics=_healthy_forecast_metrics_payload(),
         )
 
         report = evaluate_gate_matrix(
@@ -177,6 +181,7 @@ class TestAutonomyGates(TestCase):
                 "cost_bps": "5",
             },
             robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            forecast_metrics=_healthy_forecast_metrics_payload(),
             profitability_evidence=_profitability_evidence_payload(),
             fragility_state="stress",
             fragility_score=Decimal("0.7"),
@@ -225,6 +230,34 @@ class TestAutonomyGates(TestCase):
         self.assertIn("forecast_inference_latency_exceeds_threshold", report.reasons)
         self.assertIn("forecast_calibration_score_below_threshold", report.reasons)
 
+    def test_gate_matrix_fails_when_forecast_health_metrics_missing(self) -> None:
+        policy = GatePolicyMatrix()
+        inputs = GateInputs(
+            feature_schema_version="3.0.0",
+            required_feature_null_rate=Decimal("0.00"),
+            staleness_ms_p95=0,
+            symbol_coverage=2,
+            metrics={
+                "decision_count": 20,
+                "trade_count": 10,
+                "net_pnl": "50",
+                "max_drawdown": "100",
+                "turnover_ratio": "1.5",
+                "cost_bps": "5",
+            },
+            robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            profitability_evidence=_profitability_evidence_payload(),
+        )
+
+        report = evaluate_gate_matrix(
+            inputs, policy=policy, promotion_target="paper", code_version="test"
+        )
+
+        self.assertFalse(report.promotion_allowed)
+        self.assertIn("forecast_fallback_rate_missing", report.reasons)
+        self.assertIn("forecast_inference_latency_p95_missing", report.reasons)
+        self.assertIn("forecast_calibration_score_missing", report.reasons)
+
     def test_gate_matrix_degrades_when_uncertainty_threshold_exceeded(self) -> None:
         policy = GatePolicyMatrix()
         inputs = GateInputs(
@@ -241,6 +274,7 @@ class TestAutonomyGates(TestCase):
                 "cost_bps": "5",
             },
             robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            forecast_metrics=_healthy_forecast_metrics_payload(),
             profitability_evidence=_profitability_evidence_payload(
                 coverage_error="0.06",
                 gate_action="degrade",
@@ -277,6 +311,7 @@ class TestAutonomyGates(TestCase):
                 "cost_bps": "5",
             },
             robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            forecast_metrics=_healthy_forecast_metrics_payload(),
             profitability_evidence=payload,
         )
 
@@ -327,4 +362,12 @@ def _profitability_evidence_payload(
         },
         "benchmark": {"schema_version": "profitability-benchmark-v4"},
         "validation": {"passed": True},
+    }
+
+
+def _healthy_forecast_metrics_payload() -> dict[str, str]:
+    return {
+        "fallback_rate": "0.01",
+        "inference_latency_ms_p95": "50",
+        "calibration_score_min": "0.95",
     }

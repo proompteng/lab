@@ -558,7 +558,7 @@ class ForecastRouterV5:
     def _resolve_regime(self, feature_vector: FeatureVectorV3) -> str:
         explicit = feature_vector.values.get('route_regime_label')
         if isinstance(explicit, str) and explicit.strip():
-            return explicit.strip()
+            return explicit.strip().lower()
         macd = optional_decimal(feature_vector.values.get('macd')) or Decimal('0')
         signal = optional_decimal(feature_vector.values.get('macd_signal')) or Decimal('0')
         spread = macd - signal
