@@ -16,6 +16,7 @@ class LLMRiskGuardrails:
     effective_fail_mode: str
     rollout_stage: str
     governance_evidence_complete: bool
+    committee_enabled: bool
     reasons: tuple[str, ...]
 
 
@@ -94,6 +95,26 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
         adjustment_allowed = False
         reasons.append("llm_adjustment_not_approved")
 
+    committee_enabled = settings.llm_committee_enabled
+    if committee_enabled:
+        roles = settings.llm_committee_roles
+        mandatory_roles = settings.llm_committee_mandatory_roles
+        allowed_roles = {
+            "researcher",
+            "risk_critic",
+            "execution_critic",
+            "policy_judge",
+        }
+        invalid_roles = sorted({role for role in roles if role not in allowed_roles})
+        invalid_mandatory_roles = sorted(
+            {role for role in mandatory_roles if role not in allowed_roles}
+        )
+        if invalid_roles or invalid_mandatory_roles:
+            allow_requests = False
+            shadow_mode = True
+            committee_enabled = False
+            reasons.append("llm_committee_roles_invalid")
+
     return LLMRiskGuardrails(
         allow_requests=allow_requests,
         shadow_mode=shadow_mode,
@@ -101,6 +122,7 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
         effective_fail_mode=effective_fail_mode,
         rollout_stage=rollout_stage,
         governance_evidence_complete=governance_evidence_complete,
+        committee_enabled=committee_enabled,
         reasons=tuple(reasons),
     )
 

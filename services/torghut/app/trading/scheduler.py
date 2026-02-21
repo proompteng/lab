@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import Callable, Mapping
@@ -149,6 +150,18 @@ class TradingMetrics:
     )
     llm_tokens_prompt_total: int = 0
     llm_tokens_completion_total: int = 0
+    llm_committee_requests_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    llm_committee_latency_ms: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    llm_committee_verdict_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    llm_committee_schema_error_total: int = 0
+    llm_committee_veto_alignment_total: int = 0
+    llm_committee_veto_total: int = 0
     execution_requests_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
@@ -294,6 +307,38 @@ class TradingMetrics:
             normalized = "unknown"
         current = self.llm_policy_resolution_total.get(normalized, 0)
         self.llm_policy_resolution_total[normalized] = current + 1
+
+    def record_llm_committee_member(
+        self,
+        *,
+        role: str,
+        verdict: str,
+        latency_ms: int | None,
+        schema_error: bool,
+    ) -> None:
+        self.llm_committee_requests_total[role] = (
+            self.llm_committee_requests_total.get(role, 0) + 1
+        )
+        if latency_ms is not None:
+            self.llm_committee_latency_ms[role] = latency_ms
+        verdict_key = f"{role}:{verdict}"
+        self.llm_committee_verdict_total[verdict_key] = (
+            self.llm_committee_verdict_total.get(verdict_key, 0) + 1
+        )
+        if schema_error:
+            self.llm_committee_schema_error_total += 1
+
+    def record_llm_committee_veto_alignment(
+        self,
+        *,
+        committee_veto: bool,
+        deterministic_veto: bool,
+    ) -> None:
+        if not committee_veto:
+            return
+        self.llm_committee_veto_total += 1
+        if deterministic_veto:
+            self.llm_committee_veto_alignment_total += 1
 
     def record_strategy_runtime(self, telemetry: DecisionRuntimeTelemetry) -> None:
         if not telemetry.runtime_enabled:
@@ -1115,12 +1160,34 @@ class TradingPipeline:
             )
 
             response_json: dict[str, Any] = dict(outcome.response_json)
+            response_json["advisory_only"] = True
+            response_json["request_hash"] = outcome.request_hash
+            response_json["response_hash"] = outcome.response_hash
             if policy_outcome.reason:
                 response_json["policy_override"] = policy_outcome.reason
                 response_json["policy_verdict"] = policy_outcome.verdict
             if guardrails.reasons:
                 response_json["mrm_guardrails"] = list(guardrails.reasons)
             response_json["policy_resolution"] = policy_resolution
+
+            committee_payload = response_json.get("committee")
+            if isinstance(committee_payload, Mapping):
+                committee_roles = cast(Mapping[str, Any], committee_payload).get(
+                    "roles", {}
+                )
+                if isinstance(committee_roles, Mapping):
+                    for role, role_payload in cast(
+                        Mapping[str, Any], committee_roles
+                    ).items():
+                        if not isinstance(role_payload, Mapping):
+                            continue
+                        role_data = cast(Mapping[str, Any], role_payload)
+                        self.state.metrics.record_llm_committee_member(
+                            role=str(role),
+                            verdict=str(role_data.get("verdict", "unknown")),
+                            latency_ms=_optional_int(role_data.get("latency_ms")),
+                            schema_error=bool(role_data.get("schema_error", False)),
+                        )
 
             if outcome.tokens_prompt is not None:
                 self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
@@ -1174,6 +1241,10 @@ class TradingPipeline:
                     self.state.metrics.llm_guardrail_shadow_total += 1
                 return decision, None
             if policy_outcome.verdict == "veto":
+                self.state.metrics.record_llm_committee_veto_alignment(
+                    committee_veto=bool(outcome.response.committee),
+                    deterministic_veto=True,
+                )
                 return decision, policy_outcome.reason or "llm_veto"
 
             return policy_outcome.decision, None
@@ -1197,6 +1268,9 @@ class TradingPipeline:
                 response_json["mrm_guardrails"] = list(guardrails.reasons)
             if not request_json:
                 request_json = {"decision": decision.model_dump(mode="json")}
+            response_json["advisory_only"] = True
+            response_json["request_hash"] = _hash_payload(request_json)
+            response_json["response_hash"] = _hash_payload(response_json)
             self._persist_llm_review(
                 session=session,
                 decision_row=decision_row,
@@ -1265,23 +1339,27 @@ class TradingPipeline:
             market_context=market_context,
             recent_decisions=recent_decisions,
         ).model_dump(mode="json")
+        response_payload = {
+            "error": reason,
+            "fallback": fallback,
+            "effective_verdict": effective_verdict,
+            "policy_resolution": policy_resolution
+            or _build_llm_policy_resolution(
+                rollout_stage=_normalize_rollout_stage(settings.llm_rollout_stage),
+                effective_fail_mode=fallback,
+                guardrail_reasons=risk_flags or [],
+            ),
+            "advisory_only": True,
+        }
+        response_payload["request_hash"] = _hash_payload(request_payload)
+        response_payload["response_hash"] = _hash_payload(response_payload)
         self._persist_llm_review(
             session=session,
             decision_row=decision_row,
             model=settings.llm_model,
             prompt_version=settings.llm_prompt_version,
             request_json=request_payload,
-            response_json={
-                "error": reason,
-                "fallback": fallback,
-                "effective_verdict": effective_verdict,
-                "policy_resolution": policy_resolution
-                or _build_llm_policy_resolution(
-                    rollout_stage=_normalize_rollout_stage(settings.llm_rollout_stage),
-                    effective_fail_mode=fallback,
-                    guardrail_reasons=risk_flags or [],
-                ),
-            },
+            response_json=response_payload,
             verdict="error",
             confidence=None,
             adjusted_qty=None,
@@ -1634,6 +1712,22 @@ def _optional_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
+def _optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hash_payload(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _is_llm_stage_policy_violation(rollout_stage: str) -> bool:
     if rollout_stage == "stage0":
         return (
@@ -1770,6 +1864,7 @@ class TradingScheduler:
                 "allow_requests": guardrails.allow_requests,
                 "governance_evidence_complete": guardrails.governance_evidence_complete,
                 "effective_adjustment_allowed": guardrails.adjustment_allowed,
+                "committee_enabled": guardrails.committee_enabled,
                 "reasons": list(guardrails.reasons),
             },
         }

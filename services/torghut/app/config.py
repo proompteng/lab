@@ -642,6 +642,19 @@ class Settings(BaseSettings):
     llm_adjustment_approved: bool = Field(
         default=False, alias="LLM_ADJUSTMENT_APPROVED"
     )
+    llm_committee_enabled: bool = Field(default=True, alias="LLM_COMMITTEE_ENABLED")
+    llm_committee_roles_raw: str = Field(
+        default="researcher,risk_critic,execution_critic,policy_judge",
+        alias="LLM_COMMITTEE_ROLES",
+    )
+    llm_committee_mandatory_roles_raw: str = Field(
+        default="risk_critic,execution_critic,policy_judge",
+        alias="LLM_COMMITTEE_MANDATORY_ROLES",
+    )
+    llm_committee_fail_closed_verdict: Literal["veto", "abstain"] = Field(
+        default="veto",
+        alias="LLM_COMMITTEE_FAIL_CLOSED_VERDICT",
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -731,6 +744,20 @@ class Settings(BaseSettings):
             normalized_model_version_lock = self.llm_model_version_lock.strip()
             # Model lock evidence must be explicitly configured; never backfill from llm_model.
             self.llm_model_version_lock = normalized_model_version_lock or None
+        self.llm_committee_roles_raw = ",".join(
+            [
+                item.strip()
+                for item in self.llm_committee_roles_raw.split(",")
+                if item.strip()
+            ]
+        )
+        self.llm_committee_mandatory_roles_raw = ",".join(
+            [
+                item.strip()
+                for item in self.llm_committee_mandatory_roles_raw.split(",")
+                if item.strip()
+            ]
+        )
         self.trading_allocator_default_regime = (
             self.trading_allocator_default_regime.strip() or "neutral"
         )
@@ -848,6 +875,14 @@ class Settings(BaseSettings):
         if self.llm_live_fail_open_requested and self.llm_fail_open_live_approved:
             exceptions.append("live_fail_open_approved")
         return exceptions
+
+    @property
+    def llm_committee_roles(self) -> list[str]:
+        return [item.strip() for item in self.llm_committee_roles_raw.split(",") if item.strip()]
+
+    @property
+    def llm_committee_mandatory_roles(self) -> list[str]:
+        return [item.strip() for item in self.llm_committee_mandatory_roles_raw.split(",") if item.strip()]
 
     @property
     def llm_live_fail_open_requested(self) -> bool:

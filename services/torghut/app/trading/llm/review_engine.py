@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
+import hashlib
 from pathlib import Path
 from typing import Any, Optional, cast
 
@@ -25,6 +27,8 @@ from .schema import (
     MarketSnapshot,
     PortfolioSnapshot,
     RecentDecisionSummary,
+    LLMCommitteeMemberResponse,
+    LLMCommitteeTrace,
     LLMReviewResponse,
 )
 
@@ -64,6 +68,13 @@ _ALLOWED_POSITION_KEYS = {
     "unrealized_plpc",
     "cost_basis",
 }
+_COMMITTEE_ROLES = {
+    "researcher",
+    "risk_critic",
+    "execution_critic",
+    "policy_judge",
+}
+_MANDATORY_COMMITTEE_ROLES = {"risk_critic", "execution_critic", "policy_judge"}
 
 
 @dataclass
@@ -75,6 +86,8 @@ class LLMReviewOutcome:
     prompt_version: str
     tokens_prompt: Optional[int]
     tokens_completion: Optional[int]
+    request_hash: str
+    response_hash: str
 
 
 class LLMReviewEngine:
@@ -123,6 +136,34 @@ class LLMReviewEngine:
                 recent_decisions,
             )
         request_json = request.model_dump(mode="json")
+        if settings.llm_committee_enabled:
+            response, tokens_prompt, tokens_completion = self._review_with_committee(
+                request_json
+            )
+        else:
+            response, tokens_prompt, tokens_completion = self._review_single(
+                request_json
+            )
+
+        response_json = response.model_dump(mode="json")
+        request_hash = _hash_payload(request_json)
+        response_hash = _hash_payload(response_json)
+
+        return LLMReviewOutcome(
+            request_json=request_json,
+            response_json=response_json,
+            response=response,
+            model=self.model,
+            prompt_version=self.prompt_version,
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
+            request_hash=request_hash,
+            response_hash=response_hash,
+        )
+
+    def _review_single(
+        self, request_json: dict[str, Any]
+    ) -> tuple[LLMReviewResponse, Optional[int], Optional[int]]:
         messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": self.system_prompt},
             {
@@ -154,16 +195,95 @@ class LLMReviewEngine:
         usage = raw.usage or {}
         tokens_prompt = _coerce_int(usage.get("prompt_tokens"))
         tokens_completion = _coerce_int(usage.get("completion_tokens"))
+        return response, tokens_prompt, tokens_completion
 
-        return LLMReviewOutcome(
-            request_json=request_json,
-            response_json=response.model_dump(mode="json"),
-            response=response,
-            model=self.model,
-            prompt_version=self.prompt_version,
-            tokens_prompt=tokens_prompt,
-            tokens_completion=tokens_completion,
+    def _review_with_committee(
+        self, request_json: dict[str, Any]
+    ) -> tuple[LLMReviewResponse, Optional[int], Optional[int]]:
+        role_outputs: dict[str, LLMCommitteeMemberResponse] = {}
+        schema_error_count = 0
+        tokens_prompt_total = 0
+        tokens_completion_total = 0
+
+        configured_roles = [
+            role
+            for role in settings.llm_committee_roles
+            if role in _COMMITTEE_ROLES
+        ]
+        roles = configured_roles or [
+            "researcher",
+            "risk_critic",
+            "execution_critic",
+            "policy_judge",
+        ]
+
+        mandatory_roles = [
+            role
+            for role in settings.llm_committee_mandatory_roles
+            if role in _MANDATORY_COMMITTEE_ROLES
+        ]
+        if not mandatory_roles:
+            mandatory_roles = ["risk_critic", "execution_critic", "policy_judge"]
+
+        for role in roles:
+            started = time.monotonic()
+            try:
+                raw = self.client.request_review(
+                    messages=[
+                        {"role": "system", "content": _committee_system_prompt(role)},
+                        {
+                            "role": "user",
+                            "content": (
+                                "Review the following trade decision and respond with JSON "
+                                "matching the schema described.\n\n"
+                                + json.dumps(request_json, separators=(",", ":"))
+                            ),
+                        },
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+                parsed = _parse_json_object(raw.content or "")
+                parsed["role"] = role
+                member = LLMCommitteeMemberResponse.model_validate(parsed)
+                member.latency_ms = int((time.monotonic() - started) * 1000)
+                role_outputs[role] = member
+                usage = raw.usage or {}
+                tokens_prompt_total += _coerce_int(usage.get("prompt_tokens")) or 0
+                tokens_completion_total += (
+                    _coerce_int(usage.get("completion_tokens")) or 0
+                )
+            except Exception:
+                schema_error_count += 1
+                role_outputs[role] = LLMCommitteeMemberResponse(
+                    role=cast(
+                        Any,
+                        role,
+                    ),
+                    verdict=settings.llm_committee_fail_closed_verdict,
+                    confidence=0.0,
+                    uncertainty="high",
+                    rationale_short="committee_role_schema_error",
+                    required_checks=[],
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                    schema_error=True,
+                )
+
+        committee_trace = LLMCommitteeTrace(
+            roles=cast(dict[Any, LLMCommitteeMemberResponse], role_outputs),
+            mandatory_roles=cast(list[Any], mandatory_roles),
+            fail_closed_verdict=settings.llm_committee_fail_closed_verdict,
+            schema_error_count=schema_error_count,
         )
+
+        aggregate = _aggregate_committee(
+            role_outputs=role_outputs,
+            mandatory_roles=mandatory_roles,
+            fail_closed_verdict=settings.llm_committee_fail_closed_verdict,
+        )
+        aggregate["committee"] = committee_trace.model_dump(mode="json")
+        response = LLMReviewResponse.model_validate(aggregate)
+        return response, tokens_prompt_total, tokens_completion_total
 
     def build_request(
         self,
@@ -262,11 +382,133 @@ def _normalize_llm_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if "confidence" not in payload:
         payload = dict(payload)
         payload["confidence"] = 0.5
+    if "uncertainty" not in payload:
+        payload = dict(payload)
+        payload["uncertainty"] = "medium"
+    if "required_checks" not in payload:
+        payload = dict(payload)
+        payload["required_checks"] = []
     if "risk_flags" not in payload:
         payload = dict(payload)
         payload["risk_flags"] = []
+    rationale = payload.get("rationale")
+    rationale_short = payload.get("rationale_short")
+    if not rationale and isinstance(rationale_short, str):
+        payload = dict(payload)
+        payload["rationale"] = rationale_short
+    if not rationale_short and isinstance(rationale, str):
+        payload = dict(payload)
+        payload["rationale_short"] = rationale
 
     return payload
+
+
+def _committee_system_prompt(role: str) -> str:
+    role_instructions: dict[str, str] = {
+        "researcher": "Explain thesis quality and expected edge.",
+        "risk_critic": "Stress-test downside and risk/policy violations.",
+        "execution_critic": "Check feasibility under market microstructure and execution constraints.",
+        "policy_judge": "Validate schema, confidence calibration, and required deterministic checks.",
+    }
+    role_instruction = role_instructions.get(role, "Provide bounded committee review.")
+    return (
+        "You are an automated trading committee member. "
+        f"Role: {role}. {role_instruction} "
+        "Output must be advisory-only and cannot directly execute trades. "
+        "Respond ONLY with a JSON object containing exactly these keys: "
+        "verdict, confidence, uncertainty, rationale_short, required_checks, adjusted_qty, adjusted_order_type, limit_price, risk_flags. "
+        "verdict must be one of approve|adjust|veto|abstain|escalate. "
+        "confidence must be between 0 and 1. uncertainty must be low|medium|high. "
+        "rationale_short must be <= 280 chars. required_checks must list deterministic policy check IDs. "
+        "Do not include chain-of-thought or extra keys."
+    )
+
+
+def _aggregate_committee(
+    *,
+    role_outputs: dict[str, LLMCommitteeMemberResponse],
+    mandatory_roles: list[str],
+    fail_closed_verdict: str,
+) -> dict[str, Any]:
+    mandatory_veto = any(
+        role_outputs.get(role) is None or role_outputs[role].verdict == "veto"
+        for role in mandatory_roles
+    )
+    if mandatory_veto:
+        return {
+            "verdict": "veto",
+            "confidence": 1.0,
+            "uncertainty": "low",
+            "rationale_short": "mandatory_committee_veto",
+            "required_checks": sorted(
+                {
+                    check
+                    for item in role_outputs.values()
+                    for check in item.required_checks
+                }
+            ),
+            "rationale": "mandatory_committee_veto",
+            "risk_flags": ["mandatory_committee_veto"],
+        }
+
+    votes = [member.verdict for member in role_outputs.values()]
+    if any(vote == "escalate" for vote in votes):
+        verdict = "escalate"
+    elif any(vote == "abstain" for vote in votes):
+        verdict = fail_closed_verdict
+    elif any(vote == "adjust" for vote in votes):
+        verdict = "adjust"
+    elif any(vote == "approve" for vote in votes):
+        verdict = "approve"
+    else:
+        verdict = fail_closed_verdict
+
+    confidence_values = [member.confidence for member in role_outputs.values()]
+    confidence = (
+        sum(confidence_values) / len(confidence_values) if confidence_values else 0.0
+    )
+    uncertainty_rank = {"low": 1, "medium": 2, "high": 3}
+    uncertainty = "low"
+    for member in role_outputs.values():
+        if uncertainty_rank[member.uncertainty] > uncertainty_rank[uncertainty]:
+            uncertainty = member.uncertainty
+
+    adjusted_source = next(
+        (member for member in role_outputs.values() if member.verdict == "adjust"),
+        None,
+    )
+
+    return {
+        "verdict": verdict,
+        "confidence": round(confidence, 4),
+        "uncertainty": uncertainty,
+        "rationale_short": f"committee_aggregate_{verdict}",
+        "required_checks": sorted(
+            {
+                check
+                for item in role_outputs.values()
+                for check in item.required_checks
+            }
+        ),
+        "adjusted_qty": adjusted_source.adjusted_qty if adjusted_source else None,
+        "adjusted_order_type": adjusted_source.adjusted_order_type if adjusted_source else None,
+        "limit_price": adjusted_source.limit_price if adjusted_source else None,
+        "rationale": f"committee_aggregate_{verdict}",
+        "risk_flags": sorted(
+            {
+                flag
+                for item in role_outputs.values()
+                for flag in item.risk_flags
+            }
+        ),
+    }
+
+
+def _hash_payload(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def load_prompt_template(version: str) -> str:
