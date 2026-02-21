@@ -811,7 +811,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
 
     const resolvedFileKeyId = normalizeText(fileKeyId, 'fileKeyId')
     const resolvedRepositoryRef = normalizeText(repositoryRef, 'repositoryRef', 'main')
-    const resolvedCommit = normalizeOptionalText(repositoryCommit)
+    const resolvedCommit = normalizeOptionalNullableText(repositoryCommit)
     const resolvedHash = normalizeOptionalText(contentHash)
 
     if (!resolvedCommit && !resolvedHash) {
@@ -821,29 +821,45 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedMetadata = parseMetadata(metadata)
     const resolvedSourceTimestamp = parseDate(sourceTimestamp)
 
-    const row = await db
-      .insertInto('atlas.file_versions')
-      .values({
-        file_key_id: resolvedFileKeyId,
-        repository_ref: resolvedRepositoryRef,
-        repository_commit: resolvedCommit,
-        content_hash: resolvedHash,
-        language: normalizeOptionalNullableText(language),
-        byte_size: byteSize ?? null,
-        line_count: lineCount ?? null,
-        metadata: sql`${resolvedMetadata}::jsonb`,
-        source_timestamp: resolvedSourceTimestamp,
-      })
-      .onConflict((oc) =>
-        oc.columns(['file_key_id', 'repository_ref', 'repository_commit', 'content_hash']).doUpdateSet({
-          language: sql`excluded.language`,
-          byte_size: sql`excluded.byte_size`,
-          line_count: sql`excluded.line_count`,
-          metadata: sql`excluded.metadata`,
-          source_timestamp: sql`excluded.source_timestamp`,
-          updated_at: sql`now()`,
-        }),
-      )
+    const fileVersionInsert = db.insertInto('atlas.file_versions').values({
+      file_key_id: resolvedFileKeyId,
+      repository_ref: resolvedRepositoryRef,
+      repository_commit: resolvedCommit,
+      content_hash: resolvedHash,
+      language: normalizeOptionalNullableText(language),
+      byte_size: byteSize ?? null,
+      line_count: lineCount ?? null,
+      metadata: sql`${resolvedMetadata}::jsonb`,
+      source_timestamp: resolvedSourceTimestamp,
+    })
+
+    const fileVersionUpsert =
+      resolvedCommit === null
+        ? fileVersionInsert.onConflict((oc) =>
+            oc
+              .columns(['file_key_id', 'repository_ref', 'content_hash'])
+              .where('repository_commit', 'is', null)
+              .doUpdateSet({
+                language: sql`excluded.language`,
+                byte_size: sql`excluded.byte_size`,
+                line_count: sql`excluded.line_count`,
+                metadata: sql`excluded.metadata`,
+                source_timestamp: sql`excluded.source_timestamp`,
+                updated_at: sql`now()`,
+              }),
+          )
+        : fileVersionInsert.onConflict((oc) =>
+            oc.columns(['file_key_id', 'repository_ref', 'repository_commit', 'content_hash']).doUpdateSet({
+              language: sql`excluded.language`,
+              byte_size: sql`excluded.byte_size`,
+              line_count: sql`excluded.line_count`,
+              metadata: sql`excluded.metadata`,
+              source_timestamp: sql`excluded.source_timestamp`,
+              updated_at: sql`now()`,
+            }),
+          )
+
+    const row = await fileVersionUpsert
       .returning([
         'id',
         'file_key_id',

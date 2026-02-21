@@ -432,6 +432,8 @@ const normalizeRepositoryRef = (value: string | null | undefined) => {
   return trimmed
 }
 
+const shouldUseNullCommitConflictTarget = (repositoryCommit: string | null) => repositoryCommit === null
+
 const resolveGithubToken = () =>
   normalizeOptionalText(process.env.GITHUB_TOKEN) ?? normalizeOptionalText(process.env.GH_TOKEN)
 
@@ -3179,7 +3181,7 @@ export const activities = {
     const fileMeta = input.fileMetadata
     const repositoryName = fileMeta.repoName
     const repositoryRef = normalizeRepositoryRef(fileMeta.repoRef) ?? 'main'
-    const repositoryCommit = fileMeta.repoCommit ?? null
+    const repositoryCommit = normalizeOptionalText(fileMeta.repoCommit)
     const contentHash = fileMeta.contentHash ?? ''
 
     logActivity('info', 'started', 'persistFileVersion', {
@@ -3219,34 +3221,68 @@ export const activities = {
       const fileKeyId = fileKeyRows[0]?.id
       if (!fileKeyId) throw new Error('failed to upsert file key')
 
-      const fileVersionRows = (await db`
-        INSERT INTO atlas.file_versions (
-          file_key_id,
-          repository_ref,
-          repository_commit,
-          content_hash,
-          language,
-          byte_size,
-          line_count,
-          metadata,
-          source_timestamp
-        )
-        VALUES (
-          ${fileKeyId},
-          ${repositoryRef},
-          ${repositoryCommit},
-          ${contentHash},
-          ${fileMeta.language},
-          ${fileMeta.byteSize},
-          ${fileMeta.lineCount},
-          ${JSON.stringify(fileMeta.metadata)}::jsonb,
-          ${fileMeta.sourceTimestamp}
-        )
-        ON CONFLICT (file_key_id, repository_ref, repository_commit, content_hash) DO UPDATE
-        SET updated_at = now(),
-            metadata = EXCLUDED.metadata
-        RETURNING id;
-      `) as Array<{ id: string }>
+      const fileVersionRows = (
+        shouldUseNullCommitConflictTarget(repositoryCommit)
+          ? await db`
+              INSERT INTO atlas.file_versions (
+                file_key_id,
+                repository_ref,
+                repository_commit,
+                content_hash,
+                language,
+                byte_size,
+                line_count,
+                metadata,
+                source_timestamp
+              )
+              VALUES (
+                ${fileKeyId},
+                ${repositoryRef},
+                ${repositoryCommit},
+                ${contentHash},
+                ${fileMeta.language},
+                ${fileMeta.byteSize},
+                ${fileMeta.lineCount},
+                ${JSON.stringify(fileMeta.metadata)}::jsonb,
+                ${fileMeta.sourceTimestamp}
+              )
+              ON CONFLICT (file_key_id, repository_ref, content_hash)
+              WHERE repository_commit IS NULL
+              DO UPDATE
+              SET updated_at = now(),
+                  metadata = EXCLUDED.metadata
+              RETURNING id;
+            `
+          : await db`
+              INSERT INTO atlas.file_versions (
+                file_key_id,
+                repository_ref,
+                repository_commit,
+                content_hash,
+                language,
+                byte_size,
+                line_count,
+                metadata,
+                source_timestamp
+              )
+              VALUES (
+                ${fileKeyId},
+                ${repositoryRef},
+                ${repositoryCommit},
+                ${contentHash},
+                ${fileMeta.language},
+                ${fileMeta.byteSize},
+                ${fileMeta.lineCount},
+                ${JSON.stringify(fileMeta.metadata)}::jsonb,
+                ${fileMeta.sourceTimestamp}
+              )
+              ON CONFLICT (file_key_id, repository_ref, repository_commit, content_hash)
+              DO UPDATE
+              SET updated_at = now(),
+                  metadata = EXCLUDED.metadata
+              RETURNING id;
+            `
+      ) as Array<{ id: string }>
 
       const fileVersionId = fileVersionRows[0]?.id
       if (!fileVersionId) throw new Error('failed to upsert file version')
@@ -3962,6 +3998,10 @@ export const activities = {
       throw error
     }
   },
+}
+
+export const __test__ = {
+  shouldUseNullCommitConflictTarget,
 }
 
 export default activities
