@@ -286,6 +286,17 @@ class TradingMetrics:
     adaptive_policy_degradation_bps: dict[str, float] = field(
         default_factory=lambda: cast(dict[str, float], {})
     )
+    autonomy_signal_throughput_total: int = 0
+    autonomy_decision_throughput_total: int = 0
+    autonomy_trade_throughput_total: int = 0
+    autonomy_promotion_allowed_total: int = 0
+    autonomy_promotion_blocked_total: int = 0
+    autonomy_recommendation_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    autonomy_outcome_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
 
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
@@ -428,13 +439,13 @@ class TradingMetrics:
             )
 
     def record_forecast_telemetry(self, payload: Mapping[str, Any]) -> None:
-        family = str(payload.get('model_family') or 'unknown').strip() or 'unknown'
-        route_key = str(payload.get('route_key') or 'unknown').strip() or 'unknown'
-        symbol = str(payload.get('symbol') or 'unknown').strip() or 'unknown'
-        horizon = str(payload.get('horizon') or 'unknown').strip() or 'unknown'
-        latency = payload.get('inference_latency_ms')
-        calibration_error = payload.get('calibration_error')
-        fallback_reason = payload.get('fallback_reason')
+        family = str(payload.get("model_family") or "unknown").strip() or "unknown"
+        route_key = str(payload.get("route_key") or "unknown").strip() or "unknown"
+        symbol = str(payload.get("symbol") or "unknown").strip() or "unknown"
+        horizon = str(payload.get("horizon") or "unknown").strip() or "unknown"
+        latency = payload.get("inference_latency_ms")
+        calibration_error = payload.get("calibration_error")
+        fallback_reason = payload.get("fallback_reason")
 
         if isinstance(latency, int):
             self.forecast_router_inference_latency_ms[family] = latency
@@ -445,13 +456,13 @@ class TradingMetrics:
                 self.forecast_router_fallback_total.get(normalized_reason, 0) + 1
             )
 
-        route_counter_key = f'{family}|{route_key}'
+        route_counter_key = f"{family}|{route_key}"
         self.forecast_route_selection_total[route_counter_key] = (
             self.forecast_route_selection_total.get(route_counter_key, 0) + 1
         )
 
         if calibration_error is not None:
-            key = f'{family}|{symbol}|{horizon}'
+            key = f"{family}|{symbol}|{horizon}"
             self.forecast_calibration_error[key] = str(calibration_error)
 
     def record_adaptive_policy_result(
@@ -476,6 +487,38 @@ class TradingMetrics:
             self.adaptive_policy_degradation_bps[decision.key] = float(
                 decision.degradation_bps
             )
+
+    def record_autonomy_promotion_outcome(
+        self,
+        *,
+        signal_count: int,
+        decision_count: int,
+        trade_count: int,
+        recommendation: str | None,
+        promotion_allowed: bool,
+        outcome: str,
+    ) -> None:
+        self.autonomy_signal_throughput_total += max(0, signal_count)
+        self.autonomy_decision_throughput_total += max(0, decision_count)
+        self.autonomy_trade_throughput_total += max(0, trade_count)
+        if promotion_allowed:
+            self.autonomy_promotion_allowed_total += 1
+        else:
+            self.autonomy_promotion_blocked_total += 1
+        normalized_recommendation = (
+            recommendation.strip() if isinstance(recommendation, str) else ""
+        )
+        if not normalized_recommendation:
+            normalized_recommendation = "unknown"
+        self.autonomy_recommendation_total[normalized_recommendation] = (
+            self.autonomy_recommendation_total.get(normalized_recommendation, 0) + 1
+        )
+        normalized_outcome = outcome.strip() if isinstance(outcome, str) else ""
+        if not normalized_outcome:
+            normalized_outcome = "unknown"
+        self.autonomy_outcome_total[normalized_outcome] = (
+            self.autonomy_outcome_total.get(normalized_outcome, 0) + 1
+        )
 
 @dataclass
 class TradingState:
@@ -2811,6 +2854,14 @@ class TradingScheduler:
             self.state.metrics.autonomy_last_stress_metrics_count = 0
             self.state.last_autonomy_error = None
             self.state.last_autonomy_reason = reason
+            self.state.metrics.record_autonomy_promotion_outcome(
+                signal_count=0,
+                decision_count=0,
+                trade_count=0,
+                recommendation="shadow",
+                promotion_allowed=False,
+                outcome="skipped_no_signal",
+            )
             query_start = autonomy_batch.query_start or start
             query_end = autonomy_batch.query_end or now
             try:
@@ -2920,8 +2971,32 @@ class TradingScheduler:
         self.state.last_autonomy_reason = None
 
         gate_report = json.loads(result.gate_report_path.read_text(encoding="utf-8"))
-        self.state.last_autonomy_recommendation = str(
-            gate_report.get("recommended_mode")
+        recommended_mode = str(gate_report.get("recommended_mode") or "shadow")
+        self.state.last_autonomy_recommendation = recommended_mode
+        throughput_raw = gate_report.get("throughput")
+        throughput = (
+            cast(Mapping[str, Any], throughput_raw)
+            if isinstance(throughput_raw, Mapping)
+            else {}
+        )
+        promotion_decision_raw = gate_report.get("promotion_decision")
+        promotion_decision = (
+            cast(Mapping[str, Any], promotion_decision_raw)
+            if isinstance(promotion_decision_raw, Mapping)
+            else {}
+        )
+        promotion_allowed = bool(promotion_decision.get("promotion_allowed", False))
+        if promotion_allowed:
+            outcome = f"promoted_{recommended_mode}"
+        else:
+            outcome = f"blocked_{recommended_mode}"
+        self.state.metrics.record_autonomy_promotion_outcome(
+            signal_count=_int_from_mapping(throughput, "signal_count"),
+            decision_count=_int_from_mapping(throughput, "decision_count"),
+            trade_count=_int_from_mapping(throughput, "trade_count"),
+            recommendation=recommended_mode,
+            promotion_allowed=promotion_allowed,
+            outcome=outcome,
         )
         recommendation_payload = gate_report.get("promotion_recommendation")
         if isinstance(recommendation_payload, dict):
@@ -3000,6 +3075,22 @@ class TradingScheduler:
 
 
 __all__ = ["TradingScheduler", "TradingState", "TradingMetrics"]
+
+
+def _int_from_mapping(payload: Mapping[str, Any], key: str) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            try:
+                return int(stripped)
+            except ValueError:
+                return 0
+    return 0
 
 
 def _incident_payload_complete(payload: Mapping[str, Any]) -> bool:

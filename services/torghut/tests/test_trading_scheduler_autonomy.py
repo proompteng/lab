@@ -372,6 +372,11 @@ class TestTradingSchedulerAutonomy(TestCase):
                     "no_signal_window": False,
                     "no_signal_reason": None,
                 },
+                "promotion_decision": {
+                    "promotion_allowed": True,
+                    "recommended_mode": "paper",
+                    "reason_codes": [],
+                },
             }
             with patch(
                 "app.trading.scheduler.run_autonomous_lane",
@@ -393,6 +398,17 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertEqual(
                 scheduler.state.metrics.autonomy_last_stress_metrics_count, 4
+            )
+            self.assertEqual(scheduler.state.metrics.autonomy_signal_throughput_total, 9)
+            self.assertEqual(scheduler.state.metrics.autonomy_decision_throughput_total, 7)
+            self.assertEqual(scheduler.state.metrics.autonomy_trade_throughput_total, 3)
+            self.assertEqual(scheduler.state.metrics.autonomy_promotion_allowed_total, 1)
+            self.assertEqual(scheduler.state.metrics.autonomy_promotion_blocked_total, 0)
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_recommendation_total.get("paper"), 1
+            )
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_outcome_total.get("promoted_paper"), 1
             )
 
     def test_run_autonomous_cycle_records_ingest_reason_when_no_signals(self) -> None:
@@ -816,7 +832,22 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
 
             gate_report_path = output_dir / "gate-evaluation.json"
-            gate_report_path.write_text(json.dumps(deps.gate_payload), encoding="utf-8")
+            gate_payload = deps.gate_payload or {
+                "recommended_mode": "paper",
+                "gates": [],
+                "throughput": {
+                    "signal_count": 8,
+                    "decision_count": 5,
+                    "trade_count": 3,
+                    "fold_metrics_count": 1,
+                    "stress_metrics_count": 4,
+                },
+                "promotion_decision": {
+                    "promotion_allowed": True,
+                    "recommended_mode": "paper",
+                },
+            }
+            gate_report_path.write_text(json.dumps(gate_payload), encoding="utf-8")
             deps.gate_report_path = gate_report_path
 
             return SimpleNamespace(
