@@ -194,6 +194,18 @@ class TradingMetrics:
     strategy_runtime_isolated_failures_total: int = 0
     strategy_runtime_fallback_total: int = 0
     strategy_runtime_legacy_path_total: int = 0
+    forecast_router_inference_latency_ms: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    forecast_router_fallback_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    forecast_calibration_error: dict[str, str] = field(
+        default_factory=lambda: cast(dict[str, str], {})
+    )
+    forecast_route_selection_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     feature_batch_rows_total: int = 0
     feature_null_rate: dict[str, float] = field(
         default_factory=lambda: cast(dict[str, float], {})
@@ -326,6 +338,33 @@ class TradingMetrics:
             self.allocator_reason_total[reason_code] = (
                 self.allocator_reason_total.get(reason_code, 0) + 1
             )
+
+    def record_forecast_telemetry(self, payload: Mapping[str, Any]) -> None:
+        family = str(payload.get('model_family') or 'unknown').strip() or 'unknown'
+        route_key = str(payload.get('route_key') or 'unknown').strip() or 'unknown'
+        symbol = str(payload.get('symbol') or 'unknown').strip() or 'unknown'
+        horizon = str(payload.get('horizon') or 'unknown').strip() or 'unknown'
+        latency = payload.get('inference_latency_ms')
+        calibration_error = payload.get('calibration_error')
+        fallback_reason = payload.get('fallback_reason')
+
+        if isinstance(latency, int):
+            self.forecast_router_inference_latency_ms[family] = latency
+
+        if isinstance(fallback_reason, str) and fallback_reason.strip():
+            normalized_reason = fallback_reason.strip()
+            self.forecast_router_fallback_total[normalized_reason] = (
+                self.forecast_router_fallback_total.get(normalized_reason, 0) + 1
+            )
+
+        route_counter_key = f'{family}|{route_key}'
+        self.forecast_route_selection_total[route_counter_key] = (
+            self.forecast_route_selection_total.get(route_counter_key, 0) + 1
+        )
+
+        if calibration_error is not None:
+            key = f'{family}|{symbol}|{horizon}'
+            self.forecast_calibration_error[key] = str(calibration_error)
 
 
 @dataclass
@@ -516,6 +555,10 @@ class TradingPipeline:
                     self.state.metrics.record_strategy_runtime(
                         self.decision_engine.consume_runtime_telemetry()
                     )
+                    for telemetry in self.decision_engine.consume_forecast_telemetry():
+                        self.state.metrics.record_forecast_telemetry(
+                            telemetry.to_payload()
+                        )
                 except Exception:
                     logger.exception(
                         "Decision evaluation failed symbol=%s timeframe=%s",

@@ -52,6 +52,7 @@ class GateInputs:
     robustness: dict[str, Any]
     tca_metrics: dict[str, Any] = field(default_factory=_empty_dict)
     llm_metrics: dict[str, Any] = field(default_factory=_empty_dict)
+    forecast_metrics: dict[str, Any] = field(default_factory=_empty_dict)
     profitability_evidence: dict[str, Any] = field(default_factory=_empty_dict)
     operational_ready: bool = True
     runbook_validated: bool = True
@@ -82,6 +83,9 @@ class GatePolicyMatrix:
     gate2_max_tca_churn_ratio: Decimal = Decimal("0.75")
 
     gate3_max_llm_error_ratio: Decimal = Decimal("0.10")
+    gate3_max_forecast_fallback_rate: Decimal = Decimal("0.05")
+    gate3_max_forecast_latency_ms_p95: int = 200
+    gate3_min_forecast_calibration_score: Decimal = Decimal("0.85")
     gate6_require_profitability_evidence: bool = True
     gate6_min_market_net_pnl_delta: Decimal = Decimal("0")
     gate6_min_regime_slice_pass_ratio: Decimal = Decimal("0.50")
@@ -140,6 +144,15 @@ class GatePolicyMatrix:
             gate3_max_llm_error_ratio=_decimal_or_default(
                 payload.get("gate3_max_llm_error_ratio"), Decimal("0.10")
             ),
+            gate3_max_forecast_fallback_rate=_decimal_or_default(
+                payload.get("gate3_max_forecast_fallback_rate"), Decimal("0.05")
+            ),
+            gate3_max_forecast_latency_ms_p95=int(
+                payload.get("gate3_max_forecast_latency_ms_p95", 200)
+            ),
+            gate3_min_forecast_calibration_score=_decimal_or_default(
+                payload.get("gate3_min_forecast_calibration_score"), Decimal("0.85")
+            ),
             gate6_require_profitability_evidence=bool(
                 payload.get("gate6_require_profitability_evidence", True)
             ),
@@ -192,6 +205,13 @@ class GatePolicyMatrix:
             ),
             "gate2_max_tca_churn_ratio": str(self.gate2_max_tca_churn_ratio),
             "gate3_max_llm_error_ratio": str(self.gate3_max_llm_error_ratio),
+            "gate3_max_forecast_fallback_rate": str(
+                self.gate3_max_forecast_fallback_rate
+            ),
+            "gate3_max_forecast_latency_ms_p95": self.gate3_max_forecast_latency_ms_p95,
+            "gate3_min_forecast_calibration_score": str(
+                self.gate3_min_forecast_calibration_score
+            ),
             "gate6_require_profitability_evidence": self.gate6_require_profitability_evidence,
             "gate6_min_market_net_pnl_delta": str(self.gate6_min_market_net_pnl_delta),
             "gate6_min_regime_slice_pass_ratio": str(
@@ -376,6 +396,24 @@ def _gate3_shadow_paper_quality(
     llm_error_ratio = _decimal(inputs.llm_metrics.get("error_ratio")) or Decimal("0")
     if llm_error_ratio > policy.gate3_max_llm_error_ratio:
         reasons.append("llm_error_ratio_exceeds_threshold")
+    fallback_rate = _decimal(inputs.forecast_metrics.get("fallback_rate"))
+    if (
+        fallback_rate is not None
+        and fallback_rate > policy.gate3_max_forecast_fallback_rate
+    ):
+        reasons.append("forecast_fallback_rate_exceeds_threshold")
+    latency_ms_p95 = _decimal(inputs.forecast_metrics.get("inference_latency_ms_p95"))
+    if (
+        latency_ms_p95 is not None
+        and latency_ms_p95 > Decimal(policy.gate3_max_forecast_latency_ms_p95)
+    ):
+        reasons.append("forecast_inference_latency_exceeds_threshold")
+    calibration_score_min = _decimal(inputs.forecast_metrics.get("calibration_score_min"))
+    if (
+        calibration_score_min is not None
+        and calibration_score_min < policy.gate3_min_forecast_calibration_score
+    ):
+        reasons.append("forecast_calibration_score_below_threshold")
     return GateResult(
         gate_id="gate3_shadow_paper_quality",
         status="pass" if not reasons else "fail",

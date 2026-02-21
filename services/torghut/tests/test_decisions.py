@@ -313,3 +313,48 @@ class TestDecisionEngine(TestCase):
         runtime_meta = decisions[0].params.get("strategy_runtime")
         assert isinstance(runtime_meta, dict)
         self.assertEqual(runtime_meta.get("plugin_id"), "legacy_builtin")
+
+    def test_scheduler_runtime_attaches_forecast_contract_and_telemetry(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name='runtime-forecast',
+            description='version=1.0.0',
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='legacy_macd_rsi',
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=Decimal('500'),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol='AAPL',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': 100,
+            },
+            timeframe='1Min',
+        )
+        with (
+            patch.object(settings, 'trading_strategy_runtime_mode', 'scheduler_v3'),
+            patch.object(settings, 'trading_strategy_scheduler_enabled', True),
+            patch.object(settings, 'trading_strategy_runtime_fallback_legacy', False),
+            patch.object(settings, 'trading_forecast_router_enabled', True),
+            patch.object(settings, 'trading_forecast_router_policy_path', None),
+            patch.object(settings, 'trading_forecast_router_refinement_enabled', True),
+        ):
+            engine = DecisionEngine(price_fetcher=None)
+            decisions = engine.evaluate(signal, [strategy])
+            forecast_telemetry = engine.consume_forecast_telemetry()
+
+        self.assertEqual(len(decisions), 1)
+        forecast_payload = decisions[0].params.get('forecast')
+        forecast_audit = decisions[0].params.get('forecast_audit')
+        assert isinstance(forecast_payload, dict)
+        assert isinstance(forecast_audit, dict)
+        self.assertEqual(forecast_payload.get('schema_version'), 'forecast_contract_v1')
+        self.assertIn('interval', forecast_payload)
+        self.assertIn('uncertainty', forecast_payload)
+        self.assertEqual(len(forecast_telemetry), 1)
+        self.assertEqual(forecast_telemetry[0].symbol, 'AAPL')

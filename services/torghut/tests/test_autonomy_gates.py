@@ -156,6 +156,43 @@ class TestAutonomyGates(TestCase):
         self.assertFalse(report.promotion_allowed)
         self.assertIn("profitability_evidence_missing", report.reasons)
 
+    def test_gate_matrix_fails_when_forecast_health_metrics_degrade(self) -> None:
+        policy = GatePolicyMatrix(
+            gate3_max_forecast_fallback_rate=Decimal("0.05"),
+            gate3_max_forecast_latency_ms_p95=150,
+            gate3_min_forecast_calibration_score=Decimal("0.90"),
+        )
+        inputs = GateInputs(
+            feature_schema_version="3.0.0",
+            required_feature_null_rate=Decimal("0.00"),
+            staleness_ms_p95=0,
+            symbol_coverage=2,
+            metrics={
+                "decision_count": 20,
+                "trade_count": 10,
+                "net_pnl": "50",
+                "max_drawdown": "100",
+                "turnover_ratio": "1.5",
+                "cost_bps": "5",
+            },
+            robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            forecast_metrics={
+                "fallback_rate": "0.15",
+                "inference_latency_ms_p95": "201",
+                "calibration_score_min": "0.75",
+            },
+            profitability_evidence=_profitability_evidence_payload(),
+        )
+
+        report = evaluate_gate_matrix(
+            inputs, policy=policy, promotion_target="paper", code_version="test"
+        )
+
+        self.assertFalse(report.promotion_allowed)
+        self.assertIn("forecast_fallback_rate_exceeds_threshold", report.reasons)
+        self.assertIn("forecast_inference_latency_exceeds_threshold", report.reasons)
+        self.assertIn("forecast_calibration_score_below_threshold", report.reasons)
+
 
 def _profitability_evidence_payload() -> dict[str, object]:
     return {

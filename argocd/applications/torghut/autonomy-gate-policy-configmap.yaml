@@ -24,6 +24,9 @@ data:
       "gate2_max_turnover_ratio": "8.0",
       "gate2_max_cost_bps": "35",
       "gate3_max_llm_error_ratio": "0.10",
+      "gate3_max_forecast_fallback_rate": "0.05",
+      "gate3_max_forecast_latency_ms_p95": 200,
+      "gate3_min_forecast_calibration_score": "0.85",
       "gate5_live_enabled": false,
       "gate5_require_approval_token": true,
       "promotion_required_artifacts": [

@@ -17,6 +17,7 @@ from .features import (
     normalize_feature_vector_v3,
     optional_decimal,
 )
+from .forecasting import ForecastRoutingTelemetry, build_default_forecast_router
 from .models import SignalEnvelope, StrategyDecision
 from .prices import MarketSnapshot, PriceFetcher
 from .strategy_runtime import (
@@ -54,6 +55,15 @@ class DecisionEngine:
             runtime_enabled=False,
             fallback_to_legacy=False,
         )
+        self.forecast_router = (
+            build_default_forecast_router(
+                policy_path=settings.trading_forecast_router_policy_path,
+                refinement_enabled=settings.trading_forecast_router_refinement_enabled,
+            )
+            if settings.trading_forecast_router_enabled
+            else None
+        )
+        self._last_forecast_telemetry: list[ForecastRoutingTelemetry] = []
 
     def evaluate(
         self,
@@ -105,6 +115,11 @@ class DecisionEngine:
         )
         return telemetry
 
+    def consume_forecast_telemetry(self) -> list[ForecastRoutingTelemetry]:
+        telemetry = list(self._last_forecast_telemetry)
+        self._last_forecast_telemetry = []
+        return telemetry
+
     def _evaluate_with_runtime(
         self,
         signal: SignalEnvelope,
@@ -151,6 +166,7 @@ class DecisionEngine:
         )
 
         decisions: list[StrategyDecision] = []
+        self._last_forecast_telemetry = []
         if not runtime_eval.intents:
             return decisions
 
@@ -173,6 +189,17 @@ class DecisionEngine:
             qty, sizing_meta = _resolve_qty_for_aggregated(
                 source_strategies, price=price, equity=equity
             )
+            forecast_contract: dict[str, Any] | None = None
+            forecast_audit: dict[str, Any] | None = None
+            if self.forecast_router is not None:
+                forecast_result = self.forecast_router.route_and_forecast(
+                    feature_vector=feature_vector,
+                    horizon=timeframe,
+                    event_ts=signal.event_ts,
+                )
+                forecast_contract = forecast_result.contract.to_payload()
+                forecast_audit = forecast_result.audit.to_payload()
+                self._last_forecast_telemetry.append(forecast_result.telemetry)
             decisions.append(
                 StrategyDecision(
                     strategy_id=primary_strategy_id,
@@ -208,7 +235,14 @@ class DecisionEngine:
                                 }
                                 for error in runtime_eval.errors
                             ],
+                            "forecast_route_key": (
+                                str(forecast_contract.get("route_key"))
+                                if isinstance(forecast_contract, dict)
+                                else None
+                            ),
                         },
+                        forecast_contract=forecast_contract,
+                        forecast_audit=forecast_audit,
                     )
                     | {"sizing": sizing_meta},
                 )
@@ -223,6 +257,7 @@ class DecisionEngine:
         equity: Optional[Decimal],
     ) -> list[StrategyDecision]:
         decisions: list[StrategyDecision] = []
+        self._last_forecast_telemetry = []
         timeframe = signal.timeframe
         if timeframe is None:
             return decisions
@@ -265,6 +300,26 @@ class DecisionEngine:
             snapshot = self.price_fetcher.fetch_market_snapshot(signal)
             if snapshot is not None:
                 price = snapshot.price
+        forecast_contract: dict[str, Any] | None = None
+        forecast_audit: dict[str, Any] | None = None
+        if self.forecast_router is not None:
+            normalized_payload = dict(signal.payload)
+            if price is not None and "price" not in normalized_payload:
+                normalized_payload["price"] = price
+            normalized_signal = signal.model_copy(update={"payload": normalized_payload})
+            try:
+                feature_vector = normalize_feature_vector_v3(normalized_signal)
+            except FeatureNormalizationError:
+                feature_vector = None
+            if feature_vector is not None:
+                forecast_result = self.forecast_router.route_and_forecast(
+                    feature_vector=feature_vector,
+                    horizon=timeframe,
+                    event_ts=signal.event_ts,
+                )
+                forecast_contract = forecast_result.contract.to_payload()
+                forecast_audit = forecast_result.audit.to_payload()
+                self._last_forecast_telemetry.append(forecast_result.telemetry)
 
         if (
             features.macd is None
@@ -310,6 +365,8 @@ class DecisionEngine:
                     "parameter_hash": "legacy",
                     "required_features": ["macd", "macd_signal", "rsi14", "price"],
                 },
+                forecast_contract=forecast_contract,
+                forecast_audit=forecast_audit,
             )
             | {"sizing": sizing_meta},
         )
@@ -323,6 +380,8 @@ def _build_params(
     volatility: Optional[Decimal],
     snapshot: Optional[MarketSnapshot],
     runtime_metadata: dict[str, Any],
+    forecast_contract: dict[str, Any] | None = None,
+    forecast_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
         "macd": macd,
@@ -337,6 +396,10 @@ def _build_params(
         params["price_snapshot"] = _snapshot_payload(snapshot)
         if snapshot.spread is not None:
             params.setdefault("spread", snapshot.spread)
+    if forecast_contract is not None:
+        params["forecast"] = forecast_contract
+    if forecast_audit is not None:
+        params["forecast_audit"] = forecast_audit
     return params
 
 
