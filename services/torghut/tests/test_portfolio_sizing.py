@@ -6,7 +6,6 @@ from unittest import TestCase
 
 from app import config
 from app.trading.models import StrategyDecision
-from app.trading.fragility import FragilityMonitor, FragilityMonitorConfig
 from app.trading.portfolio import (
     ALLOCATOR_CLIP_CORRELATION_CAPACITY,
     ALLOCATOR_CLIP_SYMBOL_CAPACITY,
