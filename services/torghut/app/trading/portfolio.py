@@ -146,8 +146,19 @@ class PortfolioSizer:
             self.config.max_notional_per_symbol,
             _pct_equity_cap(self.config.max_position_pct_equity, equity),
         )
-        if symbol_cap is not None:
-            caps["per_symbol"] = symbol_cap
+        per_symbol_cap = _remaining_symbol_capacity(
+            symbol_cap,
+            current_value=current_value,
+            action=decision.action,
+            allow_shorts=settings.trading_allow_shorts,
+        )
+        if per_symbol_cap is not None:
+            caps["per_symbol"] = per_symbol_cap
+
+        if decision.action == "sell" and not settings.trading_allow_shorts:
+            if current_qty <= 0:
+                reasons.append("shorts_not_allowed")
+            caps["sell_inventory"] = max(current_value, Decimal("0"))
 
         gross_cap = _gross_cap_for_symbol(
             self.config.max_gross_exposure,
@@ -170,7 +181,8 @@ class PortfolioSizer:
 
         qty = (notional / price).quantize(Decimal("1"), rounding=ROUND_DOWN)
         if qty < 1:
-            reasons.append("qty_below_min")
+            if "shorts_not_allowed" not in reasons:
+                reasons.append("qty_below_min")
 
         approved = len(reasons) == 0
         if not approved:
@@ -726,6 +738,26 @@ def _apply_caps(
             capped = value
             methods.append(f"cap_{key}")
     return capped, methods
+
+
+def _remaining_symbol_capacity(
+    absolute_cap: Optional[Decimal],
+    *,
+    current_value: Decimal,
+    action: str,
+    allow_shorts: bool,
+) -> Optional[Decimal]:
+    if absolute_cap is None:
+        return None
+    if action == "buy":
+        if current_value >= 0:
+            return max(Decimal("0"), absolute_cap - current_value)
+        return max(Decimal("0"), absolute_cap + abs(current_value))
+    if allow_shorts:
+        if current_value <= 0:
+            return max(Decimal("0"), absolute_cap - abs(current_value))
+        return max(Decimal("0"), current_value + absolute_cap)
+    return max(Decimal("0"), current_value)
 
 
 def _extract_decision_price(decision: StrategyDecision) -> Optional[Decimal]:

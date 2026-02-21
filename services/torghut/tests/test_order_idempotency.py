@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
@@ -58,6 +59,25 @@ class FakeAlpacaClient:
             'filled_qty': '0',
             'status': 'accepted',
         }
+
+
+class ConflictingOrderClient(FakeAlpacaClient):
+    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+        if status != "open":
+            return []
+        return [
+            {
+                "id": "order-conflict-1",
+                "client_order_id": "existing-open-order",
+                "symbol": "AAPL",
+                "side": "sell",
+                "type": "market",
+                "time_in_force": "day",
+                "qty": "1",
+                "filled_qty": "0",
+                "status": "accepted",
+            }
+        ]
 
 
 class TestOrderIdempotency(TestCase):
@@ -171,6 +191,44 @@ class TestOrderIdempotency(TestCase):
             self.assertIsNone(tca.avg_fill_price)
             self.assertIsNone(tca.slippage_bps)
             self.assertIsNone(tca.shortfall_notional)
+
+    def test_submit_order_precheck_blocks_opposite_side_open_order(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1.0"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            client = ConflictingOrderClient()
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(session, client, decision, decision_row, "paper")
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "broker_precheck")
+            self.assertEqual(
+                payload.get("code"), "precheck_opposite_side_open_order"
+            )
+            self.assertEqual(payload.get("existing_order_id"), "order-conflict-1")
+            self.assertEqual(len(client.submitted), 0)
 
     def test_reconciler_backfills_missing_execution_by_client_order_id(self) -> None:
         with self.session_local() as session:

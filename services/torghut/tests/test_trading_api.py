@@ -244,6 +244,30 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_trading_status_includes_emergency_stop_recovery_fields(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.emergency_stop_active = True
+            scheduler.state.emergency_stop_reason = "signal_lag_exceeded:900"
+            scheduler.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
+            scheduler.state.emergency_stop_recovery_streak = 2
+            scheduler.state.emergency_stop_resolved_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/status")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            rollback = payload["rollback"]
+            self.assertIn("emergency_stop_recovery_streak", rollback)
+            self.assertIn("emergency_stop_resolved_at", rollback)
+            self.assertEqual(rollback["emergency_stop_recovery_streak"], 2)
+        finally:
+            if original_scheduler is None:
+                del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     def test_trading_autonomy_includes_no_signal_streak(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
         try:

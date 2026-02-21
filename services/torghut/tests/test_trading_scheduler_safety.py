@@ -36,6 +36,7 @@ class TestTradingSchedulerSafety(TestCase):
         self._snapshot = {
             'trading_autonomy_artifact_dir': config.settings.trading_autonomy_artifact_dir,
             'trading_emergency_stop_enabled': config.settings.trading_emergency_stop_enabled,
+            'trading_emergency_stop_recovery_cycles': config.settings.trading_emergency_stop_recovery_cycles,
             'trading_rollback_signal_lag_seconds_limit': config.settings.trading_rollback_signal_lag_seconds_limit,
             'trading_rollback_fallback_ratio_limit': config.settings.trading_rollback_fallback_ratio_limit,
             'trading_rollback_autonomy_failure_streak_limit': config.settings.trading_rollback_autonomy_failure_streak_limit,
@@ -45,6 +46,9 @@ class TestTradingSchedulerSafety(TestCase):
     def tearDown(self) -> None:
         config.settings.trading_autonomy_artifact_dir = self._snapshot['trading_autonomy_artifact_dir']
         config.settings.trading_emergency_stop_enabled = self._snapshot['trading_emergency_stop_enabled']
+        config.settings.trading_emergency_stop_recovery_cycles = self._snapshot[
+            'trading_emergency_stop_recovery_cycles'
+        ]
         config.settings.trading_rollback_signal_lag_seconds_limit = self._snapshot[
             'trading_rollback_signal_lag_seconds_limit'
         ]
@@ -90,6 +94,55 @@ class TestTradingSchedulerSafety(TestCase):
             self.assertFalse(scheduler.state.emergency_stop_active)
             self.assertEqual(scheduler.state.rollback_incidents_total, 0)
             self.assertEqual(scheduler._pipeline.order_firewall.cancel_all_calls, 0)  # type: ignore[union-attr]
+
+    def test_freshness_emergency_stop_auto_clears_after_recovery_hysteresis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config.settings.trading_autonomy_artifact_dir = tmpdir
+            config.settings.trading_emergency_stop_enabled = True
+            config.settings.trading_emergency_stop_recovery_cycles = 2
+            config.settings.trading_rollback_signal_lag_seconds_limit = 5
+            scheduler = TradingScheduler()
+            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            scheduler.state.metrics.signal_lag_seconds = 7
+
+            scheduler._evaluate_safety_controls()
+            self.assertTrue(scheduler.state.emergency_stop_active)
+            self.assertEqual(scheduler.state.emergency_stop_recovery_streak, 0)
+
+            scheduler.state.metrics.signal_lag_seconds = 0
+            scheduler._evaluate_safety_controls()
+            self.assertTrue(scheduler.state.emergency_stop_active)
+            self.assertEqual(scheduler.state.emergency_stop_recovery_streak, 1)
+
+            scheduler._evaluate_safety_controls()
+            self.assertFalse(scheduler.state.emergency_stop_active)
+            self.assertEqual(scheduler.state.emergency_stop_recovery_streak, 0)
+            self.assertIsNone(scheduler.state.emergency_stop_reason)
+            self.assertIsNone(scheduler.state.emergency_stop_triggered_at)
+            self.assertIsNotNone(scheduler.state.emergency_stop_resolved_at)
+
+    def test_nonrecoverable_emergency_stop_remains_latched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config.settings.trading_autonomy_artifact_dir = tmpdir
+            config.settings.trading_emergency_stop_enabled = True
+            config.settings.trading_emergency_stop_recovery_cycles = 1
+            scheduler = TradingScheduler()
+            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler.state.emergency_stop_active = True
+            scheduler.state.emergency_stop_reason = 'max_drawdown_exceeded:0.1200'
+            scheduler.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
+            scheduler.state.metrics.signal_lag_seconds = 0
+
+            scheduler._evaluate_safety_controls()
+
+            self.assertTrue(scheduler.state.emergency_stop_active)
+            self.assertEqual(
+                scheduler.state.emergency_stop_reason,
+                'max_drawdown_exceeded:0.1200',
+            )
+            self.assertEqual(scheduler.state.emergency_stop_recovery_streak, 0)
+            self.assertIsNone(scheduler.state.emergency_stop_resolved_at)
 
     def test_emergency_stop_triggers_on_drawdown_from_gate_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

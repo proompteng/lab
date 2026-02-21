@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Mapping
@@ -121,6 +122,29 @@ class OrderExecutor:
         if retry_delays is None:
             retry_delays = []
 
+        conflicting_order = self._find_conflicting_open_order(execution_client, request)
+        if conflicting_order is not None:
+            existing_order_id = (
+                conflicting_order.get("id")
+                or conflicting_order.get("order_id")
+                or conflicting_order.get("client_order_id")
+            )
+            existing_order_type = str(
+                conflicting_order.get("type")
+                or conflicting_order.get("order_type")
+                or "unknown"
+            ).lower()
+            existing_order_side = str(conflicting_order.get("side") or "unknown").lower()
+            payload = {
+                "source": "broker_precheck",
+                "code": "precheck_opposite_side_open_order",
+                "reject_reason": f"opposite side {existing_order_type} order exists",
+                "existing_order_id": existing_order_id,
+                "existing_order_side": existing_order_side,
+                "existing_order_type": existing_order_type,
+            }
+            raise RuntimeError(json.dumps(payload))
+
         attempt = 0
         while True:
             try:
@@ -224,6 +248,59 @@ class OrderExecutor:
         if not order:
             return None
         return order
+
+    @classmethod
+    def _find_conflicting_open_order(
+        cls,
+        execution_client: Any,
+        request: ExecutionRequest,
+    ) -> Optional[dict[str, Any]]:
+        request_symbol = request.symbol.strip().upper()
+        request_side = request.side.strip().lower()
+        if not request_symbol or request_side not in {"buy", "sell"}:
+            return None
+        for order in cls._list_open_orders(execution_client):
+            symbol = str(order.get("symbol") or "").strip().upper()
+            if symbol != request_symbol:
+                continue
+            side = str(order.get("side") or "").strip().lower()
+            if side not in {"buy", "sell"} or side == request_side:
+                continue
+            order_type = str(order.get("type") or order.get("order_type") or "").strip().lower()
+            if order_type not in {"market", "stop", "stop_limit"}:
+                continue
+            status = str(order.get("status") or "").strip().lower()
+            if status in {"filled", "canceled", "cancelled", "rejected", "expired"}:
+                continue
+            return order
+        return None
+
+    @staticmethod
+    def _list_open_orders(execution_client: Any) -> list[dict[str, Any]]:
+        lister = getattr(execution_client, "list_orders", None)
+        if not callable(lister):
+            return []
+        try:
+            orders = lister(status="open")
+        except TypeError:
+            try:
+                orders = lister()
+            except Exception as exc:
+                logger.warning("Failed to list open orders for broker precheck: %s", exc)
+                return []
+        except Exception as exc:
+            logger.warning("Failed to list open orders for broker precheck: %s", exc)
+            return []
+
+        if not isinstance(orders, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for order in orders:
+            if not isinstance(order, Mapping):
+                continue
+            mapped = cast(Mapping[object, Any], order)
+            normalized.append({str(key): value for key, value in mapped.items()})
+        return normalized
 
 
 def _coerce_json(value: Any) -> dict[str, Any]:

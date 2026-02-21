@@ -239,6 +239,23 @@ class TestExecutionAdapters(TestCase):
             config.settings.trading_execution_adapter_policy = original_policy
             config.settings.trading_execution_adapter_symbols_raw = original_symbols
 
+    def test_symbol_allowlist_policy_prefers_runtime_allowlist(self) -> None:
+        original_adapter = config.settings.trading_execution_adapter
+        original_policy = config.settings.trading_execution_adapter_policy
+        original_symbols = config.settings.trading_execution_adapter_symbols_raw
+        try:
+            config.settings.trading_execution_adapter = 'lean'
+            config.settings.trading_execution_adapter_policy = 'allowlist'
+            config.settings.trading_execution_adapter_symbols_raw = 'NVDA'
+
+            self.assertTrue(adapter_enabled_for_symbol('MSFT', allowlist={'MSFT'}))
+            self.assertFalse(adapter_enabled_for_symbol('NVDA', allowlist={'MSFT'}))
+            self.assertFalse(adapter_enabled_for_symbol('MSFT', allowlist=set()))
+        finally:
+            config.settings.trading_execution_adapter = original_adapter
+            config.settings.trading_execution_adapter_policy = original_policy
+            config.settings.trading_execution_adapter_symbols_raw = original_symbols
+
     def test_build_execution_adapter_falls_back_when_healthcheck_required_and_unhealthy(self) -> None:
         original_adapter = config.settings.trading_execution_adapter
         original_mode = config.settings.trading_mode
