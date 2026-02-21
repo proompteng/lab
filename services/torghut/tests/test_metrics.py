@@ -167,6 +167,32 @@ class TestTradingMetrics(TestCase):
         )
         self.assertIn("torghut_trading_strategy_runtime_fallback_total 2", payload)
 
+    def test_forecast_router_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.forecast_router_inference_latency_ms['chronos'] = 98
+        metrics.forecast_router_fallback_total['calibration_below_threshold'] = 3
+        metrics.forecast_calibration_error['chronos|AAPL|1m'] = '0.07'
+        metrics.forecast_route_selection_total['chronos|AAPL|1m|trend'] = 5
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_forecast_router_inference_latency_ms{model_family="chronos"} 98',
+            payload,
+        )
+        self.assertIn(
+            'torghut_forecast_router_fallback_total{reason="calibration_below_threshold"} 3',
+            payload,
+        )
+        self.assertIn(
+            'torghut_forecast_calibration_error{model_family="chronos",symbol="AAPL",horizon="1m"} 0.07',
+            payload,
+        )
+        self.assertIn(
+            'torghut_forecast_route_selection_total{model_family="chronos",route_key="AAPL|1m|trend"} 5',
+            payload,
+        )
+
     def test_record_strategy_runtime_telemetry_updates_counters(self) -> None:
         metrics = TradingMetrics()
         metrics.record_strategy_runtime(

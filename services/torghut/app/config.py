@@ -177,6 +177,21 @@ class Settings(BaseSettings):
         alias="TRADING_FEATURE_NORMALIZATION_VERSION",
         description="Feature normalization implementation version.",
     )
+    trading_forecast_router_enabled: bool = Field(
+        default=True,
+        alias='TRADING_FORECAST_ROUTER_ENABLED',
+        description='Enable deterministic forecast routing and uncertainty contract emission.',
+    )
+    trading_forecast_router_policy_path: Optional[str] = Field(
+        default=None,
+        alias='TRADING_FORECAST_ROUTER_POLICY_PATH',
+        description='Optional path to forecast router policy JSON.',
+    )
+    trading_forecast_router_refinement_enabled: bool = Field(
+        default=True,
+        alias='TRADING_FORECAST_ROUTER_REFINEMENT_ENABLED',
+        description='Enable deterministic forecast refinement for eligible routes.',
+    )
     trading_feature_quality_enabled: bool = Field(
         default=True,
         alias="TRADING_FEATURE_QUALITY_ENABLED",
