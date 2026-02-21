@@ -56,7 +56,7 @@ class RiskEngine:
             if fragility_state in {"stress", "crisis"} and not stability_mode_active:
                 reasons.append("fragility_stability_mode_mismatch")
             if fragility_state == "crisis" and _is_risk_increasing_trade(
-                decision.action, short_increasing
+                decision.action, position_qty, short_increasing
             ):
                 reasons.append("fragility_crisis_entry_blocked")
 
