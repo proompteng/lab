@@ -88,7 +88,14 @@ class TestPortfolioSizing(TestCase):
             qty=Decimal("20"),
             order_type="market",
             time_in_force="day",
-            params={"price": Decimal("100")},
+            params={
+                "price": Decimal("100"),
+                "fragility_state": "normal",
+                "spread_acceleration": Decimal("0"),
+                "liquidity_compression": Decimal("0"),
+                "crowding_proxy": Decimal("0"),
+                "correlation_concentration": Decimal("0"),
+            },
         )
 
         results = allocator.allocate(

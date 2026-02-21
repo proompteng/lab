@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Optional, cast
 
 from ..config import settings
 from ..models import Strategy
@@ -98,6 +98,19 @@ class ExecutionPolicy:
     ) -> ExecutionPolicyOutcome:
         config = self._sanitize_config(self._resolve_config(strategy=strategy, kill_switch_enabled=kill_switch_enabled))
         reasons: list[str] = []
+        allocator_meta = _allocator_payload(decision)
+        participation_override = _optional_decimal(
+            allocator_meta.get("max_participation_rate_override")
+        )
+        if participation_override is not None:
+            config = self._sanitize_config(
+                replace(
+                    config,
+                    max_participation_rate=min(
+                        config.max_participation_rate, participation_override
+                    ),
+                )
+            )
 
         if config.kill_switch_enabled:
             reasons.append('kill_switch_enabled')
@@ -514,6 +527,14 @@ def _optional_decimal(value: Any) -> Optional[Decimal]:
         return Decimal(str(value))
     except (ArithmeticError, ValueError, TypeError):
         return None
+
+
+def _allocator_payload(decision: StrategyDecision) -> dict[str, object]:
+    raw = decision.params.get("allocator")
+    if not isinstance(raw, dict):
+        return {}
+    payload = cast(dict[object, object], raw)
+    return {str(key): value for key, value in payload.items()}
 
 
 def _stringify_decimal(value: Optional[Decimal]) -> Optional[str]:

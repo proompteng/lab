@@ -9,6 +9,12 @@ from typing import Any, Callable, Iterable, Optional, cast
 
 from ..config import settings
 from ..models import Strategy
+from .fragility import (
+    FragilityAllocationAdjustment,
+    FragilityMonitor,
+    FragilityMonitorConfig,
+    FragilityState,
+)
 from .models import StrategyDecision
 
 ALLOCATOR_REJECT_NO_PRICE = "allocator_reject_no_price"
@@ -61,6 +67,9 @@ class AllocationResult:
     clipped: bool
     reason_codes: tuple[str, ...]
     regime_label: str
+    fragility_state: FragilityState
+    fragility_score: Decimal
+    stability_mode_active: bool
     budget_multiplier: Decimal
     capacity_multiplier: Decimal
     requested_notional: Optional[Decimal]
@@ -357,9 +366,11 @@ class PortfolioAllocator:
         config: AllocationConfig,
         *,
         intent_aggregator: IntentAggregator | None = None,
+        fragility_monitor: FragilityMonitor | None = None,
     ) -> None:
         self.config = config
         self.intent_aggregator = intent_aggregator or IntentAggregator()
+        self.fragility_monitor = fragility_monitor or fragility_monitor_from_settings()
 
     def allocate(
         self,
@@ -386,17 +397,45 @@ class PortfolioAllocator:
             normalized_regime,
             self.config.default_capacity_multiplier,
         )
+        fragility_adjustments = [self.fragility_monitor.evaluate(intent.decision) for intent in intents]
+        enforce_fragility = self.fragility_monitor.config.mode == "enforce"
+        portfolio_fragility_state = self.fragility_monitor.worst_state(
+            [item.snapshot.fragility_state for item in fragility_adjustments]
+        )
 
         if not self.config.enabled:
-            return [
-                self._result_from_passthrough(
-                    intent.decision,
-                    regime_label=normalized_regime,
-                    budget_multiplier=budget_multiplier,
-                    capacity_multiplier=capacity_multiplier,
+            passthrough_results: list[AllocationResult] = []
+            for intent, fragility_adjustment in zip(
+                intents, fragility_adjustments, strict=False
+            ):
+                apply_fragility = enforce_fragility and _has_fragility_signal(
+                    intent.decision
                 )
-                for intent in intents
-            ]
+                passthrough_results.append(
+                    self._result_from_passthrough(
+                        intent.decision,
+                        regime_label=normalized_regime,
+                        fragility_adjustment=fragility_adjustment,
+                        portfolio_fragility_state=portfolio_fragility_state,
+                        budget_multiplier=self._effective_multiplier(
+                            budget_multiplier,
+                            (
+                                fragility_adjustment.budget_multiplier
+                                if apply_fragility
+                                else Decimal("1")
+                            ),
+                        ),
+                        capacity_multiplier=self._effective_multiplier(
+                            capacity_multiplier,
+                            (
+                                fragility_adjustment.capacity_multiplier
+                                if apply_fragility
+                                else Decimal("1")
+                            ),
+                        ),
+                    )
+                )
+            return passthrough_results
 
         equity = _optional_decimal(account.get("equity"))
         current_positions = list(positions)
@@ -407,7 +446,9 @@ class PortfolioAllocator:
         correlation_usage: dict[str, Decimal] = {}
 
         results: list[AllocationResult] = []
-        for intent in intents:
+        for intent, fragility_adjustment in zip(
+            intents, fragility_adjustments, strict=False
+        ):
             decision = intent.decision
             price = _extract_decision_price(decision)
             params = dict(decision.params)
@@ -416,112 +457,152 @@ class PortfolioAllocator:
             reason_codes: list[str] = []
             approved = True
             clipped = False
+            apply_fragility = enforce_fragility and _has_fragility_signal(decision)
+            effective_budget_multiplier = self._effective_multiplier(
+                budget_multiplier,
+                (
+                    fragility_adjustment.budget_multiplier
+                    if apply_fragility
+                    else Decimal("1")
+                ),
+            )
+            effective_capacity_multiplier = self._effective_multiplier(
+                capacity_multiplier,
+                (
+                    fragility_adjustment.capacity_multiplier
+                    if apply_fragility
+                    else Decimal("1")
+                ),
+            )
+            if fragility_adjustment.stability_mode_active and apply_fragility:
+                reason_codes.append("allocator_stability_mode_active")
 
-            if price is None or price <= 0:
+            if approved and (price is None or price <= 0):
                 approved = False
                 reason_codes.append(ALLOCATOR_REJECT_NO_PRICE)
                 approved_notional = Decimal("0")
                 adjusted_decision = decision.model_copy(update={"qty": Decimal("0")})
-            elif decision.qty <= 0:
+            elif approved and decision.qty <= 0:
                 approved = False
                 reason_codes.append(ALLOCATOR_REJECT_ZERO_QTY)
                 approved_notional = Decimal("0")
                 adjusted_decision = decision.model_copy(update={"qty": Decimal("0")})
+            elif not approved:
+                approved_notional = Decimal("0")
+                adjusted_decision = decision.model_copy(update={"qty": Decimal("0")})
             else:
+                assert price is not None
                 _, symbol_value = _position_summary(decision.symbol, current_positions)
-                base_symbol_cap = self._symbol_cap(equity)
-                effective_symbol_cap = None
-                if base_symbol_cap is not None:
-                    effective_symbol_cap = (
-                        base_symbol_cap * budget_multiplier * capacity_multiplier
-                    )
-
-                gross_cap = self._gross_cap(
-                    current_gross_exposure=current_gross_exposure,
-                    approved_gross_delta=approved_gross_delta,
-                    symbol_value=symbol_value,
-                    budget_multiplier=budget_multiplier,
-                )
-                strategy_cap = self._strategy_budget_cap(
-                    strategy_signed_qty=intent.strategy_signed_qty,
-                    action=decision.action,
-                    strategy_usage=strategy_usage,
-                    budget_multiplier=budget_multiplier,
-                )
-                symbol_budget_cap = self._symbol_budget_cap(
-                    symbol=decision.symbol,
-                    symbol_usage=symbol_usage,
-                    budget_multiplier=budget_multiplier,
-                )
-                correlation_cap = self._correlation_budget_cap(
-                    group=correlation_group,
-                    correlation_usage=correlation_usage,
-                    budget_multiplier=budget_multiplier,
-                )
-
-                caps = {
-                    ALLOCATOR_CLIP_SYMBOL_CAPACITY: effective_symbol_cap,
-                    ALLOCATOR_CLIP_GROSS_EXPOSURE: gross_cap,
-                    ALLOCATOR_CLIP_STRATEGY_BUDGET: strategy_cap,
-                    ALLOCATOR_CLIP_SYMBOL_BUDGET: symbol_budget_cap,
-                    ALLOCATOR_CLIP_CORRELATION_CAPACITY: correlation_cap,
-                }
-                approved_notional = requested_notional or Decimal("0")
-                for reason_code, cap in caps.items():
-                    if cap is None:
-                        continue
-                    if cap <= 0:
-                        approved_notional = Decimal("0")
-                        reason_codes.append(reason_code.replace("_clip_", "_reject_"))
-                    elif approved_notional > cap:
-                        approved_notional = cap
-                        reason_codes.append(reason_code)
-
-                adjusted_qty = (approved_notional / price).quantize(
-                    Decimal("1"), rounding=ROUND_DOWN
-                )
-                if adjusted_qty < 1:
+                effective_symbol_cap: Optional[Decimal] = None
+                gross_cap: Optional[Decimal] = None
+                strategy_cap: Optional[Decimal] = None
+                symbol_budget_cap: Optional[Decimal] = None
+                correlation_cap: Optional[Decimal] = None
+                if (
+                    apply_fragility
+                    and fragility_adjustment.snapshot.fragility_state == "crisis"
+                    and _is_risk_increasing_trade(decision.action, symbol_value)
+                ):
                     approved = False
-                    if approved_notional > 0:
-                        reason_codes.append(ALLOCATOR_REJECT_QTY_BELOW_MIN)
-                    elif (
-                        ALLOCATOR_REJECT_SYMBOL_CAPACITY not in reason_codes
-                        and ALLOCATOR_REJECT_GROSS_EXPOSURE not in reason_codes
-                    ):
-                        reason_codes.append(ALLOCATOR_REJECT_SYMBOL_CAPACITY)
-                    adjusted_qty = Decimal("0")
+                    reason_codes.append("allocator_reject_crisis_entry")
+                    approved_notional = Decimal("0")
+                    adjusted_decision = decision.model_copy(update={"qty": Decimal("0")})
                 else:
-                    if adjusted_qty != decision.qty:
-                        clipped = True
-                    approved_notional = price * adjusted_qty
-                    approved_gross_delta += approved_notional
-                    allocation_weights = _strategy_weights(
-                        intent.strategy_signed_qty, decision.action
-                    )
-                    for strategy_id, weight in allocation_weights:
-                        if weight <= 0:
-                            continue
-                        strategy_usage[strategy_id] = (
-                            strategy_usage.get(strategy_id, Decimal("0"))
-                            + (approved_notional * weight)
+                    base_symbol_cap = self._symbol_cap(equity)
+                    effective_symbol_cap = None
+                    if base_symbol_cap is not None:
+                        effective_symbol_cap = (
+                            base_symbol_cap
+                            * effective_budget_multiplier
+                            * effective_capacity_multiplier
                         )
-                    symbol_key = decision.symbol.strip().upper()
-                    symbol_usage[symbol_key] = (
-                        symbol_usage.get(symbol_key, Decimal("0")) + approved_notional
+
+                    gross_cap = self._gross_cap(
+                        current_gross_exposure=current_gross_exposure,
+                        approved_gross_delta=approved_gross_delta,
+                        symbol_value=symbol_value,
+                        budget_multiplier=effective_budget_multiplier,
                     )
-                    if correlation_group:
-                        correlation_usage[correlation_group] = (
-                            correlation_usage.get(correlation_group, Decimal("0"))
+                    strategy_cap = self._strategy_budget_cap(
+                        strategy_signed_qty=intent.strategy_signed_qty,
+                        action=decision.action,
+                        strategy_usage=strategy_usage,
+                        budget_multiplier=effective_budget_multiplier,
+                    )
+                    symbol_budget_cap = self._symbol_budget_cap(
+                        symbol=decision.symbol,
+                        symbol_usage=symbol_usage,
+                        budget_multiplier=effective_budget_multiplier,
+                    )
+                    correlation_cap = self._correlation_budget_cap(
+                        group=correlation_group,
+                        correlation_usage=correlation_usage,
+                        budget_multiplier=effective_budget_multiplier,
+                    )
+                    caps = {
+                        ALLOCATOR_CLIP_SYMBOL_CAPACITY: effective_symbol_cap,
+                        ALLOCATOR_CLIP_GROSS_EXPOSURE: gross_cap,
+                        ALLOCATOR_CLIP_STRATEGY_BUDGET: strategy_cap,
+                        ALLOCATOR_CLIP_SYMBOL_BUDGET: symbol_budget_cap,
+                        ALLOCATOR_CLIP_CORRELATION_CAPACITY: correlation_cap,
+                    }
+                    approved_notional = requested_notional or Decimal("0")
+                    for reason_code, cap in caps.items():
+                        if cap is None:
+                            continue
+                        if cap <= 0:
+                            approved_notional = Decimal("0")
+                            reason_codes.append(reason_code.replace("_clip_", "_reject_"))
+                        elif approved_notional > cap:
+                            approved_notional = cap
+                            reason_codes.append(reason_code)
+
+                    adjusted_qty = (approved_notional / price).quantize(
+                        Decimal("1"), rounding=ROUND_DOWN
+                    )
+                    if adjusted_qty < 1:
+                        approved = False
+                        if approved_notional > 0:
+                            reason_codes.append(ALLOCATOR_REJECT_QTY_BELOW_MIN)
+                        elif (
+                            ALLOCATOR_REJECT_SYMBOL_CAPACITY not in reason_codes
+                            and ALLOCATOR_REJECT_GROSS_EXPOSURE not in reason_codes
+                        ):
+                            reason_codes.append(ALLOCATOR_REJECT_SYMBOL_CAPACITY)
+                        adjusted_qty = Decimal("0")
+                    else:
+                        if adjusted_qty != decision.qty:
+                            clipped = True
+                        approved_notional = price * adjusted_qty
+                        approved_gross_delta += approved_notional
+                        allocation_weights = _strategy_weights(
+                            intent.strategy_signed_qty, decision.action
+                        )
+                        for strategy_id, weight in allocation_weights:
+                            if weight <= 0:
+                                continue
+                            strategy_usage[strategy_id] = (
+                                strategy_usage.get(strategy_id, Decimal("0"))
+                                + (approved_notional * weight)
+                            )
+                        symbol_key = decision.symbol.strip().upper()
+                        symbol_usage[symbol_key] = (
+                            symbol_usage.get(symbol_key, Decimal("0"))
                             + approved_notional
                         )
+                        if correlation_group:
+                            correlation_usage[correlation_group] = (
+                                correlation_usage.get(correlation_group, Decimal("0"))
+                                + approved_notional
+                            )
 
-                adjusted_decision = decision.model_copy(update={"qty": adjusted_qty})
+                    adjusted_decision = decision.model_copy(update={"qty": adjusted_qty})
 
             allocator_payload = {
                 "enabled": self.config.enabled,
                 "regime_label": normalized_regime,
-                "budget_multiplier": _decimal_str(budget_multiplier),
-                "capacity_multiplier": _decimal_str(capacity_multiplier),
+                "budget_multiplier": _decimal_str(effective_budget_multiplier),
+                "capacity_multiplier": _decimal_str(effective_capacity_multiplier),
                 "requested_qty": str(decision.qty),
                 "approved_qty": str(adjusted_decision.qty),
                 "requested_notional": _decimal_str(requested_notional),
@@ -531,6 +612,9 @@ class PortfolioAllocator:
                 "reason_codes": sorted(set(reason_codes)),
                 "correlation_group": correlation_group,
             }
+            allocator_payload.update(fragility_adjustment.to_allocator_payload())
+            allocator_payload["portfolio_fragility_state"] = portfolio_fragility_state
+            params["fragility_snapshot"] = fragility_adjustment.snapshot.to_payload()
             current_allocator = dict(_mapping(params.get("allocator")))
             current_allocator.update(allocator_payload)
             params["allocator"] = current_allocator
@@ -543,8 +627,11 @@ class PortfolioAllocator:
                     clipped=clipped,
                     reason_codes=tuple(sorted(set(reason_codes))),
                     regime_label=normalized_regime,
-                    budget_multiplier=budget_multiplier,
-                    capacity_multiplier=capacity_multiplier,
+                    fragility_state=fragility_adjustment.snapshot.fragility_state,
+                    fragility_score=fragility_adjustment.snapshot.fragility_score,
+                    stability_mode_active=fragility_adjustment.stability_mode_active,
+                    budget_multiplier=effective_budget_multiplier,
+                    capacity_multiplier=effective_capacity_multiplier,
                     requested_notional=requested_notional,
                     approved_notional=approved_notional,
                 )
@@ -559,7 +646,19 @@ class PortfolioAllocator:
         default: Decimal,
     ) -> Decimal:
         raw = values.get(regime_label, values.get("default", default))
-        return min(self.config.max_multiplier, max(self.config.min_multiplier, raw))
+        return min(
+            self.config.max_multiplier,
+            max(self.config.min_multiplier, raw),
+        )
+
+    def _effective_multiplier(
+        self, base_multiplier: Decimal, fragility_multiplier: Decimal
+    ) -> Decimal:
+        combined = base_multiplier * _tighten_multiplier(fragility_multiplier)
+        return min(
+            self.config.max_multiplier,
+            max(self.config.min_multiplier, combined),
+        )
 
     def _symbol_cap(self, equity: Optional[Decimal]) -> Optional[Decimal]:
         symbol_pct_cap = _pct_equity_cap(self.config.max_symbol_pct_equity, equity)
@@ -650,6 +749,8 @@ class PortfolioAllocator:
         decision: StrategyDecision,
         *,
         regime_label: str,
+        fragility_adjustment: FragilityAllocationAdjustment,
+        portfolio_fragility_state: FragilityState,
         budget_multiplier: Decimal,
         capacity_multiplier: Decimal,
     ) -> AllocationResult:
@@ -668,6 +769,9 @@ class PortfolioAllocator:
                 "approved_qty": str(decision.qty),
             }
         )
+        current_allocator.update(fragility_adjustment.to_allocator_payload())
+        current_allocator["portfolio_fragility_state"] = portfolio_fragility_state
+        params["fragility_snapshot"] = fragility_adjustment.snapshot.to_payload()
         params["allocator"] = current_allocator
         passthrough_decision = decision.model_copy(update={"params": params})
         price = _extract_decision_price(passthrough_decision)
@@ -680,6 +784,9 @@ class PortfolioAllocator:
             clipped=False,
             reason_codes=(),
             regime_label=regime_label,
+            fragility_state=fragility_adjustment.snapshot.fragility_state,
+            fragility_score=fragility_adjustment.snapshot.fragility_score,
+            stability_mode_active=fragility_adjustment.stability_mode_active,
             budget_multiplier=budget_multiplier,
             capacity_multiplier=capacity_multiplier,
             requested_notional=requested_notional,
@@ -757,6 +864,51 @@ def allocator_from_settings(equity: Optional[Decimal]) -> PortfolioAllocator:
             regime_capacity_multipliers=_decimal_map(
                 settings.trading_allocator_regime_capacity_multipliers
             ),
+        )
+    )
+
+
+def fragility_monitor_from_settings() -> FragilityMonitor:
+    return FragilityMonitor(
+        FragilityMonitorConfig(
+            mode=settings.trading_fragility_mode,
+            unknown_state=settings.trading_fragility_unknown_state,
+            elevated_threshold=_optional_decimal(
+                settings.trading_fragility_elevated_threshold
+            )
+            or Decimal("0.35"),
+            stress_threshold=_optional_decimal(
+                settings.trading_fragility_stress_threshold
+            )
+            or Decimal("0.55"),
+            crisis_threshold=_optional_decimal(
+                settings.trading_fragility_crisis_threshold
+            )
+            or Decimal("0.80"),
+            state_budget_multipliers={
+                key: _tighten_multiplier(value)
+                for key, value in _fragility_decimal_map(
+                    settings.trading_fragility_state_budget_multipliers
+                ).items()
+            },
+            state_capacity_multipliers={
+                key: _tighten_multiplier(value)
+                for key, value in _fragility_decimal_map(
+                    settings.trading_fragility_state_capacity_multipliers
+                ).items()
+            },
+            state_participation_clamps={
+                key: _tighten_multiplier(value)
+                for key, value in _fragility_decimal_map(
+                    settings.trading_fragility_state_participation_clamps
+                ).items()
+            },
+            state_abstain_bias={
+                key: _tighten_multiplier(value)
+                for key, value in _fragility_decimal_map(
+                    settings.trading_fragility_state_abstain_bias
+                ).items()
+            },
         )
     )
 
@@ -1022,6 +1174,61 @@ def _decimal_map(
     return result
 
 
+def _fragility_decimal_map(values: Mapping[str, float]) -> dict[FragilityState, Decimal]:
+    result: dict[FragilityState, Decimal] = {}
+    for key, value in values.items():
+        normalized_key = key.strip().lower()
+        if normalized_key not in {"normal", "elevated", "stress", "crisis"}:
+            continue
+        decimal_value = _optional_decimal(value)
+        if decimal_value is None:
+            continue
+        result[cast(FragilityState, normalized_key)] = decimal_value
+    return result
+
+
+def _tighten_multiplier(value: Decimal) -> Decimal:
+    if value < 0:
+        return Decimal("0")
+    if value > 1:
+        return Decimal("1")
+    return value
+
+
+def _is_risk_increasing_trade(action: str, symbol_value: Decimal) -> bool:
+    if action == "buy":
+        return symbol_value >= 0
+    return symbol_value <= 0
+
+
+def _has_fragility_signal(decision: StrategyDecision) -> bool:
+    keys = (
+        "fragility_state",
+        "fragility_score",
+        "spread_acceleration",
+        "liquidity_compression",
+        "crowding_proxy",
+        "correlation_concentration",
+    )
+    params = decision.params
+
+    snapshot_payload = params.get("fragility_snapshot")
+    if isinstance(snapshot_payload, Mapping):
+        snapshot = cast(Mapping[str, Any], snapshot_payload)
+        if any(snapshot.get(key) is not None for key in keys):
+            return True
+
+    allocator_payload = params.get("allocator")
+    if isinstance(allocator_payload, Mapping):
+        allocator = cast(Mapping[str, Any], allocator_payload)
+        if allocator.get("fragility_state") is not None:
+            return True
+        if allocator.get("fragility_score") is not None:
+            return True
+
+    return any(params.get(key) is not None for key in keys)
+
+
 def _strategy_weights(
     strategy_signed_qty: tuple[tuple[str, Decimal], ...], action: str
 ) -> tuple[tuple[str, Decimal], ...]:
@@ -1112,5 +1319,6 @@ __all__ = [
     "PortfolioSizingResult",
     "PortfolioSizer",
     "allocator_from_settings",
+    "fragility_monitor_from_settings",
     "sizer_from_settings",
 ]

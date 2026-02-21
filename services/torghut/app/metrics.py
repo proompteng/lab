@@ -570,6 +570,82 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key == "fragility_score":
+                    metric_name = "torghut_trading_fragility_score"
+                    lines.append(f"# HELP {metric_name} Latest fragility score by symbol.")
+                    lines.append(f"# TYPE {metric_name} gauge")
+                    sorted_items = sorted(
+                        [
+                            (str(symbol), float(score))
+                            for symbol, score in cast(dict[str, object], value).items()
+                            if isinstance(score, (int, float, Decimal))
+                        ]
+                    )
+                    for symbol, score in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"symbol": symbol},
+                                value=score,
+                            )
+                        )
+                    continue
+                if key == "allocator_fragility_state_total":
+                    metric_name = "torghut_trading_allocator_fragility_state_total"
+                    lines.append(f"# HELP {metric_name} Allocator outcomes by fragility state.")
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(state), int(count))
+                            for state, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for state, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"fragility_state": state},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "allocator_multiplier_total":
+                    metric_name = "torghut_trading_allocation_multiplier_total"
+                    lines.append(
+                        f"# HELP {metric_name} Allocator multiplier applications by regime and fragility state."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(label), int(count))
+                            for label, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for label, count in sorted_items:
+                        parts = label.rsplit("|", 2)
+                        if len(parts) == 3:
+                            regime, fragility_state, multiplier = parts
+                        elif len(parts) == 2:
+                            regime, fragility_state = parts
+                            multiplier = "unknown"
+                        else:
+                            regime = parts[0] if parts else "unknown"
+                            fragility_state = "elevated"
+                            multiplier = "unknown"
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={
+                                    "regime": regime,
+                                    "fragility_state": fragility_state,
+                                    "multiplier": multiplier,
+                                },
+                                value=count,
+                            )
+                        )
+                    continue
                 if key == "tca_summary":
                     summary = cast(dict[str, object], value)
                     scalar_metrics: list[tuple[str, str]] = [

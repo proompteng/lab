@@ -157,6 +157,37 @@ class TestAutonomyGates(TestCase):
         self.assertFalse(report.promotion_allowed)
         self.assertIn("profitability_evidence_missing", report.reasons)
 
+    def test_gate_matrix_fails_when_fragility_stress_without_stability_mode(self) -> None:
+        policy = GatePolicyMatrix(
+            gate2_max_fragility_score=Decimal("0.9"),
+            gate2_max_fragility_state_rank=3,
+            gate2_require_stability_mode_under_stress=True,
+        )
+        inputs = GateInputs(
+            feature_schema_version="3.0.0",
+            required_feature_null_rate=Decimal("0.00"),
+            staleness_ms_p95=0,
+            symbol_coverage=2,
+            metrics={
+                "decision_count": 20,
+                "trade_count": 10,
+                "net_pnl": "50",
+                "max_drawdown": "100",
+                "turnover_ratio": "1.5",
+                "cost_bps": "5",
+            },
+            robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            profitability_evidence=_profitability_evidence_payload(),
+            fragility_state="stress",
+            fragility_score=Decimal("0.7"),
+            stability_mode_active=False,
+        )
+        report = evaluate_gate_matrix(
+            inputs, policy=policy, promotion_target="paper", code_version="test"
+        )
+        self.assertFalse(report.promotion_allowed)
+        self.assertIn("fragility_stability_mode_inactive", report.reasons)
+
     def test_gate_matrix_fails_when_forecast_health_metrics_degrade(self) -> None:
         policy = GatePolicyMatrix(
             gate3_max_forecast_fallback_rate=Decimal("0.05"),

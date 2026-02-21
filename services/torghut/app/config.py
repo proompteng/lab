@@ -592,6 +592,73 @@ class Settings(BaseSettings):
         alias="TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS",
         description="Symbol->correlation group mapping used when decisions do not provide a group.",
     )
+    trading_fragility_mode: Literal["off", "observe", "enforce"] = Field(
+        default="enforce",
+        alias="TRADING_FRAGILITY_MODE",
+        description="Fragility enforcement mode for allocator and risk checks.",
+    )
+    trading_fragility_unknown_state: Literal[
+        "normal", "elevated", "stress", "crisis"
+    ] = Field(
+        default="elevated",
+        alias="TRADING_FRAGILITY_UNKNOWN_STATE",
+        description="Conservative fragility fallback state when fragility features are missing/invalid.",
+    )
+    trading_fragility_elevated_threshold: float = Field(
+        default=0.35,
+        alias="TRADING_FRAGILITY_ELEVATED_THRESHOLD",
+        description="Score threshold for elevated fragility state.",
+    )
+    trading_fragility_stress_threshold: float = Field(
+        default=0.55,
+        alias="TRADING_FRAGILITY_STRESS_THRESHOLD",
+        description="Score threshold for stress fragility state.",
+    )
+    trading_fragility_crisis_threshold: float = Field(
+        default=0.80,
+        alias="TRADING_FRAGILITY_CRISIS_THRESHOLD",
+        description="Score threshold for crisis fragility state.",
+    )
+    trading_fragility_state_budget_multipliers: dict[str, float] = Field(
+        default_factory=lambda: {
+            "normal": 1.0,
+            "elevated": 0.85,
+            "stress": 0.55,
+            "crisis": 0.25,
+        },
+        alias="TRADING_FRAGILITY_STATE_BUDGET_MULTIPLIERS",
+        description="Fragility-state budget multipliers applied by allocator; values are clamped to [0,1].",
+    )
+    trading_fragility_state_capacity_multipliers: dict[str, float] = Field(
+        default_factory=lambda: {
+            "normal": 1.0,
+            "elevated": 0.8,
+            "stress": 0.5,
+            "crisis": 0.2,
+        },
+        alias="TRADING_FRAGILITY_STATE_CAPACITY_MULTIPLIERS",
+        description="Fragility-state symbol capacity multipliers applied by allocator; values are clamped to [0,1].",
+    )
+    trading_fragility_state_participation_clamps: dict[str, float] = Field(
+        default_factory=lambda: {
+            "normal": 0.1,
+            "elevated": 0.08,
+            "stress": 0.04,
+            "crisis": 0.02,
+        },
+        alias="TRADING_FRAGILITY_STATE_PARTICIPATION_CLAMPS",
+        description="Fragility-state max participation clamps forwarded to execution policy.",
+    )
+    trading_fragility_state_abstain_bias: dict[str, float] = Field(
+        default_factory=lambda: {
+            "normal": 0.0,
+            "elevated": 0.15,
+            "stress": 0.40,
+            "crisis": 0.75,
+        },
+        alias="TRADING_FRAGILITY_STATE_ABSTAIN_BIAS",
+        description="Fragility-state abstain bias for autonomy/execution participation controls.",
+    )
     trading_cooldown_seconds: int = Field(default=0, alias="TRADING_COOLDOWN_SECONDS")
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
@@ -1065,6 +1132,38 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS[{key}] must be >= 0"
                 )
+        if not (
+            0 <= self.trading_fragility_elevated_threshold <= 1
+            and 0 <= self.trading_fragility_stress_threshold <= 1
+            and 0 <= self.trading_fragility_crisis_threshold <= 1
+        ):
+            raise ValueError(
+                "TRADING_FRAGILITY_*_THRESHOLD values must be within [0, 1]"
+            )
+        if not (
+            self.trading_fragility_elevated_threshold
+            <= self.trading_fragility_stress_threshold
+            <= self.trading_fragility_crisis_threshold
+        ):
+            raise ValueError(
+                "TRADING_FRAGILITY thresholds must satisfy elevated <= stress <= crisis"
+            )
+        _validate_fragility_map(
+            "TRADING_FRAGILITY_STATE_BUDGET_MULTIPLIERS",
+            self.trading_fragility_state_budget_multipliers,
+        )
+        _validate_fragility_map(
+            "TRADING_FRAGILITY_STATE_CAPACITY_MULTIPLIERS",
+            self.trading_fragility_state_capacity_multipliers,
+        )
+        _validate_fragility_map(
+            "TRADING_FRAGILITY_STATE_PARTICIPATION_CLAMPS",
+            self.trading_fragility_state_participation_clamps,
+        )
+        _validate_fragility_map(
+            "TRADING_FRAGILITY_STATE_ABSTAIN_BIAS",
+            self.trading_fragility_state_abstain_bias,
+        )
         self.trading_allocator_symbol_correlation_groups = {
             str(key).strip().upper(): str(value).strip().lower()
             for key, value in self.trading_allocator_symbol_correlation_groups.items()
@@ -1266,6 +1365,12 @@ class Settings(BaseSettings):
         if stage.startswith("stage3"):
             return "stage3"
         return "stage3"
+
+
+def _validate_fragility_map(name: str, values: dict[str, float]) -> None:
+    for state, value in values.items():
+        if value < 0 or value > 1:
+            raise ValueError(f"{name}[{state}] must be within [0, 1]")
 
 
 @lru_cache(maxsize=1)

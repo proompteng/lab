@@ -157,6 +157,21 @@ class TestTradingMetrics(TestCase):
         self.assertIn("torghut_trading_tca_avg_shortfall_notional 1.25", payload)
         self.assertIn("torghut_trading_tca_avg_churn_ratio 0.4", payload)
 
+    def test_allocator_multiplier_metrics_preserve_pipe_delimited_regime_labels(self) -> None:
+        metrics = TradingMetrics()
+        payload = render_trading_metrics(
+            {
+                **metrics.__dict__,
+                "allocator_multiplier_total": {
+                    "vol=high|trend=up|liq=tight|stress|0.75": 3
+                },
+            }
+        )
+        self.assertIn(
+            'torghut_trading_allocation_multiplier_total{regime="vol=high|trend=up|liq=tight",fragility_state="stress",multiplier="0.75"} 3',
+            payload,
+        )
+
     def test_route_provenance_metrics_are_exported(self) -> None:
         metrics = TradingMetrics()
         payload = render_trading_metrics(

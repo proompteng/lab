@@ -49,6 +49,16 @@ class RiskEngine:
         notional = price * qty if price is not None else None
         position_qty, position_value = _position_summary(decision.symbol, positions)
         short_increasing = _is_short_increasing(decision.action, qty, position_qty)
+        allocator_meta = _allocator_payload(decision)
+        fragility_state = _fragility_state_from_allocator(allocator_meta)
+        stability_mode_active = bool(allocator_meta.get("stability_mode_active", False))
+        if settings.trading_fragility_mode == "enforce":
+            if fragility_state in {"stress", "crisis"} and not stability_mode_active:
+                reasons.append("fragility_stability_mode_mismatch")
+            if fragility_state == "crisis" and _is_risk_increasing_trade(
+                decision.action, qty, position_qty, short_increasing
+            ):
+                reasons.append("fragility_crisis_entry_blocked")
 
         max_notional = _resolve_decimal(strategy.max_notional_per_trade) or _resolve_decimal(
             settings.trading_max_notional_per_trade
@@ -165,6 +175,34 @@ def _optional_decimal(value: Optional[Decimal | str | float]) -> Optional[Decima
         return Decimal(str(value))
     except (ArithmeticError, ValueError):
         return None
+
+
+def _allocator_payload(decision: StrategyDecision) -> dict[str, object]:
+    raw = decision.params.get("allocator")
+    if not isinstance(raw, dict):
+        return {}
+    payload = cast(dict[object, object], raw)
+    return {str(key): value for key, value in payload.items()}
+
+
+def _fragility_state_from_allocator(allocator: dict[str, object]) -> str:
+    raw = allocator.get("fragility_state")
+    if not isinstance(raw, str):
+        return "elevated"
+    normalized = raw.strip().lower()
+    if normalized in {"normal", "elevated", "stress", "crisis"}:
+        return normalized
+    return "elevated"
+
+
+def _is_risk_increasing_trade(
+    action: str, qty: Decimal, position_qty: Decimal, short_increasing: bool
+) -> bool:
+    if action == "buy":
+        if position_qty < 0:
+            return qty > abs(position_qty)
+        return qty > 0
+    return short_increasing
 
 
 def _allocator_approved_notional(decision: StrategyDecision) -> Optional[Decimal]:
