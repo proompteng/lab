@@ -1,41 +1,197 @@
 namespace: default
 flags:
-    - key: jangar_market_context_enabled
-      name: Jangar Market Context
-      type: BOOLEAN_FLAG_TYPE
-      description: Enables market context fetching and health checks in Jangar.
-      enabled: true
-    - key: jangar_orchestration_controller_enabled
-      name: Jangar Orchestration Controller
-      type: BOOLEAN_FLAG_TYPE
-      description: Enables orchestration controller startup in Jangar.
-      enabled: true
-    - key: jangar_supporting_controller_enabled
-      name: Jangar Supporting Controller
-      type: BOOLEAN_FLAG_TYPE
-      description: Enables supporting controller startup in Jangar.
-      enabled: true
-    - key: jangar_agents_controller_enabled
-      name: Jangar Agents Controller
-      type: BOOLEAN_FLAG_TYPE
-      description: Enables agents controller startup in Jangar.
-      enabled: false
-    - key: jangar_primitives_reconciler_enabled
-      name: Jangar Primitives Reconciler
-      type: BOOLEAN_FLAG_TYPE
-      description: Enables primitives reconciler startup in Jangar.
-      enabled: false
-    - key: jangar_ci_event_stream_enabled
-      name: Jangar CI Event Stream
-      type: BOOLEAN_FLAG_TYPE
-      description: Enables CI event stream updates in Codex judge.
-      enabled: true
-    - key: jangar_torghut_decision_engine_enabled
-      name: Jangar Torghut Decision Engine
-      type: BOOLEAN_FLAG_TYPE
-      description: Enables Torghut decision engine execution in Jangar.
-      enabled: true
-    - key: jangar_e2e_gitops_write_test
-      name: Jangar E2E GitOps Write Test
-      type: BOOLEAN_FLAG_TYPE
-      enabled: true
+  - key: jangar_market_context_enabled
+    name: Jangar Market Context
+    description: Enables market context fetching and health checks in Jangar.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: jangar_orchestration_controller_enabled
+    name: Jangar Orchestration Controller
+    description: Enables orchestration controller startup in Jangar.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: jangar_supporting_controller_enabled
+    name: Jangar Supporting Controller
+    description: Enables supporting controller startup in Jangar.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: jangar_agents_controller_enabled
+    name: Jangar Agents Controller
+    description: Enables agents controller startup in Jangar.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: jangar_primitives_reconciler_enabled
+    name: Jangar Primitives Reconciler
+    description: Enables primitives reconciler startup in Jangar.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: jangar_ci_event_stream_enabled
+    name: Jangar CI Event Stream
+    description: Enables CI event stream updates in Codex judge.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: jangar_torghut_decision_engine_enabled
+    name: Jangar Torghut Decision Engine
+    description: Enables Torghut decision engine execution in Jangar.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_enabled
+    name: Torghut Trading Enabled
+    description: Global trading enablement gate for Torghut runtime.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_live_enabled
+    name: Torghut Trading Live Enabled
+    description: Live-mode safety gate for Torghut trading runtime.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_order_feed_enabled
+    name: Torghut Trading Order Feed Enabled
+    description: Enables Kafka order-feed ingestion in Torghut.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: torghut_trading_strategy_scheduler_enabled
+    name: Torghut Strategy Scheduler Enabled
+    description: Enables scheduler-integrated strategy runtime path.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: torghut_trading_strategy_runtime_fallback_legacy
+    name: Torghut Strategy Runtime Fallback Legacy
+    description: Enables fallback to legacy strategy runtime behavior.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_feature_quality_enabled
+    name: Torghut Trading Feature Quality Enabled
+    description: Enables strict feature quality gate enforcement.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_autonomy_enabled
+    name: Torghut Trading Autonomy Enabled
+    description: Enables autonomous lane orchestration in Torghut.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_autonomy_allow_live_promotion
+    name: Torghut Trading Autonomy Allow Live Promotion
+    description: Allows autonomy to promote paper decisions to live.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: torghut_trading_evidence_continuity_enabled
+    name: Torghut Trading Evidence Continuity Enabled
+    description: Enables periodic evidence continuity reconciliations.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_universe_require_non_empty_jangar
+    name: Torghut Trading Universe Require Non Empty Jangar
+    description: Fails closed when Jangar-backed universe is empty.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_execution_prefer_limit
+    name: Torghut Trading Execution Prefer Limit
+    description: Prefers limit order execution when supported.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_lean_runner_healthcheck_enabled
+    name: Torghut Trading LEAN Runner Healthcheck Enabled
+    description: Enables LEAN runner preflight health checks.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_lean_runner_require_healthy
+    name: Torghut Trading LEAN Runner Require Healthy
+    description: Requires healthy LEAN runner before using LEAN adapter.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_allocator_enabled
+    name: Torghut Trading Allocator Enabled
+    description: Enables deterministic portfolio allocator stage.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: torghut_trading_forecast_router_enabled
+    name: Torghut Trading Forecast Router Enabled
+    description: Enables forecast routing logic in autonomous execution.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_forecast_router_refinement_enabled
+    name: Torghut Trading Forecast Router Refinement Enabled
+    description: Enables forecast refinement controls before execution.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_drift_governance_enabled
+    name: Torghut Trading Drift Governance Enabled
+    description: Enables model drift governance controls and policies.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_drift_live_promotion_requires_evidence
+    name: Torghut Trading Drift Live Promotion Requires Evidence
+    description: Requires evidence checks before drift-driven live promotion.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_drift_rollback_on_performance
+    name: Torghut Trading Drift Rollback On Performance
+    description: Enables automatic rollback on adverse performance drift.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_trading_execution_advisor_enabled
+    name: Torghut Trading Execution Advisor Enabled
+    description: Enables execution advisor recommendations in order routing.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: torghut_trading_allow_shorts
+    name: Torghut Trading Allow Shorts
+    description: Allows short-side trading intents.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: torghut_trading_kill_switch_enabled
+    name: Torghut Trading Kill Switch Enabled
+    description: Enables kill switch checks before order submission.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: torghut_trading_emergency_stop_enabled
+    name: Torghut Trading Emergency Stop Enabled
+    description: Enables autonomous emergency stop enforcement.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: torghut_trading_market_context_required
+    name: Torghut Trading Market Context Required
+    description: Requires market context for LLM reviews.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_llm_enabled
+    name: Torghut LLM Enabled
+    description: Global LLM review enablement for Torghut.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_llm_jangar_bespoke_decision_enabled
+    name: Torghut LLM Jangar Bespoke Decision Enabled
+    description: Enables Jangar bespoke decision endpoint usage.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: torghut_llm_fail_open_live_approved
+    name: Torghut LLM Fail Open Live Approved
+    description: Approval gate for live fail-open behavior.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: torghut_llm_adjustment_allowed
+    name: Torghut LLM Adjustment Allowed
+    description: Allows LLM-generated quantity adjustments.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: torghut_llm_shadow_mode
+    name: Torghut LLM Shadow Mode
+    description: Enables shadow-only LLM evaluation mode.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_llm_committee_enabled
+    name: Torghut LLM Committee Enabled
+    description: Enables committee-based LLM decision arbitration.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_llm_adjustment_approved
+    name: Torghut LLM Adjustment Approved
+    description: Approval gate for LLM execution adjustments.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+  - key: jangar_e2e_gitops_write_test
+    name: Jangar E2E GitOps Write Test
+    description: Branch-local flag used to verify Flipt GitOps write-back plumbing.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
