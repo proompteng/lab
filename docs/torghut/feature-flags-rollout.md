@@ -70,3 +70,18 @@ curl -sS -X POST http://127.0.0.1:18013/evaluate/v1/boolean \
   -d '{"namespaceKey":"default","flagKey":"torghut_trading_enabled","entityId":"torghut","context":{}}'
 ```
 4. Check Torghut logs for successful startup and absence of feature-flag schema errors.
+
+## Rollout Evidence (2026-02-21)
+- Flipt source branch updated: `feature-flags-state` commit `5bbb1e03` includes all `torghut_*` keys.
+- Torghut runtime image rolled out: `registry.ide-newton.ts.net/lab/torghut@sha256:cfb6ffa5bb3f15f8031aee336d355cc280279997a289c5b5c96f0d5c48b33e76`.
+- Active Knative revision: `torghut-00009`.
+- Argo CD status during rollout: `feature-flags=Synced/Healthy`, `torghut=OutOfSync/Healthy` (manifest changes pending merge to `main`).
+- Flipt evaluation validation:
+  - Single key probe returned `enabled` for `torghut_trading_enabled`.
+  - Full catalog probe returned `ok=31 fail=0` for all `torghut_*` keys via `/evaluate/v1/boolean`.
+- Runtime env validation confirms:
+  - `TRADING_FEATURE_FLAGS_ENABLED=true`
+  - `TRADING_FEATURE_FLAGS_URL=http://feature-flags.feature-flags.svc.cluster.local:8013`
+  - `TRADING_FEATURE_FLAGS_TIMEOUT_MS=500`
+  - `TRADING_FEATURE_FLAGS_NAMESPACE=default`
+  - `TRADING_FEATURE_FLAGS_ENTITY_ID=torghut`
