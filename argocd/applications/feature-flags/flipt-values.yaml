@@ -11,11 +11,32 @@ persistence:
   size: 5Gi
 
 flipt:
+  extraEnvVars:
+    - name: FLIPT_GITHUB_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: github-token
+          key: token
+          optional: true
   config:
     authentication:
       required: false
+    credentials:
+      github:
+        type: access_token
+        access_token: ${env:FLIPT_GITHUB_TOKEN}
     storage:
       default:
+        remote: https://github.com/proompteng/lab.git
+        branch: main
+        poll_interval: 30s
+        credentials: github
         backend:
           type: local
-          path: /var/opt/flipt
+          path: /var/opt/flipt/repositories/default
+    environments:
+      default:
+        name: Default
+        default: true
+        storage: default
+        directory: argocd/applications/feature-flags/gitops
