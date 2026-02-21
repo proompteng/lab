@@ -299,3 +299,34 @@ class TestTradingMetrics(TestCase):
             "# TYPE torghut_trading_evidence_continuity_last_checked_ts_seconds gauge",
             payload,
         )
+
+    def test_uncertainty_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.calibration_coverage_error = 0.02
+        metrics.conformal_interval_width = 0.74
+        metrics.regime_shift_score = 0.41
+        metrics.uncertainty_gate_action_total["degrade"] = 2
+        metrics.recalibration_runs_total["queued"] = 1
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_calibration_coverage_error{symbol="all",horizon="autonomy"} 0.02',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_conformal_interval_width{symbol="all",horizon="autonomy"} 0.74',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_regime_shift_score{symbol="all",horizon="autonomy"} 0.41',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_uncertainty_gate_action_total{action="degrade"} 2',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_recalibration_runs_total{status="queued"} 1',
+            payload,
+        )

@@ -16,6 +16,17 @@
   "gate3_max_forecast_fallback_rate": "0.05",
   "gate3_max_forecast_latency_ms_p95": 200,
   "gate3_min_forecast_calibration_score": "0.85",
+  "gate6_max_calibration_error": "0.45",
+  "gate7_target_coverage": "0.90",
+  "gate7_max_coverage_error_pass": "0.03",
+  "gate7_max_coverage_error_degrade": "0.05",
+  "gate7_max_coverage_error_abstain": "0.08",
+  "gate7_shift_score_degrade": "0.60",
+  "gate7_shift_score_abstain": "0.80",
+  "gate7_shift_score_fail": "0.95",
+  "gate7_max_interval_width_pass": "1.25",
+  "gate7_max_interval_width_degrade": "1.75",
+  "promotion_uncertainty_max_coverage_error": "0.03",
   "gate5_live_enabled": false,
   "gate5_require_approval_token": true,
   "promotion_required_artifacts": [
@@ -26,6 +37,12 @@
   "promotion_require_patch_targets": [
     "paper",
     "live"
+  ],
+  "promotion_profitability_required_artifacts": [
+    "gates/profitability-evidence-v4.json",
+    "gates/profitability-benchmark-v4.json",
+    "gates/profitability-evidence-validation.json",
+    "gates/recalibration-report.json"
   ],
   "rollback_required_checks": [
     "killSwitchDryRunPassed",

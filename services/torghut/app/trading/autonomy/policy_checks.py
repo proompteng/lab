@@ -114,11 +114,14 @@ def evaluate_promotion_prerequisites(
     gate_index = {
         str(gate.get("gate_id", "")): gate for gate in _gates(gate_report_payload)
     }
-    for required_gate in (
+    required_gates = [
         "gate0_data_integrity",
         "gate1_statistical_robustness",
         "gate2_risk_capacity",
-    ):
+    ]
+    if promotion_target != "shadow":
+        required_gates.append("gate7_uncertainty_calibration")
+    for required_gate in required_gates:
         status = str(gate_index.get(required_gate, {}).get("status", "fail"))
         if status != "pass":
             reasons.append(f"{required_gate}_not_passed")
@@ -129,6 +132,46 @@ def evaluate_promotion_prerequisites(
                     "status": status,
                 }
             )
+
+    if promotion_target != "shadow":
+        uncertainty_action = str(
+            gate_report_payload.get("uncertainty_gate_action", "abstain")
+        ).strip()
+        if uncertainty_action != "pass":
+            reasons.append("uncertainty_gate_not_pass")
+            reason_details.append(
+                {
+                    "reason": "uncertainty_gate_not_pass",
+                    "uncertainty_gate_action": uncertainty_action,
+                }
+            )
+
+        max_coverage_error = _float_or_default(
+            policy_payload.get("promotion_uncertainty_max_coverage_error"),
+            0.03,
+        )
+        coverage_error = _float_or_default(
+            gate_report_payload.get("coverage_error"), 1.0
+        )
+        if coverage_error > max_coverage_error:
+            reasons.append("uncertainty_calibration_slo_failed")
+            reason_details.append(
+                {
+                    "reason": "uncertainty_calibration_slo_failed",
+                    "coverage_error": coverage_error,
+                    "maximum": max_coverage_error,
+                }
+            )
+
+        recalibration_run_id = str(
+            gate_report_payload.get("recalibration_run_id", "")
+        ).strip()
+        if (
+            uncertainty_action in {"degrade", "abstain", "fail"}
+            and not recalibration_run_id
+        ):
+            reasons.append("uncertainty_recalibration_run_missing")
+            reason_details.append({"reason": "uncertainty_recalibration_run_missing"})
 
     if bool(throughput_observed.get("no_signal_window", False)):
         reasons.append("no_signal_window_detected")
@@ -363,6 +406,7 @@ def _required_artifacts_for_target(
                 "gates/profitability-evidence-v4.json",
                 "gates/profitability-benchmark-v4.json",
                 "gates/profitability-evidence-validation.json",
+                "gates/recalibration-report.json",
             ],
         )
         profitability_artifacts = _list_from_any(profitability_artifacts_raw)
@@ -615,6 +659,19 @@ def _int_or_default(value: Any, default: int) -> int:
         if stripped:
             try:
                 return int(stripped)
+            except ValueError:
+                return default
+    return default
+
+
+def _float_or_default(value: Any, default: float) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            try:
+                return float(stripped)
             except ValueError:
                 return default
     return default

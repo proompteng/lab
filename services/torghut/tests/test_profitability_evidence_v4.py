@@ -64,6 +64,11 @@ class TestProfitabilityEvidenceV4(TestCase):
         self.assertEqual(
             evidence.to_payload()["schema_version"], "profitability-evidence-v4"
         )
+        confidence = evidence.to_payload()["confidence_calibration"]
+        self.assertEqual(confidence["schema_version"], "calibration_snapshot_v1")
+        self.assertIn("coverage_error", confidence)
+        self.assertIn("shift_score", confidence)
+        self.assertIn("gate_action", confidence)
         self.assertTrue(validation.passed)
         self.assertEqual(validation.reasons, [])
 

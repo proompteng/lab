@@ -295,6 +295,13 @@ class TradingMetrics:
         default_factory=lambda: cast(dict[str, int], {})
     )
     autonomy_outcome_total: dict[str, int] = field(
+    calibration_coverage_error: float = 0
+    conformal_interval_width: float = 0
+    regime_shift_score: float = 0
+    uncertainty_gate_action_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    recalibration_runs_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
 
@@ -517,6 +524,38 @@ class TradingMetrics:
         self.autonomy_outcome_total[normalized_outcome] = (
             self.autonomy_outcome_total.get(normalized_outcome, 0) + 1
         )
+
+    def record_uncertainty_gate(self, gate_report_payload: Mapping[str, Any]) -> None:
+        action = str(gate_report_payload.get("uncertainty_gate_action", "")).strip()
+        if action:
+            self.uncertainty_gate_action_total[action] = (
+                self.uncertainty_gate_action_total.get(action, 0) + 1
+            )
+        coverage_error = _optional_decimal(gate_report_payload.get("coverage_error"))
+        if coverage_error is not None:
+            self.calibration_coverage_error = float(coverage_error)
+        interval_width = _optional_decimal(
+            gate_report_payload.get("conformal_interval_width")
+        )
+        if interval_width is not None:
+            self.conformal_interval_width = float(interval_width)
+        shift_score = _optional_decimal(gate_report_payload.get("shift_score"))
+        if shift_score is not None:
+            self.regime_shift_score = float(shift_score)
+        gates = gate_report_payload.get("gates")
+        if isinstance(gates, list):
+            for raw_gate in cast(list[object], gates):
+                if not isinstance(raw_gate, Mapping):
+                    continue
+                gate = cast(Mapping[str, Any], raw_gate)
+                if str(gate.get("gate_id", "")).strip() != "gate7_uncertainty_calibration":
+                    continue
+                status = str(gate.get("status", "")).strip()
+                recalibration_status = "not_required" if status == "pass" else "queued"
+                self.recalibration_runs_total[recalibration_status] = (
+                    self.recalibration_runs_total.get(recalibration_status, 0) + 1
+                )
+                break
 
 @dataclass
 class TradingState:
@@ -2972,7 +3011,15 @@ class TradingScheduler:
         self.state.last_autonomy_gates = str(result.gate_report_path)
         self.state.last_autonomy_reason = None
 
-        gate_report = json.loads(result.gate_report_path.read_text(encoding="utf-8"))
+        gate_report_raw = json.loads(result.gate_report_path.read_text(encoding="utf-8"))
+        gate_report: dict[str, Any]
+        if isinstance(gate_report_raw, dict):
+            gate_report = cast(dict[str, Any], gate_report_raw)
+            self.state.metrics.record_uncertainty_gate(
+                cast(Mapping[str, Any], gate_report)
+            )
+        else:
+            gate_report = {}
         recommended_mode = str(gate_report.get("recommended_mode") or "shadow")
         self.state.last_autonomy_recommendation = recommended_mode
         throughput_raw = gate_report.get("throughput")

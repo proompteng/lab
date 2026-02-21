@@ -43,6 +43,7 @@ class TestAutonomyGates(TestCase):
 
         self.assertTrue(report.promotion_allowed)
         self.assertEqual(report.recommended_mode, "paper")
+        self.assertEqual(report.uncertainty_gate_action, "pass")
 
     def test_live_remains_gated_by_default(self) -> None:
         policy = GatePolicyMatrix(gate5_live_enabled=False)
@@ -193,8 +194,78 @@ class TestAutonomyGates(TestCase):
         self.assertIn("forecast_inference_latency_exceeds_threshold", report.reasons)
         self.assertIn("forecast_calibration_score_below_threshold", report.reasons)
 
+    def test_gate_matrix_degrades_when_uncertainty_threshold_exceeded(self) -> None:
+        policy = GatePolicyMatrix()
+        inputs = GateInputs(
+            feature_schema_version="3.0.0",
+            required_feature_null_rate=Decimal("0.00"),
+            staleness_ms_p95=0,
+            symbol_coverage=2,
+            metrics={
+                "decision_count": 20,
+                "trade_count": 10,
+                "net_pnl": "50",
+                "max_drawdown": "100",
+                "turnover_ratio": "1.5",
+                "cost_bps": "5",
+            },
+            robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            profitability_evidence=_profitability_evidence_payload(
+                coverage_error="0.06",
+                gate_action="degrade",
+                recalibration_run_id="recal-1",
+                recalibration_artifact_ref="/tmp/recalibration-report.json",
+            ),
+        )
 
-def _profitability_evidence_payload() -> dict[str, object]:
+        report = evaluate_gate_matrix(
+            inputs, policy=policy, promotion_target="paper", code_version="test"
+        )
+
+        self.assertFalse(report.promotion_allowed)
+        self.assertEqual(report.uncertainty_gate_action, "degrade")
+        self.assertIn("uncertainty_gate_action_degrade", report.reasons)
+
+    def test_gate_matrix_fails_closed_when_uncertainty_inputs_missing(self) -> None:
+        policy = GatePolicyMatrix()
+        payload = _profitability_evidence_payload()
+        confidence = dict(payload["confidence_calibration"])
+        del confidence["coverage_error"]
+        payload["confidence_calibration"] = confidence
+        inputs = GateInputs(
+            feature_schema_version="3.0.0",
+            required_feature_null_rate=Decimal("0.00"),
+            staleness_ms_p95=0,
+            symbol_coverage=2,
+            metrics={
+                "decision_count": 20,
+                "trade_count": 10,
+                "net_pnl": "50",
+                "max_drawdown": "100",
+                "turnover_ratio": "1.5",
+                "cost_bps": "5",
+            },
+            robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            profitability_evidence=payload,
+        )
+
+        report = evaluate_gate_matrix(
+            inputs, policy=policy, promotion_target="paper", code_version="test"
+        )
+
+        self.assertFalse(report.promotion_allowed)
+        self.assertEqual(report.uncertainty_gate_action, "abstain")
+        self.assertIn("uncertainty_inputs_missing_or_invalid", report.reasons)
+
+
+def _profitability_evidence_payload(
+    *,
+    coverage_error: str = "0.02",
+    shift_score: str = "0.20",
+    gate_action: str = "pass",
+    recalibration_run_id: str | None = None,
+    recalibration_artifact_ref: str | None = None,
+) -> dict[str, object]:
     return {
         "schema_version": "profitability-evidence-v4",
         "risk_adjusted_metrics": {
@@ -203,7 +274,17 @@ def _profitability_evidence_payload() -> dict[str, object]:
             "return_over_drawdown": "0.5",
         },
         "cost_fill_realism": {"cost_bps": "5"},
-        "confidence_calibration": {"calibration_error": "0.2"},
+        "confidence_calibration": {
+            "calibration_error": "0.2",
+            "target_coverage": "0.90",
+            "observed_coverage": str(Decimal("0.90") - Decimal(coverage_error)),
+            "coverage_error": coverage_error,
+            "avg_interval_width": "0.75",
+            "shift_score": shift_score,
+            "gate_action": gate_action,
+            "recalibration_run_id": recalibration_run_id,
+            "recalibration_artifact_ref": recalibration_artifact_ref,
+        },
         "reproducibility": {
             "artifact_hashes": {
                 "signals": "a",
