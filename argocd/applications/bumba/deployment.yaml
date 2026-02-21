@@ -30,6 +30,10 @@ spec:
               if [ ! -d /workspace/lab/.git ]; then
                 rm -rf /workspace/lab
                 git clone --depth 1 https://github.com/proompteng/lab.git /workspace/lab
+              else
+                git -C /workspace/lab remote set-url origin https://github.com/proompteng/lab.git
+                git -C /workspace/lab fetch --depth 1 origin main
+                git -C /workspace/lab reset --hard FETCH_HEAD
               fi
               mkdir -p /workspace/lab/.worktrees /workspace/.bun-install-cache
           volumeMounts:

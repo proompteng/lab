@@ -96,11 +96,6 @@ const upsertIngestionTargetTimeouts = {
   scheduleToCloseTimeoutMs: 120_000,
 }
 
-const markEventProcessedTimeouts = {
-  startToCloseTimeoutMs: 30_000,
-  scheduleToCloseTimeoutMs: 120_000,
-}
-
 const cleanupEnrichmentTimeouts = {
   startToCloseTimeoutMs: 120_000,
   scheduleToCloseTimeoutMs: 600_000,
@@ -325,20 +320,6 @@ export const workflows = [
         )) as ReadRepoFileOutput | null
 
         if (!fileResult) {
-          if (eventDeliveryId) {
-            yield* activities.schedule(
-              'markEventProcessed',
-              [
-                {
-                  deliveryId: eventDeliveryId,
-                },
-              ],
-              {
-                ...markEventProcessedTimeouts,
-                retry: activityRetry,
-              },
-            )
-          }
           yield* finalizeIngestion('skipped', 'directory')
           return {
             id: 'skipped-directory',
@@ -595,21 +576,6 @@ export const workflows = [
         if (!usePreModelChunkIndexing) {
           chunkIndexing = (yield* indexChunks(fileVersion)) as IndexFileChunksOutput
           logChunkIndexing(chunkIndexing)
-        }
-
-        if (eventDeliveryId) {
-          yield* activities.schedule(
-            'markEventProcessed',
-            [
-              {
-                deliveryId: eventDeliveryId,
-              },
-            ],
-            {
-              ...markEventProcessedTimeouts,
-              retry: activityRetry,
-            },
-          )
         }
 
         yield* finalizeIngestion('completed')

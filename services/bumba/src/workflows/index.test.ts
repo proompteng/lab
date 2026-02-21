@@ -319,16 +319,6 @@ test('enrichFile completes when all activities are resolved', async () => {
         value: {},
       },
     ],
-    [
-      'activity-13',
-      {
-        status: 'completed',
-        value: {
-          ingestionId: 'ingestion-id',
-          eventId: 'event-id',
-        },
-      },
-    ],
   ])
 
   const output = await execute(executor, {
@@ -346,7 +336,13 @@ test('enrichFile completes when all activities are resolved', async () => {
       command.attributes.value.activityType?.name === 'enrichWithModel',
   )
 
-  expect(scheduleCommands).toHaveLength(13)
+  expect(scheduleCommands).toHaveLength(12)
+  const scheduledActivityTypes = scheduleCommands.flatMap((command) =>
+    command.attributes?.case === 'scheduleActivityTaskCommandAttributes'
+      ? [command.attributes.value.activityType?.name]
+      : [],
+  )
+  expect(scheduledActivityTypes).not.toContain('markEventProcessed')
   if (!modelSchedule || modelSchedule.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
     throw new Error('Expected enrichWithModel to be scheduled.')
   }
@@ -623,16 +619,6 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
         value: {},
       },
     ],
-    [
-      'activity-14',
-      {
-        status: 'completed',
-        value: {
-          ingestionId: 'ingestion-id',
-          eventId: 'event-id',
-        },
-      },
-    ],
   ])
 
   const output = await execute(executor, {
@@ -645,7 +631,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
     (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
   )
 
-  expect(scheduleCommands).toHaveLength(14)
+  expect(scheduleCommands).toHaveLength(13)
   expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
   expect(output.completion).toBe('completed')
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })
