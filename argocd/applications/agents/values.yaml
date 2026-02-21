@@ -7,8 +7,8 @@ image:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: "95765432"
-    digest: sha256:823207a83a29c58e7064c0bd49d170188061f69c798e923540e36531b456dd63
+    tag: eaf8d021
+    digest: sha256:dd81fd7225b7e805e50e34b01dedc0301388e22d46b2ee75a145e04d3ed2a2ab
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
