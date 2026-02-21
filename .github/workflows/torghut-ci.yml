@@ -30,13 +30,25 @@ jobs:
       - name: Install uv
         run: python -m pip install --upgrade pip uv
 
-      - name: Install torghut (dev)
+      - name: Verify lockfile
         working-directory: services/torghut
-        run: uv pip install --system ".[dev]"
+        run: uv lock --check
 
-      - name: Type check (pyright)
+      - name: Sync dependencies (locked)
         working-directory: services/torghut
-        run: uv run pyright
+        run: uv sync --frozen --extra dev
+
+      - name: Type check (pyright strict app)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.json
+
+      - name: Type check (pyright alpha profile)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.alpha.json
+
+      - name: Type check (pyright scripts profile)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.scripts.json
 
   lint-and-tests:
     name: Bytecode + unit tests
@@ -54,18 +66,46 @@ jobs:
       - name: Install uv
         run: python -m pip install --upgrade pip uv
 
-      - name: Install torghut (dev)
+      - name: Sync dependencies (locked)
         working-directory: services/torghut
-        run: uv pip install --system ".[dev]"
+        run: uv sync --frozen --extra dev
 
       - name: Bytecode check
         working-directory: services/torghut
-        run: uv run python -m compileall app
+        run: uv run --frozen python -m compileall app
 
       - name: Lint
         working-directory: services/torghut
-        run: uv run ruff check app tests
+        run: uv run --frozen ruff check app tests scripts migrations
 
       - name: Unit tests
         working-directory: services/torghut
-        run: uv run python -m unittest discover -s tests -p "test_*.py"
+        run: uv run --frozen python -m unittest discover -s tests -p "test_*.py"
+
+  quality-signals:
+    name: Quality signals (complexity + security)
+    needs: pyright
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies (locked)
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev
+
+      - name: Complexity scan (ruff C901, non-blocking)
+        working-directory: services/torghut
+        run: uv run --frozen ruff check app scripts migrations --select C901 --statistics --exit-zero
+
+      - name: Security scan (ruff S, non-blocking)
+        working-directory: services/torghut
+        run: uv run --frozen ruff check app scripts migrations --select S --statistics --exit-zero

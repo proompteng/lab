@@ -32,6 +32,16 @@ Health checks:
 - `GET /healthz` – liveness (default port 8181)
 - `GET /db-check` – requires reachable Postgres at `DB_DSN` (default port 8181)
 
+## Feature flags (Flipt)
+- Torghut runtime gates are resolved via Flipt boolean evaluations when `TRADING_FEATURE_FLAGS_ENABLED=true`.
+- Configure:
+  - `TRADING_FEATURE_FLAGS_URL` (feature-flags service URL)
+  - `TRADING_FEATURE_FLAGS_NAMESPACE` (default `default`)
+  - `TRADING_FEATURE_FLAGS_ENTITY_ID` (default `torghut`)
+  - `TRADING_FEATURE_FLAGS_TIMEOUT_MS` (default `500`)
+- Canonical flag inventory is in `argocd/applications/feature-flags/gitops/default/features.yaml` (`torghut_*` keys).
+- Migration and rollout runbook: `docs/torghut/feature-flags-rollout.md`.
+
 ## Order-feed ingestion (v3 execution accuracy)
 - `TRADING_ORDER_FEED_ENABLED=true` enables Kafka order-update ingestion in the main trading runtime.
 - `TRADING_ORDER_FEED_BOOTSTRAP_SERVERS=<host:port,...>` must be set when enabled.
