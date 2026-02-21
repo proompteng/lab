@@ -531,6 +531,7 @@ class TradingState:
     last_autonomy_error: Optional[str] = None
     last_autonomy_reason: Optional[str] = None
     last_autonomy_run_id: Optional[str] = None
+    last_autonomy_candidate_id: Optional[str] = None
     last_autonomy_gates: Optional[str] = None
     last_autonomy_patch: Optional[str] = None
     last_autonomy_recommendation: Optional[str] = None
@@ -2830,6 +2831,7 @@ class TradingScheduler:
             )
 
             self.state.last_autonomy_run_id = None
+            self.state.last_autonomy_candidate_id = None
             self.state.last_autonomy_gates = str(no_signal_path)
             self.state.last_autonomy_patch = None
             self.state.last_autonomy_recommendation = None
@@ -2964,7 +2966,9 @@ class TradingScheduler:
 
         self.state.autonomy_failure_streak = 0
         self.state.autonomy_runs_total += 1
+        previous_candidate_id = self.state.last_autonomy_candidate_id
         self.state.last_autonomy_run_id = result.run_id
+        self.state.last_autonomy_candidate_id = result.candidate_id
         self.state.last_autonomy_gates = str(result.gate_report_path)
         self.state.last_autonomy_reason = None
 
@@ -2983,6 +2987,11 @@ class TradingScheduler:
             if isinstance(promotion_decision_raw, Mapping)
             else cast(Mapping[str, Any], {})
         )
+        promotion_decision_candidate_id = str(
+            promotion_decision.get("candidate_id") or result.candidate_id
+        ).strip()
+        if promotion_decision_candidate_id:
+            self.state.last_autonomy_candidate_id = promotion_decision_candidate_id
         promotion_allowed = bool(promotion_decision.get("promotion_allowed", False))
         if promotion_allowed:
             outcome = f"promoted_{recommended_mode}"
@@ -3014,6 +3023,12 @@ class TradingScheduler:
             )
             if action == "promote":
                 self.state.metrics.autonomy_promotions_total += 1
+                if (
+                    previous_candidate_id
+                    and promotion_decision_candidate_id
+                    and previous_candidate_id != promotion_decision_candidate_id
+                ):
+                    self.state.metrics.autonomy_demotions_total += 1
             elif action == "deny":
                 self.state.metrics.autonomy_denials_total += 1
             elif action == "demote":

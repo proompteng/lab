@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from ...models import (
@@ -148,9 +148,15 @@ def evaluate_evidence_continuity(
                 )
                 .where(
                     ResearchCandidate.run_id.in_(run_ids),
-                    ResearchPromotion.decision_rationale.is_not(None),
-                    ResearchPromotion.decision_rationale != "",
-                    ResearchPromotion.evidence_bundle.is_not(None),
+                    or_(
+                        and_(
+                            ResearchPromotion.decision_rationale.is_not(None),
+                            ResearchPromotion.decision_rationale != "",
+                            ResearchPromotion.evidence_bundle.is_not(None),
+                        ),
+                        ResearchPromotion.approve_reason.is_not(None),
+                        ResearchPromotion.deny_reason.is_not(None),
+                    ),
                 )
                 .group_by(ResearchCandidate.run_id)
             ).all()
