@@ -40,6 +40,10 @@ The v1 documents are written to stay consistent with:
 - `v4/` - fresh quant/LLM profitability expansion pack grounded in 2024-2025 papers and white papers.
   - Entry point: `docs/torghut/design-system/v4/index.md`
 
+- `v5/` - production-quality strategy build pack for the top 5 new quant+LLM priorities (2026-02-21),
+  with comprehensive design docs and per-paper technique synthesis.
+  - Entry point: `docs/torghut/design-system/v5/index.md`
+
 - `v1/` - first cohesive design-system pass aligned to production reality as of **2026-02-08**.
 
 ### v1 Index
