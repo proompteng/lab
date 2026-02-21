@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from yaml import safe_load
 
 from app.trading.autonomy.lane import (
+    _resolve_gate_forecast_metrics,
     _resolve_gate_fragility_inputs,
     run_autonomous_lane,
     upsert_autonomy_no_signal_run,
@@ -20,7 +21,7 @@ from app.trading.autonomy.lane import (
 from app.trading.autonomy.gates import GateEvaluationReport, GateResult
 from app.trading.evaluation import WalkForwardDecision
 from app.trading.features import SignalFeatures
-from app.trading.models import StrategyDecision
+from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.reporting import PromotionEvidenceSummary, PromotionRecommendation
 from app.models import (
     Base,
@@ -33,6 +34,40 @@ from app.models import (
 
 
 class TestAutonomousLane(TestCase):
+    def test_gate_forecast_metrics_are_derived_from_signals(self) -> None:
+        signals = [
+            SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                payload={
+                    "macd": {"macd": "0.6", "signal": "0.2"},
+                    "rsi14": "42",
+                    "price": "100",
+                },
+            ),
+            SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, 0, 2, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                payload={
+                    "macd": {"macd": "0.7", "signal": "0.1"},
+                    "rsi14": "48",
+                    "price": "101",
+                },
+            ),
+        ]
+
+        metrics = _resolve_gate_forecast_metrics(signals=signals)
+
+        self.assertIn("fallback_rate", metrics)
+        self.assertIn("inference_latency_ms_p95", metrics)
+        self.assertIn("calibration_score_min", metrics)
+        self.assertGreaterEqual(Decimal(metrics["fallback_rate"]), Decimal("0"))
+        self.assertLessEqual(Decimal(metrics["fallback_rate"]), Decimal("1"))
+        self.assertGreaterEqual(int(metrics["inference_latency_ms_p95"]), 1)
+        self.assertGreaterEqual(Decimal(metrics["calibration_score_min"]), Decimal("0"))
+
     def test_gate_fragility_inputs_are_derived_from_decision_payloads(self) -> None:
         fallback_metrics = {
             "fragility_state": "elevated",

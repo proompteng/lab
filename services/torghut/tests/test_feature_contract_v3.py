@@ -102,3 +102,19 @@ class TestFeatureContractV3(TestCase):
 
         with self.assertRaises(FeatureNormalizationError):
             normalize_feature_vector_v3(signal)
+
+    def test_normalization_lowercases_explicit_route_regime_label(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': '0.4', 'signal': '0.2'},
+                'rsi14': '50',
+                'price': '100',
+                'regime_label': '  TREND  ',
+            },
+        )
+
+        feature_vector = normalize_feature_vector_v3(signal)
+        self.assertEqual(feature_vector.values.get('route_regime_label'), 'trend')

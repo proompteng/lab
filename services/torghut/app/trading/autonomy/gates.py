@@ -549,18 +549,24 @@ def _gate3_shadow_paper_quality(
     if llm_error_ratio > policy.gate3_max_llm_error_ratio:
         reasons.append("llm_error_ratio_exceeds_threshold")
     fallback_rate = _decimal(inputs.forecast_metrics.get("fallback_rate"))
+    if fallback_rate is None:
+        reasons.append("forecast_fallback_rate_missing")
     if (
         fallback_rate is not None
         and fallback_rate > policy.gate3_max_forecast_fallback_rate
     ):
         reasons.append("forecast_fallback_rate_exceeds_threshold")
     latency_ms_p95 = _decimal(inputs.forecast_metrics.get("inference_latency_ms_p95"))
+    if latency_ms_p95 is None:
+        reasons.append("forecast_inference_latency_p95_missing")
     if (
         latency_ms_p95 is not None
         and latency_ms_p95 > Decimal(policy.gate3_max_forecast_latency_ms_p95)
     ):
         reasons.append("forecast_inference_latency_exceeds_threshold")
     calibration_score_min = _decimal(inputs.forecast_metrics.get("calibration_score_min"))
+    if calibration_score_min is None:
+        reasons.append("forecast_calibration_score_missing")
     if (
         calibration_score_min is not None
         and calibration_score_min < policy.gate3_min_forecast_calibration_score
