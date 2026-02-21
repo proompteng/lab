@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/part-of: lab
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: jangar-worker
@@ -192,4 +194,4 @@ spec:
       volumes:
         - name: workspace
           persistentVolumeClaim:
-            claimName: jangar-workspace
+            claimName: jangar-worker-workspace

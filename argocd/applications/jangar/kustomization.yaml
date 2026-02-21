@@ -18,6 +18,7 @@ resources:
   - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml
   - pvc-rwo.yaml
+  - pvc-worker-rwo.yaml
   - vscode-tailscale-service.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml

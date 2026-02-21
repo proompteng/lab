@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jangar-worker-workspace
+  namespace: jangar
+  labels:
+    app.kubernetes.io/name: jangar-worker
+    app.kubernetes.io/part-of: lab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: rook-ceph-block
