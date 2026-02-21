@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
+import YAML from 'yaml'
 
 import { repoRoot } from '../../shared/cli'
 import { updateJangarManifests } from '../update-manifests'
@@ -137,11 +138,27 @@ describe('updateJangarManifests', () => {
     })
 
     const values = readFileSync(fixture.agentsValuesPath, 'utf8')
-    expect(values).toContain('repository: registry.ide-newton.ts.net/lab/jangar')
-    expect(values).toContain('tag: agents-tag')
-    expect(values).toContain('digest: sha256:agentsdigest')
-    expect(values).toContain('repository: registry.ide-newton.ts.net/lab/jangar-control-plane')
-    expect(values).toContain('tag: keep-tag')
+    const parsed = YAML.parse(values) as {
+      image?: { repository?: string; tag?: string; digest?: string }
+      runner?: { image?: { repository?: string; tag?: string; digest?: string } }
+      controlPlane?: { image?: { repository?: string; tag?: string; digest?: string } }
+    }
+
+    expect(parsed.image).toEqual({
+      repository: 'registry.ide-newton.ts.net/lab/jangar',
+      tag: 'agents-tag',
+      digest: 'sha256:agentsdigest',
+    })
+    expect(parsed.runner?.image).toEqual({
+      repository: 'registry.ide-newton.ts.net/lab/jangar',
+      tag: 'agents-tag',
+      digest: 'sha256:agentsdigest',
+    })
+    expect(parsed.controlPlane?.image).toEqual({
+      repository: 'registry.ide-newton.ts.net/lab/jangar-control-plane',
+      tag: 'agents-tag',
+      digest: 'sha256:agentsdigest',
+    })
     expect(result.changed.agentsValues).toBe(true)
 
     rmSync(fixture.dir, { recursive: true, force: true })
