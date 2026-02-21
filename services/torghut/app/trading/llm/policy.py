@@ -18,6 +18,7 @@ class PolicyOutcome:
     verdict: str
     decision: StrategyDecision
     reason: Optional[str] = None
+    guardrail_reasons: list[str] | None = None
 
 
 def apply_policy(
@@ -27,20 +28,37 @@ def apply_policy(
 ) -> PolicyOutcome:
     """Apply policy constraints to the LLM review response."""
 
-    min_confidence = settings.llm_min_confidence
-    if review.confidence < min_confidence:
-        return _policy_from_fail_mode(
-            settings.llm_quality_fail_mode,
+    guardrail_reasons = _deterministic_guardrail_reasons(review)
+    if review.verdict == "abstain":
+        return _fallback_outcome(
             decision,
-            fail_reason="llm_confidence_below_min",
+            reason="llm_abstain",
+            fail_mode=settings.llm_abstain_fail_mode,
+            guardrail_reasons=guardrail_reasons,
+        )
+    if review.verdict == "escalate":
+        return _fallback_outcome(
+            decision,
+            reason="llm_escalate",
+            fail_mode=settings.llm_escalation_fail_mode,
+            guardrail_reasons=guardrail_reasons,
         )
 
-    quality_reason = _quality_guardrail_reason(review)
-    if quality_reason is not None:
-        return _policy_from_fail_mode(
-            settings.llm_quality_fail_mode,
+    if guardrail_reasons:
+        return _fallback_outcome(
             decision,
-            fail_reason=quality_reason,
+            reason="llm_uncertainty_guardrail",
+            fail_mode=settings.llm_uncertainty_fail_mode,
+            guardrail_reasons=guardrail_reasons,
+        )
+
+    min_confidence = settings.llm_min_confidence
+    if review.confidence < min_confidence:
+        return _fallback_outcome(
+            decision,
+            reason="llm_confidence_below_min",
+            fail_mode=settings.llm_uncertainty_fail_mode,
+            guardrail_reasons=guardrail_reasons,
         )
 
     if review.verdict == "veto":
@@ -48,22 +66,6 @@ def apply_policy(
 
     if review.verdict == "approve":
         return PolicyOutcome("approve", decision)
-
-    if review.verdict == "abstain":
-        return _policy_from_fail_mode(
-            settings.llm_abstain_fail_mode,
-            decision,
-            fail_reason="llm_abstain",
-        )
-
-    if review.verdict == "escalate":
-        if not settings.llm_allow_escalate:
-            return PolicyOutcome("veto", decision, "llm_escalate_disabled")
-        return _policy_from_fail_mode(
-            settings.llm_escalate_fail_mode,
-            decision,
-            fail_reason="llm_escalate",
-        )
 
     if adjustment_allowed is None:
         adjustment_allowed = settings.llm_adjustment_allowed
@@ -115,44 +117,62 @@ def apply_policy(
     return PolicyOutcome("adjust", updated, clamp_reason)
 
 
-def _quality_guardrail_reason(review: LLMReviewResponse) -> Optional[str]:
-    probabilities_payload = review.calibrated_probabilities
-    if probabilities_payload is None:
-        return "llm_calibrated_probabilities_missing"
-    probabilities = {
-        "approve": probabilities_payload.approve,
-        "veto": probabilities_payload.veto,
-        "adjust": probabilities_payload.adjust,
-        "abstain": probabilities_payload.abstain,
-        "escalate": probabilities_payload.escalate,
-    }
-    ranking = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
-    top_verdict, top_probability = ranking[0]
-    second_probability = ranking[1][1] if len(ranking) > 1 else 0.0
-    margin = top_probability - second_probability
+def _fallback_outcome(
+    decision: StrategyDecision,
+    *,
+    reason: str,
+    fail_mode: str,
+    guardrail_reasons: list[str],
+) -> PolicyOutcome:
+    effective_verdict = "veto" if fail_mode == "veto" else "approve"
+    return PolicyOutcome(
+        effective_verdict,
+        decision,
+        reason=f"{reason}_fallback_{fail_mode}",
+        guardrail_reasons=guardrail_reasons,
+    )
 
-    if review.uncertainty > settings.llm_max_uncertainty:
-        return "llm_uncertainty_above_max"
-    if review.verdict in {"approve", "veto", "adjust"}:
-        selected_probability = probabilities.get(review.verdict, 0.0)
-        if selected_probability < settings.llm_min_calibrated_top_probability:
-            return "llm_calibrated_probability_below_min"
-    if margin < settings.llm_min_probability_margin:
-        return "llm_probability_margin_below_min"
-    if review.verdict in {"approve", "veto", "adjust"} and top_verdict != review.verdict:
-        return "llm_selected_verdict_not_top_probability"
+
+def _deterministic_guardrail_reasons(review: LLMReviewResponse) -> list[str]:
+    reasons: list[str] = []
+    calibrated = review.calibrated_probabilities.model_dump(mode="python")
+    top_probability = max(float(value) for value in calibrated.values())
+    if top_probability < settings.llm_min_calibrated_probability:
+        reasons.append("llm_calibrated_probability_below_min")
+    if review.uncertainty.score > settings.llm_max_uncertainty_score:
+        reasons.append("llm_uncertainty_score_above_max")
+    if _band_rank(review.uncertainty.band) > _band_rank(settings.llm_max_uncertainty_band):
+        reasons.append("llm_uncertainty_band_above_max")
+    quality_score = _parse_quality_score(review.calibration_metadata.get("quality_score"))
+    if quality_score is not None and quality_score < settings.llm_min_calibration_quality_score:
+        reasons.append("llm_calibration_quality_below_min")
+    return reasons
+
+
+def _parse_quality_score(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        score = float(value)
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        try:
+            score = float(raw)
+        except (TypeError, ValueError):
+            return None
+    if 0.0 <= score <= 1.0:
+        return score
     return None
 
 
-def _policy_from_fail_mode(
-    fail_mode: str,
-    decision: StrategyDecision,
-    *,
-    fail_reason: str,
-) -> PolicyOutcome:
-    if fail_mode == "pass_through":
-        return PolicyOutcome("approve", decision, f"{fail_reason}_pass_through")
-    return PolicyOutcome("veto", decision, fail_reason)
+def _band_rank(band: str) -> int:
+    if band == "low":
+        return 0
+    if band == "medium":
+        return 1
+    return 2
 
 
 def allowed_order_types(current: str) -> set[str]:

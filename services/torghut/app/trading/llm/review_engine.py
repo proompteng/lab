@@ -32,9 +32,10 @@ _SYSTEM_PROMPT = (
     "You are an automated trading review agent. "
     "Respond ONLY with a JSON object matching the required schema. "
     "Decide whether to approve, veto, adjust, abstain, or escalate the decision. "
+    "Always provide calibrated per-verdict probabilities that sum to 1.0. "
+    "Always provide confidence and uncertainty bands. "
     "If adjusting, propose qty and optionally order_type within policy bounds. "
     "If adjusting order_type to limit or stop_limit, include limit_price. "
-    "Include calibrated verdict probabilities and uncertainty metadata. "
     "Provide a concise rationale (<= 280 chars). "
     "Do not include chain-of-thought or extra keys."
 )
@@ -222,43 +223,6 @@ def _coerce_int(value: Any) -> Optional[int]:
         return None
 
 
-def _coerce_float(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _confidence_band_for_value(confidence: float) -> str:
-    if confidence >= 0.75:
-        return "high"
-    if confidence >= 0.45:
-        return "medium"
-    return "low"
-
-
-def _uncertainty_band_for_value(uncertainty: float) -> str:
-    if uncertainty <= 0.25:
-        return "low"
-    if uncertainty <= 0.55:
-        return "medium"
-    return "high"
-
-
-def _default_calibrated_probabilities(verdict: Any, confidence: float) -> dict[str, float]:
-    normalized_verdict = str(verdict or "").strip().lower()
-    verdict_keys = ["approve", "veto", "adjust", "abstain", "escalate"]
-    if normalized_verdict not in verdict_keys:
-        normalized_verdict = "abstain"
-    chosen_probability = min(max(confidence, 0.2), 0.95)
-    residual = 1.0 - chosen_probability
-    other_keys = [key for key in verdict_keys if key != normalized_verdict]
-    each_residual = residual / len(other_keys)
-    probabilities = {key: each_residual for key in verdict_keys}
-    probabilities[normalized_verdict] = chosen_probability
-    return probabilities
-
-
 __all__ = ["LLMReviewEngine", "LLMReviewOutcome"]
 
 
@@ -294,39 +258,87 @@ def _normalize_llm_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if "verdict" not in payload and "decision" in payload:
         payload = dict(payload)
         payload["verdict"] = payload.pop("decision")
-    if "calibrated_probabilities" not in payload and "probabilities" in payload:
+    if "verdict" in payload:
+        verdict = str(payload["verdict"]).strip().lower()
+        aliases = {
+            "escalate_to_human": "escalate",
+            "escalate_human": "escalate",
+            "defer": "abstain",
+            "hold": "abstain",
+        }
         payload = dict(payload)
-        payload["calibrated_probabilities"] = payload.pop("probabilities")
+        payload["verdict"] = aliases.get(verdict, verdict)
 
     # Provide defaults for optional-ish fields; schema validation will still enforce
     # correct verdict and rationale.
     if "confidence" not in payload:
         payload = dict(payload)
         payload["confidence"] = 0.5
-    confidence = _coerce_float(payload.get("confidence"), 0.5)
-    confidence = max(0.0, min(confidence, 1.0))
+    confidence = _clamp01(payload.get("confidence"))
     if "confidence_band" not in payload:
         payload = dict(payload)
-        payload["confidence_band"] = _confidence_band_for_value(confidence)
+        payload["confidence_band"] = _confidence_band_from_score(confidence)
+    confidence_band = str(payload.get("confidence_band") or "")
     if "uncertainty" not in payload:
         payload = dict(payload)
-        payload["uncertainty"] = max(0.0, min(1.0, 1.0 - confidence))
-    uncertainty = _coerce_float(payload.get("uncertainty"), 0.5)
-    uncertainty = max(0.0, min(uncertainty, 1.0))
-    if "uncertainty_band" not in payload:
-        payload = dict(payload)
-        payload["uncertainty_band"] = _uncertainty_band_for_value(uncertainty)
+        payload["uncertainty"] = {
+            "score": round(1.0 - confidence, 4),
+            "band": _uncertainty_band_from_confidence_band(confidence_band),
+        }
     if "calibrated_probabilities" not in payload:
         payload = dict(payload)
         payload["calibrated_probabilities"] = _default_calibrated_probabilities(
-            verdict=payload.get("verdict"),
-            confidence=confidence,
+            str(payload.get("verdict") or ""),
+            confidence,
         )
+    if "calibration_metadata" not in payload:
+        payload = dict(payload)
+        payload["calibration_metadata"] = {}
+    if "escalate_reason" not in payload and "escalation_reason" in payload:
+        payload = dict(payload)
+        payload["escalate_reason"] = payload.get("escalation_reason")
     if "risk_flags" not in payload:
         payload = dict(payload)
         payload["risk_flags"] = []
 
     return payload
+
+
+def _clamp01(value: Any) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+    return min(1.0, max(0.0, score))
+
+
+def _confidence_band_from_score(confidence: float) -> str:
+    if confidence >= 0.75:
+        return "high"
+    if confidence >= 0.5:
+        return "medium"
+    return "low"
+
+
+def _uncertainty_band_from_confidence_band(confidence_band: str) -> str:
+    if confidence_band == "high":
+        return "low"
+    if confidence_band == "medium":
+        return "medium"
+    return "high"
+
+
+def _default_calibrated_probabilities(verdict: str, confidence: float) -> dict[str, float]:
+    labels = ["approve", "veto", "adjust", "abstain", "escalate"]
+    picked = verdict if verdict in labels else "abstain"
+    remainder = max(0.0, 1.0 - confidence)
+    background = remainder / 4.0
+    probabilities = {label: background for label in labels}
+    probabilities[picked] = confidence
+    total = sum(probabilities.values())
+    if total <= 0:
+        return {label: 0.2 for label in labels}
+    return {label: round(score / total, 6) for label, score in probabilities.items()}
 
 
 def load_prompt_template(version: str) -> str:

@@ -128,7 +128,6 @@ class TradingMetrics:
     llm_adjust_total: int = 0
     llm_abstain_total: int = 0
     llm_escalate_total: int = 0
-    llm_quality_guardrail_total: int = 0
     llm_error_total: int = 0
     llm_parse_error_total: int = 0
     llm_validation_error_total: int = 0
@@ -142,6 +141,7 @@ class TradingMetrics:
     llm_shadow_total: int = 0
     llm_guardrail_block_total: int = 0
     llm_guardrail_shadow_total: int = 0
+    llm_policy_fallback_total: int = 0
     llm_market_context_block_total: int = 0
     llm_market_context_error_total: int = 0
     llm_market_context_reason_total: dict[str, int] = field(
@@ -1068,44 +1068,30 @@ class TradingPipeline:
                 market_context=market_context,
                 recent_decisions=recent_decisions,
             )
+            if outcome.response.verdict == "abstain":
+                self.state.metrics.llm_abstain_total += 1
+            elif outcome.response.verdict == "escalate":
+                self.state.metrics.llm_escalate_total += 1
             policy_outcome = apply_policy(
                 decision,
                 outcome.response,
                 adjustment_allowed=guardrails.adjustment_allowed,
             )
-            if outcome.response.verdict == "abstain":
-                self.state.metrics.llm_abstain_total += 1
-            elif outcome.response.verdict == "escalate":
-                self.state.metrics.llm_escalate_total += 1
 
             response_json: dict[str, Any] = dict(outcome.response_json)
-            calibration_probabilities = (
-                outcome.response.calibrated_probabilities.model_dump(mode="json")
-                if outcome.response.calibrated_probabilities is not None
-                else None
-            )
             if policy_outcome.reason:
                 response_json["policy_override"] = policy_outcome.reason
                 response_json["policy_verdict"] = policy_outcome.verdict
-                if policy_outcome.reason.startswith("llm_") and (
-                    "uncertainty" in policy_outcome.reason
-                    or "probability" in policy_outcome.reason
-                ):
-                    self.state.metrics.llm_quality_guardrail_total += 1
+                if "_fallback_" in policy_outcome.reason:
+                    self.state.metrics.llm_policy_fallback_total += 1
+            if policy_outcome.guardrail_reasons:
+                response_json["deterministic_guardrails"] = list(
+                    policy_outcome.guardrail_reasons
+                )
             if guardrails.reasons:
                 response_json["mrm_guardrails"] = list(guardrails.reasons)
             response_json["policy_resolution"] = policy_resolution
-            response_json["calibration_metadata"] = {
-                "confidence": outcome.response.confidence,
-                "confidence_band": outcome.response.confidence_band,
-                "uncertainty": outcome.response.uncertainty,
-                "uncertainty_band": outcome.response.uncertainty_band,
-                "calibrated_probabilities": calibration_probabilities,
-            }
-            response_json["guardrail_controls"] = {
-                "quality_thresholds": guardrails.quality_thresholds,
-                "fallback_controls": guardrails.fallback_controls,
-            }
+            response_json["guardrail_controls"] = _llm_guardrail_controls_snapshot()
 
             if outcome.tokens_prompt is not None:
                 self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
@@ -1127,6 +1113,13 @@ class TradingPipeline:
                 self.state.metrics.llm_approve_total += 1
             elif policy_outcome.verdict == "veto":
                 self.state.metrics.llm_veto_total += 1
+
+            if outcome.tokens_prompt is not None:
+                self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
+            if outcome.tokens_completion is not None:
+                self.state.metrics.llm_tokens_completion_total += (
+                    outcome.tokens_completion
+                )
 
             self._persist_llm_review(
                 session=session,
@@ -1170,6 +1163,7 @@ class TradingPipeline:
                 "fallback": fallback,
                 "effective_verdict": effective_verdict,
                 "policy_resolution": policy_resolution,
+                "guardrail_controls": _llm_guardrail_controls_snapshot(),
             }
             if guardrails.reasons:
                 response_json["mrm_guardrails"] = list(guardrails.reasons)
@@ -1259,6 +1253,7 @@ class TradingPipeline:
                     effective_fail_mode=fallback,
                     guardrail_reasons=risk_flags or [],
                 ),
+                "guardrail_controls": _llm_guardrail_controls_snapshot(),
             },
             verdict="error",
             confidence=None,
@@ -1706,6 +1701,20 @@ def _build_llm_policy_resolution(
     }
 
 
+def _llm_guardrail_controls_snapshot() -> dict[str, Any]:
+    return {
+        "min_confidence": settings.llm_min_confidence,
+        "min_calibrated_probability": settings.llm_min_calibrated_probability,
+        "max_uncertainty_score": settings.llm_max_uncertainty_score,
+        "max_uncertainty_band": settings.llm_max_uncertainty_band,
+        "min_calibration_quality_score": settings.llm_min_calibration_quality_score,
+        "abstain_fail_mode": settings.llm_abstain_fail_mode,
+        "escalation_fail_mode": settings.llm_escalation_fail_mode,
+        "uncertainty_fail_mode": settings.llm_uncertainty_fail_mode,
+        "effective_fail_mode": settings.llm_effective_fail_mode_for_current_rollout(),
+    }
+
+
 class TradingScheduler:
     """Async background scheduler for trading pipeline."""
 
@@ -1748,8 +1757,6 @@ class TradingScheduler:
                 "allow_requests": guardrails.allow_requests,
                 "governance_evidence_complete": guardrails.governance_evidence_complete,
                 "effective_adjustment_allowed": guardrails.adjustment_allowed,
-                "quality_thresholds": guardrails.quality_thresholds,
-                "fallback_controls": guardrails.fallback_controls,
                 "reasons": list(guardrails.reasons),
             },
         }

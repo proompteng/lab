@@ -583,46 +583,26 @@ class Settings(BaseSettings):
         ),
     )
     llm_min_confidence: float = Field(default=0.5, alias="LLM_MIN_CONFIDENCE")
-    llm_max_uncertainty: float = Field(
-        default=0.55,
-        alias="LLM_MAX_UNCERTAINTY",
-        ge=0.0,
-        le=1.0,
-        description="Maximum allowed model uncertainty before deterministic policy blocks LLM influence.",
+    llm_min_calibrated_probability: float = Field(
+        default=0.45, alias="LLM_MIN_CALIBRATED_PROBABILITY"
     )
-    llm_min_calibrated_top_probability: float = Field(
-        default=0.45,
-        alias="LLM_MIN_CALIBRATED_TOP_PROBABILITY",
-        ge=0.0,
-        le=1.0,
-        description="Minimum calibrated probability required for the selected actionable verdict.",
+    llm_max_uncertainty_score: float = Field(
+        default=0.6, alias="LLM_MAX_UNCERTAINTY_SCORE"
     )
-    llm_min_probability_margin: float = Field(
-        default=0.08,
-        alias="LLM_MIN_PROBABILITY_MARGIN",
-        ge=0.0,
-        le=1.0,
-        description="Minimum margin between top and runner-up calibrated verdict probability.",
+    llm_max_uncertainty_band: Literal["low", "medium", "high"] = Field(
+        default="medium", alias="LLM_MAX_UNCERTAINTY_BAND"
     )
-    llm_quality_fail_mode: Literal["veto", "pass_through"] = Field(
-        default="veto",
-        alias="LLM_QUALITY_FAIL_MODE",
-        description="Deterministic fail-open/fail-closed policy when probability or uncertainty guardrails fail.",
-    )
-    llm_allow_escalate: bool = Field(
-        default=True,
-        alias="LLM_ALLOW_ESCALATE",
-        description="Allow explicit LLM escalate verdicts to enter deterministic fallback handling.",
+    llm_min_calibration_quality_score: float = Field(
+        default=0.5, alias="LLM_MIN_CALIBRATION_QUALITY_SCORE"
     )
     llm_abstain_fail_mode: Literal["veto", "pass_through"] = Field(
-        default="veto",
-        alias="LLM_ABSTAIN_FAIL_MODE",
-        description="Deterministic fallback when the LLM abstains.",
+        default="pass_through", alias="LLM_ABSTAIN_FAIL_MODE"
     )
-    llm_escalate_fail_mode: Literal["veto", "pass_through"] = Field(
-        default="veto",
-        alias="LLM_ESCALATE_FAIL_MODE",
-        description="Deterministic fallback when the LLM escalates.",
+    llm_escalation_fail_mode: Literal["veto", "pass_through"] = Field(
+        default="veto", alias="LLM_ESCALATION_FAIL_MODE"
+    )
+    llm_uncertainty_fail_mode: Literal["veto", "pass_through"] = Field(
+        default="veto", alias="LLM_UNCERTAINTY_FAIL_MODE"
     )
     llm_adjustment_allowed: bool = Field(default=False, alias="LLM_ADJUSTMENT_ALLOWED")
     llm_max_qty_multiplier: float = Field(default=1.25, alias="LLM_MAX_QTY_MULTIPLIER")
@@ -792,6 +772,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "LLM_FAIL_MODE must be 'veto' when LLM_FAIL_MODE_ENFORCEMENT=strict_veto"
             )
+        if not 0 <= self.llm_min_confidence <= 1:
+            raise ValueError("LLM_MIN_CONFIDENCE must be within [0, 1]")
+        if not 0 <= self.llm_min_calibrated_probability <= 1:
+            raise ValueError("LLM_MIN_CALIBRATED_PROBABILITY must be within [0, 1]")
+        if not 0 <= self.llm_max_uncertainty_score <= 1:
+            raise ValueError("LLM_MAX_UNCERTAINTY_SCORE must be within [0, 1]")
+        if not 0 <= self.llm_min_calibration_quality_score <= 1:
+            raise ValueError("LLM_MIN_CALIBRATION_QUALITY_SCORE must be within [0, 1]")
         if self.llm_live_fail_open_requested and not self.llm_fail_open_live_approved:
             raise ValueError(
                 "LLM_FAIL_OPEN_LIVE_APPROVED must be true when live effective fail mode is pass_through"

@@ -57,15 +57,14 @@ class TestLLMReviewEngine(TestCase):
 
         self.assertEqual(outcome.response.verdict, "approve")
         self.assertEqual(outcome.response.confidence, 0.5)
+        self.assertEqual(outcome.response.confidence_band, "medium")
         self.assertEqual(outcome.response.risk_flags, [])
-        total_probability = (
-            outcome.response.calibrated_probabilities.approve
-            + outcome.response.calibrated_probabilities.veto
-            + outcome.response.calibrated_probabilities.adjust
-            + outcome.response.calibrated_probabilities.abstain
-            + outcome.response.calibrated_probabilities.escalate
+        self.assertAlmostEqual(
+            sum(outcome.response.calibrated_probabilities.model_dump(mode="python").values()),
+            1.0,
+            places=6,
         )
-        self.assertAlmostEqual(total_probability, 1.0, places=6)
+        self.assertEqual(outcome.response.uncertainty.band, "medium")
 
     def test_build_request_sanitizes_inputs(self) -> None:
         engine = LLMReviewEngine(client=FakeLLMClient('{"verdict":"approve","confidence":1,"rationale":"ok","risk_flags":[]}'))
@@ -184,13 +183,10 @@ class TestLLMReviewEngine(TestCase):
         self.assertIsNotNone(request.market_context)
         self.assertEqual(request.market_context.symbol, "AAPL")
 
-    def test_review_rejects_invalid_probability_mass(self) -> None:
+    def test_review_normalizes_escalate_alias(self) -> None:
         engine = LLMReviewEngine(
             client=FakeLLMClient(
-                '{"verdict":"approve","confidence":0.8,"uncertainty":0.1,'
-                '"confidence_band":"high","uncertainty_band":"low",'
-                '"calibrated_probabilities":{"approve":0.9,"veto":0.1,"adjust":0.1,"abstain":0.1,"escalate":0.1},'
-                '"rationale":"bad_probs","risk_flags":[]}'
+                '{"decision":"escalate_to_human","confidence":0.2,"rationale":"need manual review"}'
             )
         )
         account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
@@ -215,13 +211,15 @@ class TestLLMReviewEngine(TestCase):
             rationale="demo",
             params={},
         )
-        with self.assertRaises(ValueError):
-            engine.review(
-                decision=decision,
-                account=account,
-                positions=positions,
-                request=engine.build_request(decision, account, positions, portfolio, None, None, []),
-                portfolio=portfolio,
-                market=None,
-                recent_decisions=[],
-            )
+        outcome = engine.review(
+            decision=decision,
+            account=account,
+            positions=positions,
+            request=engine.build_request(decision, account, positions, portfolio, None, None, []),
+            portfolio=portfolio,
+            market=None,
+            recent_decisions=[],
+        )
+        self.assertEqual(outcome.response.verdict, "escalate")
+        self.assertEqual(outcome.response.confidence_band, "low")
+        self.assertEqual(outcome.response.uncertainty.band, "high")
