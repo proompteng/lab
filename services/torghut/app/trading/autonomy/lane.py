@@ -485,7 +485,7 @@ def run_autonomous_lane(
             strategy_config_path=strategy_config_path,
             gate_policy_path=gate_policy_path,
         )
-        research_spec = {
+        research_spec: dict[str, Any] = {
             "run_id": run_id,
             "candidate_id": candidate_id,
             "candidate_hash": candidate_hash,
@@ -1315,7 +1315,7 @@ def _strategy_universe_definition(
         return {
             "autonomy_lifecycle": lifecycle_payload or {},
         }
-    payload = {
+    payload: dict[str, Any] = {
         "strategies": [
             {
                 "strategy_id": item.strategy_id,

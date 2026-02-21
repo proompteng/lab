@@ -505,15 +505,13 @@ class TradingMetrics:
             self.autonomy_promotion_allowed_total += 1
         else:
             self.autonomy_promotion_blocked_total += 1
-        normalized_recommendation = (
-            recommendation.strip() if isinstance(recommendation, str) else ""
-        )
+        normalized_recommendation = recommendation.strip() if recommendation else ""
         if not normalized_recommendation:
             normalized_recommendation = "unknown"
         self.autonomy_recommendation_total[normalized_recommendation] = (
             self.autonomy_recommendation_total.get(normalized_recommendation, 0) + 1
         )
-        normalized_outcome = outcome.strip() if isinstance(outcome, str) else ""
+        normalized_outcome = outcome.strip()
         if not normalized_outcome:
             normalized_outcome = "unknown"
         self.autonomy_outcome_total[normalized_outcome] = (
@@ -2974,16 +2972,16 @@ class TradingScheduler:
         recommended_mode = str(gate_report.get("recommended_mode") or "shadow")
         self.state.last_autonomy_recommendation = recommended_mode
         throughput_raw = gate_report.get("throughput")
-        throughput = (
+        throughput: Mapping[str, Any] = (
             cast(Mapping[str, Any], throughput_raw)
             if isinstance(throughput_raw, Mapping)
-            else {}
+            else cast(Mapping[str, Any], {})
         )
         promotion_decision_raw = gate_report.get("promotion_decision")
-        promotion_decision = (
+        promotion_decision: Mapping[str, Any] = (
             cast(Mapping[str, Any], promotion_decision_raw)
             if isinstance(promotion_decision_raw, Mapping)
-            else {}
+            else cast(Mapping[str, Any], {})
         )
         promotion_allowed = bool(promotion_decision.get("promotion_allowed", False))
         if promotion_allowed:
