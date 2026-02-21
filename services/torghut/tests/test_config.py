@@ -161,6 +161,30 @@ class TestConfig(TestCase):
             {"cursor_ahead_of_stream", "universe_source_unavailable"},
         )
 
+    def test_allocator_symbol_correlation_groups_are_normalized(self) -> None:
+        settings = Settings(
+            TRADING_UNIVERSE_SOURCE="static",
+            TRADING_ENABLED=False,
+            TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS={
+                " aapl ": " Tech ",
+                "msft": "growth",
+            },
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(
+            settings.trading_allocator_symbol_correlation_groups,
+            {"AAPL": "tech", "MSFT": "growth"},
+        )
+
+    def test_rejects_negative_allocator_strategy_budget(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                TRADING_UNIVERSE_SOURCE="static",
+                TRADING_ENABLED=False,
+                TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS={"s1": -1},
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
     def test_parses_drift_reason_code_sets(self) -> None:
         settings = Settings(
             TRADING_DRIFT_TRIGGER_RETRAIN_REASON_CODES="a,b",

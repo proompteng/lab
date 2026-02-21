@@ -552,6 +552,26 @@ class Settings(BaseSettings):
         alias="TRADING_ALLOCATOR_REGIME_CAPACITY_MULTIPLIERS",
         description="Regime->symbol capacity multiplier map used by allocator (JSON object).",
     )
+    trading_allocator_strategy_notional_caps: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS",
+        description="Strategy->per-cycle notional budget cap map used by allocator (JSON object).",
+    )
+    trading_allocator_symbol_notional_caps: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS",
+        description="Symbol->per-cycle notional budget cap map used by allocator (JSON object).",
+    )
+    trading_allocator_correlation_group_caps: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS",
+        description="Correlation-group->per-cycle notional cap map used by allocator (JSON object).",
+    )
+    trading_allocator_symbol_correlation_groups: dict[str, str] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS",
+        description="Symbol->correlation group mapping used when decisions do not provide a group.",
+    )
     trading_cooldown_seconds: int = Field(default=0, alias="TRADING_COOLDOWN_SECONDS")
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
@@ -936,6 +956,26 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"TRADING_ALLOCATOR_REGIME_CAPACITY_MULTIPLIERS[{key}] must be >= 0"
                 )
+        for key, value in self.trading_allocator_strategy_notional_caps.items():
+            if value < 0:
+                raise ValueError(
+                    f"TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS[{key}] must be >= 0"
+                )
+        for key, value in self.trading_allocator_symbol_notional_caps.items():
+            if value < 0:
+                raise ValueError(
+                    f"TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS[{key}] must be >= 0"
+                )
+        for key, value in self.trading_allocator_correlation_group_caps.items():
+            if value < 0:
+                raise ValueError(
+                    f"TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS[{key}] must be >= 0"
+                )
+        self.trading_allocator_symbol_correlation_groups = {
+            str(key).strip().upper(): str(value).strip().lower()
+            for key, value in self.trading_allocator_symbol_correlation_groups.items()
+            if str(key).strip() and str(value).strip()
+        }
         if (
             self.llm_fail_mode_enforcement == "strict_veto"
             and self.llm_fail_mode != "veto"
