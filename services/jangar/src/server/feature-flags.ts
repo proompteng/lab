@@ -17,9 +17,7 @@ const DEFAULT_TIMEOUT_MS = 500
 const DEFAULT_NAMESPACE_KEY = 'default'
 const DEFAULT_ENTITY_ID = 'jangar'
 
-const BooleanEvaluationResponseSchema = S.Struct({
-  enabled: S.Boolean,
-})
+const BooleanEnabledSchema = S.Boolean
 
 const TRUE_BOOLEAN_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
 const FALSE_BOOLEAN_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
@@ -108,9 +106,9 @@ export const getBooleanFeatureFlag = async (request: BooleanFlagRequest): Promis
     if (!response.ok) return request.defaultValue
 
     const body = await response.json()
-    const decoded = S.decodeUnknownEither(BooleanEvaluationResponseSchema)(body)
+    const decoded = S.decodeUnknownEither(BooleanEnabledSchema)((body as { enabled?: unknown } | null)?.enabled)
     if (Either.isLeft(decoded)) return request.defaultValue
-    return decoded.right.enabled
+    return decoded.right
   } catch {
     return request.defaultValue
   } finally {

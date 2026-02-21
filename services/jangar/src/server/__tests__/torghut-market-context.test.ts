@@ -100,7 +100,11 @@ describe('torghut market context', () => {
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ enabled: false }),
+      json: async () => ({
+        enabled: false,
+        reason: 'DEFAULT_EVALUATION_REASON',
+        requestId: 'test-request-id',
+      }),
     })
     vi.stubGlobal('fetch', fetchMock)
 
