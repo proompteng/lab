@@ -18,9 +18,9 @@ helmCharts:
       grafana:
         enabled: false
       elasticsearch:
-        replicas: 1
-        minimumMasterNodes: 1
-        clusterHealthCheckParams: "wait_for_status=yellow&timeout=1s"
+        replicas: 3
+        minimumMasterNodes: 2
+        clusterHealthCheckParams: "wait_for_status=green&timeout=1s"
         # Persist ES data so Temporal visibility index survives node restarts
         persistence:
           enabled: true
@@ -33,14 +33,20 @@ helmCharts:
           storageClassName: rook-ceph-block
       schema:
         createDatabase:
-          enabled: false
+          enabled: true
         setup:
-          enabled: false
+          enabled: true
         update:
-          enabled: false
+          enabled: true
       cassandra:
+        persistence:
+          enabled: true
+          storageClass: rook-ceph-block
+          accessMode: ReadWriteOnce
+          size: 20Gi
         config:
-          cluster_size: 1
+          cluster_size: 3
+          seed_size: 2
       web:
         # https://docs.temporal.io/references/web-ui-environment-variables
         additionalEnv:
