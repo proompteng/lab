@@ -70,6 +70,8 @@ def _query_llm_metrics(session: Session, start_utc: datetime, end_utc: datetime)
         "approve": 0,
         "veto": 0,
         "adjust": 0,
+        "abstain": 0,
+        "escalate": 0,
         "error": 0,
     }
     for verdict, count in verdict_rows:
@@ -115,17 +117,146 @@ def _query_llm_metrics(session: Session, start_utc: datetime, end_utc: datetime)
         for flag, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:TOP_RISK_FLAGS_LIMIT]
     ]
 
+    calibration_quality = _compute_calibration_quality(
+        session=session,
+        filter_clause=filter_clause,
+    )
+    decision_contribution = _compute_decision_contribution(
+        total_reviews=total_reviews,
+        verdict_counts=verdict_counts,
+        session=session,
+        filter_clause=filter_clause,
+    )
+
     return {
         "total_reviews": total_reviews,
         "verdict_counts": verdict_counts,
         "error_rate": error_rate,
         "avg_confidence": avg_confidence_value,
+        "decision_contribution": decision_contribution,
         "tokens": {
             "prompt": tokens_prompt,
             "completion": tokens_completion,
             "total": tokens_prompt + tokens_completion,
         },
         "top_risk_flags": top_risk_flags,
+        "calibration_quality": calibration_quality,
+    }
+
+
+def _compute_calibration_quality(
+    *,
+    session: Session,
+    filter_clause: list[Any],
+) -> dict[str, object]:
+    rows = session.execute(
+        select(
+            LLMDecisionReview.confidence,
+            LLMDecisionReview.response_json,
+        )
+        .join(TradeDecision, TradeDecision.id == LLMDecisionReview.trade_decision_id)
+        .where(*filter_clause)
+    ).all()
+
+    confidence_gap_total = 0.0
+    uncertainty_alignment_total = 0.0
+    quality_score_total = 0.0
+    confidence_gap_count = 0
+    uncertainty_alignment_count = 0
+    quality_score_count = 0
+    high_uncertainty_count = 0
+
+    for confidence_raw, response_raw in rows:
+        confidence = _safe_float(confidence_raw)
+        response = _as_mapping(response_raw)
+        calibrated = _as_mapping(response.get("calibrated_probabilities"))
+        uncertainty = _as_mapping(response.get("uncertainty"))
+        calibration_metadata = _as_mapping(response.get("calibration_metadata"))
+
+        if calibrated:
+            top_probability: float | None = None
+            for value in calibrated.values():
+                candidate = _safe_float(value)
+                if candidate is None:
+                    continue
+                if top_probability is None or candidate > top_probability:
+                    top_probability = candidate
+            if top_probability is not None and confidence is not None:
+                confidence_gap_total += abs(float(top_probability) - confidence)
+                confidence_gap_count += 1
+
+        uncertainty_score = _safe_float(uncertainty.get("score"))
+        if confidence is not None and uncertainty_score is not None:
+            uncertainty_alignment_total += abs((1.0 - confidence) - uncertainty_score)
+            uncertainty_alignment_count += 1
+        if str(uncertainty.get("band") or "").strip().lower() == "high":
+            high_uncertainty_count += 1
+
+        quality_score = _safe_float(calibration_metadata.get("quality_score"))
+        if quality_score is not None:
+            quality_score_total += quality_score
+            quality_score_count += 1
+
+    return {
+        "mean_confidence_gap": (
+            confidence_gap_total / confidence_gap_count if confidence_gap_count else None
+        ),
+        "mean_uncertainty_alignment_error": (
+            uncertainty_alignment_total / uncertainty_alignment_count
+            if uncertainty_alignment_count
+            else None
+        ),
+        "mean_calibration_quality_score": (
+            quality_score_total / quality_score_count if quality_score_count else None
+        ),
+        "high_uncertainty_rate": (
+            high_uncertainty_count / len(rows) if rows else 0.0
+        ),
+        "samples": len(rows),
+    }
+
+
+def _compute_decision_contribution(
+    *,
+    total_reviews: int,
+    verdict_counts: dict[str, int],
+    session: Session,
+    filter_clause: list[Any],
+) -> dict[str, object]:
+    response_rows = session.execute(
+        select(LLMDecisionReview.response_json)
+        .join(TradeDecision, TradeDecision.id == LLMDecisionReview.trade_decision_id)
+        .where(*filter_clause)
+    ).all()
+    fallback_total = 0
+    deterministic_guardrail_total = 0
+    for (response_raw,) in response_rows:
+        response = _as_mapping(response_raw)
+        policy_override = str(response.get("policy_override") or "")
+        if "_fallback_" in policy_override or response.get("fallback") in {"veto", "pass_through"}:
+            fallback_total += 1
+        if isinstance(response.get("deterministic_guardrails"), list):
+            deterministic_guardrail_total += 1
+
+    actionable_total = max(total_reviews - verdict_counts.get("error", 0), 0)
+    contribution_events = (
+        verdict_counts.get("adjust", 0)
+        + verdict_counts.get("veto", 0)
+        + verdict_counts.get("abstain", 0)
+        + verdict_counts.get("escalate", 0)
+    )
+    return {
+        "actionable_reviews": actionable_total,
+        "contribution_events": contribution_events,
+        "contribution_rate": (
+            contribution_events / actionable_total if actionable_total else 0.0
+        ),
+        "fallback_total": fallback_total,
+        "fallback_rate": (fallback_total / total_reviews if total_reviews else 0.0),
+        "deterministic_guardrail_total": deterministic_guardrail_total,
+        "deterministic_guardrail_rate": (
+            deterministic_guardrail_total / total_reviews if total_reviews else 0.0
+        ),
     }
 
 
@@ -160,3 +291,22 @@ def _as_int(value: object) -> int:
         return int(str(value))
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_mapping(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return cast(dict[str, Any], value)
+    return {}

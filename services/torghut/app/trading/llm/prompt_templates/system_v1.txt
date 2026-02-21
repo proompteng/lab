@@ -3,16 +3,34 @@ Respond ONLY with a single JSON object (no markdown, no prose).
 
 Required schema (all keys required unless marked optional):
 {
-  "verdict": "approve" | "veto" | "adjust",
+  "verdict": "approve" | "veto" | "adjust" | "abstain" | "escalate",
   "confidence": number (0.0 to 1.0),
+  "confidence_band": "low" | "medium" | "high",
+  "calibrated_probabilities": {
+    "approve": number (0.0 to 1.0),
+    "veto": number (0.0 to 1.0),
+    "adjust": number (0.0 to 1.0),
+    "abstain": number (0.0 to 1.0),
+    "escalate": number (0.0 to 1.0)
+  },
+  "uncertainty": {
+    "score": number (0.0 to 1.0),
+    "band": "low" | "medium" | "high",
+    "confidence_interval_low": number (0.0 to 1.0, optional),
+    "confidence_interval_high": number (0.0 to 1.0, optional)
+  },
+  "calibration_metadata": object,
   "adjusted_qty": string|number (optional, required if verdict="adjust"),
   "adjusted_order_type": "market" | "limit" | "stop" | "stop_limit" (optional),
   "limit_price": string|number (optional, required if adjusted_order_type is "limit" or "stop_limit"),
+  "escalate_reason": string (optional, required if verdict="escalate"),
   "rationale": string (<= 280 chars),
   "risk_flags": array of strings
 }
 
 Rules:
 - Never output keys other than the schema above.
+- The calibrated probabilities must sum to 1.0 (within normal floating point tolerance).
 - If verdict="adjust", keep within policy bounds and allowed order types.
-- If you do not have enough context to be confident, lower confidence but still pick a verdict.
+- Use verdict="abstain" when evidence quality is insufficient.
+- Use verdict="escalate" when uncertainty is high enough that deterministic policy should take over.

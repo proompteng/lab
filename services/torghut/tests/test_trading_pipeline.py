@@ -180,6 +180,11 @@ class FakeLLMReviewEngine:
         adjusted_order_type: str | None = None,
         limit_price: Decimal | None = None,
         confidence: float = 0.9,
+        confidence_band: str | None = None,
+        uncertainty_score: float | None = None,
+        uncertainty_band: str | None = None,
+        calibrated_probabilities: dict[str, float] | None = None,
+        calibration_quality_score: float | None = None,
         error: Exception | None = None,
         circuit_open: bool = False,
     ) -> None:
@@ -188,6 +193,11 @@ class FakeLLMReviewEngine:
         self.adjusted_order_type = adjusted_order_type
         self.limit_price = limit_price
         self.confidence = confidence
+        self.confidence_band = confidence_band
+        self.uncertainty_score = uncertainty_score
+        self.uncertainty_band = uncertainty_band
+        self.calibrated_probabilities = calibrated_probabilities
+        self.calibration_quality_score = calibration_quality_score
         self.error = error
         self.circuit_breaker = FakeCircuitBreaker(circuit_open)
 
@@ -266,6 +276,21 @@ class FakeLLMReviewEngine:
         response = LLMReviewResponse(
             verdict=self.verdict,
             confidence=self.confidence,
+            confidence_band=self.confidence_band or (
+                "high" if self.confidence >= 0.75 else "medium" if self.confidence >= 0.5 else "low"
+            ),
+            calibrated_probabilities=self.calibrated_probabilities
+            or _default_probabilities(self.verdict, self.confidence),
+            uncertainty={
+                "score": self.uncertainty_score if self.uncertainty_score is not None else (1.0 - self.confidence),
+                "band": self.uncertainty_band
+                or ("low" if self.confidence >= 0.75 else "medium" if self.confidence >= 0.5 else "high"),
+            },
+            calibration_metadata=(
+                {"quality_score": self.calibration_quality_score}
+                if self.calibration_quality_score is not None
+                else {}
+            ),
             adjusted_qty=self.adjusted_qty,
             adjusted_order_type=self.adjusted_order_type,
             limit_price=self.limit_price,
@@ -283,6 +308,16 @@ class FakeLLMReviewEngine:
             request_hash="test-request-hash",
             response_hash="test-response-hash",
         )
+
+
+def _default_probabilities(verdict: str, confidence: float) -> dict[str, float]:
+    labels = ["approve", "veto", "adjust", "abstain", "escalate"]
+    selected = verdict if verdict in labels else "approve"
+    remainder = max(0.0, 1.0 - confidence)
+    background = remainder / 4.0
+    probabilities = {label: background for label in labels}
+    probabilities[selected] = confidence
+    return probabilities
 
 
 class FakePriceFetcher(PriceFetcher):

@@ -132,6 +132,8 @@ class TradingMetrics:
     llm_approve_total: int = 0
     llm_veto_total: int = 0
     llm_adjust_total: int = 0
+    llm_abstain_total: int = 0
+    llm_escalate_total: int = 0
     llm_error_total: int = 0
     llm_parse_error_total: int = 0
     llm_validation_error_total: int = 0
@@ -145,6 +147,7 @@ class TradingMetrics:
     llm_shadow_total: int = 0
     llm_guardrail_block_total: int = 0
     llm_guardrail_shadow_total: int = 0
+    llm_policy_fallback_total: int = 0
     llm_market_context_block_total: int = 0
     llm_market_context_error_total: int = 0
     llm_market_context_reason_total: dict[str, int] = field(
@@ -1187,6 +1190,10 @@ class TradingPipeline:
                 market_context=market_context,
                 recent_decisions=recent_decisions,
             )
+            if outcome.response.verdict == "abstain":
+                self.state.metrics.llm_abstain_total += 1
+            elif outcome.response.verdict == "escalate":
+                self.state.metrics.llm_escalate_total += 1
             policy_outcome = apply_policy(
                 decision,
                 outcome.response,
@@ -1200,9 +1207,16 @@ class TradingPipeline:
             if policy_outcome.reason:
                 response_json["policy_override"] = policy_outcome.reason
                 response_json["policy_verdict"] = policy_outcome.verdict
+                if "_fallback_" in policy_outcome.reason:
+                    self.state.metrics.llm_policy_fallback_total += 1
+            if policy_outcome.guardrail_reasons:
+                response_json["deterministic_guardrails"] = list(
+                    policy_outcome.guardrail_reasons
+                )
             if guardrails.reasons:
                 response_json["mrm_guardrails"] = list(guardrails.reasons)
             response_json["policy_resolution"] = policy_resolution
+            response_json["guardrail_controls"] = _llm_guardrail_controls_snapshot()
 
             committee_payload = response_json.get("committee")
             if isinstance(committee_payload, Mapping):
@@ -1297,6 +1311,7 @@ class TradingPipeline:
                 "fallback": fallback,
                 "effective_verdict": effective_verdict,
                 "policy_resolution": policy_resolution,
+                "guardrail_controls": _llm_guardrail_controls_snapshot(),
             }
             if guardrails.reasons:
                 response_json["mrm_guardrails"] = list(guardrails.reasons)
@@ -1393,7 +1408,18 @@ class TradingPipeline:
             model=settings.llm_model,
             prompt_version=settings.llm_prompt_version,
             request_json=request_payload,
-            response_json=response_payload,
+            response_json={
+                "error": reason,
+                "fallback": fallback,
+                "effective_verdict": effective_verdict,
+                "policy_resolution": policy_resolution
+                or _build_llm_policy_resolution(
+                    rollout_stage=_normalize_rollout_stage(settings.llm_rollout_stage),
+                    effective_fail_mode=fallback,
+                    guardrail_reasons=risk_flags or [],
+                ),
+                "guardrail_controls": _llm_guardrail_controls_snapshot(),
+            },
             verdict="error",
             confidence=None,
             adjusted_qty=None,
@@ -1855,6 +1881,21 @@ def _build_llm_policy_resolution(
             ),
             "llm_fail_open_live_approved": settings.llm_fail_open_live_approved,
         },
+    }
+
+
+def _llm_guardrail_controls_snapshot() -> dict[str, Any]:
+    return {
+        "min_confidence": settings.llm_min_confidence,
+        "min_calibrated_probability": settings.llm_min_calibrated_top_probability,
+        "min_probability_margin": settings.llm_min_probability_margin,
+        "max_uncertainty_score": settings.llm_max_uncertainty,
+        "max_uncertainty_band": settings.llm_max_uncertainty_band,
+        "min_calibration_quality_score": settings.llm_min_calibration_quality_score,
+        "abstain_fail_mode": settings.llm_abstain_fail_mode,
+        "escalation_fail_mode": settings.llm_escalate_fail_mode,
+        "uncertainty_fail_mode": settings.llm_quality_fail_mode,
+        "effective_fail_mode": settings.llm_effective_fail_mode_for_current_rollout(),
     }
 
 

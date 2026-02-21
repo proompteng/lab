@@ -35,7 +35,9 @@ from .schema import (
 _SYSTEM_PROMPT = (
     "You are an automated trading review agent. "
     "Respond ONLY with a JSON object matching the required schema. "
-    "Decide whether to approve, veto, or adjust the decision. "
+    "Decide whether to approve, veto, adjust, abstain, or escalate the decision. "
+    "Always provide calibrated per-verdict probabilities that sum to 1.0. "
+    "Always provide confidence and uncertainty bands. "
     "If adjusting, propose qty and optionally order_type within policy bounds. "
     "If adjusting order_type to limit or stop_limit, include limit_price. "
     "Provide a concise rationale (<= 280 chars). "
@@ -376,18 +378,49 @@ def _normalize_llm_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if "verdict" not in payload and "decision" in payload:
         payload = dict(payload)
         payload["verdict"] = payload.pop("decision")
+    if "verdict" in payload:
+        verdict = str(payload["verdict"]).strip().lower()
+        aliases = {
+            "escalate_to_human": "escalate",
+            "escalate_human": "escalate",
+            "defer": "abstain",
+            "hold": "abstain",
+        }
+        payload = dict(payload)
+        payload["verdict"] = aliases.get(verdict, verdict)
 
     # Provide defaults for optional-ish fields; schema validation will still enforce
     # correct verdict and rationale.
     if "confidence" not in payload:
         payload = dict(payload)
         payload["confidence"] = 0.5
+    confidence = _clamp01(payload.get("confidence"))
+    if "confidence_band" not in payload:
+        payload = dict(payload)
+        payload["confidence_band"] = _confidence_band_from_score(confidence)
+    normalized_confidence_band = _normalize_confidence_band(payload.get("confidence_band"), confidence)
+    if payload.get("confidence_band") != normalized_confidence_band:
+        payload = dict(payload)
+        payload["confidence_band"] = normalized_confidence_band
+    confidence_band = normalized_confidence_band
     if "uncertainty" not in payload:
         payload = dict(payload)
-        payload["uncertainty"] = "medium"
-    if "required_checks" not in payload:
+        payload["uncertainty"] = {
+            "score": round(1.0 - confidence, 4),
+            "band": _uncertainty_band_from_confidence_band(confidence_band),
+        }
+    if "calibrated_probabilities" not in payload:
         payload = dict(payload)
-        payload["required_checks"] = []
+        payload["calibrated_probabilities"] = _default_calibrated_probabilities(
+            str(payload.get("verdict") or ""),
+            confidence,
+        )
+    if "calibration_metadata" not in payload:
+        payload = dict(payload)
+        payload["calibration_metadata"] = {}
+    if "escalate_reason" not in payload and "escalation_reason" in payload:
+        payload = dict(payload)
+        payload["escalate_reason"] = payload.get("escalation_reason")
     if "risk_flags" not in payload:
         payload = dict(payload)
         payload["risk_flags"] = []
@@ -416,7 +449,8 @@ def _committee_system_prompt(role: str) -> str:
         f"Role: {role}. {role_instruction} "
         "Output must be advisory-only and cannot directly execute trades. "
         "Respond ONLY with a JSON object containing exactly these keys: "
-        "verdict, confidence, uncertainty, rationale_short, required_checks, adjusted_qty, adjusted_order_type, limit_price, risk_flags. "
+        "verdict, confidence, uncertainty, rationale_short, required_checks, adjusted_qty, adjusted_order_type, "
+        "limit_price, risk_flags. "
         "verdict must be one of approve|adjust|veto|abstain|escalate. "
         "confidence must be between 0 and 1. uncertainty must be low|medium|high. "
         "rationale_short must be <= 280 chars. required_checks must list deterministic policy check IDs. "
@@ -434,21 +468,38 @@ def _aggregate_committee(
         role_outputs.get(role) is None or role_outputs[role].verdict == "veto"
         for role in mandatory_roles
     )
+    aggregated_checks = sorted(
+        {
+            check
+            for item in role_outputs.values()
+            for check in item.required_checks
+        }
+    )
+    aggregated_risk_flags = sorted(
+        {
+            flag
+            for item in role_outputs.values()
+            for flag in item.risk_flags
+        }
+    )
+
     if mandatory_veto:
+        verdict = "veto"
+        confidence = 1.0
+        confidence_band = "high"
+        rationale = "mandatory_committee_veto"
+        risk_flags = sorted([*aggregated_risk_flags, "mandatory_committee_veto"])
         return {
-            "verdict": "veto",
-            "confidence": 1.0,
-            "uncertainty": "low",
-            "rationale_short": "mandatory_committee_veto",
-            "required_checks": sorted(
-                {
-                    check
-                    for item in role_outputs.values()
-                    for check in item.required_checks
-                }
-            ),
-            "rationale": "mandatory_committee_veto",
-            "risk_flags": ["mandatory_committee_veto"],
+            "verdict": verdict,
+            "confidence": confidence,
+            "confidence_band": confidence_band,
+            "calibrated_probabilities": _default_calibrated_probabilities(verdict, confidence),
+            "uncertainty": {"score": 0.0, "band": "low"},
+            "calibration_metadata": {},
+            "rationale_short": rationale,
+            "required_checks": aggregated_checks,
+            "rationale": rationale,
+            "risk_flags": risk_flags,
         }
 
     votes = [member.verdict for member in role_outputs.values()]
@@ -464,50 +515,119 @@ def _aggregate_committee(
         verdict = fail_closed_verdict
 
     confidence_values = [member.confidence for member in role_outputs.values()]
-    confidence = (
-        sum(confidence_values) / len(confidence_values) if confidence_values else 0.0
+    confidence = round(
+        (sum(confidence_values) / len(confidence_values)) if confidence_values else 0.0,
+        4,
     )
+    confidence_band = _confidence_band_from_score(confidence)
+
     uncertainty_rank = {"low": 1, "medium": 2, "high": 3}
     uncertainty = "low"
     for member in role_outputs.values():
         if uncertainty_rank[member.uncertainty] > uncertainty_rank[uncertainty]:
             uncertainty = member.uncertainty
+    uncertainty_score = round(1.0 - confidence, 4)
 
     adjusted_source = next(
         (member for member in role_outputs.values() if member.verdict == "adjust"),
         None,
     )
 
-    return {
+    adjusted_qty = adjusted_source.adjusted_qty if adjusted_source else None
+    adjusted_order_type = adjusted_source.adjusted_order_type if adjusted_source else None
+    limit_price = adjusted_source.limit_price if adjusted_source else None
+
+    # Fail closed when an aggregate adjust proposal is structurally invalid.
+    if verdict == "adjust" and adjusted_qty is None:
+        verdict = fail_closed_verdict
+        adjusted_order_type = None
+        limit_price = None
+    if verdict == "adjust" and adjusted_order_type in {"limit", "stop_limit"} and limit_price is None:
+        verdict = fail_closed_verdict
+        adjusted_qty = None
+        adjusted_order_type = None
+
+    rationale = f"committee_aggregate_{verdict}"
+    payload: dict[str, Any] = {
         "verdict": verdict,
-        "confidence": round(confidence, 4),
-        "uncertainty": uncertainty,
-        "rationale_short": f"committee_aggregate_{verdict}",
-        "required_checks": sorted(
-            {
-                check
-                for item in role_outputs.values()
-                for check in item.required_checks
-            }
-        ),
-        "adjusted_qty": adjusted_source.adjusted_qty if adjusted_source else None,
-        "adjusted_order_type": adjusted_source.adjusted_order_type if adjusted_source else None,
-        "limit_price": adjusted_source.limit_price if adjusted_source else None,
-        "rationale": f"committee_aggregate_{verdict}",
-        "risk_flags": sorted(
-            {
-                flag
-                for item in role_outputs.values()
-                for flag in item.risk_flags
-            }
-        ),
+        "confidence": confidence,
+        "confidence_band": confidence_band,
+        "calibrated_probabilities": _default_calibrated_probabilities(verdict, confidence),
+        "uncertainty": {"score": uncertainty_score, "band": uncertainty},
+        "calibration_metadata": {},
+        "rationale_short": rationale,
+        "required_checks": aggregated_checks,
+        "adjusted_qty": adjusted_qty,
+        "adjusted_order_type": adjusted_order_type,
+        "limit_price": limit_price,
+        "rationale": rationale,
+        "risk_flags": aggregated_risk_flags,
     }
+    if verdict == "escalate":
+        payload["escalate_reason"] = "committee_requested_escalation"
+    return payload
+
+
+def _clamp01(value: Any) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+    return min(1.0, max(0.0, score))
+
+
+def _confidence_band_from_score(confidence: float) -> str:
+    if confidence >= 0.75:
+        return "high"
+    if confidence >= 0.5:
+        return "medium"
+    return "low"
+
+
+def _normalize_confidence_band(confidence_band: Any, confidence: float) -> str:
+    aliases = {
+        "l": "low",
+        "low-confidence": "low",
+        "low_confidence": "low",
+        "m": "medium",
+        "med": "medium",
+        "mid": "medium",
+        "moderate": "medium",
+        "medium-confidence": "medium",
+        "medium_confidence": "medium",
+        "h": "high",
+        "high-confidence": "high",
+        "high_confidence": "high",
+    }
+    normalized = aliases.get(str(confidence_band or "").strip().lower(), str(confidence_band or "").strip().lower())
+    if normalized in {"low", "medium", "high"}:
+        return normalized
+    return _confidence_band_from_score(confidence)
+
+
+def _uncertainty_band_from_confidence_band(confidence_band: str) -> str:
+    if confidence_band == "high":
+        return "low"
+    if confidence_band == "medium":
+        return "medium"
+    return "high"
+
+
+def _default_calibrated_probabilities(verdict: str, confidence: float) -> dict[str, float]:
+    labels = ["approve", "veto", "adjust", "abstain", "escalate"]
+    picked = verdict if verdict in labels else "abstain"
+    remainder = max(0.0, 1.0 - confidence)
+    background = remainder / 4.0
+    probabilities = {label: background for label in labels}
+    probabilities[picked] = confidence
+    total = sum(probabilities.values())
+    if total <= 0:
+        return {label: 0.2 for label in labels}
+    return {label: round(score / total, 6) for label, score in probabilities.items()}
 
 
 def _hash_payload(payload: dict[str, Any]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 

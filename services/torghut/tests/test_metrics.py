@@ -60,6 +60,9 @@ class TestTradingMetrics(TestCase):
         metrics.record_llm_policy_resolution("intentional_exception")
         metrics.record_llm_policy_resolution("violation")
         metrics.llm_fail_mode_exception_total = 2
+        metrics.llm_abstain_total = 1
+        metrics.llm_escalate_total = 1
+        metrics.llm_policy_fallback_total = 2
 
         payload = render_trading_metrics(metrics.__dict__)
 
@@ -84,6 +87,9 @@ class TestTradingMetrics(TestCase):
             payload,
         )
         self.assertIn("torghut_trading_llm_fail_mode_exception_total 2", payload)
+        self.assertIn("torghut_trading_llm_abstain_total 1", payload)
+        self.assertIn("torghut_trading_llm_escalate_total 1", payload)
+        self.assertIn("torghut_trading_llm_policy_fallback_total 2", payload)
 
     def test_committee_metrics_are_exported(self) -> None:
         metrics = TradingMetrics()

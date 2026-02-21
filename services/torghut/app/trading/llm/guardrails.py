@@ -13,10 +13,12 @@ class LLMRiskGuardrails:
     allow_requests: bool
     shadow_mode: bool
     adjustment_allowed: bool
+    committee_enabled: bool
     effective_fail_mode: str
     rollout_stage: str
     governance_evidence_complete: bool
-    committee_enabled: bool
+    quality_thresholds: dict[str, float]
+    fallback_controls: dict[str, str]
     reasons: tuple[str, ...]
 
 
@@ -119,10 +121,21 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
         allow_requests=allow_requests,
         shadow_mode=shadow_mode,
         adjustment_allowed=adjustment_allowed,
+        committee_enabled=committee_enabled,
         effective_fail_mode=effective_fail_mode,
         rollout_stage=rollout_stage,
         governance_evidence_complete=governance_evidence_complete,
-        committee_enabled=committee_enabled,
+        quality_thresholds={
+            "min_confidence": settings.llm_min_confidence,
+            "max_uncertainty": settings.llm_max_uncertainty,
+            "min_calibrated_top_probability": settings.llm_min_calibrated_top_probability,
+            "min_probability_margin": settings.llm_min_probability_margin,
+        },
+        fallback_controls={
+            "quality_fail_mode": settings.llm_quality_fail_mode,
+            "abstain_fail_mode": settings.llm_abstain_fail_mode,
+            "escalate_fail_mode": settings.llm_escalate_fail_mode,
+        },
         reasons=tuple(reasons),
     )
 
