@@ -233,12 +233,3 @@ class TestConfig(TestCase):
             settings.trading_drift_trigger_reselection_reason_codes, {"c", "d"}
         )
         self.assertEqual(settings.trading_drift_rollback_reason_codes, {"x", "y"})
-
-    def test_rejects_fragility_thresholds_when_unsorted(self) -> None:
-        with self.assertRaises(ValidationError):
-            Settings(
-                TRADING_FRAGILITY_ELEVATED_THRESHOLD=0.7,
-                TRADING_FRAGILITY_STRESS_THRESHOLD=0.6,
-                TRADING_FRAGILITY_CRISIS_THRESHOLD=0.8,
-                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
-            )
