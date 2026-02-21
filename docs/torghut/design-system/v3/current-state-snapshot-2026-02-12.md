@@ -1,5 +1,8 @@
 # Current System Snapshot (2026-02-12)
 
+## Status
+- Implementation status: `N/A` (snapshot evidence document; not a direct implementation target)
+
 ## Objective
 Provide a factual, timestamped snapshot of the Torghut trading system for human review and operational decision-making.
 
@@ -141,4 +144,3 @@ Primary command set used:
 - `kubectl -n torghut exec torghut-db-1 -- psql ...`
 - `kubectl -n torghut exec chi-torghut-clickhouse-default-0-0-0 -- clickhouse-client ...`
 - `kubectl -n torghut exec <torghut-pod> -c user-container -- python -c "<HTTP probe>"`
-

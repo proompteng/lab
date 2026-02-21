@@ -1,5 +1,9 @@
 # Backtesting, Walk-Forward, and Research Ledger
 
+## Status
+- Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
+
+
 ## Objective
 Establish a statistically defensible, reproducible research-to-promotion pipeline that controls overfitting and records
 all promotion evidence as immutable artifacts.

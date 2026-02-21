@@ -4,6 +4,7 @@
 - Version: `v1`
 - Last updated: **2026-02-20**
 - Source of truth (config): `argocd/applications/torghut/**`
+- Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
 
 ## Purpose
 Define resilience mechanisms that prevent AI provider issues from destabilizing trading, including:

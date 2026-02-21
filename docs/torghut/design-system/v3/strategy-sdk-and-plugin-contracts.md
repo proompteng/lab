@@ -1,5 +1,9 @@
 # Strategy SDK and Plugin Contracts
 
+## Status
+- Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
+
+
 ## Objective
 Define a strict strategy plugin SDK so research can iterate quickly while preserving runtime safety and deterministic
 behavior in Torghut production loops.

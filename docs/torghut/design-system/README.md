@@ -29,6 +29,10 @@ The v1 documents are written to stay consistent with:
 ## Recommended entrypoint (single merged doc)
 - `docs/torghut/design-system/v1/torghut-autonomous-trading-system.md`
 
+## Implementation Audit
+- Document-by-document implementation status matrix:
+  - `docs/torghut/design-system/implementation-status-matrix-2026-02-21.md`
+
 ## Design doc set
 
 - `v2/` - research and profitability blueprint for a more autonomous system (not production-facing; may drift).

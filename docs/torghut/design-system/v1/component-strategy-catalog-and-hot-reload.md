@@ -4,6 +4,7 @@
 - Version: `v1`
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
+- Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
 
 ## Purpose
 Describe the declarative strategy catalog, how it is mounted into the trading service, how it syncs into Postgres,

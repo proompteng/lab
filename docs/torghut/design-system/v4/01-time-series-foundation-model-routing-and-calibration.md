@@ -1,5 +1,8 @@
 # Time-Series Foundation Model Routing and Calibration
 
+## Status
+- Implementation status: `Partial` (core routing/calibration paths implemented; full deliverable set not strictly verified end-to-end as of 2026-02-21)
+
 ## Objective
 Add a model-routing layer that chooses between deterministic alpha models and time-series foundation models, with hard
 calibration gates before any strategy can influence paper/live decisions.
