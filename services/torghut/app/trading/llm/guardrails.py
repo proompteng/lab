@@ -16,6 +16,8 @@ class LLMRiskGuardrails:
     effective_fail_mode: str
     rollout_stage: str
     governance_evidence_complete: bool
+    quality_thresholds: dict[str, float]
+    fallback_controls: dict[str, str]
     reasons: tuple[str, ...]
 
 
@@ -101,6 +103,17 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
         effective_fail_mode=effective_fail_mode,
         rollout_stage=rollout_stage,
         governance_evidence_complete=governance_evidence_complete,
+        quality_thresholds={
+            "min_confidence": settings.llm_min_confidence,
+            "max_uncertainty": settings.llm_max_uncertainty,
+            "min_calibrated_top_probability": settings.llm_min_calibrated_top_probability,
+            "min_probability_margin": settings.llm_min_probability_margin,
+        },
+        fallback_controls={
+            "quality_fail_mode": settings.llm_quality_fail_mode,
+            "abstain_fail_mode": settings.llm_abstain_fail_mode,
+            "escalate_fail_mode": settings.llm_escalate_fail_mode,
+        },
         reasons=tuple(reasons),
     )
 

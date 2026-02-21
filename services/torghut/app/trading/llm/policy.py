@@ -29,13 +29,41 @@ def apply_policy(
 
     min_confidence = settings.llm_min_confidence
     if review.confidence < min_confidence:
-        return PolicyOutcome("veto", decision, "llm_confidence_below_min")
+        return _policy_from_fail_mode(
+            settings.llm_quality_fail_mode,
+            decision,
+            fail_reason="llm_confidence_below_min",
+        )
+
+    quality_reason = _quality_guardrail_reason(review)
+    if quality_reason is not None:
+        return _policy_from_fail_mode(
+            settings.llm_quality_fail_mode,
+            decision,
+            fail_reason=quality_reason,
+        )
 
     if review.verdict == "veto":
         return PolicyOutcome("veto", decision, "llm_veto")
 
     if review.verdict == "approve":
         return PolicyOutcome("approve", decision)
+
+    if review.verdict == "abstain":
+        return _policy_from_fail_mode(
+            settings.llm_abstain_fail_mode,
+            decision,
+            fail_reason="llm_abstain",
+        )
+
+    if review.verdict == "escalate":
+        if not settings.llm_allow_escalate:
+            return PolicyOutcome("veto", decision, "llm_escalate_disabled")
+        return _policy_from_fail_mode(
+            settings.llm_escalate_fail_mode,
+            decision,
+            fail_reason="llm_escalate",
+        )
 
     if adjustment_allowed is None:
         adjustment_allowed = settings.llm_adjustment_allowed
@@ -85,6 +113,46 @@ def apply_policy(
         }
     )
     return PolicyOutcome("adjust", updated, clamp_reason)
+
+
+def _quality_guardrail_reason(review: LLMReviewResponse) -> Optional[str]:
+    probabilities_payload = review.calibrated_probabilities
+    if probabilities_payload is None:
+        return "llm_calibrated_probabilities_missing"
+    probabilities = {
+        "approve": probabilities_payload.approve,
+        "veto": probabilities_payload.veto,
+        "adjust": probabilities_payload.adjust,
+        "abstain": probabilities_payload.abstain,
+        "escalate": probabilities_payload.escalate,
+    }
+    ranking = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
+    top_verdict, top_probability = ranking[0]
+    second_probability = ranking[1][1] if len(ranking) > 1 else 0.0
+    margin = top_probability - second_probability
+
+    if review.uncertainty > settings.llm_max_uncertainty:
+        return "llm_uncertainty_above_max"
+    if review.verdict in {"approve", "veto", "adjust"}:
+        selected_probability = probabilities.get(review.verdict, 0.0)
+        if selected_probability < settings.llm_min_calibrated_top_probability:
+            return "llm_calibrated_probability_below_min"
+    if margin < settings.llm_min_probability_margin:
+        return "llm_probability_margin_below_min"
+    if review.verdict in {"approve", "veto", "adjust"} and top_verdict != review.verdict:
+        return "llm_selected_verdict_not_top_probability"
+    return None
+
+
+def _policy_from_fail_mode(
+    fail_mode: str,
+    decision: StrategyDecision,
+    *,
+    fail_reason: str,
+) -> PolicyOutcome:
+    if fail_mode == "pass_through":
+        return PolicyOutcome("approve", decision, f"{fail_reason}_pass_through")
+    return PolicyOutcome("veto", decision, fail_reason)
 
 
 def allowed_order_types(current: str) -> set[str]:

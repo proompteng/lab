@@ -7,6 +7,50 @@ from app.trading.llm.guardrails import evaluate_llm_guardrails
 
 
 class TestLlmGuardrails(TestCase):
+    def test_guardrails_surface_quality_thresholds_and_fallback_controls(self) -> None:
+        original = {
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_max_uncertainty": config.settings.llm_max_uncertainty,
+            "llm_min_calibrated_top_probability": config.settings.llm_min_calibrated_top_probability,
+            "llm_min_probability_margin": config.settings.llm_min_probability_margin,
+            "llm_quality_fail_mode": config.settings.llm_quality_fail_mode,
+            "llm_abstain_fail_mode": config.settings.llm_abstain_fail_mode,
+            "llm_escalate_fail_mode": config.settings.llm_escalate_fail_mode,
+        }
+        config.settings.llm_allowed_models_raw = config.settings.llm_model
+        config.settings.llm_max_uncertainty = 0.4
+        config.settings.llm_min_calibrated_top_probability = 0.55
+        config.settings.llm_min_probability_margin = 0.12
+        config.settings.llm_quality_fail_mode = "veto"
+        config.settings.llm_abstain_fail_mode = "pass_through"
+        config.settings.llm_escalate_fail_mode = "veto"
+        try:
+            guardrails = evaluate_llm_guardrails()
+            self.assertEqual(guardrails.quality_thresholds["max_uncertainty"], 0.4)
+            self.assertEqual(
+                guardrails.quality_thresholds["min_calibrated_top_probability"], 0.55
+            )
+            self.assertEqual(
+                guardrails.quality_thresholds["min_probability_margin"], 0.12
+            )
+            self.assertEqual(guardrails.fallback_controls["quality_fail_mode"], "veto")
+            self.assertEqual(
+                guardrails.fallback_controls["abstain_fail_mode"], "pass_through"
+            )
+            self.assertEqual(guardrails.fallback_controls["escalate_fail_mode"], "veto")
+        finally:
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_max_uncertainty = original["llm_max_uncertainty"]
+            config.settings.llm_min_calibrated_top_probability = original[
+                "llm_min_calibrated_top_probability"
+            ]
+            config.settings.llm_min_probability_margin = original[
+                "llm_min_probability_margin"
+            ]
+            config.settings.llm_quality_fail_mode = original["llm_quality_fail_mode"]
+            config.settings.llm_abstain_fail_mode = original["llm_abstain_fail_mode"]
+            config.settings.llm_escalate_fail_mode = original["llm_escalate_fail_mode"]
+
     def test_live_equivalent_policy_keeps_paper_and_live_fail_mode_aligned(
         self,
     ) -> None:

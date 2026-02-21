@@ -58,6 +58,14 @@ class TestLLMReviewEngine(TestCase):
         self.assertEqual(outcome.response.verdict, "approve")
         self.assertEqual(outcome.response.confidence, 0.5)
         self.assertEqual(outcome.response.risk_flags, [])
+        total_probability = (
+            outcome.response.calibrated_probabilities.approve
+            + outcome.response.calibrated_probabilities.veto
+            + outcome.response.calibrated_probabilities.adjust
+            + outcome.response.calibrated_probabilities.abstain
+            + outcome.response.calibrated_probabilities.escalate
+        )
+        self.assertAlmostEqual(total_probability, 1.0, places=6)
 
     def test_build_request_sanitizes_inputs(self) -> None:
         engine = LLMReviewEngine(client=FakeLLMClient('{"verdict":"approve","confidence":1,"rationale":"ok","risk_flags":[]}'))
@@ -175,3 +183,45 @@ class TestLLMReviewEngine(TestCase):
         self.assertEqual(request.decision.params["sizing"], {"method": "default_qty", "notional_budget": "100"})
         self.assertIsNotNone(request.market_context)
         self.assertEqual(request.market_context.symbol, "AAPL")
+
+    def test_review_rejects_invalid_probability_mass(self) -> None:
+        engine = LLMReviewEngine(
+            client=FakeLLMClient(
+                '{"verdict":"approve","confidence":0.8,"uncertainty":0.1,'
+                '"confidence_band":"high","uncertainty_band":"low",'
+                '"calibrated_probabilities":{"approve":0.9,"veto":0.1,"adjust":0.1,"abstain":0.1,"escalate":0.1},'
+                '"rationale":"bad_probs","risk_flags":[]}'
+            )
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, object]] = []
+        portfolio = PortfolioSnapshot(
+            equity=Decimal("10000"),
+            cash=Decimal("10000"),
+            buying_power=Decimal("10000"),
+            total_exposure=Decimal("0"),
+            exposure_by_symbol={},
+            positions=positions,
+        )
+        decision = StrategyDecision(
+            strategy_id="demo",
+            symbol="AAPL",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            rationale="demo",
+            params={},
+        )
+        with self.assertRaises(ValueError):
+            engine.review(
+                decision=decision,
+                account=account,
+                positions=positions,
+                request=engine.build_request(decision, account, positions, portfolio, None, None, []),
+                portfolio=portfolio,
+                market=None,
+                recent_decisions=[],
+            )

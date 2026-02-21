@@ -31,9 +31,10 @@ from .schema import (
 _SYSTEM_PROMPT = (
     "You are an automated trading review agent. "
     "Respond ONLY with a JSON object matching the required schema. "
-    "Decide whether to approve, veto, or adjust the decision. "
+    "Decide whether to approve, veto, adjust, abstain, or escalate the decision. "
     "If adjusting, propose qty and optionally order_type within policy bounds. "
     "If adjusting order_type to limit or stop_limit, include limit_price. "
+    "Include calibrated verdict probabilities and uncertainty metadata. "
     "Provide a concise rationale (<= 280 chars). "
     "Do not include chain-of-thought or extra keys."
 )
@@ -221,6 +222,43 @@ def _coerce_int(value: Any) -> Optional[int]:
         return None
 
 
+def _coerce_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _confidence_band_for_value(confidence: float) -> str:
+    if confidence >= 0.75:
+        return "high"
+    if confidence >= 0.45:
+        return "medium"
+    return "low"
+
+
+def _uncertainty_band_for_value(uncertainty: float) -> str:
+    if uncertainty <= 0.25:
+        return "low"
+    if uncertainty <= 0.55:
+        return "medium"
+    return "high"
+
+
+def _default_calibrated_probabilities(verdict: Any, confidence: float) -> dict[str, float]:
+    normalized_verdict = str(verdict or "").strip().lower()
+    verdict_keys = ["approve", "veto", "adjust", "abstain", "escalate"]
+    if normalized_verdict not in verdict_keys:
+        normalized_verdict = "abstain"
+    chosen_probability = min(max(confidence, 0.2), 0.95)
+    residual = 1.0 - chosen_probability
+    other_keys = [key for key in verdict_keys if key != normalized_verdict]
+    each_residual = residual / len(other_keys)
+    probabilities = {key: each_residual for key in verdict_keys}
+    probabilities[normalized_verdict] = chosen_probability
+    return probabilities
+
+
 __all__ = ["LLMReviewEngine", "LLMReviewOutcome"]
 
 
@@ -256,12 +294,34 @@ def _normalize_llm_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if "verdict" not in payload and "decision" in payload:
         payload = dict(payload)
         payload["verdict"] = payload.pop("decision")
+    if "calibrated_probabilities" not in payload and "probabilities" in payload:
+        payload = dict(payload)
+        payload["calibrated_probabilities"] = payload.pop("probabilities")
 
     # Provide defaults for optional-ish fields; schema validation will still enforce
     # correct verdict and rationale.
     if "confidence" not in payload:
         payload = dict(payload)
         payload["confidence"] = 0.5
+    confidence = _coerce_float(payload.get("confidence"), 0.5)
+    confidence = max(0.0, min(confidence, 1.0))
+    if "confidence_band" not in payload:
+        payload = dict(payload)
+        payload["confidence_band"] = _confidence_band_for_value(confidence)
+    if "uncertainty" not in payload:
+        payload = dict(payload)
+        payload["uncertainty"] = max(0.0, min(1.0, 1.0 - confidence))
+    uncertainty = _coerce_float(payload.get("uncertainty"), 0.5)
+    uncertainty = max(0.0, min(uncertainty, 1.0))
+    if "uncertainty_band" not in payload:
+        payload = dict(payload)
+        payload["uncertainty_band"] = _uncertainty_band_for_value(uncertainty)
+    if "calibrated_probabilities" not in payload:
+        payload = dict(payload)
+        payload["calibrated_probabilities"] = _default_calibrated_probabilities(
+            verdict=payload.get("verdict"),
+            confidence=confidence,
+        )
     if "risk_flags" not in payload:
         payload = dict(payload)
         payload["risk_flags"] = []

@@ -85,3 +85,71 @@ class TestLLMPolicy(TestCase):
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_min_qty_multiplier = original["llm_min_qty_multiplier"]
             config.settings.llm_max_qty_multiplier = original["llm_max_qty_multiplier"]
+
+    def test_abstain_uses_explicit_fail_mode(self) -> None:
+        original = {
+            "llm_abstain_fail_mode": config.settings.llm_abstain_fail_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+        }
+        config.settings.llm_abstain_fail_mode = "pass_through"
+        config.settings.llm_min_confidence = 0.0
+
+        try:
+            decision = StrategyDecision(
+                strategy_id="strategy",
+                symbol="AAPL",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                order_type="market",
+                time_in_force="day",
+            )
+            review = LLMReviewResponse(
+                verdict="abstain",
+                confidence=0.7,
+                rationale="insufficient_context",
+                risk_flags=[],
+            )
+            outcome = apply_policy(decision, review)
+            self.assertEqual(outcome.verdict, "approve")
+            self.assertEqual(outcome.reason, "llm_abstain_pass_through")
+        finally:
+            config.settings.llm_abstain_fail_mode = original["llm_abstain_fail_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+
+    def test_uncertainty_guardrail_can_fail_open_when_configured(self) -> None:
+        original = {
+            "llm_quality_fail_mode": config.settings.llm_quality_fail_mode,
+            "llm_max_uncertainty": config.settings.llm_max_uncertainty,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+        }
+        config.settings.llm_quality_fail_mode = "pass_through"
+        config.settings.llm_max_uncertainty = 0.2
+        config.settings.llm_min_confidence = 0.0
+
+        try:
+            decision = StrategyDecision(
+                strategy_id="strategy",
+                symbol="AAPL",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                order_type="market",
+                time_in_force="day",
+            )
+            review = LLMReviewResponse(
+                verdict="approve",
+                confidence=0.6,
+                uncertainty=0.9,
+                rationale="quality_gate_test",
+                risk_flags=[],
+            )
+            outcome = apply_policy(decision, review)
+            self.assertEqual(outcome.verdict, "approve")
+            self.assertEqual(outcome.reason, "llm_uncertainty_above_max_pass_through")
+        finally:
+            config.settings.llm_quality_fail_mode = original["llm_quality_fail_mode"]
+            config.settings.llm_max_uncertainty = original["llm_max_uncertainty"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]

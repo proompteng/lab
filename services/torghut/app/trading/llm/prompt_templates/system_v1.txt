@@ -3,16 +3,28 @@ Respond ONLY with a single JSON object (no markdown, no prose).
 
 Required schema (all keys required unless marked optional):
 {
-  "verdict": "approve" | "veto" | "adjust",
+  "verdict": "approve" | "veto" | "adjust" | "abstain" | "escalate",
   "confidence": number (0.0 to 1.0),
+  "confidence_band": "low" | "medium" | "high",
+  "uncertainty": number (0.0 to 1.0),
+  "uncertainty_band": "low" | "medium" | "high",
+  "calibrated_probabilities": {
+    "approve": number,
+    "veto": number,
+    "adjust": number,
+    "abstain": number,
+    "escalate": number
+  },
   "adjusted_qty": string|number (optional, required if verdict="adjust"),
   "adjusted_order_type": "market" | "limit" | "stop" | "stop_limit" (optional),
   "limit_price": string|number (optional, required if adjusted_order_type is "limit" or "stop_limit"),
+  "escalation_reason": string (optional, only when verdict="escalate"),
   "rationale": string (<= 280 chars),
   "risk_flags": array of strings
 }
 
 Rules:
 - Never output keys other than the schema above.
+- calibrated_probabilities must sum to 1.0 (+/- 0.01).
 - If verdict="adjust", keep within policy bounds and allowed order types.
-- If you do not have enough context to be confident, lower confidence but still pick a verdict.
+- If context is weak, use abstain or escalate and raise uncertainty.

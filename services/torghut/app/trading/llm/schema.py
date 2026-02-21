@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _positions_default() -> list[dict[str, Any]]:
@@ -23,6 +23,48 @@ def _recent_decisions_default() -> list["RecentDecisionSummary"]:
 
 def _market_context_citations_default() -> list["MarketContextCitation"]:
     return []
+
+
+def _derived_calibrated_probabilities(
+    verdict: str,
+    confidence: float,
+) -> "LLMCalibratedProbabilities":
+    verdict_keys = ("approve", "veto", "adjust", "abstain", "escalate")
+    normalized_verdict = verdict.strip().lower()
+    if normalized_verdict not in verdict_keys:
+        normalized_verdict = "abstain"
+    chosen_probability = min(max(confidence, 0.2), 0.95)
+    residual = 1.0 - chosen_probability
+    other_keys = [key for key in verdict_keys if key != normalized_verdict]
+    each_residual = residual / len(other_keys)
+    payload = {key: each_residual for key in verdict_keys}
+    payload[normalized_verdict] = chosen_probability
+    return LLMCalibratedProbabilities.model_validate(payload)
+
+
+class LLMCalibratedProbabilities(BaseModel):
+    """Model-calibrated class probabilities for each possible verdict."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approve: float = Field(ge=0.0, le=1.0)
+    veto: float = Field(ge=0.0, le=1.0)
+    adjust: float = Field(ge=0.0, le=1.0)
+    abstain: float = Field(ge=0.0, le=1.0)
+    escalate: float = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_probability_mass(self) -> "LLMCalibratedProbabilities":
+        total = (
+            self.approve
+            + self.veto
+            + self.adjust
+            + self.abstain
+            + self.escalate
+        )
+        if total < 0.99 or total > 1.01:
+            raise ValueError("calibrated_probabilities_must_sum_to_one")
+        return self
 
 
 class LLMDecisionContext(BaseModel):
@@ -171,11 +213,16 @@ class LLMReviewResponse(BaseModel):
     # Ignore unknown fields but keep strict validation on required schema fields.
     model_config = ConfigDict(extra="ignore")
 
-    verdict: Literal["approve", "veto", "adjust"]
+    verdict: Literal["approve", "veto", "adjust", "abstain", "escalate"]
     confidence: float = Field(ge=0.0, le=1.0)
+    confidence_band: Literal["low", "medium", "high"] = "medium"
+    uncertainty: float = Field(default=0.5, ge=0.0, le=1.0)
+    uncertainty_band: Literal["low", "medium", "high"] = "medium"
+    calibrated_probabilities: Optional[LLMCalibratedProbabilities] = None
     adjusted_qty: Optional[Decimal] = None
     adjusted_order_type: Optional[Literal["market", "limit", "stop", "stop_limit"]] = None
     limit_price: Optional[Decimal] = None
+    escalation_reason: Optional[str] = None
     rationale: str
     risk_flags: list[str] = Field(default_factory=list)
 
@@ -189,8 +236,30 @@ class LLMReviewResponse(BaseModel):
             raise ValueError("rationale_too_long")
         return trimmed
 
+    @field_validator("escalation_reason")
+    @classmethod
+    def validate_escalation_reason(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        if len(trimmed) > 280:
+            raise ValueError("escalation_reason_too_long")
+        return trimmed
+
+    @model_validator(mode="after")
+    def normalize_probabilities(self) -> "LLMReviewResponse":
+        if self.calibrated_probabilities is None:
+            self.calibrated_probabilities = _derived_calibrated_probabilities(
+                verdict=self.verdict,
+                confidence=self.confidence,
+            )
+        return self
+
 
 __all__ = [
+    "LLMCalibratedProbabilities",
     "LLMDecisionContext",
     "PortfolioSnapshot",
     "MarketSnapshot",

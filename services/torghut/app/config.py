@@ -583,6 +583,47 @@ class Settings(BaseSettings):
         ),
     )
     llm_min_confidence: float = Field(default=0.5, alias="LLM_MIN_CONFIDENCE")
+    llm_max_uncertainty: float = Field(
+        default=0.55,
+        alias="LLM_MAX_UNCERTAINTY",
+        ge=0.0,
+        le=1.0,
+        description="Maximum allowed model uncertainty before deterministic policy blocks LLM influence.",
+    )
+    llm_min_calibrated_top_probability: float = Field(
+        default=0.45,
+        alias="LLM_MIN_CALIBRATED_TOP_PROBABILITY",
+        ge=0.0,
+        le=1.0,
+        description="Minimum calibrated probability required for the selected actionable verdict.",
+    )
+    llm_min_probability_margin: float = Field(
+        default=0.08,
+        alias="LLM_MIN_PROBABILITY_MARGIN",
+        ge=0.0,
+        le=1.0,
+        description="Minimum margin between top and runner-up calibrated verdict probability.",
+    )
+    llm_quality_fail_mode: Literal["veto", "pass_through"] = Field(
+        default="veto",
+        alias="LLM_QUALITY_FAIL_MODE",
+        description="Deterministic fail-open/fail-closed policy when probability or uncertainty guardrails fail.",
+    )
+    llm_allow_escalate: bool = Field(
+        default=True,
+        alias="LLM_ALLOW_ESCALATE",
+        description="Allow explicit LLM escalate verdicts to enter deterministic fallback handling.",
+    )
+    llm_abstain_fail_mode: Literal["veto", "pass_through"] = Field(
+        default="veto",
+        alias="LLM_ABSTAIN_FAIL_MODE",
+        description="Deterministic fallback when the LLM abstains.",
+    )
+    llm_escalate_fail_mode: Literal["veto", "pass_through"] = Field(
+        default="veto",
+        alias="LLM_ESCALATE_FAIL_MODE",
+        description="Deterministic fallback when the LLM escalates.",
+    )
     llm_adjustment_allowed: bool = Field(default=False, alias="LLM_ADJUSTMENT_ALLOWED")
     llm_max_qty_multiplier: float = Field(default=1.25, alias="LLM_MAX_QTY_MULTIPLIER")
     llm_min_qty_multiplier: float = Field(default=0.5, alias="LLM_MIN_QTY_MULTIPLIER")

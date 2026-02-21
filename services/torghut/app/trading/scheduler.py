@@ -126,6 +126,9 @@ class TradingMetrics:
     llm_approve_total: int = 0
     llm_veto_total: int = 0
     llm_adjust_total: int = 0
+    llm_abstain_total: int = 0
+    llm_escalate_total: int = 0
+    llm_quality_guardrail_total: int = 0
     llm_error_total: int = 0
     llm_parse_error_total: int = 0
     llm_validation_error_total: int = 0
@@ -1070,14 +1073,39 @@ class TradingPipeline:
                 outcome.response,
                 adjustment_allowed=guardrails.adjustment_allowed,
             )
+            if outcome.response.verdict == "abstain":
+                self.state.metrics.llm_abstain_total += 1
+            elif outcome.response.verdict == "escalate":
+                self.state.metrics.llm_escalate_total += 1
 
             response_json: dict[str, Any] = dict(outcome.response_json)
+            calibration_probabilities = (
+                outcome.response.calibrated_probabilities.model_dump(mode="json")
+                if outcome.response.calibrated_probabilities is not None
+                else None
+            )
             if policy_outcome.reason:
                 response_json["policy_override"] = policy_outcome.reason
                 response_json["policy_verdict"] = policy_outcome.verdict
+                if policy_outcome.reason.startswith("llm_") and (
+                    "uncertainty" in policy_outcome.reason
+                    or "probability" in policy_outcome.reason
+                ):
+                    self.state.metrics.llm_quality_guardrail_total += 1
             if guardrails.reasons:
                 response_json["mrm_guardrails"] = list(guardrails.reasons)
             response_json["policy_resolution"] = policy_resolution
+            response_json["calibration_metadata"] = {
+                "confidence": outcome.response.confidence,
+                "confidence_band": outcome.response.confidence_band,
+                "uncertainty": outcome.response.uncertainty,
+                "uncertainty_band": outcome.response.uncertainty_band,
+                "calibrated_probabilities": calibration_probabilities,
+            }
+            response_json["guardrail_controls"] = {
+                "quality_thresholds": guardrails.quality_thresholds,
+                "fallback_controls": guardrails.fallback_controls,
+            }
 
             if outcome.tokens_prompt is not None:
                 self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
@@ -1099,13 +1127,6 @@ class TradingPipeline:
                 self.state.metrics.llm_approve_total += 1
             elif policy_outcome.verdict == "veto":
                 self.state.metrics.llm_veto_total += 1
-
-            if outcome.tokens_prompt is not None:
-                self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
-            if outcome.tokens_completion is not None:
-                self.state.metrics.llm_tokens_completion_total += (
-                    outcome.tokens_completion
-                )
 
             self._persist_llm_review(
                 session=session,
@@ -1727,6 +1748,8 @@ class TradingScheduler:
                 "allow_requests": guardrails.allow_requests,
                 "governance_evidence_complete": guardrails.governance_evidence_complete,
                 "effective_adjustment_allowed": guardrails.adjustment_allowed,
+                "quality_thresholds": guardrails.quality_thresholds,
+                "fallback_controls": guardrails.fallback_controls,
                 "reasons": list(guardrails.reasons),
             },
         }
