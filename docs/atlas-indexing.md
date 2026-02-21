@@ -274,8 +274,9 @@ sequenceDiagram
 
 ### Ingestion Tracking Details
 
-- Jangar records webhook deliveries in `atlas.github_events` and starts workflows with the actual Temporal workflow ID.
-- Bumba workflows create or update `atlas.ingestions` using that workflow ID and the GitHub delivery id.
+- Jangar records webhook deliveries in `atlas.github_events`.
+- Bumba consumes pending GitHub events from `atlas.github_events` and starts workflows.
+- Bumba workflows create or update `atlas.ingestions` using the workflow ID and the GitHub delivery id.
 - `atlas.ingestions.status` is updated to `running` → `completed` (or `failed`/`skipped`) by the workflow itself.
 - `atlas.event_files` is populated when a file is indexed, keyed to the webhook delivery id + file key.
 - `atlas.ingestion_targets` is populated for each indexed file version with `kind = model_enrichment`.
