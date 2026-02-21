@@ -253,6 +253,17 @@ class TradingMetrics:
     evidence_continuity_last_checked_ts_seconds: float = 0
     evidence_continuity_last_success_ts_seconds: float = 0
     evidence_continuity_last_failed_runs: int = 0
+    autonomy_promotions_total: int = 0
+    autonomy_denials_total: int = 0
+    autonomy_demotions_total: int = 0
+    autonomy_promotion_action_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    autonomy_last_signal_count: int = 0
+    autonomy_last_decision_count: int = 0
+    autonomy_last_trade_count: int = 0
+    autonomy_last_fold_metrics_count: int = 0
+    autonomy_last_stress_metrics_count: int = 0
     allocator_requests_total: int = 0
     allocator_approved_total: int = 0
     allocator_rejected_total: int = 0
@@ -482,6 +493,10 @@ class TradingState:
     last_autonomy_gates: Optional[str] = None
     last_autonomy_patch: Optional[str] = None
     last_autonomy_recommendation: Optional[str] = None
+    last_autonomy_promotion_action: Optional[str] = None
+    last_autonomy_promotion_eligible: Optional[bool] = None
+    last_autonomy_recommendation_trace_id: Optional[str] = None
+    last_autonomy_throughput: Optional[dict[str, int | bool | str | None]] = None
     last_ingest_signals_total: int = 0
     last_ingest_window_start: Optional[datetime] = None
     last_ingest_window_end: Optional[datetime] = None
@@ -2777,6 +2792,23 @@ class TradingScheduler:
             self.state.last_autonomy_gates = str(no_signal_path)
             self.state.last_autonomy_patch = None
             self.state.last_autonomy_recommendation = None
+            self.state.last_autonomy_promotion_action = "hold"
+            self.state.last_autonomy_promotion_eligible = False
+            self.state.last_autonomy_recommendation_trace_id = None
+            self.state.last_autonomy_throughput = {
+                "signal_count": 0,
+                "decision_count": 0,
+                "trade_count": 0,
+                "fold_metrics_count": 0,
+                "stress_metrics_count": 0,
+                "no_signal_window": True,
+                "no_signal_reason": reason,
+            }
+            self.state.metrics.autonomy_last_signal_count = 0
+            self.state.metrics.autonomy_last_decision_count = 0
+            self.state.metrics.autonomy_last_trade_count = 0
+            self.state.metrics.autonomy_last_fold_metrics_count = 0
+            self.state.metrics.autonomy_last_stress_metrics_count = 0
             self.state.last_autonomy_error = None
             self.state.last_autonomy_reason = reason
             query_start = autonomy_batch.query_start or start
@@ -2891,6 +2923,58 @@ class TradingScheduler:
         self.state.last_autonomy_recommendation = str(
             gate_report.get("recommended_mode")
         )
+        recommendation_payload = gate_report.get("promotion_recommendation")
+        if isinstance(recommendation_payload, dict):
+            recommendation = cast(dict[str, Any], recommendation_payload)
+            action = str(recommendation.get("action", "")).strip().lower()
+            if action:
+                self.state.last_autonomy_promotion_action = action
+                self.state.metrics.autonomy_promotion_action_total[action] = (
+                    self.state.metrics.autonomy_promotion_action_total.get(action, 0)
+                    + 1
+                )
+            self.state.last_autonomy_promotion_eligible = bool(
+                recommendation.get("eligible", False)
+            )
+            self.state.last_autonomy_recommendation_trace_id = (
+                str(recommendation.get("trace_id", "")).strip() or None
+            )
+            if action == "promote":
+                self.state.metrics.autonomy_promotions_total += 1
+            elif action == "deny":
+                self.state.metrics.autonomy_denials_total += 1
+            elif action == "demote":
+                self.state.metrics.autonomy_demotions_total += 1
+        else:
+            self.state.last_autonomy_promotion_action = None
+            self.state.last_autonomy_promotion_eligible = None
+            self.state.last_autonomy_recommendation_trace_id = None
+
+        throughput_payload = gate_report.get("throughput")
+        if isinstance(throughput_payload, Mapping):
+            throughput = cast(dict[str, Any], throughput_payload)
+            signal_count = int(throughput.get("signal_count", 0) or 0)
+            decision_count = int(throughput.get("decision_count", 0) or 0)
+            trade_count = int(throughput.get("trade_count", 0) or 0)
+            fold_metrics_count = int(throughput.get("fold_metrics_count", 0) or 0)
+            stress_metrics_count = int(throughput.get("stress_metrics_count", 0) or 0)
+            self.state.last_autonomy_throughput = {
+                "signal_count": signal_count,
+                "decision_count": decision_count,
+                "trade_count": trade_count,
+                "fold_metrics_count": fold_metrics_count,
+                "stress_metrics_count": stress_metrics_count,
+                "no_signal_window": bool(throughput.get("no_signal_window", False)),
+                "no_signal_reason": throughput.get("no_signal_reason"),
+            }
+            self.state.metrics.autonomy_last_signal_count = signal_count
+            self.state.metrics.autonomy_last_decision_count = decision_count
+            self.state.metrics.autonomy_last_trade_count = trade_count
+            self.state.metrics.autonomy_last_fold_metrics_count = fold_metrics_count
+            self.state.metrics.autonomy_last_stress_metrics_count = stress_metrics_count
+        else:
+            self.state.last_autonomy_throughput = None
+
         self.state.last_autonomy_error = None
         if settings.trading_drift_governance_enabled:
             self._evaluate_drift_governance(

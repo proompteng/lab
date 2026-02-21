@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -29,7 +30,11 @@ class EvaluationReportConfig:
     variant_warning_threshold: int = 20
 
     def to_payload(self) -> dict[str, object]:
-        resolved_variant_count = self.variant_count if self.variant_count is not None else len(self.strategies)
+        resolved_variant_count = (
+            self.variant_count
+            if self.variant_count is not None
+            else len(self.strategies)
+        )
         return {
             "evaluation_start": self.evaluation_start.isoformat(),
             "evaluation_end": self.evaluation_end.isoformat(),
@@ -177,7 +182,8 @@ class EvaluationGatePolicy:
             min_trades=int(payload.get("min_trades", 1)),
             min_net_pnl=_decimal(payload.get("min_net_pnl", "0")) or Decimal("0"),
             max_drawdown=_decimal(payload.get("max_drawdown", "100")) or Decimal("100"),
-            max_turnover_ratio=_decimal(payload.get("max_turnover_ratio", "5")) or Decimal("5"),
+            max_turnover_ratio=_decimal(payload.get("max_turnover_ratio", "5"))
+            or Decimal("5"),
         )
 
     def to_payload(self) -> dict[str, object]:
@@ -238,6 +244,121 @@ class EvaluationReport:
         }
 
 
+@dataclass(frozen=True)
+class PromotionEvidenceSummary:
+    fold_metrics_count: int
+    stress_metrics_count: int
+    rationale_present: bool
+    evidence_complete: bool
+    reasons: list[str]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "fold_metrics_count": self.fold_metrics_count,
+            "stress_metrics_count": self.stress_metrics_count,
+            "rationale_present": self.rationale_present,
+            "evidence_complete": self.evidence_complete,
+            "reasons": list(self.reasons),
+        }
+
+
+@dataclass(frozen=True)
+class PromotionRecommendation:
+    action: Literal["promote", "hold", "deny", "demote"]
+    requested_mode: Literal["shadow", "paper", "live"]
+    recommended_mode: Literal["shadow", "paper", "live"]
+    eligible: bool
+    rationale: str
+    reasons: list[str]
+    evidence: PromotionEvidenceSummary
+    trace_id: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "action": self.action,
+            "requested_mode": self.requested_mode,
+            "recommended_mode": self.recommended_mode,
+            "eligible": self.eligible,
+            "rationale": self.rationale,
+            "reasons": list(self.reasons),
+            "evidence": self.evidence.to_payload(),
+            "trace_id": self.trace_id,
+        }
+
+
+def build_promotion_recommendation(
+    *,
+    run_id: str,
+    candidate_id: str,
+    requested_mode: Literal["shadow", "paper", "live"],
+    recommended_mode: Literal["shadow", "paper", "live"],
+    gate_allowed: bool,
+    prerequisite_allowed: bool,
+    rollback_ready: bool,
+    fold_metrics_count: int,
+    stress_metrics_count: int,
+    rationale: str | None,
+    reasons: list[str],
+) -> PromotionRecommendation:
+    normalized_rationale = (rationale or "").strip()
+    evidence_reasons: list[str] = []
+    if fold_metrics_count <= 0:
+        evidence_reasons.append("fold_metrics_missing")
+    if stress_metrics_count <= 0:
+        evidence_reasons.append("stress_metrics_missing")
+    if not normalized_rationale:
+        evidence_reasons.append("promotion_rationale_missing")
+    evidence_complete = len(evidence_reasons) == 0
+
+    eligible = (
+        gate_allowed and prerequisite_allowed and rollback_ready and evidence_complete
+    )
+    action: Literal["promote", "hold", "deny", "demote"] = "hold"
+    if eligible and recommended_mode in {"paper", "live"}:
+        action = "promote"
+    elif not eligible:
+        action = "deny"
+
+    resolved_reasons = sorted(set([*reasons, *evidence_reasons]))
+    trace_payload = {
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "requested_mode": requested_mode,
+        "recommended_mode": recommended_mode,
+        "gate_allowed": gate_allowed,
+        "prerequisite_allowed": prerequisite_allowed,
+        "rollback_ready": rollback_ready,
+        "eligible": eligible,
+        "action": action,
+        "rationale": normalized_rationale,
+        "reasons": resolved_reasons,
+        "evidence": {
+            "fold_metrics_count": fold_metrics_count,
+            "stress_metrics_count": stress_metrics_count,
+            "rationale_present": bool(normalized_rationale),
+        },
+    }
+    trace_id = hashlib.sha256(
+        json.dumps(trace_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:24]
+    return PromotionRecommendation(
+        action=action,
+        requested_mode=requested_mode,
+        recommended_mode=recommended_mode,
+        eligible=eligible,
+        rationale=normalized_rationale,
+        reasons=resolved_reasons,
+        evidence=PromotionEvidenceSummary(
+            fold_metrics_count=fold_metrics_count,
+            stress_metrics_count=stress_metrics_count,
+            rationale_present=bool(normalized_rationale),
+            evidence_complete=evidence_complete,
+            reasons=evidence_reasons,
+        ),
+        trace_id=trace_id,
+    )
+
+
 @dataclass
 class _PositionState:
     qty: Decimal = Decimal("0")
@@ -263,10 +384,14 @@ def generate_evaluation_report(
     decisions = _flatten_decisions(results)
     resolved_cost_model = cost_model or TransactionCostModel(config.cost_model_config)
     metrics = _evaluate_metrics(decisions, resolved_cost_model)
-    gates = _evaluate_gates(metrics, gate_policy or EvaluationGatePolicy(), promotion_target)
+    gates = _evaluate_gates(
+        metrics, gate_policy or EvaluationGatePolicy(), promotion_target
+    )
     robustness = _evaluate_robustness(results, resolved_cost_model)
     multiple_testing = _evaluate_multiple_testing(config)
-    impact_assumptions = _collect_impact_assumptions(decisions, config.cost_model_config)
+    impact_assumptions = _collect_impact_assumptions(
+        decisions, config.cost_model_config
+    )
     generated_at = datetime.now(timezone.utc)
     return EvaluationReport(
         report_version="v2",
@@ -339,7 +464,11 @@ def _evaluate_metrics(
         exposure_sum += exposure
         exposure_count += 1
 
-    average_exposure = exposure_sum / Decimal(str(exposure_count)) if exposure_count > 0 else Decimal("0")
+    average_exposure = (
+        exposure_sum / Decimal(str(exposure_count))
+        if exposure_count > 0
+        else Decimal("0")
+    )
     gross_pnl = realized_pnl + _unrealized_pnl(positions, last_prices)
     net_pnl = gross_pnl - total_cost
     turnover_ratio = (
@@ -469,10 +598,18 @@ def _evaluate_robustness(
     )
 
 
-def _evaluate_multiple_testing(config: EvaluationReportConfig) -> MultipleTestingSummary:
-    variant_count = config.variant_count if config.variant_count is not None else len(config.strategies)
+def _evaluate_multiple_testing(
+    config: EvaluationReportConfig,
+) -> MultipleTestingSummary:
+    variant_count = (
+        config.variant_count
+        if config.variant_count is not None
+        else len(config.strategies)
+    )
     warning_threshold = config.variant_warning_threshold
-    warning_triggered = variant_count >= warning_threshold if warning_threshold > 0 else False
+    warning_triggered = (
+        variant_count >= warning_threshold if warning_threshold > 0 else False
+    )
     warnings: list[str] = []
     if warning_triggered:
         warnings.append("variant_count_exceeds_threshold")
@@ -499,14 +636,22 @@ def _apply_fill(
 
     if action == "buy":
         if state.qty >= 0:
-            realized_pnl, trade_count = _open_long(state, qty, price, realized_pnl, trade_count)
+            realized_pnl, trade_count = _open_long(
+                state, qty, price, realized_pnl, trade_count
+            )
         else:
-            realized_pnl, trade_count = _cover_short(state, qty, price, realized_pnl, trade_count)
+            realized_pnl, trade_count = _cover_short(
+                state, qty, price, realized_pnl, trade_count
+            )
     elif action == "sell":
         if state.qty <= 0:
-            realized_pnl, trade_count = _open_short(state, qty, price, realized_pnl, trade_count)
+            realized_pnl, trade_count = _open_short(
+                state, qty, price, realized_pnl, trade_count
+            )
         else:
-            realized_pnl, trade_count = _close_long(state, qty, price, realized_pnl, trade_count)
+            realized_pnl, trade_count = _close_long(
+                state, qty, price, realized_pnl, trade_count
+            )
     return realized_pnl, trade_count
 
 
@@ -555,7 +700,9 @@ def _open_short(
 ) -> tuple[Decimal, int]:
     new_qty = state.qty - qty
     if state.qty < 0 and state.avg_price is not None:
-        state.avg_price = ((abs(state.qty) * state.avg_price) + (qty * price)) / abs(new_qty)
+        state.avg_price = ((abs(state.qty) * state.avg_price) + (qty * price)) / abs(
+            new_qty
+        )
     else:
         state.avg_price = price
     state.qty = new_qty
@@ -613,7 +760,9 @@ def _exposure_notional(
     return exposure
 
 
-def _estimate_cost(cost_model: TransactionCostModel, decision: Any, price: Decimal) -> Decimal:
+def _estimate_cost(
+    cost_model: TransactionCostModel, decision: Any, price: Decimal
+) -> Decimal:
     order = OrderIntent(
         symbol=decision.symbol,
         side="buy" if decision.action == "buy" else "sell",
@@ -649,7 +798,9 @@ def _cost_model_payload(config: CostModelConfig) -> dict[str, str]:
         "commission_per_share": str(config.commission_per_share),
         "min_commission": str(config.min_commission),
         "max_participation_rate": str(config.max_participation_rate),
-        "impact_bps_at_full_participation": str(config.impact_bps_at_full_participation),
+        "impact_bps_at_full_participation": str(
+            config.impact_bps_at_full_participation
+        ),
     }
 
 
@@ -688,10 +839,14 @@ def _collect_impact_assumptions(
         decisions_with_adv=adv_count,
         assumptions={
             "commission_bps": str(cost_model_config.commission_bps),
-            "impact_bps_at_full_participation": str(cost_model_config.impact_bps_at_full_participation),
+            "impact_bps_at_full_participation": str(
+                cost_model_config.impact_bps_at_full_participation
+            ),
             "max_participation_rate": str(cost_model_config.max_participation_rate),
             "recorded_inputs_count": str(decisions_with_recorded_inputs),
-            "fallback_inputs_count": str(max(len(decisions) - decisions_with_recorded_inputs, 0)),
+            "fallback_inputs_count": str(
+                max(len(decisions) - decisions_with_recorded_inputs, 0)
+            ),
         },
     )
 
@@ -717,7 +872,9 @@ def _decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
-def _resolve_impact_inputs(params: dict[str, Any]) -> tuple[_ResolvedImpactInputs, bool]:
+def _resolve_impact_inputs(
+    params: dict[str, Any],
+) -> tuple[_ResolvedImpactInputs, bool]:
     recorded = _recorded_impact_inputs(params)
     if recorded is not None:
         return recorded, True
@@ -800,8 +957,11 @@ __all__ = [
     "EvaluationReport",
     "EvaluationReportConfig",
     "MultipleTestingSummary",
+    "PromotionEvidenceSummary",
+    "PromotionRecommendation",
     "RobustnessFoldMetrics",
     "RobustnessReport",
+    "build_promotion_recommendation",
     "generate_evaluation_report",
     "write_evaluation_report",
 ]

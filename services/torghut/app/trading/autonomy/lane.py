@@ -43,6 +43,8 @@ from ..models import SignalEnvelope
 from ..reporting import (
     EvaluationReport,
     EvaluationReportConfig,
+    PromotionRecommendation,
+    build_promotion_recommendation,
     generate_evaluation_report,
     write_evaluation_report,
 )
@@ -226,6 +228,7 @@ def run_autonomous_lane(
     gate_report: GateEvaluationReport | None = None
     gate_report_trace_id: str | None = None
     recommendation_trace_id: str | None = None
+    promotion_recommendation: PromotionRecommendation | None = None
     gate_report_path = gates_dir / "gate-evaluation.json"
     promotion_check_path = gates_dir / "promotion-prerequisites.json"
     rollback_check_path = gates_dir / "rollback-readiness.json"
@@ -429,6 +432,8 @@ def run_autonomous_lane(
             "trade_count": report.metrics.trade_count,
             "no_signal_window": False,
             "no_signal_reason": None,
+            "fold_metrics_count": len(walk_results.folds),
+            "stress_metrics_count": 4,
         }
         gate_report_trace_id = _trace_id(gate_report_payload)
         gate_report_payload["provenance"] = {
@@ -535,27 +540,40 @@ def run_autonomous_lane(
             promotion_target=promotion_target,
             drift_promotion_evidence=drift_promotion_evidence,
         )
-
-        promotion_allowed = (
-            gate_report.promotion_allowed
-            and promotion_check.allowed
-            and rollback_check.ready
-            and drift_gate_check["allowed"]
+        fold_metrics_count = len(walk_results.folds)
+        stress_metrics_count = 4
+        promotion_rationale = _build_promotion_rationale(
+            gate_report=gate_report,
+            promotion_check_reasons=promotion_check.reasons,
+            rollback_check_reasons=rollback_check.reasons,
+            promotion_target=promotion_target,
         )
-        promotion_reasons = sorted(
-            set(
-                [
-                    *gate_report.reasons,
-                    *promotion_check.reasons,
-                    *rollback_check.reasons,
-                    *[
-                        str(item)
-                        for item in drift_gate_check.get("reasons", [])
-                        if str(item).strip()
-                    ],
-                ]
-            )
+        promotion_recommendation = build_promotion_recommendation(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            requested_mode=promotion_target,
+            recommended_mode=gate_report.recommended_mode,
+            gate_allowed=(
+                gate_report.promotion_allowed and bool(drift_gate_check["allowed"])
+            ),
+            prerequisite_allowed=promotion_check.allowed,
+            rollback_ready=rollback_check.ready,
+            fold_metrics_count=fold_metrics_count,
+            stress_metrics_count=stress_metrics_count,
+            rationale=promotion_rationale,
+            reasons=[
+                *gate_report.reasons,
+                *promotion_check.reasons,
+                *rollback_check.reasons,
+                *[
+                    str(item)
+                    for item in drift_gate_check.get("reasons", [])
+                    if str(item).strip()
+                ],
+            ],
         )
+        promotion_allowed = promotion_recommendation.eligible
+        promotion_reasons = promotion_recommendation.reasons
         promotion_gate_payload = {
             "allowed": promotion_allowed,
             "reasons": promotion_reasons,
@@ -573,7 +591,9 @@ def run_autonomous_lane(
                 "rollback_readiness": rollback_check.to_payload(),
                 "profitability_validation": profitability_validation.to_payload(),
                 "drift_governance": drift_gate_check,
+                "evidence_requirements": promotion_recommendation.evidence.to_payload(),
             },
+            "recommendation": promotion_recommendation.to_payload(),
             "artifact_refs": sorted(
                 set(
                     [
@@ -595,14 +615,9 @@ def run_autonomous_lane(
         promotion_gate_path.write_text(
             json.dumps(promotion_gate_payload, indent=2), encoding="utf-8"
         )
-        recommendation_trace_id = _trace_id(
-            {
-                "run_id": run_id,
-                "candidate_id": candidate_id,
-                "recommended_mode": gate_report.recommended_mode,
-                "promotion_allowed": promotion_allowed,
-                "reasons": promotion_reasons,
-            }
+        recommendation_trace_id = promotion_recommendation.trace_id
+        gate_report_payload["promotion_recommendation"] = (
+            promotion_recommendation.to_payload()
         )
         gate_report_payload["provenance"] = {
             "gate_report_trace_id": gate_report_trace_id,
@@ -637,6 +652,9 @@ def run_autonomous_lane(
                 promotion_target=promotion_target,
                 promotion_allowed=promotion_allowed,
                 promotion_reasons=promotion_reasons,
+                promotion_recommendation=promotion_recommendation,
+                fold_metrics_count=fold_metrics_count,
+                stress_metrics_count=stress_metrics_count,
                 gate_report_trace_id=gate_report_trace_id,
                 recommendation_trace_id=recommendation_trace_id,
             )
@@ -824,6 +842,9 @@ def _persist_run_outputs(
     promotion_target: str,
     promotion_allowed: bool,
     promotion_reasons: list[str],
+    promotion_recommendation: PromotionRecommendation,
+    fold_metrics_count: int,
+    stress_metrics_count: int,
     gate_report_trace_id: str,
     recommendation_trace_id: str,
 ) -> None:
@@ -831,6 +852,20 @@ def _persist_run_outputs(
 
     with session_factory() as session:
         with session.begin():
+            existing_champion = (
+                session.execute(
+                    select(ResearchCandidate)
+                    .where(
+                        ResearchCandidate.lifecycle_role == "champion",
+                        ResearchCandidate.lifecycle_status == "active",
+                        ResearchCandidate.promotion_target == promotion_target,
+                        ResearchCandidate.candidate_id != candidate_id,
+                    )
+                    .order_by(ResearchCandidate.created_at.desc())
+                )
+                .scalars()
+                .first()
+            )
             session.execute(
                 delete(ResearchFoldMetrics).where(
                     ResearchFoldMetrics.candidate_id == candidate_id
@@ -851,6 +886,28 @@ def _persist_run_outputs(
                     ResearchCandidate.candidate_id == candidate_id
                 )
             )
+            should_promote = (
+                promotion_allowed
+                and promotion_recommendation.action == "promote"
+                and gate_report.recommended_mode in {"paper", "live"}
+            )
+            candidate_role = "champion" if should_promote else "challenger"
+            candidate_status = "active" if should_promote else "evaluated"
+            metadata_bundle = {
+                "promotion_gate_trace_id": gate_report_trace_id,
+                "recommendation_trace_id": recommendation_trace_id,
+                "throughput": {
+                    "signal_count": len(signals),
+                    "decision_count": report.metrics.decision_count,
+                    "trade_count": report.metrics.trade_count,
+                },
+                "gate_reasons": sorted(set(gate_report.reasons)),
+                "existing_champion_candidate_id": (
+                    existing_champion.candidate_id
+                    if existing_champion is not None
+                    else None
+                ),
+            }
 
             candidate = ResearchCandidate(
                 run_id=run_id,
@@ -862,6 +919,10 @@ def _persist_run_outputs(
                 symbols_covered=sorted({signal.symbol for signal in signals}),
                 universe_definition=_strategy_universe_definition(runtime_strategies),
                 promotion_target=promotion_target,
+                lifecycle_role=candidate_role,
+                lifecycle_status=candidate_status,
+                metadata_bundle=metadata_bundle,
+                recommendation_bundle=promotion_recommendation.to_payload(),
             )
             session.add(candidate)
 
@@ -925,6 +986,13 @@ def _persist_run_outputs(
                     )
                 )
 
+            evidence_bundle = {
+                "fold_metrics_count": fold_metrics_count,
+                "stress_metrics_count": stress_metrics_count,
+                "rationale_present": bool(promotion_recommendation.rationale),
+                "evidence_complete": promotion_recommendation.evidence.evidence_complete,
+                "reasons": list(promotion_recommendation.evidence.reasons),
+            }
             session.add(
                 ResearchPromotion(
                     candidate_id=candidate_id,
@@ -940,8 +1008,70 @@ def _persist_run_outputs(
                     else ";".join(promotion_reasons),
                     paper_candidate_patch_ref=str(patch_path) if patch_path else None,
                     effective_time=now if promotion_allowed else None,
+                    decision_action=promotion_recommendation.action,
+                    decision_rationale=promotion_recommendation.rationale,
+                    evidence_bundle=evidence_bundle,
+                    recommendation_trace_id=recommendation_trace_id,
+                    successor_candidate_id=(
+                        None
+                        if promotion_recommendation.action != "demote"
+                        else candidate_id
+                    ),
+                    rollback_candidate_id=(
+                        existing_champion.candidate_id
+                        if existing_champion is not None
+                        else None
+                    ),
                 )
             )
+            if should_promote and existing_champion is not None:
+                existing_champion.lifecycle_role = "demoted"
+                existing_champion.lifecycle_status = "standby"
+                existing_champion.metadata_bundle = {
+                    "demoted_at": now.isoformat(),
+                    "demoted_by_candidate_id": candidate_id,
+                    "rollback_safe": True,
+                    "gate_report_trace_id": gate_report_trace_id,
+                }
+                session.add(existing_champion)
+                demotion_trace_id = _trace_id(
+                    {
+                        "decision_action": "demote",
+                        "candidate_id": existing_champion.candidate_id,
+                        "successor_candidate_id": candidate_id,
+                        "run_id": run_id,
+                        "recommended_mode": gate_report.recommended_mode,
+                    }
+                )
+                session.execute(
+                    delete(ResearchPromotion).where(
+                        ResearchPromotion.candidate_id
+                        == existing_champion.candidate_id,
+                        ResearchPromotion.decision_action == "demote",
+                        ResearchPromotion.successor_candidate_id == candidate_id,
+                    )
+                )
+                session.add(
+                    ResearchPromotion(
+                        candidate_id=existing_champion.candidate_id,
+                        requested_mode=promotion_target,
+                        approved_mode="shadow",
+                        approver="autonomous_scheduler",
+                        approver_role="system",
+                        approve_reason="demoted_for_new_champion",
+                        deny_reason=None,
+                        paper_candidate_patch_ref=None,
+                        effective_time=now,
+                        decision_action="demote",
+                        decision_rationale=(
+                            f"demoted_after_promotion_of_{candidate_id}_for_{promotion_target}"
+                        ),
+                        evidence_bundle=evidence_bundle,
+                        recommendation_trace_id=demotion_trace_id,
+                        successor_candidate_id=candidate_id,
+                        rollback_candidate_id=existing_champion.candidate_id,
+                    )
+                )
             run = session.execute(
                 select(ResearchRun).where(ResearchRun.run_id == run_id)
             ).scalar_one_or_none()
@@ -970,6 +1100,30 @@ def _compute_candidate_hash(
     hasher.update(gate_report.recommended_mode.encode("utf-8"))
     hasher.update(str(sorted(gate_report.reasons)).encode("utf-8"))
     return hasher.hexdigest()[:32]
+
+
+def _build_promotion_rationale(
+    *,
+    gate_report: GateEvaluationReport,
+    promotion_check_reasons: list[str],
+    rollback_check_reasons: list[str],
+    promotion_target: str,
+) -> str:
+    if (
+        gate_report.promotion_allowed
+        and not promotion_check_reasons
+        and not rollback_check_reasons
+    ):
+        return (
+            f"all_required_gates_passed_for_{promotion_target}_promotion_"
+            f"recommended_mode_{gate_report.recommended_mode}"
+        )
+    reasons = sorted(
+        set([*gate_report.reasons, *promotion_check_reasons, *rollback_check_reasons])
+    )
+    if not reasons:
+        return f"promotion_target_{promotion_target}_held_without_additional_reasons"
+    return f"promotion_blocked_or_held:{','.join(reasons)}"
 
 
 def _trace_id(payload: object) -> str:

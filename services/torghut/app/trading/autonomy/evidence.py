@@ -70,12 +70,12 @@ def evaluate_evidence_continuity(
         (
             (str(run_id), int(count or 0))
             for run_id, count in session.execute(
-            select(
-                ResearchCandidate.run_id,
-                func.count(ResearchCandidate.id),
-            )
-            .where(ResearchCandidate.run_id.in_(run_ids))
-            .group_by(ResearchCandidate.run_id)
+                select(
+                    ResearchCandidate.run_id,
+                    func.count(ResearchCandidate.id),
+                )
+                .where(ResearchCandidate.run_id.in_(run_ids))
+                .group_by(ResearchCandidate.run_id)
             ).all()
         )
     )
@@ -84,16 +84,16 @@ def evaluate_evidence_continuity(
         (
             (str(run_id), int(count or 0))
             for run_id, count in session.execute(
-            select(
-                ResearchCandidate.run_id,
-                func.count(ResearchFoldMetrics.id),
-            )
-            .join(
-                ResearchFoldMetrics,
-                ResearchFoldMetrics.candidate_id == ResearchCandidate.candidate_id,
-            )
-            .where(ResearchCandidate.run_id.in_(run_ids))
-            .group_by(ResearchCandidate.run_id)
+                select(
+                    ResearchCandidate.run_id,
+                    func.count(ResearchFoldMetrics.id),
+                )
+                .join(
+                    ResearchFoldMetrics,
+                    ResearchFoldMetrics.candidate_id == ResearchCandidate.candidate_id,
+                )
+                .where(ResearchCandidate.run_id.in_(run_ids))
+                .group_by(ResearchCandidate.run_id)
             ).all()
         )
     )
@@ -102,16 +102,17 @@ def evaluate_evidence_continuity(
         (
             (str(run_id), int(count or 0))
             for run_id, count in session.execute(
-            select(
-                ResearchCandidate.run_id,
-                func.count(ResearchStressMetrics.id),
-            )
-            .join(
-                ResearchStressMetrics,
-                ResearchStressMetrics.candidate_id == ResearchCandidate.candidate_id,
-            )
-            .where(ResearchCandidate.run_id.in_(run_ids))
-            .group_by(ResearchCandidate.run_id)
+                select(
+                    ResearchCandidate.run_id,
+                    func.count(ResearchStressMetrics.id),
+                )
+                .join(
+                    ResearchStressMetrics,
+                    ResearchStressMetrics.candidate_id
+                    == ResearchCandidate.candidate_id,
+                )
+                .where(ResearchCandidate.run_id.in_(run_ids))
+                .group_by(ResearchCandidate.run_id)
             ).all()
         )
     )
@@ -120,16 +121,38 @@ def evaluate_evidence_continuity(
         (
             (str(run_id), int(count or 0))
             for run_id, count in session.execute(
-            select(
-                ResearchCandidate.run_id,
-                func.count(ResearchPromotion.id),
-            )
-            .join(
-                ResearchPromotion,
-                ResearchPromotion.candidate_id == ResearchCandidate.candidate_id,
-            )
-            .where(ResearchCandidate.run_id.in_(run_ids))
-            .group_by(ResearchCandidate.run_id)
+                select(
+                    ResearchCandidate.run_id,
+                    func.count(ResearchPromotion.id),
+                )
+                .join(
+                    ResearchPromotion,
+                    ResearchPromotion.candidate_id == ResearchCandidate.candidate_id,
+                )
+                .where(ResearchCandidate.run_id.in_(run_ids))
+                .group_by(ResearchCandidate.run_id)
+            ).all()
+        )
+    )
+    promotion_audit_counts = dict(
+        (
+            (str(run_id), int(count or 0))
+            for run_id, count in session.execute(
+                select(
+                    ResearchCandidate.run_id,
+                    func.count(ResearchPromotion.id),
+                )
+                .join(
+                    ResearchPromotion,
+                    ResearchPromotion.candidate_id == ResearchCandidate.candidate_id,
+                )
+                .where(
+                    ResearchCandidate.run_id.in_(run_ids),
+                    ResearchPromotion.decision_rationale.is_not(None),
+                    ResearchPromotion.decision_rationale != "",
+                    ResearchPromotion.evidence_bundle.is_not(None),
+                )
+                .group_by(ResearchCandidate.run_id)
             ).all()
         )
     )
@@ -140,6 +163,7 @@ def evaluate_evidence_continuity(
         fold_count = int(fold_counts.get(run_id, 0) or 0)
         stress_count = int(stress_counts.get(run_id, 0) or 0)
         promotion_count = int(promotion_counts.get(run_id, 0) or 0)
+        promotion_audit_count = int(promotion_audit_counts.get(run_id, 0) or 0)
         missing: list[str] = []
         if candidate_count <= 0:
             missing.append("research_candidates")
@@ -149,6 +173,8 @@ def evaluate_evidence_continuity(
             missing.append("research_stress_metrics")
         if promotion_count <= 0:
             missing.append("research_promotions")
+        elif promotion_audit_count <= 0:
+            missing.append("promotion_decision_audit")
         if missing:
             missing_runs.append(
                 {
@@ -159,6 +185,7 @@ def evaluate_evidence_continuity(
                         "research_fold_metrics": fold_count,
                         "research_stress_metrics": stress_count,
                         "research_promotions": promotion_count,
+                        "promotion_decision_audit": promotion_audit_count,
                     },
                 }
             )
