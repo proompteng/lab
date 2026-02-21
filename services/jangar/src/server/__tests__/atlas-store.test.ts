@@ -55,6 +55,29 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
         }
       }
 
+      if (normalized.includes('insert into "atlas"."file_versions"')) {
+        const commit = (params[2] as string | null | undefined) ?? null
+        const hash = (params[3] as string | null | undefined) ?? ''
+        return {
+          rows: [
+            {
+              id: 'file-version-1',
+              file_key_id: 'file-key-1',
+              repository_ref: 'main',
+              repository_commit: commit,
+              content_hash: hash,
+              language: 'typescript',
+              byte_size: 128,
+              line_count: 4,
+              metadata: {},
+              source_timestamp: null,
+              created_at: now,
+              updated_at: now,
+            },
+          ] as R[],
+        }
+      }
+
       if (normalized.includes('insert into "atlas"."enrichments"')) {
         return {
           rows: [
@@ -213,5 +236,59 @@ describe('atlas store', () => {
         embedding: [0, 1],
       }),
     ).rejects.toThrow(/embedding dimension mismatch/i)
+  })
+
+  it('uses partial null-commit conflict target for file version upserts', async () => {
+    const { db, calls } = makeFakeDb()
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.upsertFileVersion({
+      fileKeyId: 'file-key-1',
+      repositoryRef: 'main',
+      repositoryCommit: null,
+      contentHash: 'abc123',
+      language: 'typescript',
+      byteSize: 42,
+      lineCount: 3,
+      metadata: {},
+      sourceTimestamp: null,
+    })
+
+    const sql = calls.find((call) => call.sql.toLowerCase().includes('insert into "atlas"."file_versions"'))?.sql
+    expect(sql).toBeTruthy()
+    const normalized = String(sql).toLowerCase().replace(/\s+/g, ' ')
+    expect(normalized).toContain(
+      'on conflict ("file_key_id", "repository_ref", "content_hash") where "repository_commit" is null do update',
+    )
+  })
+
+  it('uses commit-aware conflict target for file version upserts with commit', async () => {
+    const { db, calls } = makeFakeDb()
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.upsertFileVersion({
+      fileKeyId: 'file-key-1',
+      repositoryRef: 'main',
+      repositoryCommit: 'deadbeef',
+      contentHash: 'abc123',
+      language: 'typescript',
+      byteSize: 42,
+      lineCount: 3,
+      metadata: {},
+      sourceTimestamp: null,
+    })
+
+    const sql = calls.find((call) => call.sql.toLowerCase().includes('insert into "atlas"."file_versions"'))?.sql
+    expect(sql).toBeTruthy()
+    const normalized = String(sql).toLowerCase().replace(/\s+/g, ' ')
+    expect(normalized).toContain(
+      'on conflict ("file_key_id", "repository_ref", "repository_commit", "content_hash") do update',
+    )
   })
 })

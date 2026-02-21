@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Language } from 'web-tree-sitter'
 
-import { activities, parseCompletionOutput } from './index'
+import { __test__, activities, parseCompletionOutput } from './index'
 
 const runGit = (args: string[], cwd: string) => {
   const result = Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
@@ -386,6 +386,17 @@ describe('bumba completion parsing', () => {
 
   it('rejects non-JSON responses', () => {
     expect(() => parseCompletionOutput('plain text response')).toThrow('completion response was not valid JSON')
+  })
+})
+
+describe('bumba file-version conflict target', () => {
+  it('uses null-commit conflict target when commit is missing', () => {
+    expect(__test__.shouldUseNullCommitConflictTarget(null)).toBe(true)
+    expect(__test__.shouldUseNullCommitConflictTarget('')).toBe(false)
+  })
+
+  it('uses commit-aware conflict target when commit is present', () => {
+    expect(__test__.shouldUseNullCommitConflictTarget('deadbeef')).toBe(false)
   })
 })
 
