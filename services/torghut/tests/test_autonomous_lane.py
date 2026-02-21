@@ -777,3 +777,88 @@ class TestAutonomousLane(TestCase):
             self.assertIsNotNone(demotion_row)
             assert demotion_row is not None
             self.assertEqual(demotion_row.rollback_candidate_id, first.candidate_id)
+
+    def test_lane_marks_hold_recommendation_as_retained_challenger(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        forced_gate = GateEvaluationReport(
+            policy_version="v3-gates-1",
+            promotion_target="paper",
+            promotion_allowed=True,
+            recommended_mode="paper",
+            gates=[
+                GateResult(gate_id="gate0_data_integrity", status="pass"),
+                GateResult(gate_id="gate1_statistical_robustness", status="pass"),
+                GateResult(gate_id="gate2_risk_capacity", status="pass"),
+                GateResult(gate_id="gate3_shadow_paper_quality", status="pass"),
+                GateResult(gate_id="gate4_operational_readiness", status="pass"),
+                GateResult(gate_id="gate6_profitability_evidence", status="pass"),
+                GateResult(gate_id="gate5_live_ramp_readiness", status="pass"),
+            ],
+            reasons=[],
+            evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            code_version="test-sha",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "app.trading.autonomy.lane.evaluate_gate_matrix",
+                return_value=forced_gate,
+            ):
+                with patch(
+                    "app.trading.autonomy.lane.build_promotion_recommendation",
+                    return_value=PromotionRecommendation(
+                        action="hold",
+                        requested_mode="paper",
+                        recommended_mode="shadow",
+                        eligible=True,
+                        rationale="hold_for_shadow_stage",
+                        reasons=["shadow_mode_recommended"],
+                        evidence=PromotionEvidenceSummary(
+                            fold_metrics_count=1,
+                            stress_metrics_count=4,
+                            rationale_present=True,
+                            evidence_complete=True,
+                            reasons=[],
+                        ),
+                        trace_id="forced-hold-trace",
+                    ),
+                ):
+                    result = run_autonomous_lane(
+                        signals_path=fixture_path,
+                        strategy_config_path=strategy_config_path,
+                        gate_policy_path=gate_policy_path,
+                        output_dir=Path(tmpdir) / "lane-hold",
+                        promotion_target="paper",
+                        code_version="test-sha",
+                        persist_results=True,
+                        session_factory=session_factory,
+                    )
+
+        with session_factory() as session:
+            candidate = session.execute(
+                select(ResearchCandidate).where(
+                    ResearchCandidate.candidate_id == result.candidate_id
+                )
+            ).scalar_one()
+
+        self.assertEqual(candidate.lifecycle_role, "challenger")
+        self.assertEqual(candidate.lifecycle_status, "evaluated")
+        self.assertIsInstance(candidate.universe_definition, dict)
+        assert isinstance(candidate.universe_definition, dict)
+        lifecycle = candidate.universe_definition.get("autonomy_lifecycle")
+        self.assertIsInstance(lifecycle, dict)
+        assert isinstance(lifecycle, dict)
+        self.assertEqual(lifecycle.get("status"), "retained_challenger")

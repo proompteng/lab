@@ -980,7 +980,7 @@ def _persist_run_outputs(
             lifecycle_payload = {
                 "role": "challenger",
                 "status": "promoted_champion"
-                if promotion_allowed
+                if should_promote
                 else "retained_challenger",
                 "promotable": promotion_allowed,
                 "promotion_target": promotion_target,
