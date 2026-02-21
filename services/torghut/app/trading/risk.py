@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional, cast
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -72,6 +72,15 @@ class RiskEngine:
             projected_abs = abs(projected_value)
             if projected_abs > equity * max_pct and projected_abs >= current_abs:
                 reasons.append("max_position_pct_exceeded")
+
+        allocator_cap_notional = _allocator_approved_notional(decision)
+        if (
+            enforce_notional
+            and allocator_cap_notional is not None
+            and notional is not None
+            and notional > allocator_cap_notional
+        ):
+            reasons.append("allocator_notional_invariant_breached")
 
         if short_increasing and not settings.trading_allow_shorts:
             reasons.append("shorts_not_allowed")
@@ -156,6 +165,14 @@ def _optional_decimal(value: Optional[Decimal | str | float]) -> Optional[Decima
         return Decimal(str(value))
     except (ArithmeticError, ValueError):
         return None
+
+
+def _allocator_approved_notional(decision: StrategyDecision) -> Optional[Decimal]:
+    allocator = decision.params.get("allocator")
+    if not isinstance(allocator, Mapping):
+        return None
+    payload = cast(Mapping[str, object], allocator)
+    return _resolve_decimal(cast(Decimal | str | float | None, payload.get("approved_notional")))
 
 
 __all__ = ["RiskEngine", "FINAL_STATUSES"]

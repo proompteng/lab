@@ -542,6 +542,26 @@ class Settings(BaseSettings):
         alias="TRADING_ALLOCATOR_MAX_SYMBOL_NOTIONAL",
         description="Allocator pre-risk concentration cap as absolute notional per symbol (optional).",
     )
+    trading_allocator_strategy_notional_caps: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS",
+        description="Strategy->notional budget caps applied by allocator before risk checks (JSON object).",
+    )
+    trading_allocator_symbol_notional_caps: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS",
+        description="Symbol->notional concentration caps applied by allocator before risk checks (JSON object).",
+    )
+    trading_allocator_correlation_symbol_groups: dict[str, str] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS",
+        description="Symbol->correlation group map used for correlation-aware throttles (JSON object).",
+    )
+    trading_allocator_correlation_group_notional_caps: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS",
+        description="Correlation-group->notional caps applied by allocator before risk checks (JSON object).",
+    )
     trading_allocator_regime_budget_multipliers: dict[str, float] = Field(
         default_factory=dict,
         alias="TRADING_ALLOCATOR_REGIME_BUDGET_MULTIPLIERS",
@@ -551,6 +571,26 @@ class Settings(BaseSettings):
         default_factory=dict,
         alias="TRADING_ALLOCATOR_REGIME_CAPACITY_MULTIPLIERS",
         description="Regime->symbol capacity multiplier map used by allocator (JSON object).",
+    )
+    trading_allocator_strategy_notional_caps: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS",
+        description="Strategy->per-cycle notional budget cap map used by allocator (JSON object).",
+    )
+    trading_allocator_symbol_notional_caps: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS",
+        description="Symbol->per-cycle notional budget cap map used by allocator (JSON object).",
+    )
+    trading_allocator_correlation_group_caps: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS",
+        description="Correlation-group->per-cycle notional cap map used by allocator (JSON object).",
+    )
+    trading_allocator_symbol_correlation_groups: dict[str, str] = Field(
+        default_factory=dict,
+        alias="TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS",
+        description="Symbol->correlation group mapping used when decisions do not provide a group.",
     )
     trading_cooldown_seconds: int = Field(default=0, alias="TRADING_COOLDOWN_SECONDS")
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
@@ -931,11 +971,81 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"TRADING_ALLOCATOR_REGIME_BUDGET_MULTIPLIERS[{key}] must be >= 0"
                 )
+        normalized_strategy_caps: dict[str, float] = {}
+        for key, value in self.trading_allocator_strategy_notional_caps.items():
+            normalized_key = key.strip()
+            if not normalized_key:
+                continue
+            if value < 0:
+                raise ValueError(
+                    f"TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS[{key}] must be >= 0"
+                )
+            normalized_strategy_caps[normalized_key] = value
+        self.trading_allocator_strategy_notional_caps = normalized_strategy_caps
+
+        normalized_symbol_caps: dict[str, float] = {}
+        for key, value in self.trading_allocator_symbol_notional_caps.items():
+            normalized_key = key.strip().upper()
+            if not normalized_key:
+                continue
+            if value < 0:
+                raise ValueError(
+                    f"TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS[{key}] must be >= 0"
+                )
+            normalized_symbol_caps[normalized_key] = value
+        self.trading_allocator_symbol_notional_caps = normalized_symbol_caps
+
+        normalized_correlation_groups: dict[str, str] = {}
+        for key, value in self.trading_allocator_correlation_symbol_groups.items():
+            normalized_key = key.strip().upper()
+            normalized_value = str(value).strip().lower()
+            if not normalized_key or not normalized_value:
+                continue
+            normalized_correlation_groups[normalized_key] = normalized_value
+        self.trading_allocator_correlation_symbol_groups = normalized_correlation_groups
+
+        normalized_correlation_caps: dict[str, float] = {}
+        for (
+            key,
+            value,
+        ) in self.trading_allocator_correlation_group_notional_caps.items():
+            normalized_key = key.strip().lower()
+            if not normalized_key:
+                continue
+            if value < 0:
+                raise ValueError(
+                    f"TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS[{key}] must be >= 0"
+                )
+            normalized_correlation_caps[normalized_key] = value
+        self.trading_allocator_correlation_group_notional_caps = (
+            normalized_correlation_caps
+        )
+
         for key, value in self.trading_allocator_regime_capacity_multipliers.items():
             if value < 0:
                 raise ValueError(
                     f"TRADING_ALLOCATOR_REGIME_CAPACITY_MULTIPLIERS[{key}] must be >= 0"
                 )
+        for key, value in self.trading_allocator_strategy_notional_caps.items():
+            if value < 0:
+                raise ValueError(
+                    f"TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS[{key}] must be >= 0"
+                )
+        for key, value in self.trading_allocator_symbol_notional_caps.items():
+            if value < 0:
+                raise ValueError(
+                    f"TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS[{key}] must be >= 0"
+                )
+        for key, value in self.trading_allocator_correlation_group_caps.items():
+            if value < 0:
+                raise ValueError(
+                    f"TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS[{key}] must be >= 0"
+                )
+        self.trading_allocator_symbol_correlation_groups = {
+            str(key).strip().upper(): str(value).strip().lower()
+            for key, value in self.trading_allocator_symbol_correlation_groups.items()
+            if str(key).strip() and str(value).strip()
+        }
         if (
             self.llm_fail_mode_enforcement == "strict_veto"
             and self.llm_fail_mode != "veto"
@@ -1075,7 +1185,10 @@ class Settings(BaseSettings):
             return False
         normalized_stage = self._normalize_rollout_stage(rollout_stage)
         if normalized_stage in {"stage1", "stage2"}:
-            return self.llm_effective_fail_mode(rollout_stage=normalized_stage) == "pass_through"
+            return (
+                self.llm_effective_fail_mode(rollout_stage=normalized_stage)
+                == "pass_through"
+            )
         return self.llm_effective_fail_mode() == "pass_through"
 
     def llm_effective_fail_mode_for_current_rollout(

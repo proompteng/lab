@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, Decimal
 from collections.abc import Mapping
-from typing import Any, Iterable, Optional, cast
+from typing import Any, Callable, Iterable, Optional, cast
 
 from ..config import settings
 from ..models import Strategy
@@ -16,8 +16,14 @@ ALLOCATOR_REJECT_ZERO_QTY = "allocator_reject_zero_qty"
 ALLOCATOR_REJECT_SYMBOL_CAPACITY = "allocator_reject_symbol_capacity"
 ALLOCATOR_REJECT_GROSS_EXPOSURE = "allocator_reject_gross_exposure"
 ALLOCATOR_REJECT_QTY_BELOW_MIN = "allocator_reject_qty_below_min"
+ALLOCATOR_REJECT_STRATEGY_BUDGET = "allocator_reject_strategy_budget"
+ALLOCATOR_REJECT_SYMBOL_BUDGET = "allocator_reject_symbol_budget"
+ALLOCATOR_REJECT_CORRELATION_CAPACITY = "allocator_reject_correlation_capacity"
 ALLOCATOR_CLIP_SYMBOL_CAPACITY = "allocator_clip_symbol_capacity"
 ALLOCATOR_CLIP_GROSS_EXPOSURE = "allocator_clip_gross_exposure"
+ALLOCATOR_CLIP_STRATEGY_BUDGET = "allocator_clip_strategy_budget"
+ALLOCATOR_CLIP_SYMBOL_BUDGET = "allocator_clip_symbol_budget"
+ALLOCATOR_CLIP_CORRELATION_CAPACITY = "allocator_clip_correlation_capacity"
 
 
 @dataclass(frozen=True)
@@ -26,6 +32,7 @@ class AggregatedIntent:
     source_strategy_ids: tuple[str, ...]
     source_decision_count: int
     had_conflict: bool
+    strategy_signed_qty: tuple[tuple[str, Decimal], ...]
 
 
 @dataclass(frozen=True)
@@ -39,6 +46,10 @@ class AllocationConfig:
     max_symbol_pct_equity: Optional[Decimal]
     max_symbol_notional: Optional[Decimal]
     max_gross_exposure: Optional[Decimal]
+    strategy_notional_caps: dict[str, Decimal]
+    symbol_notional_caps: dict[str, Decimal]
+    correlation_group_caps: dict[str, Decimal]
+    symbol_correlation_groups: dict[str, str]
     regime_budget_multipliers: dict[str, Decimal]
     regime_capacity_multipliers: dict[str, Decimal]
 
@@ -125,15 +136,23 @@ class PortfolioSizer:
             )
 
         base_notional = price * decision.qty
-        notional = self._resolve_base_notional(base_notional)
+        notional = self._resolve_base_notional(decision, base_notional)
         if notional is None or notional <= 0:
             audit["output"] = {"status": "skipped", "reason": "missing_notional"}
             return PortfolioSizingResult(
                 decision=decision, approved=True, reasons=[], audit=audit
             )
 
+        notional, regime_method = _apply_allocator_regime_multiplier(
+            notional, decision.params
+        )
         notional, vol_method = self._apply_volatility_scaling(notional, volatility)
-        applied_methods = [method for method in (vol_method,) if method]
+        notional, allocator_cap_method = _cap_by_allocator_approved_notional(
+            notional, decision.params
+        )
+        applied_methods = [
+            method for method in (regime_method, vol_method, allocator_cap_method) if method
+        ]
 
         reasons: list[str] = []
         if _should_block_new_position(
@@ -207,11 +226,16 @@ class PortfolioSizer:
             decision=updated_decision, approved=approved, reasons=reasons, audit=audit
         )
 
-    def _resolve_base_notional(self, base_notional: Decimal) -> Optional[Decimal]:
+    def _resolve_base_notional(
+        self, decision: StrategyDecision, base_notional: Decimal
+    ) -> Optional[Decimal]:
         if (
             self.config.notional_per_position is not None
             and self.config.notional_per_position > 0
         ):
+            allocator_cap = _allocator_approved_notional(decision.params)
+            if allocator_cap is not None and allocator_cap > 0:
+                return min(self.config.notional_per_position, allocator_cap)
             return self.config.notional_per_position
         return base_notional
 
@@ -269,6 +293,13 @@ class IntentAggregator:
                 (item.qty for item in bucket if item.action == "sell"), Decimal("0")
             )
             had_conflict = buy_qty > 0 and sell_qty > 0
+            strategy_signed_qty: dict[str, Decimal] = {}
+            for item in bucket:
+                signed_qty = item.qty if item.action == "buy" else -item.qty
+                strategy_signed_qty[item.strategy_id] = (
+                    strategy_signed_qty.get(item.strategy_id, Decimal("0"))
+                    + signed_qty
+                )
 
             if buy_qty == sell_qty:
                 # Deterministic tie-break avoids dropping throughput when intents cancel exactly.
@@ -308,6 +339,10 @@ class IntentAggregator:
                     source_strategy_ids=tuple(item.strategy_id for item in bucket),
                     source_decision_count=len(bucket),
                     had_conflict=had_conflict,
+                    strategy_signed_qty=tuple(
+                        (strategy_id, qty)
+                        for strategy_id, qty in sorted(strategy_signed_qty.items())
+                    ),
                 )
             )
 
@@ -367,6 +402,9 @@ class PortfolioAllocator:
         current_positions = list(positions)
         current_gross_exposure, _ = _portfolio_exposure(current_positions)
         approved_gross_delta = Decimal("0")
+        strategy_usage: dict[str, Decimal] = {}
+        symbol_usage: dict[str, Decimal] = {}
+        correlation_usage: dict[str, Decimal] = {}
 
         results: list[AllocationResult] = []
         for intent in intents:
@@ -374,6 +412,7 @@ class PortfolioAllocator:
             price = _extract_decision_price(decision)
             params = dict(decision.params)
             requested_notional = None if price is None else abs(price * decision.qty)
+            correlation_group = self._resolve_correlation_group(decision)
             reason_codes: list[str] = []
             approved = True
             clipped = False
@@ -403,10 +442,29 @@ class PortfolioAllocator:
                     symbol_value=symbol_value,
                     budget_multiplier=budget_multiplier,
                 )
+                strategy_cap = self._strategy_budget_cap(
+                    strategy_signed_qty=intent.strategy_signed_qty,
+                    action=decision.action,
+                    strategy_usage=strategy_usage,
+                    budget_multiplier=budget_multiplier,
+                )
+                symbol_budget_cap = self._symbol_budget_cap(
+                    symbol=decision.symbol,
+                    symbol_usage=symbol_usage,
+                    budget_multiplier=budget_multiplier,
+                )
+                correlation_cap = self._correlation_budget_cap(
+                    group=correlation_group,
+                    correlation_usage=correlation_usage,
+                    budget_multiplier=budget_multiplier,
+                )
 
                 caps = {
                     ALLOCATOR_CLIP_SYMBOL_CAPACITY: effective_symbol_cap,
                     ALLOCATOR_CLIP_GROSS_EXPOSURE: gross_cap,
+                    ALLOCATOR_CLIP_STRATEGY_BUDGET: strategy_cap,
+                    ALLOCATOR_CLIP_SYMBOL_BUDGET: symbol_budget_cap,
+                    ALLOCATOR_CLIP_CORRELATION_CAPACITY: correlation_cap,
                 }
                 approved_notional = requested_notional or Decimal("0")
                 for reason_code, cap in caps.items():
@@ -435,7 +493,27 @@ class PortfolioAllocator:
                 else:
                     if adjusted_qty != decision.qty:
                         clipped = True
-                    approved_gross_delta += price * adjusted_qty
+                    approved_notional = price * adjusted_qty
+                    approved_gross_delta += approved_notional
+                    allocation_weights = _strategy_weights(
+                        intent.strategy_signed_qty, decision.action
+                    )
+                    for strategy_id, weight in allocation_weights:
+                        if weight <= 0:
+                            continue
+                        strategy_usage[strategy_id] = (
+                            strategy_usage.get(strategy_id, Decimal("0"))
+                            + (approved_notional * weight)
+                        )
+                    symbol_key = decision.symbol.strip().upper()
+                    symbol_usage[symbol_key] = (
+                        symbol_usage.get(symbol_key, Decimal("0")) + approved_notional
+                    )
+                    if correlation_group:
+                        correlation_usage[correlation_group] = (
+                            correlation_usage.get(correlation_group, Decimal("0"))
+                            + approved_notional
+                        )
 
                 adjusted_decision = decision.model_copy(update={"qty": adjusted_qty})
 
@@ -451,6 +529,7 @@ class PortfolioAllocator:
                 "status": "approved" if approved else "rejected",
                 "clipped": clipped,
                 "reason_codes": sorted(set(reason_codes)),
+                "correlation_group": correlation_group,
             }
             current_allocator = dict(_mapping(params.get("allocator")))
             current_allocator.update(allocator_payload)
@@ -503,6 +582,68 @@ class PortfolioAllocator:
         if available <= 0:
             return Decimal("0")
         return available
+
+    def _strategy_budget_cap(
+        self,
+        *,
+        strategy_signed_qty: tuple[tuple[str, Decimal], ...],
+        action: str,
+        strategy_usage: dict[str, Decimal],
+        budget_multiplier: Decimal,
+    ) -> Optional[Decimal]:
+        weights = _strategy_weights(strategy_signed_qty, action)
+        cap: Optional[Decimal] = None
+        for strategy_id, weight in weights:
+            strategy_cap = self.config.strategy_notional_caps.get(strategy_id)
+            if strategy_cap is None:
+                continue
+            effective_cap = strategy_cap * budget_multiplier
+            remaining = effective_cap - strategy_usage.get(strategy_id, Decimal("0"))
+            candidate = Decimal("0") if remaining <= 0 else remaining / weight
+            cap = candidate if cap is None else min(cap, candidate)
+        return cap
+
+    def _symbol_budget_cap(
+        self,
+        *,
+        symbol: str,
+        symbol_usage: dict[str, Decimal],
+        budget_multiplier: Decimal,
+    ) -> Optional[Decimal]:
+        symbol_key = symbol.strip().upper()
+        symbol_cap = self.config.symbol_notional_caps.get(symbol_key)
+        if symbol_cap is None:
+            return None
+        effective_cap = symbol_cap * budget_multiplier
+        remaining = effective_cap - symbol_usage.get(symbol_key, Decimal("0"))
+        if remaining <= 0:
+            return Decimal("0")
+        return remaining
+
+    def _correlation_budget_cap(
+        self,
+        *,
+        group: Optional[str],
+        correlation_usage: dict[str, Decimal],
+        budget_multiplier: Decimal,
+    ) -> Optional[Decimal]:
+        if not group:
+            return None
+        group_cap = self.config.correlation_group_caps.get(group)
+        if group_cap is None:
+            return None
+        effective_cap = group_cap * budget_multiplier
+        remaining = effective_cap - correlation_usage.get(group, Decimal("0"))
+        if remaining <= 0:
+            return Decimal("0")
+        return remaining
+
+    def _resolve_correlation_group(self, decision: StrategyDecision) -> Optional[str]:
+        params_group = decision.params.get("correlation_group")
+        if isinstance(params_group, str) and params_group.strip():
+            return params_group.strip().lower()
+        symbol_key = decision.symbol.strip().upper()
+        return self.config.symbol_correlation_groups.get(symbol_key)
 
     @staticmethod
     def _result_from_passthrough(
@@ -560,6 +701,12 @@ def allocator_from_settings(equity: Optional[Decimal]) -> PortfolioAllocator:
             equity,
         ),
     )
+    correlation_group_caps = dict(settings.trading_allocator_correlation_group_caps)
+    correlation_group_caps.update(
+        settings.trading_allocator_correlation_group_notional_caps
+    )
+    symbol_correlation_groups = dict(settings.trading_allocator_symbol_correlation_groups)
+    symbol_correlation_groups.update(settings.trading_allocator_correlation_symbol_groups)
     return PortfolioAllocator(
         AllocationConfig(
             enabled=settings.trading_allocator_enabled,
@@ -588,6 +735,22 @@ def allocator_from_settings(equity: Optional[Decimal]) -> PortfolioAllocator:
                 _optional_decimal(settings.trading_portfolio_max_notional_per_symbol),
             ),
             max_gross_exposure=max_gross_exposure,
+            strategy_notional_caps=_decimal_map(
+                settings.trading_allocator_strategy_notional_caps
+            ),
+            symbol_notional_caps=_decimal_map(
+                settings.trading_allocator_symbol_notional_caps,
+                normalize_key=lambda key: key.strip().upper(),
+            ),
+            correlation_group_caps=_decimal_map(
+                correlation_group_caps,
+                normalize_key=lambda key: key.strip().lower(),
+            ),
+            symbol_correlation_groups={
+                str(key).strip().upper(): str(value).strip().lower()
+                for key, value in symbol_correlation_groups.items()
+                if str(key).strip() and str(value).strip()
+            },
             regime_budget_multipliers=_decimal_map(
                 settings.trading_allocator_regime_budget_multipliers
             ),
@@ -841,24 +1004,104 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _decimal_map(values: dict[str, float]) -> dict[str, Decimal]:
+def _decimal_map(
+    values: dict[str, float], normalize_key: Callable[[str], str] | None = None
+) -> dict[str, Decimal]:
     result: dict[str, Decimal] = {}
     for key in sorted(values):
         value = values[key]
         decimal_value = _optional_decimal(value)
         if decimal_value is None:
             continue
-        result[key.strip().lower()] = decimal_value
+        normalized_key = key.strip().lower()
+        if normalize_key is not None:
+            normalized_key = normalize_key(key)
+        if not normalized_key:
+            continue
+        result[normalized_key] = decimal_value
     return result
+
+
+def _strategy_weights(
+    strategy_signed_qty: tuple[tuple[str, Decimal], ...], action: str
+) -> tuple[tuple[str, Decimal], ...]:
+    direction = Decimal("1") if action == "buy" else Decimal("-1")
+    directional: list[tuple[str, Decimal]] = []
+    total = Decimal("0")
+    for strategy_id, signed_qty in strategy_signed_qty:
+        directional_qty = signed_qty * direction
+        if directional_qty <= 0:
+            continue
+        directional.append((strategy_id, directional_qty))
+        total += directional_qty
+    if total <= 0:
+        return ()
+    return tuple(
+        (strategy_id, directional_qty / total)
+        for strategy_id, directional_qty in directional
+    )
+
+
+def _allocator_approved_notional(params: Mapping[str, Any]) -> Optional[Decimal]:
+    allocator = params.get("allocator")
+    if not isinstance(allocator, Mapping):
+        return None
+    payload = cast(Mapping[str, Any], allocator)
+    value = payload.get("approved_notional")
+    if value is None:
+        return None
+    return _optional_decimal(value)
+
+
+def _apply_allocator_regime_multiplier(
+    notional: Decimal, params: Mapping[str, Any]
+) -> tuple[Decimal, Optional[str]]:
+    allocator = params.get("allocator")
+    if not isinstance(allocator, Mapping):
+        return notional, None
+    payload = cast(Mapping[str, Any], allocator)
+    enabled = payload.get("enabled")
+    if isinstance(enabled, bool) and not enabled:
+        return notional, None
+    status = payload.get("status")
+    if isinstance(status, str) and status.strip() and status.strip().lower() != "approved":
+        return notional, None
+    budget_multiplier = _optional_decimal(payload.get("budget_multiplier"))
+    capacity_multiplier = _optional_decimal(payload.get("capacity_multiplier"))
+    multiplier = Decimal("1")
+    if budget_multiplier is not None and budget_multiplier > 0:
+        multiplier *= budget_multiplier
+    if capacity_multiplier is not None and capacity_multiplier > 0:
+        multiplier *= capacity_multiplier
+    if multiplier == Decimal("1"):
+        return notional, None
+    return notional * multiplier, "allocator_regime_multiplier"
+
+
+def _cap_by_allocator_approved_notional(
+    notional: Decimal, params: Mapping[str, Any]
+) -> tuple[Decimal, Optional[str]]:
+    approved_notional = _allocator_approved_notional(params)
+    if approved_notional is None or approved_notional <= 0:
+        return notional, None
+    if notional > approved_notional:
+        return approved_notional, "allocator_approved_notional_cap"
+    return notional, None
 
 
 __all__ = [
     "ALLOCATOR_CLIP_GROSS_EXPOSURE",
+    "ALLOCATOR_CLIP_CORRELATION_CAPACITY",
     "ALLOCATOR_CLIP_SYMBOL_CAPACITY",
+    "ALLOCATOR_CLIP_SYMBOL_BUDGET",
+    "ALLOCATOR_CLIP_STRATEGY_BUDGET",
+    "ALLOCATOR_REJECT_CORRELATION_CAPACITY",
     "ALLOCATOR_REJECT_GROSS_EXPOSURE",
     "ALLOCATOR_REJECT_NO_PRICE",
     "ALLOCATOR_REJECT_QTY_BELOW_MIN",
     "ALLOCATOR_REJECT_SYMBOL_CAPACITY",
+    "ALLOCATOR_REJECT_SYMBOL_BUDGET",
+    "ALLOCATOR_REJECT_STRATEGY_BUDGET",
     "ALLOCATOR_REJECT_ZERO_QTY",
     "AggregatedIntent",
     "AllocationConfig",

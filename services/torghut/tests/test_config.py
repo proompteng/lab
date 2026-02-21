@@ -151,6 +151,40 @@ class TestConfig(TestCase):
             settings.trading_allocator_regime_budget_multipliers,
         )
 
+    def test_allocator_budget_maps_are_normalized(self) -> None:
+        settings = Settings(
+            TRADING_UNIVERSE_SOURCE="static",
+            TRADING_ENABLED=False,
+            TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS={" momentum ": 1500.0},
+            TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS={" aapl ": 2000.0},
+            TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS={" msft ": " MegaCap "},
+            TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS={" MegaCap ": 3000.0},
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(
+            settings.trading_allocator_strategy_notional_caps, {"momentum": 1500.0}
+        )
+        self.assertEqual(
+            settings.trading_allocator_symbol_notional_caps, {"AAPL": 2000.0}
+        )
+        self.assertEqual(
+            settings.trading_allocator_correlation_symbol_groups,
+            {"MSFT": "megacap"},
+        )
+        self.assertEqual(
+            settings.trading_allocator_correlation_group_notional_caps,
+            {"megacap": 3000.0},
+        )
+
+    def test_allocator_rejects_negative_strategy_budget_cap(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                TRADING_UNIVERSE_SOURCE="static",
+                TRADING_ENABLED=False,
+                TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS={"s1": -1},
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
     def test_parses_signal_staleness_critical_reasons(self) -> None:
         settings = Settings(
             TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS="cursor_ahead_of_stream, universe_source_unavailable",
@@ -160,6 +194,30 @@ class TestConfig(TestCase):
             settings.trading_signal_staleness_alert_critical_reasons,
             {"cursor_ahead_of_stream", "universe_source_unavailable"},
         )
+
+    def test_allocator_symbol_correlation_groups_are_normalized(self) -> None:
+        settings = Settings(
+            TRADING_UNIVERSE_SOURCE="static",
+            TRADING_ENABLED=False,
+            TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS={
+                " aapl ": " Tech ",
+                "msft": "growth",
+            },
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(
+            settings.trading_allocator_symbol_correlation_groups,
+            {"AAPL": "tech", "MSFT": "growth"},
+        )
+
+    def test_rejects_negative_allocator_strategy_budget(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                TRADING_UNIVERSE_SOURCE="static",
+                TRADING_ENABLED=False,
+                TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS={"s1": -1},
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
 
     def test_parses_drift_reason_code_sets(self) -> None:
         settings = Settings(
