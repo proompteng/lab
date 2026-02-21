@@ -4,6 +4,7 @@ import { createTemporalClient, type TemporalConfig, temporalCallOptions } from '
 import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
 
 import activities from './activities/index'
+import { createGithubEventConsumer } from './event-consumer'
 
 type ActivityHandler = (...args: unknown[]) => unknown | Promise<unknown>
 
@@ -170,10 +171,13 @@ const main = async () => {
   })
 
   const health = await startHealthServer(config)
+  const eventConsumer = createGithubEventConsumer(config)
+  await eventConsumer.start()
 
   const shutdown = async (signal: string) => {
     console.log(`Received ${signal}. Shutting down worker...`)
     health.markShuttingDown()
+    await eventConsumer.stop()
     await worker.shutdown()
     await health.stop()
     process.exit(0)
@@ -187,6 +191,7 @@ const main = async () => {
     await worker.run()
   } finally {
     health.setRunning(false)
+    await eventConsumer.stop()
     await health.stop()
   }
 }

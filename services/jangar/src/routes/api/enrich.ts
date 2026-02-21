@@ -72,7 +72,6 @@ const isMissingWorktreeFile = (message: string) =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
-const MAX_EVENT_FILE_TARGETS = 200
 const LOCK_FILENAMES = new Set([
   'bun.lock',
   'composer.lock',
@@ -156,14 +155,6 @@ const normalizePathPrefix = (value: unknown) => {
   return trimmed.replace(/^\//, '')
 }
 
-const normalizePathList = (value: unknown) => {
-  if (!Array.isArray(value)) return []
-  return value
-    .filter((entry) => typeof entry === 'string')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-}
-
 const shouldSkipFilePath = (filePath: string) => {
   const normalized = filePath.trim()
   if (normalized.length === 0) return true
@@ -176,45 +167,6 @@ const shouldSkipFilePath = (filePath: string) => {
   if (BINARY_EXTENSIONS.has(extension)) return true
 
   return false
-}
-
-const collectCommitPaths = (payload: Record<string, unknown>) => {
-  const paths = new Set<string>()
-  const commit = isRecord(payload) ? payload : null
-  if (!commit) return paths
-
-  for (const path of normalizePathList(commit.added)) {
-    if (!shouldSkipFilePath(path)) {
-      paths.add(path)
-    }
-  }
-  for (const path of normalizePathList(commit.modified)) {
-    if (!shouldSkipFilePath(path)) {
-      paths.add(path)
-    }
-  }
-
-  return paths
-}
-
-const extractEventFilePaths = (payload: Record<string, unknown>) => {
-  const paths = new Set<string>()
-  const headCommit = isRecord(payload.head_commit) ? payload.head_commit : null
-  if (headCommit) {
-    for (const path of collectCommitPaths(headCommit)) {
-      paths.add(path)
-    }
-  }
-
-  const commits = Array.isArray(payload.commits) ? payload.commits : []
-  for (const commit of commits) {
-    if (!isRecord(commit)) continue
-    for (const path of collectCommitPaths(commit)) {
-      paths.add(path)
-    }
-  }
-
-  return Array.from(paths).slice(0, MAX_EVENT_FILE_TARGETS)
 }
 
 const resolveAtlasEventInput = (payload: Record<string, unknown>) => {
@@ -500,8 +452,8 @@ export const postEnrichHandlerEffect = (request: Request) =>
       }
 
       let workflow = null
-      let workflows: StartEnrichFileResult[] = []
-      if (parsedInput) {
+      const workflows: StartEnrichFileResult[] = []
+      if (parsedInput && !eventInput) {
         if (shouldSkipParsedPath) {
           return jsonResponse(
             {
@@ -526,8 +478,6 @@ export const postEnrichHandlerEffect = (request: Request) =>
             commit: parsedInput.commit ?? null,
             repository: parsedInput.repository,
             ref: parsedInput.ref,
-            workflowId: eventInput?.workflowIdentifier ?? undefined,
-            eventDeliveryId: eventInput?.deliveryId,
           }),
           Effect.map((value) => ({ ok: true as const, value })),
           Effect.catchAll((error) => {
@@ -548,51 +498,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
             eventId: githubEvent.id,
             workflowId: workflow.workflowId,
             status: 'accepted',
-            startedAt: eventInput?.receivedAt,
           })
-        }
-      } else if (eventInput?.eventType === 'push' && eventInput.commit) {
-        const eventPayload = eventInput.payload
-        if (isRecord(eventPayload)) {
-          const filePaths = extractEventFilePaths(eventPayload)
-          if (filePaths.length > 0) {
-            const results = yield* Effect.forEach(
-              filePaths,
-              (filePath) =>
-                pipe(
-                  bumbaWorkflows.startEnrichFile({
-                    filePath,
-                    commit: eventInput.commit ?? null,
-                    repository: eventInput.repository,
-                    ref: eventInput.ref,
-                    workflowId: eventInput.workflowIdentifier ?? undefined,
-                    eventDeliveryId: eventInput.deliveryId,
-                    validationMode: 'fast',
-                  }),
-                  Effect.flatMap((workflowResult) => {
-                    if (!githubEvent) return Effect.succeed(workflowResult)
-                    return pipe(
-                      atlas.upsertIngestion({
-                        eventId: githubEvent.id,
-                        workflowId: workflowResult.workflowId,
-                        status: 'accepted',
-                        startedAt: eventInput.receivedAt,
-                      }),
-                      Effect.as(workflowResult),
-                    )
-                  }),
-                  Effect.catchAll((error) => {
-                    const message = error instanceof Error ? error.message : String(error)
-                    if (isMissingWorktreeFile(message)) {
-                      return Effect.succeed(null)
-                    }
-                    return Effect.fail(error)
-                  }),
-                ),
-              { concurrency: 6 },
-            )
-            workflows = results.filter((item): item is StartEnrichFileResult => Boolean(item))
-          }
         }
       }
 

@@ -1,0 +1,117 @@
+import { afterEach, expect, test } from 'bun:test'
+
+import { __test__ } from './event-consumer'
+
+const ENV_KEYS = [
+  'BUMBA_GITHUB_EVENT_CONSUMER_ENABLED',
+  'BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS',
+  'BUMBA_GITHUB_EVENT_BATCH_SIZE',
+  'BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS',
+  'TEMPORAL_TASK_QUEUE',
+  'BUMBA_WORKSPACE_ROOT',
+  'CODEX_CWD',
+] as const
+
+const envSnapshot = new Map<string, string | undefined>()
+for (const key of ENV_KEYS) {
+  envSnapshot.set(key, process.env[key])
+}
+
+afterEach(() => {
+  for (const key of ENV_KEYS) {
+    const value = envSnapshot.get(key)
+    if (value === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = value
+    }
+  }
+})
+
+test('extractEventFilePaths returns sorted, deduped, indexable paths', () => {
+  const payload = {
+    head_commit: {
+      added: ['src/a.ts', 'bun.lock', 'assets/logo.png'],
+      modified: ['src/z.ts'],
+    },
+    commits: [
+      {
+        added: ['src/c.ts', 'src/a.ts'],
+        modified: ['src/b.ts', 'yarn.lock'],
+      },
+    ],
+  }
+
+  const paths = __test__.extractEventFilePaths(payload, 200)
+  expect(paths).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/z.ts'])
+})
+
+test('extractEventFilePaths honors max target limit', () => {
+  const payload = {
+    commits: [
+      {
+        added: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
+      },
+    ],
+  }
+
+  const paths = __test__.extractEventFilePaths(payload, 2)
+  expect(paths).toEqual(['src/a.ts', 'src/b.ts'])
+})
+
+test('resolveEventCommit prefers after and falls back to head commit id', () => {
+  const withAfter = __test__.resolveEventCommit({
+    after: 'abc123',
+    head_commit: { id: 'def456' },
+  })
+  expect(withAfter).toBe('abc123')
+
+  const withHead = __test__.resolveEventCommit({
+    head_commit: { id: 'def456' },
+  })
+  expect(withHead).toBe('def456')
+})
+
+test('resolveEventRef falls back to default branch then main', () => {
+  const fromPayload = __test__.resolveEventRef({ ref: 'refs/heads/release' })
+  expect(fromPayload).toBe('refs/heads/release')
+
+  const fromRepository = __test__.resolveEventRef({ repository: { default_branch: 'develop' } })
+  expect(fromRepository).toBe('develop')
+
+  const fromDefault = __test__.resolveEventRef({})
+  expect(fromDefault).toBe('main')
+})
+
+test('buildEventWorkflowId is deterministic for event+path', () => {
+  const a = __test__.buildEventWorkflowId('delivery-1', 'src/a.ts')
+  const b = __test__.buildEventWorkflowId('delivery-1', 'src/a.ts')
+  const c = __test__.buildEventWorkflowId('delivery-1', 'src/b.ts')
+
+  expect(a).toBe(b)
+  expect(a).not.toBe(c)
+})
+
+test('resolveConsumerConfig reads environment overrides', () => {
+  process.env.BUMBA_GITHUB_EVENT_CONSUMER_ENABLED = 'false'
+  process.env.BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS = '2500'
+  process.env.BUMBA_GITHUB_EVENT_BATCH_SIZE = '11'
+  process.env.BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS = '55'
+  process.env.TEMPORAL_TASK_QUEUE = 'jangar'
+  process.env.BUMBA_WORKSPACE_ROOT = '/workspace/lab'
+
+  const config = __test__.resolveConsumerConfig()
+
+  expect(config.enabled).toBe(false)
+  expect(config.pollIntervalMs).toBe(2500)
+  expect(config.batchSize).toBe(11)
+  expect(config.maxEventFileTargets).toBe(55)
+  expect(config.taskQueue).toBe('jangar')
+  expect(config.repoRoot).toBe('/workspace/lab')
+})
+
+test('isWorkflowAlreadyStartedError recognizes Temporal already-started errors', () => {
+  expect(__test__.isWorkflowAlreadyStartedError(new Error('WorkflowExecutionAlreadyStarted'))).toBe(true)
+  expect(__test__.isWorkflowAlreadyStartedError(new Error('workflow already started for id'))).toBe(true)
+  expect(__test__.isWorkflowAlreadyStartedError(new Error('deadline exceeded'))).toBe(false)
+})
