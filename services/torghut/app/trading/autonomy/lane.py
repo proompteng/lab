@@ -402,6 +402,12 @@ def run_autonomous_lane(
         profitability_evidence_payload["validation"] = (
             profitability_validation.to_payload()
         )
+        metrics_payload = report.metrics.to_payload()
+        fragility_state, fragility_score, stability_mode_active = (
+            _resolve_gate_fragility_inputs(
+                metrics_payload=metrics_payload, decisions=walk_decisions
+            )
+        )
         confidence_calibration_raw = profitability_evidence_payload.get(
             "confidence_calibration"
         )

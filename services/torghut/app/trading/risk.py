@@ -177,6 +177,34 @@ def _optional_decimal(value: Optional[Decimal | str | float]) -> Optional[Decima
         return None
 
 
+def _allocator_payload(decision: StrategyDecision) -> dict[str, object]:
+    raw = decision.params.get("allocator")
+    if not isinstance(raw, dict):
+        return {}
+    payload = cast(dict[object, object], raw)
+    return {str(key): value for key, value in payload.items()}
+
+
+def _fragility_state_from_allocator(allocator: dict[str, object]) -> str:
+    raw = allocator.get("fragility_state")
+    if not isinstance(raw, str):
+        return "elevated"
+    normalized = raw.strip().lower()
+    if normalized in {"normal", "elevated", "stress", "crisis"}:
+        return normalized
+    return "elevated"
+
+
+def _is_risk_increasing_trade(
+    action: str, qty: Decimal, position_qty: Decimal, short_increasing: bool
+) -> bool:
+    if action == "buy":
+        if position_qty < 0:
+            return qty > abs(position_qty)
+        return qty > 0
+    return short_increasing
+
+
 def _allocator_approved_notional(decision: StrategyDecision) -> Optional[Decimal]:
     allocator = decision.params.get("allocator")
     if not isinstance(allocator, Mapping):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Iterable, Optional, cast
 
@@ -104,7 +104,7 @@ class ExecutionPolicy:
         )
         if participation_override is not None:
             config = self._sanitize_config(
-                config_from_update(
+                replace(
                     config,
                     max_participation_rate=min(
                         config.max_participation_rate, participation_override
@@ -527,6 +527,14 @@ def _optional_decimal(value: Any) -> Optional[Decimal]:
         return Decimal(str(value))
     except (ArithmeticError, ValueError, TypeError):
         return None
+
+
+def _allocator_payload(decision: StrategyDecision) -> dict[str, object]:
+    raw = decision.params.get("allocator")
+    if not isinstance(raw, dict):
+        return {}
+    payload = cast(dict[object, object], raw)
+    return {str(key): value for key, value in payload.items()}
 
 
 def _stringify_decimal(value: Optional[Decimal]) -> Optional[str]:

@@ -12,8 +12,15 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from yaml import safe_load
 
-from app.trading.autonomy.lane import run_autonomous_lane, upsert_autonomy_no_signal_run
+from app.trading.autonomy.lane import (
+    _resolve_gate_fragility_inputs,
+    run_autonomous_lane,
+    upsert_autonomy_no_signal_run,
+)
 from app.trading.autonomy.gates import GateEvaluationReport, GateResult
+from app.trading.evaluation import WalkForwardDecision
+from app.trading.features import SignalFeatures
+from app.trading.models import StrategyDecision
 from app.trading.reporting import PromotionEvidenceSummary, PromotionRecommendation
 from app.models import (
     Base,

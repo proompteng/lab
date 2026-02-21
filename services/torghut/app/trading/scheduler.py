@@ -274,6 +274,16 @@ class TradingMetrics:
     allocator_regime_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
+    allocator_fragility_state_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    allocator_multiplier_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    fragility_score: dict[str, float] = field(
+        default_factory=lambda: cast(dict[str, float], {})
+    )
+    stability_mode_active_total: int = 0
     adaptive_policy_decisions_total: int = 0
     adaptive_policy_applied_total: int = 0
     adaptive_policy_fallback_total: int = 0
