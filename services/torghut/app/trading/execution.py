@@ -280,6 +280,7 @@ class OrderExecutor:
         lister = getattr(execution_client, "list_orders", None)
         if not callable(lister):
             return []
+        orders: Any
         try:
             orders = lister(status="open")
         except TypeError:
@@ -294,8 +295,9 @@ class OrderExecutor:
 
         if not isinstance(orders, list):
             return []
+        raw_orders = cast(list[object], orders)
         normalized: list[dict[str, Any]] = []
-        for order in orders:
+        for order in raw_orders:
             if not isinstance(order, Mapping):
                 continue
             mapped = cast(Mapping[object, Any], order)
