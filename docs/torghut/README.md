@@ -3,6 +3,7 @@
 ## Canonical design docs (production-facing)
 Start here:
 - `docs/torghut/design-system/README.md` (v1 index)
+- `docs/torghut/design-system/implementation-status-matrix-2026-02-21.md` (implementation completion audit)
 - `docs/torghut/design-system/v1/torghut-autonomous-trading-system.md` (single merged production design)
 - `docs/torghut/design-system/v1/overview.md` (system overview)
 - `docs/torghut/design-system/v1/agentruns-handoff.md` (handoff pack for AgentRuns)

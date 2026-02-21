@@ -1,5 +1,9 @@
 # Flexible Strategy Engine Architecture
 
+## Status
+- Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
+
+
 ## Objective
 Replace single-rule signal decisioning with a modular multi-strategy engine that is deterministic, testable,
 portfolio-aware, and safe for production promotion.

@@ -1,5 +1,9 @@
 # Execution, TCA, and Broker Abstraction
 
+## Status
+- Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
+
+
 ## Objective
 Decouple alpha intent generation from broker mechanics and establish closed-loop transaction cost analytics (TCA) that
 feed promotion and policy decisions.

@@ -3,6 +3,7 @@
 ## Status
 - Completed: `implemented` (2026-02-13)
 - Verification source: implemented in `services/torghut/app/trading/ingest.py`, `services/torghut/app/trading/scheduler.py`, and `services/torghut/app/trading/autonomy/lane.py`.
+- Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
 
 ## Objective
 Ensure the autonomy loop creates durable research-ledger evidence for empty-signal windows so monitoring, replay, and rollout tooling can distinguish a healthy no-data state from an execution failure.

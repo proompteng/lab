@@ -1,5 +1,8 @@
 # Current State Baseline (2026-02-11)
 
+## Status
+- Implementation status: `N/A` (snapshot baseline document; not a direct implementation target)
+
 ## Objective
 Provide a reproducible factual baseline for Torghut code, runtime health, and data quality before implementing the v3
 strategy engine.

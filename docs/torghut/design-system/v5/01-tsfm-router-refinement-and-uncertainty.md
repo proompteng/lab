@@ -1,5 +1,8 @@
 # Priority 1: TSFM Router, Refinement, and Uncertainty-Aware Forecasting
 
+## Status
+- Implementation status: `Partial` (core router implemented; full design deliverables not strictly verified end-to-end as of 2026-02-21)
+
 ## Objective
 Build a production forecasting layer that routes each symbol/horizon to the best-performing time-series model family,
 optionally applies forecast refinement, and emits calibrated uncertainty that downstream gates can enforce.

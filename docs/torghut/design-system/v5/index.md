@@ -27,6 +27,9 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 4. `04-llm-multi-agent-committee-with-deterministic-veto.md`
 5. `05-fragility-aware-regime-allocation.md`
 6. `06-whitepaper-technique-synthesis.md`
+7. `07-autonomous-research-to-engineering-pipeline.md`
+8. `08-leading-quant-firms-public-research-and-systems-2026-02-21.md`
+9. `09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
 
 ## Recommended Build Order
 1. `02-conformal-uncertainty-and-regime-gates.md`
@@ -34,6 +37,8 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 3. `03-microstructure-execution-intelligence.md`
 4. `05-fragility-aware-regime-allocation.md`
 5. `04-llm-multi-agent-committee-with-deterministic-veto.md`
+6. `07-autonomous-research-to-engineering-pipeline.md`
+7. `09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
 
 ## Why This Sequence
 - uncertainty gates are foundational controls for every downstream model path.
@@ -41,3 +46,5 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 - execution intelligence captures realized PnL improvements by lowering slippage/impact.
 - fragility-aware allocation protects tails before wider autonomy.
 - committee-style LLM orchestration is highest complexity and should sit on hardened controls.
+- two-speed pipeline operationalizes continuous intake while keeping production promotion strictly gated.
+- full-autonomy design should be evaluated as an advanced track after two-speed controls are proven.

@@ -1,5 +1,9 @@
 # Feature Contract, Schema Evolution, and Data Plane
 
+## Status
+- Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
+
+
 ## Objective
 Create a canonical feature contract that guarantees online/offline parity, safe schema evolution, and measurable data
 quality for strategy plugins.
