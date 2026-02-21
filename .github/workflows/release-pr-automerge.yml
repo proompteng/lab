@@ -50,7 +50,10 @@ jobs:
           echo "reason=not-evaluated" >> "$GITHUB_OUTPUT"
 
           allowed_authors=("app/github-actions" "github-actions[bot]")
-          allowed_paths=("argocd/applications/proompteng/kustomization.yaml")
+          allowed_paths=(
+            "argocd/applications/proompteng/kustomization.yaml"
+            "argocd/applications/bumba/kustomization.yaml"
+          )
 
           contains() {
             local needle="$1"
