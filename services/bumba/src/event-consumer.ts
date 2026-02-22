@@ -11,6 +11,8 @@ const DEFAULT_POLL_INTERVAL_MS = 10_000
 const DEFAULT_BATCH_SIZE = 20
 const DEFAULT_MAX_EVENT_FILE_TARGETS = 200
 const DEFAULT_MAX_DISPATCH_FAILURES = 6
+const DEFAULT_NONTERMINAL_INGESTION_STALE_MS = 12 * 60 * 60 * 1000
+const STALE_INGESTION_ERROR = 'stale nonterminal ingestion auto-failed by bumba event-consumer'
 
 const LOCK_FILENAMES = new Set([
   'bun.lock',
@@ -87,6 +89,8 @@ type GithubEventRow = {
 type IngestionCountsRow = {
   total: number | string | bigint
   terminal: number | string | bigint
+  nonterminal: number | string | bigint
+  oldest_nonterminal_started_at: Date | string | null
 }
 
 type GithubEventConsumerConfig = {
@@ -95,6 +99,7 @@ type GithubEventConsumerConfig = {
   batchSize: number
   maxEventFileTargets: number
   maxDispatchFailures: number
+  nonterminalIngestionStaleMs: number
   taskQueue: string
   repoRoot: string
 }
@@ -102,6 +107,8 @@ type GithubEventConsumerConfig = {
 type IngestionCounts = {
   total: number
   terminal: number
+  nonterminal: number
+  oldestNonterminalStartedAt: number | null
 }
 
 type ProcessEventResult = {
@@ -151,6 +158,10 @@ const resolveConsumerConfig = (): GithubEventConsumerConfig => ({
   maxDispatchFailures: parsePositiveInt(
     process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES,
     DEFAULT_MAX_DISPATCH_FAILURES,
+  ),
+  nonterminalIngestionStaleMs: parsePositiveInt(
+    process.env.BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS,
+    DEFAULT_NONTERMINAL_INGESTION_STALE_MS,
   ),
   taskQueue: normalizeOptionalText(process.env.TEMPORAL_TASK_QUEUE) ?? DEFAULT_TASK_QUEUE,
   repoRoot: resolve(
@@ -286,6 +297,21 @@ const toNumber = (value: number | string | bigint | null | undefined) => {
   return 0
 }
 
+const toEpochMs = (value: Date | string | number | null | undefined) => {
+  if (value instanceof Date) {
+    const epoch = value.getTime()
+    return Number.isFinite(epoch) ? epoch : null
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
 const shortHash = (value: string) => createHash('sha1').update(value).digest('hex').slice(0, 12)
 
 const buildEventWorkflowId = (deliveryId: string, filePath: string) => {
@@ -314,18 +340,42 @@ const getIngestionCounts = async (db: SqlClient, eventId: string): Promise<Inges
   const rows = (await db`
     SELECT
       count(*)::bigint AS total,
-      count(*) FILTER (WHERE status IN ('completed', 'failed', 'skipped'))::bigint AS terminal
+      count(*) FILTER (WHERE status IN ('completed', 'failed', 'skipped'))::bigint AS terminal,
+      count(*) FILTER (WHERE status NOT IN ('completed', 'failed', 'skipped'))::bigint AS nonterminal,
+      min(started_at) FILTER (WHERE status NOT IN ('completed', 'failed', 'skipped')) AS oldest_nonterminal_started_at
     FROM atlas.ingestions
     WHERE event_id = ${eventId};
   `) as IngestionCountsRow[]
 
   const row = rows[0]
-  if (!row) return { total: 0, terminal: 0 }
+  if (!row) return { total: 0, terminal: 0, nonterminal: 0, oldestNonterminalStartedAt: null }
 
   return {
     total: toNumber(row.total),
     terminal: toNumber(row.terminal),
+    nonterminal: toNumber(row.nonterminal),
+    oldestNonterminalStartedAt: toEpochMs(row.oldest_nonterminal_started_at),
   }
+}
+
+const markStaleIngestionsFailed = async (db: SqlClient, eventId: string, staleMs: number) => {
+  const rows = (await db`
+    UPDATE atlas.ingestions
+    SET
+      status = 'failed',
+      error = CASE
+        WHEN error IS NULL OR error = '' THEN ${STALE_INGESTION_ERROR}
+        WHEN error LIKE ${`${STALE_INGESTION_ERROR}%`} THEN error
+        ELSE error || ${` | ${STALE_INGESTION_ERROR}`}
+      END,
+      finished_at = COALESCE(finished_at, now())
+    WHERE event_id = ${eventId}
+      AND status NOT IN ('completed', 'failed', 'skipped')
+      AND started_at < now() - (${staleMs}::bigint * interval '1 millisecond')
+    RETURNING id;
+  `) as Array<{ id: string }>
+
+  return rows.length
 }
 
 const markEventProcessed = async (db: SqlClient, deliveryId: string) => {
@@ -411,7 +461,7 @@ const processEvent = async (
     }
   }
 
-  const ingestionCounts = await getIngestionCounts(db, event.id)
+  let ingestionCounts = await getIngestionCounts(db, event.id)
   if (ingestionCounts.total > 0) {
     if (ingestionCounts.total === ingestionCounts.terminal) {
       await markEventProcessed(db, event.delivery_id)
@@ -422,6 +472,35 @@ const processEvent = async (
         dispatchFailed: 0,
       }
     }
+
+    const oldestNonterminalStartedAt = ingestionCounts.oldestNonterminalStartedAt
+    const isStaleBlocked =
+      ingestionCounts.nonterminal > 0 &&
+      oldestNonterminalStartedAt !== null &&
+      Date.now() - oldestNonterminalStartedAt >= config.nonterminalIngestionStaleMs
+
+    if (isStaleBlocked) {
+      const staleFailed = await markStaleIngestionsFailed(db, event.id, config.nonterminalIngestionStaleMs)
+      if (staleFailed > 0) {
+        console.warn('[bumba][event-consumer] auto-failed stale nonterminal ingestions', {
+          deliveryId: event.delivery_id,
+          repository: event.repository,
+          staleFailed,
+          staleAfterMs: config.nonterminalIngestionStaleMs,
+        })
+        ingestionCounts = await getIngestionCounts(db, event.id)
+        if (ingestionCounts.total === ingestionCounts.terminal) {
+          await markEventProcessed(db, event.delivery_id)
+          return {
+            processed: true,
+            waitingOnIngestion: false,
+            dispatchStarted: 0,
+            dispatchFailed: 0,
+          }
+        }
+      }
+    }
+
     return {
       processed: false,
       waitingOnIngestion: true,
@@ -587,6 +666,7 @@ export const createGithubEventConsumer = (
         pollIntervalMs: config.pollIntervalMs,
         batchSize: config.batchSize,
         maxDispatchFailures: config.maxDispatchFailures,
+        nonterminalIngestionStaleMs: config.nonterminalIngestionStaleMs,
         taskQueue: config.taskQueue,
         repoRoot: config.repoRoot,
       })
