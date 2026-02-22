@@ -48,6 +48,7 @@ ENV CODEX_CWD=/workspace/lab \
   CODEX_REPO_SLUG=proompteng/lab \
   CODEX_REPO_URL=https://github.com/proompteng/lab.git \
   CODEX_BOOTSTRAP_REPO=1
+ENV BUN_INSTALL_CACHE_DIR=/root/.bun/install/cache
 
 # Tooling needed for builds and VS Code server
 RUN --mount=type=cache,target=/var/cache/apt \
@@ -358,7 +359,8 @@ RUN set -eux; \
   /usr/lib/docker/cli-plugins/docker-buildx version
 
 # Install Codex CLI with Bun so the app-server binary is available at runtime
-RUN --mount=type=cache,target=/root/.cache/bun bun add -g "@openai/codex@${CODEX_VERSION}"
+RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
+  bun add -g "@openai/codex@${CODEX_VERSION}"
 
 # Install openvscode-server (upstream VS Code server build from gitpod-io)
 RUN set -eux; \
@@ -414,25 +416,26 @@ ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 FROM tools AS codex-build
 WORKDIR /app
 COPY json/ .
-RUN --mount=type=cache,target=/root/.cache/bun \
+RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
   bun install --no-save --ignore-scripts --filter @proompteng/codex
-COPY full/ .
+COPY full/packages/codex ./packages/codex
 RUN bun --cwd=packages/codex run build
 
 FROM tools AS otel-build
 WORKDIR /app
 COPY json/ .
-RUN --mount=type=cache,target=/root/.cache/bun \
+RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
   bun install --no-save --ignore-scripts --filter @proompteng/otel
-COPY full/ .
+COPY full/packages/otel ./packages/otel
 RUN bun --cwd=packages/otel run build
 
 FROM tools AS temporal-bun-sdk-build
 WORKDIR /app
 COPY json/ .
-RUN --mount=type=cache,target=/root/.cache/bun \
+RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
   bun install --no-save --ignore-scripts --filter @proompteng/temporal-bun-sdk
-COPY full/ .
+COPY full/packages/otel ./packages/otel
+COPY full/packages/temporal-bun-sdk ./packages/temporal-bun-sdk
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 RUN bun --cwd=packages/temporal-bun-sdk run build
 
@@ -449,9 +452,9 @@ FROM tools-pty AS jangar-pty
 ARG TARGETARCH
 WORKDIR /app
 COPY json/ .
-RUN --mount=type=cache,target=/root/.cache/bun \
+RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
   bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
-RUN --mount=type=cache,target=/root/.cache/bun \
+RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
   set -eux; \
   case "${TARGETARCH:-$(uname -m)}" in \
     amd64|x86_64) NODE_ARCH=x64 ;; \
@@ -474,7 +477,7 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 FROM tools AS jangar-deps-dev
 WORKDIR /app
 COPY json/ .
-RUN --mount=type=cache,target=/root/.cache/bun \
+RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
   bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
 
 FROM jangar-deps-dev AS jangar-build
@@ -496,7 +499,7 @@ RUN if [ -d .output ]; then \
 FROM tools AS jangar-deps-prod
 WORKDIR /app
 COPY json/ .
-RUN --mount=type=cache,target=/root/.cache/bun \
+RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
   bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
 
 # Control-plane-only runtime image.
