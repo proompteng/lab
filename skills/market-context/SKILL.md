@@ -1,3 +1,8 @@
+---
+name: market-context
+description: Build a normalized market-context JSON bundle for a single symbol and timestamp.
+---
+
 # market-context
 
 Build a normalized market-context JSON bundle for a single symbol and timestamp.

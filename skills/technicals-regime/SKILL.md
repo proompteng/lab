@@ -1,3 +1,8 @@
+---
+name: technicals-regime
+description: Summarize trend, volatility, and liquidity regime from TA time series.
+---
+
 # technicals-regime
 
 Summarize trend, volatility, and liquidity regime from TA time series.

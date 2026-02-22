@@ -1,3 +1,8 @@
+---
+name: research-brief
+description: Generate a concise research brief with uncertainty and citations.
+---
+
 # research-brief
 
 Generate a concise research brief with uncertainty and citations.

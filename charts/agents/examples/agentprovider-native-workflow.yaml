@@ -27,7 +27,7 @@ spec:
         unified_exec = true
         shell_snapshot = true
         steer = true
-        collab = true
+        multi_agent = true
         child_agents_md = true
         collaboration_modes = false
         responses_websockets = false
