@@ -200,6 +200,11 @@ spec:
                 namespace: torghut
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                # Keep torghut on client-side apply while recovering from manual kubectl-patch SSA ownership conflicts.
+                syncOptions:
+                  - CreateNamespace=true
+                  - ServerSideApply=false
+                  - RespectIgnoreDifferences=true
                 ignoreDifferences:
                   - group: serving.knative.dev
                     kind: Service
@@ -304,7 +309,8 @@ spec:
     {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- $auto := eq .automation "auto" -}}
-    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto (hasKey . "ignoreDifferences") -}}
+    {{- $hasSyncOptions := hasKey . "syncOptions" -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasSyncOptions (hasKey . "ignoreDifferences") -}}
     {{- if $needsSpec }}
     spec:
     {{- if or $hasDestServer $hasDestName }}
@@ -322,11 +328,16 @@ spec:
         plugin:
           name: lovely
     {{- end }}
-    {{- if $auto }}
+    {{- if or $auto $hasSyncOptions }}
       syncPolicy:
+      {{- if $hasSyncOptions }}
+        syncOptions: {{ toJson .syncOptions }}
+      {{- end }}
+      {{- if $auto }}
         automated:
           prune: true
           selfHeal: true
+      {{- end }}
     {{- end }}
     {{- if hasKey . "ignoreDifferences" }}
       ignoreDifferences: {{ toJson .ignoreDifferences }}
