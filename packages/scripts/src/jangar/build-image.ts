@@ -138,6 +138,14 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     if (buildSourceMap) {
       buildArgs.JANGAR_BUILD_SOURCEMAP = buildSourceMap
     }
+    const buildCi = process.env.JANGAR_BUILD_CI?.trim()
+    if (buildCi) {
+      buildArgs.JANGAR_BUILD_CI = buildCi
+    }
+    const buildLogLevel = process.env.JANGAR_BUILD_LOG_LEVEL?.trim()
+    if (buildLogLevel) {
+      buildArgs.JANGAR_BUILD_LOG_LEVEL = buildLogLevel
+    }
     if (process.env.BUILDX_VERSION) {
       buildArgs.BUILDX_VERSION = process.env.BUILDX_VERSION
     }

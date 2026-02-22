@@ -75,6 +75,8 @@ jobs:
           JANGAR_BUILD_CACHE_MODE: min
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
           JANGAR_BUILD_SOURCEMAP: '0'
+          JANGAR_BUILD_CI: 'true'
+          JANGAR_BUILD_LOG_LEVEL: warn
         run: bun run packages/scripts/src/jangar/build-image.ts
 
       - name: Build and push jangar control-plane image
@@ -86,6 +88,8 @@ jobs:
           JANGAR_BUILD_CACHE_REF: ''
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
           JANGAR_BUILD_SOURCEMAP: '0'
+          JANGAR_BUILD_CI: 'true'
+          JANGAR_BUILD_LOG_LEVEL: warn
         run: bun run packages/scripts/src/jangar/build-control-plane-image.ts
 
       - name: Resolve pushed image digest
