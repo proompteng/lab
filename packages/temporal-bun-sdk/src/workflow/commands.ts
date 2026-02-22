@@ -307,6 +307,8 @@ const buildScheduleActivityCommand = async (
     heartbeatTimeout: durationFromMillis(intent.timeouts.heartbeatTimeoutMs),
     retryPolicy: intent.retry ? buildRetryPolicy(intent.retry) : undefined,
     requestEagerExecution: intent.requestEagerExecution ?? false,
+    // Ensure activity tasks are routed to the same worker deployment build as the workflow task.
+    useWorkflowBuildId: true,
     header: intent.header,
   })
 

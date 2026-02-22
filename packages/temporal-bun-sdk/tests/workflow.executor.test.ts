@@ -64,6 +64,7 @@ test('schedules an activity command and completes after result', async () => {
   const scheduleAttrs = scheduleCmd.attributes?.value
   expect(scheduleAttrs?.activityType?.name).toBe('sendEmail')
   expect(scheduleAttrs?.activityId).toBe('activity-0')
+  expect(scheduleAttrs?.useWorkflowBuildId).toBe(true)
   const decoded = await decodePayloadsToValues(dataConverter, scheduleAttrs?.input?.payloads ?? [])
   expect(decoded).toEqual(['hello@acme.test'])
 
