@@ -61,6 +61,21 @@ import kotlin.system.exitProcess
 
 private val logger = KotlinLogging.logger {}
 
+internal fun alpacaMarketDataStreamUrl(config: ForwarderConfig): String =
+  when (config.alpacaMarketType) {
+    AlpacaMarketType.EQUITY -> "${config.alpacaStreamUrl.trimEnd('/')}/v2/${config.alpacaFeed}"
+    AlpacaMarketType.CRYPTO -> "${config.alpacaStreamUrl.trimEnd('/')}/v1beta3/crypto/us"
+  }
+
+internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
+  when (config.alpacaMarketType) {
+    AlpacaMarketType.EQUITY -> "${config.alpacaBaseUrl.trimEnd('/')}/v2/stocks/bars"
+    AlpacaMarketType.CRYPTO -> "${config.alpacaBaseUrl.trimEnd('/')}/v1beta3/crypto/us/bars"
+  }
+
+internal fun alpacaBarsBackfillNeedsFeed(config: ForwarderConfig): Boolean =
+  config.alpacaMarketType == AlpacaMarketType.EQUITY
+
 class ForwarderApp(
   private val config: ForwarderConfig,
   private val producerFactory: (ForwarderConfig) -> KafkaProducer<String, String> = { cfg -> buildProducer(cfg.kafka) },
@@ -280,7 +295,7 @@ class ForwarderApp(
     symbolsTracker: SymbolsTracker,
     onReady: () -> Unit,
   ) {
-    val url = "${config.alpacaStreamUrl.trimEnd('/')}/v2/${config.alpacaFeed}"
+    val url = alpacaMarketDataStreamUrl(config)
     httpClient.webSocket(urlString = url) {
       suspend fun decodeNextMessages(): List<AlpacaMessage> {
         val frame = incoming.receive()
@@ -710,7 +725,7 @@ class ForwarderApp(
 
   private suspend fun fetchBackfillBarsChunk(symbols: List<String>): List<AlpacaBar> {
     if (symbols.isEmpty()) return emptyList()
-    val url = "${config.alpacaBaseUrl.trimEnd('/')}/v2/stocks/bars"
+    val url = alpacaBarsBackfillUrl(config)
 
     val response: AlpacaBarsResponse =
       httpClient
@@ -718,7 +733,9 @@ class ForwarderApp(
           parameter("symbols", symbols.joinToString(","))
           parameter("timeframe", "1Min")
           parameter("limit", "100")
-          parameter("feed", config.alpacaFeed)
+          if (alpacaBarsBackfillNeedsFeed(config)) {
+            parameter("feed", config.alpacaFeed)
+          }
           header("APCA-API-KEY-ID", config.alpacaKeyId)
           header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
         }.body()

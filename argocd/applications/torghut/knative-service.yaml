@@ -107,7 +107,11 @@ spec:
             - name: TRADING_EXECUTION_ADAPTER_POLICY
               value: allowlist
             - name: TRADING_EXECUTION_ADAPTER_SYMBOLS
-              value: SPY,QQQ,IWM,NVDA,MSFT,AAPL
+              value: BTC/USD,ETH/USD,SOL/USD
+            - name: TRADING_CRYPTO_ENABLED
+              value: "true"
+            - name: TRADING_CRYPTO_LIVE_ENABLED
+              value: "false"
             - name: TRADING_LEAN_RUNNER_URL
               value: http://torghut-lean-runner.torghut.svc.cluster.local:8088
             - name: TRADING_LEAN_RUNNER_TIMEOUT_SECONDS
@@ -131,7 +135,7 @@ spec:
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
             - name: JANGAR_SYMBOLS_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=crypto
             - name: JANGAR_BASE_URL
               value: http://jangar.jangar.svc.cluster.local
             - name: TRADING_MARKET_CONTEXT_URL

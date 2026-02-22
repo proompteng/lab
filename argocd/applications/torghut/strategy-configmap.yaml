@@ -29,7 +29,7 @@ data:
       "policy_version": "forecast_router_policy_v1",
       "routes": [
         {
-          "symbol_glob": "A*",
+          "symbol_glob": "*/USD",
           "horizon": "1m",
           "regime": "trend",
           "preferred_model_family": "financial_tsfm",
@@ -56,7 +56,7 @@ data:
         "baseline": "0.99"
       },
       "route_calibration_scores": {
-        "AAPL|1m|trend": {
+        "BTC/USD|1m|trend": {
           "financial_tsfm": "0.94"
         }
       }

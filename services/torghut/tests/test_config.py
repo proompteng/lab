@@ -262,6 +262,8 @@ class TestConfig(TestCase):
                 "torghut_trading_enabled": False,
                 "torghut_trading_emergency_stop_enabled": True,
                 "torghut_trading_execution_prefer_limit": False,
+                "torghut_trading_crypto_enabled": True,
+                "torghut_trading_crypto_live_enabled": True,
                 "torghut_llm_enabled": False,
                 "torghut_llm_adjustment_allowed": True,
             }
@@ -272,6 +274,8 @@ class TestConfig(TestCase):
                 TRADING_ENABLED=True,
                 TRADING_EMERGENCY_STOP_ENABLED=False,
                 TRADING_EXECUTION_PREFER_LIMIT=True,
+                TRADING_CRYPTO_ENABLED=False,
+                TRADING_CRYPTO_LIVE_ENABLED=False,
                 LLM_ENABLED=True,
                 LLM_ADJUSTMENT_ALLOWED=False,
                 TRADING_UNIVERSE_SOURCE="static",
@@ -283,6 +287,8 @@ class TestConfig(TestCase):
         self.assertFalse(settings.trading_enabled)
         self.assertTrue(settings.trading_emergency_stop_enabled)
         self.assertFalse(settings.trading_execution_prefer_limit)
+        self.assertTrue(settings.trading_crypto_enabled)
+        self.assertTrue(settings.trading_crypto_live_enabled)
         self.assertFalse(settings.llm_enabled)
         self.assertTrue(settings.llm_adjustment_allowed)
         self.assertEqual(

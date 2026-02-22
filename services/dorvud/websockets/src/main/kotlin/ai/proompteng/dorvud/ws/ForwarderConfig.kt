@@ -15,9 +15,15 @@ data class TopicConfig(
   val tradeUpdates: String?,
 )
 
+enum class AlpacaMarketType {
+  EQUITY,
+  CRYPTO,
+}
+
 data class ForwarderConfig(
   val alpacaKeyId: String,
   val alpacaSecretKey: String,
+  val alpacaMarketType: AlpacaMarketType,
   val alpacaFeed: String,
   val alpacaStreamUrl: String,
   val alpacaBaseUrl: String,
@@ -59,6 +65,12 @@ data class ForwarderConfig(
           ?.map { it.trim() }
           ?.filter { it.isNotEmpty() }
           ?: emptyList()
+      val alpacaMarketType =
+        when (mergedEnv["ALPACA_MARKET_TYPE"]?.trim()?.lowercase() ?: "equity") {
+          "equity" -> AlpacaMarketType.EQUITY
+          "crypto" -> AlpacaMarketType.CRYPTO
+          else -> error("ALPACA_MARKET_TYPE must be one of: equity, crypto")
+        }
 
       val jangarSymbolsUrl =
         mergedEnv["JANGAR_SYMBOLS_URL"]?.trim()?.takeIf { it.isNotEmpty() }
@@ -102,6 +114,7 @@ data class ForwarderConfig(
       return ForwarderConfig(
         alpacaKeyId = mergedEnv.getValue("ALPACA_KEY_ID"),
         alpacaSecretKey = mergedEnv.getValue("ALPACA_SECRET_KEY"),
+        alpacaMarketType = alpacaMarketType,
         alpacaFeed = mergedEnv["ALPACA_FEED"] ?: "iex",
         alpacaStreamUrl = mergedEnv["ALPACA_STREAM_URL"] ?: "wss://stream.data.alpaca.markets",
         alpacaBaseUrl = mergedEnv["ALPACA_BASE_URL"] ?: "https://data.alpaca.markets",

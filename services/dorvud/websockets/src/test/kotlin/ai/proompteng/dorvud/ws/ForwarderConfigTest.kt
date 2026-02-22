@@ -28,7 +28,37 @@ class ForwarderConfigTest {
     assertEquals("wss://stream.data.alpaca.markets", cfg.alpacaStreamUrl)
     assertEquals("localhost:9093", cfg.kafka.bootstrapServers)
     assertFalse(cfg.enableTradeUpdates)
+    assertEquals(AlpacaMarketType.EQUITY, cfg.alpacaMarketType)
     assertEquals("torghut.trades.v1", cfg.topics.trades)
+  }
+
+  @Test
+  fun `supports crypto market type`() {
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols?assetClass=crypto",
+          "ALPACA_MARKET_TYPE" to "crypto",
+        ),
+      )
+
+    assertEquals(AlpacaMarketType.CRYPTO, cfg.alpacaMarketType)
+  }
+
+  @Test
+  fun `rejects unknown market type`() {
+    assertFailsWith<IllegalStateException> {
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+          "ALPACA_MARKET_TYPE" to "futures",
+        ),
+      )
+    }
   }
 
   @Test
