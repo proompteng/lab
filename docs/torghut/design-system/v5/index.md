@@ -2,9 +2,9 @@
 
 ## Status
 - Version: `v5`
-- Date: `2026-02-21`
+- Date: `2026-02-22`
 - Maturity: `production-quality design pack`
-- Scope: 5 prioritized new-feature strategy builds plus whitepaper synthesis
+- Scope: 5 prioritized new-feature strategy builds plus whitepaper synthesis plus crypto pipeline migration design
 
 ## Purpose
 This pack expands the top 5 strategy priorities into implementation-grade designs with:
@@ -30,6 +30,7 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 7. `07-autonomous-research-to-engineering-pipeline.md`
 8. `08-leading-quant-firms-public-research-and-systems-2026-02-21.md`
 9. `09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
+10. `10-crypto-market-data-pipeline-production-design-2026-02-22.md`
 
 ## Recommended Build Order
 1. `02-conformal-uncertainty-and-regime-gates.md`
