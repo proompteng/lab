@@ -10,7 +10,9 @@ const ENV_KEYS = [
   'BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS',
   'BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES',
   'BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS',
+  'BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED',
   'TEMPORAL_TASK_QUEUE',
+  'TEMPORAL_WORKER_DEPLOYMENT_NAME',
   'BUMBA_WORKSPACE_ROOT',
   'CODEX_CWD',
   'DATABASE_URL',
@@ -103,6 +105,7 @@ test('resolveConsumerConfig reads environment overrides', () => {
   process.env.BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS = '55'
   process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES = '3'
   process.env.BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS = '600000'
+  process.env.BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED = 'false'
   process.env.TEMPORAL_TASK_QUEUE = 'jangar'
   process.env.BUMBA_WORKSPACE_ROOT = '/workspace/lab'
 
@@ -114,6 +117,7 @@ test('resolveConsumerConfig reads environment overrides', () => {
   expect(config.maxEventFileTargets).toBe(55)
   expect(config.maxDispatchFailures).toBe(3)
   expect(config.nonterminalIngestionStaleMs).toBe(600000)
+  expect(config.routingAlignmentEnabled).toBe(false)
   expect(config.taskQueue).toBe('jangar')
   expect(config.repoRoot).toBe('/workspace/lab')
 })
@@ -121,7 +125,83 @@ test('resolveConsumerConfig reads environment overrides', () => {
 test('isWorkflowAlreadyStartedError recognizes Temporal already-started errors', () => {
   expect(__test__.isWorkflowAlreadyStartedError(new Error('WorkflowExecutionAlreadyStarted'))).toBe(true)
   expect(__test__.isWorkflowAlreadyStartedError(new Error('workflow already started for id'))).toBe(true)
+  expect(
+    __test__.isWorkflowAlreadyStartedError(new Error('[already_exists] Workflow execution is already running')),
+  ).toBe(true)
   expect(__test__.isWorkflowAlreadyStartedError(new Error('deadline exceeded'))).toBe(false)
+})
+
+test('resolveWorkerDeploymentName uses env override then config default', () => {
+  process.env.TEMPORAL_WORKER_DEPLOYMENT_NAME = 'override-deployment'
+  expect(
+    __test__.resolveWorkerDeploymentName(
+      {
+        address: 'temporal-frontend.temporal.svc.cluster.local:7233',
+        namespace: 'default',
+        workerDeploymentName: 'config-deployment',
+      } as TemporalConfig,
+      'bumba',
+    ),
+  ).toBe('override-deployment')
+
+  delete process.env.TEMPORAL_WORKER_DEPLOYMENT_NAME
+  expect(
+    __test__.resolveWorkerDeploymentName(
+      {
+        address: 'temporal-frontend.temporal.svc.cluster.local:7233',
+        namespace: 'default',
+        workerDeploymentName: 'config-deployment',
+      } as TemporalConfig,
+      'bumba',
+    ),
+  ).toBe('config-deployment')
+
+  expect(
+    __test__.resolveWorkerDeploymentName(
+      {
+        address: 'temporal-frontend.temporal.svc.cluster.local:7233',
+        namespace: 'default',
+      } as TemporalConfig,
+      'bumba',
+    ),
+  ).toBe('bumba-deployment')
+})
+
+test('extractCurrentDeploymentBuildId reads current deployment version build id', () => {
+  expect(
+    __test__.extractCurrentDeploymentBuildId({
+      workerDeploymentInfo: {
+        routingConfig: {
+          currentDeploymentVersion: { buildId: 'bumba@abc123' },
+          currentVersion: '',
+        },
+      },
+    } as never),
+  ).toBe('bumba@abc123')
+
+  expect(
+    __test__.extractCurrentDeploymentBuildId({
+      workerDeploymentInfo: {
+        routingConfig: {
+          currentVersion: 'bumba@legacy',
+        },
+      },
+    } as never),
+  ).toBe('bumba@legacy')
+})
+
+test('routing alignment error classifiers are stable', () => {
+  expect(__test__.isTransientRoutingAlignmentError(new Error('failed precondition: no pollers for build id'))).toBe(
+    true,
+  )
+  expect(__test__.isTransientRoutingAlignmentError(new Error('Not Found: deployment missing'))).toBe(true)
+  expect(__test__.isTransientRoutingAlignmentError(new Error('permission denied'))).toBe(false)
+
+  expect(__test__.isDeploymentApiUnavailableError(new Error('unimplemented'))).toBe(true)
+  expect(__test__.isDeploymentApiUnavailableError(new Error('unknown service temporal.api.workflowservice.v1'))).toBe(
+    true,
+  )
+  expect(__test__.isDeploymentApiUnavailableError(new Error('failed precondition'))).toBe(false)
 })
 
 test('start fails fast when event consumer is enabled and DATABASE_URL is missing', async () => {

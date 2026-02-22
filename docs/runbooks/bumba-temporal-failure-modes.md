@@ -36,6 +36,9 @@ temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" \
   task-queue describe --task-queue bumba --select-all-active --select-unversioned
 ```
 
+If `UNVERSIONED` backlog is non-zero while workflow pollers are only versioned, new `AUTO_UPGRADE`
+workflows can stall at history length `2` (`WorkflowExecutionStarted` + `WorkflowTaskScheduled` only).
+
 Check deployment routing:
 
 ```bash
@@ -67,12 +70,14 @@ Symptoms:
 - New workflows start but fail with activity `ScheduleToStart timeout`.
 - Queue has no backlog dispatch despite active workload.
 - Pollers are on one build ID, while `currentVersionBuildID` points to another.
+- `UNVERSIONED` workflow backlog grows even though no unversioned pollers exist.
+- Affected runs often stay `Running` with `HistoryLength=2` and no workflow task started.
 
 How to confirm:
 
 1. `task-queue describe` shows poller build IDs for `workflow`/`activity`.
 2. `worker deployment describe` shows `routingConfig.currentVersionBuildID`.
-3. Values do not match.
+3. Values do not match, or current version is empty (`nil`) while versioned pollers exist.
 
 Immediate fix:
 
@@ -88,6 +93,8 @@ Prevention:
 
 - Run routing sync after every Bumba deploy.
 - Alert if `currentVersionBuildID` has no active pollers.
+- Keep `BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED=true` so Bumba waits for routing alignment
+  before dispatching new event workflows.
 
 ## Failure Mode 2: Activity Routing to Wrong Build (Historical SDK Bug)
 
@@ -224,6 +231,9 @@ Meaning:
 
 - Usually benign duplicate-start collisions.
 - Workflow IDs are deterministic per `(delivery_id, file_path)`, so duplicate starts collide by design.
+- If Bumba logs show `[already_exists] Workflow execution is already running`, treat it as non-fatal.
+  Current code classifies `already_exists` / `already running` as already-started and does not count it
+  as a dispatch failure.
 
 When to act:
 
@@ -254,6 +264,7 @@ Main knobs:
 - `BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS`
 - `BUMBA_GITHUB_EVENT_BATCH_SIZE`
 - `BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS`
+- `BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED`
 
 ## Failure Mode 7: GitHub Review Worktree Snapshot Refresh Failures (Not Bumba)
 
