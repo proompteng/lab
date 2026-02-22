@@ -7,8 +7,6 @@ on:
     paths:
       - 'services/bumba/**'
       - 'packages/scripts/src/bumba/**'
-      - 'argocd/applications/bumba/**'
-      - 'argocd/applicationsets/product.yaml'
       - '.github/workflows/bumba-ci.yml'
       - '.github/workflows/docker-build-common.yaml'
       - 'package.json'
@@ -44,7 +42,12 @@ jobs:
     secrets: inherit
 
   deploy-main:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      ${{
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/main' &&
+        !contains(github.event.head_commit.message || '', 'automated release PR')
+      }}
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: bumba
