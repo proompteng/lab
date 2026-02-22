@@ -43,6 +43,22 @@ class StaticLatestIngestor(ClickHouseSignalIngestor):
         return []
 
 
+class FlakyLatestIngestor(ClickHouseSignalIngestor):
+    def __init__(self, *args, responses: list[object], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.responses = list(responses)
+
+    def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+        if "SELECT max(" not in query:
+            return []
+        if not self.responses:
+            return []
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
 class TestSignalIngest(TestCase):
     def test_parse_envelope_row(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="envelope", fast_forward_stale_cursor=False)
@@ -237,6 +253,43 @@ class TestSignalIngest(TestCase):
         self.assertEqual(signals.no_signal_reason, "cursor_ahead_of_stream")
         self.assertIsNotNone(signals.signal_lag_seconds)
         self.assertGreater(signals.signal_lag_seconds, 0)
+
+    def test_latest_signal_timestamp_uses_cache_within_ttl(self) -> None:
+        latest = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        ingestor = FlakyLatestIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            responses=[
+                [{"latest_signal_ts": latest.isoformat()}],
+                RuntimeError("unexpected refresh"),
+            ],
+        )
+
+        first = ingestor._latest_signal_timestamp("event_ts")
+        second = ingestor._latest_signal_timestamp("event_ts")
+
+        self.assertEqual(first, latest)
+        self.assertEqual(second, latest)
+
+    def test_latest_signal_timestamp_uses_cached_value_on_refresh_failure(self) -> None:
+        latest = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        ingestor = FlakyLatestIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            responses=[
+                [{"latest_signal_ts": latest.isoformat()}],
+                RuntimeError("clickhouse unavailable"),
+            ],
+        )
+
+        first = ingestor._latest_signal_timestamp("event_ts")
+        ingestor._latest_signal_ts_checked_at = datetime.now(timezone.utc) - timedelta(seconds=31)
+        second = ingestor._latest_signal_timestamp("event_ts")
+
+        self.assertEqual(first, latest)
+        self.assertEqual(second, latest)
 
     def test_parse_window_size_timeframe(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="envelope", fast_forward_stale_cursor=False)

@@ -22,6 +22,8 @@ from .models import SignalEnvelope
 logger = logging.getLogger(__name__)
 
 FLAT_CURSOR_OVERLAP = timedelta(seconds=2)
+LATEST_SIGNAL_TS_CACHE_TTL = timedelta(seconds=30)
+LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN = timedelta(minutes=5)
 
 FLAT_SIGNAL_COLUMNS = [
     "ts",
@@ -101,6 +103,9 @@ class ClickHouseSignalIngestor:
         self.empty_batch_advance_seconds = max(0, settings.trading_signal_empty_batch_advance_seconds)
         self._columns: Optional[set[str]] = None
         self._time_column: Optional[str] = None
+        self._latest_signal_ts_cache: Optional[datetime] = None
+        self._latest_signal_ts_checked_at: Optional[datetime] = None
+        self._latest_signal_ts_last_error_at: Optional[datetime] = None
 
     def fetch_signals(self, session: Session) -> "SignalBatch":
         if not self.url:
@@ -328,6 +333,13 @@ class ClickHouseSignalIngestor:
         )
 
     def _latest_signal_timestamp(self, time_column: str) -> Optional[datetime]:
+        now = datetime.now(timezone.utc)
+        if (
+            self._latest_signal_ts_checked_at is not None
+            and now - self._latest_signal_ts_checked_at < LATEST_SIGNAL_TS_CACHE_TTL
+        ):
+            return self._latest_signal_ts_cache
+
         query = (
             "SELECT max({column}) AS latest_signal_ts "
             f"FROM {self.table} "
@@ -335,13 +347,24 @@ class ClickHouseSignalIngestor:
         ).format(column=time_column)
         try:
             rows = self._query_clickhouse(query)
-        except Exception as exc:
-            logger.warning("Failed to query latest signal timestamp: %s", exc)
-            return None
+        except Exception:
+            if (
+                self._latest_signal_ts_last_error_at is None
+                or now - self._latest_signal_ts_last_error_at >= LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN
+            ):
+                logger.warning("Failed to query latest signal timestamp from ClickHouse; using cached value.")
+                self._latest_signal_ts_last_error_at = now
+            self._latest_signal_ts_checked_at = now
+            return self._latest_signal_ts_cache
+
+        self._latest_signal_ts_last_error_at = None
+        self._latest_signal_ts_checked_at = now
         if not rows:
+            self._latest_signal_ts_cache = None
             return None
         raw = rows[0].get("latest_signal_ts")
-        return _parse_ts(raw) if raw is not None else None
+        self._latest_signal_ts_cache = _parse_ts(raw) if raw is not None else None
+        return self._latest_signal_ts_cache
 
     def commit_cursor(self, session: Session, batch: "SignalBatch") -> None:
         if batch.cursor_at is None:
