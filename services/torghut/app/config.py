@@ -29,6 +29,11 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_execution_prefer_limit": "torghut_trading_execution_prefer_limit",
     "trading_lean_runner_healthcheck_enabled": "torghut_trading_lean_runner_healthcheck_enabled",
     "trading_lean_runner_require_healthy": "torghut_trading_lean_runner_require_healthy",
+    "trading_lean_backtest_enabled": "torghut_trading_lean_backtest_enabled",
+    "trading_lean_shadow_execution_enabled": "torghut_trading_lean_shadow_execution_enabled",
+    "trading_lean_strategy_shadow_enabled": "torghut_trading_lean_strategy_shadow_enabled",
+    "trading_lean_live_canary_enabled": "torghut_trading_lean_live_canary_enabled",
+    "trading_lean_lane_disable_switch": "torghut_trading_lean_lane_disable_switch",
     "trading_allocator_enabled": "torghut_trading_allocator_enabled",
     "trading_forecast_router_enabled": "torghut_trading_forecast_router_enabled",
     "trading_forecast_router_refinement_enabled": "torghut_trading_forecast_router_refinement_enabled",
@@ -600,6 +605,51 @@ class Settings(BaseSettings):
         alias="TRADING_LEAN_RUNNER_REQUIRE_HEALTHY",
         description="Fallback to Alpaca adapter when LEAN runner preflight health checks fail.",
     )
+    trading_lean_backtest_enabled: bool = Field(
+        default=False,
+        alias="TRADING_LEAN_BACKTEST_ENABLED",
+        description="Enable asynchronous LEAN backtest lane orchestration.",
+    )
+    trading_lean_shadow_execution_enabled: bool = Field(
+        default=False,
+        alias="TRADING_LEAN_SHADOW_EXECUTION_ENABLED",
+        description="Enable LEAN execution shadow simulation telemetry for live intents.",
+    )
+    trading_lean_strategy_shadow_enabled: bool = Field(
+        default=False,
+        alias="TRADING_LEAN_STRATEGY_SHADOW_ENABLED",
+        description="Enable LEAN strategy-runtime shadow evaluations without control-plane replacement.",
+    )
+    trading_lean_live_canary_enabled: bool = Field(
+        default=False,
+        alias="TRADING_LEAN_LIVE_CANARY_ENABLED",
+        description="Enable strict LEAN live canary routing controls.",
+    )
+    trading_lean_lane_disable_switch: bool = Field(
+        default=False,
+        alias="TRADING_LEAN_LANE_DISABLE_SWITCH",
+        description="Emergency hard disable for LEAN multi-lane behavior.",
+    )
+    trading_lean_live_canary_crypto_only: bool = Field(
+        default=True,
+        alias="TRADING_LEAN_LIVE_CANARY_CRYPTO_ONLY",
+        description="Restrict LEAN live canary activation to crypto symbols only.",
+    )
+    trading_lean_live_canary_symbols_raw: Optional[str] = Field(
+        default=None,
+        alias="TRADING_LEAN_LIVE_CANARY_SYMBOLS",
+        description="Comma-separated symbol allowlist for LEAN live canaries.",
+    )
+    trading_lean_live_canary_fallback_ratio_limit: float = Field(
+        default=0.25,
+        alias="TRADING_LEAN_LIVE_CANARY_FALLBACK_RATIO_LIMIT",
+        description="Hard rollback trigger threshold for LEAN fallback ratio in live canary.",
+    )
+    trading_lean_live_canary_hard_rollback_enabled: bool = Field(
+        default=True,
+        alias="TRADING_LEAN_LIVE_CANARY_HARD_ROLLBACK_ENABLED",
+        description="Trigger emergency stop and evidence capture when live canary breaches thresholds.",
+    )
     trading_max_position_pct_equity: Optional[float] = Field(
         default=None, alias="TRADING_MAX_POSITION_PCT_EQUITY"
     )
@@ -1106,6 +1156,14 @@ class Settings(BaseSettings):
                     if item.strip()
                 ]
             )
+        if self.trading_lean_live_canary_symbols_raw:
+            self.trading_lean_live_canary_symbols_raw = ",".join(
+                [
+                    item.strip()
+                    for item in self.trading_lean_live_canary_symbols_raw.split(",")
+                    if item.strip()
+                ]
+            )
         if self.trading_signal_staleness_alert_critical_reasons_raw:
             self.trading_signal_staleness_alert_critical_reasons_raw = ",".join(
                 [
@@ -1363,6 +1421,10 @@ class Settings(BaseSettings):
             raise ValueError("LLM_MAX_UNCERTAINTY must be within [0, 1]")
         if not 0 <= self.llm_min_calibration_quality_score <= 1:
             raise ValueError("LLM_MIN_CALIBRATION_QUALITY_SCORE must be within [0, 1]")
+        if not 0 <= self.trading_lean_live_canary_fallback_ratio_limit <= 1:
+            raise ValueError(
+                "TRADING_LEAN_LIVE_CANARY_FALLBACK_RATIO_LIMIT must be within [0, 1]"
+            )
         if self.llm_live_fail_open_requested and not self.llm_fail_open_live_approved:
             raise ValueError(
                 "LLM_FAIL_OPEN_LIVE_APPROVED must be true when live effective fail mode is pass_through"
@@ -1400,6 +1462,16 @@ class Settings(BaseSettings):
         return {
             symbol.strip()
             for symbol in self.trading_execution_adapter_symbols_raw.split(",")
+            if symbol.strip()
+        }
+
+    @property
+    def trading_lean_live_canary_symbols(self) -> set[str]:
+        if not self.trading_lean_live_canary_symbols_raw:
+            return set()
+        return {
+            symbol.strip()
+            for symbol in self.trading_lean_live_canary_symbols_raw.split(",")
             if symbol.strip()
         }
 

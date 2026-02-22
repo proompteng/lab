@@ -90,6 +90,58 @@ class FakeReadClient:
 
 
 class TestExecutionAdapters(TestCase):
+    def test_lean_submit_includes_correlation_and_idempotency_audit_fields(self) -> None:
+        class CapturingLeanAdapter(LeanExecutionAdapter):
+            def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+                super().__init__(**kwargs)
+                self.captured_headers: dict[str, str] = {}
+
+            def _request_json_with_headers(  # type: ignore[override]
+                self,
+                method: str,
+                path: str,
+                payload: dict[str, str] | None,
+                *,
+                headers: dict[str, str] | None,
+                operation: str,
+            ):
+                _ = (method, payload, operation)
+                if headers:
+                    self.captured_headers = dict(headers)
+                if path == '/v1/shadow/simulate':
+                    return {'parity_status': 'pass', 'simulated_slippage_bps': 0.1}
+                return {
+                    'id': 'lean-order-1',
+                    'status': 'accepted',
+                    'symbol': 'AAPL',
+                    'qty': '1',
+                    'client_order_id': 'cid-telemetry',
+                }
+
+        original_shadow = config.settings.trading_lean_shadow_execution_enabled
+        original_disable = config.settings.trading_lean_lane_disable_switch
+        try:
+            config.settings.trading_lean_shadow_execution_enabled = True
+            config.settings.trading_lean_lane_disable_switch = False
+            adapter = CapturingLeanAdapter(base_url='http://lean.invalid', timeout_seconds=1, fallback=None)
+            payload = adapter.submit_order(
+                symbol='AAPL',
+                side='buy',
+                qty=1.0,
+                order_type='market',
+                time_in_force='day',
+                extra_params={'client_order_id': 'cid-telemetry'},
+            )
+        finally:
+            config.settings.trading_lean_shadow_execution_enabled = original_shadow
+            config.settings.trading_lean_lane_disable_switch = original_disable
+
+        self.assertIn('X-Correlation-ID', adapter.captured_headers)
+        self.assertEqual(adapter.captured_headers.get('Idempotency-Key'), 'cid-telemetry')
+        self.assertEqual(payload.get('_execution_idempotency_key'), 'cid-telemetry')
+        self.assertTrue(str(payload.get('_execution_correlation_id', '')).startswith('torghut-'))
+        self.assertEqual(payload.get('_lean_shadow', {}).get('parity_status'), 'pass')
+
     def test_lean_adapter_falls_back_to_alpaca_when_runner_unreachable(self) -> None:
         fallback = FakeFallbackAdapter()
         adapter = LeanExecutionAdapter(
@@ -238,6 +290,29 @@ class TestExecutionAdapters(TestCase):
             config.settings.trading_execution_adapter = original_adapter
             config.settings.trading_execution_adapter_policy = original_policy
             config.settings.trading_execution_adapter_symbols_raw = original_symbols
+
+    def test_live_canary_crypto_only_blocks_non_crypto_symbols(self) -> None:
+        original_adapter = config.settings.trading_execution_adapter
+        original_mode = config.settings.trading_mode
+        original_canary = config.settings.trading_lean_live_canary_enabled
+        original_crypto_only = config.settings.trading_lean_live_canary_crypto_only
+        original_symbols = config.settings.trading_lean_live_canary_symbols_raw
+        try:
+            config.settings.trading_execution_adapter = 'lean'
+            config.settings.trading_mode = 'live'
+            config.settings.trading_lean_live_canary_enabled = True
+            config.settings.trading_lean_live_canary_crypto_only = True
+            config.settings.trading_lean_live_canary_symbols_raw = 'BTC/USD,ETH/USD'
+
+            self.assertTrue(adapter_enabled_for_symbol('BTC/USD'))
+            self.assertFalse(adapter_enabled_for_symbol('AAPL'))
+            self.assertFalse(adapter_enabled_for_symbol('SOL/USD'))
+        finally:
+            config.settings.trading_execution_adapter = original_adapter
+            config.settings.trading_mode = original_mode
+            config.settings.trading_lean_live_canary_enabled = original_canary
+            config.settings.trading_lean_live_canary_crypto_only = original_crypto_only
+            config.settings.trading_lean_live_canary_symbols_raw = original_symbols
 
     def test_symbol_allowlist_policy_prefers_runtime_allowlist(self) -> None:
         original_adapter = config.settings.trading_execution_adapter

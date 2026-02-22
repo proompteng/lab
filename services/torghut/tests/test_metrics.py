@@ -159,6 +159,50 @@ class TestTradingMetrics(TestCase):
         self.assertIn("torghut_trading_tca_avg_churn_ratio 0.4", payload)
         self.assertIn("torghut_trading_tca_avg_divergence_bps 2.1", payload)
 
+    def test_lean_observability_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.record_lean_observability(
+            {
+                "requests_total": {"submit_order": 4},
+                "failures_total": {"submit_order:http_502": 2},
+                "latency_ms_avg": {"submit_order": 21.5},
+            }
+        )
+        metrics.record_lean_shadow(parity_status="drift", failure_taxonomy="execution_quality_drift")
+        metrics.record_lean_strategy_shadow("pass")
+        metrics.record_lean_canary_breach("fallback_ratio_exceeded")
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_lean_request_total{operation="submit_order"} 4',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_lean_failure_taxonomy_total{operation="submit_order",taxonomy="http_502"} 2',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_lean_latency_ms{operation="submit_order"} 21.5',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_lean_shadow_parity_total{status="drift"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_lean_shadow_failure_total{taxonomy="execution_quality_drift"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_lean_strategy_shadow_total{status="pass"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_lean_canary_breach_total{breach_type="fallback_ratio_exceeded"} 1',
+            payload,
+        )
+
     def test_allocator_multiplier_metrics_preserve_pipe_delimited_regime_labels(self) -> None:
         metrics = TradingMetrics()
         payload = render_trading_metrics(

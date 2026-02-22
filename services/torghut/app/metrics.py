@@ -116,6 +116,164 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key == "lean_request_total":
+                    metric_name = "torghut_trading_lean_request_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of LEAN runner requests by operation."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(operation), int(count))
+                            for operation, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for operation, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"operation": operation},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "lean_failure_taxonomy_total":
+                    metric_name = "torghut_trading_lean_failure_taxonomy_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of LEAN failures by operation and taxonomy."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(label), int(count))
+                            for label, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for label, count in sorted_items:
+                        operation = "unknown"
+                        taxonomy = "unknown"
+                        if ":" in label:
+                            operation, taxonomy = label.split(":", 1)
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"operation": operation, "taxonomy": taxonomy},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "lean_latency_ms":
+                    metric_name = "torghut_trading_lean_latency_ms"
+                    lines.append(
+                        f"# HELP {metric_name} Average LEAN request latency by operation."
+                    )
+                    lines.append(f"# TYPE {metric_name} gauge")
+                    sorted_items = sorted(
+                        [
+                            (str(operation), float(latency))
+                            for operation, latency in cast(dict[str, object], value).items()
+                            if isinstance(latency, (int, float))
+                        ]
+                    )
+                    for operation, latency in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"operation": operation},
+                                value=latency,
+                            )
+                        )
+                    continue
+                if key == "lean_shadow_parity_total":
+                    metric_name = "torghut_trading_lean_shadow_parity_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of LEAN shadow execution parity outcomes."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(status), int(count))
+                            for status, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for status, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"status": status},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "lean_shadow_failure_total":
+                    metric_name = "torghut_trading_lean_shadow_failure_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of LEAN shadow execution failures by taxonomy."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(taxonomy), int(count))
+                            for taxonomy, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for taxonomy, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"taxonomy": taxonomy},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "lean_strategy_shadow_total":
+                    metric_name = "torghut_trading_lean_strategy_shadow_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of LEAN strategy shadow evaluations by parity status."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(status), int(count))
+                            for status, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for status, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"status": status},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "lean_canary_breach_total":
+                    metric_name = "torghut_trading_lean_canary_breach_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of LEAN canary gate breaches by type."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(breach), int(count))
+                            for breach, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for breach, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"breach_type": breach},
+                                value=count,
+                            )
+                        )
+                    continue
                 if key == "no_signal_reason_total":
                     metric_name = "torghut_trading_no_signal_reason_total"
                     lines.append(

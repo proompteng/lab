@@ -129,6 +129,24 @@ spec:
               value: "2"
             - name: TRADING_LEAN_RUNNER_REQUIRE_HEALTHY
               value: "true"
+            - name: TRADING_LEAN_BACKTEST_ENABLED
+              value: "true"
+            - name: TRADING_LEAN_SHADOW_EXECUTION_ENABLED
+              value: "true"
+            - name: TRADING_LEAN_STRATEGY_SHADOW_ENABLED
+              value: "true"
+            - name: TRADING_LEAN_LIVE_CANARY_ENABLED
+              value: "true"
+            - name: TRADING_LEAN_LIVE_CANARY_CRYPTO_ONLY
+              value: "true"
+            - name: TRADING_LEAN_LIVE_CANARY_SYMBOLS
+              value: BTC/USD,ETH/USD,SOL/USD
+            - name: TRADING_LEAN_LIVE_CANARY_FALLBACK_RATIO_LIMIT
+              value: "0.25"
+            - name: TRADING_LEAN_LIVE_CANARY_HARD_ROLLBACK_ENABLED
+              value: "true"
+            - name: TRADING_LEAN_LANE_DISABLE_SWITCH
+              value: "false"
             - name: TRADING_STRATEGY_CONFIG_PATH
               value: /etc/torghut/strategies.yaml
             - name: TRADING_STRATEGY_CONFIG_MODE

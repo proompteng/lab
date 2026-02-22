@@ -89,6 +89,7 @@ These are explicitly designed for in the v1 docs:
   - `v1/component-flink-ta-job.md`
   - `v1/component-clickhouse-schema-and-views.md`
   - `v1/component-trading-loop.md`
+  - `v1/lean-multilane-control-plane-and-rollout-safety.md`
 - Operations:
   - `v1/operations-ta-replay-and-recovery.md`
   - `v1/operations-ws-connection-limit-and-auth.md`
