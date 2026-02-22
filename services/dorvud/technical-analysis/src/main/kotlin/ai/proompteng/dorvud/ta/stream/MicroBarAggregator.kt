@@ -105,7 +105,7 @@ class MicroBarAggregator {
     high = trade.p,
     low = trade.p,
     close = trade.p,
-    volume = trade.s.toDouble(),
+    volume = trade.s,
     vwapNumerator = trade.p * trade.s,
     count = 1,
   )

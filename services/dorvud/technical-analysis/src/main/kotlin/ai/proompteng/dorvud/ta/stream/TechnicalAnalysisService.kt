@@ -86,6 +86,14 @@ class TechnicalAnalysisService(
     val envelope =
       runCatching { json.decodeFromString<EnvelopeWrapper<TradePayload>>(record.value()) }
         .getOrElse {
+          registry
+            .counter(
+              "ta_decode_failures_total",
+              "stream",
+              "trades",
+              "topic",
+              record.topic(),
+            ).increment()
           logger.warn(it) { "failed to decode trade payload" }
           return
         }
@@ -103,6 +111,14 @@ class TechnicalAnalysisService(
     val envelope =
       runCatching { json.decodeFromString<EnvelopeWrapper<QuotePayload>>(record.value()) }
         .getOrElse {
+          registry
+            .counter(
+              "ta_decode_failures_total",
+              "stream",
+              "quotes",
+              "topic",
+              record.topic(),
+            ).increment()
           logger.warn(it) { "failed to decode quote payload" }
           return
         }
@@ -111,13 +127,53 @@ class TechnicalAnalysisService(
 
   private fun handleBar(record: ConsumerRecord<String, String>) {
     if (config.bars1mTopic == null) return
-    val envelope =
-      runCatching { json.decodeFromString<EnvelopeWrapper<MicroBarPayload>>(record.value()) }
-        .getOrElse {
-          logger.warn(it) { "failed to decode bars1m payload" }
+    val microResult = runCatching { json.decodeFromString<EnvelopeWrapper<MicroBarPayload>>(record.value()) }
+    if (microResult.isSuccess) {
+      engine.onMicroBar(microResult.getOrThrow().toEnvelope())?.let { emitSignal(it) }
+      return
+    }
+
+    val alpacaResult = runCatching { json.decodeFromString<EnvelopeWrapper<AlpacaBarPayload>>(record.value()) }
+    if (alpacaResult.isSuccess) {
+      val alpacaEnvelope = alpacaResult.getOrThrow().toEnvelope()
+      val mapped =
+        runCatching {
+          alpacaEnvelope.withPayload(alpacaEnvelope.payload.toMicroBarPayload())
+        }.getOrElse {
+          registry
+            .counter(
+              "ta_decode_failures_total",
+              "stream",
+              "bars1m",
+              "topic",
+              record.topic(),
+            ).increment()
+          logger.warn(it) { "failed to map bars1m payload into microbar payload" }
           return
         }
-    engine.onMicroBar(envelope.toEnvelope())?.let { emitSignal(it) }
+      engine.onMicroBar(mapped)?.let { emitSignal(it) }
+      return
+    }
+
+    registry
+      .counter(
+        "ta_decode_failures_total",
+        "stream",
+        "bars1m",
+        "topic",
+        record.topic(),
+      ).increment()
+    val microError = microResult.exceptionOrNull()
+    val alpacaError = alpacaResult.exceptionOrNull()
+    val combined = alpacaError ?: microError
+    if (combined != null && microError != null && microError !== combined) {
+      combined.addSuppressed(microError)
+    }
+    if (combined != null) {
+      logger.warn(combined) { "failed to decode bars1m payload" }
+    } else {
+      logger.warn { "failed to decode bars1m payload (unknown error)" }
+    }
   }
 
   private fun emitMicroBar(env: ai.proompteng.dorvud.platform.Envelope<MicroBarPayload>) {

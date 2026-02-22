@@ -106,7 +106,6 @@ class TaEngine(
     val imbalance =
       quote?.let {
         val spread = it.ap - it.bp
-        val denom = (it.bs + it.`as`).coerceAtLeast(1)
         Imbalance(spread = spread, bid_px = it.bp, ask_px = it.ap, bid_sz = it.bs, ask_sz = it.`as`)
       }
 
