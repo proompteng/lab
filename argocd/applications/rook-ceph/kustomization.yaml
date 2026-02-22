@@ -4,7 +4,7 @@ namespace: rook-ceph
 
 resources:
   - storageclasses.yaml
-  - ingressroute-dashboard.yaml
+  - tailscale-service-dashboard.yaml
 
 helmCharts:
   - name: rook-ceph
