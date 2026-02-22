@@ -4,6 +4,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlin.test.fail
 
 class AlpacaMapperTest {
@@ -42,5 +43,20 @@ class AlpacaMapperTest {
     } catch (e: Exception) {
       fail("expected decode to succeed, got ${e::class.simpleName}: ${e.message}")
     }
+  }
+
+  @Test
+  fun `maps crypto quote with fractional sizes`() {
+    val msg =
+      """{"T":"q","S":"BTC/USD","bp":67980.619,"bs":1.2699,"ap":68030.6,"as":1.28642,"t":"2026-02-22T01:09:00.656453323Z"}"""
+    val decoded = AlpacaMapper.decode(msg)
+    assertTrue(decoded is AlpacaQuote)
+    assertEquals(1.2699, decoded.bidSize)
+    assertEquals(1.28642, decoded.askSize)
+
+    val env = AlpacaMapper.toEnvelope(decoded) { 1 }
+    assertNotNull(env)
+    assertEquals("quotes", env.channel)
+    assertEquals("BTC/USD", env.symbol)
   }
 }
