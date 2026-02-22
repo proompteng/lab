@@ -183,6 +183,58 @@ test('enrichFile does not mark ingestion failed when blocked on readRepoFile', a
   expect(schedule.attributes.value.activityType?.name).toBe('readRepoFile')
 })
 
+test('enrichFile marks ingestion failed when initial upsertIngestion fails', async () => {
+  const { executor } = makeExecutor()
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    filePath: 'apps/froussard/src/webhooks/github.ts',
+    context: 'unit-test',
+    eventDeliveryId: 'delivery-1',
+  }
+
+  const activityResults = new Map<string, ActivityResolution>([
+    [
+      'activity-0',
+      {
+        status: 'failed',
+        error: new Error('upsert timeout'),
+      },
+    ],
+    [
+      'activity-1',
+      {
+        status: 'completed',
+        value: {
+          ingestionId: 'ingestion-id',
+          eventId: 'event-id',
+        },
+      },
+    ],
+  ])
+
+  const output = await execute(executor, {
+    workflowType: 'enrichFile',
+    arguments: input,
+    activityResults,
+  })
+
+  expect(output.completion).toBe('failed')
+  expect((output.failure as Error).message).toContain('upsert timeout')
+
+  const upsertIntents = output.determinismState.commandHistory.filter(
+    (entry) => entry.intent.kind === 'schedule-activity' && entry.intent.activityType === 'upsertIngestion',
+  )
+  expect(upsertIntents).toHaveLength(2)
+  expect((upsertIntents[1]?.intent as { input: unknown[] }).input).toEqual([
+    {
+      deliveryId: input.eventDeliveryId,
+      workflowId: 'test-workflow-id',
+      status: 'failed',
+      error: 'upsert timeout',
+    },
+  ])
+})
+
 test('enrichFile completes when all activities are resolved', async () => {
   const { executor } = makeExecutor()
   const input = {
@@ -951,4 +1003,56 @@ test('enrichRepository fails when child workflows report failures', async () => 
   expect(completion.completion).toBe('failed')
   expect(completion.failure).toBeInstanceOf(Error)
   expect((completion.failure as Error).message).toContain('1 child workflows failed')
+})
+
+test('enrichRepository marks ingestion failed when initial upsertIngestion fails', async () => {
+  const { executor } = makeExecutor()
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    repository: 'proompteng/lab',
+    eventDeliveryId: 'delivery-1',
+    files: ['path/to/file.ts'],
+  }
+
+  const activityResults = new Map<string, ActivityResolution>([
+    [
+      'activity-0',
+      {
+        status: 'failed',
+        error: new Error('upsert timeout'),
+      },
+    ],
+    [
+      'activity-1',
+      {
+        status: 'completed',
+        value: {
+          ingestionId: 'ingestion-id',
+          eventId: 'event-id',
+        },
+      },
+    ],
+  ])
+
+  const output = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    activityResults,
+  })
+
+  expect(output.completion).toBe('failed')
+  expect((output.failure as Error).message).toContain('upsert timeout')
+
+  const upsertIntents = output.determinismState.commandHistory.filter(
+    (entry) => entry.intent.kind === 'schedule-activity' && entry.intent.activityType === 'upsertIngestion',
+  )
+  expect(upsertIntents).toHaveLength(2)
+  expect((upsertIntents[1]?.intent as { input: unknown[] }).input).toEqual([
+    {
+      deliveryId: input.eventDeliveryId,
+      workflowId: 'test-workflow-id',
+      status: 'failed',
+      error: 'upsert timeout',
+    },
+  ])
 })

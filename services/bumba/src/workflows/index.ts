@@ -240,31 +240,10 @@ export const workflows = [
       })
 
       let ingestionId = input.ingestionId ?? null
-      let managesIngestion = false
-
-      if (eventDeliveryId && !ingestionId) {
-        const ingestion = (yield* activities.schedule(
-          'upsertIngestion',
-          [
-            {
-              deliveryId: eventDeliveryId,
-              workflowId: info.workflowId,
-              status: 'running',
-            },
-          ],
-          {
-            ...upsertIngestionTimeouts,
-            retry: activityRetry,
-          },
-        )) as UpsertIngestionOutput
-        if (ingestion) {
-          ingestionId = ingestion.ingestionId
-          managesIngestion = true
-        }
-      }
+      const ownsEventIngestion = Boolean(eventDeliveryId) && !input.ingestionId
 
       const finalizeIngestion = (status: string, error?: string) => {
-        if (!managesIngestion || !eventDeliveryId) {
+        if (!ownsEventIngestion || !eventDeliveryId) {
           return Effect.succeed<UpsertIngestionOutput | null>(null)
         }
         return activities.schedule(
@@ -285,6 +264,26 @@ export const workflows = [
       }
 
       const run = Effect.gen(function* () {
+        if (eventDeliveryId && !ingestionId) {
+          const ingestion = (yield* activities.schedule(
+            'upsertIngestion',
+            [
+              {
+                deliveryId: eventDeliveryId,
+                workflowId: info.workflowId,
+                status: 'running',
+              },
+            ],
+            {
+              ...upsertIngestionTimeouts,
+              retry: activityRetry,
+            },
+          )) as UpsertIngestionOutput
+          if (ingestion) {
+            ingestionId = ingestion.ingestionId
+          }
+        }
+
         const readRepoInput: {
           repoRoot: string
           filePath: string
@@ -640,63 +639,63 @@ export const workflows = [
           childWorkflowConcurrency: childWorkflowBatchSize,
         })
 
-        const ingestion = eventDeliveryId
-          ? ((yield* activities.schedule(
-              'upsertIngestion',
-              [
+        const run = Effect.gen(function* () {
+          const ingestion = eventDeliveryId
+            ? ((yield* activities.schedule(
+                'upsertIngestion',
+                [
+                  {
+                    deliveryId: eventDeliveryId,
+                    workflowId: info.workflowId,
+                    status: 'running',
+                  },
+                ],
                 {
-                  deliveryId: eventDeliveryId,
-                  workflowId: info.workflowId,
-                  status: 'running',
+                  ...upsertIngestionTimeouts,
+                  retry: activityRetry,
                 },
-              ],
+              )) as UpsertIngestionOutput)
+            : null
+          const ingestionId = ingestion?.ingestionId ?? null
+
+          const listRef = commit ?? ref
+          let files = input.files
+          let stats = input.stats
+
+          if (!files) {
+            const listResult = (yield* activities.schedule(
+              'listRepoFiles',
+              [{ repoRoot, ref: listRef, pathPrefix, maxFiles }],
               {
-                ...upsertIngestionTimeouts,
+                ...listRepoFilesTimeouts,
                 retry: activityRetry,
               },
-            )) as UpsertIngestionOutput)
-          : null
-        const ingestionId = ingestion?.ingestionId ?? null
+            )) as ListRepoFilesOutput
+            files = listResult.files
+            stats = { total: listResult.total, skipped: listResult.skipped }
+          }
 
-        const listRef = commit ?? ref
-        let files = input.files
-        let stats = input.stats
+          const total = stats?.total ?? files.length
+          const skipped = stats?.skipped ?? 0
 
-        if (!files) {
-          const listResult = (yield* activities.schedule(
-            'listRepoFiles',
-            [{ repoRoot, ref: listRef, pathPrefix, maxFiles }],
-            {
-              ...listRepoFilesTimeouts,
-              retry: activityRetry,
-            },
-          )) as ListRepoFilesOutput
-          files = listResult.files
-          stats = { total: listResult.total, skipped: listResult.skipped }
-        }
+          logWorkflow('enrichRepository.filesReady', {
+            workflowId: info.workflowId,
+            runId: info.runId,
+            fileCount: files.length,
+            total,
+            skipped,
+          })
 
-        const total = stats?.total ?? files.length
-        const skipped = stats?.skipped ?? 0
+          let started = 0
+          let completed = 0
+          let failed = 0
+          let childSequence = 0
+          const completionSignal = enrichRepositorySignals[CHILD_WORKFLOW_COMPLETED_SIGNAL]
 
-        logWorkflow('enrichRepository.filesReady', {
-          workflowId: info.workflowId,
-          runId: info.runId,
-          fileCount: files.length,
-          total,
-          skipped,
-        })
+          // Maintain a sliding window of in-flight child workflows.
+          const pending = new Set<string>()
+          let nextIndex = 0
 
-        let started = 0
-        let completed = 0
-        let failed = 0
-        let childSequence = 0
-        const completionSignal = enrichRepositorySignals[CHILD_WORKFLOW_COMPLETED_SIGNAL]
-
-        // Maintain a sliding window of in-flight child workflows.
-        const pending = new Set<string>()
-        let nextIndex = 0
-
-        const run = Effect.gen(function* () {
           while (nextIndex < files.length || pending.size > 0) {
             while (pending.size < childWorkflowBatchSize && nextIndex < files.length) {
               const filePath = files[nextIndex]
@@ -776,7 +775,7 @@ export const workflows = [
           }
 
           const finalStatus = failed > 0 ? 'failed' : 'completed'
-          if (eventDeliveryId && ingestionId) {
+          if (eventDeliveryId) {
             yield* activities.schedule(
               'upsertIngestion',
               [
@@ -822,7 +821,7 @@ export const workflows = [
             if (isWorkflowBlocked(cause)) {
               return yield* Effect.failCause(cause)
             }
-            if (eventDeliveryId && ingestionId) {
+            if (eventDeliveryId) {
               const error = getCauseError(cause)
               yield* activities.schedule(
                 'upsertIngestion',
