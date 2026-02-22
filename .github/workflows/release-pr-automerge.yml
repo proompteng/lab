@@ -9,22 +9,31 @@ on:
       - ready_for_review
       - labeled
       - unlabeled
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Pull request number to evaluate for auto-merge'
+        required: true
+        type: string
 
 permissions:
   contents: write
   pull-requests: write
 
 concurrency:
-  group: release-pr-automerge-${{ github.event.pull_request.number }}
+  group: release-pr-automerge-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   enable:
     if: >-
       ${{
-        github.event.pull_request.base.ref == 'main' &&
-        startsWith(github.event.pull_request.head.ref, 'release/') &&
-        github.event.pull_request.draft == false
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.pull_request.base.ref == 'main' &&
+          startsWith(github.event.pull_request.head.ref, 'release/') &&
+          github.event.pull_request.draft == false
+        )
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -37,17 +46,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
         run: |
           set -euo pipefail
 
           echo "eligible=false" >> "$GITHUB_OUTPUT"
           echo "reason=not-evaluated" >> "$GITHUB_OUTPUT"
+
+          if [[ -z "${PR_NUMBER}" ]] || ! [[ "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "reason=invalid-pr-number" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           allowed_authors=("app/github-actions" "github-actions[bot]")
           allowed_paths=(
@@ -66,6 +75,23 @@ jobs:
             done
             return 1
           }
+
+          if ! pr_json="$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")"; then
+            echo "reason=pr-not-found" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PR_STATE="$(jq -r '.state // ""' <<< "$pr_json")"
+          PR_AUTHOR="$(jq -r '.user.login // ""' <<< "$pr_json")"
+          PR_HEAD_REF="$(jq -r '.head.ref // ""' <<< "$pr_json")"
+          PR_BASE_REF="$(jq -r '.base.ref // ""' <<< "$pr_json")"
+          PR_HEAD_REPO="$(jq -r '.head.repo.full_name // ""' <<< "$pr_json")"
+          PR_IS_DRAFT="$(jq -r '.draft // false' <<< "$pr_json")"
+
+          if [[ "$PR_STATE" != "open" ]]; then
+            echo "reason=pr-not-open" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if [[ "$PR_BASE_REF" != "main" ]]; then
             echo "reason=base-not-main" >> "$GITHUB_OUTPUT"
@@ -104,9 +130,18 @@ jobs:
             exit 0
           fi
 
-          mapfile -t changed_files < <(
-            gh api "repos/$GH_REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename'
-          )
+          changed_files=()
+          for attempt in 1 2 3; do
+            mapfile -t changed_files < <(
+              gh api "repos/$GH_REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename'
+            )
+
+            if [[ "${#changed_files[@]}" -gt 0 ]]; then
+              break
+            fi
+
+            sleep 2
+          done
 
           if [[ "${#changed_files[@]}" -eq 0 ]]; then
             echo "reason=no-files-changed" >> "$GITHUB_OUTPUT"
@@ -136,7 +171,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
         run: |
           set -euo pipefail
 
