@@ -165,7 +165,7 @@ describe('github review api routes', () => {
       worktreePath: string
       fileCount: number
     }
-    let resolveRefresh: ((value: RefreshResult | PromiseLike<RefreshResult>) => void) | null = null
+    let resolveRefresh!: (value: RefreshResult) => void
 
     const refreshResult = new Promise<RefreshResult>((resolve) => {
       resolveRefresh = resolve
@@ -215,7 +215,6 @@ describe('github review api routes', () => {
     await expect(responseB.json()).resolves.toMatchObject({ ok: true, files: [], refreshing: true })
     expect(refreshWorktreeSnapshotMock).toHaveBeenCalledTimes(1)
 
-    if (!resolveRefresh) throw new Error('Expected snapshot resolver')
     resolveRefresh({
       repository: 'proompteng/lab',
       prNumber: 7001,
