@@ -13,6 +13,7 @@ on:
         required: false
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -23,6 +24,7 @@ concurrency:
 jobs:
   create-pr:
     permissions:
+      actions: write
       contents: write
       pull-requests: write
     # Run automatically for image-updater commits or manually via workflow_dispatch
@@ -59,6 +61,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
 
       - name: Create PR if not exists
+        id: create_pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -67,6 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           BASE_BRANCH="main"
+          pr_number=""
 
           existing_pr_number=$(gh pr list \
             -R "$GH_REPO" \
@@ -78,34 +82,71 @@ jobs:
 
           if [ -n "${existing_pr_number:-}" ]; then
             echo "Open PR already exists: #$existing_pr_number"
-            exit 0
-          fi
-
-          # Derive a concise title from the branch name
-          pr_title="chore(${SHORT_NAME}): automated release PR"
-          pr_body="Automated PR created on push to ${HEAD_BRANCH}. Contains Argo CD Image Updater changes for ${SHORT_NAME}."
-
-          response_file=$(mktemp)
-          err_file=$(mktemp)
-          if gh api \
-            --method POST \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/${GH_REPO}/pulls" \
-            -f base="$BASE_BRANCH" \
-            -f head="$HEAD_BRANCH" \
-            -f title="$pr_title" \
-            -f body="$pr_body" \
-            --jq '.number' > "$response_file" 2>"$err_file"; then
-            new_pr_number=$(cat "$response_file")
-            echo "Created PR #$new_pr_number"
+            pr_number="$existing_pr_number"
           else
-            status=$?
-            err_output=$(cat "$err_file")
-            if echo "$err_output" | grep -qi 'already exists'; then
-              echo "A PR already exists for $HEAD_BRANCH but was not detected as open."
-              exit 0
+            # Derive a concise title from the branch name
+            pr_title="chore(${SHORT_NAME}): automated release PR"
+            pr_body="Automated PR created on push to ${HEAD_BRANCH}. Contains Argo CD Image Updater changes for ${SHORT_NAME}."
+
+            response_file=$(mktemp)
+            err_file=$(mktemp)
+            if gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GH_REPO}/pulls" \
+              -f base="$BASE_BRANCH" \
+              -f head="$HEAD_BRANCH" \
+              -f title="$pr_title" \
+              -f body="$pr_body" \
+              --jq '.number' > "$response_file" 2>"$err_file"; then
+              pr_number=$(cat "$response_file")
+              echo "Created PR #$pr_number"
+            else
+              status=$?
+              err_output=$(cat "$err_file")
+              if echo "$err_output" | grep -qi 'already exists'; then
+                # Handle a race where the PR was created between list and create.
+                pr_number=$(gh pr list \
+                  -R "$GH_REPO" \
+                  --head "$HEAD_BRANCH" \
+                  --base "$BASE_BRANCH" \
+                  --state open \
+                  --json number \
+                  --jq '.[0].number // empty' || true)
+
+                if [ -z "${pr_number:-}" ]; then
+                  echo "PR already exists but the open PR number could not be resolved."
+                  echo "$err_output"
+                  exit 1
+                fi
+
+                echo "Open PR already exists: #$pr_number"
+              else
+                echo "$err_output"
+                exit $status
+              fi
             fi
-            echo "$err_output"
-            exit $status
+            rm -f "$response_file" "$err_file"
           fi
-          rm -f "$response_file" "$err_file"
+
+          if [ -z "${pr_number:-}" ]; then
+            echo "Could not resolve a PR number for ${HEAD_BRANCH}."
+            exit 1
+          fi
+
+          echo "pr_number=${pr_number}" >> "${GITHUB_OUTPUT}"
+
+      - name: Trigger release auto-merge evaluation
+        if: ${{ steps.create_pr.outputs.pr_number != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.create_pr.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          gh workflow run release-pr-automerge.yml \
+            -R "$GH_REPO" \
+            -f pr_number="$PR_NUMBER"
+
+          echo "Dispatched release-pr-automerge for PR #$PR_NUMBER"
