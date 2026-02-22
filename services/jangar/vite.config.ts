@@ -20,6 +20,8 @@ const ssrExternals = ['kysely', 'nats', 'pg', 'node-pty']
 const bunShimEnabled = process.env.JANGAR_BUN_SHIM === '1'
 const bunShimPath = fileURLToPath(new URL('./src/server/bun-node-shim.ts', import.meta.url))
 const buildMinify = process.env.JANGAR_BUILD_MINIFY !== '0'
+const includeTanStackDevtools = process.env.NODE_ENV !== 'production' && process.env.JANGAR_ENABLE_DEVTOOLS !== '0'
+const reportCompressedSize = process.env.CI !== 'true'
 const ssrCallerShimPath = fileURLToPath(new URL('./src/server/server-fn-ssr-caller.ts', import.meta.url))
 const resolveAliases: Record<string, string> = {
   ...(bunShimEnabled ? { bun: bunShimPath } : {}),
@@ -175,12 +177,13 @@ const config = defineConfig({
   build: {
     minify: buildMinify,
     cssMinify: buildMinify,
+    reportCompressedSize,
     rollupOptions: {
       external: ssrExternals,
     },
   },
   plugins: [
-    devtools(),
+    ...(includeTanStackDevtools ? [devtools()] : []),
     nitroStartManifestPlugin(),
     ...tanstackStartNitro(),
     ensureRoutesManifestPlugin(),

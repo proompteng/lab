@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 import { ensureCli, repoRoot, run } from '../shared/cli'
-import { buildAndPushDockerImage } from '../shared/docker'
+import { buildAndPushDockerImage, type DockerCacheMode } from '../shared/docker'
 import { execGit } from '../shared/git'
 
 export type BuildImageOptions = {
@@ -20,6 +20,7 @@ export type BuildImageOptions = {
   codexAuthPath?: string
   cacheRef?: string
   platforms?: string[]
+  cacheMode?: DockerCacheMode
 }
 
 const parsePlatforms = (value: string | undefined): string[] | undefined => {
@@ -30,6 +31,14 @@ const parsePlatforms = (value: string | undefined): string[] | undefined => {
     .filter(Boolean)
 
   return platforms.length > 0 ? platforms : undefined
+}
+
+const parseCacheMode = (value: string | undefined): DockerCacheMode | undefined => {
+  if (!value) return undefined
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'min') return 'min'
+  if (normalized === 'max') return 'max'
+  return undefined
 }
 
 const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void }> => {
@@ -90,6 +99,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const codexAuthPath =
     options.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
   const cacheRef = options.cacheRef ?? process.env.JANGAR_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
+  const cacheMode = options.cacheMode ?? parseCacheMode(process.env.JANGAR_BUILD_CACHE_MODE)
   const platforms =
     options.platforms ??
     parsePlatforms(process.env.JANGAR_IMAGE_PLATFORMS) ??
@@ -138,6 +148,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
       buildArgs,
       codexAuthPath: codexAuthPathForDocker,
       cacheRef,
+      cacheMode,
       platforms,
     })
 
