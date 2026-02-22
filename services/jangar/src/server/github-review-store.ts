@@ -802,7 +802,9 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
       .onConflict((oc) =>
         oc.columns(['repository', 'pr_number']).doUpdateSet({
           unresolved_threads_count: input.count,
-          summary: sql`jsonb_set(COALESCE(jangar_github.review_state.summary, '{}'::jsonb), '{unresolvedThreadsCount}', to_jsonb(${input.count}), true)`,
+          summary: sql`jsonb_set(COALESCE(jangar_github.review_state.summary, '{}'::jsonb), '{unresolvedThreadsCount}', ${sql.raw(
+            String(input.count),
+          )}::jsonb, true)`,
           updated_at: input.receivedAt,
         }),
       )
