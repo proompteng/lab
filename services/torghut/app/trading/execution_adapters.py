@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Mapping
 from typing import Any, Optional, Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 from ..alpaca_client import TorghutAlpacaClient
 from ..config import settings
@@ -128,6 +130,13 @@ class LeanExecutionAdapter:
         self.last_route = self.name
         self.last_fallback_reason: str | None = None
         self.last_fallback_count: int = 0
+        self.last_correlation_id: str | None = None
+        self.last_idempotency_key: str | None = None
+        self._observability_requests_total: dict[str, int] = {}
+        self._observability_failures_total: dict[str, int] = {}
+        self._observability_latency_ms_last: dict[str, float] = {}
+        self._observability_latency_ms_sum: dict[str, float] = {}
+        self._observability_latency_ms_count: dict[str, int] = {}
 
     def submit_order(
         self,
@@ -140,7 +149,16 @@ class LeanExecutionAdapter:
         stop_price: Optional[float] = None,
         extra_params: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        body = {
+        extra_params_payload: dict[str, Any] = dict(extra_params or {})
+        client_order_id = extra_params_payload.get('client_order_id')
+        correlation_id = f'torghut-{uuid4().hex[:20]}'
+        idempotency_key = str(
+            client_order_id
+            or f'{symbol}:{side}:{qty}:{order_type}:{time_in_force}:{uuid4().hex[:8]}'
+        )
+        self.last_correlation_id = correlation_id
+        self.last_idempotency_key = idempotency_key
+        body: dict[str, Any] = {
             'symbol': symbol,
             'side': side,
             'qty': qty,
@@ -148,14 +166,45 @@ class LeanExecutionAdapter:
             'time_in_force': time_in_force,
             'limit_price': limit_price,
             'stop_price': stop_price,
-            'extra_params': extra_params or {},
+            'extra_params': extra_params_payload,
         }
+        if settings.trading_lean_shadow_execution_enabled and not settings.trading_lean_lane_disable_switch:
+            try:
+                shadow_payload = self._request_json(
+                    'POST',
+                    '/v1/shadow/simulate',
+                    {
+                        'symbol': symbol,
+                        'side': side,
+                        'qty': qty,
+                        'order_type': order_type,
+                        'time_in_force': time_in_force,
+                        'limit_price': limit_price,
+                        'intent_price': limit_price,
+                    },
+                    headers={'X-Correlation-ID': correlation_id},
+                    operation='shadow_simulate',
+                )
+                if isinstance(shadow_payload, Mapping):
+                    extra_params_payload['_lean_shadow'] = dict(cast(Mapping[str, Any], shadow_payload))
+            except Exception:
+                # _request_json already records observability failures for this operation.
+                pass
         payload = self._with_fallback(
             op='submit_order',
             request=lambda: self._validate_submit_payload(
-                self._request_json('POST', '/v1/orders/submit', body),
+                self._request_json(
+                    'POST',
+                    '/v1/orders/submit',
+                    body,
+                    headers={
+                        'X-Correlation-ID': correlation_id,
+                        'Idempotency-Key': idempotency_key,
+                    },
+                    operation='submit_order',
+                ),
                 adapter='lean',
-                expected_client_order_id=(extra_params or {}).get('client_order_id'),
+                expected_client_order_id=client_order_id,
                 expected_symbol=symbol,
             ),
             fallback=lambda: self._fallback_submit(
@@ -170,6 +219,15 @@ class LeanExecutionAdapter:
             ),
         )
         payload['_execution_route_expected'] = 'lean'
+        shadow_event = extra_params_payload.get('_lean_shadow')
+        if isinstance(shadow_event, Mapping):
+            payload['_lean_shadow'] = dict(cast(Mapping[str, Any], shadow_event))
+        payload['_execution_correlation_id'] = correlation_id
+        payload['_execution_idempotency_key'] = idempotency_key
+        payload['_execution_audit'] = payload.get('_lean_audit') or {
+            'correlation_id': correlation_id,
+            'idempotency_key': idempotency_key,
+        }
         return payload
 
     def cancel_order(self, order_id: str) -> bool:
@@ -213,7 +271,11 @@ class LeanExecutionAdapter:
 
     def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, Any] | None:
         try:
-            payload = self._request_json('GET', f'/v1/orders/client/{quote(client_order_id)}')
+            payload = self._request_json(
+                'GET',
+                f'/v1/orders/client/{quote(client_order_id)}',
+                operation='get_order_by_client_order_id',
+            )
             self.last_route = self.name
             return self._validate_read_order_payload(payload, adapter='lean')
         except HTTPError as exc:
@@ -244,22 +306,55 @@ class LeanExecutionAdapter:
                 return [cast(dict[str, Any], item) for item in items if isinstance(item, Mapping)]
         return []
 
-    def _request_json(self, method: str, path: str, payload: Optional[dict[str, Any]] = None) -> Any:
+    def _request_json_with_headers(
+        self,
+        method: str,
+        path: str,
+        payload: Optional[dict[str, Any]],
+        *,
+        headers: dict[str, str] | None,
+        operation: str,
+    ) -> Any:
         url = f'{self.base_url}{path}'
+        started = time.perf_counter()
         request_body = None
-        headers = {'accept': 'application/json'}
+        request_headers = {'accept': 'application/json'}
+        if headers:
+            request_headers.update(headers)
         if payload is not None:
             request_body = json.dumps(payload).encode('utf-8')
-            headers['content-type'] = 'application/json'
-        request = Request(url=url, data=request_body, method=method, headers=headers)
-        with urlopen(request, timeout=self.timeout_seconds) as response:
-            body = response.read().decode('utf-8').strip()
+            request_headers['content-type'] = 'application/json'
+        request = Request(url=url, data=request_body, method=method, headers=request_headers)
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                body = response.read().decode('utf-8').strip()
+        except Exception as exc:
+            self._record_observability_failure(operation, exc)
+            raise
+        self._record_observability_success(operation, time.perf_counter() - started)
         if not body:
             return {}
         try:
             return json.loads(body)
         except json.JSONDecodeError:
             raise RuntimeError(f'lean_runner_invalid_json: {body[:200]}')
+
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        payload: Optional[dict[str, Any]] = None,
+        *,
+        headers: dict[str, str] | None = None,
+        operation: str = 'request_json',
+    ) -> Any:
+        return self._request_json_with_headers(
+            method,
+            path,
+            payload,
+            headers=headers,
+            operation=operation,
+        )
 
     def _with_fallback(self, *, op: str, request: Any, fallback: Any) -> Any:
         try:
@@ -282,6 +377,55 @@ class LeanExecutionAdapter:
             payload = fallback()
             self.last_route = 'alpaca_fallback'
             return payload
+
+    def evaluate_strategy_shadow(self, intent: dict[str, Any]) -> dict[str, Any] | None:
+        if settings.trading_lean_lane_disable_switch or not settings.trading_lean_strategy_shadow_enabled:
+            return None
+        correlation_id = f'torghut-shadow-{uuid4().hex[:18]}'
+        strategy_id = str(intent.get('strategy_id') or 'unknown')
+        symbol = str(intent.get('symbol') or 'unknown')
+        payload = self._request_json(
+            'POST',
+            '/v1/strategy-shadow/evaluate',
+            {
+                'strategy_id': strategy_id,
+                'symbol': symbol,
+                'intent': intent,
+            },
+            headers={'X-Correlation-ID': correlation_id},
+            operation='strategy_shadow',
+        )
+        if not isinstance(payload, Mapping):
+            return None
+        normalized = dict(cast(Mapping[str, Any], payload))
+        normalized['_execution_correlation_id'] = correlation_id
+        return normalized
+
+    def get_observability_snapshot(self) -> dict[str, Any]:
+        latency_avg: dict[str, float] = {}
+        for operation, count in self._observability_latency_ms_count.items():
+            if count <= 0:
+                latency_avg[operation] = 0.0
+                continue
+            latency_avg[operation] = self._observability_latency_ms_sum.get(operation, 0.0) / count
+        return {
+            'requests_total': dict(self._observability_requests_total),
+            'failures_total': dict(self._observability_failures_total),
+            'latency_ms_last': dict(self._observability_latency_ms_last),
+            'latency_ms_avg': latency_avg,
+        }
+
+    def _record_observability_success(self, operation: str, elapsed_seconds: float) -> None:
+        self._observability_requests_total[operation] = self._observability_requests_total.get(operation, 0) + 1
+        latency_ms = max(elapsed_seconds * 1000.0, 0.0)
+        self._observability_latency_ms_last[operation] = latency_ms
+        self._observability_latency_ms_sum[operation] = self._observability_latency_ms_sum.get(operation, 0.0) + latency_ms
+        self._observability_latency_ms_count[operation] = self._observability_latency_ms_count.get(operation, 0) + 1
+
+    def _record_observability_failure(self, operation: str, exc: Exception) -> None:
+        taxonomy = _classify_failure_taxonomy(exc)
+        key = f'{operation}:{taxonomy}'
+        self._observability_failures_total[key] = self._observability_failures_total.get(key, 0) + 1
 
     def _fallback_submit(
         self,
@@ -452,6 +596,9 @@ def build_execution_adapter(
     alpaca_adapter = AlpacaExecutionAdapter(firewall=order_firewall, read_client=alpaca_client)
     if settings.trading_execution_adapter != 'lean':
         return alpaca_adapter
+    if settings.trading_lean_lane_disable_switch:
+        logger.warning('LEAN lanes disabled by TRADING_LEAN_LANE_DISABLE_SWITCH; using Alpaca adapter')
+        return alpaca_adapter
 
     if not settings.trading_lean_runner_url:
         logger.warning('LEAN adapter requested but TRADING_LEAN_RUNNER_URL is missing; using Alpaca adapter')
@@ -491,6 +638,14 @@ def adapter_enabled_for_symbol(symbol: str, *, allowlist: set[str] | None = None
 
     if settings.trading_execution_adapter != 'lean':
         return False
+    if settings.trading_lean_lane_disable_switch:
+        return False
+    if settings.trading_mode == 'live' and settings.trading_lean_live_canary_enabled:
+        if settings.trading_lean_live_canary_crypto_only and not _is_crypto_symbol(symbol):
+            return False
+        canary_symbols = settings.trading_lean_live_canary_symbols
+        if canary_symbols and symbol not in canary_symbols:
+            return False
     if settings.trading_execution_adapter_policy == 'all':
         return True
 
@@ -505,6 +660,11 @@ def adapter_enabled_for_symbol(symbol: str, *, allowlist: set[str] | None = None
     if not configured_allowlist:
         return True
     return symbol in configured_allowlist
+
+
+def _is_crypto_symbol(symbol: str) -> bool:
+    normalized = symbol.strip().upper()
+    return '/' in normalized and len(normalized) >= 5
 
 
 def _error_summary(exc: Exception) -> str:
@@ -531,6 +691,21 @@ def _classify_fallback_reason(*, op: str, exc: Exception) -> str:
     if isinstance(exc, HTTPError):
         return f'lean_{op}_http_{exc.code}'
     return f'lean_{op}_failed'
+
+
+def _classify_failure_taxonomy(exc: Exception) -> str:
+    if isinstance(exc, TimeoutError):
+        return 'timeout'
+    if isinstance(exc, URLError):
+        return 'network_error'
+    if isinstance(exc, HTTPError):
+        return f'http_{exc.code}'
+    message = str(exc).lower().strip()
+    if 'contract' in message:
+        return 'contract_violation'
+    if 'invalid_json' in message:
+        return 'invalid_json'
+    return 'unknown_error'
 
 
 def _check_lean_runner_health(*, base_url: str, timeout_seconds: int) -> tuple[bool, str | None]:

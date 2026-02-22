@@ -36,6 +36,7 @@ from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor, SignalBatch
 from .llm import LLMReviewEngine, apply_policy
 from .llm.guardrails import evaluate_llm_guardrails
+from .lean_lanes import LeanLaneManager
 from .market_context import (
     MarketContextClient,
     MarketContextStatus,
@@ -178,6 +179,27 @@ class TradingMetrics:
         default_factory=lambda: cast(dict[str, int], {})
     )
     execution_fallback_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    lean_request_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    lean_failure_taxonomy_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    lean_latency_ms: dict[str, float] = field(
+        default_factory=lambda: cast(dict[str, float], {})
+    )
+    lean_shadow_parity_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    lean_shadow_failure_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    lean_strategy_shadow_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    lean_canary_breach_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
     no_signal_windows_total: int = 0
@@ -354,6 +376,42 @@ class TradingMetrics:
         self.no_signal_reason_streak[normalized] = (
             self.no_signal_reason_streak.get(normalized, 0) + 1
         )
+
+    def record_lean_observability(self, snapshot: Mapping[str, Any]) -> None:
+        requests = snapshot.get('requests_total')
+        if isinstance(requests, Mapping):
+            for key, value in cast(Mapping[object, Any], requests).items():
+                if isinstance(value, int):
+                    self.lean_request_total[str(key)] = value
+        failures = snapshot.get('failures_total')
+        if isinstance(failures, Mapping):
+            for key, value in cast(Mapping[object, Any], failures).items():
+                if isinstance(value, int):
+                    self.lean_failure_taxonomy_total[str(key)] = value
+        latency = snapshot.get('latency_ms_avg')
+        if isinstance(latency, Mapping):
+            for key, value in cast(Mapping[object, Any], latency).items():
+                if isinstance(value, (int, float)):
+                    self.lean_latency_ms[str(key)] = float(value)
+
+    def record_lean_shadow(self, *, parity_status: str | None, failure_taxonomy: str | None) -> None:
+        status = parity_status.strip() if isinstance(parity_status, str) else ''
+        if not status:
+            status = 'unknown'
+        self.lean_shadow_parity_total[status] = self.lean_shadow_parity_total.get(status, 0) + 1
+        if failure_taxonomy:
+            self.lean_shadow_failure_total[failure_taxonomy] = (
+                self.lean_shadow_failure_total.get(failure_taxonomy, 0) + 1
+            )
+
+    def record_lean_strategy_shadow(self, parity_status: str | None) -> None:
+        status = parity_status.strip() if isinstance(parity_status, str) else ''
+        if not status:
+            status = 'unknown'
+        self.lean_strategy_shadow_total[status] = self.lean_strategy_shadow_total.get(status, 0) + 1
+
+    def record_lean_canary_breach(self, breach_type: str) -> None:
+        self.lean_canary_breach_total[breach_type] = self.lean_canary_breach_total.get(breach_type, 0) + 1
 
     def record_signal_staleness_alert(self, reason: str | None) -> None:
         normalized = reason.strip() if isinstance(reason, str) else ""
@@ -681,6 +739,7 @@ class TradingPipeline:
         self.execution_policy = execution_policy or ExecutionPolicy()
         self.order_feed_ingestor = order_feed_ingestor or OrderFeedIngestor()
         self.market_context_client = MarketContextClient()
+        self.lean_lane_manager = LeanLaneManager()
         if llm_review_engine is not None:
             self.llm_review_engine = llm_review_engine
         elif settings.llm_enabled:
@@ -1091,6 +1150,52 @@ class TradingPipeline:
                 symbol_allowlist=symbol_allowlist,
             )
             selected_adapter_name = self._execution_client_name(execution_client)
+            if (
+                selected_adapter_name == 'lean'
+                and settings.trading_lean_strategy_shadow_enabled
+                and not settings.trading_lean_lane_disable_switch
+            ):
+                evaluator = getattr(execution_client, 'evaluate_strategy_shadow', None)
+                if callable(evaluator):
+                    try:
+                        strategy_shadow = evaluator(
+                            {
+                                'strategy_id': decision.strategy_id,
+                                'symbol': decision.symbol,
+                                'action': decision.action,
+                                'qty': str(decision.qty),
+                                'order_type': decision.order_type,
+                                'time_in_force': decision.time_in_force,
+                            }
+                        )
+                        if isinstance(strategy_shadow, Mapping):
+                            shadow_map = cast(Mapping[str, Any], strategy_shadow)
+                            parity_status = str(
+                                shadow_map.get('parity_status') or 'unknown'
+                            )
+                            self.state.metrics.record_lean_strategy_shadow(
+                                parity_status
+                            )
+                            self.lean_lane_manager.record_strategy_shadow(
+                                session,
+                                strategy_id=decision.strategy_id,
+                                symbol=decision.symbol,
+                                intent={
+                                    'action': decision.action,
+                                    'qty': str(decision.qty),
+                                    'order_type': decision.order_type,
+                                    'time_in_force': decision.time_in_force,
+                                },
+                                shadow_result=shadow_map,
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            'LEAN strategy shadow evaluation failed strategy_id=%s symbol=%s error=%s',
+                            decision.strategy_id,
+                            decision.symbol,
+                            exc,
+                        )
+                        self.state.metrics.record_lean_strategy_shadow('error')
             self.state.metrics.record_execution_request(selected_adapter_name)
             self.executor.update_decision_params(
                 session,
@@ -1154,6 +1259,7 @@ class TradingPipeline:
                 return
 
             if execution is None:
+                self._sync_lean_observability(execution_client)
                 self.state.metrics.orders_submitted_total += 1
                 return
 
@@ -1169,6 +1275,10 @@ class TradingPipeline:
                     actual_adapter=actual_adapter_name,
                     fallback_reason=fallback_reason or "adaptive_fallback",
                 )
+                self._evaluate_lean_canary_guard(
+                    session,
+                    symbol=decision.symbol,
+                )
                 self.executor.update_decision_params(
                     session,
                     decision_row,
@@ -1181,6 +1291,24 @@ class TradingPipeline:
                         }
                     },
                 )
+            raw_order_payload = getattr(execution, 'raw_order', None)
+            if isinstance(raw_order_payload, Mapping):
+                raw_order_source = cast(Mapping[object, Any], raw_order_payload)
+                raw_order: dict[str, Any] = {str(key): value for key, value in raw_order_source.items()}
+                shadow_event = raw_order.get('_lean_shadow')
+                if isinstance(shadow_event, Mapping):
+                    shadow_map = cast(Mapping[str, Any], shadow_event)
+                    parity_status = str(shadow_map.get('parity_status') or 'unknown')
+                    failure_taxonomy = (
+                        str(shadow_map.get('failure_taxonomy')).strip()
+                        if shadow_map.get('failure_taxonomy') is not None
+                        else None
+                    )
+                    self.state.metrics.record_lean_shadow(
+                        parity_status=parity_status,
+                        failure_taxonomy=failure_taxonomy,
+                    )
+            self._sync_lean_observability(execution_client)
             self.state.metrics.orders_submitted_total += 1
             logger.info(
                 "Order submitted strategy_id=%s decision_id=%s symbol=%s adapter=%s alpaca_order_id=%s",
@@ -1224,6 +1352,68 @@ class TradingPipeline:
         if isinstance(client, OrderFirewall):
             return "alpaca"
         return type(client).__name__
+
+    def _sync_lean_observability(self, execution_client: Any) -> None:
+        snapshot_getter = getattr(execution_client, 'get_observability_snapshot', None)
+        if not callable(snapshot_getter):
+            return
+        try:
+            snapshot = snapshot_getter()
+        except Exception as exc:
+            logger.warning('Failed to read LEAN observability snapshot: %s', exc)
+            return
+        if isinstance(snapshot, Mapping):
+            self.state.metrics.record_lean_observability(cast(Mapping[str, Any], snapshot))
+
+    def _evaluate_lean_canary_guard(self, session: Session, *, symbol: str) -> None:
+        if settings.trading_mode != 'live':
+            return
+        if not settings.trading_lean_live_canary_enabled:
+            return
+        if settings.trading_lean_lane_disable_switch:
+            return
+
+        lean_total = self.state.metrics.execution_requests_total.get('lean', 0)
+        fallback_total = self.state.metrics.execution_fallback_total.get('lean->alpaca', 0)
+        if lean_total <= 0:
+            return
+        ratio = fallback_total / lean_total
+        if ratio <= settings.trading_lean_live_canary_fallback_ratio_limit:
+            return
+
+        self.state.metrics.record_lean_canary_breach('fallback_ratio_exceeded')
+        evidence = {
+            'symbol': symbol,
+            'fallback_ratio': ratio,
+            'fallback_total': fallback_total,
+            'lean_total': lean_total,
+            'threshold': settings.trading_lean_live_canary_fallback_ratio_limit,
+            'recorded_at': datetime.now(timezone.utc).isoformat(),
+        }
+        incident_key = hashlib.sha256(
+            json.dumps(evidence, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        ).hexdigest()[:24]
+        incident = self.lean_lane_manager.record_canary_incident(
+            session,
+            incident_key=incident_key,
+            breach_type='fallback_ratio_exceeded',
+            severity='critical',
+            symbols=[symbol],
+            evidence=evidence,
+            rollback_triggered=settings.trading_lean_live_canary_hard_rollback_enabled,
+        )
+        self.state.rollback_incidents_total += 1
+        self.state.rollback_incident_evidence_path = (
+            f'postgres://lean_canary_incidents/{incident.incident_key}'
+        )
+
+        if not settings.trading_lean_live_canary_hard_rollback_enabled:
+            return
+        self.state.emergency_stop_active = True
+        self.state.emergency_stop_reason = (
+            f'lean_canary_breach:fallback_ratio_exceeded:{ratio:.4f}'
+        )
+        self.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
 
     def _apply_portfolio_sizing(
         self,

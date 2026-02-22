@@ -7,13 +7,20 @@ import logging
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Optional, cast
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models import Execution, Strategy, TradeDecision, coerce_json_payload
+from ..models import (
+    Execution,
+    LeanExecutionShadowEvent,
+    Strategy,
+    TradeDecision,
+    coerce_json_payload,
+)
 from ..snapshots import sync_order_to_db
 from .route_metadata import resolve_order_route_metadata
 from .execution_policy import should_retry_order_error
@@ -219,6 +226,12 @@ class OrderExecutor:
             execution_fallback_reason=fallback_reason,
             execution_fallback_count=fallback_count,
         )
+        _persist_lean_shadow_event(
+            session,
+            execution=execution,
+            order_payload=order_payload,
+            decision=decision,
+        )
         _attach_execution_policy_context(execution, execution_policy_context)
         upsert_execution_tca_metric(session, execution)
         _apply_execution_status(
@@ -416,6 +429,48 @@ def _apply_execution_status(
         decision_row.executed_at = submitted_at
     if execution.status == "filled" and decision_row.executed_at is None:
         decision_row.executed_at = datetime.now(timezone.utc)
+
+
+def _persist_lean_shadow_event(
+    session: Session,
+    *,
+    execution: Execution,
+    order_payload: Mapping[str, Any],
+    decision: StrategyDecision,
+) -> None:
+    raw_shadow = order_payload.get('_lean_shadow')
+    if not isinstance(raw_shadow, Mapping):
+        return
+    shadow = cast(Mapping[str, Any], raw_shadow)
+
+    parity_status = str(shadow.get('parity_status') or 'unknown').strip() or 'unknown'
+    event = LeanExecutionShadowEvent(
+        correlation_id=str(order_payload.get('_execution_correlation_id') or '').strip() or None,
+        trade_decision_id=execution.trade_decision_id,
+        execution_id=execution.id,
+        symbol=decision.symbol,
+        side=decision.action,
+        qty=decision.qty,
+        intent_notional=_optional_decimal(shadow.get('intent_notional')),
+        simulated_fill_price=_optional_decimal(shadow.get('simulated_fill_price')),
+        simulated_slippage_bps=_optional_decimal(shadow.get('simulated_slippage_bps')),
+        parity_delta_bps=_optional_decimal(shadow.get('parity_delta_bps')),
+        parity_status=parity_status,
+        failure_taxonomy=(
+            str(shadow.get('failure_taxonomy') or '').strip() or None
+        ),
+        simulation_json=coerce_json_payload(dict(shadow)),
+    )
+    session.add(event)
+
+
+def _optional_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
 
 
 __all__ = ["OrderExecutor"]

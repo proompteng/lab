@@ -116,6 +116,15 @@ def sync_order_to_db(
         "execution_actual_adapter": resolved_actual_adapter,
         "execution_fallback_reason": resolved_fallback_reason,
         "execution_fallback_count": resolved_fallback_count,
+        "execution_correlation_id": _coerce_text(
+            order_response.get("_execution_correlation_id")
+        ),
+        "execution_idempotency_key": _coerce_text(
+            order_response.get("_execution_idempotency_key")
+        ),
+        "execution_audit_json": coerce_json_payload(
+            order_response.get("_execution_audit") or {}
+        ),
         "raw_order": coerce_json_payload(order_response),
         "last_update_at": datetime.now(timezone.utc),
     }

@@ -164,6 +164,13 @@ class Execution(Base, TimestampMixin):
     execution_fallback_count: Mapped[int] = mapped_column(
         BigInteger(), nullable=False, default=0, server_default=text("0")
     )
+    execution_correlation_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    execution_idempotency_key: Mapped[Optional[str]] = mapped_column(
+        String(length=96), nullable=True
+    )
+    execution_audit_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     raw_order: Mapped[Any] = mapped_column(JSONType, nullable=True)
     last_update_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -187,6 +194,7 @@ class Execution(Base, TimestampMixin):
         Index("ix_executions_symbol_status", "symbol", "status"),
         Index("ix_executions_expected_adapter", "execution_expected_adapter"),
         Index("ix_executions_actual_adapter", "execution_actual_adapter"),
+        Index("ix_executions_execution_correlation_id", "execution_correlation_id"),
         Index("ix_executions_order_feed_last_event_ts", "order_feed_last_event_ts"),
     )
 
@@ -560,6 +568,141 @@ class ExecutionTCAMetric(Base, TimestampMixin):
     )
 
 
+class LeanBacktestRun(Base, TimestampMixin):
+    """Asynchronous LEAN backtest request lifecycle and reproducibility ledger."""
+
+    __tablename__ = "lean_backtest_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    backtest_id: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="queued",
+        server_default=text("'queued'"),
+    )
+    requested_by: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    lane: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="research",
+        server_default=text("'research'"),
+    )
+    config_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    result_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    artifacts_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    reproducibility_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    replay_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    deterministic_replay_passed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    failure_taxonomy: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_lean_backtest_runs_status", "status"),
+        Index("ix_lean_backtest_runs_lane", "lane"),
+        Index("ix_lean_backtest_runs_created_at", "created_at"),
+    )
+
+
+class LeanExecutionShadowEvent(Base, CreatedAtMixin):
+    """Parity telemetry comparing Torghut intents against LEAN shadow simulation."""
+
+    __tablename__ = "lean_execution_shadow_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    trade_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("trade_decisions.id", ondelete="SET NULL"), nullable=True
+    )
+    execution_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("executions.id", ondelete="SET NULL"), nullable=True
+    )
+    symbol: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    side: Mapped[str] = mapped_column(String(length=8), nullable=False)
+    qty: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    intent_notional: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    simulated_fill_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    simulated_slippage_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    parity_delta_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    parity_status: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="unknown",
+        server_default=text("'unknown'"),
+    )
+    failure_taxonomy: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    simulation_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_lean_execution_shadow_events_created_at", "created_at"),
+        Index("ix_lean_execution_shadow_events_symbol", "symbol"),
+        Index("ix_lean_execution_shadow_events_status", "parity_status"),
+        Index("ix_lean_execution_shadow_events_trade_decision", "trade_decision_id"),
+    )
+
+
+class LeanCanaryIncident(Base, CreatedAtMixin):
+    """Gate-breach incidents and rollback evidence for controlled LEAN live canaries."""
+
+    __tablename__ = "lean_canary_incidents"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    incident_key: Mapped[str] = mapped_column(String(length=96), nullable=False, unique=True)
+    breach_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    severity: Mapped[str] = mapped_column(
+        String(length=16),
+        nullable=False,
+        default="warning",
+        server_default=text("'warning'"),
+    )
+    rollback_triggered: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=func.false(),
+    )
+    symbols: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    evidence_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_lean_canary_incidents_breach_type", "breach_type"),
+        Index("ix_lean_canary_incidents_created_at", "created_at"),
+    )
+
+
+class LeanStrategyShadowEvaluation(Base, CreatedAtMixin):
+    """Shadow-only LEAN strategy-runtime parity evidence before promotion."""
+
+    __tablename__ = "lean_strategy_shadow_evaluations"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    strategy_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    intent_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    shadow_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    parity_status: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="unknown",
+        server_default=text("'unknown'"),
+    )
+    governance_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    disable_switch_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=func.false(),
+    )
+
+    __table_args__ = (
+        Index("ix_lean_strategy_shadow_evaluations_strategy", "strategy_id"),
+        Index("ix_lean_strategy_shadow_evaluations_symbol", "symbol"),
+        Index("ix_lean_strategy_shadow_evaluations_status", "parity_status"),
+    )
+
+
 class ToolRunLog(Base, CreatedAtMixin):
     """Trace of tool invocations made by the Codex agent."""
 
@@ -639,6 +782,10 @@ __all__ = [
     "ResearchFoldMetrics",
     "ResearchStressMetrics",
     "ResearchPromotion",
+    "LeanBacktestRun",
+    "LeanExecutionShadowEvent",
+    "LeanCanaryIncident",
+    "LeanStrategyShadowEvaluation",
     "LLMDecisionReview",
     "TimestampMixin",
     "CreatedAtMixin",

@@ -117,3 +117,33 @@ spec:
     compression.type: lz4
     retention.ms: 604800000
     cleanup.policy: compact,delete
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: torghut.lean.shadow.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    compression.type: lz4
+    retention.ms: 1209600000
+    cleanup.policy: delete
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: torghut.lean.backtests.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    compression.type: lz4
+    retention.ms: 2592000000
+    cleanup.policy: compact,delete
