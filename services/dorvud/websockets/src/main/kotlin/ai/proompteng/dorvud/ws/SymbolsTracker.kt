@@ -35,6 +35,14 @@ internal class SymbolsTracker(
       return SymbolsRefreshResult(lastKnown, hadError = true)
     }
 
+    if (fetched.isEmpty() && lastKnown.isNotEmpty()) {
+      if (lastFailureFingerprint != "empty_result") {
+        lastFailureFingerprint = "empty_result"
+        logger.warn { "desired symbols fetch returned empty list; keeping last-known list" }
+      }
+      return SymbolsRefreshResult(lastKnown, hadError = true)
+    }
+
     lastFailureFingerprint = null
     lastKnown = fetched
     return SymbolsRefreshResult(lastKnown, hadError = false)
