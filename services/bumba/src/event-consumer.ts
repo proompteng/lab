@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 
-import { createTemporalClient, type TemporalClient, type TemporalConfig } from '@proompteng/temporal-bun-sdk'
+import {
+  createTemporalClient,
+  type TemporalClient,
+  type TemporalConfig,
+  temporalCallOptions,
+} from '@proompteng/temporal-bun-sdk'
 import { VersioningBehavior } from '@proompteng/temporal-bun-sdk/worker'
 import { SQL } from 'bun'
 
@@ -12,6 +17,8 @@ const DEFAULT_BATCH_SIZE = 20
 const DEFAULT_MAX_EVENT_FILE_TARGETS = 200
 const DEFAULT_MAX_DISPATCH_FAILURES = 6
 const DEFAULT_NONTERMINAL_INGESTION_STALE_MS = 12 * 60 * 60 * 1000
+const DEFAULT_ROUTING_ALIGNMENT_ENABLED = true
+const DEFAULT_ROUTING_ALIGNMENT_RPC_TIMEOUT_MS = 5_000
 const STALE_INGESTION_ERROR = 'stale nonterminal ingestion auto-failed by bumba event-consumer'
 
 const LOCK_FILENAMES = new Set([
@@ -100,6 +107,7 @@ type GithubEventConsumerConfig = {
   maxEventFileTargets: number
   maxDispatchFailures: number
   nonterminalIngestionStaleMs: number
+  routingAlignmentEnabled: boolean
   taskQueue: string
   repoRoot: string
 }
@@ -162,6 +170,10 @@ const resolveConsumerConfig = (): GithubEventConsumerConfig => ({
   nonterminalIngestionStaleMs: parsePositiveInt(
     process.env.BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS,
     DEFAULT_NONTERMINAL_INGESTION_STALE_MS,
+  ),
+  routingAlignmentEnabled: parseBoolean(
+    process.env.BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED,
+    DEFAULT_ROUTING_ALIGNMENT_ENABLED,
   ),
   taskQueue: normalizeOptionalText(process.env.TEMPORAL_TASK_QUEUE) ?? DEFAULT_TASK_QUEUE,
   repoRoot: resolve(
@@ -320,10 +332,55 @@ const buildEventWorkflowId = (deliveryId: string, filePath: string) => {
   return `bumba-event-${deliveryHash}-${pathHash}`
 }
 
+const resolveWorkerDeploymentName = (temporalConfig: TemporalConfig, taskQueue: string) => {
+  return (
+    normalizeOptionalText(process.env.TEMPORAL_WORKER_DEPLOYMENT_NAME) ??
+    normalizeOptionalText(temporalConfig.workerDeploymentName) ??
+    `${taskQueue}-deployment`
+  )
+}
+
+const extractCurrentDeploymentBuildId = (
+  response: Awaited<ReturnType<TemporalClient['deployments']['describeWorkerDeployment']>>,
+) => {
+  return (
+    normalizeOptionalText(response.workerDeploymentInfo?.routingConfig?.currentDeploymentVersion?.buildId) ??
+    normalizeOptionalText(response.workerDeploymentInfo?.routingConfig?.currentVersion)
+  )
+}
+
+const isTransientRoutingAlignmentError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('no pollers') ||
+    normalized.includes('missing task queue') ||
+    normalized.includes('missing task queues') ||
+    normalized.includes('failed precondition') ||
+    normalized.includes('not found')
+  )
+}
+
+const isDeploymentApiUnavailableError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('unimplemented') ||
+    normalized.includes('unknown method') ||
+    normalized.includes('unknown service') ||
+    normalized.includes('method not found')
+  )
+}
+
 const isWorkflowAlreadyStartedError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error)
   const normalized = message.toLowerCase()
-  return normalized.includes('workflowexecutionalreadystarted') || normalized.includes('already started')
+  return (
+    normalized.includes('workflowexecutionalreadystarted') ||
+    normalized.includes('already started') ||
+    normalized.includes('already running') ||
+    normalized.includes('already_exists')
+  )
 }
 
 const listPendingGithubEvents = async (db: SqlClient, limit: number): Promise<GithubEventRow[]> => {
@@ -586,9 +643,86 @@ export const createGithubEventConsumer = (
   let tickPromise: Promise<void> = Promise.resolve()
   const inFlightDeliveries = new Set<string>()
   const dispatchFailureCounts = new Map<string, number>()
+  const workerBuildId = normalizeOptionalText(temporalConfig.workerBuildId)
+  const workerDeploymentName = resolveWorkerDeploymentName(temporalConfig, config.taskQueue)
+  let routingAligned = !config.routingAlignmentEnabled || !workerBuildId
+  let routingGuardFailOpen = false
+  let lastRoutingGuardLogAt = 0
+
+  const ensureRoutingAlignment = async () => {
+    if (!started || !client) return false
+    if (!config.routingAlignmentEnabled || !workerBuildId || routingAligned || routingGuardFailOpen) {
+      return true
+    }
+
+    try {
+      const describeRequest = { deploymentName: workerDeploymentName } as Parameters<
+        TemporalClient['deployments']['describeWorkerDeployment']
+      >[0]
+      const deployment = await client.deployments.describeWorkerDeployment(
+        describeRequest,
+        temporalCallOptions({ timeoutMs: DEFAULT_ROUTING_ALIGNMENT_RPC_TIMEOUT_MS }),
+      )
+      const currentBuildId = extractCurrentDeploymentBuildId(deployment)
+      if (currentBuildId === workerBuildId) {
+        routingAligned = true
+        console.info('[bumba][event-consumer] worker deployment routing already aligned', {
+          deploymentName: workerDeploymentName,
+          buildId: workerBuildId,
+        })
+        return true
+      }
+
+      const setCurrentVersionRequest = {
+        deploymentName: workerDeploymentName,
+        buildId: workerBuildId,
+        version: '',
+        conflictToken: new Uint8Array(),
+        allowNoPollers: false,
+        ignoreMissingTaskQueues: false,
+        identity: `bumba-event-consumer/${process.pid}`,
+      } as Parameters<TemporalClient['deployments']['setWorkerDeploymentCurrentVersion']>[0]
+      await client.deployments.setWorkerDeploymentCurrentVersion(
+        setCurrentVersionRequest,
+        temporalCallOptions({ timeoutMs: DEFAULT_ROUTING_ALIGNMENT_RPC_TIMEOUT_MS }),
+      )
+
+      routingAligned = true
+      console.warn('[bumba][event-consumer] aligned worker deployment routing to active build', {
+        deploymentName: workerDeploymentName,
+        previousBuildId: currentBuildId ?? null,
+        buildId: workerBuildId,
+      })
+      return true
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      if (isDeploymentApiUnavailableError(error)) {
+        routingGuardFailOpen = true
+        console.warn('[bumba][event-consumer] deployment routing APIs unavailable; continuing without startup guard', {
+          deploymentName: workerDeploymentName,
+          buildId: workerBuildId,
+          error: errorMessage,
+        })
+        return true
+      }
+
+      const now = Date.now()
+      if (now - lastRoutingGuardLogAt >= Math.max(config.pollIntervalMs * 3, 15_000)) {
+        const level = isTransientRoutingAlignmentError(error) ? 'warn' : 'error'
+        console[level]('[bumba][event-consumer] waiting for worker deployment routing alignment', {
+          deploymentName: workerDeploymentName,
+          buildId: workerBuildId,
+          error: errorMessage,
+        })
+        lastRoutingGuardLogAt = now
+      }
+      return false
+    }
+  }
 
   const runTick = async () => {
     if (!started || !db || !client) return
+    if (!(await ensureRoutingAlignment())) return
 
     const events = await listPendingGithubEvents(db, config.batchSize)
     if (events.length === 0) return
@@ -667,6 +801,9 @@ export const createGithubEventConsumer = (
         batchSize: config.batchSize,
         maxDispatchFailures: config.maxDispatchFailures,
         nonterminalIngestionStaleMs: config.nonterminalIngestionStaleMs,
+        routingAlignmentEnabled: config.routingAlignmentEnabled,
+        workerDeploymentName,
+        workerBuildId: workerBuildId ?? null,
         taskQueue: config.taskQueue,
         repoRoot: config.repoRoot,
       })
@@ -716,5 +853,9 @@ export const __test__ = {
   resolveConsumerConfig,
   shouldSkipFilePath,
   isWorkflowAlreadyStartedError,
+  resolveWorkerDeploymentName,
+  extractCurrentDeploymentBuildId,
+  isTransientRoutingAlignmentError,
+  isDeploymentApiUnavailableError,
   TERMINAL_INGESTION_STATUSES,
 }

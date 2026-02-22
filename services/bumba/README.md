@@ -10,7 +10,10 @@ Temporal worker that enriches repository files using AST context + self-hosted m
 - The worker can consume pending `atlas.github_events` and start `enrichFile` workflows directly. Controls:
   `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED`, `BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS`,
   `BUMBA_GITHUB_EVENT_BATCH_SIZE`, `BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS`,
-  `BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES`.
+  `BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES`, `BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED`.
+- When routing alignment is enabled, the event-consumer waits to confirm/set Temporal worker deployment
+  routing to the active `TEMPORAL_WORKER_BUILD_ID` before dispatching new event workflows. This avoids
+  unversioned workflow starts when the deployment current version drifts.
 - Enrichment skips directory paths; model completion failures (including timeouts) fail the workflow to avoid placeholders.
 - Repository listing sync can be tuned with `BUMBA_REPO_SYNC_INTERVAL_MS` (set `0` to disable periodic origin fetches).
 - Performance knobs: `OPENAI_API_BASE_URL`, `OPENAI_COMPLETION_TIMEOUT_MS`, `OPENAI_COMPLETION_MAX_OUTPUT_TOKENS`, `BUMBA_MODEL_CONCURRENCY`,
