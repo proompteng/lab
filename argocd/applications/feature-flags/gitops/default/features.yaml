@@ -64,7 +64,7 @@ flags:
     name: Torghut Trading Crypto Live Enabled
     description: Live trading gate for crypto symbol execution paths.
     type: BOOLEAN_FLAG_TYPE
-    enabled: false
+    enabled: true
   - key: torghut_trading_order_feed_enabled
     name: Torghut Trading Order Feed Enabled
     description: Enables Kafka order-feed ingestion in Torghut.
