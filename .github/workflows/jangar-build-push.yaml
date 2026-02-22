@@ -36,9 +36,12 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.9
+          no-cache: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          cache-binary: false
 
       - name: Resolve image tag
         id: meta
@@ -47,17 +50,40 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Prepare pruned build context
+        id: prune
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRUNE_DIR="$(mktemp -d)"
+          bunx turbo prune --scope=@proompteng/jangar --docker --out-dir="$PRUNE_DIR"
+          cp tsconfig.base.json "$PRUNE_DIR/tsconfig.base.json"
+          if [ -d skills ]; then
+            cp -R skills "$PRUNE_DIR/skills"
+          fi
+          if [ -d services/jangar/agentctl ]; then
+            mkdir -p "$PRUNE_DIR/full/services/jangar" "$PRUNE_DIR/json/services/jangar"
+            cp -R services/jangar/agentctl "$PRUNE_DIR/full/services/jangar/agentctl"
+            cp -R services/jangar/agentctl "$PRUNE_DIR/json/services/jangar/agentctl"
+          fi
+          echo "context=$PRUNE_DIR" >> "$GITHUB_OUTPUT"
+
       - name: Build and push jangar image
         env:
+          JANGAR_BUILD_CONTEXT: ${{ steps.prune.outputs.context }}
           JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           JANGAR_IMAGE_PLATFORMS: linux/arm64
+          JANGAR_BUILD_CACHE_MODE: min
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
         run: bun run packages/scripts/src/jangar/build-image.ts
 
       - name: Build and push jangar control-plane image
         env:
+          JANGAR_BUILD_CONTEXT: ${{ steps.prune.outputs.context }}
           JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           JANGAR_IMAGE_PLATFORMS: linux/arm64
+          JANGAR_BUILD_CACHE_MODE: min
+          JANGAR_BUILD_CACHE_REF: ''
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
         run: bun run packages/scripts/src/jangar/build-control-plane-image.ts
 

@@ -96,12 +96,12 @@ spec:
                     - --group=$(DOCKER_GROUP_GID)
                   resources:
                     requests:
-                      cpu: "1"
-                      memory: "2Gi"
-                      ephemeral-storage: "30Gi"
-                    limits:
                       cpu: "2"
                       memory: "4Gi"
+                      ephemeral-storage: "30Gi"
+                    limits:
+                      cpu: "6"
+                      memory: "8Gi"
                       ephemeral-storage: "50Gi"
                   env:
                     - name: DOCKER_GROUP_GID

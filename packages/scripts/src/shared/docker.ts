@@ -1,5 +1,7 @@
 import { ensureCli, repoRoot, run } from './cli'
 
+export type DockerCacheMode = 'max' | 'min'
+
 export type DockerBuildOptions = {
   registry: string
   repository: string
@@ -13,6 +15,7 @@ export type DockerBuildOptions = {
   platforms?: string[]
   codexAuthPath?: string
   cacheRef?: string
+  cacheMode?: DockerCacheMode
   useBuildx?: boolean
 }
 
@@ -32,6 +35,12 @@ const isTruthyEnv = (value: string | undefined): boolean => {
   )
 }
 
+const normalizeCacheMode = (value: string | undefined): DockerCacheMode => {
+  if (!value) return 'max'
+  const normalized = value.trim().toLowerCase()
+  return normalized === 'min' ? 'min' : 'max'
+}
+
 export const buildAndPushDockerImage = async (options: DockerBuildOptions): Promise<DockerBuildResult> => {
   ensureCli('docker')
 
@@ -40,6 +49,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
   const ghTokenEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
   const dockerEnv = { DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' }
   const noCache = options.noCache ?? (isTruthyEnv(process.env.DOCKER_NO_CACHE) || isTruthyEnv(process.env.NO_CACHE))
+  const cacheMode = normalizeCacheMode(options.cacheMode ?? process.env.DOCKER_BUILD_CACHE_MODE)
 
   let shouldUseBuildx =
     options.useBuildx === true || Boolean(options.cacheRef) || (options.platforms && options.platforms.length > 0)
@@ -77,6 +87,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     buildArgs: Object.keys(options.buildArgs ?? {}).length ? options.buildArgs : undefined,
     noCache: noCache || undefined,
     cacheRef: effectiveCacheRef,
+    cacheMode: effectiveCacheRef ? cacheMode : undefined,
     buildxDriver: buildxDriver ?? undefined,
     useBuildx: shouldUseBuildx || undefined,
   })
@@ -90,7 +101,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     }
     if (effectiveCacheRef) {
       args.push('--cache-from', `type=registry,ref=${effectiveCacheRef}`)
-      args.push('--cache-to', `type=registry,ref=${effectiveCacheRef},mode=max`)
+      args.push('--cache-to', `type=registry,ref=${effectiveCacheRef},mode=${cacheMode}`)
     }
     if (options.codexAuthPath) {
       args.push('--secret', `id=codexauth,src=${options.codexAuthPath}`)
