@@ -26,6 +26,7 @@ export const Route = createFileRoute('/torghut/symbols')({
 
 function TorghutSymbols() {
   const [items, setItems] = useState<SymbolItem[]>([])
+  const [assetClass, setAssetClass] = useState<'equity' | 'crypto'>('crypto')
   const [symbolsText, setSymbolsText] = useState('')
   const [listStatus, setListStatus] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
@@ -38,11 +39,11 @@ function TorghutSymbols() {
 
   const refresh = useCallback(async () => {
     setListStatus(null)
-    const res = await fetch('/api/torghut/symbols?includeDisabled=true&format=full')
+    const res = await fetch(`/api/torghut/symbols?includeDisabled=true&format=full&assetClass=${assetClass}`)
     if (!res.ok) throw new Error(`Failed to load symbols (${res.status})`)
     const json = (await res.json()) as { items: SymbolItem[] }
     setItems(json.items)
-  }, [])
+  }, [assetClass])
 
   useEffect(() => {
     refresh().catch((err: unknown) => {
@@ -65,7 +66,7 @@ function TorghutSymbols() {
       const res = await fetch('/api/torghut/symbols', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'idempotency-key': randomUuid() },
-        body: JSON.stringify({ symbolsText: trimmed, enabled: true, assetClass: 'equity' }),
+        body: JSON.stringify({ symbolsText: trimmed, enabled: true, assetClass }),
       })
       if (!res.ok) throw new Error(`Failed to save (${res.status})`)
       setSymbolsText('')
@@ -78,7 +79,7 @@ function TorghutSymbols() {
     } finally {
       setIsSaving(false)
     }
-  }, [refresh, symbolsText])
+  }, [assetClass, refresh, symbolsText])
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault()
@@ -93,7 +94,7 @@ function TorghutSymbols() {
       const res = await fetch(`/api/torghut/symbols/${encodeURIComponent(symbol)}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify({ enabled, assetClass }),
       })
       if (!res.ok) throw new Error(`Failed to update ${symbol} (${res.status})`)
     } catch (err: unknown) {
@@ -113,6 +114,20 @@ function TorghutSymbols() {
             Enabled <span className="tabular-nums">{enabledCount}</span> of{' '}
             <span className="tabular-nums">{items.length}</span>
           </p>
+          <div className="flex items-center gap-2 text-xs">
+            <label className="text-muted-foreground" htmlFor="torghut-symbol-asset-class">
+              Asset class
+            </label>
+            <select
+              id="torghut-symbol-asset-class"
+              className="border border-input bg-transparent px-2 py-1 text-xs text-foreground"
+              value={assetClass}
+              onChange={(event) => setAssetClass(event.target.value === 'crypto' ? 'crypto' : 'equity')}
+            >
+              <option value="crypto">crypto</option>
+              <option value="equity">equity</option>
+            </select>
+          </div>
         </div>
         <Dialog
           open={isDialogOpen}

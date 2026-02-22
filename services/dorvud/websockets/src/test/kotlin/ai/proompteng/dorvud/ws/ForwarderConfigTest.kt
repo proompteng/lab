@@ -28,7 +28,71 @@ class ForwarderConfigTest {
     assertEquals("wss://stream.data.alpaca.markets", cfg.alpacaStreamUrl)
     assertEquals("localhost:9093", cfg.kafka.bootstrapServers)
     assertFalse(cfg.enableTradeUpdates)
+    assertEquals(AlpacaMarketType.EQUITY, cfg.alpacaMarketType)
+    assertEquals("us", cfg.alpacaCryptoLocation)
     assertEquals("torghut.trades.v1", cfg.topics.trades)
+  }
+
+  @Test
+  fun `supports crypto market type`() {
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols?assetClass=crypto",
+          "ALPACA_MARKET_TYPE" to "crypto",
+        ),
+      )
+
+    assertEquals(AlpacaMarketType.CRYPTO, cfg.alpacaMarketType)
+    assertEquals("us", cfg.alpacaCryptoLocation)
+  }
+
+  @Test
+  fun `supports crypto location override`() {
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols?assetClass=crypto",
+          "ALPACA_MARKET_TYPE" to "crypto",
+          "ALPACA_CRYPTO_LOCATION" to "eu-1",
+        ),
+      )
+
+    assertEquals(AlpacaMarketType.CRYPTO, cfg.alpacaMarketType)
+    assertEquals("eu-1", cfg.alpacaCryptoLocation)
+  }
+
+  @Test
+  fun `rejects unknown crypto location`() {
+    assertFailsWith<IllegalStateException> {
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+          "ALPACA_MARKET_TYPE" to "crypto",
+          "ALPACA_CRYPTO_LOCATION" to "moon-1",
+        ),
+      )
+    }
+  }
+
+  @Test
+  fun `rejects unknown market type`() {
+    assertFailsWith<IllegalStateException> {
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+          "ALPACA_MARKET_TYPE" to "futures",
+        ),
+      )
+    }
   }
 
   @Test

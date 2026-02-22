@@ -31,11 +31,24 @@ class RiskEngine:
         execution_advisor: Mapping[str, Any] | None = None,
     ) -> RiskCheckResult:
         reasons: list[str] = []
+        crypto_symbol = _is_crypto_symbol(decision.symbol)
 
         if not settings.trading_enabled:
             reasons.append("trading_disabled")
         if settings.trading_mode == "live" and not settings.trading_live_enabled:
             reasons.append("live_trading_disabled")
+        if crypto_symbol and not settings.trading_ws_crypto_enabled:
+            reasons.append("crypto_ws_disabled")
+        if crypto_symbol and not settings.trading_universe_crypto_enabled:
+            reasons.append("crypto_universe_disabled")
+        if crypto_symbol and not settings.trading_crypto_enabled:
+            reasons.append("crypto_trading_disabled")
+        if (
+            crypto_symbol
+            and settings.trading_mode == "live"
+            and not settings.trading_crypto_live_enabled
+        ):
+            reasons.append("crypto_live_trading_disabled")
 
         if not strategy.enabled:
             reasons.append("strategy_disabled")
@@ -184,6 +197,10 @@ def _is_short_increasing(action: str, qty: Decimal, position_qty: Decimal) -> bo
     if position_qty <= 0:
         return True
     return qty > position_qty
+
+
+def _is_crypto_symbol(symbol: str) -> bool:
+    return "/" in symbol
 
 
 def _optional_decimal(value: Optional[Decimal | str | float]) -> Optional[Decimal]:
