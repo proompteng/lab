@@ -39,6 +39,7 @@ class TestLlmEvaluation(TestCase):
                 timeframe="1Min",
                 decision_json={"symbol": "AAPL", "action": "buy", "qty": "1"},
                 status="planned",
+                created_at=datetime(2026, 2, 21, 12, 0, tzinfo=timezone.utc),
             )
             session.add(decision)
             session.commit()
