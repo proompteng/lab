@@ -188,8 +188,9 @@ describe('github review ingest', () => {
     const store = requireStore()
     const snapshotMock = globalState.__githubWorktreeSnapshotMock
     if (!snapshotMock) throw new Error('Expected github worktree snapshot mock')
-
-    snapshotMock.mockRejectedValue(new Error('Unable to resolve git ref: origin/missing-branch'))
+    ;(snapshotMock as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Unable to resolve git ref: origin/missing-branch'),
+    )
     ;(store.getPrWorktree as ReturnType<typeof vi.fn>).mockResolvedValue({
       repository: 'proompteng/lab',
       prNumber: 3001,
