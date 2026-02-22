@@ -96,14 +96,15 @@ spec:
                     - dockerd
                     - --host=unix:///var/run/docker.sock
                     - --group=$(DOCKER_GROUP_GID)
+                    - --max-concurrent-uploads=8
                   resources:
                     requests:
-                      cpu: "2"
-                      memory: "4Gi"
+                      cpu: "4"
+                      memory: "8Gi"
                       ephemeral-storage: "30Gi"
                     limits:
-                      cpu: "6"
-                      memory: "8Gi"
+                      cpu: "12"
+                      memory: "16Gi"
                       ephemeral-storage: "50Gi"
                   env:
                     - name: DOCKER_GROUP_GID
