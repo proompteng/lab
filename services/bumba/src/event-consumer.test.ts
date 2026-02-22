@@ -9,6 +9,7 @@ const ENV_KEYS = [
   'BUMBA_GITHUB_EVENT_BATCH_SIZE',
   'BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS',
   'BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES',
+  'BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS',
   'TEMPORAL_TASK_QUEUE',
   'BUMBA_WORKSPACE_ROOT',
   'CODEX_CWD',
@@ -101,6 +102,7 @@ test('resolveConsumerConfig reads environment overrides', () => {
   process.env.BUMBA_GITHUB_EVENT_BATCH_SIZE = '11'
   process.env.BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS = '55'
   process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES = '3'
+  process.env.BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS = '600000'
   process.env.TEMPORAL_TASK_QUEUE = 'jangar'
   process.env.BUMBA_WORKSPACE_ROOT = '/workspace/lab'
 
@@ -111,6 +113,7 @@ test('resolveConsumerConfig reads environment overrides', () => {
   expect(config.batchSize).toBe(11)
   expect(config.maxEventFileTargets).toBe(55)
   expect(config.maxDispatchFailures).toBe(3)
+  expect(config.nonterminalIngestionStaleMs).toBe(600000)
   expect(config.taskQueue).toBe('jangar')
   expect(config.repoRoot).toBe('/workspace/lab')
 })
