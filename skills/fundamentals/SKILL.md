@@ -1,3 +1,8 @@
+---
+name: fundamentals
+description: Produce normalized fundamentals factors and deltas for one symbol.
+---
+
 # fundamentals
 
 Produce normalized fundamentals factors and deltas for one symbol.

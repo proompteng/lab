@@ -1,3 +1,8 @@
+---
+name: news-sentiment
+description: Extract structured, source-attributed sentiment context for one symbol.
+---
+
 # news-sentiment
 
 Extract structured, source-attributed sentiment context for one symbol.
