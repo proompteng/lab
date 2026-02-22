@@ -38,7 +38,6 @@ jobs:
           GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -euo pipefail
@@ -46,7 +45,6 @@ jobs:
           echo "eligible=false" >> "$GITHUB_OUTPUT"
           echo "reason=not-evaluated" >> "$GITHUB_OUTPUT"
 
-          allowed_authors=('app/github-actions' 'github-actions[bot]')
           allowed_paths=('argocd/applications/torghut/knative-service.yaml')
 
           contains() {
@@ -62,11 +60,6 @@ jobs:
 
           if [ "${PR_HEAD_REPO}" != "${GH_REPO}" ]; then
             echo "reason=head-not-from-same-repo" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if ! contains "${PR_AUTHOR}" "${allowed_authors[@]}"; then
-            echo "reason=author-not-allowlisted:${PR_AUTHOR}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
