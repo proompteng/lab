@@ -59,6 +59,7 @@ class ForwarderEndpointsTest {
     assertEquals("wss://stream.data.alpaca.markets/v2/iex", alpacaMarketDataStreamUrl(cfg))
     assertEquals("https://data.alpaca.markets/v2/stocks/bars", alpacaBarsBackfillUrl(cfg))
     assertTrue(alpacaBarsBackfillNeedsFeed(cfg))
+    assertEquals(listOf("trades", "quotes", "bars", "updatedBars"), alpacaMarketDataChannels(cfg))
   }
 
   @Test
@@ -67,6 +68,7 @@ class ForwarderEndpointsTest {
     assertEquals("wss://stream.data.alpaca.markets/v1beta3/crypto/us", alpacaMarketDataStreamUrl(cfg))
     assertEquals("https://data.alpaca.markets/v1beta3/crypto/us/bars", alpacaBarsBackfillUrl(cfg))
     assertFalse(alpacaBarsBackfillNeedsFeed(cfg))
+    assertEquals(listOf("trades", "quotes", "bars"), alpacaMarketDataChannels(cfg))
   }
 
   @Test

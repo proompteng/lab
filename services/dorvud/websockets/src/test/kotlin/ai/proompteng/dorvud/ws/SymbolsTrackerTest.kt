@@ -65,4 +65,18 @@ class SymbolsTrackerTest {
       assertEquals(listOf("TSLA", "MSFT"), second.symbols)
       assertTrue(second.hadError)
     }
+
+  @Test
+  fun `keeps last known when fetch returns empty list`() =
+    runBlocking {
+      val tracker =
+        SymbolsTracker(
+          listOf("BTC/USD", "ETH/USD", "SOL/USD"),
+          fetcher = { emptyList() },
+        )
+
+      val result = tracker.refresh()
+      assertEquals(listOf("BTC/USD", "ETH/USD", "SOL/USD"), result.symbols)
+      assertTrue(result.hadError)
+    }
 }

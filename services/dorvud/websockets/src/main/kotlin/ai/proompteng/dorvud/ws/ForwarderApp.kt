@@ -77,6 +77,12 @@ internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
 
 internal fun alpacaBarsBackfillNeedsFeed(config: ForwarderConfig): Boolean = config.alpacaMarketType == AlpacaMarketType.EQUITY
 
+internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> =
+  when (config.alpacaMarketType) {
+    AlpacaMarketType.EQUITY -> listOf("trades", "quotes", "bars", "updatedBars")
+    AlpacaMarketType.CRYPTO -> listOf("trades", "quotes", "bars")
+  }
+
 class ForwarderApp(
   private val config: ForwarderConfig,
   private val producerFactory: (ForwarderConfig) -> KafkaProducer<String, String> = { cfg -> buildProducer(cfg.kafka) },
@@ -380,15 +386,13 @@ class ForwarderApp(
 
       suspend fun applySubscribe(symbols: List<String>) {
         if (symbols.isEmpty()) return
+        val channels = alpacaMarketDataChannels(config)
         symbols.chunked(config.subscribeBatchSize).forEach { batch ->
           val subscribe =
             buildJsonObject {
               put("action", "subscribe")
               val symbolsJson = buildJsonArray { batch.forEach { add(JsonPrimitive(it)) } }
-              put("trades", symbolsJson)
-              put("quotes", symbolsJson)
-              put("bars", symbolsJson)
-              put("updatedBars", symbolsJson)
+              channels.forEach { channel -> put(channel, symbolsJson) }
             }
           sendSerialized(subscribe)
         }
@@ -396,15 +400,13 @@ class ForwarderApp(
 
       suspend fun applyUnsubscribe(symbols: List<String>) {
         if (symbols.isEmpty()) return
+        val channels = alpacaMarketDataChannels(config)
         symbols.chunked(config.subscribeBatchSize).forEach { batch ->
           val unsubscribe =
             buildJsonObject {
               put("action", "unsubscribe")
               val symbolsJson = buildJsonArray { batch.forEach { add(JsonPrimitive(it)) } }
-              put("trades", symbolsJson)
-              put("quotes", symbolsJson)
-              put("bars", symbolsJson)
-              put("updatedBars", symbolsJson)
+              channels.forEach { channel -> put(channel, symbolsJson) }
             }
           sendSerialized(unsubscribe)
         }
