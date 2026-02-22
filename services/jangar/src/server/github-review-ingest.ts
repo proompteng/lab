@@ -354,13 +354,14 @@ const maybeRefreshWorktreeSnapshot = async (
   },
 ) => {
   if (!input.headRef || !input.baseRef) return
+  const { headRef, baseRef } = input
   const existing = await store.getPrWorktree({ repository: input.repository, prNumber: input.prNumber })
   if (existing?.headSha && input.headSha && existing.headSha === input.headSha) return
   const refreshKey = buildWorktreeRefreshKey({
     repository: input.repository,
     prNumber: input.prNumber,
-    headRef: input.headRef,
-    baseRef: input.baseRef,
+    headRef,
+    baseRef,
   })
   if (hasFreshWorktreeRefreshFailure(refreshKey)) return
 
@@ -375,8 +376,8 @@ const maybeRefreshWorktreeSnapshot = async (
       await getWorktreeSnapshot()({
         repository: input.repository,
         prNumber: input.prNumber,
-        headRef: input.headRef,
-        baseRef: input.baseRef,
+        headRef,
+        baseRef,
       })
       clearWorktreeRefreshFailureTimeout(refreshKey)
       worktreeRefreshFailures.delete(refreshKey)

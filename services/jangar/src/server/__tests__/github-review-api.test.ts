@@ -156,19 +156,7 @@ describe('github review api routes', () => {
   })
 
   it('deduplicates pull file refreshes while one snapshot refresh is in flight', async () => {
-    let resolveRefresh:
-      | ((value: {
-          repository: string
-          prNumber: number
-          commitSha: string
-          baseSha: string
-          worktreeName: string
-          worktreePath: string
-          fileCount: number
-        }) => void)
-      | null = null
-
-    const refreshResult = new Promise<{
+    type RefreshResult = {
       repository: string
       prNumber: number
       commitSha: string
@@ -176,7 +164,10 @@ describe('github review api routes', () => {
       worktreeName: string
       worktreePath: string
       fileCount: number
-    }>((resolve) => {
+    }
+    let resolveRefresh!: (value: RefreshResult) => void
+
+    const refreshResult = new Promise<RefreshResult>((resolve) => {
       resolveRefresh = resolve
     })
     refreshWorktreeSnapshotMock.mockReturnValue(refreshResult)
@@ -224,7 +215,6 @@ describe('github review api routes', () => {
     await expect(responseB.json()).resolves.toMatchObject({ ok: true, files: [], refreshing: true })
     expect(refreshWorktreeSnapshotMock).toHaveBeenCalledTimes(1)
 
-    if (!resolveRefresh) throw new Error('Expected snapshot resolver')
     resolveRefresh({
       repository: 'proompteng/lab',
       prNumber: 7001,
