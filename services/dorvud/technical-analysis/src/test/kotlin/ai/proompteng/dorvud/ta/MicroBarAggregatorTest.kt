@@ -23,7 +23,7 @@ class MicroBarAggregatorTest {
         channel = "trades",
         symbol = "TEST",
         seq = 1,
-        payload = TradePayload(p = 100.0, s = 10, t = now),
+        payload = TradePayload(p = 100.0, s = 10.0, t = now),
         isFinal = true,
         source = "unit",
         window = Window(size = "PT1S", step = "PT1S", start = now.toString(), end = now.plusSeconds(1).toString()),

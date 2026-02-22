@@ -544,8 +544,8 @@ private fun signalsStatementBuilder(): JdbcStatementBuilder<Envelope<TaSignalsPa
     setNullableDouble(statement, 23, payload.imbalance?.spread)
     setNullableDouble(statement, 24, payload.imbalance?.bid_px)
     setNullableDouble(statement, 25, payload.imbalance?.ask_px)
-    setNullableLong(statement, 26, payload.imbalance?.bid_sz)
-    setNullableLong(statement, 27, payload.imbalance?.ask_sz)
+    setNullableLong(statement, 26, payload.imbalance?.bid_sz?.toLong())
+    setNullableLong(statement, 27, payload.imbalance?.ask_sz?.toLong())
     setNullableDouble(statement, 28, payload.vol_realized?.w60s)
   }
 
@@ -984,7 +984,7 @@ private data class BucketState(
         high = trade.p,
         low = trade.p,
         close = trade.p,
-        volume = trade.s.toDouble(),
+        volume = trade.s,
         vwapNumerator = trade.p * trade.s,
         count = 1,
       )

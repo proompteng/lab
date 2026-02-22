@@ -29,7 +29,7 @@ class AlpacaBarMappingTest {
           "h": 12.0,
           "l": 9.0,
           "c": 11.5,
-          "v": 500,
+          "v": 500.25,
           "vw": 10.8,
           "n": 12,
           "t": "2025-01-01T00:00:00Z"
@@ -47,7 +47,7 @@ class AlpacaBarMappingTest {
     assertEquals(12.0, micro.h)
     assertEquals(9.0, micro.l)
     assertEquals(11.5, micro.c)
-    assertEquals(500.0, micro.v)
+    assertEquals(500.25, micro.v)
     assertEquals(10.8, micro.vwap)
     assertEquals(12L, micro.count)
     assertEquals(Instant.parse("2025-01-01T00:00:00Z"), micro.t)

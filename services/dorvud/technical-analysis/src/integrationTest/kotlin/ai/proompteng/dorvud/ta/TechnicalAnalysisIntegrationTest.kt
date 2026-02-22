@@ -127,7 +127,7 @@ class TechnicalAnalysisIntegrationTest {
             channel = "trades",
             symbol = "TEST",
             seq = idx.toLong(),
-            payload = TradePayload(p = 100.0 + idx, s = 10, t = now.plusSeconds(idx.toLong())),
+            payload = TradePayload(p = 100.0 + idx, s = 10.0, t = now.plusSeconds(idx.toLong())),
             isFinal = true,
             source = "it",
             window =

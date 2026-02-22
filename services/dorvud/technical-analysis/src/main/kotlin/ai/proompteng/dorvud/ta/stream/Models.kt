@@ -10,7 +10,7 @@ import java.time.Instant
 @Serializable
 data class TradePayload(
   val p: Double,
-  val s: Long,
+  val s: Double,
   @Serializable(with = InstantIsoSerializer::class)
   val t: Instant,
 )
@@ -18,9 +18,9 @@ data class TradePayload(
 @Serializable
 data class QuotePayload(
   val bp: Double,
-  val bs: Long,
+  val bs: Double,
   val ap: Double,
-  val `as`: Long,
+  val `as`: Double,
   @Serializable(with = InstantIsoSerializer::class)
   val t: Instant,
 )
@@ -36,7 +36,7 @@ data class AlpacaBarPayload(
   @SerialName("c")
   val close: Double,
   @SerialName("v")
-  val volume: Long,
+  val volume: Double,
   @SerialName("vw")
   val vwap: Double? = null,
   @SerialName("n")
@@ -110,8 +110,8 @@ data class Imbalance(
   val spread: Double,
   val bid_px: Double,
   val ask_px: Double,
-  val bid_sz: Long,
-  val ask_sz: Long,
+  val bid_sz: Double,
+  val ask_sz: Double,
 )
 
 @Serializable
@@ -145,7 +145,7 @@ fun AlpacaBarPayload.toMicroBarPayload(): MicroBarPayload =
     h = high,
     l = low,
     c = close,
-    v = volume.toDouble(),
+    v = volume,
     vwap = vwap,
     count = tradeCount ?: 0L,
     t = Instant.parse(timestamp),
