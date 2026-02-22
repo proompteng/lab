@@ -22,6 +22,7 @@ Temporal worker that enriches repository files using AST context + self-hosted m
   `OPENAI_EMBEDDING_RETRY_MAX_MS`, `OPENAI_EMBEDDING_RETRY_BACKOFF`, `OPENAI_EMBEDDING_BATCH_WINDOW_MS`,
   `OPENAI_EMBEDDING_MAX_BATCH_CHARS`.
 - `enrichRepository` keeps 24 child workflows in flight by default; if `maxFiles` is set it becomes the default concurrency. Override via `childWorkflowConcurrency` input or `--child-workflow-concurrency` in the CLI.
+- Incident runbook: `docs/runbooks/bumba-temporal-failure-modes.md`.
 
 ## CLI helpers
 - `bun run packages/scripts/src/bumba/enrich-file.ts --file <path> --wait`
