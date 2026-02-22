@@ -127,7 +127,6 @@ import {
   type DescribeScheduleRequest,
   DescribeScheduleRequestSchema,
   type DescribeScheduleResponse,
-  type DescribeWorkerDeploymentRequest,
   DescribeWorkerDeploymentRequestSchema,
   type DescribeWorkerDeploymentResponse,
   type DescribeWorkerRequest,
@@ -175,13 +174,11 @@ import {
   type SetCurrentDeploymentRequest,
   SetCurrentDeploymentRequestSchema,
   type SetCurrentDeploymentResponse,
-  type SetWorkerDeploymentCurrentVersionRequest,
   SetWorkerDeploymentCurrentVersionRequestSchema,
   type SetWorkerDeploymentCurrentVersionResponse,
   type SetWorkerDeploymentManagerRequest,
   SetWorkerDeploymentManagerRequestSchema,
   type SetWorkerDeploymentManagerResponse,
-  type SetWorkerDeploymentRampingVersionRequest,
   SetWorkerDeploymentRampingVersionRequestSchema,
   type SetWorkerDeploymentRampingVersionResponse,
   type SignalWithStartWorkflowExecutionResponse,
@@ -496,13 +493,41 @@ export interface TemporalWorkerOperationsClient {
   ): Promise<UpdateWorkerVersioningRulesResponse>
 }
 
+export interface DescribeWorkerDeploymentInput {
+  readonly namespace?: string
+  readonly deploymentName: string
+}
+
+export interface SetWorkerDeploymentCurrentVersionInput {
+  readonly namespace?: string
+  readonly deploymentName: string
+  readonly buildId: string
+  readonly version?: string
+  readonly conflictToken?: Uint8Array
+  readonly identity?: string
+  readonly ignoreMissingTaskQueues?: boolean
+  readonly allowNoPollers?: boolean
+}
+
+export interface SetWorkerDeploymentRampingVersionInput {
+  readonly namespace?: string
+  readonly deploymentName: string
+  readonly buildId: string
+  readonly percentage: number
+  readonly version?: string
+  readonly conflictToken?: Uint8Array
+  readonly identity?: string
+  readonly ignoreMissingTaskQueues?: boolean
+  readonly allowNoPollers?: boolean
+}
+
 export interface TemporalDeploymentClient {
   listWorkerDeployments(
     request?: Omit<ListWorkerDeploymentsRequest, 'namespace'> & { namespace?: string },
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<ListWorkerDeploymentsResponse>
   describeWorkerDeployment(
-    request: Omit<DescribeWorkerDeploymentRequest, 'namespace'> & { namespace?: string },
+    request: DescribeWorkerDeploymentInput,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<DescribeWorkerDeploymentResponse>
   listDeployments(
@@ -526,11 +551,11 @@ export interface TemporalDeploymentClient {
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<GetDeploymentReachabilityResponse>
   setWorkerDeploymentCurrentVersion(
-    request: Omit<SetWorkerDeploymentCurrentVersionRequest, 'namespace'> & { namespace?: string },
+    request: SetWorkerDeploymentCurrentVersionInput,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<SetWorkerDeploymentCurrentVersionResponse>
   setWorkerDeploymentRampingVersion(
-    request: Omit<SetWorkerDeploymentRampingVersionRequest, 'namespace'> & { namespace?: string },
+    request: SetWorkerDeploymentRampingVersionInput,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<SetWorkerDeploymentRampingVersionResponse>
   updateWorkerDeploymentVersionMetadata(
@@ -2176,7 +2201,7 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async describeWorkerDeployment(
-    request: Omit<DescribeWorkerDeploymentRequest, 'namespace'> & { namespace?: string },
+    request: DescribeWorkerDeploymentInput,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<DescribeWorkerDeploymentResponse> {
     return this.#instrumentOperation(
@@ -2184,7 +2209,10 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(DescribeWorkerDeploymentRequestSchema, { ...request, namespace })
+        const payload = create(DescribeWorkerDeploymentRequestSchema, {
+          namespace,
+          deploymentName: request.deploymentName,
+        })
         return await this.executeRpc(
           'describeWorkerDeployment',
           (rpcOptions) => this.workflowService.describeWorkerDeployment(payload, rpcOptions),
@@ -2296,7 +2324,7 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async setWorkerDeploymentCurrentVersion(
-    request: Omit<SetWorkerDeploymentCurrentVersionRequest, 'namespace'> & { namespace?: string },
+    request: SetWorkerDeploymentCurrentVersionInput,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<SetWorkerDeploymentCurrentVersionResponse> {
     return this.#instrumentOperation(
@@ -2304,7 +2332,16 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(SetWorkerDeploymentCurrentVersionRequestSchema, { ...request, namespace })
+        const payload = create(SetWorkerDeploymentCurrentVersionRequestSchema, {
+          namespace,
+          deploymentName: request.deploymentName,
+          buildId: request.buildId,
+          version: request.version ?? '',
+          conflictToken: request.conflictToken ?? new Uint8Array(),
+          identity: request.identity ?? '',
+          ignoreMissingTaskQueues: request.ignoreMissingTaskQueues ?? false,
+          allowNoPollers: request.allowNoPollers ?? false,
+        })
         return await this.executeRpc(
           'setWorkerDeploymentCurrentVersion',
           (rpcOptions) => this.workflowService.setWorkerDeploymentCurrentVersion(payload, rpcOptions),
@@ -2316,7 +2353,7 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async setWorkerDeploymentRampingVersion(
-    request: Omit<SetWorkerDeploymentRampingVersionRequest, 'namespace'> & { namespace?: string },
+    request: SetWorkerDeploymentRampingVersionInput,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<SetWorkerDeploymentRampingVersionResponse> {
     return this.#instrumentOperation(
@@ -2324,7 +2361,17 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(SetWorkerDeploymentRampingVersionRequestSchema, { ...request, namespace })
+        const payload = create(SetWorkerDeploymentRampingVersionRequestSchema, {
+          namespace,
+          deploymentName: request.deploymentName,
+          buildId: request.buildId,
+          percentage: request.percentage,
+          version: request.version ?? '',
+          conflictToken: request.conflictToken ?? new Uint8Array(),
+          identity: request.identity ?? '',
+          ignoreMissingTaskQueues: request.ignoreMissingTaskQueues ?? false,
+          allowNoPollers: request.allowNoPollers ?? false,
+        })
         return await this.executeRpc(
           'setWorkerDeploymentRampingVersion',
           (rpcOptions) => this.workflowService.setWorkerDeploymentRampingVersion(payload, rpcOptions),
