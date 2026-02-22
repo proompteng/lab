@@ -149,14 +149,16 @@ class LeanExecutionAdapter:
         stop_price: Optional[float] = None,
         extra_params: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
+        extra_params_payload: dict[str, Any] = dict(extra_params or {})
+        client_order_id = extra_params_payload.get('client_order_id')
         correlation_id = f'torghut-{uuid4().hex[:20]}'
         idempotency_key = str(
-            (extra_params or {}).get('client_order_id')
+            client_order_id
             or f'{symbol}:{side}:{qty}:{order_type}:{time_in_force}:{uuid4().hex[:8]}'
         )
         self.last_correlation_id = correlation_id
         self.last_idempotency_key = idempotency_key
-        body = {
+        body: dict[str, Any] = {
             'symbol': symbol,
             'side': side,
             'qty': qty,
@@ -164,7 +166,7 @@ class LeanExecutionAdapter:
             'time_in_force': time_in_force,
             'limit_price': limit_price,
             'stop_price': stop_price,
-            'extra_params': extra_params or {},
+            'extra_params': extra_params_payload,
         }
         if settings.trading_lean_shadow_execution_enabled and not settings.trading_lean_lane_disable_switch:
             try:
@@ -184,9 +186,10 @@ class LeanExecutionAdapter:
                     operation='shadow_simulate',
                 )
                 if isinstance(shadow_payload, Mapping):
-                    body['extra_params']['_lean_shadow'] = dict(cast(Mapping[str, Any], shadow_payload))
-            except Exception as exc:
-                self._record_observability_failure('shadow_simulate', exc)
+                    extra_params_payload['_lean_shadow'] = dict(cast(Mapping[str, Any], shadow_payload))
+            except Exception:
+                # _request_json already records observability failures for this operation.
+                pass
         payload = self._with_fallback(
             op='submit_order',
             request=lambda: self._validate_submit_payload(
@@ -201,7 +204,7 @@ class LeanExecutionAdapter:
                     operation='submit_order',
                 ),
                 adapter='lean',
-                expected_client_order_id=(extra_params or {}).get('client_order_id'),
+                expected_client_order_id=client_order_id,
                 expected_symbol=symbol,
             ),
             fallback=lambda: self._fallback_submit(
@@ -216,7 +219,7 @@ class LeanExecutionAdapter:
             ),
         )
         payload['_execution_route_expected'] = 'lean'
-        shadow_event = body['extra_params'].get('_lean_shadow')
+        shadow_event = extra_params_payload.get('_lean_shadow')
         if isinstance(shadow_event, Mapping):
             payload['_lean_shadow'] = dict(cast(Mapping[str, Any], shadow_event))
         payload['_execution_correlation_id'] = correlation_id

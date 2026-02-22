@@ -79,6 +79,7 @@ class LeanLaneManager:
             raise RuntimeError('lean_backtest_not_found')
 
         payload = self._request_runner('GET', f'/v1/backtests/{backtest_id}')
+        previous_status = row.status
         row.status = str(payload.get('status') or row.status)
         result = payload.get('result')
         if isinstance(result, Mapping):
@@ -92,7 +93,10 @@ class LeanLaneManager:
             if isinstance(deterministic, bool):
                 row.deterministic_replay_passed = deterministic
         row.failure_taxonomy = self._derive_backtest_failure_taxonomy(row)
-        if row.status == 'completed':
+        if (
+            row.status == 'completed'
+            and (previous_status != 'completed' or row.completed_at is None)
+        ):
             row.completed_at = datetime.now(timezone.utc)
         session.add(row)
         session.commit()
@@ -241,7 +245,10 @@ class LeanLaneManager:
             raise RuntimeError(f'lean_runner_network_error:{exc.reason}') from exc
         if not raw:
             return {}
-        parsed = json.loads(raw)
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f'lean_runner_invalid_json:{raw[:200]}') from exc
         if not isinstance(parsed, Mapping):
             return {}
         return {str(key): value for key, value in cast(Mapping[object, Any], parsed).items()}

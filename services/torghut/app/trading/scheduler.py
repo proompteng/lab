@@ -1291,8 +1291,10 @@ class TradingPipeline:
                         }
                     },
                 )
-            if isinstance(execution.raw_order, Mapping):
-                raw_order = cast(Mapping[str, Any], execution.raw_order)
+            raw_order_payload = getattr(execution, 'raw_order', None)
+            if isinstance(raw_order_payload, Mapping):
+                raw_order_source = cast(Mapping[object, Any], raw_order_payload)
+                raw_order: dict[str, Any] = {str(key): value for key, value in raw_order_source.items()}
                 shadow_event = raw_order.get('_lean_shadow')
                 if isinstance(shadow_event, Mapping):
                     shadow_map = cast(Mapping[str, Any], shadow_event)

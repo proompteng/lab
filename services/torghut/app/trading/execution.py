@@ -7,6 +7,7 @@ import logging
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Optional, cast
 
 from sqlalchemy import or_, select
@@ -463,7 +464,7 @@ def _persist_lean_shadow_event(
     session.add(event)
 
 
-def _optional_decimal(value: Any) -> Any:
+def _optional_decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
     try:

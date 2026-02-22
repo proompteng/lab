@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Any, cast
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
@@ -213,10 +214,14 @@ def submit_lean_backtest(
     config_payload = payload.get("config")
     if not isinstance(config_payload, dict):
         raise HTTPException(status_code=400, detail="config_must_be_object")
+    config = {
+        str(key): value
+        for key, value in cast(dict[object, Any], config_payload).items()
+    }
     try:
         row = LEAN_LANE_MANAGER.submit_backtest(
             session,
-            config=config_payload,
+            config=config,
             lane=lane,
             requested_by=requested_by,
             correlation_id=f"torghut-backtest-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",

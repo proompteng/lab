@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -169,8 +170,16 @@ class TestExecutionAdapters(TestCase):
 
     def test_lean_submit_contract_violation_triggers_fallback(self) -> None:
         class InvalidLeanAdapter(LeanExecutionAdapter):
-            def _request_json(self, method: str, path: str, payload: dict[str, str] | None = None):  # type: ignore[override]
-                _ = (method, path, payload)
+            def _request_json(  # type: ignore[override]
+                self,
+                method: str,
+                path: str,
+                payload: dict[str, Any] | None = None,
+                *,
+                headers: dict[str, str] | None = None,
+                operation: str = 'request_json',
+            ):
+                _ = (method, path, payload, headers, operation)
                 return {'status': 'accepted'}  # missing id/symbol/qty contract keys
 
         fallback = FakeFallbackAdapter()
@@ -193,8 +202,16 @@ class TestExecutionAdapters(TestCase):
 
     def test_lean_get_order_contract_violation_triggers_fallback(self) -> None:
         class InvalidLeanAdapter(LeanExecutionAdapter):
-            def _request_json(self, method: str, path: str, payload: dict[str, str] | None = None):  # type: ignore[override]
-                _ = (method, path, payload)
+            def _request_json(  # type: ignore[override]
+                self,
+                method: str,
+                path: str,
+                payload: dict[str, Any] | None = None,
+                *,
+                headers: dict[str, str] | None = None,
+                operation: str = 'request_json',
+            ):
+                _ = (method, path, payload, headers, operation)
                 return {'symbol': 'AAPL'}  # missing id/status
 
         fallback = FakeFallbackAdapter()
@@ -218,8 +235,16 @@ class TestExecutionAdapters(TestCase):
 
     def test_lean_list_orders_contract_violation_triggers_fallback(self) -> None:
         class InvalidLeanAdapter(LeanExecutionAdapter):
-            def _request_json(self, method: str, path: str, payload: dict[str, str] | None = None):  # type: ignore[override]
-                _ = (method, path, payload)
+            def _request_json(  # type: ignore[override]
+                self,
+                method: str,
+                path: str,
+                payload: dict[str, Any] | None = None,
+                *,
+                headers: dict[str, str] | None = None,
+                operation: str = 'request_json',
+            ):
+                _ = (method, path, payload, headers, operation)
                 return {'orders': [{'symbol': 'AAPL'}]}  # missing id/status
 
         fallback = FakeFallbackAdapter()
@@ -243,8 +268,16 @@ class TestExecutionAdapters(TestCase):
 
     def test_lean_submit_symbol_mismatch_triggers_fallback(self) -> None:
         class InvalidLeanAdapter(LeanExecutionAdapter):
-            def _request_json(self, method: str, path: str, payload: dict[str, str] | None = None):  # type: ignore[override]
-                _ = (method, path, payload)
+            def _request_json(  # type: ignore[override]
+                self,
+                method: str,
+                path: str,
+                payload: dict[str, Any] | None = None,
+                *,
+                headers: dict[str, str] | None = None,
+                operation: str = 'request_json',
+            ):
+                _ = (method, path, payload, headers, operation)
                 return {
                     'id': 'lean-order-1',
                     'status': 'accepted',
