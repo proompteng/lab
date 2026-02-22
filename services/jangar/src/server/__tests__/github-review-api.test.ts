@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  getPullFilesHandler,
   getPullHandler,
   getPullsHandler,
-  getPullFilesHandler,
-  refreshPullFilesHandler,
   mergePullHandler,
+  refreshPullFilesHandler,
   resolveThreadHandler,
   submitReviewHandler,
 } from '~/server/github-review-handlers'
@@ -156,15 +156,17 @@ describe('github review api routes', () => {
   })
 
   it('deduplicates pull file refreshes while one snapshot refresh is in flight', async () => {
-    let resolveRefresh: ((value: {
-      repository: string
-      prNumber: number
-      commitSha: string
-      baseSha: string
-      worktreeName: string
-      worktreePath: string
-      fileCount: number
-    }) => void) | null = null
+    let resolveRefresh:
+      | ((value: {
+          repository: string
+          prNumber: number
+          commitSha: string
+          baseSha: string
+          worktreeName: string
+          worktreePath: string
+          fileCount: number
+        }) => void)
+      | null = null
 
     const refreshResult = new Promise<{
       repository: string
@@ -236,7 +238,9 @@ describe('github review api routes', () => {
   })
 
   it('returns refresh-in-progress when a prior refresh hit missing git refs', async () => {
-    refreshWorktreeSnapshotMock.mockRejectedValueOnce(new Error('Unable to resolve git ref: origin/feature-refresh-7002'))
+    refreshWorktreeSnapshotMock.mockRejectedValueOnce(
+      new Error('Unable to resolve git ref: origin/feature-refresh-7002'),
+    )
     const store = {
       getPull: vi.fn(async () => ({
         pull: {
