@@ -37,6 +37,26 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "true"
+              - name: metrics-server
+                path: manifests/overlays/release-ha-1.21+
+                repoURL: https://github.com/kubernetes-sigs/metrics-server.git
+                targetRevision: v0.8.1
+                namespace: kube-system
+                renderWithLovely: false
+                kustomize:
+                  patches:
+                    - target:
+                        kind: Deployment
+                        name: metrics-server
+                        namespace: kube-system
+                      patch: |-
+                        - op: add
+                          path: /spec/template/spec/containers/0/args/-
+                          value: --kubelet-insecure-tls
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
               - name: feature-flags
                 path: argocd/applications/feature-flags
                 namespace: feature-flags
@@ -396,8 +416,8 @@ spec:
       destination:
         namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
       source:
-        repoURL: https://github.com/proompteng/lab.git
-        targetRevision: main
+        repoURL: '{{ if hasKey . "repoURL" }}{{ .repoURL }}{{ else }}https://github.com/proompteng/lab.git{{ end }}'
+        targetRevision: '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
         path: "{{ .path }}"
       syncPolicy:
         syncOptions:
@@ -568,9 +588,10 @@ spec:
     {{- $hasDestServer := hasKey . "destinationServer" -}}
     {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+    {{- $hasKustomize := hasKey . "kustomize" -}}
     {{- $auto := eq .automation "auto" -}}
     {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
-    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS (hasKey . "ignoreDifferences") -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $hasKustomize $auto $hasManagedNS (hasKey . "ignoreDifferences") -}}
     {{- if $needsSpec }}
     spec:
     {{- if or $hasDestServer $hasDestName }}
@@ -583,10 +604,15 @@ spec:
         name: '{{ .destinationName }}'
       {{- end }}
     {{- end }}
-    {{- if $useLovely }}
+    {{- if or $useLovely $hasKustomize }}
       source:
+      {{- if $useLovely }}
         plugin:
           name: lovely
+      {{- end }}
+      {{- if $hasKustomize }}
+        kustomize: {{ toJson .kustomize }}
+      {{- end }}
     {{- end }}
     {{- if or $auto $hasManagedNS }}
       syncPolicy:
