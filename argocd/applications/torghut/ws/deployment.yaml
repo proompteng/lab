@@ -17,7 +17,7 @@ spec:
       labels:
         app: torghut-ws
       annotations:
-        kubectl.kubernetes.io/restartedAt: 2026-02-19T22:59:18.000Z
+        kubectl.kubernetes.io/restartedAt: 2026-02-22T01:05:00.000Z
     spec:
       serviceAccountName: torghut-runtime
       securityContext:
@@ -27,7 +27,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: torghut-ws
-          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:af0d9b811ffb6ecff388351f5e6c970c53fe8bf1623fd30618cabb1a08001c35
+          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:fec40cdba6c8694ec96ece8e542a17ae61b74f5f605ee688bd1a56f27254fa11
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -51,9 +51,9 @@ spec:
                   name: torghut-ws
                   key: password
             - name: TORGHUT_WS_VERSION
-              value: v0.556.1-32-g950a4eb9
+              value: v0.560.0-13-g51bb9aa9
             - name: TORGHUT_WS_COMMIT
-              value: 950a4eb9badc5abab25d45f3c3ec2262ff3f8899
+              value: 51bb9aa97ba608f775da6e1194536ea195ec84ca
           ports:
             - containerPort: 8080
               name: http
