@@ -38,6 +38,35 @@ const defaultEntryPaths = {
 const isInsideRouterMonoRepo = path.basename(path.resolve(repoRoot, '..')) === 'packages'
 const startManifestModuleId = `\0${VIRTUAL_MODULES.startManifest}`
 const startClientEntryId = 'virtual:tanstack-start-client-entry'
+const knownUnusedExternalImportWarnings = [
+  {
+    exporter: '@tanstack/router-core/ssr/server',
+    importer: '@tanstack/start-server-core/dist/esm/index.js',
+    imports: [
+      'createRequestHandler',
+      'defineHandlerCallback',
+      'transformPipeableStreamWithRouter',
+      'transformReadableStreamWithRouter',
+    ],
+  },
+  {
+    exporter: '@tanstack/start-client-core',
+    importer: '@tanstack/start-server-core/dist/esm/frame-protocol.js',
+    imports: ['TSS_CONTENT_TYPE_FRAMED', 'TSS_FRAMED_PROTOCOL_VERSION'],
+  },
+]
+
+const isKnownUnusedExternalImportWarning = (warning: { code?: string; message?: string }): boolean => {
+  if (warning.code !== 'UNUSED_EXTERNAL_IMPORT') return false
+  const message = warning.message ?? ''
+  return knownUnusedExternalImportWarnings.some((knownWarning) => {
+    return (
+      message.includes(`external module "${knownWarning.exporter}"`) &&
+      message.includes(knownWarning.importer) &&
+      knownWarning.imports.every((importName) => message.includes(`"${importName}"`))
+    )
+  })
+}
 
 const isFullUrl = (value: string): boolean => {
   try {
@@ -177,6 +206,10 @@ const config = defineConfig({
     cssMinify: buildMinify,
     rollupOptions: {
       external: ssrExternals,
+      onwarn(warning, warn) {
+        if (isKnownUnusedExternalImportWarning(warning)) return
+        warn(warning)
+      },
     },
   },
   plugins: [
