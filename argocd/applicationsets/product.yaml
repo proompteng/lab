@@ -201,10 +201,10 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 # Keep torghut on client-side apply while recovering from manual kubectl-patch SSA ownership conflicts.
+                # Do not use RespectIgnoreDifferences here: it can prevent nested Knative Service env updates from applying.
                 syncOptions:
                   - CreateNamespace=true
                   - ServerSideApply=false
-                  - RespectIgnoreDifferences=true
                 ignoreDifferences:
                   - group: serving.knative.dev
                     kind: Service
