@@ -8,5 +8,5 @@ metadata:
 data:
   HOST: 0.0.0.0
   PORT: "3000"
-  INNGEST_APP_ID: khoshut-bun
+  INNGEST_APP_ID: khoshut
   INNGEST_BASE_URL: http://inngest.inngest.svc.cluster.local:8288
