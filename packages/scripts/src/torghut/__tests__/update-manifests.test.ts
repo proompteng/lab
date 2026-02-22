@@ -8,9 +8,10 @@ import { __private } from '../update-manifests'
 
 const createFixture = () => {
   const dir = mkdtempSync(join(tmpdir(), 'torghut-manifests-test-'))
-  const manifestPath = join(dir, 'knative-service.yaml')
+  const serviceManifestPath = join(dir, 'knative-service.yaml')
+  const migrationManifestPath = join(dir, 'db-migrations-job.yaml')
   writeFileSync(
-    manifestPath,
+    serviceManifestPath,
     `apiVersion: serving.knative.dev/v1
 kind: Service
 spec:
@@ -30,37 +31,56 @@ spec:
 `,
     'utf8',
   )
-  return { dir, manifestPath }
+  writeFileSync(
+    migrationManifestPath,
+    `apiVersion: batch/v1
+kind: Job
+spec:
+  template:
+    spec:
+      containers:
+        - name: migrate
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
+`,
+    'utf8',
+  )
+  return { dir, serviceManifestPath, migrationManifestPath }
 }
 
 describe('update-manifests', () => {
-  it('updates image digest, rollout timestamp, and metadata env values', () => {
+  it('updates service and migration image digest, rollout timestamp, and metadata env values', () => {
     const fixture = createFixture()
-    const result = __private.updateTorghutManifest({
+    const result = __private.updateTorghutManifests({
       imageName: 'registry.ide-newton.ts.net/lab/torghut',
       digest: 'sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
       version: 'v0.600.0',
       commit: '1234567890abcdef1234567890abcdef12345678',
       rolloutTimestamp: '2026-02-21T04:00:00Z',
-      manifestPath: relative(repoRoot, fixture.manifestPath),
+      manifestPath: relative(repoRoot, fixture.serviceManifestPath),
+      migrationManifestPath: relative(repoRoot, fixture.migrationManifestPath),
     })
 
-    const manifest = readFileSync(fixture.manifestPath, 'utf8')
-    expect(manifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
-    expect(manifest).toContain(
+    const serviceManifest = readFileSync(fixture.serviceManifestPath, 'utf8')
+    const migrationManifest = readFileSync(fixture.migrationManifestPath, 'utf8')
+    expect(serviceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
+    expect(serviceManifest).toContain(
       'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(manifest).toContain('value: v0.600.0')
-    expect(manifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
+    expect(serviceManifest).toContain('value: v0.600.0')
+    expect(serviceManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
+    expect(migrationManifest).toContain(
+      'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
+    )
     expect(result.changed).toBe(true)
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
+    expect(result.changedPaths.length).toBe(2)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
 
-  it('returns changed=false when manifest already matches requested state', () => {
+  it('returns changed=false when manifests already match requested state', () => {
     const fixture = createFixture()
     const options = {
       imageName: 'registry.ide-newton.ts.net/lab/torghut',
@@ -68,11 +88,12 @@ describe('update-manifests', () => {
       version: 'v0.601.0',
       commit: 'abcdefabcdefabcdefabcdefabcdefabcdefabcd',
       rolloutTimestamp: '2026-02-21T05:00:00Z',
-      manifestPath: relative(repoRoot, fixture.manifestPath),
+      manifestPath: relative(repoRoot, fixture.serviceManifestPath),
+      migrationManifestPath: relative(repoRoot, fixture.migrationManifestPath),
     }
 
-    __private.updateTorghutManifest(options)
-    const second = __private.updateTorghutManifest(options)
+    __private.updateTorghutManifests(options)
+    const second = __private.updateTorghutManifests(options)
     expect(second.changed).toBe(false)
 
     rmSync(fixture.dir, { recursive: true, force: true })

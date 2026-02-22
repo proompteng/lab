@@ -215,7 +215,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- argocd/applications/torghut/knative-service.yaml; then
+          if git diff --quiet -- \
+            argocd/applications/torghut/knative-service.yaml \
+            argocd/applications/torghut/db-migrations-job.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -240,6 +242,7 @@ jobs:
           draft: true
           add-paths: |
             argocd/applications/torghut/knative-service.yaml
+            argocd/applications/torghut/db-migrations-job.yaml
           body: |
             ## Summary
             Promote Torghut image into GitOps manifests.
@@ -267,6 +270,7 @@ jobs:
           delete-branch: true
           add-paths: |
             argocd/applications/torghut/knative-service.yaml
+            argocd/applications/torghut/db-migrations-job.yaml
           body: |
             ## Summary
             Promote Torghut image into GitOps manifests.

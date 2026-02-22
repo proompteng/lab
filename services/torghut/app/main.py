@@ -7,18 +7,18 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request as URLRequest, urlopen
 
 from .alpaca_client import TorghutAlpacaClient
 from .config import settings
-from .db import ensure_schema, get_session, ping
+from .db import check_schema_current, ensure_schema, get_session, ping
 from .metrics import render_trading_metrics
 from .models import Execution, ExecutionTCAMetric, TradeDecision
 from .trading import TradingScheduler
@@ -55,6 +55,22 @@ app = FastAPI(title="torghut", lifespan=lifespan)
 app.state.settings = settings
 
 
+@app.exception_handler(SQLAlchemyError)
+def sqlalchemy_exception_handler(
+    _request: Request,
+    exc: SQLAlchemyError,
+) -> JSONResponse:
+    """Convert unhandled DB exceptions into explicit service-unavailable responses."""
+
+    message = str(getattr(exc, "orig", exc)).lower()
+    if "undefinedcolumn" in message or ("column" in message and "does not exist" in message):
+        detail = "database schema mismatch; migrations pending"
+    else:
+        detail = "database unavailable"
+    logger.error("Unhandled database exception: %s", exc)
+    return JSONResponse(status_code=503, content={"detail": detail})
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     """Liveness endpoint for Kubernetes/Knative probes."""
@@ -75,15 +91,28 @@ def root() -> dict[str, str]:
 
 
 @app.get("/db-check")
-def db_check(session: Session = Depends(get_session)) -> dict[str, bool]:
-    """Verify basic database connectivity using the configured DSN."""
+def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
+    """Verify database connectivity and Alembic schema head alignment."""
 
     try:
-        ping(session)
+        schema_status = check_schema_current(session)
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="database unavailable") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not bool(schema_status.get("schema_current")):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "database schema mismatch",
+                **schema_status,
+            },
+        )
 
-    return {"ok": True}
+    return {
+        "ok": True,
+        **schema_status,
+    }
 
 
 @app.get("/trading/status")
@@ -493,7 +522,7 @@ def _check_clickhouse() -> dict[str, object]:
         return {"ok": False, "detail": "clickhouse url missing"}
     query = "SELECT 1 FORMAT JSONEachRow"
     params = {"query": query}
-    request = Request(
+    request = URLRequest(
         f"{settings.trading_clickhouse_url.rstrip('/')}/?{urlencode(params)}",
         headers={"Content-Type": "text/plain"},
     )

@@ -21,7 +21,9 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock README.md ./
+COPY alembic.ini ./
 COPY app ./app
+COPY migrations ./migrations
 RUN /opt/venv/bin/uv sync --frozen --no-dev
 
 
@@ -38,7 +40,9 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
+COPY alembic.ini ./
 COPY app ./app
+COPY migrations ./migrations
 COPY README.md .
 
 RUN groupadd --system torghut && useradd --system --create-home --gid torghut torghut

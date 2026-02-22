@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: torghut-db-migrations
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-db-migrations
+    app.kubernetes.io/part-of: lab
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut-db-migrations
+        app.kubernetes.io/part-of: lab
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          imagePullPolicy: IfNotPresent
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:c141aaa74a60f2c0c426f3bd6d814dfbbe4390e2bf91cec6aadf11b3d4ab3571
+          command:
+            - alembic
+          args:
+            - -c
+            - /app/alembic.ini
+            - upgrade
+            - heads
+          env:
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
