@@ -11,7 +11,6 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from typing import Any
-from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 
