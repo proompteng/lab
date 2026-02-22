@@ -14,6 +14,10 @@ const createFixture = () => {
     serviceManifestPath,
     `apiVersion: serving.knative.dev/v1
 kind: Service
+metadata:
+  annotations:
+    serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
+    serving.knative.dev/lastModifier: admin
 spec:
   template:
     metadata:
@@ -66,6 +70,10 @@ describe('update-manifests', () => {
     expect(serviceManifest).toContain(
       'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
+    expect(serviceManifest).toContain(
+      'serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller',
+    )
+    expect(serviceManifest).not.toContain('serving.knative.dev/lastModifier:')
     expect(serviceManifest).toContain('value: v0.600.0')
     expect(serviceManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(migrationManifest).toContain(

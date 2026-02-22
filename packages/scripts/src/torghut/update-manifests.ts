@@ -84,7 +84,6 @@ const updateTorghutManifest = (options: UpdateManifestsOptions) => {
     `$1${options.commit}`,
     'TORGHUT_COMMIT',
   )
-  updated = updated.replace(/^\s*serving\.knative\.dev\/creator:\s*[^\n]+\n/gm, '')
   updated = updated.replace(/^\s*serving\.knative\.dev\/lastModifier:\s*[^\n]+\n/gm, '')
 
   if (updated !== source) {
