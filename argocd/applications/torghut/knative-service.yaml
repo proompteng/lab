@@ -10,6 +10,7 @@ metadata:
     networking.knative.dev/visibility: cluster-local
   annotations:
     serving.knative.dev/rollout-duration: 10s
+    serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
     argocd.argoproj.io/tracking-id: torghut:serving.knative.dev/Service:torghut/torghut
 spec:
   template:
