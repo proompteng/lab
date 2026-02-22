@@ -85,7 +85,6 @@ jobs:
           JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           JANGAR_IMAGE_PLATFORMS: linux/arm64
           JANGAR_BUILD_CACHE_MODE: min
-          JANGAR_BUILD_CACHE_REF: ''
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
           JANGAR_BUILD_SOURCEMAP: '0'
           JANGAR_BUILD_CI: 'true'
