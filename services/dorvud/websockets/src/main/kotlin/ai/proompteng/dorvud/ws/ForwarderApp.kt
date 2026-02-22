@@ -64,17 +64,18 @@ private val logger = KotlinLogging.logger {}
 internal fun alpacaMarketDataStreamUrl(config: ForwarderConfig): String =
   when (config.alpacaMarketType) {
     AlpacaMarketType.EQUITY -> "${config.alpacaStreamUrl.trimEnd('/')}/v2/${config.alpacaFeed}"
-    AlpacaMarketType.CRYPTO -> "${config.alpacaStreamUrl.trimEnd('/')}/v1beta3/crypto/us"
+    AlpacaMarketType.CRYPTO ->
+      "${config.alpacaStreamUrl.trimEnd('/')}/v1beta3/crypto/${config.alpacaCryptoLocation}"
   }
 
 internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
   when (config.alpacaMarketType) {
     AlpacaMarketType.EQUITY -> "${config.alpacaBaseUrl.trimEnd('/')}/v2/stocks/bars"
-    AlpacaMarketType.CRYPTO -> "${config.alpacaBaseUrl.trimEnd('/')}/v1beta3/crypto/us/bars"
+    AlpacaMarketType.CRYPTO ->
+      "${config.alpacaBaseUrl.trimEnd('/')}/v1beta3/crypto/${config.alpacaCryptoLocation}/bars"
   }
 
-internal fun alpacaBarsBackfillNeedsFeed(config: ForwarderConfig): Boolean =
-  config.alpacaMarketType == AlpacaMarketType.EQUITY
+internal fun alpacaBarsBackfillNeedsFeed(config: ForwarderConfig): Boolean = config.alpacaMarketType == AlpacaMarketType.EQUITY
 
 class ForwarderApp(
   private val config: ForwarderConfig,

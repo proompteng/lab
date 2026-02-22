@@ -88,6 +88,8 @@ spec:
               value: torghut
             - name: TRADING_MODE
               value: live
+            - name: TRADING_ACCOUNT_LABEL
+              value: PA3R2KWBVTJY
             - name: TRADING_LIVE_ENABLED
               value: "true"
             - name: TRADING_SIGNAL_SOURCE
@@ -112,6 +114,10 @@ spec:
               value: "true"
             - name: TRADING_CRYPTO_LIVE_ENABLED
               value: "false"
+            - name: TRADING_WS_CRYPTO_ENABLED
+              value: "true"
+            - name: TRADING_UNIVERSE_CRYPTO_ENABLED
+              value: "true"
             - name: TRADING_LEAN_RUNNER_URL
               value: http://torghut-lean-runner.torghut.svc.cluster.local:8088
             - name: TRADING_LEAN_RUNNER_TIMEOUT_SECONDS

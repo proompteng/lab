@@ -45,6 +45,16 @@ flags:
     description: Live-mode safety gate for Torghut trading runtime.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
+  - key: torghut_ws_crypto_enabled
+    name: Torghut WS Crypto Enabled
+    description: Enables crypto websocket market-data lane for Torghut rollout.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+  - key: torghut_universe_crypto_enabled
+    name: Torghut Universe Crypto Enabled
+    description: Allows crypto symbols in the Torghut trading universe resolver.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
   - key: torghut_trading_crypto_enabled
     name: Torghut Trading Crypto Enabled
     description: Enables crypto-universe strategy and execution paths in Torghut.

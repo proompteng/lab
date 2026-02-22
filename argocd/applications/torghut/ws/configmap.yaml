@@ -5,6 +5,7 @@ metadata:
   namespace: torghut
 data:
   ALPACA_MARKET_TYPE: "crypto"
+  ALPACA_CRYPTO_LOCATION: "us"
   ALPACA_FEED: "iex"
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_TRADE_STREAM_URL: "wss://paper-api.alpaca.markets/stream"

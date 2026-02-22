@@ -1,5 +1,8 @@
 package ai.proompteng.dorvud.ws
 
+import ai.proompteng.dorvud.platform.KafkaAuth
+import ai.proompteng.dorvud.platform.KafkaProducerSettings
+import ai.proompteng.dorvud.platform.KafkaTls
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -11,6 +14,7 @@ class ForwarderEndpointsTest {
       alpacaKeyId = "key",
       alpacaSecretKey = "secret",
       alpacaMarketType = marketType,
+      alpacaCryptoLocation = "us",
       alpacaFeed = "iex",
       alpacaStreamUrl = "wss://stream.data.alpaca.markets/",
       alpacaBaseUrl = "https://data.alpaca.markets/",
@@ -28,7 +32,7 @@ class ForwarderEndpointsTest {
       dedupTtlSeconds = 5,
       dedupMaxEntries = 10_000,
       kafka =
-        ai.proompteng.dorvud.platform.KafkaProducerSettings(
+        KafkaProducerSettings(
           bootstrapServers = "localhost:9092",
           clientId = "dorvud-ws",
           lingerMs = 30,
@@ -36,8 +40,8 @@ class ForwarderEndpointsTest {
           acks = "all",
           compressionType = "lz4",
           securityProtocol = "SASL_PLAINTEXT",
-          auth = ai.proompteng.dorvud.platform.KafkaAuth("user", "pass", "SCRAM-SHA-512"),
-          tls = ai.proompteng.dorvud.platform.KafkaTls(),
+          auth = KafkaAuth("user", "pass", "SCRAM-SHA-512"),
+          tls = KafkaTls(),
         ),
       topics =
         TopicConfig(
@@ -63,5 +67,12 @@ class ForwarderEndpointsTest {
     assertEquals("wss://stream.data.alpaca.markets/v1beta3/crypto/us", alpacaMarketDataStreamUrl(cfg))
     assertEquals("https://data.alpaca.markets/v1beta3/crypto/us/bars", alpacaBarsBackfillUrl(cfg))
     assertFalse(alpacaBarsBackfillNeedsFeed(cfg))
+  }
+
+  @Test
+  fun `crypto endpoints respect configured location`() {
+    val cfg = baseConfig(AlpacaMarketType.CRYPTO).copy(alpacaCryptoLocation = "eu-1")
+    assertEquals("wss://stream.data.alpaca.markets/v1beta3/crypto/eu-1", alpacaMarketDataStreamUrl(cfg))
+    assertEquals("https://data.alpaca.markets/v1beta3/crypto/eu-1/bars", alpacaBarsBackfillUrl(cfg))
   }
 }

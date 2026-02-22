@@ -225,6 +225,8 @@ def _filter_symbols(symbols: set[str]) -> set[str]:
     for symbol in symbols:
         normalized = normalize_symbol(symbol)
         if normalized:
+            if "/" in normalized and not settings.trading_universe_crypto_enabled:
+                continue
             cleaned.add(normalized)
     return cleaned
 

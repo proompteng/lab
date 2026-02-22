@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_enabled": "torghut_trading_enabled",
     "trading_live_enabled": "torghut_trading_live_enabled",
+    "trading_ws_crypto_enabled": "torghut_ws_crypto_enabled",
+    "trading_universe_crypto_enabled": "torghut_universe_crypto_enabled",
     "trading_crypto_enabled": "torghut_trading_crypto_enabled",
     "trading_crypto_live_enabled": "torghut_trading_crypto_live_enabled",
     "trading_order_feed_enabled": "torghut_trading_order_feed_enabled",
@@ -117,6 +119,16 @@ class Settings(BaseSettings):
         default="paper", alias="TRADING_MODE"
     )
     trading_live_enabled: bool = Field(default=False, alias="TRADING_LIVE_ENABLED")
+    trading_ws_crypto_enabled: bool = Field(
+        default=False,
+        alias="TRADING_WS_CRYPTO_ENABLED",
+        description="Enable crypto websocket market-data path dependencies for trading.",
+    )
+    trading_universe_crypto_enabled: bool = Field(
+        default=False,
+        alias="TRADING_UNIVERSE_CRYPTO_ENABLED",
+        description="Allow slash-delimited crypto symbols in resolved trading universe.",
+    )
     trading_crypto_enabled: bool = Field(
         default=False,
         alias="TRADING_CRYPTO_ENABLED",

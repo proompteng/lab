@@ -17,6 +17,9 @@ class TestUniverseResolver(TestCase):
         self._original_enabled = config.settings.trading_enabled
         self._original_autonomy = config.settings.trading_autonomy_enabled
         self._original_live = config.settings.trading_live_enabled
+        self._original_universe_crypto_enabled = (
+            config.settings.trading_universe_crypto_enabled
+        )
         self._original_max_stale_seconds = config.settings.trading_universe_max_stale_seconds
         self._original_cache_seconds = config.settings.trading_universe_cache_seconds
 
@@ -27,6 +30,9 @@ class TestUniverseResolver(TestCase):
         config.settings.trading_enabled = self._original_enabled
         config.settings.trading_autonomy_enabled = self._original_autonomy
         config.settings.trading_live_enabled = self._original_live
+        config.settings.trading_universe_crypto_enabled = (
+            self._original_universe_crypto_enabled
+        )
         config.settings.trading_universe_max_stale_seconds = self._original_max_stale_seconds
         config.settings.trading_universe_cache_seconds = self._original_cache_seconds
 
@@ -84,3 +90,17 @@ class TestUniverseResolver(TestCase):
 
         with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
             self.assertEqual(resolver.get_symbols(), set())
+
+    def test_static_universe_filters_crypto_when_disabled(self) -> None:
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_universe_crypto_enabled = False
+        config.settings.trading_static_symbols_raw = "AAPL,BTC/USD,ETH/USD,MSFT"
+        resolver = UniverseResolver()
+        self.assertEqual(resolver.get_symbols(), {"AAPL", "MSFT"})
+
+    def test_static_universe_allows_crypto_when_enabled(self) -> None:
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_universe_crypto_enabled = True
+        config.settings.trading_static_symbols_raw = "AAPL,BTC/USD,ETH/USD,MSFT"
+        resolver = UniverseResolver()
+        self.assertEqual(resolver.get_symbols(), {"AAPL", "BTC/USD", "ETH/USD", "MSFT"})

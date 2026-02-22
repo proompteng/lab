@@ -25,9 +25,9 @@
 ```
 
 ## Flag Inventory
-- Total Torghut flags: `31`.
-- Trading flags: `24` (`torghut_trading_*`).
-- LLM flags: `7` (`torghut_llm_*`).
+- Total Torghut flags: tracked by manifest parity test in `services/torghut/tests/test_config.py`.
+- Trading flags: `torghut_trading_*` plus rollout controls such as `torghut_ws_crypto_enabled` and `torghut_universe_crypto_enabled`.
+- LLM flags: `torghut_llm_*`.
 - Canonical inventory lives in `argocd/applications/feature-flags/gitops/default/features.yaml`.
 
 ## Migration Guarantees
@@ -78,7 +78,7 @@ curl -sS -X POST http://127.0.0.1:18013/evaluate/v1/boolean \
 - Argo CD status during rollout: `feature-flags=Synced/Healthy`, `torghut=OutOfSync/Healthy` (manifest changes pending merge to `main`).
 - Flipt evaluation validation:
   - Single key probe returned `enabled` for `torghut_trading_enabled`.
-  - Full catalog probe returned `ok=31 fail=0` for all `torghut_*` keys via `/evaluate/v1/boolean`.
+  - Full catalog probe returned `ok=<all torghut keys> fail=0` for all `torghut_*` keys via `/evaluate/v1/boolean`.
 - Runtime env validation confirms:
   - `TRADING_FEATURE_FLAGS_ENABLED=true`
   - `TRADING_FEATURE_FLAGS_URL=http://feature-flags.feature-flags.svc.cluster.local:8013`
