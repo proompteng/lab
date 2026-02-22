@@ -182,4 +182,50 @@ describe('github review ingest', () => {
     expect(result.skipped).toBe(true)
     expect(store?.upsertPrState).not.toHaveBeenCalled()
   })
+
+  it('skips repeated worktree snapshot refreshes when a ref is missing', async () => {
+    const handler = await requireHandler()
+    const store = requireStore()
+    const snapshotMock = globalState.__githubWorktreeSnapshotMock
+    if (!snapshotMock) throw new Error('Expected github worktree snapshot mock')
+
+    snapshotMock.mockRejectedValue(new Error('Unable to resolve git ref: origin/missing-branch'))
+    ;(store.getPrWorktree as ReturnType<typeof vi.fn>).mockResolvedValue({
+      repository: 'proompteng/lab',
+      prNumber: 3001,
+      worktreeName: 'proompteng-lab-3001',
+      worktreePath: '/tmp/proompteng-lab-3001',
+      baseSha: 'base-sha',
+      headSha: 'stale-head-sha',
+      lastRefreshedAt: '2025-01-01T00:00:00Z',
+    })
+
+    const payload: GithubWebhookEvent = {
+      event: 'pull_request',
+      action: 'opened',
+      deliveryId: 'delivery-3',
+      repository: 'proompteng/lab',
+      sender: 'octocat',
+      payload: {
+        pull_request: {
+          number: 3001,
+          title: 'Refresh backoff regression',
+          state: 'open',
+          head: { ref: 'feature-missing', sha: 'abc3001' },
+          base: { ref: 'main', sha: 'def3001', repo: { full_name: 'proompteng/lab' } },
+          user: { login: 'octocat' },
+          labels: [{ name: 'backend' }],
+        },
+      },
+    }
+
+    const first = await handler(payload)
+    expect(first.ok).toBe(true)
+    expect(snapshotMock).toHaveBeenCalledTimes(1)
+
+    const second = await handler(payload)
+    expect(second.ok).toBe(true)
+    expect(snapshotMock).toHaveBeenCalledTimes(1)
+    expect(store.upsertPrState).toHaveBeenCalledTimes(2)
+  })
 })

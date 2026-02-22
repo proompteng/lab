@@ -5,7 +5,50 @@ import { refreshWorktreeSnapshot, type WorktreeSnapshotResult } from '~/server/g
 
 const DEFAULT_REPOSITORY = 'proompteng/lab'
 const WORKTREE_REFRESH_TIMEOUT_MS = 4_000
+const WORKTREE_REFRESH_FAILURE_TTL_MS = 60_000
+const REFRESH_WORKTREE_NOT_FOUND_ERROR = /Unable to resolve git ref:/
 const refreshInFlight = new Map<string, Promise<WorktreeSnapshotResult>>()
+const worktreeRefreshFailures = new Map<string, number>()
+const worktreeRefreshFailureTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+const clearWorktreeRefreshFailureTimeout = (key: string) => {
+  const timeout = worktreeRefreshFailureTimers.get(key)
+  if (!timeout) return
+  clearTimeout(timeout)
+  worktreeRefreshFailureTimers.delete(key)
+}
+
+const markWorktreeRefreshFailure = (key: string) => {
+  worktreeRefreshFailures.set(key, Date.now())
+  clearWorktreeRefreshFailureTimeout(key)
+  const timer = setTimeout(() => {
+    worktreeRefreshFailures.delete(key)
+    worktreeRefreshFailureTimers.delete(key)
+  }, WORKTREE_REFRESH_FAILURE_TTL_MS)
+  if (typeof (timer as { unref?: () => void }).unref === 'function') {
+    ;(timer as { unref: () => void }).unref()
+  }
+  worktreeRefreshFailureTimers.set(key, timer)
+}
+
+const buildWorktreeRefreshKey = (input: { repository: string; prNumber: number; headRef: string; baseRef: string }) =>
+  `${input.repository}#${input.prNumber}#${input.headRef}#${input.baseRef}`
+
+const hasFreshWorktreeRefreshFailure = (key: string) => {
+  const failedAt = worktreeRefreshFailures.get(key)
+  if (!failedAt) return false
+  if (Date.now() - failedAt < WORKTREE_REFRESH_FAILURE_TTL_MS) return true
+  clearWorktreeRefreshFailureTimeout(key)
+  worktreeRefreshFailures.delete(key)
+  return false
+}
+
+const isMissingRefError = (error: unknown) => {
+  if (error instanceof Error) {
+    return REFRESH_WORKTREE_NOT_FOUND_ERROR.test(error.message)
+  }
+  return REFRESH_WORKTREE_NOT_FOUND_ERROR.test(String(error))
+}
 
 const jsonResponse = (payload: unknown, status = 200) => {
   const body = JSON.stringify(payload)
@@ -36,11 +79,19 @@ const GITHUB_LOGIN_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const queueWorktreeRefresh = (input: { repository: string; prNumber: number; headRef: string; baseRef: string }) => {
-  const key = `${input.repository}#${input.prNumber}`
+  const key = buildWorktreeRefreshKey(input)
   const existing = refreshInFlight.get(key)
   if (existing) return existing
   const task = refreshWorktreeSnapshot(input)
+    .then((snapshot) => {
+      clearWorktreeRefreshFailureTimeout(key)
+      worktreeRefreshFailures.delete(key)
+      return snapshot
+    })
     .catch((error) => {
+      if (isMissingRefError(error)) {
+        markWorktreeRefreshFailure(key)
+      }
       console.warn('[github-review] worktree snapshot refresh failed', {
         repository: input.repository,
         prNumber: input.prNumber,
@@ -80,6 +131,15 @@ const maybeAutoRefreshFiles = async (
   if (!input.headRef || !input.baseRef) return false
   const existing = await store.getPrWorktree({ repository: input.repository, prNumber: input.prNumber })
   if (existing?.headSha && input.headSha && existing.headSha === input.headSha) return false
+
+  const refreshKey = buildWorktreeRefreshKey({
+    repository: input.repository,
+    prNumber: input.prNumber,
+    headRef: input.headRef,
+    baseRef: input.baseRef,
+  })
+  if (hasFreshWorktreeRefreshFailure(refreshKey)) return false
+
   const task = queueWorktreeRefresh({
     repository: input.repository,
     prNumber: input.prNumber,
@@ -254,6 +314,16 @@ export const refreshPullFilesHandler = async (
     }
     if (!pull.pull.headRef || !pull.pull.baseRef) {
       return jsonResponse({ ok: false, error: 'Missing base/head ref for pull request' }, 400)
+    }
+
+    const refreshKey = buildWorktreeRefreshKey({
+      repository,
+      prNumber,
+      headRef: pull.pull.headRef,
+      baseRef: pull.pull.baseRef,
+    })
+    if (hasFreshWorktreeRefreshFailure(refreshKey)) {
+      return jsonResponse({ ok: true, status: 'refreshing' }, 202)
     }
 
     const refreshTask = queueWorktreeRefresh({
