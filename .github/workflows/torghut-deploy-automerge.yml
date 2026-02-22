@@ -45,7 +45,10 @@ jobs:
           echo "eligible=false" >> "$GITHUB_OUTPUT"
           echo "reason=not-evaluated" >> "$GITHUB_OUTPUT"
 
-          allowed_paths=('argocd/applications/torghut/knative-service.yaml')
+          allowed_paths=(
+            'argocd/applications/torghut/knative-service.yaml'
+            'argocd/applications/torghut/db-migrations-job.yaml'
+          )
 
           contains() {
             local needle="$1"

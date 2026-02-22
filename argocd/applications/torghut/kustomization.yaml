@@ -7,6 +7,7 @@ resources:
   - autonomous-configmap.yaml
   - autonomy-configmap.yaml
   - autonomy-gate-policy-configmap.yaml
+  - db-migrations-job.yaml
   - knative-service.yaml
   - tailscale-service.yaml
   - sealed-secrets.yaml

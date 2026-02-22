@@ -12,6 +12,7 @@ automate via PR + Argo sync). Other docs should link here instead of duplicating
 - Flink TA job: `FlinkDeployment/torghut-ta` (`argocd/applications/torghut/ta/flinkdeployment.yaml`)
 - TA config: `ConfigMap/torghut-ta-config` (`argocd/applications/torghut/ta/configmap.yaml`)
 - Trading service: Knative `Service/torghut` (`argocd/applications/torghut/knative-service.yaml`)
+- DB migration gate: `Job/torghut-db-migrations` (`argocd/applications/torghut/db-migrations-job.yaml`, Argo `PreSync` hook)
 - Kafka namespace/tools: `kafka` (Strimzi); bootstrap `kafka-kafka-bootstrap.kafka:9092`
 - Ceph RGW bucket: `ObjectBucketClaim/flink-checkpoints` (for Flink checkpoint/savepoint storage)
 

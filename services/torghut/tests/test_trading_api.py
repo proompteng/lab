@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -138,6 +139,40 @@ class TestTradingApi(TestCase):
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["symbol"], "AAPL")
 
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+        },
+    )
+    def test_db_check_reports_schema_heads(self, _mock_check: object) -> None:
+        response = self.client.get("/db-check")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["schema_current"])
+        self.assertEqual(payload["current_heads"], payload["expected_heads"])
+
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": False,
+            "current_heads": ["0010_execution_provenance_and_governance_trace"],
+            "expected_heads": [
+                "0011_autonomy_lifecycle_and_promotion_audit",
+                "0011_execution_tca_simulator_divergence",
+            ],
+        },
+    )
+    def test_db_check_schema_mismatch_returns_503(self, _mock_check: object) -> None:
+        response = self.client.get("/db-check")
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["detail"]["error"], "database schema mismatch")
+        self.assertFalse(payload["detail"]["schema_current"])
+
     def test_trading_executions_endpoint(self) -> None:
         response = self.client.get("/trading/executions?symbol=AAPL")
         self.assertEqual(response.status_code, 200)
@@ -221,6 +256,13 @@ class TestTradingApi(TestCase):
             payload["control_plane_contract"]["contract_version"],
             "torghut.quant-producer.v1",
         )
+
+    @patch("app.main._load_tca_summary", side_effect=SQLAlchemyError("boom"))
+    def test_trading_status_maps_unhandled_db_errors_to_503(self, _mock_tca: object) -> None:
+        response = self.client.get("/trading/status")
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["detail"], "database unavailable")
 
     def test_trading_status_includes_signal_ingest_metadata(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)

@@ -11,6 +11,7 @@ import { execGit } from '../shared/git'
 const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/torghut'
 const defaultManifestPath = 'argocd/applications/torghut/knative-service.yaml'
+const defaultMigrationManifestPath = 'argocd/applications/torghut/db-migrations-job.yaml'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/i
 
@@ -21,6 +22,7 @@ type UpdateManifestsOptions = {
   commit: string
   rolloutTimestamp: string
   manifestPath?: string
+  migrationManifestPath?: string
 }
 
 type CliOptions = {
@@ -32,6 +34,7 @@ type CliOptions = {
   commit?: string
   rolloutTimestamp?: string
   manifestPath?: string
+  migrationManifestPath?: string
 }
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
@@ -81,6 +84,8 @@ const updateTorghutManifest = (options: UpdateManifestsOptions) => {
     `$1${options.commit}`,
     'TORGHUT_COMMIT',
   )
+  updated = updated.replace(/^\s*serving\.knative\.dev\/creator:\s*[^\n]+\n/gm, '')
+  updated = updated.replace(/^\s*serving\.knative\.dev\/lastModifier:\s*[^\n]+\n/gm, '')
 
   if (updated !== source) {
     writeFileSync(manifestPath, updated, 'utf8')
@@ -90,6 +95,40 @@ const updateTorghutManifest = (options: UpdateManifestsOptions) => {
     manifestPath,
     imageRef,
     changed: updated !== source,
+  }
+}
+
+const updateTorghutMigrationManifest = (options: UpdateManifestsOptions) => {
+  const manifestPath = resolvePath(options.migrationManifestPath ?? defaultMigrationManifestPath)
+  const source = readFileSync(manifestPath, 'utf8')
+  const imageRef = `${options.imageName}@${options.digest}`
+
+  const updated = replaceSingle(
+    source,
+    /(- name:\s*migrate[\s\S]*?\n\s*image:\s*)([^\n]+)/,
+    `$1${imageRef}`,
+    'torghut-db-migrations image reference',
+  )
+
+  if (updated !== source) {
+    writeFileSync(manifestPath, updated, 'utf8')
+  }
+
+  return {
+    manifestPath,
+    imageRef,
+    changed: updated !== source,
+  }
+}
+
+const updateTorghutManifests = (options: UpdateManifestsOptions) => {
+  const service = updateTorghutManifest(options)
+  const migration = updateTorghutMigrationManifest(options)
+  const changedPaths = [service, migration].filter((entry) => entry.changed).map((entry) => entry.manifestPath)
+  return {
+    imageRef: service.imageRef,
+    changed: changedPaths.length > 0,
+    changedPaths,
   }
 }
 
@@ -109,7 +148,8 @@ Options:
   --version <value>
   --commit <sha40>
   --rollout-timestamp <ISO8601>
-  --manifest-path <path>`)
+  --manifest-path <path>
+  --migration-manifest-path <path>`)
       process.exit(0)
     }
 
@@ -151,6 +191,9 @@ Options:
       case '--manifest-path':
         options.manifestPath = value
         break
+      case '--migration-manifest-path':
+        options.migrationManifestPath = value
+        break
       default:
         throw new Error(`Unknown option: ${flag}`)
     }
@@ -177,17 +220,18 @@ export const main = (cliOptions?: CliOptions) => {
   const commit = parsed.commit ?? process.env.TORGHUT_COMMIT ?? execGit(['rev-parse', 'HEAD'])
   const rolloutTimestamp = parsed.rolloutTimestamp ?? process.env.TORGHUT_ROLLOUT_TIMESTAMP ?? new Date().toISOString()
 
-  const result = updateTorghutManifest({
+  const result = updateTorghutManifests({
     imageName,
     digest,
     version,
     commit,
     rolloutTimestamp,
     manifestPath: parsed.manifestPath ?? process.env.TORGHUT_MANIFEST_PATH,
+    migrationManifestPath: parsed.migrationManifestPath ?? process.env.TORGHUT_MIGRATION_MANIFEST_PATH,
   })
 
   if (result.changed) {
-    console.log(`Updated ${result.manifestPath} with ${result.imageRef}`)
+    console.log(`Updated ${result.changedPaths.join(', ')} with ${result.imageRef}`)
   } else {
     console.log(`No manifest changes required for ${result.imageRef}`)
   }
@@ -206,4 +250,6 @@ export const __private = {
   parseArgs,
   replaceSingle,
   updateTorghutManifest,
+  updateTorghutMigrationManifest,
+  updateTorghutManifests,
 }

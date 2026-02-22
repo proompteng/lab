@@ -30,7 +30,7 @@ uv run pyright
 
 Health checks:
 - `GET /healthz` – liveness (default port 8181)
-- `GET /db-check` – requires reachable Postgres at `DB_DSN` (default port 8181)
+- `GET /db-check` – requires reachable Postgres at `DB_DSN` and matching Alembic heads (default port 8181)
 
 ## Feature flags (Flipt)
 - Torghut runtime gates are resolved via Flipt boolean evaluations when `TRADING_FEATURE_FLAGS_ENABLED=true`.
@@ -46,6 +46,7 @@ Health checks:
 - `torghut-ci` validates code changes on PR and push.
 - `torghut-build-push` runs on `main` merges touching Torghut sources/scripts, builds/pushes image, and emits a release contract artifact.
 - `torghut-release` consumes that artifact, updates `argocd/applications/torghut/knative-service.yaml` digest/version metadata, and opens a release PR (`codex/torghut-release-<tag>`).
+- The same release promotion updates `argocd/applications/torghut/db-migrations-job.yaml`, so the migration hook runs with the same image revision.
 - `torghut-deploy-automerge` enables squash auto-merge for eligible release PRs.
 - Migration safety gate: if the promoted source commit touches `services/torghut/migrations/**`, the release PR is created as draft with `do-not-automerge` and requires manual approval before merge.
 
