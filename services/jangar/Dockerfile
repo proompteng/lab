@@ -453,7 +453,7 @@ ARG TARGETARCH
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
-  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
+  bun install --no-save --production --ignore-scripts --linker=hoisted --filter @proompteng/jangar
 RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
   set -eux; \
   case "${TARGETARCH:-$(uname -m)}" in \
@@ -488,8 +488,10 @@ COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/pack
 WORKDIR /app/services/jangar
 ARG JANGAR_BUILD_NODE_OPTIONS="--max-old-space-size=2048"
 ARG JANGAR_BUILD_MINIFY=0
+ARG JANGAR_BUILD_SOURCEMAP=1
 ENV NODE_OPTIONS=${JANGAR_BUILD_NODE_OPTIONS}
 ENV JANGAR_BUILD_MINIFY=${JANGAR_BUILD_MINIFY}
+ENV JANGAR_BUILD_SOURCEMAP=${JANGAR_BUILD_SOURCEMAP}
 RUN if [ -d .output ]; then \
     echo "Using prebuilt .output from build context"; \
   else \
@@ -500,7 +502,7 @@ FROM tools AS jangar-deps-prod
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
-  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
+  bun install --no-save --production --ignore-scripts --linker=hoisted --filter @proompteng/jangar
 
 # Control-plane-only runtime image.
 #

@@ -134,6 +134,10 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     if (buildMinify) {
       buildArgs.JANGAR_BUILD_MINIFY = buildMinify
     }
+    const buildSourceMap = process.env.JANGAR_BUILD_SOURCEMAP?.trim()
+    if (buildSourceMap) {
+      buildArgs.JANGAR_BUILD_SOURCEMAP = buildSourceMap
+    }
     if (process.env.BUILDX_VERSION) {
       buildArgs.BUILDX_VERSION = process.env.BUILDX_VERSION
     }
