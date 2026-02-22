@@ -8,13 +8,13 @@ spec:
   sources:
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
-      targetRevision: 0.12.1
+      targetRevision: 0.13.1
       helm:
         releaseName: arc-controller
         skipCrds: false
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.12.1
+      targetRevision: 0.13.1
       helm:
         releaseName: arc-runner-set
         skipCrds: false
@@ -31,10 +31,10 @@ spec:
             type: "kubernetes"
             kubernetesModeWorkVolumeClaim:
               accessModes: ["ReadWriteOnce"]
-              storageClassName: "rook-ceph-block"
+              storageClassName: "local-path"
               resources:
                 requests:
-                  storage: 60Gi
+                  storage: 20Gi
           listenerTemplate:
             spec:
               containers:
@@ -121,10 +121,10 @@ spec:
                     volumeClaimTemplate:
                       spec:
                         accessModes: ["ReadWriteOnce"]
-                        storageClassName: "rook-ceph-block"
+                        storageClassName: "local-path"
                         resources:
                           requests:
-                            storage: 60Gi
+                            storage: 20Gi
                 - name: dind-sock
                   emptyDir: {}
                 - name: dind-externals
