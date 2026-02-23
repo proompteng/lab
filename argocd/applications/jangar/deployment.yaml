@@ -108,7 +108,7 @@ spec:
             - name: JANGAR_CI_EVENT_STREAM_ENABLED_FLAG_KEY
               value: jangar_ci_event_stream_enabled
             - name: JANGAR_MODELS
-              value: gpt-5.3-codex
+              value: gpt-5.3-codex,codex-5.3-spark
             - name: JANGAR_DEFAULT_MODEL
               value: gpt-5.3-codex
             - name: JANGAR_GIT_LOCK_RETRY_ATTEMPTS
