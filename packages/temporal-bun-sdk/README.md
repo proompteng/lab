@@ -9,6 +9,7 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
 - **Connect-powered client** – `createTemporalClient` gives you a fully typed Temporal WorkflowService client backed by @bufbuild/protobuf.
 - **Simple data conversion** – JSON payload conversion out of the box with hooks for custom codecs.
 - **Bun CLI** – `temporal-bun` scaffolds workers and ships lightweight Docker helpers (no Zig build steps required).
+- **Bundled agent skills** – install a ready-to-use Temporal operations skill for Codex-compatible agents via `temporal-bun skill install`.
 
 ## Prerequisites
 - **Bun ≥ 1.1.20** – required for the runtime and CLI.
@@ -438,7 +439,36 @@ temporal-bun init [directory]        Scaffold a new worker project
 temporal-bun docker-build            Build a Docker image for the current project
 temporal-bun doctor                  Validate config + observability sinks
 temporal-bun replay                  Replay workflow histories and diff determinism
+temporal-bun skill                   Install/list bundled agent skills
 temporal-bun help                    Show available commands
+```
+
+## Bundled agent skills
+
+`@proompteng/temporal-bun-sdk` ships with a packaged Temporal skill bundle under `skills/` plus CLI helpers:
+
+```bash
+# list available bundled skills
+bunx temporal-bun skill list
+
+# install default bundled skill into Codex skills directory
+bunx temporal-bun skill install temporal
+
+# install into a custom directory
+bunx temporal-bun skill install temporal --to /tmp/my-skills
+```
+
+For direct scripting, use the exported API from `@proompteng/temporal-bun-sdk/skills`:
+
+```ts
+import { installBundledSkill, listBundledSkills } from '@proompteng/temporal-bun-sdk/skills'
+
+const skills = await listBundledSkills()
+await installBundledSkill({
+  skillName: skills[0]?.name ?? 'temporal',
+  destinationDir: '/tmp/skills',
+  force: true,
+})
 ```
 
 ### Replay workflow histories

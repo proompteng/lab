@@ -56,6 +56,8 @@ export {
 export { createWorkerAppLayer, runWorkerApp, WorkerAppLayer } from './runtime/worker-app'
 export type { SearchAttributeSchemaMap, TypedSearchAttributes } from './search-attributes'
 export { createTypedSearchAttributes, defineSearchAttributes } from './search-attributes'
+export type { BundledSkill, InstallBundledSkillOptions, InstallBundledSkillResult } from './skills'
+export { getBundledSkill, installBundledSkill, listBundledSkills, resolveBundledSkillsDirectory } from './skills'
 export type { TestWorkflowEnvironmentOptions, TimeSkippingTestWorkflowEnvironmentOptions } from './testing'
 export {
   createExistingWorkflowEnvironment,

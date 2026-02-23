@@ -14,11 +14,13 @@
   "files": [
     "dist",
     "dist/native",
+    "skills",
     "README.md"
   ],
   "bin": {
-    "temporal-bun-worker": "./dist/bin/start-worker.js",
-    "temporal-bun": "./dist/bin/temporal-bun.js"
+    "temporal-bun-worker": "./dist/src/bin/start-worker.js",
+    "temporal-bun": "./dist/src/bin/temporal-bun.js",
+    "temporal-bun-skill": "./dist/src/bin/temporal-bun-skill.js"
   },
   "exports": {
     ".": {
@@ -49,8 +51,13 @@
       "types": "./dist/src/testing/index.d.ts",
       "default": "./dist/src/testing/index.js"
     },
-    "./bin/start-worker": "./dist/bin/start-worker.js",
-    "./bin/cli": "./dist/bin/temporal-bun.js"
+    "./skills": {
+      "types": "./dist/src/skills/index.d.ts",
+      "default": "./dist/src/skills/index.js"
+    },
+    "./bin/start-worker": "./dist/src/bin/start-worker.js",
+    "./bin/cli": "./dist/src/bin/temporal-bun.js",
+    "./bin/skill": "./dist/src/bin/temporal-bun-skill.js"
   },
   "scripts": {
     "clean": "rm -rf dist",
@@ -60,7 +67,7 @@
     "test": "bun test",
     "test:load": "bun scripts/run-worker-load.ts",
     "test:coverage": "bun test --coverage",
-    "start:worker": "bun run dist/bin/start-worker.js",
+    "start:worker": "bun run dist/src/bin/start-worker.js",
     "temporal:start": "bun scripts/start-temporal-cli.ts",
     "temporal:stop": "bun scripts/stop-temporal-cli.ts",
     "prepack": "bun run build",

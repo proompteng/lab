@@ -10,6 +10,7 @@ import { makeDefaultClientInterceptors } from '../interceptors/client'
 import { makeDefaultWorkerInterceptors } from '../interceptors/worker'
 import { runTemporalCliEffect } from '../runtime/cli-layer'
 import { ObservabilityService, TemporalConfigService } from '../runtime/effect-layers'
+import { runSkillCli } from '../skills/cli'
 import { executeLintWorkflows, parseLintWorkflowsFlags, printLintWorkflows } from './lint-workflows-command'
 import { executeReplay, parseReplayOptions, printReplaySummary } from './replay-command'
 
@@ -156,12 +157,15 @@ const handleLintWorkflows: CommandHandler = (_args, flags) =>
     return result.exitCode !== 0 ? { exitCode: result.exitCode } : undefined
   })
 
+const handleSkill: CommandHandler = (args, flags) => Effect.tryPromise(() => runSkillCli(args, flags))
+
 const commands: Record<string, CommandHandler> = {
   init: handleInit,
   'docker-build': handleDockerBuild,
   doctor: handleDoctor,
   replay: handleReplay,
   'lint-workflows': handleLintWorkflows,
+  skill: handleSkill,
   help: handleHelp,
 }
 
@@ -244,6 +248,7 @@ Commands:
   docker-build            Build a Docker image for the current project
   doctor                  Validate configuration + observability sinks
   replay                  Replay workflow histories to diff determinism
+  skill                   Install/list bundled agent skills
   lint-workflows           Lint workflow modules for nondeterminism hazards
   help                    Show this help message
 
@@ -276,6 +281,8 @@ Options:
   --format <format>       Lint output format (text|json)
   --config <path>         Workflow lint config path (default: .temporal-bun-workflows.json)
   --changed-only          Lint only entries impacted by git diff (best-effort)
+  --to <path>             Install root directory for temporal-bun skill install
+  --skill <name>          Skill name override for temporal-bun skill commands
 `)
 }
 
