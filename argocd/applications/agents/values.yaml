@@ -1,22 +1,22 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 9854d227
-  digest: sha256:049244e12c30630142640f5a8f8dd0b0ed4c29d82121b2b22e071c7ae545e72b
+  tag: 9ce84b30
+  digest: sha256:cdc55eed51cc8fe7eed9fdb80a35418f6f03c80cf824ba52603cba26432593d0
   pullPolicy: IfNotPresent
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 9854d227
-    digest: sha256:5e723e2874372ca75c449061ebc89aebbeeceede5cf865561c48dc3ccbb8d33b
+    tag: 9ce84b30
+    digest: sha256:ee1cdde7425bbb0b58f9e825988b3dae908238703740daba3a07816b22daa645
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 9854d227
-    digest: sha256:049244e12c30630142640f5a8f8dd0b0ed4c29d82121b2b22e071c7ae545e72b
+    tag: 9ce84b30
+    digest: sha256:cdc55eed51cc8fe7eed9fdb80a35418f6f03c80cf824ba52603cba26432593d0
 controllers:
   enabled: true
   replicaCount: 2
@@ -34,10 +34,8 @@ resources:
 controller:
   namespaces:
     - agents
-  # Keep runner jobs around long enough to inspect no-op/failure runs in-cluster.
   jobTtlSeconds: 86400
   jobTtlSecondsAfterFinished: 86400
-  # Persist run logs/artifacts for one week for debugging and audits.
   logRetentionSeconds: 604800
   authSecret:
     name: codex-auth
