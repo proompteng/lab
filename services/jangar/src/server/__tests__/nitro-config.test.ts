@@ -10,4 +10,8 @@ describe('nitro config', () => {
   test('enables websocket support', () => {
     expect(nitroConfig.experimental?.websocket).toBe(true)
   })
+
+  test('disables nf3 node_modules tracing for container builds', () => {
+    expect(nitroConfig.externals?.noTrace).toBe(true)
+  })
 })

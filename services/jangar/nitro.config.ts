@@ -21,6 +21,8 @@ export default defineNitroConfig({
   minify: false,
   sourceMap: buildSourceMap,
   externals: {
+    // Runtime images already include /app/node_modules, so skip nf3 tracing/copying work.
+    noTrace: true,
     // Keep Start runtime internals inlined, but leave heavyweight SDKs external so Nitro
     // doesn't spend build time rebundling them on each image build.
     inline: ['@tanstack/react-start', '@tanstack/react-start-server', '@tanstack/start-server-core'],
