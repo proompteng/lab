@@ -422,7 +422,7 @@ def _resolve_microstructure_state_payload(
     payload = signal.payload
     raw_state = payload.get("microstructure_state")
     if isinstance(raw_state, dict):
-        state = dict(raw_state)
+        state = dict(cast(dict[str, Any], raw_state))
     else:
         extracted = extract_microstructure_features_v1(signal)
         state = {
@@ -452,13 +452,16 @@ def _resolve_execution_advice_payload(signal: SignalEnvelope) -> dict[str, Any] 
     raw_advice = payload.get("execution_advice")
     advice: dict[str, Any]
     if isinstance(raw_advice, dict):
-        advice = dict(raw_advice)
+        advice = dict(cast(dict[str, Any], raw_advice))
     else:
         advice = {}
         direct_urgency = payload.get("urgency_tier")
         execution_block = payload.get("execution")
-        if isinstance(execution_block, dict) and direct_urgency is None:
-            direct_urgency = execution_block.get("urgency_tier")
+        execution_payload: dict[str, Any] | None = None
+        if isinstance(execution_block, dict):
+            execution_payload = dict(cast(dict[str, Any], execution_block))
+        if execution_payload is not None and direct_urgency is None:
+            direct_urgency = execution_payload.get("urgency_tier")
         advice["urgency_tier"] = direct_urgency
         for key in (
             "max_participation_rate",
@@ -471,8 +474,8 @@ def _resolve_execution_advice_payload(signal: SignalEnvelope) -> dict[str, Any] 
             "latency_ms",
         ):
             value = payload.get(key)
-            if value is None and isinstance(execution_block, dict):
-                value = execution_block.get(key)
+            if value is None and execution_payload is not None:
+                value = execution_payload.get(key)
             if value is not None:
                 advice[key] = value
         advice["event_ts"] = signal.event_ts.isoformat()
@@ -492,7 +495,7 @@ def _resolve_fragility_snapshot_payload(
     payload = signal.payload
     raw_snapshot = payload.get("fragility_snapshot")
     if isinstance(raw_snapshot, dict):
-        snapshot = dict(raw_snapshot)
+        snapshot = dict(cast(dict[str, Any], raw_snapshot))
     else:
         snapshot = {}
 
