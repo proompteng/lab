@@ -1,15 +1,15 @@
-import { DiagConsoleLogger, DiagLogLevel, diag } from '@proompteng/otel/api'
-import { getNodeAutoInstrumentations } from '@proompteng/otel/auto-instrumentations-node'
-import { OTLPMetricExporter } from '@proompteng/otel/exporter-metrics-otlp-http'
-import { OTLPTraceExporter } from '@proompteng/otel/exporter-trace-otlp-http'
-import { Resource } from '@proompteng/otel/resources'
-import { PeriodicExportingMetricReader } from '@proompteng/otel/sdk-metrics'
-import { NodeSDK, type NodeSDKConfiguration } from '@proompteng/otel/sdk-node'
+import { DiagConsoleLogger, DiagLogLevel, diag } from '../otel/api'
+import { getNodeAutoInstrumentations } from '../otel/auto-instrumentations-node'
+import { OTLPMetricExporter } from '../otel/exporter-metrics-otlp-http'
+import { OTLPTraceExporter } from '../otel/exporter-trace-otlp-http'
+import { Resource } from '../otel/resources'
+import { PeriodicExportingMetricReader } from '../otel/sdk-metrics'
+import { NodeSDK, type NodeSDKConfiguration } from '../otel/sdk-node'
 import {
   SEMRESATTRS_SERVICE_INSTANCE_ID,
   SEMRESATTRS_SERVICE_NAME,
   SEMRESATTRS_SERVICE_NAMESPACE,
-} from '@proompteng/otel/semantic-conventions'
+} from '../otel/semantic-conventions'
 
 export interface OpenTelemetryConfig {
   enabled?: boolean
@@ -333,7 +333,7 @@ const stripEndpointPath = (value: string): string => {
   }
 }
 
-const resolveDiagLogLevel = (DiagLogLevel: typeof import('@proompteng/otel/api').DiagLogLevel) => {
+const resolveDiagLogLevel = (DiagLogLevel: typeof import('../otel/api').DiagLogLevel) => {
   const raw = process.env.OTEL_LOG_LEVEL ?? process.env.TEMPORAL_OTEL_LOG_LEVEL
   if (!raw) {
     return DiagLogLevel.ERROR
