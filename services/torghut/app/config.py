@@ -1003,7 +1003,7 @@ class Settings(BaseSettings):
     llm_provider: Literal["jangar", "openai"] = Field(
         default="openai", alias="LLM_PROVIDER"
     )
-    llm_model: str = Field(default="gpt-5.3-codex", alias="LLM_MODEL")
+    llm_model: str = Field(default="gpt-5.3-codex-spark", alias="LLM_MODEL")
     # Used only when `LLM_PROVIDER=jangar` and the Jangar request fails.
     # This should point at an OpenAI-compatible endpoint (e.g. vLLM, Ollama, llama.cpp server).
     llm_self_hosted_base_url: Optional[str] = Field(
