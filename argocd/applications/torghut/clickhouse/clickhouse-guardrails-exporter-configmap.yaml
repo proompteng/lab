@@ -25,6 +25,7 @@ data:
     CLICKHOUSE_PORT = int(os.environ.get("CLICKHOUSE_PORT", "8123"))
     EXPORTER_PORT = int(os.environ.get("EXPORTER_PORT", "9108"))
     SCRAPE_INTERVAL_SECONDS = int(os.environ.get("SCRAPE_INTERVAL_SECONDS", "30"))
+    FRESHNESS_QUERY_MODE = os.environ.get("CLICKHOUSE_FRESHNESS_QUERY_MODE", "auto").strip().lower()
 
     DEFAULT_DISK_NAME = os.environ.get("CLICKHOUSE_DISK_NAME", "default")
     TABLES = os.environ.get("CLICKHOUSE_REPLICATED_TABLES", "ta_signals,ta_microbars").split(",")
@@ -71,6 +72,8 @@ data:
             self.last_scrape_success = 0.0
             self.last_scrape_ts_seconds = 0.0
             self.last_error = ""
+            self.freshness_low_memory_total: dict[str, float] = {"ta_signals": 0.0, "ta_microbars": 0.0}
+            self.freshness_fallback_total: dict[str, float] = {"ta_signals": 0.0, "ta_microbars": 0.0}
 
         def snapshot(self) -> dict:
             with self.lock:
@@ -78,6 +81,8 @@ data:
                     "replicas": dict(self.replicas),
                     "last_scrape_success": self.last_scrape_success,
                     "last_scrape_ts_seconds": self.last_scrape_ts_seconds,
+                    "freshness_low_memory_total": dict(self.freshness_low_memory_total),
+                    "freshness_fallback_total": dict(self.freshness_fallback_total),
                 }
 
 
@@ -89,6 +94,53 @@ data:
             return float(value)
         except Exception:
             return float("nan")
+
+
+    def fetch_freshness_ms(replica_url: str, table: str, time_column: str, alias: str) -> tuple[float, float, float]:
+        precise_query = (
+            f"SELECT ifNull(toUnixTimestamp64Milli(max({time_column})), 0) AS {alias} "
+            f"FROM {DATABASE}.{table} "
+            "FORMAT JSONEachRow"
+        )
+        # Low-memory fallback path based on active parts metadata. This avoids scanning full table data.
+        low_memory_query = (
+            "SELECT ifNull(toUnixTimestamp(max(max_time)) * 1000, 0) AS "
+            f"{alias} "
+            "FROM system.parts "
+            "WHERE active "
+            f"AND database = {clickhouse_str(DATABASE)} "
+            f"AND table = {clickhouse_str(table)} "
+            "FORMAT JSONEachRow"
+        )
+
+        mode = FRESHNESS_QUERY_MODE if FRESHNESS_QUERY_MODE in ("auto", "precise", "low_memory") else "auto"
+        if mode == "precise":
+            rows = clickhouse_query_rows(replica_url, precise_query)
+            if not rows:
+                raise RuntimeError(f"{table} freshness query returned no rows")
+            return float_or_nan(rows[0].get(alias, 0.0)), 0.0, 0.0
+
+        if mode == "low_memory":
+            rows = clickhouse_query_rows(replica_url, low_memory_query)
+            if not rows:
+                raise RuntimeError(f"{table} low-memory freshness query returned no rows")
+            return float_or_nan(rows[0].get(alias, 0.0)), 1.0, 0.0
+
+        try:
+            rows = clickhouse_query_rows(replica_url, precise_query)
+            if not rows:
+                raise RuntimeError(f"{table} freshness query returned no rows")
+            return float_or_nan(rows[0].get(alias, 0.0)), 0.0, 0.0
+        except Exception as precise_error:
+            try:
+                rows = clickhouse_query_rows(replica_url, low_memory_query)
+                if not rows:
+                    raise RuntimeError(f"{table} low-memory freshness query returned no rows")
+                return float_or_nan(rows[0].get(alias, 0.0)), 1.0, 1.0
+            except Exception as low_memory_error:
+                raise RuntimeError(
+                    f"{table} freshness query failed (precise={precise_error}; low_memory={low_memory_error})"
+                ) from low_memory_error
 
 
     def scrape_once():
@@ -125,20 +177,10 @@ data:
                     "FORMAT JSONEachRow"
                 )
 
-            signals_freshness_query = (
-                "SELECT ifNull(toUnixTimestamp64Milli(max(event_ts)), 0) AS max_event_ts_ms "
-                f"FROM {DATABASE}.ta_signals "
-                "FORMAT JSONEachRow"
-            )
-
-            microbars_freshness_query = (
-                "SELECT ifNull(toUnixTimestamp64Milli(max(window_end)), 0) AS max_window_end_ms "
-                f"FROM {DATABASE}.ta_microbars "
-                "FORMAT JSONEachRow"
-            )
-
             replicas: dict[str, dict] = {}
             scrape_errors: list[str] = []
+            low_memory_increments = {"ta_signals": 0.0, "ta_microbars": 0.0}
+            fallback_increments = {"ta_signals": 0.0, "ta_microbars": 0.0}
 
             for replica in replica_names:
                 replica_url = f"http://{replica}.{CLICKHOUSE_NAMESPACE}.svc.cluster.local:{CLICKHOUSE_PORT}"
@@ -155,17 +197,22 @@ data:
                             raise RuntimeError("readonly query returned no rows")
                         readonly_row = readonly_rows[0]
 
-                    signals_rows = clickhouse_query_rows(replica_url, signals_freshness_query)
-                    if not signals_rows:
-                        raise RuntimeError("signals freshness query returned no rows")
-                    signals_row = signals_rows[0]
-                    max_event_ts_ms = float_or_nan(signals_row.get("max_event_ts_ms", 0.0))
-
-                    microbars_rows = clickhouse_query_rows(replica_url, microbars_freshness_query)
-                    if not microbars_rows:
-                        raise RuntimeError("microbars freshness query returned no rows")
-                    microbars_row = microbars_rows[0]
-                    max_window_end_ms = float_or_nan(microbars_row.get("max_window_end_ms", 0.0))
+                    max_event_ts_ms, signals_low_memory_mode, signals_fallback_mode = fetch_freshness_ms(
+                        replica_url=replica_url,
+                        table="ta_signals",
+                        time_column="event_ts",
+                        alias="max_event_ts_ms",
+                    )
+                    max_window_end_ms, microbars_low_memory_mode, microbars_fallback_mode = fetch_freshness_ms(
+                        replica_url=replica_url,
+                        table="ta_microbars",
+                        time_column="window_end",
+                        alias="max_window_end_ms",
+                    )
+                    low_memory_increments["ta_signals"] += signals_low_memory_mode
+                    low_memory_increments["ta_microbars"] += microbars_low_memory_mode
+                    fallback_increments["ta_signals"] += signals_fallback_mode
+                    fallback_increments["ta_microbars"] += microbars_fallback_mode
 
                     free_space = float_or_nan(disk_row.get("free_space"))
                     total_space = float_or_nan(disk_row.get("total_space"))
@@ -181,6 +228,8 @@ data:
                         "any_replica_readonly": float_or_nan(readonly_row.get("any_readonly", 0.0)),
                         "ta_signals_max_event_ts_seconds": max_event_ts_ms / 1000.0,
                         "ta_microbars_max_window_end_seconds": max_window_end_ms / 1000.0,
+                        "ta_signals_freshness_low_memory_mode": signals_low_memory_mode,
+                        "ta_microbars_freshness_low_memory_mode": microbars_low_memory_mode,
                     }
                 except Exception as e:
                     scrape_errors.append(f"{replica}: {e}")
@@ -192,6 +241,8 @@ data:
                         "any_replica_readonly": float("nan"),
                         "ta_signals_max_event_ts_seconds": float("nan"),
                         "ta_microbars_max_window_end_seconds": float("nan"),
+                        "ta_signals_freshness_low_memory_mode": float("nan"),
+                        "ta_microbars_freshness_low_memory_mode": float("nan"),
                     }
 
             last_scrape_success = 1.0 if scrape_errors == [] else 0.0
@@ -201,6 +252,10 @@ data:
                 state.last_scrape_success = last_scrape_success
                 state.last_scrape_ts_seconds = now
                 state.last_error = "; ".join(scrape_errors)
+                state.freshness_low_memory_total["ta_signals"] += low_memory_increments["ta_signals"]
+                state.freshness_low_memory_total["ta_microbars"] += low_memory_increments["ta_microbars"]
+                state.freshness_fallback_total["ta_signals"] += fallback_increments["ta_signals"]
+                state.freshness_fallback_total["ta_microbars"] += fallback_increments["ta_microbars"]
         except Exception as e:
             with state.lock:
                 state.replicas = {}
@@ -282,6 +337,41 @@ data:
             lines.append(
                 f'torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{{replica="{label}"}} {metrics["ta_microbars_max_window_end_seconds"]}'
             )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_freshness_low_memory_mode 1 if freshness query used low-memory path for this replica/table on last scrape."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_freshness_low_memory_mode gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                'torghut_clickhouse_guardrails_freshness_low_memory_mode{replica="%s",table="ta_signals"} %s'
+                % (label, metrics["ta_signals_freshness_low_memory_mode"])
+            )
+            lines.append(
+                'torghut_clickhouse_guardrails_freshness_low_memory_mode{replica="%s",table="ta_microbars"} %s'
+                % (label, metrics["ta_microbars_freshness_low_memory_mode"])
+            )
+
+        lines.append("# HELP torghut_clickhouse_guardrails_freshness_low_memory_total Freshness queries served via low-memory mode.")
+        lines.append("# TYPE torghut_clickhouse_guardrails_freshness_low_memory_total counter")
+        lines.append(
+            f'torghut_clickhouse_guardrails_freshness_low_memory_total{{table="ta_signals"}} {snapshot["freshness_low_memory_total"]["ta_signals"]}'
+        )
+        lines.append(
+            f'torghut_clickhouse_guardrails_freshness_low_memory_total{{table="ta_microbars"}} {snapshot["freshness_low_memory_total"]["ta_microbars"]}'
+        )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_freshness_fallback_total Freshness queries that fell back from precise to low-memory mode."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_freshness_fallback_total counter")
+        lines.append(
+            f'torghut_clickhouse_guardrails_freshness_fallback_total{{table="ta_signals"}} {snapshot["freshness_fallback_total"]["ta_signals"]}'
+        )
+        lines.append(
+            f'torghut_clickhouse_guardrails_freshness_fallback_total{{table="ta_microbars"}} {snapshot["freshness_fallback_total"]["ta_microbars"]}'
+        )
 
         lines.append("# HELP torghut_clickhouse_guardrails_last_scrape_success 1 if the last scrape succeeded.")
         lines.append("# TYPE torghut_clickhouse_guardrails_last_scrape_success gauge")

@@ -138,7 +138,7 @@ As deployed config is in:
 - `argocd/applications/torghut/ta/flinkdeployment.yaml` (Flink + secrets + checkpoint config)
 
 Delivery semantics:
-- Kafka can be `EXACTLY_ONCE`, but as deployed `TA_KAFKA_DELIVERY_GUARANTEE=AT_LEAST_ONCE`.
+- Kafka is configured with `TA_KAFKA_DELIVERY_GUARANTEE=EXACTLY_ONCE`.
 - ClickHouse writes are at-least-once; design assumes duplicates are tolerable.
 
 Known production failure: ClickHouse disk pressure causing JDBC failures and TA job failure.

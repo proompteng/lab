@@ -2,7 +2,7 @@
 
 ## Status
 - Version: `v1`
-- Last updated: **2026-02-08**
+- Last updated: **2026-02-23**
 - Source of truth (config): `argocd/applications/torghut/**`
 
 ## Purpose
@@ -58,6 +58,18 @@ From `argocd/applications/torghut/ta/configmap.yaml`:
 If disk pressure is ongoing, lowering batch size may reduce burstiness but can increase overhead. Prefer increasing
 storage or reducing retention rather than “tuning around” persistent disk scarcity.
 
+### 4) Low-memory freshness query path for monitoring/exporters
+The guardrails exporter now supports explicit freshness query modes via
+`CLICKHOUSE_FRESHNESS_QUERY_MODE` (in `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`):
+- `auto` (default): use precise `max()` freshness query, then fall back to low-memory `system.parts` metadata query on failure.
+- `precise`: only use `max()` freshness query.
+- `low_memory`: always use low-memory `system.parts` metadata query.
+
+Exporter telemetry for this path:
+- `torghut_clickhouse_guardrails_freshness_low_memory_mode{replica,table}` (`1` when last scrape used low-memory mode)
+- `torghut_clickhouse_guardrails_freshness_low_memory_total{table}`
+- `torghut_clickhouse_guardrails_freshness_fallback_total{table}`
+
 ## Failure mode focus: disk full → Flink JDBC sink failure
 ### Symptoms
 - FlinkDeployment `torghut-ta` transitions to `FAILED`.
@@ -68,6 +80,15 @@ storage or reducing retention rather than “tuning around” persistent disk sc
 - Kubernetes: `kubectl get flinkdeployment -n torghut torghut-ta`
 - ClickHouse: low free bytes; pending merges/backlog
 - Trading/UI: stale `max(event_ts)` in `ta_signals`
+- Exporter path health:
+  - `kubectl -n torghut port-forward svc/torghut-clickhouse-guardrails-exporter 19108:9108`
+  - `curl -fsS http://127.0.0.1:19108/metrics | rg '^torghut_clickhouse_guardrails_(freshness_low_memory_mode|freshness_low_memory_total|freshness_fallback_total|ta_signals_max_event_ts_seconds|ta_microbars_max_window_end_seconds)'`
+  - Pass:
+    - `increase(torghut_clickhouse_guardrails_freshness_fallback_total[15m]) == 0` in steady state.
+    - Freshness gauges advance and remain within market-hour thresholds.
+  - Fail:
+    - `TorghutClickHouseFreshnessQueryFallbacks` alert fires.
+    - Freshness gauges stop advancing while fallback counter increases.
 
 ### Recovery steps (operator)
 1) **Confirm** it is disk pressure (not auth):

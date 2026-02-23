@@ -40,6 +40,8 @@ spec:
               value: torghut
             - name: CLICKHOUSE_CLUSTER
               value: default
+            - name: CLICKHOUSE_FRESHNESS_QUERY_MODE
+              value: auto
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
           ports:

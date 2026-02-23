@@ -8,6 +8,7 @@ import io.micrometer.core.instrument.Timer
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 internal class ForwarderMetrics(
   private val registry: MeterRegistry,
@@ -18,8 +19,12 @@ internal class ForwarderMetrics(
   private val kafkaProduceErrorCounters = ConcurrentHashMap<String, Counter>()
   private val kafkaProduceSuccessCounters = ConcurrentHashMap<String, Counter>()
   private val kafkaMetadataErrorCounters = ConcurrentHashMap<String, Counter>()
+  private val desiredSymbolsFetchFailureCounters = ConcurrentHashMap<String, Counter>()
 
   private val readinessStatus = AtomicInteger(0)
+  private val desiredSymbolsFetchDegraded = AtomicInteger(0)
+  private val desiredSymbolsFetchLastSuccessEpochMs = AtomicLong(0)
+  private val desiredSymbolsFetchLastFailureEpochMs = AtomicLong(0)
   private val readinessErrorClassGauge =
     ReadinessErrorClass
       .entries
@@ -46,11 +51,26 @@ internal class ForwarderMetrics(
   val reconnects: Counter = registry.counter("torghut_ws_reconnects_total")
   val kafkaSendErrors: Counter = registry.counter("torghut_ws_kafka_send_errors_total")
   val wsConnectSuccess: Counter = registry.counter("torghut_ws_ws_connect_success_total")
+  val desiredSymbolsFetchSuccess: Counter = registry.counter("torghut_ws_desired_symbols_fetch_success_total")
 
   init {
     Gauge
       .builder("torghut_ws_readyz_status", readinessStatus) { it.get().toDouble() }
       .register(registry)
+
+    Gauge
+      .builder("torghut_ws_desired_symbols_fetch_degraded", desiredSymbolsFetchDegraded) { it.get().toDouble() }
+      .register(registry)
+
+    Gauge
+      .builder("torghut_ws_desired_symbols_fetch_last_success_ts_seconds", desiredSymbolsFetchLastSuccessEpochMs) {
+        it.get().toDouble() / 1_000.0
+      }.register(registry)
+
+    Gauge
+      .builder("torghut_ws_desired_symbols_fetch_last_failure_ts_seconds", desiredSymbolsFetchLastFailureEpochMs) {
+        it.get().toDouble() / 1_000.0
+      }.register(registry)
 
     readinessErrorClassGauge.forEach { (errorClass, value) ->
       Gauge
@@ -155,5 +175,23 @@ internal class ForwarderMetrics(
           .tag("channel", dedupChannel)
           .register(registry)
       }.increment()
+  }
+
+  fun recordDesiredSymbolsFetchSuccess() {
+    desiredSymbolsFetchSuccess.increment()
+    desiredSymbolsFetchDegraded.set(0)
+    desiredSymbolsFetchLastSuccessEpochMs.set(System.currentTimeMillis())
+  }
+
+  fun recordDesiredSymbolsFetchFailure(reason: String) {
+    desiredSymbolsFetchFailureCounters
+      .computeIfAbsent(reason) { failureReason ->
+        Counter
+          .builder("torghut_ws_desired_symbols_fetch_failures_total")
+          .tag("reason", failureReason)
+          .register(registry)
+      }.increment()
+    desiredSymbolsFetchDegraded.set(1)
+    desiredSymbolsFetchLastFailureEpochMs.set(System.currentTimeMillis())
   }
 }

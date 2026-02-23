@@ -178,6 +178,23 @@ data:
             annotations:
               summary: Torghut ClickHouse guardrails scrape failing
               description: Guardrails exporter is up but cannot query ClickHouse successfully.
+          - alert: TorghutClickHouseFreshnessQueryFallbacks
+            expr: |
+              increase(
+                torghut_clickhouse_guardrails_freshness_fallback_total{
+                  namespace="torghut",
+                  service="torghut-clickhouse-guardrails-exporter"
+                }[15m]
+              ) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut ClickHouse freshness queries are using fallback mode
+              description: |
+                Guardrails freshness checks are falling back from precise to low-memory mode.
+                This usually indicates ClickHouse query pressure or tight memory headroom.
+              runbook_url: docs/torghut/design-system/v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md
       - name: torghut-ws.rules
         rules:
           - alert: TorghutWSForwarderDown
@@ -209,6 +226,30 @@ data:
               description: |
                 torghut-ws /readyz is failing for 5 minutes (Alpaca/Kafka gates not healthy).
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
+          - alert: TorghutWSDesiredSymbolsFetchFailing
+            expr: |
+              max_over_time(
+                torghut_ws_desired_symbols_fetch_degraded{
+                  namespace="torghut",
+                  service="torghut-ws"
+                }[15m]
+              ) >= 1
+              * on() group_left()
+              (
+                (day_of_week(vector(time())) >= bool 1)
+                * (day_of_week(vector(time())) <= bool 5)
+                * (hour(vector(time())) >= bool 14)
+                * (hour(vector(time())) < bool 21)
+              )
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut WS desired-symbol polling degraded
+              description: |
+                torghut-ws has failed desired symbol polls for at least 15 minutes and is running on cached symbols.
+                Verify Jangar symbols endpoint health and recent symbol updates.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
           - alert: TorghutWSKafkaSendErrors
             expr: |
               rate(

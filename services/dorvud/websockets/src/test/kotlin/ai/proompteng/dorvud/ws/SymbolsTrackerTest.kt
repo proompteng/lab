@@ -13,6 +13,7 @@ class SymbolsTrackerTest {
       val result = tracker.refresh()
       assertEquals(listOf("AAPL", "MSFT"), result.symbols)
       assertTrue(result.hadError.not())
+      assertEquals(null, result.failureReason)
     }
 
   @Test
@@ -27,6 +28,7 @@ class SymbolsTrackerTest {
       val result = tracker.refresh()
       assertEquals(listOf("AAPL"), result.symbols)
       assertTrue(result.hadError)
+      assertEquals("fetch_error", result.failureReason)
     }
 
   @Test
@@ -41,6 +43,7 @@ class SymbolsTrackerTest {
       val result = tracker.refresh()
       assertEquals(listOf("TSLA"), result.symbols)
       assertTrue(result.hadError.not())
+      assertEquals(null, result.failureReason)
     }
 
   @Test
@@ -64,6 +67,7 @@ class SymbolsTrackerTest {
       val second = tracker.refresh()
       assertEquals(listOf("TSLA", "MSFT"), second.symbols)
       assertTrue(second.hadError)
+      assertEquals("fetch_error", second.failureReason)
     }
 
   @Test
@@ -78,5 +82,6 @@ class SymbolsTrackerTest {
       val result = tracker.refresh()
       assertEquals(listOf("BTC/USD", "ETH/USD", "SOL/USD"), result.symbols)
       assertTrue(result.hadError)
+      assertEquals("empty_result", result.failureReason)
     }
 }
