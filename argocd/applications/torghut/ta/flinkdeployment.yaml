@@ -85,6 +85,8 @@ spec:
   flinkConfiguration:
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/savepoints
+    execution.checkpointing.mode: EXACTLY_ONCE
+    execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
     taskmanager.numberOfTaskSlots: "2"
     restart-strategy.type: fixed-delay
     restart-strategy.fixed-delay.attempts: "5"
@@ -111,7 +113,7 @@ spec:
                 name: torghut-ta-config
           env:
             - name: TA_KAFKA_DELIVERY_GUARANTEE
-              value: AT_LEAST_ONCE
+              value: EXACTLY_ONCE
             - name: TA_KAFKA_USERNAME
               value: torghut-ws
             - name: TA_KAFKA_PASSWORD
@@ -183,5 +185,5 @@ spec:
     entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
     parallelism: 8
-    upgradeMode: stateless
+    upgradeMode: last-state
     state: running

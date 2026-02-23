@@ -415,7 +415,12 @@ class ForwarderApp(
       suspend fun desiredSymbols(): SymbolsRefreshResult {
         val refreshed = symbolsTracker.refresh()
         if (refreshed.hadError) {
-          logger.warn { "failed to poll desired symbols; keeping last-known list" }
+          metrics.recordDesiredSymbolsFetchFailure(refreshed.failureReason ?: "unknown")
+          logger.warn {
+            "failed to poll desired symbols; keeping last-known list reason=${refreshed.failureReason ?: "unknown"}"
+          }
+        } else {
+          metrics.recordDesiredSymbolsFetchSuccess()
         }
         return refreshed
       }

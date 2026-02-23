@@ -27,7 +27,7 @@ Provide oncall operational procedures for recovering TA outputs when:
 - ClickHouse: `svc/torghut-clickhouse:8123` (auth via `Secret/torghut-clickhouse-auth`)
 - Checkpoints/savepoints: MinIO/S3 path from `state.checkpoints.dir` + `state.savepoints.dir` in `argocd/applications/torghut/ta/flinkdeployment.yaml`
 - Kafka topics (current names): `TA_TRADES_TOPIC`, `TA_QUOTES_TOPIC`, `TA_BARS1M_TOPIC`, `TA_MICROBARS_TOPIC`, `TA_SIGNALS_TOPIC` in `argocd/applications/torghut/ta/configmap.yaml`
- - Delivery guarantee: `TA_KAFKA_DELIVERY_GUARANTEE` is set in `argocd/applications/torghut/ta/flinkdeployment.yaml` (currently `AT_LEAST_ONCE`).
+ - Delivery guarantee: `TA_KAFKA_DELIVERY_GUARANTEE` is set in `argocd/applications/torghut/ta/flinkdeployment.yaml` (currently `EXACTLY_ONCE`).
 
 ## Quick architecture reminder
 
