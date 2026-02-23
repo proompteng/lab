@@ -34,6 +34,11 @@ resources:
 controller:
   namespaces:
     - agents
+  # Keep runner jobs around long enough to inspect no-op/failure runs in-cluster.
+  jobTtlSeconds: 86400
+  jobTtlSecondsAfterFinished: 86400
+  # Persist run logs/artifacts for one week for debugging and audits.
+  logRetentionSeconds: 604800
   authSecret:
     name: codex-auth
     key: auth.json
