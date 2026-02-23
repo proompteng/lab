@@ -227,6 +227,17 @@ const buildWorkflowId = (filePath: string, provided?: string) => {
   return `bumba-${normalized}-${randomUUID()}`
 }
 
+const resolveWorkflowResult = async (
+  client: {
+    workflow: {
+      result: (handle: unknown) => Promise<unknown>
+    }
+  },
+  startResult: {
+    handle: unknown
+  },
+) => client.workflow.result(startResult.handle)
+
 const main = async () => {
   const options = parseArgs(Bun.argv.slice(2))
   process.env.TEMPORAL_ADDRESS = options.temporalAddress ?? DEFAULT_TEMPORAL_ADDRESS
@@ -266,10 +277,19 @@ const main = async () => {
   }
 
   if (options.wait) {
-    output.result = await startResult.handle.result()
+    output.result = await resolveWorkflowResult(client, startResult)
   }
 
   console.log(JSON.stringify(output, null, 2))
 }
 
-main().catch((error) => fatal('Failed to start bumba workflow', error))
+if (import.meta.main) {
+  main().catch((error) => fatal('Failed to start bumba workflow', error))
+}
+
+export const __private = {
+  buildWorkflowId,
+  parseArgs,
+  resolveInputs,
+  resolveWorkflowResult,
+}
