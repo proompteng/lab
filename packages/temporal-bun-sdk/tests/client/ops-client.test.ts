@@ -350,16 +350,22 @@ test('workflow, worker, and deployment ops call WorkflowService RPCs with defaul
     expect(lastCall(calls, 'getDeploymentReachability')?.request.namespace).toBe(config.namespace)
 
     await client.deployments.setWorkerDeploymentCurrentVersion(
-      { deploymentName: 'deploy-5', version: 'v1', buildId: 'build-5' },
+      { deploymentName: 'deploy-5', buildId: 'build-5' },
       callOptions,
     )
-    expect(lastCall(calls, 'setWorkerDeploymentCurrentVersion')?.request.namespace).toBe(config.namespace)
+    const setCurrentVersionCall = lastCall(calls, 'setWorkerDeploymentCurrentVersion')
+    expect(setCurrentVersionCall?.request.namespace).toBe(config.namespace)
+    expect(setCurrentVersionCall?.request.version).toBe('')
+    expect(setCurrentVersionCall?.request.conflictToken).toEqual(new Uint8Array())
 
     await client.deployments.setWorkerDeploymentRampingVersion(
-      { deploymentName: 'deploy-6', version: 'v2', buildId: 'build-6', percentage: 10 },
+      { deploymentName: 'deploy-6', buildId: 'build-6', percentage: 10 },
       callOptions,
     )
-    expect(lastCall(calls, 'setWorkerDeploymentRampingVersion')?.request.namespace).toBe(config.namespace)
+    const setRampingVersionCall = lastCall(calls, 'setWorkerDeploymentRampingVersion')
+    expect(setRampingVersionCall?.request.namespace).toBe(config.namespace)
+    expect(setRampingVersionCall?.request.version).toBe('')
+    expect(setRampingVersionCall?.request.conflictToken).toEqual(new Uint8Array())
 
     await client.deployments.updateWorkerDeploymentVersionMetadata(
       { deploymentVersion: { deploymentName: 'deploy-7', buildId: 'build-7' }, version: 'v3' },

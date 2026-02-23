@@ -656,11 +656,8 @@ export const createGithubEventConsumer = (
     }
 
     try {
-      const describeRequest = { deploymentName: workerDeploymentName } as Parameters<
-        TemporalClient['deployments']['describeWorkerDeployment']
-      >[0]
       const deployment = await client.deployments.describeWorkerDeployment(
-        describeRequest,
+        { deploymentName: workerDeploymentName },
         temporalCallOptions({ timeoutMs: DEFAULT_ROUTING_ALIGNMENT_RPC_TIMEOUT_MS }),
       )
       const currentBuildId = extractCurrentDeploymentBuildId(deployment)
@@ -673,17 +670,14 @@ export const createGithubEventConsumer = (
         return true
       }
 
-      const setCurrentVersionRequest = {
-        deploymentName: workerDeploymentName,
-        buildId: workerBuildId,
-        version: '',
-        conflictToken: new Uint8Array(),
-        allowNoPollers: false,
-        ignoreMissingTaskQueues: false,
-        identity: `bumba-event-consumer/${process.pid}`,
-      } as Parameters<TemporalClient['deployments']['setWorkerDeploymentCurrentVersion']>[0]
       await client.deployments.setWorkerDeploymentCurrentVersion(
-        setCurrentVersionRequest,
+        {
+          deploymentName: workerDeploymentName,
+          buildId: workerBuildId,
+          allowNoPollers: false,
+          ignoreMissingTaskQueues: false,
+          identity: `bumba-event-consumer/${process.pid}`,
+        },
         temporalCallOptions({ timeoutMs: DEFAULT_ROUTING_ALIGNMENT_RPC_TIMEOUT_MS }),
       )
 
