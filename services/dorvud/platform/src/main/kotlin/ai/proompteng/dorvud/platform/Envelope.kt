@@ -21,6 +21,7 @@ data class Envelope<T>(
   val symbol: String,
   val seq: Long,
   val payload: T,
+  val accountLabel: String? = null,
   val isFinal: Boolean = true,
   val source: String = "ws",
   val window: Window? = null,

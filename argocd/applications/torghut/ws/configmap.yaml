@@ -32,4 +32,6 @@ data:
   TOPIC_QUOTES: "torghut.quotes.v1"
   TOPIC_BARS_1M: "torghut.bars.1m.v1"
   TOPIC_TRADE_UPDATES: "torghut.trade-updates.v1"
+  TOPIC_TRADE_UPDATES_V2: "torghut.trade-updates.v2"
+  TORGHUT_ACCOUNT_LABEL: "PA3SX7FYNUTF"
   TOPIC_STATUS: "torghut.status.v1"

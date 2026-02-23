@@ -25,6 +25,9 @@ BACKFILL_DECISION_LIMIT = 200
 class Reconciler:
     """Pull order updates from execution adapter and update executions."""
 
+    def __init__(self, account_label: str | None = None) -> None:
+        self.account_label = account_label
+
     def reconcile(self, session: Session, client: Any) -> int:
         updates = 0
         updates += self._reconcile_existing_executions(session, client)
@@ -35,6 +38,8 @@ class Reconciler:
 
     def _reconcile_existing_executions(self, session: Session, client: Any) -> int:
         stmt = select(Execution).where(~Execution.status.in_(FINAL_STATUSES))
+        if self.account_label:
+            stmt = stmt.where(Execution.alpaca_account_label == self.account_label)
         executions = session.execute(stmt).scalars().all()
         updates = 0
         for execution in executions:
@@ -88,6 +93,10 @@ class Reconciler:
             .order_by(TradeDecision.created_at.desc())
             .limit(BACKFILL_DECISION_LIMIT)
         )
+        if self.account_label:
+            decision_stmt = decision_stmt.where(
+                TradeDecision.alpaca_account_label == self.account_label
+            )
         decisions = session.execute(decision_stmt).scalars().all()
 
         updates = 0
@@ -96,7 +105,20 @@ class Reconciler:
                 continue
 
             existing_stmt = select(Execution).where(
-                (Execution.trade_decision_id == decision.id) | (Execution.client_order_id == decision.decision_hash)
+                (
+                    (Execution.trade_decision_id == decision.id)
+                    & (
+                        Execution.alpaca_account_label
+                        == decision.alpaca_account_label
+                    )
+                )
+                | (
+                    (Execution.client_order_id == decision.decision_hash)
+                    & (
+                        Execution.alpaca_account_label
+                        == decision.alpaca_account_label
+                    )
+                )
             )
             existing = session.execute(existing_stmt).scalar_one_or_none()
             if existing is not None:
@@ -127,6 +149,7 @@ class Reconciler:
                 session,
                 order,
                 trade_decision_id=str(decision.id),
+                alpaca_account_label=decision.alpaca_account_label,
                 execution_expected_adapter=route_expected,
                 execution_actual_adapter=route_actual,
             )

@@ -28,6 +28,7 @@ class NormalizedOrderEvent:
     source_topic: str
     source_partition: int | None
     source_offset: int | None
+    alpaca_account_label: str
     feed_seq: int | None
     event_ts: datetime | None
     symbol: str | None
@@ -105,6 +106,7 @@ class OrderFeedIngestor:
             normalized = normalize_order_feed_record(
                 record,
                 default_topic=settings.trading_order_feed_topic,
+                default_account_label=settings.trading_account_label,
             )
             if normalized.event is None:
                 counters['missing_fields_total'] += 1
@@ -169,7 +171,7 @@ class OrderFeedIngestor:
 
         bootstrap_servers_raw = settings.trading_order_feed_bootstrap_servers or ''
         return KafkaConsumer(
-            settings.trading_order_feed_topic,
+            *settings.trading_order_feed_topics,
             bootstrap_servers=[item.strip() for item in bootstrap_servers_raw.split(',') if item.strip()],
             group_id=settings.trading_order_feed_group_id,
             client_id=settings.trading_order_feed_client_id,
@@ -181,7 +183,9 @@ class OrderFeedIngestor:
         )
 
 
-def normalize_order_feed_record(record: Any, *, default_topic: str) -> NormalizationResult:
+def normalize_order_feed_record(
+    record: Any, *, default_topic: str, default_account_label: str
+) -> NormalizationResult:
     """Normalize a Kafka record (or Kafka-like test object) into a canonical event."""
 
     value = getattr(record, 'value', None)
@@ -225,8 +229,16 @@ def normalize_order_feed_record(record: Any, *, default_topic: str) -> Normaliza
     source_topic = _coerce_text(getattr(record, 'topic', None)) or _coerce_text(envelope.get('topic') if envelope else None)
     if source_topic is None:
         source_topic = default_topic
+    account_label = (
+        _coerce_text(data_payload.get('account_label'))
+        or _coerce_text(data_payload.get('accountLabel'))
+        or _coerce_text(envelope.get('account_label') if envelope else None)
+        or _coerce_text(envelope.get('accountLabel') if envelope else None)
+        or default_account_label
+    )
 
     fingerprint_input = {
+        'alpaca_account_label': account_label,
         'alpaca_order_id': alpaca_order_id,
         'client_order_id': client_order_id,
         'event_type': event_type,
@@ -244,6 +256,7 @@ def normalize_order_feed_record(record: Any, *, default_topic: str) -> Normaliza
         source_topic=source_topic,
         source_partition=_coerce_int(getattr(record, 'partition', None)),
         source_offset=_coerce_int(getattr(record, 'offset', None)),
+        alpaca_account_label=account_label,
         feed_seq=feed_seq,
         event_ts=event_ts,
         symbol=symbol,
@@ -274,7 +287,10 @@ def persist_order_event(session: Session, event: NormalizedOrderEvent) -> tuple[
         trade_decision_id = execution.trade_decision_id
     elif event.client_order_id:
         decision = session.execute(
-            select(TradeDecision).where(TradeDecision.decision_hash == event.client_order_id)
+            select(TradeDecision).where(
+                TradeDecision.decision_hash == event.client_order_id,
+                TradeDecision.alpaca_account_label == event.alpaca_account_label,
+            )
         ).scalar_one_or_none()
         if decision is not None:
             trade_decision_id = decision.id
@@ -284,6 +300,7 @@ def persist_order_event(session: Session, event: NormalizedOrderEvent) -> tuple[
         source_topic=event.source_topic,
         source_partition=event.source_partition,
         source_offset=event.source_offset,
+        alpaca_account_label=event.alpaca_account_label,
         feed_seq=event.feed_seq,
         event_ts=event.event_ts,
         symbol=event.symbol,
@@ -348,7 +365,10 @@ def apply_order_event_to_execution(execution: Execution, event: ExecutionOrderEv
 def latest_order_event_for_execution(session: Session, execution: Execution) -> ExecutionOrderEvent | None:
     """Fetch newest persisted order event linked to an execution."""
 
-    filters: list[ColumnElement[bool]] = [ExecutionOrderEvent.execution_id == execution.id]
+    filters: list[ColumnElement[bool]] = [
+        ExecutionOrderEvent.execution_id == execution.id,
+        ExecutionOrderEvent.alpaca_account_label == execution.alpaca_account_label,
+    ]
     if execution.alpaca_order_id:
         filters.append(ExecutionOrderEvent.alpaca_order_id == execution.alpaca_order_id)
     if execution.client_order_id:
@@ -370,9 +390,15 @@ def latest_order_event_for_execution(session: Session, execution: Execution) -> 
 def _resolve_execution(session: Session, event: NormalizedOrderEvent) -> Execution | None:
     clauses: list[ColumnElement[bool]] = []
     if event.alpaca_order_id:
-        clauses.append(Execution.alpaca_order_id == event.alpaca_order_id)
+        clauses.append(
+            (Execution.alpaca_order_id == event.alpaca_order_id)
+            & (Execution.alpaca_account_label == event.alpaca_account_label)
+        )
     if event.client_order_id:
-        clauses.append(Execution.client_order_id == event.client_order_id)
+        clauses.append(
+            (Execution.client_order_id == event.client_order_id)
+            & (Execution.alpaca_account_label == event.alpaca_account_label)
+        )
     if not clauses:
         return None
     return session.execute(select(Execution).where(or_(*clauses))).scalar_one_or_none()

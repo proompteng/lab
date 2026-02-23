@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from unittest import TestCase
 
@@ -43,6 +44,7 @@ class TestModels(TestCase):
 
             execution = Execution(
                 trade_decision_id=decision.id,
+                alpaca_account_label="paper",
                 alpaca_order_id="order-1",
                 client_order_id="client-1",
                 symbol="AAPL",
@@ -62,6 +64,7 @@ class TestModels(TestCase):
                 source_topic="torghut.trade-updates.v1",
                 source_partition=0,
                 source_offset=1,
+                alpaca_account_label="paper",
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
                 alpaca_order_id="order-1",
@@ -100,3 +103,88 @@ class TestModels(TestCase):
             self.assertEqual(found_execution.filled_qty, Decimal("0"))
             self.assertEqual(found_order_event.event_type, "fill")
             self.assertEqual(found_snapshot.equity, Decimal("10000"))
+
+    def test_account_scoped_uniques_allow_same_ids_across_accounts(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+
+        with Session(engine) as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo strat",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="symbols_list",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.flush()
+
+            decision_a = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper-a",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"side": "buy"},
+                decision_hash="shared-hash",
+            )
+            decision_b = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper-b",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"side": "buy"},
+                decision_hash="shared-hash",
+            )
+            session.add_all([decision_a, decision_b])
+            session.flush()
+
+            execution_a = Execution(
+                trade_decision_id=decision_a.id,
+                alpaca_account_label="paper-a",
+                alpaca_order_id="shared-order",
+                client_order_id="shared-client",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("0"),
+                status="accepted",
+                raw_order={"id": "shared-order"},
+            )
+            execution_b = Execution(
+                trade_decision_id=decision_b.id,
+                alpaca_account_label="paper-b",
+                alpaca_order_id="shared-order",
+                client_order_id="shared-client",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("0"),
+                status="accepted",
+                raw_order={"id": "shared-order"},
+            )
+            session.add_all([execution_a, execution_b])
+            session.commit()
+
+            execution_duplicate = Execution(
+                trade_decision_id=decision_a.id,
+                alpaca_account_label="paper-a",
+                alpaca_order_id="shared-order",
+                client_order_id="shared-client",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("0"),
+                status="accepted",
+                raw_order={"id": "shared-order"},
+            )
+            session.add(execution_duplicate)
+            with self.assertRaises(IntegrityError):
+                session.commit()
+            session.rollback()

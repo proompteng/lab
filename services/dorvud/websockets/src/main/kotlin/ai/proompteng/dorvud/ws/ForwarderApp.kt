@@ -176,6 +176,7 @@ class ForwarderApp(
                     ?: DedupCache(Duration.ofSeconds(config.dedupTtlSeconds), config.dedupMaxEntries),
                   tradeStreamUrl,
                   tradeTopic,
+                  config.topics.tradeUpdatesV2,
                 )
               }
           }
@@ -263,13 +264,14 @@ class ForwarderApp(
     seq: SeqTracker,
     tradeUpdatesDedup: DedupCache<String>,
     streamUrl: String,
-    topic: String,
+    topicV1: String,
+    topicV2: String?,
   ) {
     var attempt = 0
     while (scope.isActive) {
       try {
         ensureKafkaReady(producer)
-        streamTradeUpdatesSession(producer, seq, tradeUpdatesDedup, streamUrl, topic) {
+        streamTradeUpdatesSession(producer, seq, tradeUpdatesDedup, streamUrl, topicV1, topicV2) {
           attempt = 0
         }
       } catch (e: CancellationException) {
@@ -509,7 +511,8 @@ class ForwarderApp(
     seq: SeqTracker,
     tradeUpdatesDedup: DedupCache<String>,
     streamUrl: String,
-    topic: String,
+    topicV1: String,
+    topicV2: String?,
     onReady: () -> Unit,
   ) {
     httpClient.webSocket(urlString = streamUrl) {
@@ -588,7 +591,7 @@ class ForwarderApp(
           }
           "trade_updates" -> {
             val data = obj["data"] as? JsonObject ?: continue
-            handleTradeUpdate(data, producer, seq, tradeUpdatesDedup, topic)
+            handleTradeUpdate(data, producer, seq, tradeUpdatesDedup, topicV1, topicV2)
           }
         }
       }
@@ -625,7 +628,8 @@ class ForwarderApp(
     producer: KafkaProducer<String, String>,
     seq: SeqTracker,
     tradeUpdatesDedup: DedupCache<String>,
-    topic: String,
+    topicV1: String,
+    topicV2: String?,
   ) {
     val order = data["order"] as? JsonObject
     val symbol = order?.get("symbol")?.jsonPrimitive?.contentOrNull ?: "UNKNOWN"
@@ -676,7 +680,29 @@ class ForwarderApp(
       )
 
     recordLag(env)
-    sendKafka(producer, topic, env)
+    sendKafka(producer, topicV1, env)
+    if (!topicV2.isNullOrBlank()) {
+      val payloadV2 =
+        buildJsonObject {
+          data.forEach { (key, value) -> put(key, value) }
+          config.torghutAccountLabel?.let { put("account_label", JsonPrimitive(it)) }
+        }
+      val envV2: Envelope<JsonElement> =
+        Envelope(
+          ingestTs = env.ingestTs,
+          eventTs = env.eventTs,
+          feed = env.feed,
+          channel = env.channel,
+          symbol = env.symbol,
+          seq = env.seq,
+          payload = payloadV2,
+          accountLabel = config.torghutAccountLabel,
+          isFinal = true,
+          source = env.source,
+          version = 2,
+        )
+      sendKafka(producer, topicV2, envV2)
+    }
   }
 
   private suspend fun maybeBackfillBars(

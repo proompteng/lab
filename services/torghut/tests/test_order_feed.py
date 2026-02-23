@@ -89,6 +89,7 @@ class TestOrderFeed(TestCase):
 
         execution = Execution(
             trade_decision_id=decision.id,
+            alpaca_account_label='paper',
             alpaca_order_id='order-1',
             client_order_id='client-1',
             symbol='AAPL',
@@ -116,8 +117,13 @@ class TestOrderFeed(TestCase):
 
         with Session(self.engine) as session:
             self._seed_execution(session)
-            normalized = normalize_order_feed_record(record, default_topic='torghut.trade-updates.v1')
+            normalized = normalize_order_feed_record(
+                record,
+                default_topic='torghut.trade-updates.v1',
+                default_account_label='paper',
+            )
             assert normalized.event is not None
+            self.assertEqual(normalized.event.alpaca_account_label, 'paper')
 
             first, first_dup = persist_order_event(session, normalized.event)
             second, second_dup = persist_order_event(session, normalized.event)
@@ -144,6 +150,7 @@ class TestOrderFeed(TestCase):
                 source_topic='torghut.trade-updates.v1',
                 source_partition=0,
                 source_offset=99,
+                alpaca_account_label='paper',
                 feed_seq=12,
                 event_ts=execution.order_feed_last_event_ts - timedelta(seconds=10),
                 symbol='AAPL',
@@ -173,9 +180,29 @@ class TestOrderFeed(TestCase):
         )
         record = FakeRecord(value=payload, offset=44)
 
-        normalized = normalize_order_feed_record(record, default_topic='torghut.trade-updates.v1')
+        normalized = normalize_order_feed_record(
+            record,
+            default_topic='torghut.trade-updates.v1',
+            default_account_label='paper',
+        )
         self.assertIsNone(normalized.event)
         self.assertEqual(normalized.drop_reason, 'missing_order_identity')
+
+    def test_v2_payload_uses_account_label_from_envelope(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","accountLabel":"paper-b","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"account_label":"paper-b","order":{"id":"order-9","client_order_id":"client-9","symbol":"AAPL","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10,"version":2}'
+        )
+        record = FakeRecord(value=payload, topic='torghut.trade-updates.v2', offset=12)
+
+        normalized = normalize_order_feed_record(
+            record,
+            default_topic='torghut.trade-updates.v1',
+            default_account_label='paper-a',
+        )
+        assert normalized.event is not None
+        self.assertEqual(normalized.event.alpaca_account_label, 'paper-b')
 
     def test_ingestor_applies_valid_events_and_tracks_missing_fields(self) -> None:
         good = FakeRecord(
