@@ -8,6 +8,7 @@ import { createTemporalClient } from '@proompteng/temporal-bun-sdk'
 import { VersioningBehavior } from '@proompteng/temporal-bun-sdk/worker'
 
 import { repoRoot as defaultRepoRoot, fatal } from '../shared/cli'
+import { resolveWorkflowResult } from './enrich-file-result'
 
 type Options = {
   filePath: string
@@ -266,10 +267,19 @@ const main = async () => {
   }
 
   if (options.wait) {
-    output.result = await startResult.handle.result()
+    output.result = await resolveWorkflowResult(client, startResult)
   }
 
   console.log(JSON.stringify(output, null, 2))
 }
 
-main().catch((error) => fatal('Failed to start bumba workflow', error))
+if (import.meta.main) {
+  main().catch((error) => fatal('Failed to start bumba workflow', error))
+}
+
+export const __private = {
+  buildWorkflowId,
+  parseArgs,
+  resolveInputs,
+  resolveWorkflowResult,
+}
