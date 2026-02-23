@@ -612,6 +612,50 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key == "runtime_uncertainty_gate_action_total":
+                    metric_name = "torghut_trading_runtime_uncertainty_gate_action_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of runtime uncertainty gate actions by action."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(action), int(count))
+                            for action, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for action, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"action": action},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "runtime_uncertainty_gate_blocked_total":
+                    metric_name = "torghut_trading_runtime_uncertainty_gate_blocked_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of runtime uncertainty gate entry blocks by action."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(action), int(count))
+                            for action, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for action, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"action": action},
+                                value=count,
+                            )
+                        )
+                    continue
                 if key == "llm_committee_latency_ms":
                     metric_name = "torghut_trading_llm_committee_latency_ms"
                     lines.append(

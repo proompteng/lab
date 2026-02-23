@@ -76,6 +76,19 @@ _RECOVERABLE_EMERGENCY_STOP_PREFIXES: tuple[str, ...] = (
     "signal_lag_exceeded:",
     "signal_staleness_streak_exceeded:",
 )
+_RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
+_RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
+_RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
+RuntimeUncertaintyGateAction = Literal["pass", "degrade", "abstain", "fail"]
+
+
+@dataclass(frozen=True)
+class RuntimeUncertaintyGate:
+    action: RuntimeUncertaintyGateAction
+    source: str
+    coverage_error: Decimal | None = None
+    shift_score: Decimal | None = None
+    conformal_interval_width: Decimal | None = None
 
 
 def _split_emergency_stop_reasons(raw: str | None) -> list[str]:
@@ -334,6 +347,12 @@ class TradingMetrics:
     conformal_interval_width: float = 0
     regime_shift_score: float = 0
     uncertainty_gate_action_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    runtime_uncertainty_gate_action_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    runtime_uncertainty_gate_blocked_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
     recalibration_runs_total: dict[str, int] = field(
@@ -641,6 +660,17 @@ class TradingMetrics:
                 )
                 break
 
+    def record_runtime_uncertainty_gate(
+        self, action: RuntimeUncertaintyGateAction, *, blocked: bool
+    ) -> None:
+        self.runtime_uncertainty_gate_action_total[action] = (
+            self.runtime_uncertainty_gate_action_total.get(action, 0) + 1
+        )
+        if blocked:
+            self.runtime_uncertainty_gate_blocked_total[action] = (
+                self.runtime_uncertainty_gate_blocked_total.get(action, 0) + 1
+            )
+
 @dataclass
 class TradingState:
     running: bool = False
@@ -695,6 +725,9 @@ class TradingState:
     drift_live_promotion_reasons: list[str] = field(
         default_factory=lambda: cast(list[str], [])
     )
+    last_runtime_uncertainty_gate_action: str | None = None
+    last_runtime_uncertainty_gate_source: str | None = None
+    last_runtime_uncertainty_gate_reason: str | None = None
     metrics: TradingMetrics = field(default_factory=TradingMetrics)
 
 
@@ -1055,6 +1088,39 @@ class TradingPipeline:
                 )
                 return
 
+            decision, gate_payload, gate_rejection = self._apply_runtime_uncertainty_gate(
+                decision,
+                positions=positions,
+            )
+            self.executor.update_decision_params(
+                session,
+                decision_row,
+                {"runtime_uncertainty_gate": gate_payload},
+            )
+            gate_action = str(gate_payload.get("action") or "pass").strip().lower()
+            if gate_action in {"pass", "degrade", "abstain", "fail"}:
+                self.state.metrics.record_runtime_uncertainty_gate(
+                    cast(RuntimeUncertaintyGateAction, gate_action),
+                    blocked=gate_rejection is not None,
+                )
+                self.state.last_runtime_uncertainty_gate_action = gate_action
+            else:
+                self.state.last_runtime_uncertainty_gate_action = None
+            self.state.last_runtime_uncertainty_gate_source = str(
+                gate_payload.get("source") or ""
+            ).strip() or None
+            self.state.last_runtime_uncertainty_gate_reason = gate_rejection
+            if gate_rejection:
+                self.state.metrics.orders_rejected_total += 1
+                self.executor.mark_rejected(session, decision_row, gate_rejection)
+                logger.info(
+                    "Decision rejected by runtime uncertainty gate strategy_id=%s symbol=%s reason=%s",
+                    decision.strategy_id,
+                    decision.symbol,
+                    gate_rejection,
+                )
+                return
+
             decision, llm_reject_reason = self._apply_llm_review(
                 session,
                 decision,
@@ -1334,6 +1400,146 @@ class TradingPipeline:
                     f"decision_handler_error {type(exc).__name__}",
                 )
             return
+
+    def _resolve_runtime_uncertainty_gate(
+        self, decision: StrategyDecision
+    ) -> RuntimeUncertaintyGate:
+        params = decision.params
+        direct_action = _coerce_runtime_uncertainty_gate_action(
+            params.get("uncertainty_gate_action")
+        )
+        if direct_action is not None:
+            return RuntimeUncertaintyGate(action=direct_action, source="decision_params")
+
+        runtime_payload = params.get("runtime_uncertainty_gate")
+        if isinstance(runtime_payload, Mapping):
+            runtime_map = cast(Mapping[str, Any], runtime_payload)
+            runtime_action = _coerce_runtime_uncertainty_gate_action(
+                runtime_map.get("action")
+            )
+            if runtime_action is not None:
+                return RuntimeUncertaintyGate(
+                    action=runtime_action,
+                    source="decision_runtime_payload",
+                )
+
+        forecast_audit = params.get("forecast_audit")
+        if isinstance(forecast_audit, Mapping):
+            audit_map = cast(Mapping[str, Any], forecast_audit)
+            audit_action = _coerce_runtime_uncertainty_gate_action(
+                audit_map.get("uncertainty_gate_action")
+            )
+            if audit_action is not None:
+                return RuntimeUncertaintyGate(
+                    action=audit_action,
+                    source="forecast_audit",
+                )
+
+        gate_path_raw = self.state.last_autonomy_gates
+        if gate_path_raw:
+            try:
+                payload = json.loads(Path(gate_path_raw).read_text(encoding="utf-8"))
+            except Exception:
+                payload = {}
+            if isinstance(payload, Mapping):
+                gate_map = cast(Mapping[str, Any], payload)
+                gate_action = _coerce_runtime_uncertainty_gate_action(
+                    gate_map.get("uncertainty_gate_action")
+                )
+                if gate_action is not None:
+                    return RuntimeUncertaintyGate(
+                        action=gate_action,
+                        source="autonomy_gate_report",
+                        coverage_error=_optional_decimal(gate_map.get("coverage_error")),
+                        shift_score=_optional_decimal(gate_map.get("shift_score")),
+                        conformal_interval_width=_optional_decimal(
+                            gate_map.get("conformal_interval_width")
+                        ),
+                    )
+        return RuntimeUncertaintyGate(action="pass", source="default_pass")
+
+    def _apply_runtime_uncertainty_gate(
+        self,
+        decision: StrategyDecision,
+        *,
+        positions: list[dict[str, Any]],
+    ) -> tuple[StrategyDecision, dict[str, Any], str | None]:
+        gate = self._resolve_runtime_uncertainty_gate(decision)
+        risk_increasing_entry = _is_runtime_risk_increasing_entry(decision, positions)
+        payload: dict[str, Any] = {
+            "action": gate.action,
+            "source": gate.source,
+            "risk_increasing_entry": risk_increasing_entry,
+            "entry_blocked": False,
+            "block_reason": None,
+            "degrade_qty_multiplier": None,
+            "max_participation_rate_override": None,
+            "min_execution_seconds": None,
+            "coverage_error": (
+                str(gate.coverage_error) if gate.coverage_error is not None else None
+            ),
+            "shift_score": (
+                str(gate.shift_score) if gate.shift_score is not None else None
+            ),
+            "conformal_interval_width": (
+                str(gate.conformal_interval_width)
+                if gate.conformal_interval_width is not None
+                else None
+            ),
+        }
+        if gate.action == "pass":
+            return decision, payload, None
+
+        if gate.action in {"abstain", "fail"}:
+            if risk_increasing_entry:
+                reason = (
+                    "runtime_uncertainty_gate_fail_block_new_entries"
+                    if gate.action == "fail"
+                    else "runtime_uncertainty_gate_abstain_block_risk_increasing_entries"
+                )
+                payload["entry_blocked"] = True
+                payload["block_reason"] = reason
+                return decision, payload, reason
+            return decision, payload, None
+
+        params = dict(decision.params)
+        allocator = _coerce_json(params.get("allocator"))
+        current_override = _optional_decimal(
+            allocator.get("max_participation_rate_override")
+        )
+        if (
+            current_override is None
+            or current_override > _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE
+        ):
+            allocator["max_participation_rate_override"] = str(
+                _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE
+            )
+        params["allocator"] = allocator
+        execution_seconds = _optional_int(params.get("execution_seconds"))
+        if (
+            execution_seconds is None
+            or execution_seconds < _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
+        ):
+            params["execution_seconds"] = _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
+
+        qty = _optional_decimal(decision.qty)
+        adjusted_qty = decision.qty
+        if qty is not None and qty > 0:
+            scaled = (
+                qty * _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER
+            ).quantize(Decimal("1"))
+            adjusted_qty = max(Decimal("1"), scaled)
+        payload["degrade_qty_multiplier"] = str(_RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER)
+        payload["max_participation_rate_override"] = str(
+            _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE
+        )
+        payload["min_execution_seconds"] = _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
+        payload["adjusted_qty"] = str(adjusted_qty)
+        return (
+            decision.model_copy(update={"qty": adjusted_qty, "params": params}),
+            payload,
+            None,
+        )
 
     def _execution_client_for_symbol(
         self,
@@ -2165,6 +2371,51 @@ def _optional_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _coerce_runtime_uncertainty_gate_action(
+    value: Any,
+) -> RuntimeUncertaintyGateAction | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"pass", "degrade", "abstain", "fail"}:
+        return cast(RuntimeUncertaintyGateAction, normalized)
+    return None
+
+
+def _position_qty(symbol: str, positions: list[dict[str, Any]]) -> Decimal:
+    total_qty = Decimal("0")
+    for position in positions:
+        if position.get("symbol") != symbol:
+            continue
+        qty = _optional_decimal(position.get("qty"))
+        if qty is None:
+            qty = _optional_decimal(position.get("quantity"))
+        if qty is None:
+            continue
+        side = str(position.get("side") or "").strip().lower()
+        if side == "short":
+            qty = -abs(qty)
+        total_qty += qty
+    return total_qty
+
+
+def _is_runtime_risk_increasing_entry(
+    decision: StrategyDecision,
+    positions: list[dict[str, Any]],
+) -> bool:
+    qty = _optional_decimal(decision.qty)
+    if qty is None or qty <= 0:
+        return False
+    position_qty = _position_qty(decision.symbol, positions)
+    if decision.action == "buy":
+        if position_qty < 0:
+            return qty > abs(position_qty)
+        return True
+    if position_qty <= 0:
+        return True
+    return qty > position_qty
 
 
 def _hash_payload(payload: dict[str, Any]) -> str:
