@@ -17,7 +17,6 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 
 FROM deps AS build
 COPY full/ .
-RUN bun --cwd=packages/otel run build
 RUN bun --cwd=packages/temporal-bun-sdk run build
 
 FROM oven/bun:${BUN_VERSION} AS deps-prod
@@ -43,6 +42,5 @@ RUN --mount=type=cache,target=/var/cache/apt \
 COPY --from=deps-prod /app/node_modules ./node_modules
 COPY --from=build /app/services/bumba ./services/bumba
 COPY --from=build /app/tsconfig.base.json ./tsconfig.base.json
-COPY --from=build /app/packages/otel ./packages/otel
 COPY --from=build /app/packages/temporal-bun-sdk ./packages/temporal-bun-sdk
 CMD ["bun", "services/bumba/src/worker.ts"]
