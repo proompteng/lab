@@ -1092,11 +1092,21 @@ class TradingPipeline:
                 decision,
                 positions=positions,
             )
-            self.executor.update_decision_params(
-                session,
-                decision_row,
-                {"runtime_uncertainty_gate": gate_payload},
-            )
+            gate_params = decision.model_dump(mode="json").get("params", {})
+            if isinstance(gate_params, Mapping):
+                merged_gate_params = dict(cast(Mapping[str, Any], gate_params))
+                merged_gate_params["runtime_uncertainty_gate"] = gate_payload
+                self.executor.update_decision_params(
+                    session,
+                    decision_row,
+                    merged_gate_params,
+                )
+            else:
+                self.executor.update_decision_params(
+                    session,
+                    decision_row,
+                    {"runtime_uncertainty_gate": gate_payload},
+                )
             gate_action = str(gate_payload.get("action") or "pass").strip().lower()
             if gate_action in {"pass", "degrade", "abstain", "fail"}:
                 self.state.metrics.record_runtime_uncertainty_gate(
