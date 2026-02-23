@@ -304,6 +304,16 @@ class TestExecutionPolicy(TestCase):
         self.assertEqual(outcome.decision.order_type, "limit")
         self.assertEqual(outcome.advisor_metadata["applied"], True)
         self.assertEqual(outcome.advisor_metadata["max_participation_rate"], "0.05")
+        self.assertIn(
+            "participation_rate_tightened",
+            outcome.advisor_metadata["tightening_reasons"],
+        )
+        self.assertIn(
+            "urgency_tier_bounded",
+            outcome.advisor_metadata["tightening_reasons"],
+        )
+        params_update = outcome.params_update()
+        self.assertIn("execution_advisor", params_update)
 
     def test_advisor_timeout_falls_back_to_baseline(self) -> None:
         config.settings.trading_execution_advisor_enabled = True
@@ -341,3 +351,118 @@ class TestExecutionPolicy(TestCase):
         )
         self.assertEqual(outcome.advisor_metadata["applied"], False)
         self.assertEqual(outcome.advisor_metadata["fallback_reason"], "advisor_timeout")
+
+    def test_advisor_state_staleness_falls_back_deterministically(self) -> None:
+        config.settings.trading_execution_advisor_enabled = True
+        config.settings.trading_execution_advisor_max_staleness_seconds = 10
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2025-12-31T23:59:00Z",
+                        "spread_bps": "3.2",
+                        "depth_top5_usd": "1500000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 20,
+                        "fill_hazard": "0.8",
+                        "liquidity_regime": "normal",
+                    },
+                    "execution_advice": {
+                        "urgency_tier": "normal",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "max_participation_rate": "0.01",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertEqual(outcome.advisor_metadata["applied"], False)
+        self.assertEqual(
+            outcome.advisor_metadata["fallback_reason"], "advisor_state_stale"
+        )
+
+    def test_advisor_advice_staleness_falls_back_deterministically(self) -> None:
+        config.settings.trading_execution_advisor_enabled = True
+        config.settings.trading_execution_advisor_max_staleness_seconds = 10
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "3.2",
+                        "depth_top5_usd": "1500000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 20,
+                        "fill_hazard": "0.8",
+                        "liquidity_regime": "normal",
+                    },
+                    "execution_advice": {
+                        "urgency_tier": "normal",
+                        "event_ts": "2025-12-31T23:59:00Z",
+                        "max_participation_rate": "0.01",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertEqual(outcome.advisor_metadata["applied"], False)
+        self.assertEqual(
+            outcome.advisor_metadata["fallback_reason"], "advisor_advice_stale"
+        )
+
+    def test_advisor_disabled_keeps_baseline_behavior(self) -> None:
+        config.settings.trading_execution_advisor_enabled = False
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "3.2",
+                        "depth_top5_usd": "1500000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 20,
+                        "fill_hazard": "0.8",
+                        "liquidity_regime": "normal",
+                    },
+                    "execution_advice": {
+                        "urgency_tier": "normal",
+                        "max_participation_rate": "0.01",
+                        "preferred_order_type": "limit",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertTrue(outcome.approved)
+        self.assertEqual(outcome.decision.order_type, "market")
+        self.assertEqual(outcome.advisor_metadata["applied"], False)
+        self.assertEqual(
+            outcome.advisor_metadata["fallback_reason"], "advisor_disabled"
+        )

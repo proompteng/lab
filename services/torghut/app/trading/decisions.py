@@ -13,6 +13,7 @@ from ..models import Strategy
 from .features import (
     FeatureNormalizationError,
     SignalFeatures,
+    extract_microstructure_features_v1,
     extract_signal_features,
     normalize_feature_vector_v3,
     optional_decimal,
@@ -212,6 +213,7 @@ class DecisionEngine:
                     time_in_force="day",
                     rationale=",".join(intent.explain),
                     params=_build_params(
+                        signal=signal,
                         macd=features.macd,
                         macd_signal=features.macd_signal,
                         rsi=features.rsi,
@@ -353,6 +355,7 @@ class DecisionEngine:
             time_in_force="day",
             rationale=",".join(rationale_parts),
             params=_build_params(
+                signal=signal,
                 macd=features.macd,
                 macd_signal=features.macd_signal,
                 rsi=features.rsi,
@@ -373,6 +376,7 @@ class DecisionEngine:
 
 
 def _build_params(
+    signal: SignalEnvelope,
     macd: Decimal | None,
     macd_signal: Decimal | None,
     rsi: Decimal | None,
@@ -400,7 +404,122 @@ def _build_params(
         params["forecast"] = forecast_contract
     if forecast_audit is not None:
         params["forecast_audit"] = forecast_audit
+    microstructure_state = _resolve_microstructure_state_payload(signal)
+    if microstructure_state is not None:
+        params["microstructure_state"] = microstructure_state
+    execution_advice = _resolve_execution_advice_payload(signal)
+    if execution_advice is not None:
+        params["execution_advice"] = execution_advice
+    fragility_snapshot = _resolve_fragility_snapshot_payload(signal)
+    if fragility_snapshot is not None:
+        params["fragility_snapshot"] = fragility_snapshot
     return params
+
+
+def _resolve_microstructure_state_payload(
+    signal: SignalEnvelope,
+) -> dict[str, Any] | None:
+    payload = signal.payload
+    raw_state = payload.get("microstructure_state")
+    if isinstance(raw_state, dict):
+        state = dict(cast(dict[str, Any], raw_state))
+    else:
+        extracted = extract_microstructure_features_v1(signal)
+        state = {
+            "schema_version": extracted.schema_version,
+            "symbol": extracted.symbol,
+            "event_ts": extracted.event_ts.isoformat(),
+            "spread_bps": str(extracted.spread_bps),
+            "depth_top5_usd": str(extracted.depth_top5_usd),
+            "order_flow_imbalance": str(extracted.order_flow_imbalance),
+            "latency_ms_estimate": extracted.latency_ms_estimate,
+            "fill_hazard": str(extracted.fill_hazard),
+            "liquidity_regime": extracted.liquidity_regime,
+        }
+
+    state["schema_version"] = "microstructure_state_v1"
+    state["symbol"] = str(state.get("symbol") or signal.symbol).strip().upper()
+    if not state["symbol"]:
+        state["symbol"] = signal.symbol.strip().upper()
+    event_ts = state.get("event_ts")
+    if event_ts is None:
+        state["event_ts"] = signal.event_ts.isoformat()
+    return state
+
+
+def _resolve_execution_advice_payload(signal: SignalEnvelope) -> dict[str, Any] | None:
+    payload = signal.payload
+    raw_advice = payload.get("execution_advice")
+    advice: dict[str, Any]
+    if isinstance(raw_advice, dict):
+        advice = dict(cast(dict[str, Any], raw_advice))
+    else:
+        advice = {}
+        direct_urgency = payload.get("urgency_tier")
+        execution_block = payload.get("execution")
+        execution_payload: dict[str, Any] | None = None
+        if isinstance(execution_block, dict):
+            execution_payload = dict(cast(dict[str, Any], execution_block))
+        if execution_payload is not None and direct_urgency is None:
+            direct_urgency = execution_payload.get("urgency_tier")
+        advice["urgency_tier"] = direct_urgency
+        for key in (
+            "max_participation_rate",
+            "preferred_order_type",
+            "quote_offset_bps",
+            "adverse_selection_risk",
+            "simulator_version",
+            "expected_shortfall_bps_p50",
+            "expected_shortfall_bps_p95",
+            "latency_ms",
+        ):
+            value = payload.get(key)
+            if value is None and execution_payload is not None:
+                value = execution_payload.get(key)
+            if value is not None:
+                advice[key] = value
+        advice["event_ts"] = signal.event_ts.isoformat()
+
+    urgency_tier = str(advice.get("urgency_tier") or "").strip().lower()
+    if urgency_tier not in {"low", "normal", "high"}:
+        return None
+    advice["urgency_tier"] = urgency_tier
+    if advice.get("event_ts") is None:
+        advice["event_ts"] = signal.event_ts.isoformat()
+    return advice
+
+
+def _resolve_fragility_snapshot_payload(
+    signal: SignalEnvelope,
+) -> dict[str, Any] | None:
+    payload = signal.payload
+    raw_snapshot = payload.get("fragility_snapshot")
+    if isinstance(raw_snapshot, dict):
+        snapshot = dict(cast(dict[str, Any], raw_snapshot))
+    else:
+        snapshot = {}
+
+    keys = (
+        "spread_acceleration",
+        "liquidity_compression",
+        "crowding_proxy",
+        "correlation_concentration",
+        "fragility_score",
+        "fragility_state",
+    )
+    for key in keys:
+        if snapshot.get(key) is None and payload.get(key) is not None:
+            snapshot[key] = payload.get(key)
+
+    has_fragility_inputs = any(snapshot.get(key) is not None for key in keys)
+    if not has_fragility_inputs:
+        return None
+
+    snapshot["schema_version"] = "fragility_snapshot_v1"
+    snapshot["symbol"] = str(snapshot.get("symbol") or signal.symbol).strip().upper()
+    if snapshot.get("event_ts") is None:
+        snapshot["event_ts"] = signal.event_ts.isoformat()
+    return snapshot
 
 
 def _snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
