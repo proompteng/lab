@@ -212,7 +212,14 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+            - name: codex-auth
+              mountPath: /root/.codex/auth.json
+              subPath: auth.json
+              readOnly: true
       volumes:
         - name: workspace
           persistentVolumeClaim:
             claimName: jangar-worker-workspace
+        - name: codex-auth
+          secret:
+            secretName: codex-auth

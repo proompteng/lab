@@ -1,11 +1,10 @@
 import io
-import json
 import unittest
 from unittest.mock import patch
 
 from app.config import settings
 from app.trading.llm.client import LLMClient, LLMClientResponse
-from app.trading.llm.client import _parse_jangar_decision_sse, _parse_jangar_sse
+from app.trading.llm.client import _parse_jangar_sse
 
 
 class TestJangarSseParsing(unittest.TestCase):
@@ -54,60 +53,14 @@ data: [DONE]
         with self.assertRaises(TimeoutError):
             _parse_jangar_sse(stream, timeout_seconds=0)
 
-
-class TestJangarDecisionSseParsing(unittest.TestCase):
-    def test_parses_final_content_and_usage(self) -> None:
-        final_payload = json.dumps(
-            {
-                "run_id": "run-1",
-                "payload": {
-                    "llm_response": {
-                        "content": '{"verdict":"approve"}',
-                        "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
-                    }
-                },
-            }
-        )
-        stream = io.BytesIO(
-            f"""
-event: decision.accepted
-data: {{"run_id":"run-1","payload":{{"request_id":"req-1"}}}}
-
-event: decision.final
-data: {final_payload}
-
-""".encode("utf-8")
-        )
-
-        content, usage = _parse_jangar_decision_sse(stream)
-        self.assertEqual(content, '{"verdict":"approve"}')
-        self.assertEqual(usage, {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18})
-
-    def test_raises_on_error_event(self) -> None:
-        stream = io.BytesIO(
-            b"""
-event: decision.error
-data: {"payload":{"code":"run_failed","message":"boom"}}
-
-"""
-        )
-
-        with self.assertRaises(RuntimeError):
-            _parse_jangar_decision_sse(stream)
-
-
 class TestJangarFallbackChain(unittest.TestCase):
     def setUp(self) -> None:
         self._orig_provider = settings.llm_provider
         self._orig_trading_mode = settings.trading_mode
-        self._orig_bespoke_enabled = settings.llm_jangar_bespoke_decision_enabled
-        self._orig_bespoke_retries = settings.llm_jangar_bespoke_max_retries
 
     def tearDown(self) -> None:
         settings.llm_provider = self._orig_provider
         settings.trading_mode = self._orig_trading_mode
-        settings.llm_jangar_bespoke_decision_enabled = self._orig_bespoke_enabled
-        settings.llm_jangar_bespoke_max_retries = self._orig_bespoke_retries
 
     def test_falls_back_to_self_hosted_when_jangar_fails(self) -> None:
         settings.llm_provider = "jangar"
@@ -123,45 +76,6 @@ class TestJangarFallbackChain(unittest.TestCase):
         self.assertTrue(primary.called)
         self.assertTrue(fallback.called)
         self.assertEqual(response.content, expected.content)
-
-    def test_retries_bespoke_with_same_request_id(self) -> None:
-        settings.llm_provider = "jangar"
-        settings.trading_mode = "paper"
-        settings.llm_jangar_bespoke_decision_enabled = True
-        settings.llm_jangar_bespoke_max_retries = 1
-
-        client = LLMClient(model="gpt-test", timeout_seconds=1)
-        calls: list[dict[str, object]] = []
-
-        def fake_once(
-            self: LLMClient,
-            *,
-            request_id: str,
-            messages: list[dict[str, object]],
-            temperature: float,
-            max_tokens: int,
-        ) -> LLMClientResponse:
-            calls.append(
-                {
-                    "request_id": request_id,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
-            )
-            if len(calls) == 1:
-                raise TimeoutError("timed out")
-            return LLMClientResponse(
-                content=json.dumps({"verdict": "approve", "confidence": 0.9, "rationale": "ok", "risk_flags": []}),
-                usage=None,
-            )
-
-        with patch.object(LLMClient, "_request_review_via_jangar_bespoke_once", new=fake_once):
-            response = client.request_review(messages=[], temperature=0.2, max_tokens=10)
-
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0]["request_id"], calls[1]["request_id"])
-        self.assertIn('"verdict": "approve"', response.content)
 
     def test_raises_when_all_providers_fail_in_paper_mode(self) -> None:
         settings.llm_provider = "jangar"
@@ -184,6 +98,52 @@ class TestJangarFallbackChain(unittest.TestCase):
             with patch.object(LLMClient, "_request_review_via_self_hosted", side_effect=RuntimeError("nope2")):
                 with self.assertRaises(RuntimeError):
                     client.request_review(messages=[], temperature=0.2, max_tokens=10)
+
+
+class TestJangarRequestHeaders(unittest.TestCase):
+    def setUp(self) -> None:
+        self._orig_jangar_base_url = settings.jangar_base_url
+        self._orig_jangar_api_key = settings.jangar_api_key
+
+    def tearDown(self) -> None:
+        settings.jangar_base_url = self._orig_jangar_base_url
+        settings.jangar_api_key = self._orig_jangar_api_key
+
+    def test_completion_request_sends_trade_execution_client_header(self) -> None:
+        settings.jangar_base_url = "http://jangar"
+        settings.jangar_api_key = "jangar-token"
+
+        captured_headers: dict[str, str] = {}
+
+        class _FakeResponse:
+            status = 200
+
+            def __enter__(self) -> "_FakeResponse":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                return b""
+
+        def _fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+            nonlocal captured_headers
+            captured_headers = {name.lower(): value for name, value in request.header_items()}
+            return _FakeResponse()
+
+        client = LLMClient(model="gpt-test", timeout_seconds=1)
+
+        with patch("app.trading.llm.client.urlopen", side_effect=_fake_urlopen):
+            with patch(
+                "app.trading.llm.client._parse_jangar_sse",
+                return_value=('{"verdict":"approve","confidence":1,"rationale":"ok","risk_flags":[]}', None),
+            ):
+                response = client._request_review_via_jangar(messages=[], temperature=0.2, max_tokens=16)
+
+        self.assertIn('"verdict":"approve"', response.content)
+        self.assertEqual(captured_headers.get("x-trade-execution"), "torghut")
+        self.assertEqual(captured_headers.get("authorization"), "Bearer jangar-token")
 
 
 if __name__ == "__main__":

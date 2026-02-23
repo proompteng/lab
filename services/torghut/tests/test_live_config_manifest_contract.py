@@ -51,7 +51,10 @@ class TestLiveConfigManifestContract(TestCase):
 
         self.assertEqual(settings.trading_mode, "live")
         self.assertEqual(settings.trading_parity_policy, "mode_coupled")
+        self.assertEqual(settings.llm_rollout_stage, "stage1")
+        self.assertEqual(settings.llm_fail_mode, "veto")
         self.assertEqual(settings.llm_fail_mode_enforcement, "configured")
+        self.assertFalse(settings.llm_live_fail_open_requested_for_stage("stage1"))
         self.assertEqual(settings.llm_effective_fail_mode_for_current_rollout(), "veto")
         self.assertEqual(
             settings.llm_effective_fail_mode(rollout_stage="stage1"), "veto"

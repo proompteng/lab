@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -794,6 +794,149 @@ describe('chat completions handler', () => {
     expect(transcriptState.setTranscript).not.toHaveBeenCalled()
     const opts = mockClient.runTurnStream.mock.calls[0]?.[1] as { threadId?: string } | undefined
     expect(opts?.threadId).toBe('thread-1')
+  })
+
+  it('runs trade-execution requests statelessly in a dedicated torghut workspace', async () => {
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
+    process.env.JANGAR_MODELS = 'gpt-5.3-codex'
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed('thread-1')),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(null)),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string, _opts?: { threadId?: string; model?: string; cwd?: string }) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-1',
+        'x-trade-execution': 'torghut',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        messages: [{ role: 'user', content: 'execute trade intent' }],
+        stream: true,
+      }),
+    })
+
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(request),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
+      ),
+    )
+    await response.text()
+
+    expect(threadState.getThreadId).not.toHaveBeenCalled()
+    expect(worktreeState.getWorktreeName).not.toHaveBeenCalled()
+    expect(transcriptState.getTranscript).not.toHaveBeenCalled()
+
+    const opts = mockClient.runTurnStream.mock.calls[0]?.[1] as
+      | { threadId?: string; model?: string; cwd?: string }
+      | undefined
+    expect(opts?.threadId).toBeUndefined()
+    expect(opts?.model).toBe('gpt-5.3-codex')
+    if (!worktreeRoot) throw new Error('expected temporary CODEX_CWD to be set')
+    const expectedCwd = join(worktreeRoot, 'torghut')
+    expect(opts?.cwd).toBe(expectedCwd)
+    const cwdStat = await stat(expectedCwd)
+    expect(cwdStat.isDirectory()).toBe(true)
+  })
+
+  it('returns 400 when x-trade-execution has an invalid value', async () => {
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-trade-execution': 'not-torghut',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        messages: [{ role: 'user', content: 'execute trade intent' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    expect(response.status).toBe(400)
+
+    const text = await response.text()
+    expect(text).toContain('invalid_trade_execution_header')
+    expect(text).toContain('[DONE]')
+  })
+
+  it('returns 400 when legacy x-jangar-client-kind trade-execution header is used', async () => {
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-jangar-client-kind': 'trade-execution',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        messages: [{ role: 'user', content: 'execute trade intent' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    expect(response.status).toBe(400)
+
+    const text = await response.text()
+    expect(text).toContain('deprecated_trade_execution_header')
+    expect(text).toContain('[DONE]')
+  })
+
+  it('requires an explicit model for x-trade-execution requests', async () => {
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-trade-execution': 'torghut',
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'execute trade intent' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    expect(response.status).toBe(400)
+
+    const text = await response.text()
+    expect(text).toContain('model_required')
+    expect(text).toContain('[DONE]')
   })
 
   it('falls back to stateless behavior when Redis state is unavailable', async () => {

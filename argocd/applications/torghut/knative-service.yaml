@@ -215,7 +215,7 @@ spec:
             - name: LLM_SHADOW_COMPLETED_AT
               value: 2026-02-12T06:45:00Z
             - name: LLM_FAIL_MODE
-              value: pass_through
+              value: veto
             - name: LLM_FAIL_MODE_ENFORCEMENT
               value: configured
             - name: LLM_FAIL_OPEN_LIVE_APPROVED
@@ -226,14 +226,6 @@ spec:
               value: "1200"
             - name: LLM_TIMEOUT_SECONDS
               value: "20"
-            - name: LLM_JANGAR_BESPOKE_DECISION_ENABLED
-              value: "false"
-            - name: LLM_JANGAR_BESPOKE_TIMEOUT_SECONDS
-              value: "75"
-            - name: LLM_JANGAR_BESPOKE_MAX_RETRIES
-              value: "1"
-            - name: LLM_JANGAR_BESPOKE_RETRY_BACKOFF_SECONDS
-              value: "0.5"
             - name: LLM_CIRCUIT_MAX_ERRORS
               value: "3"
             - name: LLM_CIRCUIT_WINDOW_SECONDS
