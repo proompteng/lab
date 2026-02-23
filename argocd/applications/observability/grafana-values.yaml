@@ -32,7 +32,7 @@ datasources:
         uid: tempo
         type: tempo
         access: proxy
-        url: http://observability-tempo-query-frontend.observability.svc.cluster.local:3100
+        url: http://observability-tempo-query-frontend.observability.svc.cluster.local:3200
         isDefault: false
         jsonData:
           tracesToLogsV2:
