@@ -33,6 +33,12 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 10. `10-crypto-market-data-pipeline-production-design-2026-02-22.md`
 11. `11-multi-account-trading-architecture-and-rollout-2026-02-22.md`
 
+## Source-Verified Implementation Snapshot (2026-02-23)
+- `01-tsfm-router-refinement-and-uncertainty.md`: Implemented (partial). Router/refinement/fallback paths and tests exist, and runtime uncertainty gate action handling is now wired in the trading scheduler.
+- `02-conformal-uncertainty-and-regime-gates.md`: Implemented (partial). Uncertainty gate outputs (`pass/degrade/abstain/fail`) and promotion checks are wired, with runtime execution-path enforcement covered in scheduler logic and trading-pipeline tests.
+- `10-crypto-market-data-pipeline-production-design-2026-02-22.md`: Implemented (partial). Desired-symbol fetch failure metrics and alerting are now wired (`ForwarderMetrics` + `TorghutWSDesiredSymbolsFetchFailing`); remaining work is full cutover/rollout validation.
+- `11-multi-account-trading-architecture-and-rollout-2026-02-22.md`: Implemented (partial, feature-flagged). Account registry, per-account scheduler lanes, account-scoped idempotency/cursor constraints, and trade-updates v2 dual-read are merged; runtime keeps `TRADING_MULTI_ACCOUNT_ENABLED=false` by default.
+
 ## Recommended Build Order
 1. `02-conformal-uncertainty-and-regime-gates.md`
 2. `01-tsfm-router-refinement-and-uncertainty.md`

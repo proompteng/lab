@@ -144,8 +144,8 @@
 | `docs/torghut/design-system/v4/09-ai-market-fragility-and-stability-controls.md` | Not Implemented | `v4 design pack; advanced features pending` |
 | `docs/torghut/design-system/v4/10-profitability-evidence-standard-and-benchmark-suite.md` | Not Implemented | `v4 design pack; advanced features pending` |
 | `docs/torghut/design-system/v4/index.md` | N/A | `index/meta/snapshot` |
-| `docs/torghut/design-system/v5/01-tsfm-router-refinement-and-uncertainty.md` | Partial | `core router implemented; full design deliverables not strictly verified end-to-end` |
-| `docs/torghut/design-system/v5/02-conformal-uncertainty-and-regime-gates.md` | Not Implemented | `v5 design pack; advanced features pending` |
+| `docs/torghut/design-system/v5/01-tsfm-router-refinement-and-uncertainty.md` | Partial | `code: services/torghut/app/trading/forecasting.py, services/torghut/app/trading/decisions.py; test: services/torghut/tests/test_forecasting.py; runtime: argocd/applications/torghut/autonomy-configmap.yaml + strategy-configmap forecast-router-policy.json; note: runtime uncertainty-gate action enforcement is now wired in services/torghut/app/trading/scheduler.py` |
+| `docs/torghut/design-system/v5/02-conformal-uncertainty-and-regime-gates.md` | Partial | `code: services/torghut/app/trading/autonomy/gates.py, services/torghut/app/trading/autonomy/policy_checks.py, services/torghut/app/trading/evaluation.py, services/torghut/app/trading/scheduler.py; test: services/torghut/tests/test_trading_pipeline.py, services/torghut/tests/test_profitability_evidence_v4.py, services/torghut/tests/test_governance_policy_dry_run.py, services/torghut/tests/test_metrics.py; runtime: argocd/applications/torghut/autonomy-gate-policy-configmap.yaml` |
 | `docs/torghut/design-system/v5/03-microstructure-execution-intelligence.md` | Not Implemented | `v5 design pack; advanced features pending` |
 | `docs/torghut/design-system/v5/04-llm-multi-agent-committee-with-deterministic-veto.md` | Not Implemented | `v5 design pack; advanced features pending` |
 | `docs/torghut/design-system/v5/05-fragility-aware-regime-allocation.md` | Not Implemented | `v5 design pack; advanced features pending` |
@@ -153,6 +153,8 @@
 | `docs/torghut/design-system/v5/07-autonomous-research-to-engineering-pipeline.md` | Not Implemented | `v5 design pack; advanced features pending` |
 | `docs/torghut/design-system/v5/08-leading-quant-firms-public-research-and-systems-2026-02-21.md` | Not Implemented | `v5 design pack; advanced features pending` |
 | `docs/torghut/design-system/v5/09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md` | Not Implemented | `v5 design pack; advanced features pending` |
+| `docs/torghut/design-system/v5/10-crypto-market-data-pipeline-production-design-2026-02-22.md` | Partial | `code: services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/SymbolsTracker.kt, ForwarderApp.kt, ForwarderMetrics.kt; runtime: argocd/applications/torghut/ta/flinkdeployment.yaml, argocd/applications/observability/graf-mimir-rules.yaml (TorghutWSDesiredSymbolsFetchFailing); remaining: full cutover/rollout validation` |
+| `docs/torghut/design-system/v5/11-multi-account-trading-architecture-and-rollout-2026-02-22.md` | Partial | `code: services/torghut/app/config.py (account registry + feature-flag mapping), services/torghut/app/trading/scheduler.py (multi-lane per-account pipelines), services/torghut/app/trading/execution.py + ingest.py + order_feed.py (account-scoped idempotency/cursor/topic dual-read), services/torghut/migrations/versions/0013_multi_account_execution_isolation.py; tests: services/torghut/tests/test_config.py, services/torghut/tests/test_signal_ingest.py, services/torghut/tests/test_order_feed.py; runtime default-off flag: argocd/applications/torghut/knative-service.yaml` |
 | `docs/torghut/design-system/v5/index.md` | N/A | `index/meta/snapshot` |
 
 ## Completed Documents (Strict)
