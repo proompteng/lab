@@ -25,6 +25,12 @@ from ..snapshots import sync_order_to_db
 from .route_metadata import resolve_order_route_metadata
 from .execution_policy import should_retry_order_error
 from .models import ExecutionRequest, StrategyDecision, decision_hash
+from .quantity_rules import (
+    min_qty_for_symbol,
+    quantize_qty_for_symbol,
+    qty_has_valid_increment,
+    qty_step_for_symbol,
+)
 from .tca import upsert_execution_tca_metric
 
 logger = logging.getLogger(__name__)
@@ -146,6 +152,9 @@ class OrderExecutor:
             stop_price=decision.stop_price,
             client_order_id=decision_row.decision_hash,
         )
+        pre_submit_error = _validate_pre_submit_request(request)
+        if pre_submit_error is not None:
+            raise RuntimeError(json.dumps(pre_submit_error))
 
         if retry_delays is None:
             retry_delays = []
@@ -363,6 +372,40 @@ def _coerce_json(value: Any) -> dict[str, Any]:
         raw = cast(Mapping[str, Any], value)
         return {str(key): val for key, val in raw.items()}
     return {}
+
+
+def _validate_pre_submit_request(request: ExecutionRequest) -> dict[str, Any] | None:
+    if request.qty <= 0:
+        return {
+            "source": "local_pre_submit",
+            "code": "local_qty_non_positive",
+            "reject_reason": "qty must be positive",
+            "symbol": request.symbol,
+            "qty": str(request.qty),
+        }
+    min_qty = min_qty_for_symbol(request.symbol)
+    if request.qty < min_qty:
+        return {
+            "source": "local_pre_submit",
+            "code": "local_qty_below_min",
+            "reject_reason": f"qty below minimum increment {min_qty}",
+            "symbol": request.symbol,
+            "qty": str(request.qty),
+            "min_qty": str(min_qty),
+        }
+    if not qty_has_valid_increment(request.symbol, request.qty):
+        step = qty_step_for_symbol(request.symbol)
+        quantized_qty = quantize_qty_for_symbol(request.symbol, request.qty)
+        return {
+            "source": "local_pre_submit",
+            "code": "local_qty_invalid_increment",
+            "reject_reason": f"qty increment invalid; step={step}",
+            "symbol": request.symbol,
+            "qty": str(request.qty),
+            "qty_step": str(step),
+            "quantized_qty": str(quantized_qty),
+        }
+    return None
 
 
 def _extract_execution_policy_context(

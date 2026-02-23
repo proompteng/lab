@@ -17,6 +17,11 @@ from .microstructure import (
 )
 from .models import StrategyDecision
 from .prices import MarketSnapshot
+from .quantity_rules import (
+    min_qty_for_symbol,
+    qty_has_valid_increment,
+    quantize_qty_for_symbol,
+)
 from .tca import AdaptiveExecutionPolicyDecision
 
 DEFAULT_EXECUTION_SECONDS = 60
@@ -149,6 +154,16 @@ class ExecutionPolicy:
 
         price = _resolve_price(decision, market_snapshot)
         qty = _optional_decimal(decision.qty)
+        min_qty = min_qty_for_symbol(decision.symbol)
+        if qty is None or qty <= 0:
+            reasons.append("qty_non_positive")
+            qty = Decimal("0")
+        elif qty < min_qty:
+            reasons.append("qty_below_min")
+        elif not qty_has_valid_increment(decision.symbol, qty):
+            quantized = quantize_qty_for_symbol(decision.symbol, qty)
+            reasons.append(f"qty_invalid_increment:step={_stringify_decimal(min_qty)}")
+            qty = quantized
         notional = price * qty if price is not None and qty is not None else None
 
         min_notional = config.min_notional

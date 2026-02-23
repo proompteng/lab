@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from decimal import ROUND_DOWN, Decimal
+from decimal import Decimal
 from typing import Any, Iterable, Literal, Optional, cast
 
 from ..config import settings
@@ -21,6 +21,7 @@ from .features import (
 from .forecasting import ForecastRoutingTelemetry, build_default_forecast_router
 from .models import SignalEnvelope, StrategyDecision
 from .prices import MarketSnapshot, PriceFetcher
+from .quantity_rules import min_qty_for_symbol, quantize_qty_for_symbol
 from .strategy_runtime import (
     RuntimeErrorRecord,
     RuntimeObservation,
@@ -188,7 +189,10 @@ class DecisionEngine:
                 if strategy_id in strategies_by_id
             ]
             qty, sizing_meta = _resolve_qty_for_aggregated(
-                source_strategies, price=price, equity=equity
+                source_strategies,
+                symbol=intent.symbol,
+                price=price,
+                equity=equity,
             )
             forecast_contract: dict[str, Any] | None = None
             forecast_audit: dict[str, Any] | None = None
@@ -342,7 +346,12 @@ class DecisionEngine:
         else:
             return None
 
-        qty, sizing_meta = _resolve_qty(strategy, price=price, equity=equity)
+        qty, sizing_meta = _resolve_qty(
+            strategy,
+            symbol=signal.symbol,
+            price=price,
+            equity=equity,
+        )
 
         return StrategyDecision(
             strategy_id=str(strategy.id),
@@ -534,10 +543,11 @@ def _snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
 def _resolve_qty(
     strategy: Strategy,
     *,
+    symbol: str,
     price: Optional[Decimal],
     equity: Optional[Decimal],
 ) -> tuple[Decimal, dict[str, Any]]:
-    """Resolve an integer share quantity from strategy settings.
+    """Resolve an asset-class-aware quantity from strategy settings.
 
     Precedence:
     - `min(max_notional_per_trade, equity * max_position_pct_equity)` when both are available
@@ -580,9 +590,10 @@ def _resolve_qty(
     if notional_budget is None or notional_budget <= 0:
         return default_qty, {"method": "default_qty", "reason": "missing_budget"}
 
-    qty = (notional_budget / price).quantize(Decimal("1"), rounding=ROUND_DOWN)
-    if qty < 1:
-        qty = Decimal("1")
+    qty = quantize_qty_for_symbol(symbol, notional_budget / price)
+    min_qty = min_qty_for_symbol(symbol)
+    if qty < min_qty:
+        qty = min_qty
 
     return qty, {
         "method": method,
@@ -594,6 +605,7 @@ def _resolve_qty(
 def _resolve_qty_for_aggregated(
     strategies: list[Strategy],
     *,
+    symbol: str,
     price: Optional[Decimal],
     equity: Optional[Decimal],
 ) -> tuple[Decimal, dict[str, Any]]:
@@ -619,9 +631,10 @@ def _resolve_qty_for_aggregated(
     if total_budget <= 0:
         return default_qty, {"method": "default_qty", "reason": "missing_budget"}
 
-    qty = (total_budget / price).quantize(Decimal("1"), rounding=ROUND_DOWN)
-    if qty < 1:
-        qty = Decimal("1")
+    qty = quantize_qty_for_symbol(symbol, total_budget / price)
+    min_qty = min_qty_for_symbol(symbol)
+    if qty < min_qty:
+        qty = min_qty
     return qty, {
         "method": "aggregated_notional_budget",
         "notional_budget": str(total_budget),

@@ -23,6 +23,39 @@ from app.trading.portfolio import (
 
 
 class TestPortfolioSizing(TestCase):
+    def test_intent_aggregator_preserves_fractional_qty_for_crypto(self) -> None:
+        aggregator = IntentAggregator()
+        decisions = [
+            StrategyDecision(
+                strategy_id="s2",
+                symbol="BTC/USD",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("0.10000000"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("100000")},
+            ),
+            StrategyDecision(
+                strategy_id="s1",
+                symbol="BTC/USD",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("0.25000000"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("100000")},
+            ),
+        ]
+
+        aggregated = aggregator.aggregate(decisions)
+
+        self.assertEqual(len(aggregated), 1)
+        self.assertEqual(aggregated[0].decision.action, "buy")
+        self.assertEqual(aggregated[0].decision.qty, Decimal("0.15000000"))
+
     def test_intent_aggregator_merges_conflicting_intents_deterministically(
         self,
     ) -> None:
@@ -436,6 +469,34 @@ class TestPortfolioSizing(TestCase):
         self.assertTrue(result.approved)
         self.assertEqual(result.decision.qty, Decimal("40"))
 
+    def test_volatility_scaling_keeps_fractional_crypto_qty(self) -> None:
+        sizer = PortfolioSizer(
+            PortfolioSizingConfig(
+                notional_per_position=Decimal("1000"),
+                volatility_target=None,
+                volatility_floor=Decimal("0"),
+                max_positions=None,
+                max_notional_per_symbol=None,
+                max_position_pct_equity=None,
+                max_gross_exposure=None,
+                max_net_exposure=None,
+            )
+        )
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="BTC/USD",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100000")},
+        )
+        result = sizer.size(decision, account={"equity": "50000"}, positions=[])
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("0.01000000"))
+
     def test_max_positions_blocks_new_symbol(self) -> None:
         sizer = PortfolioSizer(
             PortfolioSizingConfig(
@@ -530,6 +591,48 @@ class TestPortfolioSizing(TestCase):
 
         self.assertTrue(result.approved)
         self.assertEqual(result.decision.qty, Decimal("5"))
+
+    def test_allocator_clips_fractional_crypto_qty(self) -> None:
+        allocator = PortfolioAllocator(
+            AllocationConfig(
+                enabled=True,
+                default_regime="neutral",
+                default_budget_multiplier=Decimal("1.0"),
+                default_capacity_multiplier=Decimal("1.0"),
+                min_multiplier=Decimal("0"),
+                max_multiplier=Decimal("2"),
+                max_symbol_pct_equity=Decimal("0.10"),
+                max_symbol_notional=None,
+                max_gross_exposure=None,
+                strategy_notional_caps={},
+                symbol_notional_caps={},
+                correlation_group_caps={},
+                symbol_correlation_groups={},
+                regime_budget_multipliers={},
+                regime_capacity_multipliers={},
+            )
+        )
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="BTC/USD",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("0.10000000"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100000")},
+        )
+        results = allocator.allocate(
+            [decision],
+            account={"equity": "10000", "buying_power": "10000", "cash": "10000"},
+            positions=[],
+            regime_label="neutral",
+        )
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].approved)
+        self.assertIn(ALLOCATOR_CLIP_SYMBOL_CAPACITY, results[0].reason_codes)
+        self.assertEqual(results[0].decision.qty, Decimal("0.01000000"))
 
     def test_sell_without_inventory_rejected_when_shorts_disabled(self) -> None:
         original_allow_shorts = config.settings.trading_allow_shorts

@@ -121,6 +121,30 @@ class TestExecutionPolicy(TestCase):
         self.assertFalse(outcome.approved)
         self.assertIn("min_notional_not_met", outcome.reasons)
 
+    def test_crypto_fractional_qty_allowed(self) -> None:
+        policy = ExecutionPolicy(config=_config(min_notional=Decimal("250")))
+        decision = _decision(qty=Decimal("0.01000000"), price=Decimal("50000"))
+        decision = decision.model_copy(update={"symbol": "BTC/USD"})
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+        self.assertTrue(outcome.approved)
+        self.assertNotIn("qty_below_min", outcome.reasons)
+
+    def test_equity_fractional_qty_rejected_as_invalid_increment(self) -> None:
+        policy = ExecutionPolicy(config=_config())
+        outcome = policy.evaluate(
+            _decision(qty=Decimal("0.5"), price=Decimal("100")),
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+        self.assertFalse(outcome.approved)
+        self.assertIn("qty_below_min", outcome.reasons)
+
     def test_approved_orders_stay_within_caps(self) -> None:
         policy = ExecutionPolicy(
             config=_config(
