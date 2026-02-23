@@ -9,14 +9,13 @@ metadata:
     app.kubernetes.io/part-of: lab
     networking.knative.dev/visibility: cluster-local
   annotations:
-    serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
     serving.knative.dev/rollout-duration: 10s
     argocd.argoproj.io/tracking-id: torghut:serving.knative.dev/Service:torghut/torghut
 spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-02-23T06:16:44Z"
+        client.knative.dev/updateTimestamp: "2026-02-19T22:59:18.000Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -26,7 +25,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:66754cde33faa910a1b9f0096b0f142b060e66f6c9d8ffbc7a906efac124eb4e
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:23464c08edc2bead7a2840d3e26ccb214dfd5ec59840cd586c8d27150c651445
           ports:
             - name: http1
               containerPort: 8181
@@ -77,25 +76,8 @@ spec:
               value: "true"
             - name: TRADING_KILL_SWITCH_ENABLED
               value: "false"
-            - name: TRADING_FEATURE_FLAGS_ENABLED
-              value: "true"
-            - name: TRADING_FEATURE_FLAGS_URL
-              value: http://feature-flags.feature-flags.svc.cluster.local:8013
-            - name: TRADING_FEATURE_FLAGS_TIMEOUT_MS
-              value: "500"
-            - name: TRADING_FEATURE_FLAGS_NAMESPACE
-              value: default
-            - name: TRADING_FEATURE_FLAGS_ENTITY_ID
-              value: torghut
-            - name: TRADING_MULTI_ACCOUNT_ENABLED
-              value: "false"
             - name: TRADING_MODE
               value: live
-            - name: TRADING_ACCOUNT_LABEL
-              value: PA3SX7FYNUTF
-            - name: TRADING_ACCOUNTS_JSON
-              value: >
-                [{"label":"PA3SX7FYNUTF","mode":"live","enabled":true}]
             - name: TRADING_LIVE_ENABLED
               value: "true"
             - name: TRADING_SIGNAL_SOURCE
@@ -108,24 +90,20 @@ spec:
               value: "5000"
             - name: TRADING_RECONCILE_MS
               value: "15000"
-            - name: TRADING_ORDER_FEED_TOPIC_V2
-              value: torghut.trade-updates.v2
             - name: TRADING_EXECUTION_ADAPTER
               value: lean
             - name: TRADING_EXECUTION_FALLBACK_ADAPTER
               value: alpaca
             - name: TRADING_EXECUTION_ADAPTER_POLICY
-              value: allowlist
-            - name: TRADING_EXECUTION_ADAPTER_SYMBOLS
-              value: BTC/USD,ETH/USD,SOL/USD
+              value: all
             - name: TRADING_CRYPTO_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_CRYPTO_LIVE_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_WS_CRYPTO_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_UNIVERSE_CRYPTO_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_LEAN_RUNNER_URL
               value: http://torghut-lean-runner.torghut.svc.cluster.local:8088
             - name: TRADING_LEAN_RUNNER_TIMEOUT_SECONDS
@@ -136,23 +114,7 @@ spec:
               value: "2"
             - name: TRADING_LEAN_RUNNER_REQUIRE_HEALTHY
               value: "true"
-            - name: TRADING_LEAN_BACKTEST_ENABLED
-              value: "true"
-            - name: TRADING_LEAN_SHADOW_EXECUTION_ENABLED
-              value: "true"
-            - name: TRADING_LEAN_STRATEGY_SHADOW_ENABLED
-              value: "true"
-            - name: TRADING_LEAN_LIVE_CANARY_ENABLED
-              value: "true"
             - name: TRADING_LEAN_LIVE_CANARY_CRYPTO_ONLY
-              value: "true"
-            - name: TRADING_LEAN_LIVE_CANARY_SYMBOLS
-              value: BTC/USD,ETH/USD,SOL/USD
-            - name: TRADING_LEAN_LIVE_CANARY_FALLBACK_RATIO_LIMIT
-              value: "0.25"
-            - name: TRADING_LEAN_LIVE_CANARY_HARD_ROLLBACK_ENABLED
-              value: "true"
-            - name: TRADING_LEAN_LANE_DISABLE_SWITCH
               value: "false"
             - name: TRADING_STRATEGY_CONFIG_PATH
               value: /etc/torghut/strategies.yaml
@@ -167,7 +129,7 @@ spec:
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
             - name: JANGAR_SYMBOLS_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=crypto
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity
             - name: JANGAR_BASE_URL
               value: http://jangar.jangar.svc.cluster.local
             - name: TRADING_MARKET_CONTEXT_URL
@@ -195,11 +157,11 @@ spec:
             - name: LLM_PROVIDER
               value: jangar
             - name: LLM_MODEL
-              value: gpt-5.3-codex-spark
+              value: gpt-5.3-codex
             - name: LLM_MODEL_VERSION_LOCK
-              value: gpt-5.3-codex-spark
+              value: gpt-5.3-codex
             - name: LLM_ALLOWED_MODELS
-              value: gpt-5.3-codex-spark
+              value: gpt-5.3-codex
             - name: LLM_ALLOWED_PROMPT_VERSIONS
               value: v1
             - name: LLM_ENABLED
@@ -215,7 +177,7 @@ spec:
             - name: LLM_SHADOW_COMPLETED_AT
               value: 2026-02-12T06:45:00Z
             - name: LLM_FAIL_MODE
-              value: veto
+              value: pass_through
             - name: LLM_FAIL_MODE_ENFORCEMENT
               value: configured
             - name: LLM_FAIL_OPEN_LIVE_APPROVED
@@ -226,6 +188,14 @@ spec:
               value: "1200"
             - name: LLM_TIMEOUT_SECONDS
               value: "20"
+            - name: LLM_JANGAR_BESPOKE_DECISION_ENABLED
+              value: "false"
+            - name: LLM_JANGAR_BESPOKE_TIMEOUT_SECONDS
+              value: "75"
+            - name: LLM_JANGAR_BESPOKE_MAX_RETRIES
+              value: "1"
+            - name: LLM_JANGAR_BESPOKE_RETRY_BACKOFF_SECONDS
+              value: "0.5"
             - name: LLM_CIRCUIT_MAX_ERRORS
               value: "3"
             - name: LLM_CIRCUIT_WINDOW_SECONDS
@@ -237,7 +207,7 @@ spec:
             - name: LLM_SELF_HOSTED_BASE_URL
               value: http://saigak.saigak.svc.cluster.local:11434/v1
             - name: LLM_SELF_HOSTED_MODEL
-              value: qwen3-coder-saigak:30b
+              value: qwen3-coder-saigak:30b-a3b-q4_K_M
             - name: TA_CLICKHOUSE_URL
               value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
             - name: TA_CLICKHOUSE_USERNAME
@@ -250,9 +220,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.560.0-168-ga03dc80d
+              value: v0.556.1-32-g950a4eb9
             - name: TORGHUT_COMMIT
-              value: a03dc80d3cc2e0960280486ac5797e6b14bf61fe
+              value: 950a4eb9badc5abab25d45f3c3ec2262ff3f8899
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config
@@ -262,7 +232,7 @@ spec:
               port: http1
           readinessProbe:
             httpGet:
-              path: /db-check
+              path: /healthz
               port: http1
           resources:
             requests:
