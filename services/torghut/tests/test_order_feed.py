@@ -150,6 +150,7 @@ class TestOrderFeed(TestCase):
                 source_topic='torghut.trade-updates.v1',
                 source_partition=0,
                 source_offset=99,
+                alpaca_account_label='paper',
                 feed_seq=12,
                 event_ts=execution.order_feed_last_event_ts - timedelta(seconds=10),
                 symbol='AAPL',

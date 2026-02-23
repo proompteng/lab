@@ -26,6 +26,7 @@ class ForwarderEndpointsTest {
       shardCount = 1,
       shardIndex = 0,
       enableTradeUpdates = false,
+      torghutAccountLabel = null,
       enableBarsBackfill = false,
       reconnectBaseMs = 500,
       reconnectMaxMs = 30_000,
@@ -50,6 +51,7 @@ class ForwarderEndpointsTest {
           bars1m = "torghut.bars.1m.v1",
           status = "torghut.status.v1",
           tradeUpdates = null,
+          tradeUpdatesV2 = null,
         ),
     )
 

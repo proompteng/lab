@@ -1532,14 +1532,15 @@ class Settings(BaseSettings):
         try:
             parsed = json.loads(self.trading_accounts_json)
             if isinstance(parsed, dict):
-                candidates = parsed.get("accounts")
+                parsed_map = cast(dict[str, Any], parsed)
+                raw_candidates = parsed_map.get("accounts")
             else:
-                candidates = parsed
-            if not isinstance(candidates, list):
+                raw_candidates = parsed
+            if not isinstance(raw_candidates, list):
                 raise ValueError("accounts registry must be a list")
             lanes = [
-                TradingAccountLane.model_validate(item)
-                for item in candidates
+                TradingAccountLane.model_validate(cast(dict[str, Any], item))
+                for item in cast(list[object], raw_candidates)
                 if isinstance(item, dict)
             ]
         except (json.JSONDecodeError, ValidationError, ValueError):

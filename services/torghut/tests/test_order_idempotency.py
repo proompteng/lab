@@ -701,6 +701,7 @@ class TestOrderIdempotency(TestCase):
                 source_topic='torghut.trade-updates.v1',
                 source_partition=0,
                 source_offset=4,
+                alpaca_account_label='paper',
                 event_ts=datetime.now(timezone.utc),
                 feed_seq=100,
                 symbol='AAPL',
