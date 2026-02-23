@@ -262,6 +262,7 @@ class TestConfig(TestCase):
                 "torghut_trading_enabled": False,
                 "torghut_trading_emergency_stop_enabled": True,
                 "torghut_trading_execution_prefer_limit": False,
+                "torghut_trading_multi_account_enabled": True,
                 "torghut_ws_crypto_enabled": True,
                 "torghut_universe_crypto_enabled": True,
                 "torghut_trading_crypto_enabled": True,
@@ -276,6 +277,7 @@ class TestConfig(TestCase):
                 TRADING_ENABLED=True,
                 TRADING_EMERGENCY_STOP_ENABLED=False,
                 TRADING_EXECUTION_PREFER_LIMIT=True,
+                TRADING_MULTI_ACCOUNT_ENABLED=False,
                 TRADING_WS_CRYPTO_ENABLED=False,
                 TRADING_UNIVERSE_CRYPTO_ENABLED=False,
                 TRADING_CRYPTO_ENABLED=False,
@@ -291,6 +293,7 @@ class TestConfig(TestCase):
         self.assertFalse(settings.trading_enabled)
         self.assertTrue(settings.trading_emergency_stop_enabled)
         self.assertFalse(settings.trading_execution_prefer_limit)
+        self.assertTrue(settings.trading_multi_account_enabled)
         self.assertTrue(settings.trading_ws_crypto_enabled)
         self.assertTrue(settings.trading_universe_crypto_enabled)
         self.assertTrue(settings.trading_crypto_enabled)
@@ -382,3 +385,39 @@ class TestConfig(TestCase):
             set(FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD.values()),
             manifest_keys,
         )
+
+    def test_trading_accounts_registry_falls_back_to_single_account_when_disabled(self) -> None:
+        settings = Settings(
+            TRADING_MULTI_ACCOUNT_ENABLED=False,
+            TRADING_ACCOUNT_LABEL="paper-a",
+            TRADING_MODE="paper",
+            APCA_API_KEY_ID="key-a",
+            APCA_API_SECRET_KEY="secret-a",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        accounts = settings.trading_accounts
+        self.assertEqual(len(accounts), 1)
+        self.assertEqual(accounts[0].label, "paper-a")
+        self.assertEqual(accounts[0].api_key, "key-a")
+
+    def test_trading_accounts_registry_parses_enabled_lanes(self) -> None:
+        settings = Settings(
+            TRADING_MULTI_ACCOUNT_ENABLED=True,
+            TRADING_ACCOUNT_LABEL="paper-a",
+            TRADING_MODE="paper",
+            APCA_API_KEY_ID="fallback-key",
+            APCA_API_SECRET_KEY="fallback-secret",
+            TRADING_ACCOUNTS_JSON=json.dumps(
+                {
+                    "accounts": [
+                        {"label": "paper-a", "enabled": True, "api_key": "k1", "secret_key": "s1"},
+                        {"label": "paper-b", "enabled": False},
+                        {"label": "paper-c", "enabled": True},
+                    ]
+                }
+            ),
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        labels = [account.label for account in settings.trading_accounts]
+        self.assertEqual(labels, ["paper-a", "paper-c"])
+        self.assertEqual(settings.trading_accounts[1].api_key, "fallback-key")

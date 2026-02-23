@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..alpaca_client import TorghutAlpacaClient
-from ..config import settings
+from ..config import TradingAccountLane, settings
 from ..db import SessionLocal
 from ..models import LLMDecisionReview, Strategy, TradeDecision, coerce_json_payload
 from ..snapshots import snapshot_account_and_positions
@@ -2554,6 +2554,7 @@ class TradingScheduler:
         self._task: Optional[asyncio.Task[None]] = None
         self._stop_event = asyncio.Event()
         self._pipeline: Optional[TradingPipeline] = None
+        self._pipelines: list[TradingPipeline] = []
 
     def llm_status(self) -> dict[str, object]:
         circuit_snapshot = None
@@ -2593,10 +2594,14 @@ class TradingScheduler:
             },
         }
 
-    def _build_pipeline(self) -> TradingPipeline:
+    def _build_pipeline_for_account(self, lane: TradingAccountLane) -> TradingPipeline:
         price_fetcher = ClickHousePriceFetcher()
         strategy_catalog = StrategyCatalog.from_settings()
-        alpaca_client = TorghutAlpacaClient()
+        alpaca_client = TorghutAlpacaClient(
+            api_key=lane.api_key,
+            secret_key=lane.secret_key,
+            base_url=lane.base_url,
+        )
         order_firewall = OrderFirewall(alpaca_client)
         execution_adapter = build_execution_adapter(
             alpaca_client=alpaca_client, order_firewall=order_firewall
@@ -2604,19 +2609,23 @@ class TradingScheduler:
         return TradingPipeline(
             alpaca_client=alpaca_client,
             order_firewall=order_firewall,
-            ingestor=ClickHouseSignalIngestor(),
+            ingestor=ClickHouseSignalIngestor(account_label=lane.label),
             decision_engine=DecisionEngine(price_fetcher=price_fetcher),
             risk_engine=RiskEngine(),
             executor=OrderExecutor(),
             execution_adapter=execution_adapter,
-            reconciler=Reconciler(),
+            reconciler=Reconciler(account_label=lane.label),
             universe_resolver=UniverseResolver(),
             state=self.state,
-            account_label=settings.trading_account_label,
+            account_label=lane.label,
             price_fetcher=price_fetcher,
             strategy_catalog=strategy_catalog,
             order_feed_ingestor=OrderFeedIngestor(),
         )
+
+    def _build_pipeline(self) -> TradingPipeline:
+        lane = settings.trading_accounts[0]
+        return self._build_pipeline_for_account(lane)
 
     def _drift_thresholds(self) -> DriftThresholds:
         return DriftThresholds(
@@ -3177,8 +3186,10 @@ class TradingScheduler:
     async def start(self) -> None:
         if self._task:
             return
-        if self._pipeline is None:
-            self._pipeline = self._build_pipeline()
+        if not self._pipelines:
+            lanes = settings.trading_accounts
+            self._pipelines = [self._build_pipeline_for_account(lane) for lane in lanes]
+            self._pipeline = self._pipelines[0] if self._pipelines else None
         self._stop_event.clear()
         self.state.running = True
         self._task = asyncio.create_task(self._run_loop())
@@ -3194,8 +3205,11 @@ class TradingScheduler:
             pass
         self._task = None
         self.state.running = False
-        if self._pipeline is not None:
-            self._pipeline.order_feed_ingestor.close()
+        active_pipelines = self._pipelines or ([self._pipeline] if self._pipeline is not None else [])
+        for pipeline in active_pipelines:
+            pipeline.order_feed_ingestor.close()
+        self._pipelines = []
+        self._pipeline = None
 
     async def _run_loop(self) -> None:
         poll_interval = settings.trading_poll_ms / 1000
@@ -3212,7 +3226,16 @@ class TradingScheduler:
             try:
                 if self._pipeline is None:
                     raise RuntimeError("trading_pipeline_not_initialized")
-                await asyncio.to_thread(self._pipeline.run_once)
+                active_pipelines = self._pipelines or [self._pipeline]
+                for pipeline in active_pipelines:
+                    try:
+                        await asyncio.to_thread(pipeline.run_once)
+                    except Exception as lane_exc:
+                        logger.exception(
+                            "Trading lane failed account=%s: %s",
+                            pipeline.account_label,
+                            lane_exc,
+                        )
                 self.state.last_run_at = datetime.now(timezone.utc)
                 self.state.last_error = None
             except Exception as exc:  # pragma: no cover - loop guard
@@ -3226,7 +3249,17 @@ class TradingScheduler:
                 try:
                     if self._pipeline is None:
                         raise RuntimeError("trading_pipeline_not_initialized")
-                    updates = await asyncio.to_thread(self._pipeline.reconcile)
+                    updates = 0
+                    active_pipelines = self._pipelines or [self._pipeline]
+                    for pipeline in active_pipelines:
+                        try:
+                            updates += await asyncio.to_thread(pipeline.reconcile)
+                        except Exception as lane_exc:
+                            logger.exception(
+                                "Reconcile lane failed account=%s: %s",
+                                pipeline.account_label,
+                                lane_exc,
+                            )
                     if updates:
                         logger.info("Reconciled %s executions", updates)
                     self.state.last_reconcile_at = datetime.now(timezone.utc)

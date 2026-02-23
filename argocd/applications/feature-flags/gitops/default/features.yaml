@@ -70,6 +70,11 @@ flags:
     description: Enables Kafka order-feed ingestion in Torghut.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
+  - key: torghut_trading_multi_account_enabled
+    name: Torghut Trading Multi Account Enabled
+    description: Enables account-isolated multi-account execution lanes in Torghut.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
   - key: torghut_trading_strategy_scheduler_enabled
     name: Torghut Strategy Scheduler Enabled
     description: Enables scheduler-integrated strategy runtime path.

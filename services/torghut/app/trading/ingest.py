@@ -91,6 +91,7 @@ class ClickHouseSignalIngestor:
         initial_lookback_minutes: Optional[int] = None,
         schema: Optional[str] = None,
         fast_forward_stale_cursor: bool = True,
+        account_label: Optional[str] = None,
     ) -> None:
         self.url = (url or settings.trading_clickhouse_url or "").rstrip("/")
         self.username = username or settings.trading_clickhouse_username
@@ -99,6 +100,7 @@ class ClickHouseSignalIngestor:
         self.batch_size = batch_size or settings.trading_signal_batch_size
         self.initial_lookback_minutes = initial_lookback_minutes or settings.trading_signal_lookback_minutes
         self.schema = schema or settings.trading_signal_schema
+        self.account_label = account_label or settings.trading_account_label
         self.fast_forward_stale_cursor = fast_forward_stale_cursor
         self.empty_batch_advance_seconds = max(0, settings.trading_signal_empty_batch_advance_seconds)
         self._columns: Optional[set[str]] = None
@@ -575,7 +577,10 @@ class ClickHouseSignalIngestor:
         return self._time_column
 
     def _get_cursor(self, session: Session) -> tuple[datetime, Optional[int], Optional[str]]:
-        stmt = select(TradeCursor).where(TradeCursor.source == "clickhouse")
+        stmt = select(TradeCursor).where(
+            TradeCursor.source == "clickhouse",
+            TradeCursor.account_label == self.account_label,
+        )
         cursor_row = session.execute(stmt).scalar_one_or_none()
         if cursor_row:
             return cursor_row.cursor_at, cursor_row.cursor_seq, cursor_row.cursor_symbol
@@ -590,7 +595,10 @@ class ClickHouseSignalIngestor:
         cursor_seq: Optional[int],
         cursor_symbol: Optional[str],
     ) -> None:
-        stmt = select(TradeCursor).where(TradeCursor.source == "clickhouse")
+        stmt = select(TradeCursor).where(
+            TradeCursor.source == "clickhouse",
+            TradeCursor.account_label == self.account_label,
+        )
         cursor_row = session.execute(stmt).scalar_one_or_none()
         if cursor_row:
             cursor_row.cursor_at = cursor_at
@@ -600,6 +608,7 @@ class ClickHouseSignalIngestor:
         else:
             cursor_row = TradeCursor(
                 source="clickhouse",
+                account_label=self.account_label,
                 cursor_at=cursor_at,
                 cursor_seq=cursor_seq,
                 cursor_symbol=cursor_symbol,

@@ -86,7 +86,9 @@ class TradeDecision(Base, CreatedAtMixin):
     strategy_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False
     )
-    alpaca_account_label: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    alpaca_account_label: Mapped[str] = mapped_column(
+        String(length=64), nullable=False, server_default=text("'paper'")
+    )
     symbol: Mapped[str] = mapped_column(String(length=16), nullable=False)
     timeframe: Mapped[str] = mapped_column(String(length=16), nullable=False)
     decision_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
@@ -115,7 +117,13 @@ class TradeDecision(Base, CreatedAtMixin):
     __table_args__ = (
         Index("ix_trade_decisions_strategy", "strategy_id"),
         Index("ix_trade_decisions_status", "status"),
-        Index("ix_trade_decisions_decision_hash", "decision_hash", unique=True),
+        Index("ix_trade_decisions_decision_hash", "decision_hash"),
+        Index(
+            "uq_trade_decisions_account_decision_hash",
+            "alpaca_account_label",
+            "decision_hash",
+            unique=True,
+        ),
     )
 
 
@@ -128,11 +136,14 @@ class Execution(Base, TimestampMixin):
     trade_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), ForeignKey("trade_decisions.id", ondelete="SET NULL"), nullable=True
     )
+    alpaca_account_label: Mapped[str] = mapped_column(
+        String(length=64), nullable=False, server_default=text("'paper'")
+    )
     alpaca_order_id: Mapped[str] = mapped_column(
-        String(length=128), nullable=False, unique=True
+        String(length=128), nullable=False
     )
     client_order_id: Mapped[Optional[str]] = mapped_column(
-        String(length=128), nullable=True, unique=True
+        String(length=128), nullable=True
     )
     symbol: Mapped[str] = mapped_column(String(length=16), nullable=False)
     side: Mapped[str] = mapped_column(String(length=8), nullable=False)
@@ -191,6 +202,19 @@ class Execution(Base, TimestampMixin):
 
     __table_args__ = (
         Index("ix_executions_alpaca_order_id", "alpaca_order_id"),
+        Index("ix_executions_account_label", "alpaca_account_label"),
+        Index(
+            "uq_executions_account_alpaca_order_id",
+            "alpaca_account_label",
+            "alpaca_order_id",
+            unique=True,
+        ),
+        Index(
+            "uq_executions_account_client_order_id",
+            "alpaca_account_label",
+            "client_order_id",
+            unique=True,
+        ),
         Index("ix_executions_symbol_status", "symbol", "status"),
         Index("ix_executions_expected_adapter", "execution_expected_adapter"),
         Index("ix_executions_actual_adapter", "execution_actual_adapter"),
@@ -211,6 +235,7 @@ class ExecutionOrderEvent(Base, CreatedAtMixin):
     source_topic: Mapped[str] = mapped_column(String(length=128), nullable=False)
     source_partition: Mapped[Optional[int]] = mapped_column(nullable=True)
     source_offset: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    alpaca_account_label: Mapped[str] = mapped_column(String(length=64), nullable=False)
     feed_seq: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     event_ts: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -726,11 +751,18 @@ class TradeCursor(Base, TimestampMixin):
     __tablename__ = "trade_cursor"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
-    source: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    source: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    account_label: Mapped[str] = mapped_column(
+        String(length=64), nullable=False, server_default=text("'paper'")
+    )
     cursor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     cursor_seq: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     cursor_symbol: Mapped[Optional[str]] = mapped_column(
         String(length=32), nullable=True
+    )
+
+    __table_args__ = (
+        Index("uq_trade_cursor_source_account", "source", "account_label", unique=True),
     )
 
 

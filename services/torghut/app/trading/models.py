@@ -68,7 +68,9 @@ class ExecutionRequest(BaseModel):
     extra_params: dict[str, Any] = Field(default_factory=dict)
 
 
-def decision_hash(decision: StrategyDecision) -> str:
+def decision_hash(
+    decision: StrategyDecision, *, account_label: str | None = None
+) -> str:
     """Create an idempotency hash for a strategy decision."""
 
     params_payload = {
@@ -83,6 +85,7 @@ def decision_hash(decision: StrategyDecision) -> str:
         "limit_price": str(decision.limit_price) if decision.limit_price is not None else None,
         "stop_price": str(decision.stop_price) if decision.stop_price is not None else None,
         "params": decision.params,
+        "account_label": account_label,
     }
     raw = json.dumps(params_payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()

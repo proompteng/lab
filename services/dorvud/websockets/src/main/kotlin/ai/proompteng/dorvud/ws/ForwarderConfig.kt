@@ -13,6 +13,7 @@ data class TopicConfig(
   val bars1m: String,
   val status: String,
   val tradeUpdates: String?,
+  val tradeUpdatesV2: String?,
 )
 
 enum class AlpacaMarketType {
@@ -36,6 +37,7 @@ data class ForwarderConfig(
   val shardCount: Int,
   val shardIndex: Int,
   val enableTradeUpdates: Boolean,
+  val torghutAccountLabel: String?,
   val enableBarsBackfill: Boolean,
   val reconnectBaseMs: Long,
   val reconnectMaxMs: Long,
@@ -94,6 +96,7 @@ data class ForwarderConfig(
           bars1m = mergedEnv["TOPIC_BARS_1M"] ?: "torghut.bars.1m.v1",
           status = mergedEnv["TOPIC_STATUS"] ?: "torghut.status.v1",
           tradeUpdates = mergedEnv["TOPIC_TRADE_UPDATES"],
+          tradeUpdatesV2 = mergedEnv["TOPIC_TRADE_UPDATES_V2"],
         )
 
       val kafka =
@@ -135,6 +138,7 @@ data class ForwarderConfig(
         shardCount = shardCount,
         shardIndex = shardIndex,
         enableTradeUpdates = mergedEnv["ENABLE_TRADE_UPDATES"]?.toBooleanStrictOrNull() ?: false,
+        torghutAccountLabel = mergedEnv["TORGHUT_ACCOUNT_LABEL"]?.trim()?.takeIf { it.isNotEmpty() },
         enableBarsBackfill = mergedEnv["ENABLE_BARS_BACKFILL"]?.toBooleanStrictOrNull() ?: false,
         reconnectBaseMs = mergedEnv["RECONNECT_BASE_MS"]?.toLongOrNull() ?: 500,
         reconnectMaxMs = mergedEnv["RECONNECT_MAX_MS"]?.toLongOrNull() ?: 30_000,

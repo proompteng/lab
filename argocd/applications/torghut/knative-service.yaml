@@ -87,10 +87,15 @@ spec:
               value: default
             - name: TRADING_FEATURE_FLAGS_ENTITY_ID
               value: torghut
+            - name: TRADING_MULTI_ACCOUNT_ENABLED
+              value: "false"
             - name: TRADING_MODE
               value: live
             - name: TRADING_ACCOUNT_LABEL
               value: PA3SX7FYNUTF
+            - name: TRADING_ACCOUNTS_JSON
+              value: >
+                [{"label":"PA3SX7FYNUTF","mode":"live","enabled":true}]
             - name: TRADING_LIVE_ENABLED
               value: "true"
             - name: TRADING_SIGNAL_SOURCE
@@ -103,6 +108,8 @@ spec:
               value: "5000"
             - name: TRADING_RECONCILE_MS
               value: "15000"
+            - name: TRADING_ORDER_FEED_TOPIC_V2
+              value: torghut.trade-updates.v2
             - name: TRADING_EXECUTION_ADAPTER
               value: lean
             - name: TRADING_EXECUTION_FALLBACK_ADAPTER

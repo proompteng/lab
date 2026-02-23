@@ -44,6 +44,7 @@ def sync_order_to_db(
     session: Session,
     order_response: dict[str, Any],
     trade_decision_id: Optional[str] = None,
+    alpaca_account_label: Optional[str] = None,
     *,
     execution_expected_adapter: str | None = None,
     execution_actual_adapter: str | None = None,
@@ -90,18 +91,29 @@ def sync_order_to_db(
         )
     )
 
-    stmt = select(Execution).where(Execution.alpaca_order_id == alpaca_order_id)
+    account_label = alpaca_account_label or order_response.get("alpaca_account_label")
+    if not account_label:
+        account_label = "paper"
+
+    stmt = select(Execution).where(
+        Execution.alpaca_order_id == alpaca_order_id,
+        Execution.alpaca_account_label == account_label,
+    )
     existing = session.execute(stmt).scalar_one_or_none()
     if existing is None:
         client_order_id = order_response.get("client_order_id")
         if client_order_id:
-            stmt = select(Execution).where(Execution.client_order_id == client_order_id)
+            stmt = select(Execution).where(
+                Execution.client_order_id == client_order_id,
+                Execution.alpaca_account_label == account_label,
+            )
             existing = session.execute(stmt).scalar_one_or_none()
             if existing and existing.alpaca_order_id != alpaca_order_id:
                 logger.warning("Execution client_order_id reused with new alpaca_order_id")
 
     data = {
         "trade_decision_id": trade_decision_id,
+        "alpaca_account_label": account_label,
         "alpaca_order_id": alpaca_order_id,
         "client_order_id": order_response.get("client_order_id"),
         "symbol": order_response.get("symbol"),
@@ -145,12 +157,18 @@ def sync_order_to_db(
         return execution
     except IntegrityError:
         session.rollback()
-        stmt = select(Execution).where(Execution.alpaca_order_id == alpaca_order_id)
+        stmt = select(Execution).where(
+            Execution.alpaca_order_id == alpaca_order_id,
+            Execution.alpaca_account_label == account_label,
+        )
         existing = session.execute(stmt).scalar_one_or_none()
         if existing is None:
             client_order_id = order_response.get("client_order_id")
             if client_order_id:
-                stmt = select(Execution).where(Execution.client_order_id == client_order_id)
+                stmt = select(Execution).where(
+                    Execution.client_order_id == client_order_id,
+                    Execution.alpaca_account_label == account_label,
+                )
                 existing = session.execute(stmt).scalar_one_or_none()
         if existing is None:
             raise

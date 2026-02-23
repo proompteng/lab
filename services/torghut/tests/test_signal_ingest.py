@@ -374,6 +374,50 @@ class TestSignalIngest(TestCase):
             self.assertEqual(cursor.cursor_seq, 1)
             self.assertEqual(cursor.cursor_symbol, "MSFT")
 
+    def test_cursor_is_account_scoped(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        class CursorIngestor(ClickHouseSignalIngestor):
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                return []
+
+        ingestor_a = CursorIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            account_label="paper-a",
+            fast_forward_stale_cursor=False,
+        )
+        ingestor_b = CursorIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            account_label="paper-b",
+            fast_forward_stale_cursor=False,
+        )
+
+        with session_local() as session:
+            ingestor_a._set_cursor(
+                session,
+                datetime(2026, 1, 1, 0, 0, 10, tzinfo=timezone.utc),
+                10,
+                "AAPL",
+            )
+            ingestor_b._set_cursor(
+                session,
+                datetime(2026, 1, 1, 0, 0, 20, tzinfo=timezone.utc),
+                20,
+                "MSFT",
+            )
+            rows = session.execute(select(TradeCursor).order_by(TradeCursor.account_label)).scalars().all()
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0].account_label, "paper-a")
+            self.assertEqual(rows[0].cursor_seq, 10)
+            self.assertEqual(rows[1].account_label, "paper-b")
+            self.assertEqual(rows[1].cursor_seq, 20)
+
     def test_empty_fetch_advances_cursor_to_recent_window(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)

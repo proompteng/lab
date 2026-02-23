@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models import Base, Execution, ExecutionOrderEvent, ExecutionTCAMetric, Strategy, TradeDecision
+from app.config import settings
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision, decision_hash
 from app.trading.reconcile import Reconciler
@@ -86,6 +87,11 @@ class TestOrderIdempotency(TestCase):
         engine = create_engine('sqlite+pysqlite:///:memory:', future=True)
         Base.metadata.create_all(engine)
         self.session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        self._orig_multi_account_enabled = settings.trading_multi_account_enabled
+        settings.trading_multi_account_enabled = False
+
+    def tearDown(self) -> None:
+        settings.trading_multi_account_enabled = self._orig_multi_account_enabled
 
     def test_decision_hash_stable_for_same_intent(self) -> None:
         event_ts = datetime(2026, 2, 10, tzinfo=timezone.utc)
@@ -113,6 +119,23 @@ class TestOrderIdempotency(TestCase):
         )
 
         self.assertEqual(decision_hash(decision_a), decision_hash(decision_b))
+
+    def test_decision_hash_changes_by_account_when_multi_account_enabled(self) -> None:
+        settings.trading_multi_account_enabled = True
+        decision = StrategyDecision(
+            strategy_id='strategy-1',
+            symbol='AAPL',
+            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+            timeframe='1Min',
+            action='buy',
+            qty=Decimal('1.0'),
+            order_type='market',
+            time_in_force='day',
+            params={'signal': 'macd'},
+        )
+        hash_a = decision_hash(decision, account_label='paper-a')
+        hash_b = decision_hash(decision, account_label='paper-b')
+        self.assertNotEqual(hash_a, hash_b)
 
     def test_retry_after_db_failure_does_not_duplicate_submit(self) -> None:
         with self.session_local() as session:

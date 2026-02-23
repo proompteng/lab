@@ -6,7 +6,7 @@ from functools import lru_cache
 from typing import Any, List, Literal, Optional, cast
 from urllib.request import Request, urlopen
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, BaseModel, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_crypto_enabled": "torghut_trading_crypto_enabled",
     "trading_crypto_live_enabled": "torghut_trading_crypto_live_enabled",
     "trading_order_feed_enabled": "torghut_trading_order_feed_enabled",
+    "trading_multi_account_enabled": "torghut_trading_multi_account_enabled",
     "trading_strategy_scheduler_enabled": "torghut_trading_strategy_scheduler_enabled",
     "trading_strategy_runtime_fallback_legacy": "torghut_trading_strategy_runtime_fallback_legacy",
     "trading_feature_quality_enabled": "torghut_trading_feature_quality_enabled",
@@ -55,6 +56,17 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "llm_committee_enabled": "torghut_llm_committee_enabled",
     "llm_adjustment_approved": "torghut_llm_adjustment_approved",
 }
+
+
+class TradingAccountLane(BaseModel):
+    """Runtime trading-account lane configuration."""
+
+    label: str
+    mode: Literal["paper", "live"] = "paper"
+    api_key: Optional[str] = None
+    secret_key: Optional[str] = None
+    base_url: Optional[str] = None
+    enabled: bool = True
 
 
 def _resolve_boolean_feature_flag(
@@ -225,6 +237,11 @@ class Settings(BaseSettings):
     trading_order_feed_enabled: bool = Field(
         default=False, alias="TRADING_ORDER_FEED_ENABLED"
     )
+    trading_multi_account_enabled: bool = Field(
+        default=False,
+        alias="TRADING_MULTI_ACCOUNT_ENABLED",
+        description="Enable multi-account lane supervision and account-scoped execution isolation.",
+    )
     trading_order_feed_bootstrap_servers: Optional[str] = Field(
         default=None,
         alias="TRADING_ORDER_FEED_BOOTSTRAP_SERVERS",
@@ -234,6 +251,11 @@ class Settings(BaseSettings):
         default="torghut.trade-updates.v1",
         alias="TRADING_ORDER_FEED_TOPIC",
         description="Canonical order update topic.",
+    )
+    trading_order_feed_topic_v2: Optional[str] = Field(
+        default=None,
+        alias="TRADING_ORDER_FEED_TOPIC_V2",
+        description="Optional trade-updates.v2 topic with account_label envelope.",
     )
     trading_order_feed_group_id: str = Field(
         default="torghut-order-feed-v1",
@@ -860,6 +882,14 @@ class Settings(BaseSettings):
     trading_cooldown_seconds: int = Field(default=0, alias="TRADING_COOLDOWN_SECONDS")
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
+    trading_accounts_json: Optional[str] = Field(
+        default=None,
+        alias="TRADING_ACCOUNTS_JSON",
+        description=(
+            "Optional JSON account registry for multi-account execution. "
+            "Accepted forms: array of accounts or object with {accounts:[...]}."
+        ),
+    )
     trading_kill_switch_enabled: bool = Field(
         default=True, alias="TRADING_KILL_SWITCH_ENABLED"
     )
@@ -1150,6 +1180,12 @@ class Settings(BaseSettings):
             self.trading_lean_runner_url = self.trading_lean_runner_url.strip().rstrip(
                 "/"
             )
+        if self.trading_order_feed_topic_v2:
+            normalized_topic_v2 = self.trading_order_feed_topic_v2.strip()
+            self.trading_order_feed_topic_v2 = normalized_topic_v2 or None
+        if self.trading_accounts_json:
+            normalized_registry = self.trading_accounts_json.strip()
+            self.trading_accounts_json = normalized_registry or None
         if self.trading_execution_adapter_symbols_raw:
             self.trading_execution_adapter_symbols_raw = ",".join(
                 [
@@ -1466,6 +1502,72 @@ class Settings(BaseSettings):
             for symbol in self.trading_execution_adapter_symbols_raw.split(",")
             if symbol.strip()
         }
+
+    @property
+    def trading_order_feed_topics(self) -> list[str]:
+        topics: list[str] = []
+        primary = self.trading_order_feed_topic.strip()
+        if primary:
+            topics.append(primary)
+        if self.trading_order_feed_topic_v2:
+            v2 = self.trading_order_feed_topic_v2.strip()
+            if v2 and v2 not in topics:
+                topics.insert(0, v2)
+        return topics
+
+    @property
+    def trading_accounts(self) -> list[TradingAccountLane]:
+        fallback = TradingAccountLane(
+            label=self.trading_account_label,
+            mode=self.trading_mode,
+            api_key=self.apca_api_key_id,
+            secret_key=self.apca_api_secret_key,
+            base_url=self.apca_api_base_url,
+            enabled=True,
+        )
+        if not self.trading_multi_account_enabled:
+            return [fallback]
+        if not self.trading_accounts_json:
+            return [fallback]
+        try:
+            parsed = json.loads(self.trading_accounts_json)
+            if isinstance(parsed, dict):
+                candidates = parsed.get("accounts")
+            else:
+                candidates = parsed
+            if not isinstance(candidates, list):
+                raise ValueError("accounts registry must be a list")
+            lanes = [
+                TradingAccountLane.model_validate(item)
+                for item in candidates
+                if isinstance(item, dict)
+            ]
+        except (json.JSONDecodeError, ValidationError, ValueError):
+            logger.exception(
+                "Invalid TRADING_ACCOUNTS_JSON; falling back to single-account runtime."
+            )
+            return [fallback]
+
+        enabled_lanes: list[TradingAccountLane] = []
+        for lane in lanes:
+            if not lane.enabled:
+                continue
+            resolved_label = lane.label.strip()
+            if not resolved_label:
+                continue
+            enabled_lanes.append(
+                lane.model_copy(
+                    update={
+                        "label": resolved_label,
+                        "api_key": lane.api_key or self.apca_api_key_id,
+                        "secret_key": lane.secret_key or self.apca_api_secret_key,
+                        "base_url": lane.base_url or self.apca_api_base_url,
+                    }
+                )
+            )
+        if not enabled_lanes:
+            return [fallback]
+        return enabled_lanes
 
     @property
     def trading_lean_live_canary_symbols(self) -> set[str]:

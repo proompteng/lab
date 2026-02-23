@@ -21,6 +21,7 @@ from ..models import (
     TradeDecision,
     coerce_json_payload,
 )
+from ..config import settings
 from ..snapshots import sync_order_to_db
 from .route_metadata import resolve_order_route_metadata
 from .execution_policy import should_retry_order_error
@@ -46,8 +47,16 @@ class OrderExecutor:
         strategy: Strategy,
         account_label: str,
     ) -> TradeDecision:
-        digest = decision_hash(decision)
-        stmt = select(TradeDecision).where(TradeDecision.decision_hash == digest)
+        digest = decision_hash(
+            decision,
+            account_label=account_label
+            if settings.trading_multi_account_enabled
+            else None,
+        )
+        stmt = select(TradeDecision).where(
+            TradeDecision.decision_hash == digest,
+            TradeDecision.alpaca_account_label == account_label,
+        )
         existing = session.execute(stmt).scalar_one_or_none()
         if existing:
             return existing
@@ -81,9 +90,18 @@ class OrderExecutor:
     def _fetch_execution(
         self, session: Session, decision_row: TradeDecision
     ) -> Optional[Execution]:
-        conditions = [Execution.trade_decision_id == decision_row.id]
+        conditions = [
+            Execution.trade_decision_id == decision_row.id,
+            Execution.alpaca_account_label == decision_row.alpaca_account_label,
+        ]
         if decision_row.decision_hash:
-            conditions.append(Execution.client_order_id == decision_row.decision_hash)
+            conditions.append(
+                (Execution.client_order_id == decision_row.decision_hash)
+                & (
+                    Execution.alpaca_account_label
+                    == decision_row.alpaca_account_label
+                )
+            )
         stmt = select(Execution).where(or_(*conditions))
         return session.execute(stmt).scalar_one_or_none()
 
@@ -125,6 +143,7 @@ class OrderExecutor:
                 session,
                 existing_payload,
                 trade_decision_id=str(decision_row.id),
+                alpaca_account_label=account_label,
                 execution_expected_adapter=route_expected,
                 execution_actual_adapter=route_actual,
                 execution_fallback_reason=fallback_reason,
@@ -230,6 +249,7 @@ class OrderExecutor:
             session,
             order_payload,
             trade_decision_id=str(decision_row.id),
+            alpaca_account_label=account_label,
             execution_expected_adapter=route_expected,
             execution_actual_adapter=route_actual,
             execution_fallback_reason=fallback_reason,
