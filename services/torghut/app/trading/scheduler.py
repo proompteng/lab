@@ -109,11 +109,12 @@ def _format_order_submit_rejection(error: Exception) -> str:
         code = payload.get("code")
         reject_reason = payload.get("reject_reason")
         existing_order_id = payload.get("existing_order_id")
-        parts: list[str] = (
-            ["broker_precheck_rejected"]
-            if source == "broker_precheck"
-            else ["alpaca_order_rejected"]
-        )
+        if source == "broker_precheck":
+            parts: list[str] = ["broker_precheck_rejected"]
+        elif source == "local_pre_submit":
+            parts = ["local_pre_submit_rejected"]
+        else:
+            parts = ["alpaca_order_rejected"]
         if code is not None:
             parts.append(f"code={code}")
         if reject_reason:

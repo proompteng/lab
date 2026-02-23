@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import ROUND_DOWN, Decimal
+from decimal import Decimal
 from collections.abc import Mapping
 from typing import Any, Callable, Iterable, Optional, cast
 
@@ -16,6 +16,7 @@ from .fragility import (
     FragilityState,
 )
 from .models import StrategyDecision
+from .quantity_rules import min_qty_for_symbol, quantize_qty_for_symbol
 
 ALLOCATOR_REJECT_NO_PRICE = "allocator_reject_no_price"
 ALLOCATOR_REJECT_ZERO_QTY = "allocator_reject_zero_qty"
@@ -207,8 +208,9 @@ class PortfolioSizer:
             notional, cap_methods = _apply_caps(notional, caps)
             applied_methods.extend(cap_methods)
 
-        qty = (notional / price).quantize(Decimal("1"), rounding=ROUND_DOWN)
-        if qty < 1:
+        qty = quantize_qty_for_symbol(decision.symbol, notional / price)
+        min_qty = min_qty_for_symbol(decision.symbol)
+        if qty < min_qty:
             if "shorts_not_allowed" not in reasons:
                 reasons.append("qty_below_min")
 
@@ -321,8 +323,8 @@ class IntentAggregator:
                 chosen_action = "sell"
                 chosen_qty = sell_qty - buy_qty
 
-            chosen_qty = chosen_qty.quantize(Decimal("1"), rounding=ROUND_DOWN)
             primary = bucket[0]
+            chosen_qty = quantize_qty_for_symbol(primary.symbol, chosen_qty)
             params = dict(primary.params)
             allocator_meta = dict(_mapping(params.get("allocator")))
             allocator_meta.update(
@@ -557,10 +559,10 @@ class PortfolioAllocator:
                             approved_notional = cap
                             reason_codes.append(reason_code)
 
-                    adjusted_qty = (approved_notional / price).quantize(
-                        Decimal("1"), rounding=ROUND_DOWN
+                    adjusted_qty = quantize_qty_for_symbol(
+                        decision.symbol, approved_notional / price
                     )
-                    if adjusted_qty < 1:
+                    if adjusted_qty < min_qty_for_symbol(decision.symbol):
                         approved = False
                         if approved_notional > 0:
                             reason_codes.append(ALLOCATOR_REJECT_QTY_BELOW_MIN)

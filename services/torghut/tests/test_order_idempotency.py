@@ -13,6 +13,7 @@ from app.models import Base, Execution, ExecutionOrderEvent, ExecutionTCAMetric,
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision, decision_hash
 from app.trading.reconcile import Reconciler
+from app.trading.scheduler import _format_order_submit_rejection
 
 
 class FakeAlpacaClient:
@@ -408,6 +409,53 @@ class TestOrderIdempotency(TestCase):
             )
             self.assertEqual(payload.get("existing_order_id"), "order-conflict-1")
             self.assertEqual(len(client.submitted), 0)
+
+    def test_submit_order_precheck_blocks_invalid_equity_fractional_qty(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(session, FakeAlpacaClient(), decision, decision_row, "paper")
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "local_pre_submit")
+            self.assertEqual(payload.get("code"), "local_qty_below_min")
+
+    def test_local_pre_submit_rejection_formats_with_distinct_reason_prefix(self) -> None:
+        error = RuntimeError(
+            json.dumps(
+                {
+                    "source": "local_pre_submit",
+                    "code": "local_qty_below_min",
+                    "reject_reason": "qty below minimum increment 1",
+                }
+            )
+        )
+        formatted = _format_order_submit_rejection(error)
+        self.assertIn("local_pre_submit_rejected", formatted)
+        self.assertIn("code=local_qty_below_min", formatted)
 
     def test_reconciler_backfills_missing_execution_by_client_order_id(self) -> None:
         with self.session_local() as session:
