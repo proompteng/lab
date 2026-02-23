@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
+import tempfile
 from unittest import TestCase
 from unittest.mock import patch
 from typing import Any
@@ -168,6 +170,15 @@ class CountingAlpacaClient(FakeAlpacaClient):
     def list_positions(self) -> list[dict[str, str]]:
         self.position_calls += 1
         return super().list_positions()
+
+
+class PositionedAlpacaClient(FakeAlpacaClient):
+    def __init__(self, positions: list[dict[str, str]]) -> None:
+        super().__init__()
+        self._positions = positions
+
+    def list_positions(self) -> list[dict[str, str]]:
+        return list(self._positions)
 
 
 class FakeLeanAdapter(FakeAlpacaClient):
@@ -722,6 +733,435 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(executions), 1)
                 self.assertIsNotNone(decisions[0].decision_hash)
                 self.assertEqual(len(alpaca_client.submitted), 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+
+    def test_pipeline_runtime_uncertainty_fail_blocks_new_entries(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with self.session_local() as session:
+                    strategy = Strategy(
+                        name="demo",
+                        description="runtime-gate-fail",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["AAPL"],
+                        max_notional_per_trade=Decimal("1000"),
+                    )
+                    session.add(strategy)
+                    session.commit()
+
+                gate_path = Path(tmpdir) / "gate-report.json"
+                gate_path.write_text(
+                    '{"uncertainty_gate_action":"fail","coverage_error":"0.11","shift_score":"0.96"}',
+                    encoding="utf-8",
+                )
+                signal = SignalEnvelope(
+                    event_ts=datetime.now(timezone.utc),
+                    symbol="AAPL",
+                    payload={
+                        "macd": {"macd": 1.2, "signal": 0.5},
+                        "rsi14": 25,
+                        "price": 100,
+                    },
+                    timeframe="1Min",
+                )
+                state = TradingState(last_autonomy_gates=str(gate_path))
+                alpaca_client = FakeAlpacaClient()
+                pipeline = TradingPipeline(
+                    alpaca_client=alpaca_client,
+                    order_firewall=OrderFirewall(alpaca_client),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=alpaca_client,
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=state,
+                    account_label="paper",
+                    session_factory=self.session_local,
+                )
+
+                pipeline.run_once()
+
+                with self.session_local() as session:
+                    decisions = session.execute(select(TradeDecision)).scalars().all()
+                    self.assertEqual(len(decisions), 1)
+                    self.assertEqual(decisions[0].status, "rejected")
+                    decision_json = decisions[0].decision_json
+                    assert isinstance(decision_json, dict)
+                    self.assertIn(
+                        "runtime_uncertainty_gate_fail_block_new_entries",
+                        decision_json.get("risk_reasons", []),
+                    )
+                    params = decision_json.get("params")
+                    assert isinstance(params, dict)
+                    gate_payload = params.get("runtime_uncertainty_gate")
+                    assert isinstance(gate_payload, dict)
+                    self.assertEqual(gate_payload.get("action"), "fail")
+                    self.assertTrue(gate_payload.get("entry_blocked"))
+
+                self.assertEqual(alpaca_client.submitted, [])
+                self.assertEqual(
+                    state.metrics.runtime_uncertainty_gate_action_total.get("fail"), 1
+                )
+                self.assertEqual(
+                    state.metrics.runtime_uncertainty_gate_blocked_total.get("fail"),
+                    1,
+                )
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+
+    def test_pipeline_runtime_uncertainty_abstain_allows_risk_reducing_exit(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with self.session_local() as session:
+                    strategy = Strategy(
+                        name="demo",
+                        description="runtime-gate-abstain",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["AAPL"],
+                        max_notional_per_trade=Decimal("1000"),
+                    )
+                    session.add(strategy)
+                    session.commit()
+
+                gate_path = Path(tmpdir) / "gate-report.json"
+                gate_path.write_text(
+                    '{"uncertainty_gate_action":"abstain"}',
+                    encoding="utf-8",
+                )
+                signal = SignalEnvelope(
+                    event_ts=datetime.now(timezone.utc),
+                    symbol="AAPL",
+                    payload={
+                        "macd": {"macd": 0.4, "signal": 1.0},
+                        "rsi14": 75,
+                        "price": 100,
+                    },
+                    timeframe="1Min",
+                )
+                state = TradingState(last_autonomy_gates=str(gate_path))
+                alpaca_client = PositionedAlpacaClient(
+                    positions=[
+                        {
+                            "symbol": "AAPL",
+                            "qty": "5",
+                            "side": "long",
+                            "market_value": "500",
+                        }
+                    ]
+                )
+                pipeline = TradingPipeline(
+                    alpaca_client=alpaca_client,
+                    order_firewall=OrderFirewall(alpaca_client),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=alpaca_client,
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=state,
+                    account_label="paper",
+                    session_factory=self.session_local,
+                )
+
+                pipeline.run_once()
+
+                with self.session_local() as session:
+                    decisions = session.execute(select(TradeDecision)).scalars().all()
+                    self.assertEqual(len(decisions), 1)
+                    self.assertEqual(decisions[0].status, "submitted")
+                    decision_json = decisions[0].decision_json
+                    assert isinstance(decision_json, dict)
+                    params = decision_json.get("params")
+                    assert isinstance(params, dict)
+                    gate_payload = params.get("runtime_uncertainty_gate")
+                    assert isinstance(gate_payload, dict)
+                    self.assertEqual(gate_payload.get("action"), "abstain")
+                    self.assertFalse(gate_payload.get("entry_blocked"))
+                    self.assertFalse(gate_payload.get("risk_increasing_entry"))
+
+                self.assertEqual(len(alpaca_client.submitted), 1)
+                self.assertEqual(
+                    state.metrics.runtime_uncertainty_gate_action_total.get("abstain"),
+                    1,
+                )
+                self.assertIsNone(
+                    state.metrics.runtime_uncertainty_gate_blocked_total.get("abstain")
+                )
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+
+    def test_pipeline_runtime_uncertainty_degrade_tightens_sizing_and_participation(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with self.session_local() as session:
+                    strategy = Strategy(
+                        name="demo",
+                        description="runtime-gate-degrade",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["AAPL"],
+                        max_notional_per_trade=Decimal("1000"),
+                    )
+                    session.add(strategy)
+                    session.commit()
+
+                gate_path = Path(tmpdir) / "gate-report.json"
+                gate_path.write_text(
+                    '{"uncertainty_gate_action":"degrade"}',
+                    encoding="utf-8",
+                )
+                signal = SignalEnvelope(
+                    event_ts=datetime.now(timezone.utc),
+                    symbol="AAPL",
+                    payload={
+                        "macd": {"macd": 1.2, "signal": 0.5},
+                        "rsi14": 25,
+                        "price": 100,
+                    },
+                    timeframe="1Min",
+                )
+                state = TradingState(last_autonomy_gates=str(gate_path))
+                alpaca_client = FakeAlpacaClient()
+                pipeline = TradingPipeline(
+                    alpaca_client=alpaca_client,
+                    order_firewall=OrderFirewall(alpaca_client),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=alpaca_client,
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=state,
+                    account_label="paper",
+                    session_factory=self.session_local,
+                )
+
+                pipeline.run_once()
+
+                self.assertEqual(len(alpaca_client.submitted), 1)
+                self.assertEqual(alpaca_client.submitted[0]["qty"], "5.0")
+                with self.session_local() as session:
+                    decisions = session.execute(select(TradeDecision)).scalars().all()
+                    self.assertEqual(len(decisions), 1)
+                    self.assertEqual(decisions[0].status, "submitted")
+                    decision_json = decisions[0].decision_json
+                    assert isinstance(decision_json, dict)
+                    params = decision_json.get("params")
+                    assert isinstance(params, dict)
+                    gate_payload = params.get("runtime_uncertainty_gate")
+                    assert isinstance(gate_payload, dict)
+                    self.assertEqual(gate_payload.get("action"), "degrade")
+                    self.assertEqual(gate_payload.get("degrade_qty_multiplier"), "0.50")
+                    allocator = params.get("allocator")
+                    assert isinstance(allocator, dict)
+                    self.assertEqual(
+                        allocator.get("max_participation_rate_override"), "0.05"
+                    )
+                    self.assertEqual(params.get("execution_seconds"), 120)
+
+                self.assertEqual(
+                    state.metrics.runtime_uncertainty_gate_action_total.get("degrade"),
+                    1,
+                )
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+
+    def test_runtime_uncertainty_gate_does_not_bypass_kill_switch_precedence(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_kill_switch_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with self.session_local() as session:
+                    strategy = Strategy(
+                        name="demo",
+                        description="runtime-gate-precedence",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["AAPL"],
+                        max_notional_per_trade=Decimal("1000"),
+                    )
+                    session.add(strategy)
+                    session.commit()
+
+                gate_path = Path(tmpdir) / "gate-report.json"
+                gate_path.write_text(
+                    '{"uncertainty_gate_action":"abstain"}',
+                    encoding="utf-8",
+                )
+                signal = SignalEnvelope(
+                    event_ts=datetime.now(timezone.utc),
+                    symbol="AAPL",
+                    payload={
+                        "macd": {"macd": 0.4, "signal": 1.0},
+                        "rsi14": 75,
+                        "price": 100,
+                    },
+                    timeframe="1Min",
+                )
+                state = TradingState(last_autonomy_gates=str(gate_path))
+                alpaca_client = PositionedAlpacaClient(
+                    positions=[
+                        {
+                            "symbol": "AAPL",
+                            "qty": "5",
+                            "side": "long",
+                            "market_value": "500",
+                        }
+                    ]
+                )
+                pipeline = TradingPipeline(
+                    alpaca_client=alpaca_client,
+                    order_firewall=OrderFirewall(alpaca_client),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=alpaca_client,
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=state,
+                    account_label="paper",
+                    session_factory=self.session_local,
+                )
+
+                pipeline.run_once()
+
+                self.assertEqual(alpaca_client.submitted, [])
+                with self.session_local() as session:
+                    decisions = session.execute(select(TradeDecision)).scalars().all()
+                    self.assertEqual(len(decisions), 1)
+                    self.assertEqual(decisions[0].status, "rejected")
+                    decision_json = decisions[0].decision_json
+                    assert isinstance(decision_json, dict)
+                    risk_reasons = decision_json.get("risk_reasons", [])
+                    self.assertIn("kill_switch_enabled", risk_reasons)
+                    self.assertNotIn(
+                        "runtime_uncertainty_gate_abstain_block_risk_increasing_entries",
+                        risk_reasons,
+                    )
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]

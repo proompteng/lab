@@ -367,6 +367,8 @@ class TestTradingMetrics(TestCase):
         metrics.conformal_interval_width = 0.74
         metrics.regime_shift_score = 0.41
         metrics.uncertainty_gate_action_total["degrade"] = 2
+        metrics.runtime_uncertainty_gate_action_total["degrade"] = 3
+        metrics.runtime_uncertainty_gate_blocked_total["fail"] = 1
         metrics.recalibration_runs_total["queued"] = 1
 
         payload = render_trading_metrics(metrics.__dict__)
@@ -385,6 +387,14 @@ class TestTradingMetrics(TestCase):
         )
         self.assertIn(
             'torghut_trading_uncertainty_gate_action_total{action="degrade"} 2',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_runtime_uncertainty_gate_action_total{action="degrade"} 3',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_runtime_uncertainty_gate_blocked_total{action="fail"} 1',
             payload,
         )
         self.assertIn(
