@@ -13,7 +13,7 @@ spec:
       content: |-
         model = "gpt-5.3-codex"
         model_reasoning_summary = "detailed"
-        model_reasoning_effort = "medium"
+        model_reasoning_effort = "high"
         model_verbosity = "medium"
         preferred_auth_method = "apikey"
         approval_policy = "never"
