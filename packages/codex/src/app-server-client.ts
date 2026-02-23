@@ -97,6 +97,11 @@ export type CodexAppServerOptions = {
    * Defaults to false.
    */
   experimentalRawEvents?: boolean
+  /**
+   * Persist additional rollout events required for richer thread history.
+   * Defaults to false.
+   */
+  persistExtendedHistory?: boolean
   clientInfo?: ClientInfo
   logger?: (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => void
   bootstrapTimeoutMs?: number
@@ -236,6 +241,7 @@ export class CodexAppServerClient {
   private defaultEffort: ReasoningEffort
   private threadConfig: { [key in string]?: JsonValue } | null
   private experimentalRawEvents: boolean
+  private persistExtendedHistory: boolean
 
   constructor({
     binaryPath = 'codex',
@@ -246,6 +252,7 @@ export class CodexAppServerClient {
     defaultEffort = DEFAULT_EFFORT,
     threadConfig,
     experimentalRawEvents = false,
+    persistExtendedHistory = false,
     clientInfo = defaultClientInfo,
     logger,
     bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
@@ -257,6 +264,7 @@ export class CodexAppServerClient {
     this.defaultEffort = defaultEffort
     this.threadConfig = threadConfig === undefined ? { mcp_servers: {}, web_search: 'live' } : threadConfig
     this.experimentalRawEvents = experimentalRawEvents
+    this.persistExtendedHistory = persistExtendedHistory
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
     const args = ['--sandbox', this.sandbox, '--ask-for-approval', this.approval, '--model', defaultModel, 'app-server']
@@ -414,6 +422,7 @@ export class CodexAppServerClient {
         personality: null,
         ephemeral: null,
         experimentalRawEvents: this.experimentalRawEvents,
+        persistExtendedHistory: this.persistExtendedHistory,
       }
 
       const threadResp = (await this.request<ThreadStartResponse>('thread/start', threadParams)) as ThreadStartResponse
