@@ -220,11 +220,6 @@ flags:
     description: Global LLM review enablement for Torghut.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
-  - key: torghut_llm_jangar_bespoke_decision_enabled
-    name: Torghut LLM Jangar Bespoke Decision Enabled
-    description: Enables Jangar bespoke decision endpoint usage.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: false
   - key: torghut_llm_fail_open_live_approved
     name: Torghut LLM Fail Open Live Approved
     description: Approval gate for live fail-open behavior.

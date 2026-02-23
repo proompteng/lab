@@ -49,7 +49,6 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_emergency_stop_enabled": "torghut_trading_emergency_stop_enabled",
     "trading_market_context_required": "torghut_trading_market_context_required",
     "llm_enabled": "torghut_llm_enabled",
-    "llm_jangar_bespoke_decision_enabled": "torghut_llm_jangar_bespoke_decision_enabled",
     "llm_fail_open_live_approved": "torghut_llm_fail_open_live_approved",
     "llm_adjustment_allowed": "torghut_llm_adjustment_allowed",
     "llm_shadow_mode": "torghut_llm_shadow_mode",
@@ -77,7 +76,7 @@ def _resolve_boolean_feature_flag(
     flag_key: str,
     default_value: bool,
     timeout_ms: int,
-) -> bool:
+) -> tuple[bool, bool]:
     payload = json.dumps(
         {
             "namespaceKey": namespace_key,
@@ -100,16 +99,31 @@ def _resolve_boolean_feature_flag(
         with urlopen(request, timeout=timeout_seconds) as response:
             status = int(getattr(response, "status", 200))
             if status < 200 or status >= 300:
-                return default_value
+                logger.warning(
+                    "Feature flag resolve HTTP failure for key=%s status=%s; using default.",
+                    flag_key,
+                    status,
+                )
+                return default_value, False
             raw_body = json.loads(response.read().decode("utf-8"))
             if not isinstance(raw_body, dict):
-                return default_value
+                logger.warning(
+                    "Feature flag resolve invalid response for key=%s; using default.",
+                    flag_key,
+                )
+                return default_value, False
             body = cast(dict[str, object], raw_body)
             enabled = body.get("enabled")
-            return enabled if isinstance(enabled, bool) else default_value
+            if not isinstance(enabled, bool):
+                logger.warning(
+                    "Feature flag resolve missing boolean `enabled` for key=%s; using default.",
+                    flag_key,
+                )
+                return default_value, False
+            return enabled, True
     except Exception:
         logger.warning("Feature flag resolve failed for key=%s; using default.", flag_key)
-        return default_value
+        return default_value, False
 
 
 class Settings(BaseSettings):
@@ -1005,18 +1019,6 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=300, alias="LLM_MAX_TOKENS")
     llm_timeout_seconds: int = Field(default=20, alias="LLM_TIMEOUT_SECONDS")
-    llm_jangar_bespoke_decision_enabled: bool = Field(
-        default=False, alias="LLM_JANGAR_BESPOKE_DECISION_ENABLED"
-    )
-    llm_jangar_bespoke_timeout_seconds: int = Field(
-        default=75, alias="LLM_JANGAR_BESPOKE_TIMEOUT_SECONDS"
-    )
-    llm_jangar_bespoke_max_retries: int = Field(
-        default=1, alias="LLM_JANGAR_BESPOKE_MAX_RETRIES"
-    )
-    llm_jangar_bespoke_retry_backoff_seconds: float = Field(
-        default=0.5, alias="LLM_JANGAR_BESPOKE_RETRY_BACKOFF_SECONDS"
-    )
     llm_fail_mode: Literal["veto", "pass_through"] = Field(
         default="veto", alias="LLM_FAIL_MODE"
     )
@@ -1146,7 +1148,7 @@ class Settings(BaseSettings):
         self.trading_feature_flags_entity_id = entity_id
         for field_name, flag_key in FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD.items():
             default_value = bool(getattr(self, field_name))
-            resolved = _resolve_boolean_feature_flag(
+            resolved, success = _resolve_boolean_feature_flag(
                 endpoint=endpoint,
                 namespace_key=namespace_key,
                 entity_id=entity_id,
@@ -1155,6 +1157,12 @@ class Settings(BaseSettings):
                 timeout_ms=self.trading_feature_flags_timeout_ms,
             )
             setattr(self, field_name, resolved)
+            if not success:
+                logger.warning(
+                    "Feature flag endpoint unavailable; skipping remaining overrides after key=%s.",
+                    flag_key,
+                )
+                break
 
     def model_post_init(self, __context: Any) -> None:
         self._apply_feature_flag_overrides()

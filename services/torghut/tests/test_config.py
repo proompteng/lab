@@ -259,6 +259,7 @@ class TestConfig(TestCase):
             payload = json.loads(request.data.decode("utf-8"))
             key = payload.get("flagKey")
             values = {
+                "torghut_trading_live_enabled": False,
                 "torghut_trading_enabled": False,
                 "torghut_trading_emergency_stop_enabled": True,
                 "torghut_trading_execution_prefer_limit": False,
@@ -270,7 +271,7 @@ class TestConfig(TestCase):
                 "torghut_llm_enabled": False,
                 "torghut_llm_adjustment_allowed": True,
             }
-            return _MockFlagResponse({"enabled": values.get(key)})
+            return _MockFlagResponse({"enabled": values.get(key, False)})
 
         with patch("app.config.urlopen", side_effect=_mock_urlopen):
             settings = Settings(
@@ -352,6 +353,60 @@ class TestConfig(TestCase):
         self.assertFalse(settings.trading_enabled)
         self.assertFalse(settings.trading_emergency_stop_enabled)
         self.assertTrue(settings.llm_enabled)
+
+    def test_feature_flag_failures_short_circuit_remaining_remote_lookups(self) -> None:
+        call_count = 0
+
+        def _mock_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("network")
+
+        with patch("app.config.urlopen", side_effect=_mock_urlopen):
+            Settings(
+                TRADING_ENABLED=False,
+                TRADING_EMERGENCY_STOP_ENABLED=False,
+                LLM_ENABLED=True,
+                TRADING_UNIVERSE_SOURCE="static",
+                TRADING_FEATURE_FLAGS_ENABLED=True,
+                TRADING_FEATURE_FLAGS_URL="http://feature-flags.feature-flags.svc.cluster.local:8013",
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
+        self.assertEqual(call_count, 1)
+
+    def test_feature_flag_invalid_payload_short_circuit_remaining_remote_lookups(self) -> None:
+        call_count = 0
+
+        class _Response:
+            status = 200
+
+            def __enter__(self) -> "_Response":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                return b'{"enabled":"yes"}'
+
+        def _mock_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+            nonlocal call_count
+            call_count += 1
+            return _Response()
+
+        with patch("app.config.urlopen", side_effect=_mock_urlopen):
+            Settings(
+                TRADING_ENABLED=False,
+                TRADING_EMERGENCY_STOP_ENABLED=False,
+                LLM_ENABLED=True,
+                TRADING_UNIVERSE_SOURCE="static",
+                TRADING_FEATURE_FLAGS_ENABLED=True,
+                TRADING_FEATURE_FLAGS_URL="http://feature-flags.feature-flags.svc.cluster.local:8013",
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
+        self.assertEqual(call_count, 1)
 
     def test_feature_flag_map_covers_all_boolean_runtime_gates(self) -> None:
         boolean_fields = {

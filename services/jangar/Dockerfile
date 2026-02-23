@@ -579,13 +579,6 @@ COPY --from=jangar-build /app/services/bumba ./services/bumba
 WORKDIR /app/services/jangar
 
 RUN mkdir -p /root/.codex
-RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json,required=false \
-  if [ -f /tmp/codex_auth.json ]; then \
-    install -m 600 /tmp/codex_auth.json /root/.codex/auth.json; \
-  else \
-    printf '{}' > /root/.codex/auth.json; \
-    chmod 600 /root/.codex/auth.json; \
-  fi
 COPY --from=jangar-build /app/services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
 COPY --from=jangar-build /app/services/jangar/scripts/agent-runner.ts /usr/local/bin/agent-runner
 COPY --from=jangar-build /app/services/jangar/scripts/codex-implement.ts /usr/local/bin/codex-implement

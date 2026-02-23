@@ -8,6 +8,7 @@ resources:
   - jangar-worker-deployment.yaml
   - service.yaml
   - github-token.yaml
+  - codex-auth-sealedsecret.yaml
   - discord-codex-bot-sealedsecret.yaml
   - discord-success-channel-sealedsecret.yaml
   - codex-run-complete-kafkasource.yaml

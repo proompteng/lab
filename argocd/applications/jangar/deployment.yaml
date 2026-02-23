@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-02-23T00:59:31Z"
+    deploy.knative.dev/rollout: "2026-02-23T05:39:58Z"
 spec:
   replicas: 1
   strategy:
@@ -36,7 +36,7 @@ spec:
                 rm -rf /workspace/lab
                 git clone --depth 1 https://github.com/proompteng/lab.git /workspace/lab
               fi
-              mkdir -p /workspace/lab/.worktrees /workspace/.bun-install-cache /workspace/.ovscode
+              mkdir -p /workspace/lab/.worktrees /workspace/lab/torghut /workspace/.bun-install-cache /workspace/.ovscode
           volumeMounts:
             - name: workspace
               mountPath: /workspace
@@ -374,6 +374,10 @@ spec:
             - name: torghut-db-ca
               mountPath: /etc/ssl/certs/torghut-db
               readOnly: true
+            - name: codex-auth
+              mountPath: /root/.codex/auth.json
+              subPath: auth.json
+              readOnly: true
         - name: docker
           image: docker:25.0-dind
           imagePullPolicy: IfNotPresent
@@ -414,3 +418,6 @@ spec:
           secret:
             secretName: torghut-db-ca
             optional: true
+        - name: codex-auth
+          secret:
+            secretName: codex-auth

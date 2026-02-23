@@ -54,7 +54,7 @@ const ChatRequestSchema = S.Struct({
 })
 
 type ChatRequest = S.Schema.Type<typeof ChatRequestSchema>
-type ChatClientKind = 'openwebui' | 'discord' | 'unknown'
+type ChatClientKind = 'openwebui' | 'discord' | 'trade-execution' | 'unknown'
 
 class RequestError extends Error {
   readonly status: number
@@ -129,8 +129,28 @@ const parseRequest = async (request: Request): Promise<ChatRequest> => {
 }
 
 const resolveChatClientKind = (request: Request): ChatClientKind => {
+  const tradeExecutionHeader = request.headers.get('x-trade-execution')
+  if (tradeExecutionHeader !== null) {
+    const normalized = tradeExecutionHeader.trim().toLowerCase()
+    if (normalized !== 'torghut') {
+      throw new RequestError(
+        400,
+        'invalid_trade_execution_header',
+        "`x-trade-execution` must be 'torghut' when provided",
+      )
+    }
+    return 'trade-execution'
+  }
+
   const raw = request.headers.get('x-jangar-client-kind')
   const normalized = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
+  if (normalized === 'trade-execution') {
+    throw new RequestError(
+      400,
+      'deprecated_trade_execution_header',
+      '`x-jangar-client-kind: trade-execution` is no longer supported; use `x-trade-execution: torghut`',
+    )
+  }
   if (normalized === 'discord') return 'discord'
   if (normalized === 'openwebui') return 'openwebui'
   if (normalized.length > 0) return 'unknown'
@@ -139,6 +159,7 @@ const resolveChatClientKind = (request: Request): ChatClientKind => {
 
 const WORKTREE_DIR_NAME = '.worktrees'
 const WORKTREE_NAME_PATTERN = /^[a-z0-9-]+$/
+const TRADE_EXECUTION_DIR_NAME = 'torghut'
 
 const MISSING_UPSTREAM_THREAD_MESSAGE_FRAGMENTS = ['conversation not found', 'thread not found'] as const
 
@@ -206,6 +227,13 @@ const resolveCodexBaseCwd = () => {
 const resolveCodexCwd = (worktreePath?: string) => worktreePath ?? resolveCodexBaseCwd()
 
 const resolveWorktreeRoot = () => join(resolveCodexBaseCwd(), WORKTREE_DIR_NAME)
+const resolveTradeExecutionRoot = () => join(resolveCodexBaseCwd(), TRADE_EXECUTION_DIR_NAME)
+
+const ensureTradeExecutionCwd = async () => {
+  const tradeExecutionCwd = resolveTradeExecutionRoot()
+  await mkdir(tradeExecutionCwd, { recursive: true })
+  return tradeExecutionCwd
+}
 
 const runGitWithRecovery = async (
   args: string[],
@@ -682,7 +710,14 @@ export const handleChatCompletionEffect = (request: Request) =>
         const includePlan = parsed.stream_options?.include_plan !== false
         const chatIdHeader = request.headers.get('x-openwebui-chat-id')
         const chatId = typeof chatIdHeader === 'string' && chatIdHeader.trim().length > 0 ? chatIdHeader.trim() : null
-        const chatClientKind = resolveChatClientKind(request)
+        const chatClientKind = yield* Effect.try({
+          try: () => resolveChatClientKind(request),
+          catch: (error) =>
+            error instanceof RequestError
+              ? error
+              : new RequestError(400, 'invalid_request_error', 'Invalid chat request headers'),
+        })
+        const tradeExecutionRequest = chatClientKind === 'trade-execution'
         const statefulTranscriptEnabled =
           process.env.JANGAR_STATEFUL_CHAT_MODE === '1' && chatClientKind === 'openwebui'
 
@@ -698,7 +733,19 @@ export const handleChatCompletionEffect = (request: Request) =>
         let transcriptState: TranscriptStateService | null = null
         let storedTranscript: TranscriptEntry[] | null = null
 
-        if (chatId) {
+        if (tradeExecutionRequest) {
+          codexCwd = yield* Effect.tryPromise({
+            try: () => ensureTradeExecutionCwd(),
+            catch: (error) =>
+              new RequestError(
+                500,
+                'trade_execution_cwd_setup_failed',
+                error instanceof Error ? error.message : 'Unable to prepare trade-execution workspace',
+              ),
+          })
+        }
+
+        if (chatId && !tradeExecutionRequest) {
           const resolved = yield* pipe(
             Effect.gen(function* () {
               const threadState = yield* ThreadState
@@ -838,6 +885,15 @@ export const handleChatCompletionEffect = (request: Request) =>
               worktreePath: resolved.worktreePath,
             })
           }
+        }
+        if (chatId && tradeExecutionRequest) {
+          console.info('[chat] skipping stateful chat for trade-execution request', { chatId })
+        }
+
+        if (tradeExecutionRequest && !parsed.model) {
+          return yield* Effect.fail(
+            new RequestError(400, 'model_required', '`model` is required when using `x-trade-execution: torghut`'),
+          )
         }
 
         const model = parsed.model ?? config.defaultModel
