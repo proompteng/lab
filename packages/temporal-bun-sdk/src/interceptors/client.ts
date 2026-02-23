@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
-import { SpanStatusCode, trace } from '@proompteng/otel/api'
 import { Effect } from 'effect'
 import { defaultRetryPolicy, type TemporalRpcRetryPolicy, withTemporalRetry } from '../client/retries'
 import type { DataConverter } from '../common/payloads'
 import type { Logger } from '../observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from '../observability/metrics'
+import { SpanStatusCode, trace } from '../otel/api'
 import { type InterceptorKind, runInterceptors, type TemporalInterceptor } from './types'
 
 export interface ClientInterceptorContextMetadata {
