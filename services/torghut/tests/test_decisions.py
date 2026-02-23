@@ -358,3 +358,71 @@ class TestDecisionEngine(TestCase):
         self.assertIn('uncertainty', forecast_payload)
         self.assertEqual(len(forecast_telemetry), 1)
         self.assertEqual(forecast_telemetry[0].symbol, 'AAPL')
+
+    def test_decision_params_include_microstructure_advice_and_fragility_payloads(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='wiring',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol='aapl',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+                'spread': Decimal('0.02'),
+                'depth_top5_usd': Decimal('1200000'),
+                'order_flow_imbalance': Decimal('0.15'),
+                'latency_ms_estimate': 22,
+                'fill_hazard': Decimal('0.65'),
+                'liquidity_regime': 'compressed',
+                'execution_advice': {
+                    'urgency_tier': 'normal',
+                    'max_participation_rate': '0.05',
+                    'preferred_order_type': 'limit',
+                    'adverse_selection_risk': '0.22',
+                    'expected_shortfall_bps_p50': '1.5',
+                    'expected_shortfall_bps_p95': '4.8',
+                    'simulator_version': 'sim-v5',
+                },
+                'spread_acceleration': Decimal('0.30'),
+                'liquidity_compression': Decimal('0.35'),
+                'crowding_proxy': Decimal('0.40'),
+                'correlation_concentration': Decimal('0.45'),
+                'fragility_state': 'elevated',
+            },
+            timeframe='1Min',
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        params = decisions[0].params
+        micro = params.get('microstructure_state')
+        assert isinstance(micro, dict)
+        self.assertEqual(micro.get('schema_version'), 'microstructure_state_v1')
+        self.assertEqual(micro.get('symbol'), 'AAPL')
+        self.assertEqual(micro.get('liquidity_regime'), 'compressed')
+
+        advice = params.get('execution_advice')
+        assert isinstance(advice, dict)
+        self.assertEqual(advice.get('urgency_tier'), 'normal')
+        self.assertEqual(advice.get('preferred_order_type'), 'limit')
+        self.assertEqual(advice.get('expected_shortfall_bps_p50'), '1.5')
+
+        fragility = params.get('fragility_snapshot')
+        assert isinstance(fragility, dict)
+        self.assertEqual(fragility.get('schema_version'), 'fragility_snapshot_v1')
+        self.assertEqual(fragility.get('symbol'), 'AAPL')
+        self.assertEqual(fragility.get('fragility_state'), 'elevated')
+        self.assertEqual(fragility.get('spread_acceleration'), Decimal('0.30'))
