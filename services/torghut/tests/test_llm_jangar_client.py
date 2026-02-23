@@ -102,14 +102,17 @@ class TestJangarFallbackChain(unittest.TestCase):
 
 class TestJangarRequestHeaders(unittest.TestCase):
     def setUp(self) -> None:
+        self._orig_provider = settings.llm_provider
         self._orig_jangar_base_url = settings.jangar_base_url
         self._orig_jangar_api_key = settings.jangar_api_key
 
     def tearDown(self) -> None:
+        settings.llm_provider = self._orig_provider
         settings.jangar_base_url = self._orig_jangar_base_url
         settings.jangar_api_key = self._orig_jangar_api_key
 
     def test_completion_request_sends_trade_execution_client_header(self) -> None:
+        settings.llm_provider = "jangar"
         settings.jangar_base_url = "http://jangar"
         settings.jangar_api_key = "jangar-token"
 
