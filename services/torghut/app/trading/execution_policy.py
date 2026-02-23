@@ -164,7 +164,7 @@ class ExecutionPolicy:
             quantized = quantize_qty_for_symbol(decision.symbol, qty)
             reasons.append(f"qty_invalid_increment:step={_stringify_decimal(min_qty)}")
             qty = quantized
-        notional = price * qty if price is not None and qty is not None else None
+        notional = price * qty if price is not None else None
 
         min_notional = config.min_notional
         if (
