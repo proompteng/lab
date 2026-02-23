@@ -47,7 +47,7 @@ extraEnvVars:
   - name: AIOHTTP_CLIENT_SESSION_SSL
     value: "false"
   - name: DEFAULT_MODELS
-    value: gpt-5.3-codex
+    value: gpt-5.3-codex,gpt-5.3-codex-spark
   - name: WEBUI_AUTH
     value: "false"
   - name: ENABLE_SIGNUP
