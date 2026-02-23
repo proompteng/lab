@@ -8,6 +8,7 @@ import { createTemporalClient } from '@proompteng/temporal-bun-sdk'
 import { VersioningBehavior } from '@proompteng/temporal-bun-sdk/worker'
 
 import { repoRoot as defaultRepoRoot, fatal } from '../shared/cli'
+import { resolveWorkflowResult } from './enrich-file-result'
 
 type Options = {
   filePath: string
@@ -226,17 +227,6 @@ const buildWorkflowId = (filePath: string, provided?: string) => {
   const normalized = filePath.replace(/[^a-zA-Z0-9_.-]+/g, '-')
   return `bumba-${normalized}-${randomUUID()}`
 }
-
-const resolveWorkflowResult = async (
-  client: {
-    workflow: {
-      result: (handle: unknown) => Promise<unknown>
-    }
-  },
-  startResult: {
-    handle: unknown
-  },
-) => client.workflow.result(startResult.handle)
 
 const main = async () => {
   const options = parseArgs(Bun.argv.slice(2))

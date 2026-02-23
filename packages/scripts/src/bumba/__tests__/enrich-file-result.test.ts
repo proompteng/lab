@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 
-import { __private } from '../enrich-file'
+import { resolveWorkflowResult } from '../enrich-file-result'
 
-describe('enrich-file', () => {
-  it('wait mode resolves results through client.workflow.result', async () => {
+describe('enrich-file result helper', () => {
+  it('resolves results through client.workflow.result', async () => {
     const handle = { id: 'workflow-handle' }
     const expected = { ok: true }
 
@@ -17,7 +17,7 @@ describe('enrich-file', () => {
       },
     }
 
-    const result = await __private.resolveWorkflowResult(client, { handle })
+    const result = await resolveWorkflowResult(client, { handle })
 
     expect(receivedHandle).toBe(handle)
     expect(result).toEqual(expected)
