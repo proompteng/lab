@@ -7,7 +7,7 @@ export type OpenAIConfig = {
   defaultModel: string
 }
 
-const DEFAULT_MODELS = ['gpt-5.3-codex']
+const DEFAULT_MODELS = ['gpt-5.3-codex', 'gpt-5.3-codex-spark']
 
 const parseModelsEnv = (raw: string | undefined) => {
   if (!raw) return null

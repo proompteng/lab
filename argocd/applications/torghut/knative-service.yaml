@@ -195,11 +195,11 @@ spec:
             - name: LLM_PROVIDER
               value: jangar
             - name: LLM_MODEL
-              value: gpt-5.3-codex
+              value: gpt-5.3-codex-spark
             - name: LLM_MODEL_VERSION_LOCK
-              value: gpt-5.3-codex
+              value: gpt-5.3-codex-spark
             - name: LLM_ALLOWED_MODELS
-              value: gpt-5.3-codex
+              value: gpt-5.3-codex-spark
             - name: LLM_ALLOWED_PROMPT_VERSIONS
               value: v1
             - name: LLM_ENABLED
