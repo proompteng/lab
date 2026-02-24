@@ -324,7 +324,7 @@ spec:
               port: http1
           readinessProbe:
             httpGet:
-              path: /db-check
+              path: /healthz
               port: http1
           resources:
             requests:
