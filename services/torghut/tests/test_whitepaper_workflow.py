@@ -101,6 +101,17 @@ https://example.com/paper.pdf
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        service.enqueue_inngest_run = (  # type: ignore[method-assign]
+            lambda *, run, issue_event, attachment_url: {
+                "event_name": "torghut/whitepaper.analysis.requested",
+                "event_ids": ["evt-dispatch"],
+                "event_payload": {
+                    "run_id": run.run_id,
+                    "issue_url": issue_event.issue_url,
+                    "attachment_url": attachment_url,
+                },
+            }
+        )
         service._submit_jangar_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "ok": True,
@@ -122,6 +133,11 @@ https://example.com/paper.pdf
             self.assertIsNotNone(kickoff.run_id)
             session.commit()
 
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            self.assertEqual(run_row.status, "inngest_dispatched")
+
+            service.dispatch_codex_agentrun(session, run_row.run_id)
+            session.commit()
             run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
             self.assertEqual(run_row.status, "agentrun_dispatched")
 
@@ -169,3 +185,40 @@ https://example.com/paper.pdf
 
             pr_row = session.execute(select(WhitepaperDesignPullRequest)).scalar_one()
             self.assertEqual(pr_row.pr_number, 1234)
+
+    def test_ingest_queues_inngest_when_enabled(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        service.enqueue_inngest_run = (  # type: ignore[method-assign]
+            lambda *, run, issue_event, attachment_url: {
+                "event_name": "torghut/whitepaper.analysis.requested",
+                "event_ids": ["evt-1"],
+                "event_payload": {
+                    "run_id": run.run_id,
+                    "issue_url": issue_event.issue_url,
+                    "attachment_url": attachment_url,
+                },
+            }
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            self.assertEqual(kickoff.reason, "queued")
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            self.assertEqual(run_row.status, "inngest_dispatched")
+            self.assertEqual(run_row.inngest_event_id, "evt-1")
+            self.assertEqual(
+                run_row.inngest_function_id,
+                "torghut-whitepaper-analysis-v1",
+            )
+            self.assertIsNone(
+                session.execute(select(WhitepaperCodexAgentRun)).scalar_one_or_none()
+            )

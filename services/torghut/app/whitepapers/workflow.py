@@ -17,6 +17,7 @@ from typing import Any, Mapping, cast
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
+from fastapi import FastAPI
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -36,6 +37,13 @@ from ..models import (
 logger = logging.getLogger(__name__)
 
 _GITHUB_ISSUE_ACTIONS = {"opened", "edited", "reopened", "labeled"}
+
+try:
+    import inngest as inngest_sdk
+    from inngest import fast_api as inngest_fast_api
+except Exception:  # pragma: no cover - optional dependency at runtime
+    inngest_sdk = None  # type: ignore[assignment]
+    inngest_fast_api = None  # type: ignore[assignment]
 
 
 @dataclass(frozen=True)
@@ -82,7 +90,25 @@ def whitepaper_workflow_enabled() -> bool:
 
 
 def whitepaper_kafka_enabled() -> bool:
-    return _bool_env("WHITEPAPER_KAFKA_ENABLED", default=False)
+    return True
+
+
+def whitepaper_inngest_enabled() -> bool:
+    return True
+
+
+def whitepaper_inngest_event_name() -> str:
+    return _str_env(
+        "WHITEPAPER_INNGEST_EVENT_NAME",
+        "torghut/whitepaper.analysis.requested",
+    ) or "torghut/whitepaper.analysis.requested"
+
+
+def whitepaper_inngest_function_id() -> str:
+    return _str_env(
+        "WHITEPAPER_INNGEST_FUNCTION_ID",
+        "torghut-whitepaper-analysis-v1",
+    ) or "torghut-whitepaper-analysis-v1"
 
 
 def marker_start() -> str:
@@ -531,7 +557,7 @@ class WhitepaperWorkflowService:
             status=run_status,
             trigger_source="github_issue_kafka" if source == "kafka" else "github_issue_api",
             trigger_actor=issue_event.actor,
-            inngest_event_id=issue_event.delivery_id,
+            inngest_event_id=None,
             orchestration_context_json={
                 "repository": issue_event.repository,
                 "issue_number": issue_event.issue_number,
@@ -571,11 +597,37 @@ class WhitepaperWorkflowService:
         agentrun_name: str | None = None
         if run_status == "queued" and _bool_env("WHITEPAPER_AGENTRUN_AUTO_DISPATCH", True):
             try:
-                dispatched = self.dispatch_codex_agentrun(session, run_id)
-                agentrun_name = cast(str | None, dispatched.get("agentrun_name"))
+                dispatch_result = self.enqueue_inngest_run(
+                    run=run_row,
+                    issue_event=issue_event,
+                    attachment_url=attachment_url,
+                )
+                event_ids = cast(list[str], dispatch_result.get("event_ids") or [])
+                run_row.inngest_event_id = event_ids[0] if event_ids else None
+                run_row.inngest_function_id = whitepaper_inngest_function_id()
+                run_row.status = "inngest_dispatched"
+                session.add(run_row)
+                session.add(
+                    WhitepaperAnalysisStep(
+                        analysis_run_id=run_row.id,
+                        step_name="inngest_dispatch",
+                        step_order=2,
+                        attempt=1,
+                        status="completed",
+                        executor="torghut",
+                        idempotency_key=run_row.run_id,
+                        started_at=datetime.now(timezone.utc),
+                        completed_at=datetime.now(timezone.utc),
+                        input_json={
+                            "event_name": whitepaper_inngest_event_name(),
+                            "run_id": run_row.run_id,
+                        },
+                        output_json=dispatch_result,
+                    )
+                )
             except Exception as exc:
                 run_row.status = "failed"
-                run_row.failure_reason = f"agentrun_dispatch_failed:{type(exc).__name__}:{exc}"
+                run_row.failure_reason = f"inngest_dispatch_failed:{type(exc).__name__}:{exc}"
                 session.add(run_row)
 
         session.flush()
@@ -728,6 +780,65 @@ class WhitepaperWorkflowService:
             "agentrun_uid": agentrun_uid,
             "status": phase,
         }
+
+    def enqueue_inngest_run(
+        self,
+        *,
+        run: WhitepaperAnalysisRun,
+        issue_event: GithubIssueEvent,
+        attachment_url: str,
+    ) -> dict[str, Any]:
+        client = self.build_inngest_client()
+        if client is None:
+            raise RuntimeError("inngest_client_not_configured")
+
+        repository = issue_event.repository
+        issue_number = issue_event.issue_number
+        issue_url = issue_event.issue_url
+        event_name = whitepaper_inngest_event_name()
+        event_payload = {
+            "run_id": run.run_id,
+            "repository": repository,
+            "issue_number": issue_number,
+            "issue_url": issue_url,
+            "attachment_url": attachment_url,
+            "github_delivery_id": issue_event.delivery_id,
+        }
+        event = inngest_sdk.Event(  # type: ignore[union-attr]
+            name=event_name,
+            id=run.run_id,
+            data=event_payload,
+        )
+        event_ids = cast(list[str], client.send(event))
+        return {
+            "event_name": event_name,
+            "event_ids": event_ids,
+            "event_payload": event_payload,
+        }
+
+    @staticmethod
+    def build_inngest_client() -> Any | None:
+        if not whitepaper_inngest_enabled():
+            return None
+        if inngest_sdk is None:
+            return None
+
+        event_key = _str_env("INNGEST_EVENT_KEY")
+        if not event_key:
+            return None
+
+        app_id = _str_env("INNGEST_APP_ID", "torghut") or "torghut"
+        signing_key = _str_env("INNGEST_SIGNING_KEY")
+        base_url = _str_env("INNGEST_BASE_URL", "http://inngest.inngest.svc.cluster.local:8288")
+        timeout_seconds = max(1, _int_env("WHITEPAPER_INNGEST_TIMEOUT_SECONDS", 20))
+        return inngest_sdk.Inngest(  # type: ignore[union-attr]
+            app_id=app_id,
+            event_key=event_key,
+            signing_key=signing_key,
+            event_api_base_url=base_url,
+            api_base_url=base_url,
+            request_timeout=timeout_seconds,
+        )
 
     def finalize_run(
         self,
@@ -1311,14 +1422,88 @@ class WhitepaperKafkaWorker:
             self._ingestor.ingest_once(session)
 
 
+def mount_inngest_whitepaper_function(
+    app: FastAPI,
+    *,
+    session_factory: Any,
+    workflow_service: WhitepaperWorkflowService,
+) -> bool:
+    if not whitepaper_inngest_enabled():
+        return False
+    if inngest_sdk is None or inngest_fast_api is None:
+        logger.warning("Inngest SDK unavailable; whitepaper orchestration function not mounted")
+        return False
+
+    client = workflow_service.build_inngest_client()
+    if client is None:
+        logger.warning(
+            "Inngest client configuration missing; whitepaper orchestration function not mounted"
+        )
+        return False
+
+    function_id = whitepaper_inngest_function_id()
+    event_name = whitepaper_inngest_event_name()
+
+    @client.create_function(
+        fn_id=function_id,
+        trigger=inngest_sdk.TriggerEvent(event=event_name),  # type: ignore[union-attr]
+    )
+    async def whitepaper_inngest_orchestrator(ctx: Any) -> dict[str, Any]:
+        event = getattr(ctx, "event", None)
+        event_data = cast(dict[str, Any], getattr(event, "data", {}) or {})
+        run_id = str(event_data.get("run_id") or "").strip()
+        if not run_id:
+            raise RuntimeError("whitepaper_run_id_missing")
+
+        with session_factory() as session:
+            row = session.execute(
+                select(WhitepaperAnalysisRun).where(WhitepaperAnalysisRun.run_id == run_id)
+            ).scalar_one_or_none()
+            if row is None:
+                raise RuntimeError("whitepaper_run_not_found")
+
+            row.inngest_function_id = function_id
+            incoming_run_id = str(getattr(ctx, "run_id", "") or "").strip()
+            if incoming_run_id and (
+                row.inngest_run_id is None or row.inngest_run_id == incoming_run_id
+            ):
+                row.inngest_run_id = incoming_run_id
+            event_id = str(
+                event_data.get("inngest_event_id")
+                or event_data.get("event_id")
+                or ""
+            ).strip()
+            if event_id and not row.inngest_event_id:
+                row.inngest_event_id = event_id
+            session.add(row)
+            result = workflow_service.dispatch_codex_agentrun(session, run_id)
+            session.commit()
+            return {
+                "run_id": run_id,
+                "inngest_run_id": incoming_run_id or row.inngest_run_id,
+                "agentrun": result,
+            }
+
+    serve_path = _str_env("WHITEPAPER_INNGEST_SERVE_PATH", "/api/inngest")
+    inngest_fast_api.serve(
+        app,
+        client,
+        [whitepaper_inngest_orchestrator],
+        serve_path=serve_path,
+    )
+    return True
+
+
 __all__ = [
     "IssueKickoffResult",
     "WhitepaperKafkaIssueIngestor",
     "WhitepaperKafkaWorker",
     "WhitepaperWorkflowService",
+    "mount_inngest_whitepaper_function",
     "extract_pdf_urls",
     "normalize_github_issue_event",
     "parse_marker_block",
+    "whitepaper_inngest_enabled",
     "whitepaper_kafka_enabled",
     "whitepaper_workflow_enabled",
 ]

@@ -176,8 +176,6 @@ spec:
                   optional: true
             - name: WHITEPAPER_WORKFLOW_ENABLED
               value: "true"
-            - name: WHITEPAPER_KAFKA_ENABLED
-              value: "true"
             - name: WHITEPAPER_KAFKA_BOOTSTRAP_SERVERS
               value: kafka-kafka-bootstrap.kafka:9092
             - name: WHITEPAPER_KAFKA_TOPIC
@@ -234,6 +232,24 @@ spec:
               value: codex-whitepaper-github-token
             - name: WHITEPAPER_AGENTRUN_SUBMIT_URL
               value: http://agents.agents.svc.cluster.local/v1/agent-runs
+            - name: INNGEST_APP_ID
+              value: torghut
+            - name: INNGEST_BASE_URL
+              value: http://inngest.inngest.svc.cluster.local:8288
+            - name: INNGEST_EVENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: inngest
+                  key: INNGEST_EVENT_KEY
+            - name: INNGEST_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: inngest
+                  key: INNGEST_SIGNING_KEY
+            - name: WHITEPAPER_INNGEST_EVENT_NAME
+              value: torghut/whitepaper.analysis.requested
+            - name: WHITEPAPER_INNGEST_FUNCTION_ID
+              value: torghut-whitepaper-analysis-v1
             - name: TRADING_MARKET_CONTEXT_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/
             - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS

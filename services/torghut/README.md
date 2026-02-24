@@ -41,10 +41,8 @@ base_branch: main
 <!-- TORGHUT_WHITEPAPER:END -->
 ```
 - Include a `.pdf` attachment URL in the issue body.
-- Froussard forwards issue webhook events to Kafka (`WHITEPAPER_KAFKA_TOPIC`), and Torghut consumes them when:
-  - `WHITEPAPER_WORKFLOW_ENABLED=true`
-  - `WHITEPAPER_KAFKA_ENABLED=true`
-- Torghut stores source metadata/artifact refs in whitepaper tables, uploads source PDF to Ceph, and dispatches a Codex AgentRun via Jangar (`/v1/agent-runs`) in namespace `agents`.
+- Froussard forwards issue webhook events to Kafka (`WHITEPAPER_KAFKA_TOPIC`) and Torghut consumes them whenever `WHITEPAPER_WORKFLOW_ENABLED=true`.
+- Torghut stores source metadata/artifact refs in whitepaper tables, uploads source PDF to Ceph, emits an Inngest event (`torghut/whitepaper.analysis.requested`), and the Torghut Inngest function dispatches a Codex AgentRun via Jangar (`/v1/agent-runs`) in namespace `agents`.
 - Dispatch endpoint uses `WHITEPAPER_AGENTRUN_SUBMIT_URL`; default fallback is `http://agents.agents.svc.cluster.local/v1/agent-runs`.
 
 Endpoints:

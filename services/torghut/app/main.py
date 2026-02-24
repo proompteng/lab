@@ -36,6 +36,8 @@ from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .whitepapers import (
     WhitepaperKafkaWorker,
     WhitepaperWorkflowService,
+    mount_inngest_whitepaper_function,
+    whitepaper_inngest_enabled,
     whitepaper_kafka_enabled,
     whitepaper_workflow_enabled,
 )
@@ -75,6 +77,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="torghut", lifespan=lifespan)
 app.state.settings = settings
+app.state.whitepaper_inngest_registered = mount_inngest_whitepaper_function(
+    app,
+    session_factory=SessionLocal,
+    workflow_service=WHITEPAPER_WORKFLOW,
+)
 
 
 @app.exception_handler(SQLAlchemyError)
@@ -147,6 +154,8 @@ def whitepaper_status() -> dict[str, object]:
     return {
         "workflow_enabled": whitepaper_workflow_enabled(),
         "kafka_enabled": whitepaper_kafka_enabled(),
+        "inngest_enabled": whitepaper_inngest_enabled(),
+        "inngest_registered": bool(getattr(app.state, "whitepaper_inngest_registered", False)),
         "worker_running": worker_running,
     }
 
