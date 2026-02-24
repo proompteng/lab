@@ -1,0 +1,974 @@
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import type { Pool } from 'pg'
+
+type NullableString = string | null
+
+type WhitepaperStorageConfig = {
+  endpoint: string
+  accessKey: string
+  secretKey: string
+  region: string
+}
+
+export type TorghutWhitepaperListFilters = {
+  limit?: number
+  offset?: number
+  query?: string
+  status?: string
+  verdict?: string
+}
+
+export type TorghutWhitepaperListItem = {
+  runId: string
+  status: string
+  triggerSource: string
+  triggerActor: NullableString
+  failureReason: NullableString
+  createdAt: NullableString
+  startedAt: NullableString
+  completedAt: NullableString
+  document: {
+    key: NullableString
+    title: NullableString
+    source: NullableString
+    sourceIdentifier: NullableString
+    status: NullableString
+    lastProcessedAt: NullableString
+  }
+  version: {
+    versionNumber: number | null
+    parseStatus: NullableString
+    fileName: NullableString
+    fileSizeBytes: number | null
+    checksumSha256: NullableString
+    cephBucket: NullableString
+    cephObjectKey: NullableString
+    sourceAttachmentUrl: NullableString
+  }
+  latestAgentrun: {
+    name: NullableString
+    status: NullableString
+    headBranch: NullableString
+    startedAt: NullableString
+    completedAt: NullableString
+  } | null
+  verdict: {
+    verdict: NullableString
+    score: number | null
+    confidence: number | null
+    requiresFollowup: boolean
+  } | null
+  designPullRequest: {
+    status: NullableString
+    prNumber: number | null
+    prUrl: NullableString
+    isMerged: boolean
+  } | null
+}
+
+export type TorghutWhitepaperListResult = {
+  items: TorghutWhitepaperListItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export type TorghutWhitepaperAgentRun = {
+  id: string
+  name: string
+  status: string
+  requestedBy: NullableString
+  namespace: NullableString
+  vcsRepository: NullableString
+  vcsBaseBranch: NullableString
+  vcsHeadBranch: NullableString
+  startedAt: NullableString
+  completedAt: NullableString
+  failureReason: NullableString
+  logArtifactRef: NullableString
+  patchArtifactRef: NullableString
+  createdAt: NullableString
+}
+
+export type TorghutWhitepaperDesignPullRequest = {
+  id: string
+  attempt: number | null
+  status: string
+  repository: NullableString
+  baseBranch: NullableString
+  headBranch: NullableString
+  prNumber: number | null
+  prUrl: NullableString
+  title: NullableString
+  ciStatus: NullableString
+  isMerged: boolean
+  mergedAt: NullableString
+  createdAt: NullableString
+}
+
+export type TorghutWhitepaperAnalysisStep = {
+  id: string
+  stepName: string
+  attempt: number | null
+  status: string
+  executor: NullableString
+  startedAt: NullableString
+  completedAt: NullableString
+  durationMs: number | null
+  error: unknown
+  output: unknown
+  createdAt: NullableString
+}
+
+export type TorghutWhitepaperArtifact = {
+  id: string
+  artifactScope: string
+  artifactType: string
+  artifactRole: NullableString
+  cephBucket: NullableString
+  cephObjectKey: NullableString
+  artifactUri: NullableString
+  contentType: NullableString
+  sizeBytes: number | null
+  createdAt: NullableString
+}
+
+export type TorghutWhitepaperDetail = {
+  run: {
+    id: string
+    runId: string
+    status: string
+    triggerSource: string
+    triggerActor: NullableString
+    failureCode: NullableString
+    failureReason: NullableString
+    createdAt: NullableString
+    startedAt: NullableString
+    completedAt: NullableString
+    requestPayload: unknown
+    resultPayload: unknown
+  }
+  document: {
+    id: string
+    key: NullableString
+    title: NullableString
+    source: NullableString
+    sourceIdentifier: NullableString
+    status: NullableString
+    lastProcessedAt: NullableString
+    metadata: unknown
+    createdAt: NullableString
+  }
+  version: {
+    id: string
+    versionNumber: number | null
+    fileName: NullableString
+    fileSizeBytes: number | null
+    checksumSha256: NullableString
+    parseStatus: NullableString
+    parseError: NullableString
+    pageCount: number | null
+    charCount: number | null
+    tokenCount: number | null
+    cephBucket: NullableString
+    cephObjectKey: NullableString
+    uploadedBy: NullableString
+    uploadMetadata: unknown
+    createdAt: NullableString
+  }
+  pdf: {
+    fileName: NullableString
+    cephBucket: NullableString
+    cephObjectKey: NullableString
+    sourceAttachmentUrl: NullableString
+  }
+  synthesis: {
+    executiveSummary: NullableString
+    methodologySummary: NullableString
+    problemStatement: NullableString
+    implementationPlanMd: NullableString
+    confidence: number | null
+    keyFindings: string[]
+    noveltyClaims: string[]
+    riskAssessment: unknown
+    citations: unknown
+    raw: unknown
+  } | null
+  verdict: {
+    verdict: NullableString
+    score: number | null
+    confidence: number | null
+    decisionPolicy: NullableString
+    rationale: NullableString
+    requiresFollowup: boolean
+    rejectionReasons: string[]
+    recommendations: string[]
+    gating: unknown
+  } | null
+  latestAgentrun: TorghutWhitepaperAgentRun | null
+  agentruns: TorghutWhitepaperAgentRun[]
+  designPullRequests: TorghutWhitepaperDesignPullRequest[]
+  steps: TorghutWhitepaperAnalysisStep[]
+  artifacts: TorghutWhitepaperArtifact[]
+}
+
+export type TorghutWhitepaperPdfLocator = {
+  runId: string
+  fileName: NullableString
+  cephBucket: NullableString
+  cephObjectKey: NullableString
+  sourceAttachmentUrl: NullableString
+}
+
+const DEFAULT_LIMIT = 30
+const MAX_LIMIT = 100
+
+const asString = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length ? trimmed : null
+}
+
+const asIso = (value: unknown): string | null => {
+  if (!value) return null
+  const parsed = value instanceof Date ? value : new Date(String(value))
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed.toISOString()
+}
+
+const asNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+const asInteger = (value: unknown): number | null => {
+  const numeric = asNumber(value)
+  if (numeric === null) return null
+  return Math.trunc(numeric)
+}
+
+const asBoolean = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    return normalized === 'true' || normalized === 't' || normalized === '1' || normalized === 'yes'
+  }
+  if (typeof value === 'number') return value !== 0
+  return false
+}
+
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+const asStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => asString(entry)).filter((entry): entry is string => entry !== null)
+  }
+  const single = asString(value)
+  return single ? [single] : []
+}
+
+const extractSourceAttachmentUrl = (uploadMetadata: unknown): string | null => {
+  const record = asRecord(uploadMetadata)
+  if (!record) return null
+  return (
+    asString(record.attachment_url) ??
+    asString(record.attachmentUrl) ??
+    asString(record.source_url) ??
+    asString(record.sourceUrl)
+  )
+}
+
+const clampLimit = (value: number | undefined) => {
+  if (!value || !Number.isFinite(value)) return DEFAULT_LIMIT
+  return Math.max(1, Math.min(Math.trunc(value), MAX_LIMIT))
+}
+
+const clampOffset = (value: number | undefined) => {
+  if (!value || !Number.isFinite(value)) return 0
+  return Math.max(0, Math.trunc(value))
+}
+
+const normalizeEndpoint = (endpoint: string, secure: boolean) => {
+  if (/^https?:\/\//i.test(endpoint)) return endpoint
+  return `http${secure ? 's' : ''}://${endpoint}`
+}
+
+const resolveStorageEndpoint = () => {
+  const explicit = asString(process.env.WHITEPAPER_CEPH_ENDPOINT) ?? asString(process.env.MINIO_ENDPOINT)
+  if (explicit) {
+    const secureRaw = (process.env.WHITEPAPER_CEPH_USE_TLS ?? process.env.MINIO_SECURE ?? '').trim().toLowerCase()
+    const secure = secureRaw === 'true' || secureRaw === '1' || secureRaw === 'yes'
+    return normalizeEndpoint(explicit, secure)
+  }
+
+  const bucketHost = asString(process.env.WHITEPAPER_CEPH_BUCKET_HOST) ?? asString(process.env.BUCKET_HOST)
+  if (!bucketHost) return null
+  const bucketPort = asString(process.env.WHITEPAPER_CEPH_BUCKET_PORT) ?? asString(process.env.BUCKET_PORT)
+  const secureRaw = (process.env.WHITEPAPER_CEPH_USE_TLS ?? '').trim().toLowerCase()
+  const secure = secureRaw === 'true' || secureRaw === '1' || secureRaw === 'yes'
+  const base = `http${secure ? 's' : ''}://${bucketHost}`
+  return bucketPort ? `${base}:${bucketPort}` : base
+}
+
+const resolveWhitepaperStorageConfig = (): WhitepaperStorageConfig | null => {
+  const endpoint = resolveStorageEndpoint()
+  const accessKey =
+    asString(process.env.WHITEPAPER_CEPH_ACCESS_KEY) ??
+    asString(process.env.AWS_ACCESS_KEY_ID) ??
+    asString(process.env.MINIO_ACCESS_KEY)
+  const secretKey =
+    asString(process.env.WHITEPAPER_CEPH_SECRET_KEY) ??
+    asString(process.env.AWS_SECRET_ACCESS_KEY) ??
+    asString(process.env.MINIO_SECRET_KEY)
+  const region =
+    asString(process.env.WHITEPAPER_CEPH_REGION) ??
+    asString(process.env.AWS_REGION) ??
+    asString(process.env.AWS_DEFAULT_REGION) ??
+    'us-east-1'
+
+  if (!endpoint || !accessKey || !secretKey) return null
+  return { endpoint, accessKey, secretKey, region }
+}
+
+const whitepaperS3ClientCache = (() => {
+  let cachedKey: string | null = null
+  let cachedClient: S3Client | null = null
+
+  return (config: WhitepaperStorageConfig) => {
+    const cacheKey = `${config.endpoint}:${config.accessKey}:${config.secretKey}:${config.region}`
+    if (cachedClient && cachedKey === cacheKey) return cachedClient
+
+    cachedKey = cacheKey
+    cachedClient = new S3Client({
+      endpoint: config.endpoint,
+      region: config.region,
+      credentials: {
+        accessKeyId: config.accessKey,
+        secretAccessKey: config.secretKey,
+      },
+      forcePathStyle: true,
+    })
+
+    return cachedClient
+  }
+})()
+
+const buildSignedPdfUrl = async (bucket: string, key: string) => {
+  const config = resolveWhitepaperStorageConfig()
+  if (!config) return null
+
+  try {
+    const client = whitepaperS3ClientCache(config)
+    const command = new GetObjectCommand({ Bucket: bucket, Key: key })
+    return await getSignedUrl(client, command, { expiresIn: 5 * 60 })
+  } catch {
+    return null
+  }
+}
+
+const formatPdfResponse = (
+  upstream: Response,
+  {
+    fileName,
+    source,
+  }: {
+    fileName: string | null
+    source: 'bucket' | 'source_url'
+  },
+) => {
+  if (!upstream.ok || !upstream.body) return null
+
+  const safeName = (fileName ?? 'whitepaper.pdf').replace(/[^a-zA-Z0-9._-]+/g, '_')
+  const headers = new Headers()
+  headers.set('content-type', upstream.headers.get('content-type') ?? 'application/pdf')
+  headers.set('cache-control', 'private, max-age=60')
+  headers.set('content-disposition', `inline; filename="${safeName}"`)
+  headers.set('x-whitepaper-pdf-source', source)
+
+  const contentLength = upstream.headers.get('content-length')
+  if (contentLength) headers.set('content-length', contentLength)
+
+  return new Response(upstream.body, {
+    status: 200,
+    headers,
+  })
+}
+
+const fetchPdfFromUrl = async (
+  url: string,
+  {
+    fileName,
+    source,
+  }: {
+    fileName: string | null
+    source: 'bucket' | 'source_url'
+  },
+) => {
+  try {
+    const upstream = await fetch(url)
+    return formatPdfResponse(upstream, { fileName, source })
+  } catch {
+    return null
+  }
+}
+
+export const listTorghutWhitepapers = async (
+  params: {
+    pool: Pool
+  } & TorghutWhitepaperListFilters,
+): Promise<TorghutWhitepaperListResult> => {
+  const limit = clampLimit(params.limit)
+  const offset = clampOffset(params.offset)
+  const query = asString(params.query)
+  const status = asString(params.status)
+  const verdict = asString(params.verdict)
+
+  const result = await params.pool.query(
+    `
+      select
+        count(*) over()::bigint as total_count,
+        r.run_id,
+        r.status as run_status,
+        r.trigger_source,
+        r.trigger_actor,
+        r.failure_reason,
+        r.created_at as run_created_at,
+        r.started_at as run_started_at,
+        r.completed_at as run_completed_at,
+        d.document_key,
+        d.title as document_title,
+        d.source as document_source,
+        d.source_identifier,
+        d.status as document_status,
+        d.last_processed_at,
+        v.version_number,
+        v.parse_status,
+        v.file_name,
+        v.file_size_bytes,
+        v.checksum_sha256,
+        v.ceph_bucket,
+        v.ceph_object_key,
+        v.upload_metadata_json,
+        ag.agentrun_name,
+        ag.status as agentrun_status,
+        ag.vcs_head_branch,
+        ag.started_at as agentrun_started_at,
+        ag.completed_at as agentrun_completed_at,
+        vv.verdict,
+        vv.score,
+        vv.confidence,
+        vv.requires_followup,
+        pr.status as pr_status,
+        pr.pr_number,
+        pr.pr_url,
+        pr.is_merged
+      from whitepaper_analysis_runs r
+      join whitepaper_documents d on d.id = r.document_id
+      join whitepaper_document_versions v on v.id = r.document_version_id
+      left join lateral (
+        select
+          c.agentrun_name,
+          c.status,
+          c.vcs_head_branch,
+          c.started_at,
+          c.completed_at
+        from whitepaper_codex_agentruns c
+        where c.analysis_run_id = r.id
+        order by c.created_at desc
+        limit 1
+      ) ag on true
+      left join whitepaper_viability_verdicts vv on vv.analysis_run_id = r.id
+      left join lateral (
+        select
+          p.status,
+          p.pr_number,
+          p.pr_url,
+          p.is_merged
+        from whitepaper_design_pull_requests p
+        where p.analysis_run_id = r.id
+        order by p.attempt desc, p.created_at desc
+        limit 1
+      ) pr on true
+      where ($1::text is null or r.status = $1)
+        and ($2::text is null or vv.verdict = $2)
+        and (
+          $3::text is null
+          or d.title ilike '%' || $3 || '%'
+          or d.source_identifier ilike '%' || $3 || '%'
+          or r.run_id ilike '%' || $3 || '%'
+        )
+      order by r.created_at desc
+      limit $4
+      offset $5
+    `,
+    [status, verdict, query, limit, offset],
+  )
+
+  const items = result.rows.map((row) => {
+    const uploadMetadata = asRecord(row.upload_metadata_json)
+
+    const latestAgentrun = asString(row.agentrun_name)
+      ? {
+          name: asString(row.agentrun_name),
+          status: asString(row.agentrun_status),
+          headBranch: asString(row.vcs_head_branch),
+          startedAt: asIso(row.agentrun_started_at),
+          completedAt: asIso(row.agentrun_completed_at),
+        }
+      : null
+
+    const verdictPayload = asString(row.verdict)
+      ? {
+          verdict: asString(row.verdict),
+          score: asNumber(row.score),
+          confidence: asNumber(row.confidence),
+          requiresFollowup: asBoolean(row.requires_followup),
+        }
+      : null
+
+    const designPullRequest =
+      asString(row.pr_status) || asNumber(row.pr_number) !== null || asString(row.pr_url)
+        ? {
+            status: asString(row.pr_status),
+            prNumber: asInteger(row.pr_number),
+            prUrl: asString(row.pr_url),
+            isMerged: asBoolean(row.is_merged),
+          }
+        : null
+
+    return {
+      runId: String(row.run_id),
+      status: String(row.run_status),
+      triggerSource: String(row.trigger_source),
+      triggerActor: asString(row.trigger_actor),
+      failureReason: asString(row.failure_reason),
+      createdAt: asIso(row.run_created_at),
+      startedAt: asIso(row.run_started_at),
+      completedAt: asIso(row.run_completed_at),
+      document: {
+        key: asString(row.document_key),
+        title: asString(row.document_title),
+        source: asString(row.document_source),
+        sourceIdentifier: asString(row.source_identifier),
+        status: asString(row.document_status),
+        lastProcessedAt: asIso(row.last_processed_at),
+      },
+      version: {
+        versionNumber: asInteger(row.version_number),
+        parseStatus: asString(row.parse_status),
+        fileName: asString(row.file_name),
+        fileSizeBytes: asInteger(row.file_size_bytes),
+        checksumSha256: asString(row.checksum_sha256),
+        cephBucket: asString(row.ceph_bucket),
+        cephObjectKey: asString(row.ceph_object_key),
+        sourceAttachmentUrl: extractSourceAttachmentUrl(uploadMetadata),
+      },
+      latestAgentrun,
+      verdict: verdictPayload,
+      designPullRequest,
+    } satisfies TorghutWhitepaperListItem
+  })
+
+  const total = result.rows.length ? Math.max(0, asInteger(result.rows[0]?.total_count) ?? 0) : 0
+
+  return {
+    items,
+    total,
+    limit,
+    offset,
+  }
+}
+
+const mapAgentRunRow = (row: Record<string, unknown>): TorghutWhitepaperAgentRun => ({
+  id: String(row.id),
+  name: String(row.agentrun_name),
+  status: String(row.status),
+  requestedBy: asString(row.requested_by),
+  namespace: asString(row.agentrun_namespace),
+  vcsRepository: asString(row.vcs_repository),
+  vcsBaseBranch: asString(row.vcs_base_branch),
+  vcsHeadBranch: asString(row.vcs_head_branch),
+  startedAt: asIso(row.started_at),
+  completedAt: asIso(row.completed_at),
+  failureReason: asString(row.failure_reason),
+  logArtifactRef: asString(row.log_artifact_ref),
+  patchArtifactRef: asString(row.patch_artifact_ref),
+  createdAt: asIso(row.created_at),
+})
+
+export const getTorghutWhitepaperDetail = async (params: {
+  pool: Pool
+  runId: string
+}): Promise<TorghutWhitepaperDetail | null> => {
+  const runResult = await params.pool.query(
+    `
+      select
+        r.id::text as analysis_run_id,
+        r.run_id,
+        r.status as run_status,
+        r.trigger_source,
+        r.trigger_actor,
+        r.failure_code,
+        r.failure_reason,
+        r.created_at as run_created_at,
+        r.started_at as run_started_at,
+        r.completed_at as run_completed_at,
+        r.request_payload_json,
+        r.result_payload_json,
+        d.id::text as document_id,
+        d.document_key,
+        d.title as document_title,
+        d.source as document_source,
+        d.source_identifier,
+        d.status as document_status,
+        d.last_processed_at,
+        d.metadata_json,
+        d.created_at as document_created_at,
+        v.id::text as document_version_id,
+        v.version_number,
+        v.file_name,
+        v.file_size_bytes,
+        v.checksum_sha256,
+        v.parse_status,
+        v.parse_error,
+        v.page_count,
+        v.char_count,
+        v.token_count,
+        v.ceph_bucket,
+        v.ceph_object_key,
+        v.uploaded_by,
+        v.upload_metadata_json,
+        v.created_at as version_created_at,
+        s.executive_summary,
+        s.methodology_summary,
+        s.problem_statement,
+        s.implementation_plan_md,
+        s.confidence as synthesis_confidence,
+        s.key_findings_json,
+        s.novelty_claims_json,
+        s.risk_assessment_json,
+        s.citations_json,
+        s.synthesis_json,
+        vv.verdict,
+        vv.score,
+        vv.confidence as verdict_confidence,
+        vv.decision_policy,
+        vv.rationale,
+        vv.requires_followup,
+        vv.rejection_reasons_json,
+        vv.recommendations_json,
+        vv.gating_json
+      from whitepaper_analysis_runs r
+      join whitepaper_documents d on d.id = r.document_id
+      join whitepaper_document_versions v on v.id = r.document_version_id
+      left join whitepaper_syntheses s on s.analysis_run_id = r.id
+      left join whitepaper_viability_verdicts vv on vv.analysis_run_id = r.id
+      where r.run_id = $1
+      limit 1
+    `,
+    [params.runId],
+  )
+
+  const runRow = runResult.rows[0] as Record<string, unknown> | undefined
+  if (!runRow) return null
+
+  const analysisRunId = String(runRow.analysis_run_id)
+
+  const [agentrunsResult, stepsResult, prsResult, artifactsResult] = await Promise.all([
+    params.pool.query(
+      `
+        select
+          id::text,
+          agentrun_name,
+          status,
+          requested_by,
+          agentrun_namespace,
+          vcs_repository,
+          vcs_base_branch,
+          vcs_head_branch,
+          started_at,
+          completed_at,
+          failure_reason,
+          log_artifact_ref,
+          patch_artifact_ref,
+          created_at
+        from whitepaper_codex_agentruns
+        where analysis_run_id = $1::uuid
+        order by created_at desc
+      `,
+      [analysisRunId],
+    ),
+    params.pool.query(
+      `
+        select
+          id::text,
+          step_name,
+          attempt,
+          status,
+          executor,
+          started_at,
+          completed_at,
+          duration_ms,
+          error_json,
+          output_json,
+          created_at
+        from whitepaper_analysis_steps
+        where analysis_run_id = $1::uuid
+        order by created_at asc, attempt asc
+      `,
+      [analysisRunId],
+    ),
+    params.pool.query(
+      `
+        select
+          id::text,
+          attempt,
+          status,
+          repository,
+          base_branch,
+          head_branch,
+          pr_number,
+          pr_url,
+          title,
+          ci_status,
+          is_merged,
+          merged_at,
+          created_at
+        from whitepaper_design_pull_requests
+        where analysis_run_id = $1::uuid
+        order by attempt desc, created_at desc
+      `,
+      [analysisRunId],
+    ),
+    params.pool.query(
+      `
+        select
+          id::text,
+          artifact_scope,
+          artifact_type,
+          artifact_role,
+          ceph_bucket,
+          ceph_object_key,
+          artifact_uri,
+          content_type,
+          size_bytes,
+          created_at
+        from whitepaper_artifacts
+        where analysis_run_id = $1::uuid
+        order by created_at desc
+        limit 200
+      `,
+      [analysisRunId],
+    ),
+  ])
+
+  const uploadMetadata = asRecord(runRow.upload_metadata_json)
+
+  const synthesis = asString(runRow.executive_summary)
+    ? {
+        executiveSummary: asString(runRow.executive_summary),
+        methodologySummary: asString(runRow.methodology_summary),
+        problemStatement: asString(runRow.problem_statement),
+        implementationPlanMd: asString(runRow.implementation_plan_md),
+        confidence: asNumber(runRow.synthesis_confidence),
+        keyFindings: asStringArray(runRow.key_findings_json),
+        noveltyClaims: asStringArray(runRow.novelty_claims_json),
+        riskAssessment: runRow.risk_assessment_json ?? null,
+        citations: runRow.citations_json ?? null,
+        raw: runRow.synthesis_json ?? null,
+      }
+    : null
+
+  const verdict = asString(runRow.verdict)
+    ? {
+        verdict: asString(runRow.verdict),
+        score: asNumber(runRow.score),
+        confidence: asNumber(runRow.verdict_confidence),
+        decisionPolicy: asString(runRow.decision_policy),
+        rationale: asString(runRow.rationale),
+        requiresFollowup: asBoolean(runRow.requires_followup),
+        rejectionReasons: asStringArray(runRow.rejection_reasons_json),
+        recommendations: asStringArray(runRow.recommendations_json),
+        gating: runRow.gating_json ?? null,
+      }
+    : null
+
+  const agentruns = agentrunsResult.rows.map((row) => mapAgentRunRow(row as Record<string, unknown>))
+  const latestAgentrun = agentruns[0] ?? null
+
+  const designPullRequests = prsResult.rows.map((row) => {
+    const record = row as Record<string, unknown>
+    return {
+      id: String(record.id),
+      attempt: asInteger(record.attempt),
+      status: String(record.status),
+      repository: asString(record.repository),
+      baseBranch: asString(record.base_branch),
+      headBranch: asString(record.head_branch),
+      prNumber: asInteger(record.pr_number),
+      prUrl: asString(record.pr_url),
+      title: asString(record.title),
+      ciStatus: asString(record.ci_status),
+      isMerged: asBoolean(record.is_merged),
+      mergedAt: asIso(record.merged_at),
+      createdAt: asIso(record.created_at),
+    } satisfies TorghutWhitepaperDesignPullRequest
+  })
+
+  const steps = stepsResult.rows.map((row) => {
+    const record = row as Record<string, unknown>
+    return {
+      id: String(record.id),
+      stepName: String(record.step_name),
+      attempt: asInteger(record.attempt),
+      status: String(record.status),
+      executor: asString(record.executor),
+      startedAt: asIso(record.started_at),
+      completedAt: asIso(record.completed_at),
+      durationMs: asInteger(record.duration_ms),
+      error: record.error_json ?? null,
+      output: record.output_json ?? null,
+      createdAt: asIso(record.created_at),
+    } satisfies TorghutWhitepaperAnalysisStep
+  })
+
+  const artifacts = artifactsResult.rows.map((row) => {
+    const record = row as Record<string, unknown>
+    return {
+      id: String(record.id),
+      artifactScope: String(record.artifact_scope),
+      artifactType: String(record.artifact_type),
+      artifactRole: asString(record.artifact_role),
+      cephBucket: asString(record.ceph_bucket),
+      cephObjectKey: asString(record.ceph_object_key),
+      artifactUri: asString(record.artifact_uri),
+      contentType: asString(record.content_type),
+      sizeBytes: asInteger(record.size_bytes),
+      createdAt: asIso(record.created_at),
+    } satisfies TorghutWhitepaperArtifact
+  })
+
+  return {
+    run: {
+      id: String(runRow.analysis_run_id),
+      runId: String(runRow.run_id),
+      status: String(runRow.run_status),
+      triggerSource: String(runRow.trigger_source),
+      triggerActor: asString(runRow.trigger_actor),
+      failureCode: asString(runRow.failure_code),
+      failureReason: asString(runRow.failure_reason),
+      createdAt: asIso(runRow.run_created_at),
+      startedAt: asIso(runRow.run_started_at),
+      completedAt: asIso(runRow.run_completed_at),
+      requestPayload: runRow.request_payload_json ?? null,
+      resultPayload: runRow.result_payload_json ?? null,
+    },
+    document: {
+      id: String(runRow.document_id),
+      key: asString(runRow.document_key),
+      title: asString(runRow.document_title),
+      source: asString(runRow.document_source),
+      sourceIdentifier: asString(runRow.source_identifier),
+      status: asString(runRow.document_status),
+      lastProcessedAt: asIso(runRow.last_processed_at),
+      metadata: runRow.metadata_json ?? null,
+      createdAt: asIso(runRow.document_created_at),
+    },
+    version: {
+      id: String(runRow.document_version_id),
+      versionNumber: asInteger(runRow.version_number),
+      fileName: asString(runRow.file_name),
+      fileSizeBytes: asInteger(runRow.file_size_bytes),
+      checksumSha256: asString(runRow.checksum_sha256),
+      parseStatus: asString(runRow.parse_status),
+      parseError: asString(runRow.parse_error),
+      pageCount: asInteger(runRow.page_count),
+      charCount: asInteger(runRow.char_count),
+      tokenCount: asInteger(runRow.token_count),
+      cephBucket: asString(runRow.ceph_bucket),
+      cephObjectKey: asString(runRow.ceph_object_key),
+      uploadedBy: asString(runRow.uploaded_by),
+      uploadMetadata: uploadMetadata,
+      createdAt: asIso(runRow.version_created_at),
+    },
+    pdf: {
+      fileName: asString(runRow.file_name),
+      cephBucket: asString(runRow.ceph_bucket),
+      cephObjectKey: asString(runRow.ceph_object_key),
+      sourceAttachmentUrl: extractSourceAttachmentUrl(uploadMetadata),
+    },
+    synthesis,
+    verdict,
+    latestAgentrun,
+    agentruns,
+    designPullRequests,
+    steps,
+    artifacts,
+  }
+}
+
+export const getTorghutWhitepaperPdfLocator = async (params: {
+  pool: Pool
+  runId: string
+}): Promise<TorghutWhitepaperPdfLocator | null> => {
+  const result = await params.pool.query(
+    `
+      select
+        r.run_id,
+        v.file_name,
+        v.ceph_bucket,
+        v.ceph_object_key,
+        v.upload_metadata_json
+      from whitepaper_analysis_runs r
+      join whitepaper_document_versions v on v.id = r.document_version_id
+      where r.run_id = $1
+      limit 1
+    `,
+    [params.runId],
+  )
+
+  const row = result.rows[0] as Record<string, unknown> | undefined
+  if (!row) return null
+
+  const uploadMetadata = asRecord(row.upload_metadata_json)
+
+  return {
+    runId: String(row.run_id),
+    fileName: asString(row.file_name),
+    cephBucket: asString(row.ceph_bucket),
+    cephObjectKey: asString(row.ceph_object_key),
+    sourceAttachmentUrl: extractSourceAttachmentUrl(uploadMetadata),
+  }
+}
+
+export const streamTorghutWhitepaperPdf = async (locator: TorghutWhitepaperPdfLocator): Promise<Response | null> => {
+  const bucket = asString(locator.cephBucket)
+  const key = asString(locator.cephObjectKey)
+
+  if (bucket && key) {
+    const signedUrl = await buildSignedPdfUrl(bucket, key)
+    if (signedUrl) {
+      const streamed = await fetchPdfFromUrl(signedUrl, {
+        fileName: locator.fileName,
+        source: 'bucket',
+      })
+      if (streamed) return streamed
+    }
+  }
+
+  const sourceUrl = asString(locator.sourceAttachmentUrl)
+  if (!sourceUrl) return null
+
+  return fetchPdfFromUrl(sourceUrl, {
+    fileName: locator.fileName,
+    source: 'source_url',
+  })
+}
