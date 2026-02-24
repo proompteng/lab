@@ -1,0 +1,163 @@
+{
+  "run_id": "wp-1cea6ee3eda0f57fdb57d36e",
+  "paper": {
+    "title": "QuantAgent: Seeking Holy Grail in Trading by Self-Improving Large Language Model",
+    "arxiv_id": "2402.03755",
+    "pdf_url": "https://arxiv.org/pdf/2402.03755.pdf",
+    "version": "v1",
+    "date": "2024-02-06"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "executive_summary": "QuantAgent proposes a two-layer self-improving LLM architecture (inner writer-judge loop + outer real-feedback loop) for financial signal mining. The framework is coherent and implementation-relevant, but claims of provable efficiency rely on strong imported assumptions, and empirical evidence is primarily directional rather than numerically rigorous.",
+  "problem_statement": "How to autonomously build and integrate high-quality domain knowledge for LLM agents in specialized domains such as quantitative trading without heavy manual curation.",
+  "methodology_summary": "The inner loop iteratively refines outputs using KB retrieval, writer generation, and judge scoring until threshold or step limit. The outer loop evaluates outputs in a real environment and appends feedback to KB. The analysis models the inner loop as an MDP and combines inner and outer loop efficiency arguments via sublinear regret decomposition.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "The two-loop architecture is a practical pattern for self-improving agents where high-fidelity external evaluation is available.",
+      "evidence": [
+        "Section 3",
+        "Figure 1",
+        "Algorithm 1",
+        "Algorithm 2"
+      ]
+    },
+    {
+      "id": "KF-2",
+      "finding": "Provable efficiency claims are assumption-heavy and mostly inherited from cited prior work rather than fully new proof machinery.",
+      "evidence": [
+        "Section 4.1.2",
+        "Lemma 4.3",
+        "Section 4.1.3",
+        "Lemma 4.5",
+        "Section 4.1.4",
+        "Theorem 4.6"
+      ]
+    },
+    {
+      "id": "KF-3",
+      "finding": "Experiments claim iterative performance/relevance gains, but the paper provides limited explicit quantitative tables in the main body.",
+      "evidence": [
+        "Section 6",
+        "Figure 3",
+        "Figure 4",
+        "Figure 5"
+      ]
+    },
+    {
+      "id": "KF-4",
+      "finding": "The method's practical success depends strongly on KB quality and evaluator fidelity.",
+      "evidence": [
+        "Section 3.2",
+        "Section 7"
+      ]
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "Unified two-loop self-improving framework for domain adaptation",
+      "assessment": "moderately_novel",
+      "notes": "Clear systems-level unification; related methods are shown as special cases in Section 3.3."
+    },
+    {
+      "claim": "Provable efficiency for overall framework",
+      "assessment": "partially_supported",
+      "notes": "Depends on Assumptions 4.1/4.4 and imported lemmas; practical validity requires domain-specific validation."
+    },
+    {
+      "claim": "Effective autonomous quant signal mining",
+      "assessment": "promising_but_limited",
+      "notes": "Evidence is encouraging but limited by dataset scope and reporting granularity."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "assumption_mismatch",
+      "severity": "high",
+      "detail": "Implicit Bayesian inference and pessimistic offline RL assumptions may not hold in real trading environments."
+    },
+    {
+      "risk": "evaluation_bias",
+      "severity": "high",
+      "detail": "LLM-based relevance judging can introduce circular or preference bias."
+    },
+    {
+      "risk": "external_validity",
+      "severity": "high",
+      "detail": "Single-market, single-year experiment setup limits portability to other regimes."
+    },
+    {
+      "risk": "cost_scaling",
+      "severity": "medium",
+      "detail": "Nested loops can cause significant token/time growth at larger horizons and iterations."
+    },
+    {
+      "risk": "kb_drift",
+      "severity": "medium",
+      "detail": "Unchecked feedback ingestion can accumulate stale or regime-specific artifacts."
+    }
+  ],
+  "implementation_implications": [
+    "Adopt the two-tier evaluation pattern (cheap inner loop + expensive outer truth loop).",
+    "Store structured per-iteration artifacts with strict provenance.",
+    "Require deterministic promotion gates on robustness metrics before any live usage.",
+    "Add KB lifecycle governance (versioning, dedupe, decay, retirement).",
+    "Run shadow-mode and paper-trading phases before any production promotion."
+  ],
+  "citations": [
+    {
+      "section": "3",
+      "pointer": "Figure 1, Algorithm 1-2",
+      "claim": "Defines two-layer loop and update process."
+    },
+    {
+      "section": "4.1.1",
+      "pointer": "Eq. 1-3",
+      "claim": "MDP formalization and Bayesian regret objective."
+    },
+    {
+      "section": "4.1.2",
+      "pointer": "Assumption 4.1, Definition 4.2, Lemma 4.3",
+      "claim": "Inner-loop efficiency argument."
+    },
+    {
+      "section": "4.1.3",
+      "pointer": "Assumption 4.4, Lemma 4.5",
+      "claim": "Outer-loop efficiency via pessimism."
+    },
+    {
+      "section": "4.1.4",
+      "pointer": "Eq. 5, Theorem 4.6",
+      "claim": "Combined overall regret decomposition."
+    },
+    {
+      "section": "4.2",
+      "pointer": "Complexity expressions",
+      "claim": "Token/time complexity in training and inference."
+    },
+    {
+      "section": "5.2",
+      "pointer": "Dataset/model setup",
+      "claim": "500 A-share stocks (2023), GPT-4-0125-preview."
+    },
+    {
+      "section": "6",
+      "pointer": "Figure 3-5",
+      "claim": "Directional self-improvement outcomes."
+    },
+    {
+      "section": "7",
+      "pointer": "Discussion",
+      "claim": "Acknowledges dependency on KB quality and compute optimization."
+    },
+    {
+      "section": "Appendix C.1",
+      "pointer": "Three iterations of signal refinement",
+      "claim": "Concrete iterative improvement example."
+    }
+  ],
+  "confidence": 0.71
+}
