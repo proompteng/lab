@@ -801,7 +801,11 @@ class WhitepaperWorkflowService:
             id=run.run_id,
             data=event_payload,
         )
-        event_ids = cast(list[str], client.send(event))
+        send_result = client.send(event)
+        if asyncio.iscoroutine(send_result):
+            event_ids = cast(list[str], asyncio.run(send_result))
+        else:
+            event_ids = cast(list[str], send_result)
         return {
             "event_name": event_name,
             "event_ids": event_ids,
