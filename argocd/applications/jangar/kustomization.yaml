@@ -4,6 +4,8 @@ namespace: jangar
 resources:
   - torghut-db-ca-sealedsecret.yaml
   - rook-ceph-rgw-jangar-sealedsecret.yaml
+  - cnpg-jangar-db-objectbucketclaim.yaml
+  - cnpg-jangar-db-bucket-migration-job.yaml
   - deployment.yaml
   - jangar-worker-deployment.yaml
   - service.yaml

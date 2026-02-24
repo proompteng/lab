@@ -4,7 +4,7 @@ metadata:
   name: jangar-db-daily
   namespace: jangar
 spec:
-  schedule: "0 0 0 * * *"
+  schedule: "0 0 11 * * *"
   backupOwnerReference: self
   method: barmanObjectStore
   cluster:
