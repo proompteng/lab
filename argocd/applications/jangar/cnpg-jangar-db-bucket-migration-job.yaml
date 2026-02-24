@@ -1,0 +1,104 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jangar-db-backup-bucket-migration
+  namespace: jangar
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RGW_ENDPOINT_URL
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+            - name: SOURCE_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-rgw-jangar
+                  key: accesskey
+            - name: SOURCE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-rgw-jangar
+                  key: secretkey
+            - name: TARGET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cnpg-jangar-db
+                  key: AWS_ACCESS_KEY_ID
+            - name: TARGET_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cnpg-jangar-db
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -euo pipefail
+
+              SRC_ROOT="src/argo-workflows/cnpg/jangar"
+              DST_ROOT="dst/cnpg/jangar-db"
+
+              until mc alias set src "$RGW_ENDPOINT_URL" "$SOURCE_ACCESS_KEY" "$SOURCE_SECRET_KEY" --api S3v4; do
+                echo "waiting for source RGW auth..."
+                sleep 5
+              done
+
+              until mc alias set dst "$RGW_ENDPOINT_URL" "$TARGET_ACCESS_KEY" "$TARGET_SECRET_KEY" --api S3v4; do
+                echo "waiting for target RGW auth..."
+                sleep 5
+              done
+
+              mc mb -p "dst/cnpg" >/dev/null 2>&1 || true
+
+              attempt=1
+              max_attempts=10
+
+              while [ "$attempt" -le "$max_attempts" ]; do
+                src_count="$(mc ls --recursive "$SRC_ROOT" | wc -l | tr -d ' ')"
+                if [ "$src_count" = "0" ]; then
+                  echo "no objects found under $SRC_ROOT; nothing to migrate"
+                  exit 0
+                fi
+
+                echo "mirror attempt $attempt/$max_attempts (source objects: $src_count)"
+                mc mirror --overwrite "$SRC_ROOT" "$DST_ROOT" || true
+
+                dst_count="$(mc ls --recursive "$DST_ROOT" | wc -l | tr -d ' ')"
+                if [ "$dst_count" -ge "$src_count" ]; then
+                  echo "migration complete: source=$src_count destination=$dst_count"
+                  exit 0
+                fi
+
+                echo "attempt $attempt incomplete: source=$src_count destination=$dst_count"
+                attempt=$((attempt + 1))
+                sleep 5
+              done
+
+              src_count="$(mc ls --recursive "$SRC_ROOT" | wc -l | tr -d ' ')"
+              dst_count="$(mc ls --recursive "$DST_ROOT" | wc -l | tr -d ' ')"
+              echo "migration incomplete after retries: source=$src_count destination=$dst_count"
+              exit 1

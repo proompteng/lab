@@ -19,15 +19,15 @@ spec:
         - CREATE EXTENSION IF NOT EXISTS vector;
   backup:
     barmanObjectStore:
-      destinationPath: s3://argo-workflows/cnpg/jangar
+      destinationPath: s3://cnpg/jangar-db
       endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
       s3Credentials:
         accessKeyId:
-          name: rook-ceph-rgw-jangar
-          key: accesskey
+          name: cnpg-jangar-db
+          key: AWS_ACCESS_KEY_ID
         secretAccessKey:
-          name: rook-ceph-rgw-jangar
-          key: secretkey
+          name: cnpg-jangar-db
+          key: AWS_SECRET_ACCESS_KEY
     retentionPolicy: "14d"
   inheritedMetadata:
     annotations:
