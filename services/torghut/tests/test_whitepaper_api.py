@@ -41,13 +41,12 @@ class TestWhitepaperApi(TestCase):
         self.engine.dispose()
 
     @patch("app.main.whitepaper_workflow_enabled", return_value=True)
-    @patch("app.main.whitepaper_kafka_enabled", return_value=False)
-    def test_whitepaper_status_endpoint(self, _mock_kafka: object, _mock_enabled: object) -> None:
+    def test_whitepaper_status_endpoint(self, _mock_enabled: object) -> None:
         response = self.client.get("/whitepapers/status")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertTrue(payload["workflow_enabled"])
-        self.assertFalse(payload["kafka_enabled"])
+        self.assertTrue(payload["kafka_enabled"])
 
     @patch(
         "app.main.WHITEPAPER_WORKFLOW.ingest_github_issue_event",
