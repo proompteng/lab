@@ -1,0 +1,32 @@
+{
+  "run_id": "wp-c8f866f2b289cb3de96f2fa1",
+  "verdict": "conditional_implement",
+  "score": 0.65,
+  "confidence": 0.73,
+  "decision_policy": "whitepaper_v1",
+  "gating": {
+    "full_paper_review_completed": true,
+    "implementation_ready_design_doc_present": true,
+    "machine_readable_artifacts_present": true,
+    "theory_assumption_risk": "high",
+    "empirical_rigor": "medium_low",
+    "external_validity": "low",
+    "recommended_mode": "shadow_and_paper_trading_only"
+  },
+  "rationale": "The architecture is useful and implementation-ready as a staged research workflow, but evidence quality and assumption risk are insufficient for immediate full production deployment with live capital.",
+  "rejection_reasons": [
+    "Reject immediate full-production deployment because the main theory claims depend on assumptions not validated for the target live regime.",
+    "Reject direct live strategy promotion because the empirical setup is narrow (single market and year) with limited ablation transparency.",
+    "Reject live-capital execution without cost-aware robustness gates and stronger governance controls for KB updates."
+  ],
+  "follow_up_recommendations": [
+    "Implement writer-judge and outer evaluator loops in deterministic shadow mode first.",
+    "Add strict promotion gates for walk-forward robustness, turnover, drawdown, and cost-aware performance.",
+    "Run ablation matrix (none, inner-only, outer-only, full-loop) to verify causal benefit.",
+    "Introduce KB lifecycle controls: provenance hashes, dedupe, decay/retirement, and quality scoring.",
+    "Require human approval before any transition from paper trading to live execution."
+  ],
+  "requires_followup": true,
+  "approved_by": null,
+  "approved_at": null
+}

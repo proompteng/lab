@@ -1,0 +1,133 @@
+{
+  "run_id": "wp-c8f866f2b289cb3de96f2fa1",
+  "repository": "proompteng/lab",
+  "issue": {
+    "number": 3585,
+    "url": "https://github.com/proompteng/lab/issues/3585",
+    "title": "[smoke] whitepaper trigger path A 20260224061628"
+  },
+  "paper": {
+    "title": "QuantAgent: Seeking Holy Grail in Trading by Self-Improving Large Language Model",
+    "arxiv_id": "2402.03755",
+    "pdf_url": "https://arxiv.org/pdf/2402.03755.pdf",
+    "ceph_uri": "s3://torghut-whitepapers/raw/github/proompteng-lab/issue-3585/wp-c8f866f2b289cb3de96f2fa1/source.pdf",
+    "version": "v1",
+    "published_date": "2024-02-06"
+  },
+  "review": {
+    "full_paper_read": true,
+    "total_pages": 15,
+    "pages_reviewed": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "executive_summary": "QuantAgent introduces a two-loop self-improvement architecture where an inner writer-judge cycle refines outputs and an outer real-world evaluation cycle updates the knowledge base. The architecture is practically useful, but the efficiency claims are assumption-heavy and experimental evidence is mainly directional, so deployment should be staged and heavily gated.",
+  "methodology": {
+    "inner_loop": "Algorithm 1 iterates retrieval, writing, judging, and review accumulation in a shared context buffer until reward threshold or max steps.",
+    "outer_loop": "Algorithm 2 executes the inner loop, evaluates outputs in the real environment, and updates KB with answer plus feedback across K iterations.",
+    "theory": "Section 4 formalizes the inner loop as an MDP and combines inner and outer efficiency results via regret decomposition.",
+    "cost": {
+      "token_training": "O(KT^2H)",
+      "token_inference": "O(T^2H)",
+      "time_training": "O(KTH)",
+      "time_inference": "O(TH)"
+    }
+  },
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "The two-loop separation of cheap inner critique and expensive outer truth feedback is an implementation-relevant architecture pattern.",
+      "evidence": ["Section 3", "Figure 1", "Algorithm 1", "Algorithm 2"]
+    },
+    {
+      "id": "KF-2",
+      "finding": "Provable efficiency depends on assumptions about implicit Bayesian inference, planning optimality, and pessimistic offline RL.",
+      "evidence": ["Assumption 4.1", "Definition 4.2", "Lemma 4.3", "Assumption 4.4", "Lemma 4.5", "Theorem 4.6"]
+    },
+    {
+      "id": "KF-3",
+      "finding": "Results indicate iterative improvement trends but provide limited tabular and ablation-level quantitative depth for production decisions.",
+      "evidence": ["Section 6", "Figure 3", "Figure 4", "Figure 5"]
+    },
+    {
+      "id": "KF-4",
+      "finding": "System quality is tightly coupled to KB quality and evaluator fidelity.",
+      "evidence": ["Section 3.2", "Section 7"]
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "Unified two-loop framework",
+      "assessment": "moderately_novel",
+      "notes": "Section 3.3 positions prior methods as special cases under loop reductions."
+    },
+    {
+      "claim": "Provable efficiency of end-to-end framework",
+      "assessment": "partially_supported",
+      "notes": "Claim is logically coherent but inherited from prior lemmas under strong assumptions."
+    },
+    {
+      "claim": "Effective autonomous quant signal mining",
+      "assessment": "promising_but_limited",
+      "notes": "Empirical scope is narrow (single market and year)."
+    }
+  ],
+  "risks": [
+    {
+      "risk": "assumption_mismatch",
+      "severity": "high",
+      "detail": "Core theory assumptions may not hold in non-stationary live trading environments."
+    },
+    {
+      "risk": "evaluation_bias",
+      "severity": "high",
+      "detail": "LLM-based relevance judging can introduce circular scoring bias."
+    },
+    {
+      "risk": "external_validity",
+      "severity": "high",
+      "detail": "Single-market single-year evidence limits portability across regimes."
+    },
+    {
+      "risk": "kb_drift",
+      "severity": "medium",
+      "detail": "Feedback accumulation without governance can retain stale patterns."
+    },
+    {
+      "risk": "cost_scaling",
+      "severity": "medium",
+      "detail": "Nested-loop runtime can grow quickly with T and K."
+    }
+  ],
+  "assumptions": [
+    "LLM in-context behavior approximates Bayesian inference over environment parameters.",
+    "Planning module achieves epsilon-optimality with high probability.",
+    "Pessimistic offline RL assumptions are applicable to KB-derived data."
+  ],
+  "unresolved_questions": [
+    "How robust are results under explicit transaction costs, slippage, and market impact?",
+    "How much of performance gain is attributable to inner loop vs outer loop in strict ablations?",
+    "What KB governance policy prevents regime-specific contamination over time?"
+  ],
+  "implementation_implications": [
+    "Adopt two-tier loop architecture in a controlled offline pipeline.",
+    "Require deterministic run metadata and immutable artifact capture.",
+    "Gate promotions via walk-forward and cost-aware robustness checks.",
+    "Add KB versioning, deduplication, and decay/retirement policies.",
+    "Use paper-trading before any live-capital deployment."
+  ],
+  "citations": [
+    {"section": "3", "pointer": "Figure 1, Algorithm 1-2", "claim": "Defines inner and outer loop mechanics."},
+    {"section": "4.1.1", "pointer": "Eq. 1-3", "claim": "MDP formulation and regret objective."},
+    {"section": "4.1.2", "pointer": "Assumption 4.1, Definition 4.2, Lemma 4.3", "claim": "Inner-loop efficiency basis."},
+    {"section": "4.1.3", "pointer": "Assumption 4.4, Lemma 4.5", "claim": "Outer-loop efficiency via pessimism."},
+    {"section": "4.1.4", "pointer": "Eq. 5, Theorem 4.6", "claim": "Combined regret decomposition claim."},
+    {"section": "4.2", "pointer": "Complexity formulas", "claim": "Token/time complexity."},
+    {"section": "5.2", "pointer": "Dataset and model setup", "claim": "500 A-share stocks (2023), GPT-4-0125-preview."},
+    {"section": "6", "pointer": "Figure 3-5", "claim": "Directional self-improvement evidence."},
+    {"section": "Appendix C.1", "pointer": "Three-iteration example", "claim": "Concrete iterative signal refinement trace."}
+  ],
+  "confidence": 0.73
+}
