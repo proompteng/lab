@@ -176,6 +176,8 @@ spec:
                   optional: true
             - name: WHITEPAPER_WORKFLOW_ENABLED
               value: "true"
+            - name: WHITEPAPER_KAFKA_ENABLED
+              value: "true"
             - name: WHITEPAPER_KAFKA_BOOTSTRAP_SERVERS
               value: kafka-kafka-bootstrap.kafka:9092
             - name: WHITEPAPER_KAFKA_TOPIC
