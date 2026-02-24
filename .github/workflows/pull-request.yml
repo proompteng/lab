@@ -343,8 +343,7 @@ jobs:
         run: bun run lint:oxlint
 
       - name: Format check
-        working-directory: apps/kitty-krew
-        run: bunx oxfmt --check .
+        run: bunx oxfmt --check apps/kitty-krew
 
       - name: Type check
         working-directory: apps/kitty-krew
