@@ -50,20 +50,20 @@ class TestLiveConfigManifestContract(TestCase):
         settings = Settings(**env)
 
         self.assertEqual(settings.trading_mode, "live")
-        self.assertEqual(settings.trading_parity_policy, "mode_coupled")
         self.assertEqual(settings.llm_rollout_stage, "stage1")
-        self.assertEqual(settings.llm_fail_mode, "veto")
+        self.assertEqual(settings.llm_fail_mode, "pass_through")
         self.assertEqual(settings.llm_fail_mode_enforcement, "configured")
-        self.assertFalse(settings.llm_live_fail_open_requested_for_stage("stage1"))
-        self.assertEqual(settings.llm_effective_fail_mode_for_current_rollout(), "veto")
+        self.assertTrue(settings.llm_live_fail_open_requested_for_stage("stage1"))
         self.assertEqual(
-            settings.llm_effective_fail_mode(rollout_stage="stage1"), "veto"
+            settings.llm_effective_fail_mode_for_current_rollout(), "pass_through"
+        )
+        self.assertEqual(
+            settings.llm_effective_fail_mode(rollout_stage="stage1"), "pass_through"
         )
 
     def test_live_pass_through_requires_explicit_approval_gate(self) -> None:
         env = _load_torghut_knative_env()
         fail_open_env = dict(env)
-        fail_open_env["TRADING_PARITY_POLICY"] = "live_equivalent"
         fail_open_env["LLM_ROLLOUT_STAGE"] = "stage3"
         fail_open_env["LLM_FAIL_MODE"] = "pass_through"
         fail_open_env["LLM_FAIL_MODE_ENFORCEMENT"] = "configured"

@@ -1945,7 +1945,6 @@ class TestTradingPipeline(TestCase):
             "llm_enabled": config.settings.llm_enabled,
             "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
-            "trading_parity_policy": config.settings.trading_parity_policy,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
@@ -1960,7 +1959,6 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_enabled = True
         config.settings.llm_fail_mode = "pass_through"
         config.settings.llm_fail_mode_enforcement = "configured"
-        config.settings.trading_parity_policy = "mode_coupled"
         config.settings.llm_shadow_mode = False
         config.settings.llm_min_confidence = 0.0
         _set_llm_guardrails(config)
@@ -2059,9 +2057,9 @@ class TestTradingPipeline(TestCase):
 
             with self.session_local() as session:
                 executions = session.execute(select(Execution)).scalars().all()
-                self.assertEqual(len(executions), 1)
+                self.assertEqual(len(executions), 2)
                 decisions = session.execute(select(TradeDecision)).scalars().all()
-                self.assertEqual(decisions[-1].status, "rejected")
+                self.assertEqual(decisions[-1].status, "submitted")
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -2077,7 +2075,6 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_fail_mode_enforcement = original[
                 "llm_fail_mode_enforcement"
             ]
-            config.settings.trading_parity_policy = original["trading_parity_policy"]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
@@ -2400,7 +2397,7 @@ class TestTradingPipeline(TestCase):
                 "llm_adjustment_approved"
             ]
 
-    def test_pipeline_stage1_live_overrides_fail_mode(self) -> None:
+    def test_pipeline_stage1_live_uses_mode_consistent_fail_mode(self) -> None:
         from app import config
 
         original = {
@@ -2414,7 +2411,6 @@ class TestTradingPipeline(TestCase):
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
-            "trading_parity_policy": config.settings.trading_parity_policy,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
             "llm_evaluation_report": config.settings.llm_evaluation_report,
             "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
@@ -2431,7 +2427,6 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_shadow_mode = False
         config.settings.llm_fail_mode = "pass_through"
         config.settings.llm_fail_mode_enforcement = "configured"
-        config.settings.trading_parity_policy = "mode_coupled"
         _set_llm_guardrails(config)
 
         try:
@@ -2483,12 +2478,12 @@ class TestTradingPipeline(TestCase):
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(decisions[0].status, "submitted")
                 self.assertEqual(len(executions), 1)
-                self.assertEqual(pipeline.state.metrics.llm_fail_mode_override_total, 1)
+                self.assertEqual(pipeline.state.metrics.llm_fail_mode_override_total, 0)
                 self.assertEqual(
                     pipeline.state.metrics.llm_fail_mode_exception_total, 0
                 )
                 self.assertEqual(
-                    pipeline.state.metrics.llm_policy_resolution_total.get("violation"),
+                    pipeline.state.metrics.llm_policy_resolution_total.get("compliant"),
                     1,
                 )
                 self.assertEqual(
@@ -2511,7 +2506,6 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_fail_mode_enforcement = original[
                 "llm_fail_mode_enforcement"
             ]
-            config.settings.trading_parity_policy = original["trading_parity_policy"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
             config.settings.llm_effective_challenge_id = original[
@@ -2539,7 +2533,6 @@ class TestTradingPipeline(TestCase):
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
-            "trading_parity_policy": config.settings.trading_parity_policy,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
             "llm_evaluation_report": config.settings.llm_evaluation_report,
             "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
@@ -2557,7 +2550,6 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_shadow_mode = False
         config.settings.llm_fail_mode = "pass_through"
         config.settings.llm_fail_mode_enforcement = "configured"
-        config.settings.trading_parity_policy = "mode_coupled"
         _set_llm_guardrails(config)
 
         try:
@@ -2649,7 +2641,6 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_fail_mode_enforcement = original[
                 "llm_fail_mode_enforcement"
             ]
-            config.settings.trading_parity_policy = original["trading_parity_policy"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
             config.settings.llm_effective_challenge_id = original[

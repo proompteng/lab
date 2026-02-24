@@ -2521,7 +2521,6 @@ def _build_llm_policy_resolution(
         "reasoning": reasoning,
         "source_inputs": {
             "trading_mode": settings.trading_mode,
-            "trading_parity_policy": settings.trading_parity_policy,
             "llm_fail_mode_enforcement": settings.llm_fail_mode_enforcement,
             "llm_live_fail_open_requested": settings.llm_live_fail_open_requested_for_stage(
                 normalized_stage
@@ -2571,7 +2570,6 @@ class TradingScheduler:
         return {
             "enabled": settings.llm_enabled,
             "rollout_stage": guardrails.rollout_stage,
-            "parity_policy": settings.trading_parity_policy,
             "fail_mode_enforcement": settings.llm_fail_mode_enforcement,
             # Keep configured shadow_mode for backward compatibility.
             "shadow_mode": settings.llm_shadow_mode,

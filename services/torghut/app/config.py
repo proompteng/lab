@@ -197,14 +197,6 @@ class Settings(BaseSettings):
         alias="TRADING_FEATURE_FLAGS_ENTITY_ID",
         description="Entity id used for Flipt feature-flag evaluation context.",
     )
-    trading_parity_policy: Literal["live_equivalent", "mode_coupled"] = Field(
-        default="live_equivalent",
-        alias="TRADING_PARITY_POLICY",
-        description=(
-            "Policy for paper/live internal behavior parity. live_equivalent keeps decision/risk/LLM behavior "
-            "consistent across modes; mode_coupled preserves legacy mode-specific safety logic."
-        ),
-    )
     trading_signal_source: Literal["clickhouse"] = Field(
         default="clickhouse", alias="TRADING_SIGNAL_SOURCE"
     )
@@ -1655,8 +1647,6 @@ class Settings(BaseSettings):
     @property
     def llm_policy_exceptions(self) -> list[str]:
         exceptions: list[str] = []
-        if self.trading_parity_policy == "mode_coupled":
-            exceptions.append("mode_coupled_behavior_enabled")
         if self.llm_fail_mode_enforcement == "configured":
             exceptions.append("configured_fail_mode_enabled")
         if self.llm_live_fail_open_requested and self.llm_fail_open_live_approved:
@@ -1700,19 +1690,12 @@ class Settings(BaseSettings):
         if rollout_stage == "stage1":
             if self.llm_fail_mode_enforcement == "strict_veto":
                 return "veto"
-            if (
-                self.trading_parity_policy == "mode_coupled"
-                and self.trading_mode == "live"
-            ):
-                return "veto"
             return "pass_through"
 
         if rollout_stage == "stage2":
             return "pass_through"
 
         if self.llm_fail_mode_enforcement == "strict_veto":
-            return "veto"
-        if self.trading_parity_policy == "mode_coupled" and self.trading_mode == "live":
             return "veto"
         return self.llm_fail_mode
 
