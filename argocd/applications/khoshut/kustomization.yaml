@@ -7,4 +7,5 @@ resources:
   - service.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/khoshut
-    newTag: 0.0.1
+    newTag: 0.560.0
+    newName: registry.ide-newton.ts.net/lab/khoshut
