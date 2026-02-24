@@ -42,7 +42,24 @@ controller:
     key: auth.json
     mountPath: /root/.codex
 rbac:
-  clusterScoped: false
+  clusterScoped: true
+  extraRules:
+    - apiGroups:
+        - apiextensions.k8s.io
+      resources:
+        - customresourcedefinitions
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - services
+      verbs:
+        - get
+        - list
+        - watch
 database:
   secretRef:
     name: jangar-db-app

@@ -17,6 +17,7 @@ resources:
   - sample-budget.yaml
   - sample-signal.yaml
   - torghut-agentruns.yaml
+  - nats-service.yaml
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml
 helmGlobals:
