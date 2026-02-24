@@ -24,6 +24,17 @@ import {
 } from './agentrun-artifacts'
 import { deriveStandardConditionUpdates, normalizeConditions, upsertCondition } from './conditions'
 import {
+  parseBooleanEnv,
+  parseEnvArray,
+  parseEnvRecord,
+  parseEnvStringList,
+  parseJsonEnv,
+  parseNumberEnv,
+  parseOptionalNumber,
+  parseStringList,
+} from './env-config'
+import { createImplementationContractTools } from './implementation-contract'
+import {
   markAgentsControllerStarted,
   markAgentsControllerStartFailed,
   requestAgentsControllerStart,
@@ -87,14 +98,6 @@ const BASE_REQUIRED_CRDS = [
   'memories.agents.proompteng.ai',
 ]
 const VCS_PROVIDER_CRD = 'versioncontrolproviders.agents.proompteng.ai'
-
-const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
-  if (value == null) return fallback
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'y'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'n'].includes(normalized)) return false
-  return fallback
-}
 
 const isVcsProvidersEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED, true)
 
@@ -305,13 +308,6 @@ const resolveNamespaces = async () => {
     throw new Error('no namespaces returned by kubectl')
   }
   return resolved
-}
-
-const parseNumberEnv = (value: string | undefined, fallback: number, min = 0) => {
-  if (!value) return fallback
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed < min) return fallback
-  return parsed
 }
 
 const isAgentRunIdempotencyEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED, true)
@@ -725,15 +721,6 @@ const getTemporalClient = async () => {
   return client
 }
 
-const parseOptionalNumber = (value: unknown): number | undefined => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number.parseFloat(value)
-    if (Number.isFinite(parsed)) return parsed
-  }
-  return undefined
-}
-
 const normalizeRunnerJobTtlSeconds = (value: number, source: string) => {
   if (!Number.isFinite(value)) return null
   if (value <= 0) return null
@@ -1093,35 +1080,6 @@ const resolveSystemPrompt = async (options: {
     systemPromptRef: null,
     systemPromptHash: null,
   }
-}
-
-const parseStringList = (value: unknown) =>
-  Array.isArray(value)
-    ? value
-        .filter((item): item is string => typeof item === 'string')
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0)
-    : []
-
-const parseEnvList = (name: string) => {
-  const raw = process.env[name]
-  if (!raw) return []
-  return raw
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0)
-}
-
-const normalizeStringList = (values: unknown[]) =>
-  values
-    .filter((item): item is string => typeof item === 'string')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
-
-const parseEnvStringList = (name: string) => {
-  const parsed = parseEnvArray(name)
-  if (Array.isArray(parsed)) return normalizeStringList(parsed)
-  return parseEnvList(name)
 }
 
 const resolveRunnerServiceAccount = (runtimeConfig: Record<string, unknown>) =>
@@ -1507,25 +1465,6 @@ const fetchGithubAppToken = async (input: {
 
 const clearGithubAppTokenCache = () => {
   runtimeMutableState.githubAppTokenCache.clear()
-}
-
-const parseJsonEnv = (name: string) => {
-  const raw = process.env[name]
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as unknown
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.warn(`[jangar] invalid ${name} JSON: ${message}`)
-    return null
-  }
-}
-
-const parseEnvRecord = (name: string) => asRecord(parseJsonEnv(name))
-
-const parseEnvArray = (name: string) => {
-  const parsed = parseJsonEnv(name)
-  return Array.isArray(parsed) ? parsed : null
 }
 
 const resolveVcsPrRateLimits = () => {
@@ -2277,6 +2216,9 @@ const resolveRunParam = (run: Record<string, unknown>, keys: string[]) => {
   return resolveParam(params, keys)
 }
 
+const { buildEventContext, buildEventPayload, validateImplementationContract, buildContractStatus } =
+  createImplementationContractTools(resolveParam)
+
 const normalizeRepository = (value: string) => value.trim().toLowerCase()
 
 const normalizeBranchName = (value: string) => value.trim()
@@ -2436,214 +2378,9 @@ const applyVcsMetadataToParameters = (
   return updated ? next : parameters
 }
 
-const parseGithubExternalId = (externalId: string) => {
-  const trimmed = externalId.trim()
-  const [repo, number] = trimmed.split('#')
-  if (!repo || !number) return null
-  return { repository: repo.trim(), issueNumber: number.trim() }
-}
-
-type ImplementationContractMapping = { from: string; to: string }
-
-const DEFAULT_METADATA_MAPPINGS: ImplementationContractMapping[] = [
-  { from: 'repo', to: 'repository' },
-  { from: 'issueRepository', to: 'repository' },
-  { from: 'issue', to: 'issueNumber' },
-  { from: 'issueId', to: 'issueNumber' },
-  { from: 'issue_id', to: 'issueNumber' },
-  { from: 'issue_number', to: 'issueNumber' },
-  { from: 'title', to: 'issueTitle' },
-  { from: 'body', to: 'issueBody' },
-  { from: 'url', to: 'issueUrl' },
-  { from: 'baseBranch', to: 'base' },
-  { from: 'base_ref', to: 'base' },
-  { from: 'baseRef', to: 'base' },
-  { from: 'headBranch', to: 'head' },
-  { from: 'head_ref', to: 'head' },
-  { from: 'headRef', to: 'head' },
-  { from: 'workflowStage', to: 'stage' },
-  { from: 'codexStage', to: 'stage' },
-]
-
-const normalizeContractMappings = (value: unknown): ImplementationContractMapping[] => {
-  if (!Array.isArray(value)) return []
-  const mappings: ImplementationContractMapping[] = []
-  for (const entry of value) {
-    const record = asRecord(entry)
-    if (!record) continue
-    const from = asString(record.from)?.trim()
-    const to = asString(record.to)?.trim()
-    if (!from || !to) continue
-    mappings.push({ from, to })
-  }
-  return mappings
-}
-
-const normalizeRequiredKeys = (value: unknown) => {
-  if (!Array.isArray(value)) return []
-  const keys = value
-    .filter((item): item is string => typeof item === 'string')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
-  return Array.from(new Set(keys))
-}
-
-const hasInvalidRequiredKeys = (value: unknown) =>
-  Array.isArray(value) && value.some((key) => typeof key !== 'string' || key.trim().length === 0)
-
-const hasInvalidContractMappings = (value: unknown) =>
-  Array.isArray(value) &&
-  value.some((entry) => {
-    const record = asRecord(entry)
-    if (!record) return true
-    const from = asString(record.from)?.trim()
-    const to = asString(record.to)?.trim()
-    return !from || !to
-  })
-
-const applyMetadataMappings = (metadata: Record<string, string>, mappings: ImplementationContractMapping[]) => {
-  for (const mapping of mappings) {
-    const fromValue = metadata[mapping.from]
-    if (!fromValue || metadata[mapping.to]) continue
-    metadata[mapping.to] = fromValue
-  }
-}
-
 const setMetadataIfMissing = (metadata: Record<string, string>, key: string, value: string) => {
   if (!value || metadata[key]) return
   metadata[key] = value
-}
-
-const buildEventContext = (
-  implementation: Record<string, unknown>,
-  parameters: Record<string, string>,
-  contractOverride?: { requiredKeys?: string[]; mappings?: ImplementationContractMapping[] },
-) => {
-  const source = asRecord(implementation.source) ?? {}
-  const provider = asString(source.provider) ?? ''
-  const externalId = asString(source.externalId) ?? ''
-  const sourceUrl = asString(source.url) ?? ''
-
-  const contract = asRecord(implementation.contract) ?? {}
-  const contractMappings = contractOverride?.mappings ?? normalizeContractMappings(contract.mappings)
-  const requiredKeys = contractOverride?.requiredKeys ?? normalizeRequiredKeys(contract.requiredKeys)
-
-  const summary = asString(implementation.summary) ?? ''
-  const text = asString(implementation.text) ?? ''
-
-  const metadata: Record<string, string> = {}
-  for (const [key, value] of Object.entries(parameters)) {
-    if (typeof value !== 'string') continue
-    const trimmed = value.trim()
-    if (!trimmed) continue
-    metadata[key] = trimmed
-  }
-
-  applyMetadataMappings(metadata, DEFAULT_METADATA_MAPPINGS)
-  applyMetadataMappings(metadata, contractMappings)
-
-  let repository = metadata.repository ?? resolveParam(parameters, ['repository'])
-  let issueNumber = metadata.issueNumber ?? resolveParam(parameters, ['issueNumber'])
-
-  const resolvedIssueTitle = metadata.issueTitle ?? resolveParam(parameters, ['issueTitle'])
-  const issueTitle = resolvedIssueTitle || summary
-  const resolvedIssueBody = metadata.issueBody ?? resolveParam(parameters, ['issueBody'])
-  const issueBody = resolvedIssueBody || text
-  const resolvedIssueUrl = metadata.issueUrl ?? resolveParam(parameters, ['issueUrl'])
-  const issueUrl = resolvedIssueUrl || sourceUrl
-  const resolvedPrompt = metadata.prompt ?? resolveParam(parameters, ['prompt'])
-  const prompt = resolvedPrompt || text || summary
-  const base = metadata.base ?? resolveParam(parameters, ['base'])
-  const head = metadata.head ?? resolveParam(parameters, ['head'])
-  const stage = metadata.stage ?? resolveParam(parameters, ['stage'])
-
-  if ((!repository || !issueNumber) && provider === 'github' && externalId) {
-    const parsed = parseGithubExternalId(externalId)
-    if (parsed) {
-      repository = repository || parsed.repository
-      issueNumber = issueNumber || parsed.issueNumber
-    }
-  }
-
-  setMetadataIfMissing(metadata, 'repository', repository)
-  setMetadataIfMissing(metadata, 'issueNumber', issueNumber)
-  setMetadataIfMissing(metadata, 'issueTitle', issueTitle)
-  setMetadataIfMissing(metadata, 'issueBody', issueBody)
-  setMetadataIfMissing(metadata, 'issueUrl', issueUrl)
-  setMetadataIfMissing(metadata, 'url', issueUrl)
-  setMetadataIfMissing(metadata, 'base', base)
-  setMetadataIfMissing(metadata, 'head', head)
-  setMetadataIfMissing(metadata, 'stage', stage)
-  setMetadataIfMissing(metadata, 'prompt', prompt)
-
-  const payload: Record<string, unknown> = {}
-  if (prompt) payload.prompt = prompt
-  if (repository) payload.repository = repository
-  if (issueNumber) payload.issueNumber = issueNumber
-  if (issueTitle) payload.issueTitle = issueTitle
-  if (issueBody) payload.issueBody = issueBody
-  if (issueUrl) payload.issueUrl = issueUrl
-  if (base) payload.base = base
-  if (head) payload.head = head
-  if (stage) payload.stage = stage
-  if (Object.keys(metadata).length > 0) {
-    payload.metadata = { map: metadata }
-  }
-
-  const missingRequiredKeys = requiredKeys.filter((key) => !metadata[key])
-
-  return { payload, metadata, missingRequiredKeys, requiredKeys }
-}
-
-const buildEventPayload = (implementation: Record<string, unknown>, parameters: Record<string, string>) =>
-  buildEventContext(implementation, parameters).payload
-
-const validateImplementationContract = (
-  implementation: Record<string, unknown>,
-  parameters: Record<string, string>,
-) => {
-  const contract = asRecord(implementation.contract) ?? {}
-  if (hasInvalidRequiredKeys(contract.requiredKeys)) {
-    return {
-      ok: false as const,
-      reason: 'InvalidContract',
-      requiredKeys: normalizeRequiredKeys(contract.requiredKeys),
-      message: 'spec.contract.requiredKeys must be non-empty strings',
-    }
-  }
-  if (hasInvalidContractMappings(contract.mappings)) {
-    return {
-      ok: false as const,
-      reason: 'InvalidContract',
-      requiredKeys: normalizeRequiredKeys(contract.requiredKeys),
-      message: 'spec.contract.mappings entries must include non-empty from and to',
-    }
-  }
-
-  const requiredKeys = normalizeRequiredKeys(contract.requiredKeys)
-  const { missingRequiredKeys } = buildEventContext(implementation, parameters, {
-    requiredKeys,
-    mappings: normalizeContractMappings(contract.mappings),
-  })
-  if (missingRequiredKeys.length === 0) {
-    return { ok: true as const, requiredKeys }
-  }
-  return {
-    ok: false as const,
-    reason: 'MissingRequiredMetadata',
-    requiredKeys,
-    missing: missingRequiredKeys,
-    message: `missing required metadata keys: ${missingRequiredKeys.join(', ')}`,
-  }
-}
-
-const buildContractStatus = (contractCheck: { ok: boolean; requiredKeys: string[]; missing?: string[] }) => {
-  if (contractCheck.requiredKeys.length === 0) return undefined
-  const status: Record<string, unknown> = { requiredKeys: contractCheck.requiredKeys }
-  if (!contractCheck.ok && contractCheck.missing && contractCheck.missing.length > 0) {
-    status.missingKeys = contractCheck.missing
-  }
-  return status
 }
 
 const resolveVcsContext = async ({
