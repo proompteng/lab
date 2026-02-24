@@ -76,6 +76,12 @@ const TABLE = 'entries'
 
 const DEFAULT_IVFFLAT_PROBES = 10
 const MAX_IVFFLAT_PROBES = 100
+const RETRIEVE_CANDIDATE_MULTIPLIER = 4
+const MAX_RETRIEVE_CANDIDATES = 200
+const MAX_RELEVANT_DISTANCE = 0.62
+const RELATIVE_RELEVANT_DISTANCE_WINDOW = 0.18
+const MAX_LEXICAL_MATCH_DISTANCE = 0.72
+const MIN_QUERY_TERM_LENGTH = 3
 
 const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
   try {
@@ -86,6 +92,23 @@ const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
 }
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
+
+const normalizeQueryTerms = (query: string) => {
+  const terms = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter((term) => term.length >= MIN_QUERY_TERM_LENGTH)
+  return Array.from(new Set(terms))
+}
+
+const countQueryTermHits = (terms: readonly string[], text: string) => {
+  if (terms.length === 0) return 0
+  let hits = 0
+  for (const term of terms) {
+    if (text.includes(term)) hits += 1
+  }
+  return hits
+}
 
 const normalizeMetadata = (value?: Record<string, unknown>) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -324,6 +347,11 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     }
 
     const resolvedLimit = Math.max(1, Math.min(50, limit ?? DEFAULT_LIMIT))
+    const candidateLimit = Math.min(
+      MAX_RETRIEVE_CANDIDATES,
+      Math.max(resolvedLimit * RETRIEVE_CANDIDATE_MULTIPLIER, resolvedLimit),
+    )
+    const queryTerms = normalizeQueryTerms(resolvedQuery)
 
     const embedding = await embed(resolvedQuery)
     const vectorString = vectorToPgArray(embedding)
@@ -348,10 +376,25 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
           distanceExpr.as('distance'),
         ])
       const scopedQuery = resolvedNamespace ? baseQuery.where('task_name', '=', resolvedNamespace) : baseQuery
-      return await scopedQuery.orderBy(distanceExpr).limit(resolvedLimit).execute()
+      return await scopedQuery.orderBy(distanceExpr).limit(candidateLimit).execute()
     })
 
-    const ids = rows.map((row) => row.id)
+    const bestDistance = rows[0] ? Number(rows[0].distance) : Number.POSITIVE_INFINITY
+    const semanticDistanceCeiling = Math.min(MAX_RELEVANT_DISTANCE, bestDistance + RELATIVE_RELEVANT_DISTANCE_WINDOW)
+    const relevantRows = rows
+      .filter((row) => {
+        const distance = Number(row.distance)
+        if (!Number.isFinite(distance)) return false
+        if (distance <= semanticDistanceCeiling) return true
+        if (distance > MAX_LEXICAL_MATCH_DISTANCE || queryTerms.length === 0) return false
+
+        const text =
+          `${row.summary ?? ''}\n${row.content}\n${Array.isArray(row.tags) ? row.tags.join(' ') : ''}`.toLowerCase()
+        return countQueryTermHits(queryTerms, text) > 0
+      })
+      .slice(0, resolvedLimit)
+
+    const ids = relevantRows.map((row) => row.id)
     if (ids.length > 0) {
       await db
         .updateTable('memories.entries')
@@ -362,7 +405,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
         .execute()
     }
 
-    return rows.map((row) => ({
+    return relevantRows.map((row) => ({
       id: row.id,
       namespace: row.task_name,
       content: row.content,
