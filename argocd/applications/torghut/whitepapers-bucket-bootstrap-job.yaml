@@ -61,7 +61,7 @@ spec:
             - -ec
             - |
               mc alias set ceph "http://${BUCKET_HOST}:${BUCKET_PORT}" "${AWS_ACCESS_KEY_ID}" "${AWS_SECRET_ACCESS_KEY}"
-              mc mb --ignore-existing "ceph/${BUCKET_NAME}"
+              mc stat "ceph/${BUCKET_NAME}" >/dev/null 2>&1 || mc mb "ceph/${BUCKET_NAME}"
 
               for prefix in \
                 "raw/github" \
@@ -78,5 +78,5 @@ spec:
                 "index/manifests" \
                 "ops/failed" \
                 "ops/quarantine"; do
-                mc cp /dev/null "ceph/${BUCKET_NAME}/${prefix}/.keep"
+                printf "" | mc pipe "ceph/${BUCKET_NAME}/${prefix}/.keep"
               done
