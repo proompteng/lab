@@ -5,6 +5,8 @@
     "type": "git",
     "url": "https://github.com/proompteng/lab"
   },
+  "type": "module",
+  "module": "src/server.ts",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
@@ -18,7 +20,5 @@
   },
   "devDependencies": {
     "typescript": "^5.8.2"
-  },
-  "module": "src/server.ts",
-  "type": "module"
+  }
 }

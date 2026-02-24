@@ -207,7 +207,7 @@ export const runCli = async (opts: CliOptions = {}) => {
   note(created.join('\n'), 'Files')
 
   note(
-    `Next steps:\n- bunx biome check services/${name} packages/scripts/src/${name} argocd/applications/${name} || true\n- bun install --frozen-lockfile\n- cd services/${name} && bun dev\n- configure ArgoCD ApplicationSet entry if needed`,
+    `Next steps:\n- bunx oxfmt --check services/${name} packages/scripts/src/${name} argocd/applications/${name} || true\n- bun install --frozen-lockfile\n- cd services/${name} && bun dev\n- configure ArgoCD ApplicationSet entry if needed`,
     'Tips',
   )
 

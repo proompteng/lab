@@ -1,38 +1,38 @@
 base_image: discourse/base:2.0.20251003-1437
 params:
-  redis_io_threads: "1"
+  redis_io_threads: '1'
 
 run:
   - file:
-     path: /etc/service/redis/run
-     chmod: "+x"
-     contents: |
+      path: /etc/service/redis/run
+      chmod: '+x'
+      contents: |
         #!/bin/sh
         exec 2>&1
         install -d -m 0755 -o redis -g redis /shared/redis_data
         exec thpoff chpst -u redis -U redis /usr/bin/redis-server /etc/redis/redis.conf
   - file:
-     path: /etc/service/redis/log/run
-     chmod: "+x"
-     contents: |
-       #!/bin/sh
-       mkdir -p /var/log/redis
-       exec svlogd /var/log/redis
+      path: /etc/service/redis/log/run
+      chmod: '+x'
+      contents: |
+        #!/bin/sh
+        mkdir -p /var/log/redis
+        exec svlogd /var/log/redis
   - file:
-     path: /etc/runit/3.d/10-redis
-     chmod: "+x"
-     contents: |
-       #!/bin/bash
-       sv stop redis
+      path: /etc/runit/3.d/10-redis
+      chmod: '+x'
+      contents: |
+        #!/bin/bash
+        sv stop redis
 
   - replace:
-      filename: "/etc/redis/redis.conf"
-      from: "daemonize yes"
-      to: ""
+      filename: '/etc/redis/redis.conf'
+      from: 'daemonize yes'
+      to: ''
   - replace:
-      filename: "/etc/redis/redis.conf"
+      filename: '/etc/redis/redis.conf'
       from: /^pidfile.*$/
-      to: ""
+      to: ''
 
   - exec:
       tag: db
@@ -40,29 +40,29 @@ run:
         - install -d -m 0755 -o redis -g redis /shared/redis_data
 
   - replace:
-      filename: "/etc/redis/redis.conf"
+      filename: '/etc/redis/redis.conf'
       from: /^logfile.*$/
-      to: "logfile \"\""
+      to: 'logfile ""'
 
   - replace:
-      filename: "/etc/redis/redis.conf"
+      filename: '/etc/redis/redis.conf'
       from: /^bind .*$/
-      to: ""
+      to: ''
 
   - replace:
-      filename: "/etc/redis/redis.conf"
+      filename: '/etc/redis/redis.conf'
       from: /^dir .*$/
-      to: "dir /shared/redis_data"
+      to: 'dir /shared/redis_data'
 
   - replace:
-      filename: "/etc/redis/redis.conf"
+      filename: '/etc/redis/redis.conf'
       from: /^protected-mode yes/
-      to: "protected-mode no"
+      to: 'protected-mode no'
 
   - replace:
-      filename: "/etc/redis/redis.conf"
-      from: "# io-threads 4"
-      to: "io-threads $redis_io_threads"
+      filename: '/etc/redis/redis.conf'
+      from: '# io-threads 4'
+      to: 'io-threads $redis_io_threads'
 
   - exec:
       cmd: echo redis installed
@@ -86,7 +86,7 @@ hooks:
     - exec: sleep 10
   after_code:
     - replace:
-       filename: /etc/service/unicorn/run
-       from: "# redis"
-       to: |
-         sv start redis || exit 1
+        filename: /etc/service/unicorn/run
+        from: '# redis'
+        to: |
+          sv start redis || exit 1

@@ -16,15 +16,15 @@
 
 ## Timeline (UTC)
 
-| Time | Event |
-|------|-------|
-| 2025-12-29 ~00:10 | Investigation begins: Kafka topic `argo.workflows.completions` shows 0 messages; Jangar DB has no new runs. |
-| 2025-12-29 ~00:15 | Kafka broker `kafka-pool-a-2` found in `CrashLoopBackOff` with I/O error reading `/var/lib/kafka/data/kafka-log2/meta.properties`; Longhorn volume `data-kafka-pool-a-2` faulted/detached. |
-| 2025-12-29 ~00:20 | Longhorn replica salvage initiated; volume reattached and broker rescheduled. |
-| 2025-12-29 ~00:38 | Argo Events EventSource/Sensor synced to remove workflow status filters and add log trigger for visibility. |
-| 2025-12-29 00:43:43 | EventSource publishes workflow completion; Sensor produces Kafka message; EventBus stream `default` increments to 1. |
-| 2025-12-29 00:43:43 | Jangar inserts `codex_judge.runs` for issue 2166 (status `judging`). |
-| 2025-12-29 00:50:20 | Judge evaluation completes; run status `completed`, evaluation `decision=pass`. |
+| Time                | Event                                                                                                                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2025-12-29 ~00:10   | Investigation begins: Kafka topic `argo.workflows.completions` shows 0 messages; Jangar DB has no new runs.                                                                                |
+| 2025-12-29 ~00:15   | Kafka broker `kafka-pool-a-2` found in `CrashLoopBackOff` with I/O error reading `/var/lib/kafka/data/kafka-log2/meta.properties`; Longhorn volume `data-kafka-pool-a-2` faulted/detached. |
+| 2025-12-29 ~00:20   | Longhorn replica salvage initiated; volume reattached and broker rescheduled.                                                                                                              |
+| 2025-12-29 ~00:38   | Argo Events EventSource/Sensor synced to remove workflow status filters and add log trigger for visibility.                                                                                |
+| 2025-12-29 00:43:43 | EventSource publishes workflow completion; Sensor produces Kafka message; EventBus stream `default` increments to 1.                                                                       |
+| 2025-12-29 00:43:43 | Jangar inserts `codex_judge.runs` for issue 2166 (status `judging`).                                                                                                                       |
+| 2025-12-29 00:50:20 | Judge evaluation completes; run status `completed`, evaluation `decision=pass`.                                                                                                            |
 
 ## Root Cause
 

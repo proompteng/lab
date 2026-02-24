@@ -3,7 +3,9 @@
 Status: Current (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Purpose
+
 Define the lifecycle and upgrade flow for Agents CRDs, including generation, validation, packaging, rollout,
 compatibility rules, and CI enforcement. This design codifies the existing build and release workflow into a
 production-ready checklist.
@@ -32,17 +34,21 @@ production-ready checklist.
 - CI must validate schemas, examples, and size limits for every CRD change.
 
 ## Lifecycle Overview
+
 ### Authoring
+
 - Update Go types under `services/jangar/api/agents/v1alpha1` for agent primitives.
 - Update static YAML under `charts/agents/crds/` for supporting primitives.
 - Update the controller logic in `services/jangar/src/server` in the same change set.
 
 ### Generation
+
 - Run `go generate services/jangar/api/agents` to refresh CRDs and deepcopy outputs.
 - Use `scripts/agents/patch-crds.py` to strip `x-kubernetes-preserve-unknown-fields: false` from CRDs when needed.
 - Commit regenerated CRDs to `charts/agents/crds/`.
 
 ### Validation
+
 - Run `scripts/agents/validate-agents.sh` to enforce:
   - Helm renderability for dev/local/ci/prod values files.
   - Example manifests compatibility with installed CRD versions.
@@ -50,10 +56,12 @@ production-ready checklist.
   - CRD structural validation with `kubeconform`.
 
 ### Packaging
+
 - Keep `Chart.yaml` annotations in sync with the CRD inventory for Artifact Hub.
 - Update `charts/agents/examples` when new CRDs or required fields are introduced.
 
 ### Deployment
+
 - Use Helm (via ArgoCD) to install CRDs before controller Deployments.
 - Ensure the controller image and chart version are upgraded together.
 
@@ -102,6 +110,7 @@ production-ready checklist.
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -116,7 +125,9 @@ production-ready checklist.
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -149,13 +160,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -171,6 +185,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -183,6 +198,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

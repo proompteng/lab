@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: "95765432"
+  tag: '95765432'
   digest: sha256:44669d6e24474c9661977b3ad231caa532bc9548acd46ef5bca2905435394992
   pullPolicy: IfNotPresent
 
@@ -18,7 +18,7 @@ env:
   vars:
     # CI runs with a fresh Postgres, so we must run migrations to create schema
     # (otherwise controllers will fail to reconcile AgentRuns).
-    JANGAR_MIGRATIONS: "auto"
+    JANGAR_MIGRATIONS: 'auto'
 
 resources:
   requests:

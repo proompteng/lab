@@ -7,12 +7,13 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "bunx biome check",
-    "format": "bunx biome format --write",
+    "lint": "bunx oxfmt --check",
+    "format": "bunx oxfmt",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
     "payload:generate:importmap": "payload generate:importmap",
-    "payload:generate:types": "payload generate:types"
+    "payload:generate:types": "payload generate:types",
+    "format:check": "bunx oxfmt --check ."
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.73.0",
@@ -29,7 +30,6 @@
     "sharp": "0.34.2"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.3.8",
     "@types/node": "25.2.3",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",

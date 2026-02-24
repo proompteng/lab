@@ -33,6 +33,7 @@ The local-path provisioner uses a per-node path map. Ensure it contains:
 - `talos-192-168-1-203` -> `/var/mnt/local-path-provisioner`
 
 Source of truth:
+
 - `/Users/gregkonush/.codex/worktrees/0133/lab/argocd/applications/local-path/patches/local-path-config.patch.yaml`
 
 ## 1) Snapshot etcd + verify health
@@ -144,5 +145,5 @@ Talos volume growth behavior is controlled by the volume config:
 - If `maxSize` is unset, the initial provisioning can use all remaining space.
 
 Source of truth:
-- `/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/local-path.patch.yaml`
 
+- `/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/local-path.patch.yaml`

@@ -99,14 +99,18 @@ Codex sessions are stored locally under `~/.codex/auth.json`. When recreating th
    ```
    This creates aliases such as `coder.proompteng` that wrap the Coder proxy command.
 2. Sync the Codex CLI credentials and config:
+
    ```bash
    ./scripts/sync-codex-cli.sh
    ```
+
    - Optional flags: `--workspace <name>`, `--auth <path>`, `--config <path>`, `--remote-home <path>`, `--remote-repo <path>`.
      - The script checks for both `rsync` and the OpenSSH client locally and will exit early if either is missing.
    - By default the script consumes `scripts/codex-config-template.toml` (no MCP stanza) and renders it for the remote paths, so `/home/coder` and `/home/coder/github.com/lab` remain trusted on Ubuntu. Supply `--config <path>` if you need a different template.
-  - After syncing it installs a shell wrapper function in `~/.profile`, `~/.bashrc`, and `~/.zshrc` so running `codex …` automatically expands to `codex --full-auto --dangerously-bypass-approvals-and-sandbox --search --model gpt-5.3-codex …` without shadowing the binary.
-   - Both files are locked down with `chmod 600` after transfer.
+
+- After syncing it installs a shell wrapper function in `~/.profile`, `~/.bashrc`, and `~/.zshrc` so running `codex …` automatically expands to `codex --full-auto --dangerously-bypass-approvals-and-sandbox --search --model gpt-5.3-codex …` without shadowing the binary.
+- Both files are locked down with `chmod 600` after transfer.
+
 3. Verify on the remote host if desired:
    ```bash
    ssh coder.proompteng 'ls -l ~/.codex/auth.json'

@@ -1,12 +1,15 @@
 # Torghut v3 Full-Loop Autonomous Quant System (LLM Integrated)
 
 ## Status
+
 - Version: `v3-full-loop`
 - Date: `2026-02-11`
 - Audience: Torghut engineers, AgentRun implementers, oncall operators, quant research owners.
 
 ## Objective
+
 Define a production-grade autonomous loop for Torghut:
+
 - research and hypothesis generation,
 - strategy implementation,
 - backtesting and statistical validation,
@@ -18,6 +21,7 @@ LLM integration is included as a bounded subsystem for reasoning, review, and or
 execution controls remain final authority.
 
 ## Full Loop Pipeline
+
 1. `Research Intake`
 2. `Candidate Build`
 3. `Backtest + Robustness`
@@ -28,36 +32,38 @@ execution controls remain final authority.
 
 ## Scope Matrix (Agent Implementation Size)
 
-| Doc | Epic size | Minimum implementation scope |
-| --- | --- | --- |
-| `01-autonomous-pipeline-dag-spec.md` | Large | pipeline orchestration config + stage validators + CI DAG tests |
-| `02-gate-policy-matrix.md` | Large | gate evaluator engine + policy config + machine-readable reports |
-| `03-implementationspec-catalog.md` | Medium | versioned specs + contract tests + manifest inventory |
-| `04-agentrun-orchestration-playbook.md` | Large | runner scheduling/retry/idempotency playbooks + templates |
-| `05-dataset-feature-versioning-spec.md` | Large | dataset snapshot/version registry + parity checks + migrations |
-| `06-backtest-realism-standard.md` | Large | cost/fill realism modules + scenario stress suite + validation CLI |
-| `07-shadow-paper-evaluation-spec.md` | Large | champion-challenger wiring + telemetry dashboards + promotion reports |
-| `08-live-rollout-capital-ramp-plan.md` | Large | staged rollout configs + approval hooks + auto-rollback scripts |
-| `09-incident-kill-switch-recovery-runbook.md` | Medium | runbooks + executable incident scripts + recovery verification |
-| `10-audit-compliance-evidence-spec.md` | Medium | evidence package schema + retention policy + audit exporter |
-| `11-phase1-phase2-implementation-notes-2026-02-11.md` | Draft | implementation backfill + notes for completion work |
-| `12-autonomous-gap-closure-roadmap.md` | Medium | roadmap of sequencing for remaining gaps |
-| `13-research-ledger-promotion-evidence-spec.md` | Large | replayable evidence and gate/ledger contract |
-| `14-lean-router-and-execution-governance-spec.md` | Medium | adapter routing safety and provenance requirements |
-| `15-llm-advisory-rollout-spec.md` | Medium | LLM advisory mode controls |
-| `16-autonomous-quant-readiness-execution-plan.md` | Large | phase-based readiness and evidence plan |
-| `17-autonomous-quant-completion-gap-and-rollout.md` | Critical | implementation + rollout checklist for remaining blockers |
-| `18-autonomous-quant-full-readiness-roadmap.md` | Critical | current missing subsystems, control checks, and execution sequence |
-| `19-autonomous-quant-live-readiness-snapshot-2026-02-13.md` | Critical | live-state evidence snapshot and immediate recovery order |
-| `20-autonomous-quant-llm-completion-roadmap-2026-02-13.md` | Critical | full-autonomy production completion plan (LEAN + LLM + evidence) |
-| `21-autonomous-no-signal-evidence-implementation-2026-02-13.md` | Critical | no-signal windows now persist as skipped research evidence for full-loop visibility |
+| Doc                                                             | Epic size | Minimum implementation scope                                                        |
+| --------------------------------------------------------------- | --------- | ----------------------------------------------------------------------------------- |
+| `01-autonomous-pipeline-dag-spec.md`                            | Large     | pipeline orchestration config + stage validators + CI DAG tests                     |
+| `02-gate-policy-matrix.md`                                      | Large     | gate evaluator engine + policy config + machine-readable reports                    |
+| `03-implementationspec-catalog.md`                              | Medium    | versioned specs + contract tests + manifest inventory                               |
+| `04-agentrun-orchestration-playbook.md`                         | Large     | runner scheduling/retry/idempotency playbooks + templates                           |
+| `05-dataset-feature-versioning-spec.md`                         | Large     | dataset snapshot/version registry + parity checks + migrations                      |
+| `06-backtest-realism-standard.md`                               | Large     | cost/fill realism modules + scenario stress suite + validation CLI                  |
+| `07-shadow-paper-evaluation-spec.md`                            | Large     | champion-challenger wiring + telemetry dashboards + promotion reports               |
+| `08-live-rollout-capital-ramp-plan.md`                          | Large     | staged rollout configs + approval hooks + auto-rollback scripts                     |
+| `09-incident-kill-switch-recovery-runbook.md`                   | Medium    | runbooks + executable incident scripts + recovery verification                      |
+| `10-audit-compliance-evidence-spec.md`                          | Medium    | evidence package schema + retention policy + audit exporter                         |
+| `11-phase1-phase2-implementation-notes-2026-02-11.md`           | Draft     | implementation backfill + notes for completion work                                 |
+| `12-autonomous-gap-closure-roadmap.md`                          | Medium    | roadmap of sequencing for remaining gaps                                            |
+| `13-research-ledger-promotion-evidence-spec.md`                 | Large     | replayable evidence and gate/ledger contract                                        |
+| `14-lean-router-and-execution-governance-spec.md`               | Medium    | adapter routing safety and provenance requirements                                  |
+| `15-llm-advisory-rollout-spec.md`                               | Medium    | LLM advisory mode controls                                                          |
+| `16-autonomous-quant-readiness-execution-plan.md`               | Large     | phase-based readiness and evidence plan                                             |
+| `17-autonomous-quant-completion-gap-and-rollout.md`             | Critical  | implementation + rollout checklist for remaining blockers                           |
+| `18-autonomous-quant-full-readiness-roadmap.md`                 | Critical  | current missing subsystems, control checks, and execution sequence                  |
+| `19-autonomous-quant-live-readiness-snapshot-2026-02-13.md`     | Critical  | live-state evidence snapshot and immediate recovery order                           |
+| `20-autonomous-quant-llm-completion-roadmap-2026-02-13.md`      | Critical  | full-autonomy production completion plan (LEAN + LLM + evidence)                    |
+| `21-autonomous-no-signal-evidence-implementation-2026-02-13.md` | Critical  | no-signal windows now persist as skipped research evidence for full-loop visibility |
 
 Definition of "significant scope" for this pack:
+
 - touches at least 2 code/config areas,
 - produces at least 3 concrete artifacts,
 - includes automated verification and rollback path.
 
 ## Document Set
+
 1. `01-autonomous-pipeline-dag-spec.md`
 2. `02-gate-policy-matrix.md`
 3. `03-implementationspec-catalog.md`
@@ -81,18 +87,21 @@ Definition of "significant scope" for this pack:
 21. `21-autonomous-no-signal-evidence-implementation-2026-02-13.md`
 
 ## Templates
+
 - `templates/implementationspecs.yaml`
 - `templates/agentruns.yaml`
 - `templates/orchestration-policy.yaml`
 - `templates/orchestration-observability.yaml`
 
 ## Cross-References
+
 - Core v3 architecture: `docs/torghut/design-system/v3/flexible-strategy-engine-architecture.md`
 - Core v3 governance: `docs/torghut/design-system/v3/autonomy-governance-and-rollout-plan.md`
 - AgentRun conventions: `docs/agents/agentrun-creation-guide.md`
 - Torghut AgentRun handoff baseline: `docs/torghut/design-system/v1/agentruns-handoff.md`
 
 ## Definition of Complete Autonomous Loop
+
 - Every promotion is evidence-backed and reproducible.
 - Every autonomous action is bounded by deterministic controls.
 - Every stage is runnable by AgentRun from an ImplementationSpec.

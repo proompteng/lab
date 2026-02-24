@@ -3,20 +3,25 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 AgentRun status can accumulate artifacts, logs, and metadata. Without limits and schema conventions, status can grow large, exceed Kubernetes object size limits, and create performance issues for controllers and clients.
 
 This doc defines size and count limits plus a recommended artifact schema.
 
 ## Goals
+
 - Bound AgentRun status size.
 - Keep artifact references lightweight (store large content externally).
 - Provide predictable retrieval patterns for operators.
 
 ## Non-Goals
+
 - Designing the external artifact store (handled elsewhere).
 
 ## Current State
+
 - AgentRun status includes `artifacts []Artifact` in Go types:
   - `services/jangar/api/agents/v1alpha1/types.go`
 - Controller writes artifacts into status during run reconciliation:
@@ -24,7 +29,9 @@ This doc defines size and count limits plus a recommended artifact schema.
 - CRD schema is generated in `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`.
 
 ## Design
+
 ### Limits (recommended)
+
 - `status.artifacts`:
   - Max entries: 50
   - Max per-entry URL length: 2048
@@ -34,45 +41,55 @@ This doc defines size and count limits plus a recommended artifact schema.
   - Storing only pointers (S3 URL, object key) in status.
 
 ### Schema conventions
+
 Each artifact entry should include:
+
 - `type` (e.g. `log`, `diff`, `report`)
 - `uri` (external location)
 - `contentType`
 - `sizeBytes` (optional)
 
 ## Config Mapping
-| Helm value / env var (proposed) | Effect | Behavior |
-|---|---|---|
-| `controllers.env.vars.JANGAR_AGENTRUN_ARTIFACTS_MAX` | bound | Caps artifact list length in status. |
+
+| Helm value / env var (proposed)                         | Effect     | Behavior                                                        |
+| ------------------------------------------------------- | ---------- | --------------------------------------------------------------- |
+| `controllers.env.vars.JANGAR_AGENTRUN_ARTIFACTS_MAX`    | bound      | Caps artifact list length in status.                            |
 | `controllers.env.vars.JANGAR_AGENTRUN_ARTIFACTS_STRICT` | strictness | If true, fail run when artifacts exceed limits (default false). |
 
 ## Rollout Plan
+
 1. Implement soft caps (drop oldest) and emit a warning condition.
 2. Add optional strict mode for CI environments.
 
 Rollback:
+
 - Disable caps by setting max high (not recommended) or reverting code.
 
 ## Validation
+
 ```bash
 kubectl -n agents get agentrun <name> -o jsonpath='{.status.artifacts}' | wc -c
 kubectl -n agents get agentrun <name> -o yaml | rg -n \"artifacts:\"
 ```
 
 ## Failure Modes and Mitigations
+
 - Status exceeds object size limits: mitigate by pointer-only artifacts and strict caps.
 - Operators lose needed history due to trimming: mitigate by ensuring external store retains full artifact history.
 
 ## Acceptance Criteria
+
 - AgentRun status stays under safe size limits under sustained use.
 - Artifacts in status are always external references, not large inline payloads.
 
 ## References
+
 - Kubernetes object size limits (etcd considerations): https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -87,7 +104,9 @@ kubectl -n agents get agentrun <name> -o yaml | rg -n \"artifacts:\"
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -120,13 +139,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -142,6 +164,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -154,6 +177,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

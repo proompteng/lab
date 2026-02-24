@@ -5,19 +5,23 @@
 This document describes a **single-run, end-to-end** implementation plan for the core automated trading pipeline in torghut. It is intentionally structured as a one-shot execution guide for Codex (no milestones).
 
 ## Scope
+
 - **Signals source:** ClickHouse `ta_signals`.
 - **Execution mode:** paper trading by default, live trading gated by config.
 - **Universe:** from Jangar symbols endpoint or per-strategy list.
 - **Owner:** torghut service (FastAPI) or a dedicated worker deployment in the torghut namespace.
 
 ## Design References
+
 - Streaming + TA pipeline: `docs/torghut/architecture.md`
 - Flink TA job: `docs/torghut/flink-ta.md`
 - Topics & schemas: `docs/torghut/topics-and-schemas.md`
 - Main service consumer guide: `docs/torghut/main-service-consumer.md` (deprecated)
 
 ## System Overview
+
 Pipeline:
+
 ```
 Alpaca Market WS -> torghut-ws -> Kafka ingest topics -> torghut-ta (Flink) -> ClickHouse (ta_signals/ta_microbars)
 ClickHouse -> torghut trading loop -> deterministic RiskEngine -> OrderExecutor -> Alpaca Trading API
@@ -26,6 +30,7 @@ Jangar -> symbols/universe API + TA visualization (reads ClickHouse directly)
 ```
 
 ## Runtime Configuration (env)
+
 - `TRADING_ENABLED` (default `false`) gates the trading loop.
 - `TRADING_MODE` (`paper|live`, default `paper`); live requires `TRADING_LIVE_ENABLED=true`.
 - `TRADING_SIGNAL_SOURCE` (`clickhouse`), `TRADING_SIGNAL_TABLE` (default `torghut.ta_signals`).
@@ -62,7 +67,9 @@ flowchart LR
 ## One-Shot Execution Steps (implementation within a single Codex run)
 
 ### 1) Create trading modules (code)
+
 Create a module folder under `services/torghut/app/trading/` with:
+
 - `models.py` - Pydantic DTOs for signals/decisions/execution requests.
 - `ingest.py` - ClickHouse signal ingestion (poll by `event_ts` cursor).
 - `decisions.py` - Strategy evaluation (start with simple MACD/RSI example).
@@ -78,14 +85,18 @@ Create a module folder under `services/torghut/app/trading/` with:
   - periodic reconciliation
 
 ### 2) Wire into torghut service
+
 In `services/torghut/app/main.py`:
+
 - On startup, spawn the trading loop if `TRADING_ENABLED=true`.
 - Optional admin endpoints:
   - `GET /trading/status`
   - `GET /trading/health`
 
 ### 3) Extend config
+
 In `services/torghut/app/config.py` add:
+
 - `TRADING_ENABLED` (bool)
 - `TRADING_MODE` (`paper|live`)
 - `TRADING_SIGNAL_SOURCE` (`clickhouse`)
@@ -93,23 +104,31 @@ In `services/torghut/app/config.py` add:
 - `TRADING_UNIVERSE_SOURCE` (`jangar|static`)
 
 ### 4) DB schema updates
+
 Use Alembic in `services/torghut/migrations/` to add:
+
 - `trade_decisions.decision_hash` (unique)
 - `trade_decisions.executed_at` (timestamp)
 - Optional: `executions.last_update_at`
 - Optional: `trade_cursor` table for ingestion cursor (or re-use `tool_run_logs`).
 
 ### 5) Idempotency
+
 Decision hash:
+
 ```
 decision_hash = sha256(strategy_id + symbol + event_ts + action + params)
 ```
+
 Before submitting an order:
+
 - check if decision exists for hash
 - if execution exists, skip
 
 ### 6) Risk & gating rules
+
 Minimum checks before order submission:
+
 - `TRADING_ENABLED=true`
 - `TRADING_MODE=paper` unless explicit live override
 - strategy enabled + symbol allowed
@@ -119,10 +138,13 @@ Minimum checks before order submission:
 - optional cool-down per symbol
 
 ### 7) Observability
+
 Logs (structured):
+
 - `strategy_id`, `decision_id`, `symbol`, `event_ts`, `alpaca_order_id`
 
 Metrics (min set):
+
 - `decisions_total`
 - `orders_submitted_total`
 - `orders_rejected_total`
@@ -138,23 +160,29 @@ Metrics (min set):
 configuration for operational visibility.
 
 ### 8) Manifests / runtime
+
 Option A: run trading loop in torghut Knative service.
 Option B: create a **dedicated worker Deployment**:
+
 - `argocd/applications/torghut/trading/`
 - ConfigMap for trading settings
 - Secret for Alpaca creds
 
 ### 9) Tests
+
 Add unit tests:
+
 - decision logic
 - risk engine
 - idempotency
-Integration test:
+  Integration test:
 - ingest one fake signal -> decision -> execution row
 
 ## Strategy provisioning
+
 Define a strategy catalog in `argocd/applications/torghut/strategy-configmap.yaml` (hot reload applies changes).
 For ad-hoc dev/stage seeding you can still run:
+
 ```
 uv run python services/torghut/scripts/seed_strategy.py \
   --name macd-rsi-default \
@@ -164,28 +192,34 @@ uv run python services/torghut/scripts/seed_strategy.py \
 ```
 
 ## Replay / backtest hook
+
 Replay ClickHouse signals through the decision engine without executing orders by
 calling `ClickHouseSignalIngestor.fetch_signals_between(...)` in a one-off script
 or notebook (no dedicated replay script is shipped today).
 
 ## Trading audit APIs
+
 - `GET /trading/decisions?symbol=&since=`
 - `GET /trading/executions?symbol=&since=`
 - `GET /trading/metrics`
   - Decision JSON includes `params.price` + `params.price_snapshot` when prices are fetched from ClickHouse.
 
 ## Code Locations (existing + new)
+
 Existing:
+
 - `services/torghut/app/alpaca_client.py`
 - `services/torghut/app/models/entities.py`
 - `services/torghut/app/snapshots.py`
 
 New (proposed):
+
 - `services/torghut/app/trading/*.py`
 - `services/torghut/migrations/*`
 - `argocd/applications/torghut/trading/*` (if separate worker)
 
 ## Suggested TODO markers (for tracking)
+
 ```
 # TODO(trading): implement SignalIngestor for ClickHouse
 # TODO(trading): implement StrategyRunner
@@ -195,5 +229,6 @@ New (proposed):
 ```
 
 ## Notes
+
 - Signal ingestion is ClickHouse-only for this plan.
 - Keep the system paper-only unless explicitly configured for live trading.

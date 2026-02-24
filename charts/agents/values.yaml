@@ -1,7 +1,7 @@
-nameOverride: ""
-fullnameOverride: ""
+nameOverride: ''
+fullnameOverride: ''
 
-namespaceOverride: ""
+namespaceOverride: ''
 
 replicaCount: 1
 
@@ -15,16 +15,16 @@ autoscaling:
 image:
   repository: ghcr.io/proompteng/jangar
   tag: latest
-  digest: ""
+  digest: ''
   pullPolicy: IfNotPresent
   pullSecrets: []
 
 controlPlane:
   image:
-    repository: ""
-    tag: ""
-    digest: ""
-    pullPolicy: ""
+    repository: ''
+    tag: ''
+    digest: ''
+    pullPolicy: ''
     pullSecrets: []
   env:
     vars: {}
@@ -39,10 +39,10 @@ controllers:
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: null
   image:
-    repository: ""
-    tag: ""
-    digest: ""
-    pullPolicy: ""
+    repository: ''
+    tag: ''
+    digest: ''
+    pullPolicy: ''
     pullSecrets: []
   resources: {}
   env:
@@ -52,18 +52,18 @@ runner:
   image:
     repository: registry.ide-newton.ts.net/lab/codex-universal
     tag: 20260219-234214-2a44dd59-dl
-    digest: ""
+    digest: ''
     pullPolicy: IfNotPresent
     pullSecrets: []
 
 serviceAccount:
   create: true
-  name: ""
+  name: ''
   annotations: {}
 
 runnerServiceAccount:
   create: false
-  name: ""
+  name: ''
   annotations: {}
   setAsDefault: true
   rbac:
@@ -92,7 +92,7 @@ audit:
     # none | stdout | http
     type: none
     http:
-      url: ""
+      url: ''
       headers: {}
       timeoutMs: 2000
 
@@ -107,7 +107,7 @@ metrics:
     labels: {}
   serviceMonitor:
     enabled: false
-    namespace: ""
+    namespace: ''
     interval: 30s
     scrapeTimeout: 10s
     honorLabels: false
@@ -119,7 +119,7 @@ metrics:
     enabled: true
     annotations: {}
     labels:
-      grafana_dashboard: "1"
+      grafana_dashboard: '1'
 
 resources:
   requests:
@@ -129,7 +129,7 @@ resources:
 
 resourceQuota:
   enabled: false
-  name: ""
+  name: ''
   hard: {}
   scopes: []
   scopeSelector: {}
@@ -138,7 +138,7 @@ resourceQuota:
 
 limitRange:
   enabled: false
-  name: ""
+  name: ''
   limits: []
   annotations: {}
   labels: {}
@@ -172,7 +172,7 @@ readinessProbe:
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
-  maxUnavailable: ""
+  maxUnavailable: ''
   annotations: {}
 
 networkPolicy:
@@ -190,21 +190,21 @@ env:
   config: []
   vars:
     NODE_ENV: production
-    PORT: "8080"
-    JANGAR_MIGRATIONS: "auto"
+    PORT: '8080'
+    JANGAR_MIGRATIONS: 'auto'
 
 workflowRuntime:
   native:
-    rerunOrchestration: ""
-    rerunOrchestrationNamespace: ""
-    systemImprovementOrchestration: ""
-    systemImprovementOrchestrationNamespace: ""
+    rerunOrchestration: ''
+    rerunOrchestrationNamespace: ''
+    systemImprovementOrchestration: ''
+    systemImprovementOrchestrationNamespace: ''
 
 runtime:
-  agentRunnerImage: ""
-  agentImage: ""
-  scheduleRunnerImage: ""
-  scheduleServiceAccount: ""
+  agentRunnerImage: ''
+  agentImage: ''
+  scheduleRunnerImage: ''
+  scheduleServiceAccount: ''
 
 envFromSecretRefs: []
 envFromConfigMapRefs: []
@@ -214,7 +214,7 @@ controller:
   leaderElection:
     enabled: true
     leaseName: jangar-controller-leader
-    leaseNamespace: ""
+    leaseNamespace: ''
     leaseDurationSeconds: 30
     renewDeadlineSeconds: 20
     retryPeriodSeconds: 5
@@ -250,7 +250,7 @@ controller:
   jobTtlSeconds: 600
   jobTtlSecondsAfterFinished: 600
   authSecret:
-    name: ""
+    name: ''
     key: auth.json
     mountPath: /root/.codex
   admissionPolicy:
@@ -270,48 +270,48 @@ controller:
         - pat
     prRateLimits: {}
   defaultWorkload:
-    serviceAccountName: ""
+    serviceAccountName: ''
     nodeSelector: {}
     tolerations: []
     affinity: {}
     topologySpreadConstraints: []
     podSecurityContext: {}
     imagePullSecrets: []
-    priorityClassName: ""
-    schedulerName: ""
+    priorityClassName: ''
+    schedulerName: ''
 
 versionControlProvider:
   enabled: false
   name: github
-  namespace: ""
+  namespace: ''
   provider: github
   apiBaseUrl: https://api.github.com
   cloneBaseUrl: https://github.com
   webBaseUrl: https://github.com
-  cloneProtocol: ""
-  sshHost: ""
-  sshUser: ""
+  cloneProtocol: ''
+  sshHost: ''
+  sshUser: ''
   auth:
     method: token
-    username: ""
+    username: ''
     token:
       secretRef:
-        name: ""
+        name: ''
         key: token
-      type: ""
+      type: ''
     app:
-      appId: ""
-      installationId: ""
+      appId: ''
+      installationId: ''
       privateKeySecretRef:
-        name: ""
+        name: ''
         key: privateKey
       tokenTtlSeconds: 0
     ssh:
       privateKeySecretRef:
-        name: ""
+        name: ''
         key: privateKey
       knownHostsConfigMapRef:
-        name: ""
+        name: ''
         key: known_hosts
   repositoryPolicy:
     allow: []
@@ -328,8 +328,8 @@ versionControlProvider:
     pullRequest:
       enabled: true
       draft: false
-      titleTemplate: "Codex: {{repository}}"
-      bodyTemplate: "Closes #{{issueNumber}}"
+      titleTemplate: 'Codex: {{repository}}'
+      bodyTemplate: 'Closes #{{issueNumber}}'
 
 orchestrationController:
   enabled: true
@@ -343,25 +343,25 @@ agentComms:
   enabled: false
   subjects: []
   nats:
-    url: ""
-    user: ""
-    password: ""
+    url: ''
+    user: ''
+    password: ''
     userSecret:
-      name: ""
+      name: ''
       usernameKey: username
       passwordKey: password
 
 database:
-  url: ""
+  url: ''
   secretRef:
-    name: ""
+    name: ''
     key: url
   createSecret:
     enabled: false
-    name: ""
+    name: ''
     annotations: {}
   caSecret:
-    name: ""
+    name: ''
     key: ca.crt
 
 extraVolumes: []
@@ -376,19 +376,19 @@ podSecurityAdmission:
   labels: {}
 
 kubernetesApi:
-  host: ""
-  port: ""
+  host: ''
+  port: ''
 
 argocdHooks:
   enabled: false
-  serviceAccountName: ""
+  serviceAccountName: ''
   ttlSecondsAfterFinished: 300
   syncWaves:
-    preSync: "-1"
-    postSync: "1"
+    preSync: '-1'
+    postSync: '1'
   image:
     repository: bitnami/kubectl
-    tag: "1.30.1"
+    tag: '1.30.1'
     pullPolicy: IfNotPresent
   preSync:
     enabled: true
@@ -397,5 +397,5 @@ argocdHooks:
     waitTimeout: 10m
     cleanup: true
   smoke:
-    labelSelector: ""
+    labelSelector: ''
     agentRun: {}

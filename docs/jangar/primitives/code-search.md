@@ -358,7 +358,7 @@ This avoids guessing and reduces the number of “search -> wrong file -> search
 
 List top atlas tables:
 
-```bash
+````bash
 kubectl cnpg psql -n jangar jangar-db -- -d jangar -c \\\n  \"SELECT nspname AS schema, relname AS table, pg_size_pretty(pg_total_relation_size(c.oid)) AS total_size\\\n   FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace\\\n   WHERE c.relkind='r' AND nspname NOT IN ('pg_catalog','information_schema')\\\n   ORDER BY pg_total_relation_size(c.oid) DESC LIMIT 30;\"\n```
 
 Check whether chunk indexing is enabled (it is not today):
@@ -373,3 +373,4 @@ kubectl cnpg psql -n jangar jangar-db -- -d jangar -c \\\n  \"SELECT count(*) FR
 3. Enable the Code Search API endpoint (hybrid retrieval) and integrate it as an agent tool.
 4. Backfill existing `file_versions` with rate limiting.
 5. Iterate on chunking and reranking based on real agent usage.
+````

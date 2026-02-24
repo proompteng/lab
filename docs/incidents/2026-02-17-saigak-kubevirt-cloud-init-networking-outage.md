@@ -14,13 +14,13 @@
 
 ## Timeline (UTC)
 
-| Time | Event |
-| --- | --- |
-| ~2026-02-17 06:xxZ | `talos-192-168-1-85` restarted; `saigak` VM comes back `Running` but service is unreachable. |
-| ~2026-02-17 07:xxZ | Confirmed node GPU is present/allocatable and `virt-launcher-saigak-*` requests `nvidia.com/GA102_GEFORCE_RTX_3090: 1`. |
+| Time               | Event                                                                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ~2026-02-17 06:xxZ | `talos-192-168-1-85` restarted; `saigak` VM comes back `Running` but service is unreachable.                                                                  |
+| ~2026-02-17 07:xxZ | Confirmed node GPU is present/allocatable and `virt-launcher-saigak-*` requests `nvidia.com/GA102_GEFORCE_RTX_3090: 1`.                                       |
 | ~2026-02-17 07:xxZ | Diagnosed KubeVirt masquerade path failing: `curl` to `saigak.saigak.svc:11434` times out; inside `virt-launcher` neighbor `10.0.2.2` is `FAILED/INCOMPLETE`. |
-| ~2026-02-17 08:xxZ | Root cause isolated to guest networking: cloud-init shows `enp1s0` `Up=False` and no IP, so masquerade DNAT never reaches the guest. |
-| ~2026-02-17 08:xxZ | Remediations applied via GitOps (ArgoCD) and `saigak` VMI restarted until guest NIC comes up and endpoints respond. |
+| ~2026-02-17 08:xxZ | Root cause isolated to guest networking: cloud-init shows `enp1s0` `Up=False` and no IP, so masquerade DNAT never reaches the guest.                          |
+| ~2026-02-17 08:xxZ | Remediations applied via GitOps (ArgoCD) and `saigak` VMI restarted until guest NIC comes up and endpoints respond.                                           |
 
 ## Root Cause
 
@@ -93,4 +93,3 @@ kubectl -n saigak exec "pod/$POD" -c compute -- sh -c \
 kubectl describe node talos-192-168-1-85 | rg 'nvidia.com/GA102_GEFORCE_RTX_3090|Allocated resources'
 kubectl -n saigak get pod -l kubevirt.io=virt-launcher -o json | jq '.items[0].spec.containers[] | select(.name==\"compute\") | .resources'
 ```
-

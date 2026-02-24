@@ -62,7 +62,7 @@ jobs:
             Automated Temporal proto regeneration for `@proompteng/temporal-bun-sdk`.
 
             - Ran `bun packages/temporal-bun-sdk/scripts/update-temporal-protos.ts`
-            - Rebuilt SDK and executed Biome + test + load suites
+            - Rebuilt SDK and executed Oxfmt + test + load suites
 
             Merge after verifying CI to keep generated protos aligned with upstream Temporal APIs.
 

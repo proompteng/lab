@@ -3,21 +3,26 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The Agents chart supports multiple ways to provide `DATABASE_URL` to both the control plane and controllers. The precedence is currently implicit in templates; misconfiguration can lead to pods starting without a database connection or using an unintended database.
 
 This doc formalizes the precedence rules and recommended operational patterns.
 
 ## Goals
+
 - Make the `DATABASE_URL` source deterministic and auditable.
 - Support GitOps-friendly database secret management.
 - Provide clear failure behavior when database config is missing.
 
 ## Non-Goals
+
 - Managing the database lifecycle itself (CNPG, RDS, etc.).
 - Automatic database provisioning.
 
 ## Current State
+
 - Chart values: `charts/agents/values.yaml` under `database.*`.
 - Template renders `DATABASE_URL`:
   - Control plane: `charts/agents/templates/deployment.yaml`
@@ -26,59 +31,72 @@ This doc formalizes the precedence rules and recommended operational patterns.
 - Cluster desired state: `argocd/applications/agents/values.yaml` uses `database.secretRef`.
 
 ## Design
+
 ### Precedence (highest wins)
+
 1. `database.url` (inline literal in Helm values; not recommended for prod)
 2. `database.secretRef` (preferred; Secret managed outside chart)
 3. `database.createSecret.enabled` (chart creates Secret from `database.url`-like values; for dev only)
 4. Otherwise: omit `DATABASE_URL` and fail fast (application should refuse to start)
 
 ### Required behavior
+
 - Chart SHOULD fail render if none of the above sources are configured for a production profile (e.g. `values-prod.yaml`).
 - Runtime SHOULD log a single line at startup indicating which source was used (inline vs Secret).
 
 ## Config Mapping
-| Helm value | Rendered env var | Intended behavior |
-|---|---|---|
-| `database.url` | `DATABASE_URL` (literal) | Highest precedence; discouraged for prod GitOps. |
-| `database.secretRef.name` + `database.secretRef.key` | `DATABASE_URL` from `secretKeyRef` | Preferred production path. |
-| `database.createSecret.enabled=true` | `DATABASE_URL` from chart-created Secret | Dev/local convenience; avoid for prod. |
+
+| Helm value                                           | Rendered env var                         | Intended behavior                                |
+| ---------------------------------------------------- | ---------------------------------------- | ------------------------------------------------ |
+| `database.url`                                       | `DATABASE_URL` (literal)                 | Highest precedence; discouraged for prod GitOps. |
+| `database.secretRef.name` + `database.secretRef.key` | `DATABASE_URL` from `secretKeyRef`       | Preferred production path.                       |
+| `database.createSecret.enabled=true`                 | `DATABASE_URL` from chart-created Secret | Dev/local convenience; avoid for prod.           |
 
 ## Rollout Plan
+
 1. Add docs + README clarifying precedence.
 2. Add `values.schema.json` constraints: if `database.createSecret.enabled=true`, require `database.url`.
 3. Add `templates/validation.yaml` rules for production profiles (render-time failure).
 
 Rollback:
+
 - Disable validation rules; do not change existing Secret references.
 
 ## Validation
+
 Render:
+
 ```bash
 mise exec helm@3 -- helm template agents charts/agents -f argocd/applications/agents/values.yaml | rg -n \"DATABASE_URL\"
 ```
 
 Live:
+
 ```bash
 kubectl -n agents get deploy agents -o yaml | rg -n \"DATABASE_URL\"
 kubectl -n agents get secret jangar-db-app -o yaml
 ```
 
 ## Failure Modes and Mitigations
+
 - Both `database.url` and `database.secretRef` set: mitigate by documenting precedence and adding validation warnings.
 - Secret exists but key is wrong: mitigate by schema defaults (`key: url`) + startup error with clear message.
 - Missing database config causes CrashLoopBackOff: mitigate via render-time validation in prod profiles.
 
 ## Acceptance Criteria
+
 - Operators can identify the effective `DATABASE_URL` source from Helm render output.
 - Production installs fail fast if database config is missing.
 
 ## References
+
 - Kubernetes Secrets as env vars: https://kubernetes.io/docs/concepts/configuration/secret/
 - Helm values best practices: https://helm.sh/docs/chart_best_practices/values/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -93,7 +111,9 @@ kubectl -n agents get secret jangar-db-app -o yaml
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -126,13 +146,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -148,6 +171,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -160,6 +184,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

@@ -43,7 +43,7 @@ cause a drift loop.
    ```bash
    kubectl apply -k argocd/applications/<app>/overlays/cluster
    ```
-3. If an emergency fix *requires* running `kn service update`, immediately
+3. If an emergency fix _requires_ running `kn service update`, immediately
    export the hydrated spec afterwards:
    ```bash
    kubectl get ksvc <app> -n <namespace> -o yaml > /tmp/ksvc.yaml

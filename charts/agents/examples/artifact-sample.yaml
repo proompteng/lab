@@ -7,4 +7,3 @@ spec:
     name: default-storage
   lifecycle:
     ttlDays: 7
-

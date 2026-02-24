@@ -37,21 +37,14 @@
     "backtest/evaluation-report.json",
     "gates/gate-evaluation.json"
   ],
-  "promotion_require_patch_targets": [
-    "paper",
-    "live"
-  ],
+  "promotion_require_patch_targets": ["paper", "live"],
   "promotion_profitability_required_artifacts": [
     "gates/profitability-evidence-v4.json",
     "gates/profitability-benchmark-v4.json",
     "gates/profitability-evidence-validation.json",
     "gates/recalibration-report.json"
   ],
-  "rollback_required_checks": [
-    "killSwitchDryRunPassed",
-    "gitopsRevertDryRunPassed",
-    "strategyDisableDryRunPassed"
-  ],
+  "rollback_required_checks": ["killSwitchDryRunPassed", "gitopsRevertDryRunPassed", "strategyDisableDryRunPassed"],
   "rollback_dry_run_max_age_hours": 72,
   "rollback_require_human_approval": true
 }

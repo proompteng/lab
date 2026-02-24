@@ -3,69 +3,87 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 Operators need reliable cancellation semantics for OrchestrationRuns. Cancelling should propagate to all active underlying runtimes (Jobs/Workflows/etc) and update status/conditions in a predictable way.
 
 ## Goals
+
 - Define cancel request API and status transitions.
 - Ensure cancel propagates to underlying resources best-effort.
 
 ## Non-Goals
+
 - Guaranteeing immediate termination in all runtimes.
 
 ## Current State
+
 - OrchestrationRun CRD exists:
   - `charts/agents/crds/orchestration.proompteng.ai_orchestrationruns.yaml`
 - Controller: `services/jangar/src/server/orchestration-controller.ts`
 - Orchestration submission stores externalRunId in DB: `services/jangar/src/server/orchestration-submit.ts`.
 
 ## Design
+
 ### API shape
+
 Add:
+
 ```yaml
 spec:
   cancel: true
 ```
+
 or a `spec.desiredState: Cancelled`.
 
 ### Controller behavior
+
 - If cancel requested:
   - Attempt to delete/terminate underlying runtime resources.
   - Set `status.phase=Cancelled` and condition `Cancelled=True` once cancellation is acknowledged.
   - If already terminal success/failure: ignore cancel request (no-op) and record a condition reason.
 
 ## Config Mapping
-| Helm value / env var (proposed) | Effect | Behavior |
-|---|---|---|
-| `controllers.env.vars.JANGAR_ORCHESTRATION_CANCEL_TIMEOUT_MS` | bound | Upper bound for cancellation attempts before marking cancelled anyway. |
+
+| Helm value / env var (proposed)                               | Effect | Behavior                                                               |
+| ------------------------------------------------------------- | ------ | ---------------------------------------------------------------------- |
+| `controllers.env.vars.JANGAR_ORCHESTRATION_CANCEL_TIMEOUT_MS` | bound  | Upper bound for cancellation attempts before marking cancelled anyway. |
 
 ## Rollout Plan
+
 1. Implement cancel semantics in controller with a feature flag.
 2. Canary in non-prod by cancelling a running orchestration and confirming propagation.
 
 Rollback:
+
 - Disable cancel support flag; rely on manual deletion of underlying resources.
 
 ## Validation
+
 ```bash
 kubectl -n agents patch orchestrationrun <name> --type=merge -p '{\"spec\":{\"cancel\":true}}'
 kubectl -n agents get orchestrationrun <name> -o yaml | rg -n \"Cancelled|phase\"
 ```
 
 ## Failure Modes and Mitigations
+
 - Underlying runtime ignores deletion: mitigate by best-effort termination + clear status messaging.
 - Cancel flips terminal success incorrectly: mitigate by making cancel a no-op for terminal runs.
 
 ## Acceptance Criteria
+
 - Cancelling a running OrchestrationRun results in a terminal Cancelled state and best-effort runtime termination.
 - Cancel is a no-op for already terminal runs.
 
 ## References
+
 - Kubernetes graceful termination concepts: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -80,7 +98,9 @@ kubectl -n agents get orchestrationrun <name> -o yaml | rg -n \"Cancelled|phase\
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -113,13 +133,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -135,6 +158,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -147,6 +171,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

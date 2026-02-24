@@ -5,7 +5,7 @@
 - Format: `bun run format`
 - Lint: `bun run --filter @proompteng/bumba lint`
 - Typecheck: `bun run --filter @proompteng/bumba tsc`
-- Biome: `bunx biome check services/bumba`
+- Oxfmt: `bunx oxfmt --check services/bumba`
 
 ## Go
 

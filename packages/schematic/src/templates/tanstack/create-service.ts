@@ -24,6 +24,38 @@ type ScaffoldOverride = {
 
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
 
+const serviceBaseScripts: Record<string, string> = {
+  dev: 'vite dev --host --port 3000',
+  build: 'vite build',
+  start: 'bun .output/server/index.mjs',
+  lint: 'bunx oxfmt --check src',
+  'lint:oxlint': 'oxlint --config ../../.oxlintrc.json .',
+  'lint:oxlint:type': 'oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .',
+  test: 'vitest run',
+}
+
+export const mergeTanstackServiceScripts = (
+  pkg: Record<string, unknown>,
+  options: { enablePostgres?: boolean } = {},
+): Record<string, string> => {
+  const existingScripts =
+    pkg.scripts && typeof pkg.scripts === 'object' && !Array.isArray(pkg.scripts)
+      ? (pkg.scripts as Record<string, string>)
+      : {}
+
+  const scripts: Record<string, string> = {
+    ...existingScripts,
+    ...serviceBaseScripts,
+  }
+
+  if (options.enablePostgres) {
+    scripts.generate = 'bunx drizzle-kit generate --config drizzle.config.ts'
+    scripts.migrate = 'bunx drizzle-kit push --config drizzle.config.ts'
+  }
+
+  return scripts
+}
+
 const rootRouteTemplate = (
   name: string,
 ) => `import { HeadContent, Link, Scripts, createRootRoute } from '@tanstack/react-router'
@@ -249,31 +281,9 @@ const scaffoldWithTanstackCli = async (opts: TanstackServiceOptions): Promise<Ge
     pkg.version = pkg.version ?? '0.1.0'
     pkg.private = true
     pkg.type = 'module'
-    const baseScripts: Record<string, string> = {
-      dev: 'vite dev --host --port 3000',
-      build: 'vite build',
-      start: 'bun .output/server/index.mjs',
-      lint: 'bunx biome check src',
-      test: 'vitest run',
-    }
-
-    const existingScripts =
-      pkg.scripts && typeof pkg.scripts === 'object' && !Array.isArray(pkg.scripts)
-        ? (pkg.scripts as Record<string, string>)
-        : {}
-    const mergedScripts: Record<string, string> = { ...existingScripts, ...baseScripts }
-    pkg.scripts = mergedScripts
+    pkg.scripts = mergeTanstackServiceScripts(pkg, { enablePostgres: opts.enablePostgres })
 
     if (opts.enablePostgres) {
-      const currentScripts =
-        pkg.scripts && typeof pkg.scripts === 'object' && !Array.isArray(pkg.scripts)
-          ? (pkg.scripts as Record<string, string>)
-          : {}
-      pkg.scripts = {
-        ...currentScripts,
-        generate: 'bunx drizzle-kit generate --config drizzle.config.ts',
-        migrate: 'bunx drizzle-kit push --config drizzle.config.ts',
-      }
       const deps = (pkg.dependencies as Record<string, string> | undefined) ?? {}
       pkg.dependencies = {
         ...deps,

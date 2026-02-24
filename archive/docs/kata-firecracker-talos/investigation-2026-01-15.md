@@ -5,9 +5,11 @@ Cluster: ryzen (Talos v1.12.1, Kubernetes v1.35.0)
 Node: 192.168.1.194
 
 ## Goal
+
 Run Kata Containers with Firecracker (runtimeClass `kata-fc`) on the ryzen Talos cluster and verify with a test pod. Provide reliable proof that Firecracker-backed Kata pods start.
 
 ## Environment
+
 - OS: Talos v1.12.1
 - Kubernetes: v1.35.0
 - containerd: v2.1.6
@@ -15,35 +17,43 @@ Run Kata Containers with Firecracker (runtimeClass `kata-fc`) on the ryzen Talos
 - RuntimeClass: `kata-fc`
 
 Key binaries found:
+
 - `/usr/local/bin/firecracker`
 - `/usr/local/bin/containerd-shim-kata-v2`
 - `/usr/local/share/kata-containers/configuration.toml`
 
 ## Summary of Findings
-1) **Firecracker requires a block-backed rootfs**, which in containerd is typically provided via the **devmapper snapshotter**.
-2) **Talos’s containerd build on this node does not expose the devmapper snapshotter**, even after adding a devmapper config stanza. As a result, Kata+Firecracker cannot create a sandbox.
-3) Attempts to run a `kata-fc` pod fail with:
+
+1. **Firecracker requires a block-backed rootfs**, which in containerd is typically provided via the **devmapper snapshotter**.
+2. **Talos’s containerd build on this node does not expose the devmapper snapshotter**, even after adding a devmapper config stanza. As a result, Kata+Firecracker cannot create a sandbox.
+3. Attempts to run a `kata-fc` pod fail with:
    - `CreateContainerRequest timed out` (initially)
    - or `failed to mount /run/kata-containers/shared/containers/...: ENOENT`
    - and after configuring devmapper: `snapshotter devmapper was not found: not found`
-4) Firecracker never creates its API socket under `/run/vc/firecracker/.../root/run/firecracker.socket`, indicating the VMM never fully starts.
+4. Firecracker never creates its API socket under `/run/vc/firecracker/.../root/run/firecracker.socket`, indicating the VMM never fully starts.
 
 This is a hard blocker unless containerd is rebuilt with devmapper support or the OS/containerd runtime is changed.
 
 ## Detailed Timeline & Evidence
 
 ### 1) Confirm runtime and node
+
 Commands:
+
 ```
 kubectl --context=ryzen get nodes -o wide
 kubectl --context=ryzen get runtimeclass
 ```
+
 Result:
+
 - Node `ryzen` Ready on Talos v1.12.1, containerd v2.1.6.
 - RuntimeClass `kata-fc` exists.
 
 ### 2) Initial failure: CreateContainerRequest timed out
+
 Test pod:
+
 ```
 apiVersion: v1
 kind: Pod
@@ -59,21 +69,27 @@ spec:
       image: busybox:1.36
       command: ["sh", "-c", "echo kata-fc-ok && sleep 3600"]
 ```
+
 Symptoms:
+
 - Pod stuck `ContainerCreating`.
 - `FailedCreatePodSandBox` with timeout.
 
 Containerd/cri log evidence (tail):
+
 - `getting vm status failed ... /run/vc/firecracker/.../firecracker.socket: no such file or directory`
 - `CreateContainerRequest timed out`
 
 Interpretation:
+
 - Kata shim attempts to talk to Firecracker API socket that never appears.
 
 ### 3) ConfigPath adjustment
+
 Initially used a custom config under `/var/lib/kata-containers/configuration-fc.toml`, but Talos only allows `machine.files` under `/var`. To remove variables, switched to the **stock config**:
 
 Talos file (`/etc/cri/conf.d/20-customization.part`):
+
 ```
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc"]
   runtime_type = "io.containerd.kata-fc.v2"
@@ -95,16 +111,21 @@ Talos file (`/etc/cri/conf.d/20-customization.part`):
 Result: timeout errors replaced by rootfs mount ENOENT errors. Firecracker still never starts.
 
 ### 4) ENOENT rootfs mount failures
+
 Pod describe showed:
+
 ```
 failed to mount /run/kata-containers/shared/containers/<id>/rootfs to /run/kata-containers/<id>/rootfs, with error: ENOENT
 ```
 
 Interpretation:
+
 - Kata expects a block-based rootfs for Firecracker. Without a block snapshotter, rootfs mount path doesn’t materialize.
 
 ### 5) Attempted devmapper snapshotter
+
 Added devmapper snapshotter config and runtime snapshotter in CRI config:
+
 ```
 [plugins."io.containerd.snapshotter.v1.devmapper"]
   pool_name = "containerd-pool"
@@ -121,22 +142,28 @@ Added devmapper snapshotter config and runtime snapshotter in CRI config:
 ```
 
 Created a loopback-backed thinpool (test-only) via a privileged pod:
+
 - Creates `/var/lib/containerd/io.containerd.snapshotter.v1.devmapper/{data,meta}`
 - `dmsetup create containerd-pool ...`
 
 Result:
+
 - `kata-fc-test` failed with:
   `snapshotter devmapper was not found: not found`
 
 ### 6) Confirm containerd does not load devmapper
+
 Containerd logs show only `native` and `overlayfs` snapshotters loaded:
+
 ```
 io.containerd.snapshotter.v1.native
 io.containerd.snapshotter.v1.overlayfs
 ```
+
 No devmapper plugin is present. This indicates the containerd build shipped with Talos here does not include devmapper snapshotter support.
 
 ## Root Cause
+
 Firecracker requires block-backed rootfs. On this Talos node, containerd lacks the devmapper snapshotter, so Firecracker cannot mount the root filesystem. This prevents Firecracker from starting and causes Kata shim failures.
 
 ## Resolution (Working on 2026-01-15)
@@ -232,26 +259,32 @@ Linux kata-fc-test 6.12.47 #1 SMP Fri Dec  5 12:15:04 UTC 2025 x86_64 GNU/Linux
 ## Internet Research (Primary Sources)
 
 ### Firecracker storage model
+
 - Firecracker’s device model includes `virtio-block` as the storage device. This implies storage (including rootfs) is exposed to the guest as a block device, not a host file share.
   - https://firecracker-microvm.github.io/
 
 ### Containerd devmapper snapshotter
+
 - Devmapper snapshotter is a containerd plugin that stores snapshots in filesystem images inside a device-mapper thin pool. It requires creating a thin-pool in advance and configuring containerd to use it.
   - https://fossies.org/linux/containerd/docs/snapshotters/devmapper.md
 
 ### Talos containerd configuration merge point
+
 - Talos merges containerd configuration from `/etc/cri/conf.d/20-customization.part` (Talos docs).
   - https://www.talos.dev/v1.11/talos-guides/configuration/containerd/
 
 ### Talos custom image build path
+
 - Talos supports building custom images from source (needed if containerd must be rebuilt with devmapper support).
   - https://www.talos.dev/v1.10/advanced/building-images/
 
 ### Firecracker + devmapper in the ecosystem
+
 - Flintlock docs explicitly state it relies on containerd’s devmapper snapshotter to provide filesystem devices for Firecracker microVMs, reinforcing the block-backed storage requirement.
   - https://flintlock.liquidmetal.dev/docs/getting-started/containerd/
 
 ## What Works
+
 - Kata binaries are present (`/usr/local/bin/firecracker`, `containerd-shim-kata-v2`).
 - RuntimeClass `kata-fc` exists.
 - KVM/vsock device nodes exist (`/dev/kvm`, `/dev/vhost-vsock`).
@@ -259,25 +292,30 @@ Linux kata-fc-test 6.12.47 #1 SMP Fri Dec  5 12:15:04 UTC 2025 x86_64 GNU/Linux
 - `kata-fc-test` pod runs successfully.
 
 ## What Does Not Work
+
 - Devmapper snapshotter is not available in the Talos containerd build.
 
 ## Required Fix Options
-1) **Keep blockfile snapshotter** (current working solution).
-2) **Custom Talos build/containerd** with devmapper snapshotter enabled (optional).
-3) **Use a different VMM** (QEMU or Cloud Hypervisor) if blockfile is not viable.
+
+1. **Keep blockfile snapshotter** (current working solution).
+2. **Custom Talos build/containerd** with devmapper snapshotter enabled (optional).
+3. **Use a different VMM** (QEMU or Cloud Hypervisor) if blockfile is not viable.
 
 ## Artifacts & References
+
 - Talos config changes live in:
   - `/Users/gregkonush/github.com/devices/ryzen/controlplane.yaml`
   - `/Users/gregkonush/github.com/devices/ryzen/worker.yaml`
 - Doc: `docs/kata-firecracker-talos/kata-firecracker-talos.md`
 
 ## Cleanup Performed
+
 - Removed helper pods:
   - `blockfile-scratch-init`
   - `ctr-plugins-check`
   - `ctr-fix-pause`
 
 ## Next Actions
+
 - Optional: codify the blockfile scratch creation as a GitOps manifest.
 - Optional: evaluate a custom Talos/containerd build if devmapper is required.

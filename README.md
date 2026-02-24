@@ -35,41 +35,45 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 
 ## Repository Layout
 
-| Path | Description |
-| ---- | ----------- |
-| `apps/` | Frontends and UX surfaces (e.g. `landing`, `app`, `docs`) with co-located fixtures and tests. |
-| `packages/backend` | Convex backend project (`convex dev`, codegen, model seeding). |
-| `packages/atelier`, `packages/cloutt` | Shared TypeScript utilities and infrastructure tooling. |
-| `services/` | Go microservices (`miel`, `prt`, `eclair`) with adjacent tests and Dockerfiles. |
-| `ansible/` | Playbooks and inventory for provisioning supporting hosts. |
-| `tofu/` | OpenTofu (Terraform) configurations for Harvester, Cloudflare, Rancher, and Tailscale. |
-| `kubernetes/` | Cluster bootstrap/maintenance tooling (install scripts, Coder template); no workload manifests. |
-| `argocd/` | Argo CD application specs and ApplicationSets for GitOps deployment. |
-| `scripts/` | Helper scripts for builds, secrets management, and Tailscale automation. |
-| `AGENTS.md`, `CLAUDE.md` | Notes and prompts for AI agent integrations. |
+| Path                                  | Description                                                                                     |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `apps/`                               | Frontends and UX surfaces (e.g. `landing`, `app`, `docs`) with co-located fixtures and tests.   |
+| `packages/backend`                    | Convex backend project (`convex dev`, codegen, model seeding).                                  |
+| `packages/atelier`, `packages/cloutt` | Shared TypeScript utilities and infrastructure tooling.                                         |
+| `services/`                           | Go microservices (`miel`, `prt`, `eclair`) with adjacent tests and Dockerfiles.                 |
+| `ansible/`                            | Playbooks and inventory for provisioning supporting hosts.                                      |
+| `tofu/`                               | OpenTofu (Terraform) configurations for Harvester, Cloudflare, Rancher, and Tailscale.          |
+| `kubernetes/`                         | Cluster bootstrap/maintenance tooling (install scripts, Coder template); no workload manifests. |
+| `argocd/`                             | Argo CD application specs and ApplicationSets for GitOps deployment.                            |
+| `scripts/`                            | Helper scripts for builds, secrets management, and Tailscale automation.                        |
+| `AGENTS.md`, `CLAUDE.md`              | Notes and prompts for AI agent integrations.                                                    |
 
 ---
 
 ## Development Workflows
 
 ### Frontend
+
 - Lint & format: `bun run lint:landing`, `bun run format`
 - Build & smoke test: `bun run build:landing` then `bun run start:landing`
-- Shared Biome config lives at `biome.json`
+- Shared Oxfmt config lives at `.oxfmtrc.json`
 
 ### Convex Backend
+
 - Generate types: `bun run --filter @proompteng/backend codegen`
 - Start local dev: `bun run dev:convex`
 - Seed models: `bun run seed:models`
 
 ### Go Services
+
 - Test all services: `go test ./services/...`
 - Build binaries: `go build ./services/...`
 - Unit test a single service: `go test ./services/prt -run TestHandleRoot`
 
 ### Tooling & Quality
-- Husky + Biome formatted on commit (`lint-staged` configuration in `package.json`).
-- Oxlint runs alongside Biome: `bun run lint:oxlint` for repo-wide JS/TS checks and `bun run lint:oxlint:type` to run type-aware checks across TS workspaces.
+
+- Husky + Oxfmt formatting on commit (`lint-staged` configuration in `package.json`).
+- Oxlint runs alongside Oxfmt: `bun run lint:oxlint` for repo-wide JS/TS checks and `bun run lint:oxlint:type` to run type-aware checks across TS workspaces.
 - Type-aware Oxlint uses tsgolint (typescript-go), which may skip unsupported tsconfig options (such as `baseUrl`)—use lint-only tsconfigs per workspace if needed.
 - TailwindCSS v4 & Radix UI used extensively in frontend components.
 
@@ -109,17 +113,18 @@ These instructions remain intentionally permissive for an isolated lab network�
 
 ## Infrastructure & Operations
 
-| Task | Command / Notes |
-| ---- | ---------------- |
-| Plan infrastructure | `bun run tf:plan` (OpenTofu under `tofu/harvester`)
-| Apply infrastructure | `bun run tf:apply` (only after reviewing the plan)
-| Destroy Harvester VM | `bun run tf:destroy`
-| Apply Kubernetes base | `bun run harvester:apply` or `./kubernetes/install.sh`
-| Bootstrap Argo CD | `bun run k:bootstrap` (server-side apply; avoids metadata annotation size limit issues on CRDs)
-| Run Ansible playbooks | `bun run ansible`
-| Manage Coder template | `kubernetes/coder` contains Terraform + template YAML used by the button above.
+| Task                  | Command / Notes                                                                                 |
+| --------------------- | ----------------------------------------------------------------------------------------------- |
+| Plan infrastructure   | `bun run tf:plan` (OpenTofu under `tofu/harvester`)                                             |
+| Apply infrastructure  | `bun run tf:apply` (only after reviewing the plan)                                              |
+| Destroy Harvester VM  | `bun run tf:destroy`                                                                            |
+| Apply Kubernetes base | `bun run harvester:apply` or `./kubernetes/install.sh`                                          |
+| Bootstrap Argo CD     | `bun run k:bootstrap` (server-side apply; avoids metadata annotation size limit issues on CRDs) |
+| Run Ansible playbooks | `bun run ansible`                                                                               |
+| Manage Coder template | `kubernetes/coder` contains Terraform + template YAML used by the button above.                 |
 
 Supporting configuration:
+
 - `skaffold.yaml` for iterative container builds.
 - `scripts/generate-*` helpers to create sealed secrets and Tailscale auth keys.
 - `tmp/` contains sample certs, Milvus configs, and operator bundles used during experimentation.
@@ -144,4 +149,4 @@ Supporting configuration:
 - `services/*/README.md` – Service-specific docs (`miel`, `prt`)
 - `tofu/README.md` – Terraform/OpenTofu usage
 
-Feel free to add new experiments under `apps/` or `services/`—keep scope tight, follow the Biome/Tailwind conventions, and document deployment steps alongside automation scripts.
+Feel free to add new experiments under `apps/` or `services/`—keep scope tight, follow the Oxfmt/Tailwind conventions, and document deployment steps alongside automation scripts.

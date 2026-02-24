@@ -13,64 +13,74 @@ Captured on **November 17, 2025** with Newegg pricing. This Arm-first design tar
 
 ## Bill of materials
 
-| Role | Item | SKU | Qty | Unit Price | Extended | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Chassis / acoustics | [Fractal Design Define 7 XL (dark tint TG)](https://www.newegg.com/fractal-design-atx-full-tower-define-7-xl-steel-computer-case-black-fd-c-def7x-03/p/N82E16811352120) | N82E16811352120 | 1 | $254.99 | $254.99 | Sound-damped full tower with modular drive cages (6 × 3.5 in + 2 × 2.5 in included, 18 positions max) for dense storage. |
-| Compute base | [ASRock Rack ALTRAD8UD-1L2T + Ampere Altra M128-26 bundle](https://www.newegg.com/asrock-rack-altrad8ud-1l2t-q64-22-ampere-altra-max-ampere-altra-processors/p/N82E16813140135) | N82E16813140135 | 1 | $2,149.00 | $2,149.00 | 128-core Arm server CPU, dual 10 GbE LAN, and passive 2U cooler on a deep micro-ATX board. |
-| Power delivery | [ASRock Phantom Gaming PG-1600G (ATX 3.1 / PCIe 5.1)](https://www.newegg.com/asrock-atx3-1-pcie5-1-1600-w-cybenetics-gold-power-supply-black-pg-1600g/p/N82E16817955003) | N82E16817955003 | 1 | $199.99 | $199.99 | 1,600 W PSU with 12V-2x6 harnesses for accelerator or storage expansion cards. |
-| Primary OS / cache | [Samsung 990 PRO 2 TB NVMe SSD](https://www.newegg.com/samsung-2tb-990-pro-nvme-2-0/p/N82E16820147861) | N82E16820147861 | 1 | $189.99 | $189.99 | PCIe 4.0 boot/cache device delivering 7 GB/s-class reads for ZFS special devices or VM images. |
-| Power harnessing | [StarTech PYO2SATA SATA power Y splitters](https://www.newegg.com/multi-color-startech-6-cable-connectors/p/N82E16812200468?Item=9SIA1K682A3800) | 9SIA1K682A3800 | 4 | $15.99 | $63.96 | Adapts PSU SATA runs into eight additional drive feeds without secondary PSUs. |
-| Memory | [NEMIX 1 TB (8 × 128 GB) DDR4-2933 ECC LRDIMM kit](https://www.newegg.com/p/1X5-003Z-01928?Item=9SIA7S6BW24233) | 9SIA7S6BW24233 | 1 | $3,621.35 | $3,621.35 | 1 TB ECC RAM removes the typical homelab bottleneck for Proxmox/Talos clusters and analytics workloads. |
-| Thermal management | [Noctua NF-A14x25r G2 PWM Sx2-PP kits](https://www.newegg.com/p/9SIAADYKB59265) | 9SIAADYKB59265 | 5 kits (10 fans) | $84.95 | $424.75 | Push/pull 140 mm sets keep airflow laminar across drive cages and the passive CPU heat sink. |
-| Storage cabling | [Enlabs SFF-8643 to 4 × SATA breakout cables (0.5 m)](https://www.newegg.com/p/9SIACJF8TR1154) | 9SIACJF8TR1154 | 2 | $13.89 | $27.78 | Breaks the HBA mini-SAS ports into individual SATA channels for JBOD or ZFS mirrors. |
-| Spot cooling | [Noctua NF-A9 PWM 92 mm fan](https://www.newegg.com/p/9SIAZTUKCA0825) | 9SIAZTUKCA0825 | 1 | $25.50 | $25.50 | Targets localized hot spots such as the SAS HBA or VRM zones. |
-| Storage expansion | [Broadcom / LSI 9400-8i Tri-Mode HBA](https://www.newegg.com/p/9SIBT5SKEV9153) | 9SIBT5SKEV9153 | 1 | $109.00 | $109.00 | PCIe 3.1 x8 controller supplies eight 12G lanes (SAS / SATA / NVMe) for future disk pools. |
+| Role                | Item                                                                                                                                                                            | SKU             | Qty              | Unit Price | Extended  | Notes                                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ---------------- | ---------- | --------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Chassis / acoustics | [Fractal Design Define 7 XL (dark tint TG)](https://www.newegg.com/fractal-design-atx-full-tower-define-7-xl-steel-computer-case-black-fd-c-def7x-03/p/N82E16811352120)         | N82E16811352120 | 1                | $254.99    | $254.99   | Sound-damped full tower with modular drive cages (6 × 3.5 in + 2 × 2.5 in included, 18 positions max) for dense storage. |
+| Compute base        | [ASRock Rack ALTRAD8UD-1L2T + Ampere Altra M128-26 bundle](https://www.newegg.com/asrock-rack-altrad8ud-1l2t-q64-22-ampere-altra-max-ampere-altra-processors/p/N82E16813140135) | N82E16813140135 | 1                | $2,149.00  | $2,149.00 | 128-core Arm server CPU, dual 10 GbE LAN, and passive 2U cooler on a deep micro-ATX board.                               |
+| Power delivery      | [ASRock Phantom Gaming PG-1600G (ATX 3.1 / PCIe 5.1)](https://www.newegg.com/asrock-atx3-1-pcie5-1-1600-w-cybenetics-gold-power-supply-black-pg-1600g/p/N82E16817955003)        | N82E16817955003 | 1                | $199.99    | $199.99   | 1,600 W PSU with 12V-2x6 harnesses for accelerator or storage expansion cards.                                           |
+| Primary OS / cache  | [Samsung 990 PRO 2 TB NVMe SSD](https://www.newegg.com/samsung-2tb-990-pro-nvme-2-0/p/N82E16820147861)                                                                          | N82E16820147861 | 1                | $189.99    | $189.99   | PCIe 4.0 boot/cache device delivering 7 GB/s-class reads for ZFS special devices or VM images.                           |
+| Power harnessing    | [StarTech PYO2SATA SATA power Y splitters](https://www.newegg.com/multi-color-startech-6-cable-connectors/p/N82E16812200468?Item=9SIA1K682A3800)                                | 9SIA1K682A3800  | 4                | $15.99     | $63.96    | Adapts PSU SATA runs into eight additional drive feeds without secondary PSUs.                                           |
+| Memory              | [NEMIX 1 TB (8 × 128 GB) DDR4-2933 ECC LRDIMM kit](https://www.newegg.com/p/1X5-003Z-01928?Item=9SIA7S6BW24233)                                                                 | 9SIA7S6BW24233  | 1                | $3,621.35  | $3,621.35 | 1 TB ECC RAM removes the typical homelab bottleneck for Proxmox/Talos clusters and analytics workloads.                  |
+| Thermal management  | [Noctua NF-A14x25r G2 PWM Sx2-PP kits](https://www.newegg.com/p/9SIAADYKB59265)                                                                                                 | 9SIAADYKB59265  | 5 kits (10 fans) | $84.95     | $424.75   | Push/pull 140 mm sets keep airflow laminar across drive cages and the passive CPU heat sink.                             |
+| Storage cabling     | [Enlabs SFF-8643 to 4 × SATA breakout cables (0.5 m)](https://www.newegg.com/p/9SIACJF8TR1154)                                                                                  | 9SIACJF8TR1154  | 2                | $13.89     | $27.78    | Breaks the HBA mini-SAS ports into individual SATA channels for JBOD or ZFS mirrors.                                     |
+| Spot cooling        | [Noctua NF-A9 PWM 92 mm fan](https://www.newegg.com/p/9SIAZTUKCA0825)                                                                                                           | 9SIAZTUKCA0825  | 1                | $25.50     | $25.50    | Targets localized hot spots such as the SAS HBA or VRM zones.                                                            |
+| Storage expansion   | [Broadcom / LSI 9400-8i Tri-Mode HBA](https://www.newegg.com/p/9SIBT5SKEV9153)                                                                                                  | 9SIBT5SKEV9153  | 1                | $109.00    | $109.00   | PCIe 3.1 x8 controller supplies eight 12G lanes (SAS / SATA / NVMe) for future disk pools.                               |
 
 ## Component gallery
 
 ### Fractal Design Define 7 XL
+
 [![Fractal Design Define 7 XL](/images/homelab-boms/ampere/define-7-xl.jpg)](https://www.newegg.com/fractal-design-atx-full-tower-define-7-xl-steel-computer-case-black-fd-c-def7x-03/p/N82E16811352120)
 
 ### ASRock Rack ALTRAD8UD-1L2T bundle
+
 [![ASRock Rack ALTRAD8UD-1L2T](/images/homelab-boms/ampere/altrad8ud-bundle.jpg)](https://www.newegg.com/asrock-rack-altrad8ud-1l2t-q64-22-ampere-altra-max-ampere-altra-processors/p/N82E16813140135)
 
 ### ASRock Phantom Gaming PG-1600G PSU
+
 [![ASRock PG-1600G PSU](/images/homelab-boms/ampere/pg-1600g.png)](https://www.newegg.com/asrock-atx3-1-pcie5-1-1600-w-cybenetics-gold-power-supply-black-pg-1600g/p/N82E16817955003)
 
 ### Samsung 990 PRO 2 TB NVMe
+
 [![Samsung 990 PRO 2 TB](/images/homelab-boms/ampere/990-pro-2tb.jpg)](https://www.newegg.com/samsung-2tb-990-pro-nvme-2-0/p/N82E16820147861)
 
 ### StarTech PYO2SATA splitters
+
 [![StarTech SATA splitter](/images/homelab-boms/ampere/pyo2sata.jpg)](https://www.newegg.com/multi-color-startech-6-cable-connectors/p/N82E16812200468?Item=9SIA1K682A3800)
 
 ### NEMIX 1 TB ECC LRDIMM kit
+
 [![NEMIX 1 TB LRDIMM kit](/images/homelab-boms/ampere/nemix-1tb.jpg)](https://www.newegg.com/p/1X5-003Z-01928?Item=9SIA7S6BW24233)
 
 ### Noctua NF-A14x25r G2 PWM kit
+
 [![Noctua NF-A14x25r G2](/images/homelab-boms/ampere/noctua-a14-kit.jpg)](https://www.newegg.com/p/9SIAADYKB59265)
 
 ### Enlabs SFF-8643 to SATA breakout
+
 [![Enlabs SFF-8643 to SATA](/images/homelab-boms/ampere/enlabs-sff8643.jpg)](https://www.newegg.com/p/9SIACJF8TR1154)
 
 ### Noctua NF-A9 PWM
+
 [![Noctua NF-A9 PWM](/images/homelab-boms/ampere/noctua-a9.jpg)](https://www.newegg.com/p/9SIAZTUKCA0825)
 
 ### Broadcom / LSI 9400-8i HBA
+
 [![Broadcom / LSI 9400-8i](/images/homelab-boms/ampere/lsi-9400-8i.jpg)](https://www.newegg.com/p/9SIBT5SKEV9153)
 
 ## Compatibility checklist
 
-| Check | Details |
-| --- | --- |
-| Case ⇆ motherboard | The Define 7 XL supports E-ATX / ATX / mATX / mITX / SSI-CEB / SSI-EEB boards with a 23.78″ × 9.45″ × 22.28″ interior and removable drive cages. The ALTRAD8UD-1L2T board is a **Deep Micro ATX** design measuring 9.6″ × 10.5″, so it mounts with ample clearance while still leaving room for front drive cages. |
-| Case ⇆ PSU | The chassis calls for a standard **ATX** power supply (bottom-mounted, up to 250 mm with both drive cages installed). The PG-1600G is an ATX 3.1 unit with a 135 mm fan and fully modular harnesses, so it aligns with the Define 7 XL’s PSU bay and cable channels. |
-| CPU ⇆ motherboard | The bundle ships with a **Single Socket (LGA 4926)** Ampere Altra M128-26 processor already matched to the ALTRAD8UD-1L2T board, which officially supports Ampere Altra / Altra Max CPUs, eliminating socket/BIOS guesswork. |
-| Memory ⇆ motherboard | ALTRAD8UD-1L2T exposes **8 × 288-pin DDR4 slots** (registered ECC, up to 256 GB per DIMM at DDR4-3200). The NEMIX kit is 8 × 128 GB DDR4-2933 ECC **LRDIMM** (PC4-23400, 1.2 V), so each module meets the board’s pinout, voltage, and buffering requirements with plenty of capacity headroom. |
-| NVMe ⇆ motherboard | The motherboard provides **two M-key M.2 slots (PCIe 4.0 ×4) supporting 2280/2230** lengths. Samsung’s 990 PRO is an M.2 2280 NVMe 2.0 drive that runs at PCIe 4.0 ×4, so it drops straight into either onboard slot without adapters. |
-| Expansion ⇆ motherboard | Four PCIe 4.0 ×16 slots (slot 5 is full-length ×16 electrically) are available. The Broadcom/LSI 9400-8i HBA is a PCIe 3.1 ×8 low-profile/MD2 card, so it seats in any of the ×16 slots while remaining backward-compatible with PCIe 4.0 slots. |
-| HBA ⇆ breakout cables | Broadcom’s 9400-8i exposes **two internal SFF-8643 Mini-SAS HD (x4) connectors**, and each Enlabs cable terminates in one SFF-8643 plug that fans out to **4 × SATA** ends. This pairing lets the HBA service up to eight SATA disks immediately. |
-| Storage power | The PG-1600G is fully modular with native SATA power leads; every StarTech PYO2SATA adapter converts one SATA plug into **two SATA outputs**, supplying eight extra drive connectors to match the breakout cables. |
-| Cooling plan | Define 7 XL offers mounts for up to **9 × 140 mm** fans (front/top/bottom) plus a Nexus+ 2 hub that powers three PWM and six 3-pin fans. Five Noctua Sx2-PP kits (10 × 140 mm) fully populate those positions, while the included multi-brackets and internal tie-downs make it easy to secure the 92 mm NF-A9 as a spot cooler near the HBA or VRM section. |
+| Check                   | Details                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Case ⇆ motherboard      | The Define 7 XL supports E-ATX / ATX / mATX / mITX / SSI-CEB / SSI-EEB boards with a 23.78″ × 9.45″ × 22.28″ interior and removable drive cages. The ALTRAD8UD-1L2T board is a **Deep Micro ATX** design measuring 9.6″ × 10.5″, so it mounts with ample clearance while still leaving room for front drive cages.                                           |
+| Case ⇆ PSU              | The chassis calls for a standard **ATX** power supply (bottom-mounted, up to 250 mm with both drive cages installed). The PG-1600G is an ATX 3.1 unit with a 135 mm fan and fully modular harnesses, so it aligns with the Define 7 XL’s PSU bay and cable channels.                                                                                         |
+| CPU ⇆ motherboard       | The bundle ships with a **Single Socket (LGA 4926)** Ampere Altra M128-26 processor already matched to the ALTRAD8UD-1L2T board, which officially supports Ampere Altra / Altra Max CPUs, eliminating socket/BIOS guesswork.                                                                                                                                 |
+| Memory ⇆ motherboard    | ALTRAD8UD-1L2T exposes **8 × 288-pin DDR4 slots** (registered ECC, up to 256 GB per DIMM at DDR4-3200). The NEMIX kit is 8 × 128 GB DDR4-2933 ECC **LRDIMM** (PC4-23400, 1.2 V), so each module meets the board’s pinout, voltage, and buffering requirements with plenty of capacity headroom.                                                              |
+| NVMe ⇆ motherboard      | The motherboard provides **two M-key M.2 slots (PCIe 4.0 ×4) supporting 2280/2230** lengths. Samsung’s 990 PRO is an M.2 2280 NVMe 2.0 drive that runs at PCIe 4.0 ×4, so it drops straight into either onboard slot without adapters.                                                                                                                       |
+| Expansion ⇆ motherboard | Four PCIe 4.0 ×16 slots (slot 5 is full-length ×16 electrically) are available. The Broadcom/LSI 9400-8i HBA is a PCIe 3.1 ×8 low-profile/MD2 card, so it seats in any of the ×16 slots while remaining backward-compatible with PCIe 4.0 slots.                                                                                                             |
+| HBA ⇆ breakout cables   | Broadcom’s 9400-8i exposes **two internal SFF-8643 Mini-SAS HD (x4) connectors**, and each Enlabs cable terminates in one SFF-8643 plug that fans out to **4 × SATA** ends. This pairing lets the HBA service up to eight SATA disks immediately.                                                                                                            |
+| Storage power           | The PG-1600G is fully modular with native SATA power leads; every StarTech PYO2SATA adapter converts one SATA plug into **two SATA outputs**, supplying eight extra drive connectors to match the breakout cables.                                                                                                                                           |
+| Cooling plan            | Define 7 XL offers mounts for up to **9 × 140 mm** fans (front/top/bottom) plus a Nexus+ 2 hub that powers three PWM and six 3-pin fans. Five Noctua Sx2-PP kits (10 × 140 mm) fully populate those positions, while the included multi-brackets and internal tie-downs make it easy to secure the 92 mm NF-A9 as a spot cooler near the HBA or VRM section. |
 
 ## Architecture notes
 

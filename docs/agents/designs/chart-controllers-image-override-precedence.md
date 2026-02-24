@@ -3,17 +3,22 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The Agents chart can run controllers as a separate Deployment (`agents-controllers`) with its own image. Operators need a clear contract for how `controllers.image.*` relates to the root `image.*` and the control plane `controlPlane.image.*`.
 
 ## Goals
+
 - Define image selection precedence for `agents-controllers`.
 - Enable safe canarying controllers independently from the control plane.
 
 ## Non-Goals
+
 - Supporting multiple controller images in a single release (one deployment only).
 
 ## Current State
+
 - Controllers deployment template: `charts/agents/templates/deployment-controllers.yaml` computes:
   - `$imageRepo := .Values.controllers.image.repository | default .Values.image.repository`
   - similarly for `tag`, `digest`, `pullPolicy`, `pullSecrets`
@@ -21,50 +26,61 @@ The Agents chart can run controllers as a separate Deployment (`agents-controlle
 - GitOps currently pins both control plane and controller images in `argocd/applications/agents/values.yaml`.
 
 ## Design
+
 ### Precedence for controllers
+
 1. `controllers.image.*` (if field non-empty)
 2. `image.*` (root defaults)
 
 ### Operational policy
+
 - For production: always set `controllers.image.digest` explicitly when `controllers.enabled=true`.
 - For canary: bump controllers digest first, validate, then bump control plane digest.
 
 ## Config Mapping
-| Helm value | Rendered image for `agents-controllers` | Notes |
-|---|---|---|
-| `controllers.image.repository` | repo | Defaults to `image.repository` if empty. |
-| `controllers.image.tag` | tag | Defaults to `image.tag` if empty. |
-| `controllers.image.digest` | digest | Defaults to `image.digest` if empty. |
-| `controllers.image.pullSecrets` | imagePullSecrets | Defaults to `image.pullSecrets` if empty. |
+
+| Helm value                      | Rendered image for `agents-controllers` | Notes                                     |
+| ------------------------------- | --------------------------------------- | ----------------------------------------- |
+| `controllers.image.repository`  | repo                                    | Defaults to `image.repository` if empty.  |
+| `controllers.image.tag`         | tag                                     | Defaults to `image.tag` if empty.         |
+| `controllers.image.digest`      | digest                                  | Defaults to `image.digest` if empty.      |
+| `controllers.image.pullSecrets` | imagePullSecrets                        | Defaults to `image.pullSecrets` if empty. |
 
 ## Rollout Plan
+
 1. Add this contract to `charts/agents/README.md`.
 2. Add a CI check that `controllers.enabled=true` implies `controllers.image.digest` is non-empty in prod overlays.
 3. Use an Argo CD canary window (manual sync or progressive wave) before promoting.
 
 Rollback:
+
 - Revert `controllers.image.digest` to the prior known-good digest and re-sync.
 
 ## Validation
+
 ```bash
 mise exec helm@3 -- helm template agents charts/agents -f argocd/applications/agents/values.yaml | rg -n \"name: agents-controllers|image:\"
 kubectl -n agents get deploy agents-controllers -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
 ```
 
 ## Failure Modes and Mitigations
+
 - Controllers image accidentally inherits `image.tag=latest` without digest: mitigate via validation/enforcement in prod.
 - Canary controllers uses incompatible schema vs CRDs: mitigate by bundling CRD changes + controllers changes in one PR when APIs change.
 
 ## Acceptance Criteria
+
 - Operators can canary `agents-controllers` without modifying the control plane deployment.
 - A prod overlay policy ensures controllers run by digest, not mutable tags.
 
 ## References
+
 - Kubernetes container images: https://kubernetes.io/docs/concepts/containers/images/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -79,7 +95,9 @@ kubectl -n agents get deploy agents-controllers -o jsonpath='{.spec.template.spe
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -112,13 +130,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -134,6 +155,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -146,6 +168,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

@@ -78,12 +78,12 @@ output to incident threads or feed it into scripts.
 
 The cache now exposes metrics via the `observability/metrics.ts` interface:
 
-| Metric | Description |
-| --- | --- |
-| `temporal_worker_sticky_cache_hits_total` | snapshot reuse events |
-| `temporal_worker_sticky_cache_misses_total` | rebuilds due to stale/missing snapshots |
-| `temporal_worker_sticky_cache_evictions_total` | LRU/TTL evictions inside the cache |
-| `temporal_worker_sticky_cache_heal_total` | entries cleared after nondeterminism |
+| Metric                                         | Description                             |
+| ---------------------------------------------- | --------------------------------------- |
+| `temporal_worker_sticky_cache_hits_total`      | snapshot reuse events                   |
+| `temporal_worker_sticky_cache_misses_total`    | rebuilds due to stale/missing snapshots |
+| `temporal_worker_sticky_cache_evictions_total` | LRU/TTL evictions inside the cache      |
+| `temporal_worker_sticky_cache_heal_total`      | entries cleared after nondeterminism    |
 
 Attach your own registry via `WorkerRuntimeOptions.metrics` or call
 `makeStickyCache({ metrics: {...} })` when supplying a custom cache.

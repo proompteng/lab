@@ -78,45 +78,45 @@ TEMPORAL_API_KEY=your-cloud-api-key
 
 Environment variables supported by the config loader:
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `TEMPORAL_ADDRESS` | `${TEMPORAL_HOST}:${TEMPORAL_GRPC_PORT}` | Direct address override (e.g. `temporal.example.com:7233`). |
-| `TEMPORAL_HOST` | `127.0.0.1` | Hostname used when `TEMPORAL_ADDRESS` is unset. |
-| `TEMPORAL_GRPC_PORT` | `7233` | Temporal gRPC port. |
-| `TEMPORAL_NAMESPACE` | `default` | Namespace passed to the worker and client. |
-| `TEMPORAL_TASK_QUEUE` | `replay-fixtures` | Worker task queue. |
-| `TEMPORAL_API_KEY` | _unset_ | Injected into connection metadata for Cloud/API auth. |
-| `TEMPORAL_CLOUD_ADDRESS` | _unset_ | Temporal Cloud Ops endpoint (defaults to `saas-api.tmprl.cloud:443` when Cloud API is enabled). |
-| `TEMPORAL_CLOUD_API_KEY` | _unset_ | API key for Temporal Cloud Ops API (Bearer token). |
-| `TEMPORAL_CLOUD_API_VERSION` | _unset_ | Cloud API version header (defaults to `2025-05-31` when Cloud API is enabled). |
-| `TEMPORAL_TLS_CA_PATH` | _unset_ | Path to trusted CA bundle. |
-| `TEMPORAL_TLS_CERT_PATH` / `TEMPORAL_TLS_KEY_PATH` | _unset_ | mTLS client certificate and key (require both). |
-| `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name verification. |
-| `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to skip certificate verification. |
-| `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (host and PID are appended). |
-| `TEMPORAL_WORKER_BUILD_ID` | _unset_ | Worker build ID; auto-derived when unset. |
-| `TEMPORAL_WORKFLOW_CONCURRENCY` | `4` | Workflow poller concurrency. |
-| `TEMPORAL_ACTIVITY_CONCURRENCY` | `4` | Activity poller concurrency. |
-| `TEMPORAL_STICKY_CACHE_SIZE` | `128` | Sticky cache size for determinism snapshots. |
-| `TEMPORAL_STICKY_TTL_MS` | `300000` | Sticky cache TTL in milliseconds. |
-| `TEMPORAL_STICKY_SCHEDULING_ENABLED` | `true` when cache size > 0 | Enable sticky scheduling; set to `0/false` to disable. |
-| `TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS` | `5000` | Activity heartbeat throttle interval. |
-| `TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS` | `5000` | Activity heartbeat RPC timeout. |
-| `TEMPORAL_LOG_FORMAT` | `pretty` | Select `json` or `pretty` logging output for worker/client runs. |
-| `TEMPORAL_LOG_LEVEL` | `info` | Minimum log severity (`debug`, `info`, `warn`, `error`). |
-| `TEMPORAL_TRACING_INTERCEPTORS_ENABLED` | `true` | Set to `false` to disable tracing/audit interceptors. |
-| `TEMPORAL_SHOW_STACK_SOURCES` | `false` | Include stack trace source maps in errors. |
-| `TEMPORAL_METRICS_EXPORTER` | `in-memory` | Metrics sink: `in-memory`, `file`, `prometheus`, or `otlp`. |
-| `TEMPORAL_METRICS_ENDPOINT` | _unset_ | Path/URL for file, Prometheus, or OTLP exporters. |
-| `TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS` | `5` | WorkflowService RPC attempt budget. |
-| `TEMPORAL_CLIENT_RETRY_INITIAL_MS` | `200` | Initial retry delay (milliseconds). |
-| `TEMPORAL_CLIENT_RETRY_MAX_MS` | `5000` | Maximum retry delay (milliseconds). |
-| `TEMPORAL_CLIENT_RETRY_BACKOFF` | `2` | Exponential backoff multiplier applied per attempt. |
-| `TEMPORAL_CLIENT_RETRY_JITTER_FACTOR` | `0.2` | Decorrelated jitter factor between 0 and 1. |
-| `TEMPORAL_CLIENT_RETRY_STATUS_CODES` | `UNAVAILABLE,RESOURCE_EXHAUSTED,DEADLINE_EXCEEDED,INTERNAL` | Comma-separated Connect codes that should be retried. |
-| `TEMPORAL_PAYLOAD_CODECS` | _unset_ | Comma-separated payload codecs applied in order (e.g. `gzip,aes-gcm`). |
-| `TEMPORAL_CODEC_AES_KEY` | _unset_ | Base64 or hex AES key (128/192/256-bit) required when `aes-gcm` is enabled. |
-| `TEMPORAL_CODEC_AES_KEY_ID` | `default` | Optional key identifier recorded in payload metadata for rotation/diagnostics. |
+| Variable                                           | Default                                                     | Description                                                                                     |
+| -------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `TEMPORAL_ADDRESS`                                 | `${TEMPORAL_HOST}:${TEMPORAL_GRPC_PORT}`                    | Direct address override (e.g. `temporal.example.com:7233`).                                     |
+| `TEMPORAL_HOST`                                    | `127.0.0.1`                                                 | Hostname used when `TEMPORAL_ADDRESS` is unset.                                                 |
+| `TEMPORAL_GRPC_PORT`                               | `7233`                                                      | Temporal gRPC port.                                                                             |
+| `TEMPORAL_NAMESPACE`                               | `default`                                                   | Namespace passed to the worker and client.                                                      |
+| `TEMPORAL_TASK_QUEUE`                              | `replay-fixtures`                                           | Worker task queue.                                                                              |
+| `TEMPORAL_API_KEY`                                 | _unset_                                                     | Injected into connection metadata for Cloud/API auth.                                           |
+| `TEMPORAL_CLOUD_ADDRESS`                           | _unset_                                                     | Temporal Cloud Ops endpoint (defaults to `saas-api.tmprl.cloud:443` when Cloud API is enabled). |
+| `TEMPORAL_CLOUD_API_KEY`                           | _unset_                                                     | API key for Temporal Cloud Ops API (Bearer token).                                              |
+| `TEMPORAL_CLOUD_API_VERSION`                       | _unset_                                                     | Cloud API version header (defaults to `2025-05-31` when Cloud API is enabled).                  |
+| `TEMPORAL_TLS_CA_PATH`                             | _unset_                                                     | Path to trusted CA bundle.                                                                      |
+| `TEMPORAL_TLS_CERT_PATH` / `TEMPORAL_TLS_KEY_PATH` | _unset_                                                     | mTLS client certificate and key (require both).                                                 |
+| `TEMPORAL_TLS_SERVER_NAME`                         | _unset_                                                     | Overrides TLS server name verification.                                                         |
+| `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS`   | `false`                                                     | Accepts `1/true/on` to skip certificate verification.                                           |
+| `TEMPORAL_WORKER_IDENTITY_PREFIX`                  | `temporal-bun-worker`                                       | Worker identity prefix (host and PID are appended).                                             |
+| `TEMPORAL_WORKER_BUILD_ID`                         | _unset_                                                     | Worker build ID; auto-derived when unset.                                                       |
+| `TEMPORAL_WORKFLOW_CONCURRENCY`                    | `4`                                                         | Workflow poller concurrency.                                                                    |
+| `TEMPORAL_ACTIVITY_CONCURRENCY`                    | `4`                                                         | Activity poller concurrency.                                                                    |
+| `TEMPORAL_STICKY_CACHE_SIZE`                       | `128`                                                       | Sticky cache size for determinism snapshots.                                                    |
+| `TEMPORAL_STICKY_TTL_MS`                           | `300000`                                                    | Sticky cache TTL in milliseconds.                                                               |
+| `TEMPORAL_STICKY_SCHEDULING_ENABLED`               | `true` when cache size > 0                                  | Enable sticky scheduling; set to `0/false` to disable.                                          |
+| `TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS`          | `5000`                                                      | Activity heartbeat throttle interval.                                                           |
+| `TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS`       | `5000`                                                      | Activity heartbeat RPC timeout.                                                                 |
+| `TEMPORAL_LOG_FORMAT`                              | `pretty`                                                    | Select `json` or `pretty` logging output for worker/client runs.                                |
+| `TEMPORAL_LOG_LEVEL`                               | `info`                                                      | Minimum log severity (`debug`, `info`, `warn`, `error`).                                        |
+| `TEMPORAL_TRACING_INTERCEPTORS_ENABLED`            | `true`                                                      | Set to `false` to disable tracing/audit interceptors.                                           |
+| `TEMPORAL_SHOW_STACK_SOURCES`                      | `false`                                                     | Include stack trace source maps in errors.                                                      |
+| `TEMPORAL_METRICS_EXPORTER`                        | `in-memory`                                                 | Metrics sink: `in-memory`, `file`, `prometheus`, or `otlp`.                                     |
+| `TEMPORAL_METRICS_ENDPOINT`                        | _unset_                                                     | Path/URL for file, Prometheus, or OTLP exporters.                                               |
+| `TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS`               | `5`                                                         | WorkflowService RPC attempt budget.                                                             |
+| `TEMPORAL_CLIENT_RETRY_INITIAL_MS`                 | `200`                                                       | Initial retry delay (milliseconds).                                                             |
+| `TEMPORAL_CLIENT_RETRY_MAX_MS`                     | `5000`                                                      | Maximum retry delay (milliseconds).                                                             |
+| `TEMPORAL_CLIENT_RETRY_BACKOFF`                    | `2`                                                         | Exponential backoff multiplier applied per attempt.                                             |
+| `TEMPORAL_CLIENT_RETRY_JITTER_FACTOR`              | `0.2`                                                       | Decorrelated jitter factor between 0 and 1.                                                     |
+| `TEMPORAL_CLIENT_RETRY_STATUS_CODES`               | `UNAVAILABLE,RESOURCE_EXHAUSTED,DEADLINE_EXCEEDED,INTERNAL` | Comma-separated Connect codes that should be retried.                                           |
+| `TEMPORAL_PAYLOAD_CODECS`                          | _unset_                                                     | Comma-separated payload codecs applied in order (e.g. `gzip,aes-gcm`).                          |
+| `TEMPORAL_CODEC_AES_KEY`                           | _unset_                                                     | Base64 or hex AES key (128/192/256-bit) required when `aes-gcm` is enabled.                     |
+| `TEMPORAL_CODEC_AES_KEY_ID`                        | `default`                                                   | Optional key identifier recorded in payload metadata for rotation/diagnostics.                  |
 
 `loadTemporalConfig()` returns typed values that the client and worker factories
 consume directly, so you never have to stitch addresses or TLS buffers together
@@ -167,14 +167,21 @@ helper and telemetry interceptors:
 
 - **Configurable retries** - `config.rpcRetryPolicy` is populated from the `TEMPORAL_CLIENT_RETRY_*` env vars (or overrides passed to `loadTemporalConfig`). All client methods use the resulting jittered exponential backoff policy, and you can override per-call values via `TemporalClientCallOptions.retryPolicy`.
 - **Optional call options** - `startWorkflow`, `signalWorkflow`, `queryWorkflow`, `signalWithStart`, `terminateWorkflow`, and `describeNamespace` accept an optional trailing `callOptions` argument (headers, timeout, abort signal, retry policy). Use `temporalCallOptions()` to brand the object so payloads are not mistaken for options:
+
   ```ts
   import { temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 
-  await client.signalWorkflow(handle, 'updateState', { signal: 'start' }, temporalCallOptions({
-    headers: { 'x-trace-id': traceId },
-    timeoutMs: 5_000,
-  }))
+  await client.signalWorkflow(
+    handle,
+    'updateState',
+    { signal: 'start' },
+    temporalCallOptions({
+      headers: { 'x-trace-id': traceId },
+      timeoutMs: 5_000,
+    }),
+  )
   ```
+
 - **Default interceptors** - inbound/outbound hooks wrap every workflow RPC and operation: namespace/identity headers are injected, retries use jittered backoff, and latency/error metrics flow through the configured registry/exporter. Tracing spans are opt in via `TEMPORAL_TRACING_INTERCEPTORS_ENABLED` (or `tracingEnabled` in code). Append custom middleware with `clientInterceptors` (client) or `interceptors` (transport) to add auth headers, audit logs, or bespoke telemetry.
 - **Memo/search helpers** - `client.memo` and `client.searchAttributes` expose `encode`/`decode` helpers that reuse the client's `DataConverter`, making it easy to prepare payloads for raw WorkflowService requests.
 - **TLS validation** - TLS buffers are checked up front (missing files, invalid PEMs, and mismatched cert/key pairs throw `TemporalTlsConfigurationError`) and transport failures surface as `TemporalTlsHandshakeError` with remediation hints.
@@ -276,7 +283,7 @@ scripts. It reuses `loadTemporalConfig`, the observability sinks, and the same
 ingestion pipeline that powers the worker sticky cache.
 
 - `--history-file <path>` - replay a JSON capture (`temporal workflow show
-  --history --output json`) or a fixture envelope with `history` + `info`.
+--history --output json`) or a fixture envelope with `history` + `info`.
 - `--execution <workflowId/runId>` - fetch live history via the Temporal CLI or
   WorkflowService RPC (`--source cli|service|auto`).
 - `--workflow-type`, `--namespace`, `--temporal-cli`, `--json` - supply workflow
@@ -482,7 +489,6 @@ await client.shutdown()
 Use `defineWorkflowQueries` and `client.queryWorkflow` for query handlers; query
 execution runs in read-only mode and rejects non-deterministic operations.
 
-
 ## CLI quick reference
 
 The `temporal-bun` CLI is available through `bunx temporal-bun <command>` once
@@ -558,12 +564,12 @@ teams can copy/paste into new Bun workers.
 
 ## CLI and tooling reference
 
-| Command | Purpose | Notes |
-| --- | --- | --- |
-| `temporal-bun init` | Scaffold a worker + Docker assets | Honors `--force` to overwrite existing files. |
-| `temporal-bun doctor` | Load config, emit log + metrics, verify TLS | Accepts `--log-format`, `--log-level`, `--metrics`, `--metrics-exporter`, `--metrics-endpoint`. |
-| `temporal-bun docker-build` | Build worker image | Supports `--tag`, `--context`, and `--file`. |
-| `temporal-bun replay` | Diff workflow determinism from JSON or live histories | Supports `--history-file`, `--execution`, `--source cli|service|auto`, `--json`. |
+| Command                     | Purpose                                               | Notes                                                                                           |
+| --------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------- | ---------------- |
+| `temporal-bun init`         | Scaffold a worker + Docker assets                     | Honors `--force` to overwrite existing files.                                                   |
+| `temporal-bun doctor`       | Load config, emit log + metrics, verify TLS           | Accepts `--log-format`, `--log-level`, `--metrics`, `--metrics-exporter`, `--metrics-endpoint`. |
+| `temporal-bun docker-build` | Build worker image                                    | Supports `--tag`, `--context`, and `--file`.                                                    |
+| `temporal-bun replay`       | Diff workflow determinism from JSON or live histories | Supports `--history-file`, `--execution`, `--source cli                                         | service | auto`, `--json`. |
 
 Proto regeneration lives under `packages/temporal-bun-sdk/scripts/update-temporal-protos.ts`.
 Pass `--version <tag>` (or omit to use the latest release) and optionally

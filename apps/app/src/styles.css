@@ -1,4 +1,4 @@
-@import "@proompteng/design/globals.css";
+@import '@proompteng/design/globals.css';
 
 @source "./**/*.{js,jsx,ts,tsx}";
 @source not "../node_modules";

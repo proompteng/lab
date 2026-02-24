@@ -1,15 +1,15 @@
-version: "3.8"
+version: '3.8'
 services:
   nginx-proxy-manager:
     image: jc21/nginx-proxy-manager:latest
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "81:81"
-      - "443:443"
+      - '80:80'
+      - '81:81'
+      - '443:443'
     environment:
-      DB_SQLITE_FILE: "/data/database.sqlite"
-      DISABLE_IPV6: "true"
+      DB_SQLITE_FILE: '/data/database.sqlite'
+      DISABLE_IPV6: 'true'
     volumes:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt

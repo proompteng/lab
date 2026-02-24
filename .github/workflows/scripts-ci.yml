@@ -5,12 +5,12 @@ on:
     branches:
       - main
     paths:
-      - "packages/scripts/**"
-      - ".github/workflows/scripts-ci.yml"
+      - 'packages/scripts/**'
+      - '.github/workflows/scripts-ci.yml'
   pull_request:
     paths:
-      - "packages/scripts/**"
-      - ".github/workflows/scripts-ci.yml"
+      - 'packages/scripts/**'
+      - '.github/workflows/scripts-ci.yml'
 
 jobs:
   lint-and-test:

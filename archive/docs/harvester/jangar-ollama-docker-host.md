@@ -3,10 +3,12 @@
 This runbook installs NVIDIA drivers + Ollama on `docker-host` (`kalmyk@192.168.1.190`), pulls a quantized Qwen model for chat/coding (**Qwen3 Coder**) plus a small embeddings model (**Qwen3 Embedding**), and wires OpenWebUI (in the `jangar` namespace) to use that Ollama endpoint.
 
 ## Prerequisites
+
 - GPU is passed through to `docker-host` from Harvester.
   - See `archive/docs/harvester/harvester-gpu-pci-passthrough.md`.
 
 ## Install NVIDIA driver + CUDA (inside the VM)
+
 SSH to the VM:
 
 ```bash
@@ -42,6 +44,7 @@ ls -la /dev/nvidia*
 ```
 
 ## Install Ollama + Saigak (recommended)
+
 Saigak wires Ollama for throughput tuning plus a host-level proxy on `:11434`
 that exports OTEL metrics.
 
@@ -73,6 +76,7 @@ curl -fsS http://127.0.0.1:11434/api/tags
 ```
 
 ## Install Ollama (manual fallback)
+
 If you need to bootstrap without Saigak, install Ollama via the upstream script:
 
 ```bash
@@ -84,8 +88,11 @@ Then configure a host proxy separately or adjust consumers to talk to
 `127.0.0.1:11435`.
 
 ## Pull models
+
 ### Chat/coding: Qwen3 Coder (quantized)
+
 Expected (Saigak) model tag on `docker-host`:
+
 - `qwen3-coder-saigak:30b-a3b-q4_K_M`
 
 Pull Qwen3 Coder 30B A3B (Q4_K_M) (non-Saigak tag shown as fallback):
@@ -113,7 +120,9 @@ nvidia-smi
 ```
 
 ### Embeddings: Qwen3 Embedding (OpenAI-compatible)
+
 Expected (Saigak) embeddings tag on `docker-host`:
+
 - `qwen3-embedding-saigak:0.6b`
 
 Pull an embeddings model (non-Saigak tag shown as fallback):
@@ -137,6 +146,7 @@ curl -fsS http://127.0.0.1:11434/v1/embeddings \
 Note: no changes to `jangar` are required for embeddings — as long as clients can reach `http://192.168.1.190:11434`, they can call `POST /v1/embeddings` directly.
 
 ### Create tuned aliases (Saigak defaults)
+
 If you have the repo available on the host, create tuned aliases using the Saigak modelfiles:
 
 ```bash
@@ -172,9 +182,11 @@ curl -sS -G http://jangar/api/memories \
 ```
 
 ## Wire Jangar OpenWebUI to `docker-host` Ollama
+
 OpenWebUI in the `jangar` namespace is Helm-managed via `argocd/applications/jangar/openwebui-values.yaml`. It’s configured to use Jangar as the OpenAI-compatible backend, but can also be given one or more Ollama endpoints.
 
 Desired state (GitOps):
+
 - `argocd/applications/jangar/openwebui-values.yaml` sets:
   - `ollamaUrls: [http://192.168.1.190:11434]`
   - `ENABLE_OLLAMA_API=true` (via `extraEnvVars`)
@@ -189,8 +201,11 @@ If the models are available, OpenWebUI should include `qwen3-coder-saigak:30b-a3
 `qwen3-embedding-saigak:0.6b` in its model list.
 
 ## Troubleshooting
+
 ### Harvester VM stuck `Starting` / `CrashLoopBackOff` (virt-launcher flaps)
+
 Symptoms:
+
 - Harvester UI shows `docker-host` stuck in `Starting` (or `CrashLoopBackOff`).
 - The VMI rapidly goes `Scheduling -> Failed`, and `virt-launcher-docker-host-*` pods get created then deleted.
 - Jangar memory search returns 500s like `retrieve memories failed: Unable to connect` (because the embeddings backend is unreachable).
@@ -204,6 +219,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml -n harvester-system logs deploy/harveste
 ```
 
 If you see this error, it’s the common root cause:
+
 - `admission webhook "pcidevices.harvesterhci.io" denied the request: gpu device ga102: resource name nvidia.com/GA102_GEFORCE_RTX_3090 not found in pcidevice cache`
 
 Fix (refresh the PCI device webhook/controller cache):
@@ -221,41 +237,46 @@ kubectl --kubeconfig ~/.kube/altra.yaml -n default get vmi docker-host -w
 ```
 
 ### Ollama running but completions time out
+
 Symptoms:
+
 - `/v1/chat/completions` hangs or returns 500s after minutes.
 - Ollama logs show `offloaded 0/.. layers to GPU` or CUDA init errors.
 - `nvidia-smi` fails with driver/library mismatch.
 
 Fix (driver mismatch on `docker-host`):
-1) Remove stray 550 packages (if present):
+
+1. Remove stray 550 packages (if present):
    ```bash
    sudo apt-get purge -y 'nvidia-*550*'
    ```
-2) Reinstall the 580 stack and rebuild initramfs:
+2. Reinstall the 580 stack and rebuild initramfs:
    ```bash
    sudo apt-get install -y nvidia-driver-580 nvidia-utils-580 nvidia-kernel-common-580 nvidia-kernel-source-580 nvidia-dkms-580 nvidia-compute-utils-580
    sudo update-initramfs -u
    sudo reboot
    ```
-3) Verify:
+3. Verify:
    ```bash
    nvidia-smi
    journalctl -u ollama -n 50 --no-pager | grep -i cuda
    ```
 
 ### Saigak Alloy keeps restarting after reboot
+
 Cause: the Saigak compose stack lives in `/tmp/saigak`, and `/tmp` may be wiped on reboot.
 
 Fix:
-1) Restore the Saigak files on the host:
+
+1. Restore the Saigak files on the host:
    ```bash
    scp -r services/saigak/* kalmyk@192.168.1.190:/tmp/saigak/
    ```
-2) Restart the stack:
+2. Restart the stack:
    ```bash
    ssh kalmyk@192.168.1.190 'cd /tmp/saigak && docker compose up -d'
    ```
-3) Confirm:
+3. Confirm:
    ```bash
    docker ps --format 'table {{.Names}}\t{{.Status}}' | grep saigak
    ```

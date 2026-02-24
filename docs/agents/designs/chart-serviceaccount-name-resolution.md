@@ -3,10 +3,13 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The Agents chart supports `serviceAccount.create` and `serviceAccount.name`, plus a separate `runnerServiceAccount` for jobs created by controllers. The naming and resolution rules must be explicit so operators can safely integrate with external IAM (IRSA, Workload Identity) and cluster policy.
 
 ## Goals
+
 - Define deterministic ServiceAccount naming and selection for:
   - Control plane pods
   - Controllers pods
@@ -14,9 +17,11 @@ The Agents chart supports `serviceAccount.create` and `serviceAccount.name`, plu
 - Avoid accidental reuse of default ServiceAccounts.
 
 ## Non-Goals
+
 - Cloud-provider-specific IAM automation.
 
 ## Current State
+
 - Values: `charts/agents/values.yaml` under `serviceAccount.*` and `runnerServiceAccount.*`.
 - Templates:
   - ServiceAccount: `charts/agents/templates/serviceaccount.yaml`
@@ -27,55 +32,66 @@ The Agents chart supports `serviceAccount.create` and `serviceAccount.name`, plu
 - Runner RBAC: `charts/agents/templates/runner-rbac.yaml`.
 
 ## Design
+
 ### Naming contract
+
 - If `serviceAccount.create=true` and `serviceAccount.name` is empty:
   - Chart creates `ServiceAccount/<release fullname>`.
 - If `serviceAccount.name` is set:
   - Chart uses that name and does not create a new ServiceAccount unless explicitly requested.
 
 ### Runner ServiceAccount contract
+
 - If `runnerServiceAccount.create=true`:
   - Chart creates `ServiceAccount/<release fullname>-runner` unless `runnerServiceAccount.name` is set.
 - If `runnerServiceAccount.setAsDefault=true`:
   - Controllers default runner jobs to that ServiceAccount via env var mapping (see `charts/agents/templates/deployment-controllers.yaml` for `JANGAR_SCHEDULE_SERVICE_ACCOUNT` and workload defaults).
 
 ## Config Mapping
-| Helm value | Rendered object/field | Behavior |
-|---|---|---|
-| `serviceAccount.create=true` | `ServiceAccount` | Create control plane/controllers ServiceAccount. |
-| `serviceAccount.name` | `spec.serviceAccountName` | Explicit override of SA used by Deployments. |
-| `runnerServiceAccount.create=true` | `ServiceAccount` | Create SA intended for runner Jobs. |
-| `runnerServiceAccount.setAsDefault=true` | controller env/runtime | Sets default runner job SA when workload spec omits it. |
+
+| Helm value                               | Rendered object/field     | Behavior                                                |
+| ---------------------------------------- | ------------------------- | ------------------------------------------------------- |
+| `serviceAccount.create=true`             | `ServiceAccount`          | Create control plane/controllers ServiceAccount.        |
+| `serviceAccount.name`                    | `spec.serviceAccountName` | Explicit override of SA used by Deployments.            |
+| `runnerServiceAccount.create=true`       | `ServiceAccount`          | Create SA intended for runner Jobs.                     |
+| `runnerServiceAccount.setAsDefault=true` | controller env/runtime    | Sets default runner job SA when workload spec omits it. |
 
 ## Rollout Plan
+
 1. Document naming in `charts/agents/README.md`.
 2. Add chart validation:
    - If `runnerServiceAccount.rbac.create=true`, require `runnerServiceAccount.create=true` or a non-empty name.
 3. Add controller-side logging of chosen runner ServiceAccount per Job.
 
 Rollback:
+
 - Revert values; existing ServiceAccounts are safe to keep.
 
 ## Validation
+
 ```bash
 mise exec helm@3 -- helm template agents charts/agents -f argocd/applications/agents/values.yaml | rg -n \"kind: ServiceAccount|serviceAccountName\"
 kubectl -n agents get sa
 ```
 
 ## Failure Modes and Mitigations
+
 - Deployments run as `default` SA unexpectedly: mitigate with schema validation and documented defaults.
 - Runner jobs fail RBAC due to SA mismatch: mitigate with explicit runner SA + explicit RoleBindings.
 
 ## Acceptance Criteria
+
 - Helm render shows a single, predictable ServiceAccount per component.
 - Runner job SA selection is observable in logs and Job specs.
 
 ## References
+
 - Kubernetes ServiceAccounts: https://kubernetes.io/docs/concepts/security/service-accounts/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -90,7 +106,9 @@ kubectl -n agents get sa
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -123,13 +141,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -145,6 +166,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -157,6 +179,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

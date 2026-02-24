@@ -3,17 +3,22 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 Orchestrations represent multi-step workflows. The current schema supports `spec.steps`, but the semantics around ordering, dependency graphs, and partial failure are not explicitly documented. This doc defines a DAG model that controllers can implement consistently.
 
 ## Goals
+
 - Define step dependency semantics (DAG, not just list).
 - Define failure handling and step skipping rules.
 
 ## Non-Goals
+
 - Replacing the underlying runtime (workflow/job/temporal).
 
 ## Current State
+
 - Orchestration CRD exists:
   - `charts/agents/crds/orchestration.proompteng.ai_orchestrations.yaml`
   - Controller: `services/jangar/src/server/orchestration-controller.ts`
@@ -22,57 +27,71 @@ Orchestrations represent multi-step workflows. The current schema supports `spec
 - There is no design-level contract for step dependencies beyond the raw schema.
 
 ## Design
+
 ### API shape (incremental)
+
 Extend step schema:
+
 ```yaml
 spec:
   steps:
     - name: build
       dependsOn: []
     - name: test
-      dependsOn: ["build"]
+      dependsOn: ['build']
 ```
 
 ### Execution semantics
+
 - A step becomes runnable when all `dependsOn` steps are terminal success.
 - If a dependency fails:
   - Dependent steps become `Skipped` with reason `DependencyFailed`.
 - Support `continueOnFailure` (optional) for best-effort steps.
 
 ## Config Mapping
-| Helm value / env var | Effect | Behavior |
-|---|---|---|
-| `orchestrationController.enabled` | `JANGAR_ORCHESTRATION_CONTROLLER_ENABLED` (existing pattern) | Enables orchestration DAG execution logic. |
-| `orchestrationController.namespaces` | `JANGAR_ORCHESTRATION_CONTROLLER_NAMESPACES` | Scope of orchestration reconciliation. |
+
+| Helm value / env var                 | Effect                                                       | Behavior                                   |
+| ------------------------------------ | ------------------------------------------------------------ | ------------------------------------------ |
+| `orchestrationController.enabled`    | `JANGAR_ORCHESTRATION_CONTROLLER_ENABLED` (existing pattern) | Enables orchestration DAG execution logic. |
+| `orchestrationController.namespaces` | `JANGAR_ORCHESTRATION_CONTROLLER_NAMESPACES`                 | Scope of orchestration reconciliation.     |
 
 ## Rollout Plan
+
 1. Add API fields with backward compatibility:
-  - If `dependsOn` absent, treat steps as sequential list.
+
+- If `dependsOn` absent, treat steps as sequential list.
+
 2. Canary in non-prod with a 2-step DAG example.
 
 Rollback:
+
 - Remove `dependsOn` fields; controllers fall back to sequential behavior.
 
 ## Validation
+
 ```bash
 kubectl -n agents get orchestration -o yaml | rg -n \"steps:|dependsOn\"
 kubectl -n agents get orchestrationrun -o yaml | rg -n \"phase:|Skipped|DependencyFailed\"
 ```
 
 ## Failure Modes and Mitigations
+
 - Cycles in dependsOn: mitigate with controller-side validation (reject with Ready=False).
 - Missing dependency name: mitigate with validation and clear errors.
 
 ## Acceptance Criteria
+
 - DAG execution is deterministic and documented.
 - Sequential orchestrations continue to work unchanged.
 
 ## References
+
 - Argo Workflows DAG concepts (widely used Kubernetes DAG runtime): https://argo-workflows.readthedocs.io/en/latest/walk-through/dag/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -87,7 +106,9 @@ kubectl -n agents get orchestrationrun -o yaml | rg -n \"phase:|Skipped|Dependen
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -120,13 +141,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -142,6 +166,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -154,6 +179,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

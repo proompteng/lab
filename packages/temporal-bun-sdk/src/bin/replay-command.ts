@@ -69,10 +69,10 @@ type ReplayExecutionOptions = ReplaySingleOptions & { execution: WorkflowExecuti
 const isReplayOptions = (value: unknown): value is ReplayCommandOptions =>
   Boolean(
     value &&
-      typeof value === 'object' &&
-      ('historyFile' in (value as Record<string, unknown>) ||
-        'historyDir' in (value as Record<string, unknown>) ||
-        'execution' in (value as Record<string, unknown>)),
+    typeof value === 'object' &&
+    ('historyFile' in (value as Record<string, unknown>) ||
+      'historyDir' in (value as Record<string, unknown>) ||
+      'execution' in (value as Record<string, unknown>)),
   )
 
 interface HistoryMetadata {

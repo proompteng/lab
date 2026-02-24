@@ -31,13 +31,13 @@ Deliver a **fully autonomous development cycle** where a human supplies an “Id
 
 ## 4. Non-Functional Requirements
 
-| Area | Expectation |
-| --- | --- |
-| Reliability | Survive transient GitHub/Kafka outages; idempotent workflow submissions. |
-| Observability | Trace each idea through all stages with metrics and logs. |
-| Security | Least-privilege credentials, approvals for high-risk actions, immutable audit trail. |
-| Cost | Autoscale agents, limit concurrent heavy workflows, provide cost attribution per idea. |
-| Extensibility | Pluggable policy engine, ability to add new workflow stages or external integrations. |
+| Area          | Expectation                                                                            |
+| ------------- | -------------------------------------------------------------------------------------- |
+| Reliability   | Survive transient GitHub/Kafka outages; idempotent workflow submissions.               |
+| Observability | Trace each idea through all stages with metrics and logs.                              |
+| Security      | Least-privilege credentials, approvals for high-risk actions, immutable audit trail.   |
+| Cost          | Autoscale agents, limit concurrent heavy workflows, provide cost attribution per idea. |
+| Extensibility | Pluggable policy engine, ability to add new workflow stages or external integrations.  |
 
 ## 5. Architecture Overview
 
@@ -83,6 +83,7 @@ Key components evolve from the current codebase:
 
 1. **Configuration**
    - Extend `services/facteur/internal/config/config.go` to include:
+
      ```yaml
      codex_executor:
        enabled: true
@@ -166,7 +167,7 @@ Key components evolve from the current codebase:
    - Integrate new summary output consumed by orchestrator.
 
 4. **Integration Template (New)**
-   - Actions: rebase, ensure status checks, merge to target branch, tag release.  
+   - Actions: rebase, ensure status checks, merge to target branch, tag release.
    - Runs `codex-integration.ts` script that we will create within `services/jangar/scripts/codex`.
 
 5. **Deploy Template (New)**
@@ -175,15 +176,15 @@ Key components evolve from the current codebase:
 
 ## 7. Data Flow & Topics
 
-| Topic | Producer | Consumer | Payload |
-| --- | --- | --- | --- |
-| `codex.intent` | Froussard | Facteur | Normalised Idea Spec |
-| `github.issues.codex.tasks` | Froussard | Facteur executor | Protobuf CodexTask |
-| `codex.plan` | Planning workflow | Facteur | Plan artifacts metadata |
-| `codex.execution` | Implementation workflow | Facteur, Observability | Progress, logs |
-| `codex.review` | Review workflow | Facteur | QA outcomes |
-| `codex.deploy` | Deploy workflow | Facteur | Deployment status |
-| `codex.telemetry` | All workflows | Observability | Metrics/traces |
+| Topic                       | Producer                | Consumer               | Payload                 |
+| --------------------------- | ----------------------- | ---------------------- | ----------------------- |
+| `codex.intent`              | Froussard               | Facteur                | Normalised Idea Spec    |
+| `github.issues.codex.tasks` | Froussard               | Facteur executor       | Protobuf CodexTask      |
+| `codex.plan`                | Planning workflow       | Facteur                | Plan artifacts metadata |
+| `codex.execution`           | Implementation workflow | Facteur, Observability | Progress, logs          |
+| `codex.review`              | Review workflow         | Facteur                | QA outcomes             |
+| `codex.deploy`              | Deploy workflow         | Facteur                | Deployment status       |
+| `codex.telemetry`           | All workflows           | Observability          | Metrics/traces          |
 
 ## 8. Knowledge Base Integration
 
@@ -245,6 +246,7 @@ Key components evolve from the current codebase:
    - Implement semantic suggestions, cost-aware scheduling, continuous improvement analytics.
 
 For each phase:
+
 - Update runbooks, dashboards, and alerting.
 - Provide feature flags to fall back to manual control if needed.
 

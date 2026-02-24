@@ -33,6 +33,7 @@ This server codebase uses Effect’s **service pattern**:
   - `WorktreeStateLive` (`Layer.scoped(...)`)
 
 Notes:
+
 - Prefer `Layer.sync` / `Layer.effect` for simple services.
 - Prefer `Layer.scoped` when you need to acquire/release resources (connections, timers, file handles, etc.).
 - If you need **lazy initialization** (only when the feature is used), do it inside the service implementation (e.g. keep a `let cached = null` inside the `Layer` factory), not as a top-level IIFE singleton.
@@ -44,6 +45,7 @@ Notes:
   - `handleChatCompletion(request)` – thin wrapper that runs the effect on a shared `ManagedRuntime`
 
 Notes:
+
 - **Do not** build “live” layers inside every request handler invocation if the service holds resources (e.g. Redis clients).
 - Prefer a module-level `ManagedRuntime.make(Layer.mergeAll(...))` and call `runtime.runPromise(effect)` per request, so services are reused and scoped finalizers run when the runtime is disposed (e.g. during shutdown or tests).
 

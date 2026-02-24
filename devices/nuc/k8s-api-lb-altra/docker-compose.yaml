@@ -7,4 +7,3 @@ services:
       - '6444:6444'
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-

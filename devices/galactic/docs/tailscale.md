@@ -3,6 +3,7 @@
 This runbook installs and validates node-level Tailscale on Talos so `containerd` can pull private images from `registry.ide-newton.ts.net`.
 
 Cluster inventory (current):
+
 - `ryzen` (amd64): `192.168.1.194`
 - `ampone` (arm64): `192.168.1.203`
 - `altra` (arm64): `192.168.1.85`
@@ -14,10 +15,12 @@ Kubernetes pulls images via node `kubelet`/`containerd`, not pod networking. If 
 ## Architecture
 
 Tailscale on Talos requires both:
+
 1. Talos **system extension** (`tailscale`) in `machine.install.extensions`.
 2. `ExtensionServiceConfig` named `tailscale` with runtime env (`TS_AUTHKEY`, `TS_HOSTNAME`, routes, etc.).
 
 Important DNS behavior on Talos:
+
 - Set `TS_ACCEPT_DNS=false`.
 - Configure DNS using Talos machine config (`machine.network.nameservers`).
 - Reason: Talos root filesystem is immutable; allowing Tailscale to manage `/etc/resolv.conf` creates noisy failures.
@@ -166,22 +169,27 @@ talosctl image pull -n <node-ip> -e <node-ip> registry.ide-newton.ts.net/lab/reg
 ## Failure modes and fixes (observed)
 
 1. `failed to install bootloader ... efivars ... input/output error` on ARM:
+
 - Cause: firmware/efivars write path fails during in-place upgrade.
 - Fix: use Method A (ESP UKI swap), then reboot.
 
 2. Boot menu shows many Talos entries:
+
 - Cause: multiple `.efi` UKIs under `EFI/Linux`; systemd-boot auto-discovers each.
 - Fix: keep one active UKI (`Talos-v1.12.4.efi`), rename extra files (for example `~1.efi`).
 
 3. `ext-tailscale` never stabilizes or node missing in Tailnet:
+
 - Cause: missing extension activation, bad `TS_AUTHKEY`, or wrong tags/ACL.
 - Fix: verify `get extensions`, verify `ExtensionServiceConfig`, rotate auth key, check tailnet ACL grants for tags.
 
 4. `TS_ACCEPT_DNS=true` causes DNS write errors:
+
 - Cause: Talos root FS is immutable.
 - Fix: set `TS_ACCEPT_DNS=false`, manage nameservers via machine config patches.
 
 5. Node identity/IP drift (`202` -> `203`) breaks cluster/LB:
+
 - Cause: node rebooted with different live identity/IP while configs still reference old IP.
 - Fix:
   - remove stale etcd member and stale Kubernetes node

@@ -1,24 +1,29 @@
 # Jangar Bespoke Decision Endpoint and Intraday Loop Design
 
 ## Status
+
 - Version: `v1`
 - Date: `2026-02-12`
 - Maturity: `proposed implementation design`
 
 ## Objective
+
 Replace Torghut's current dependency on Jangar's OpenAI-compatible completion endpoint with a dedicated decision-engine
 endpoint that:
+
 - launches agent execution with quant-specific skills,
 - supports long-running execution and progress streaming,
 - returns deterministic decision artifacts for Torghut execution policy,
 - runs continuously in an intraday loop driven by refined strategy triggers.
 
 Quant performance control-plane contract:
+
 - `docs/agents/designs/jangar-quant-performance-control-plane.md`
 
 ## Current Baseline
 
 ### Current call path
+
 - Torghut LLM client calls:
   - `/openai/v1/chat/completions`
   - source: `services/torghut/app/trading/llm/client.py`
@@ -27,6 +32,7 @@ Quant performance control-plane contract:
   - backed by `services/jangar/src/server/chat.ts`
 
 ### Verified runtime/data facts (2026-02-12 06:31-06:35 UTC)
+
 - Runtime:
   - `ksvc/torghut` ready on `torghut-00062`.
   - `deployment/jangar` healthy (`1/1`).
@@ -42,9 +48,11 @@ Quant performance control-plane contract:
     `self signed certificate in certificate chain` (Torghut DB trust-chain issue).
 
 ### Evidence collection playbook
+
 - `docs/agents/designs/jangar-torghut-live-analysis-playbook.md`
 
 ### Why this is insufficient
+
 - Completion endpoint is generic chat transport, not a quant decision contract.
 - No explicit lifecycle for long-running decision workflows (accepted/running/final).
 - No first-class output schema for:
@@ -55,12 +63,14 @@ Quant performance control-plane contract:
 ## Target Decision Interface
 
 ### New bespoke endpoint
+
 - `POST /api/torghut/decision-engine/stream`
 - Content type: `application/json`
 - Response type: `text/event-stream`
 - Connection model: server-sent events with heartbeat + progress + final decision envelope.
 
 ### Request contract (minimum)
+
 ```json
 {
   "request_id": "uuid",
@@ -101,6 +111,7 @@ Quant performance control-plane contract:
 ```
 
 ### SSE event contract (minimum)
+
 - `decision.accepted`
 - `decision.progress`
 - `decision.context_ready`
@@ -110,6 +121,7 @@ Quant performance control-plane contract:
 - heartbeat comments every 5-15s.
 
 Final event payload must include:
+
 - normalized `DecisionIntent`,
 - confidence + uncertainty notes,
 - bounded size recommendation,
@@ -119,6 +131,7 @@ Final event payload must include:
 ## Skill Execution Requirements
 
 Decision run must execute a fixed skill bundle (versioned):
+
 - `market-context`
 - `news-sentiment`
 - `fundamentals`
@@ -127,6 +140,7 @@ Decision run must execute a fixed skill bundle (versioned):
 - `execution-routing`
 
 Required guarantees:
+
 - each skill emits structured JSON,
 - each domain output has freshness + source quality metadata,
 - missing/stale domains are explicit risk flags (never silently omitted).
@@ -134,70 +148,89 @@ Required guarantees:
 ## Long-Running Workflow Options
 
 ### Option A: Synchronous blocking HTTP
+
 Flow:
+
 - Torghut calls bespoke endpoint.
 - Jangar executes agent inline and holds connection until final result.
 
 Pros:
+
 - simplest request/reply semantics.
-Cons:
+  Cons:
 - fragile for long runs, retries, and restarts.
 - poor operator visibility for partial progress.
 
 Use when:
+
 - maximum decision latency is tightly bounded (<20-30s).
 
 ### Option B: Submit + poll run status
+
 Flow:
+
 - Torghut submits request (`202 Accepted`) with `run_id`.
 - Torghut polls `/api/torghut/decision-engine/runs/{id}`.
 
 Pros:
+
 - resilient to caller disconnects.
 - easy retries/idempotency.
-Cons:
+  Cons:
 - polling overhead and delayed progress visibility.
 
 Use when:
+
 - clients cannot keep streaming connections open.
 
 ### Option C: Submit + SSE stream (recommended baseline)
+
 Flow:
+
 - Torghut posts request to stream endpoint.
 - Jangar starts AgentRun/OrchestrationRun and streams status events until final.
 
 Pros:
+
 - rich progress and low-latency completion.
 - good fit with existing Jangar SSE patterns (`/api/agents/events`).
-Cons:
+  Cons:
 - needs robust heartbeat/timeout handling on both sides.
 
 Use when:
+
 - intraday decisions may take 20s-5m and observability is required.
 
 ### Option D: Temporal workflow orchestration + SSE bridge (recommended for long/complex runs)
+
 Flow:
+
 - endpoint starts Temporal workflow (`decision-workflow`).
 - workflow fan-outs skill tasks, waits for completion, aggregates decision.
 - SSE route streams workflow state and final decision.
 
 Pros:
+
 - strongest durability/retry semantics.
 - explicit timeout, compensation, and recovery behavior.
-Cons:
+  Cons:
 - highest implementation complexity.
 
 Use when:
+
 - decision workflow includes external providers and variable latency.
 
 ## Recommendation
+
 - Phase 1: Option C (SSE + AgentRun/OrchestrationRun) for fast delivery.
 - Phase 2: Option D (Temporal) for hardened long-running durability.
 
 ## Execution Path and LEAN Integration
 
 ### Decision-output boundary
+
 Bespoke endpoint returns intent, never raw broker order submission:
+
 - Torghut remains authority for deterministic policy checks and order firewall.
 - Decision output includes:
   - `action`, `qty`, `order_constraints`,
@@ -206,6 +239,7 @@ Bespoke endpoint returns intent, never raw broker order submission:
   - rationale and risk flags.
 
 ### Adapter routing
+
 - Torghut execution policy resolves final adapter using:
   - risk state,
   - policy gates,
@@ -219,31 +253,38 @@ Bespoke endpoint returns intent, never raw broker order submission:
 ## Intraday Trigger-Loop Options
 
 ### Loop Option 1: Torghut scheduler-driven (recommended start)
+
 - Existing `TradingScheduler` in Torghut continues to trigger cycles.
 - Each strategy trigger calls bespoke endpoint once per candidate decision.
 
 Pros:
+
 - minimal architectural disruption.
 - reuse existing kill-switch and cadence controls.
 
 ### Loop Option 2: Jangar Schedule primitive driven
+
 - Use `Schedule` CRD targeting `OrchestrationRun`/`AgentRun`.
 - Jangar cron launches recurring decision runs.
 
 Pros:
+
 - native control-plane ownership of loop cadence.
-Cons:
+  Cons:
 - weaker direct coupling to real-time torghut-ta trigger events.
 
 ### Loop Option 3: Event-driven from torghut-ta signal stream
+
 - signal events trigger orchestration run creation directly.
 
 Pros:
+
 - lowest trigger latency.
-Cons:
+  Cons:
 - requires dedupe/idempotency controls for bursty events.
 
 ### Recommended operating model
+
 - Hybrid:
   - short term: Loop Option 1 (Torghut scheduler-driven),
   - medium term: add event-trigger path for high-priority setups,
@@ -252,61 +293,77 @@ Cons:
 ## Proposed Implementation Plan
 
 ### Workstream 0: Connectivity/trust prerequisites
+
 Owned areas:
+
 - `argocd/applications/jangar/deployment.yaml`
 - `services/jangar/src/server/torghut-trading-db.ts`
 
 Deliverables:
+
 - fix `TORGHUT_DB_DSN` TLS trust-chain in Jangar runtime,
 - ensure Torghut trading reads from Jangar are reliable before bespoke endpoint rollout,
 - add endpoint preflight probe in rollout checklist.
 
 ### Workstream A: Bespoke endpoint API
+
 Owned areas:
+
 - `services/jangar/src/routes/api/torghut/decision-engine/stream.ts` (new)
 - `services/jangar/src/routes/api/torghut/decision-engine/runs/$id.ts` (new, if poll fallback kept)
 - `services/jangar/src/server/torghut-decision-engine.ts` (new)
 - `services/jangar/src/server/agent-messages-store.ts` (reuse for progress events)
 
 Deliverables:
+
 - request validation schema,
 - SSE stream with heartbeats and lifecycle events,
 - idempotency by `request_id`,
 - persisted run state.
 
 ### Workstream B: Agent workflow wiring
+
 Owned areas:
+
 - `argocd/applications/jangar/jangar-primitives-agent*.yaml`
 - `argocd/applications/jangar/jangar-primitives-orchestration*.yaml`
 - `skills/*` (new quant decision skills)
 
 Deliverables:
+
 - dedicated `decision-engine` agent/orchestration templates,
 - skill bundle execution contract,
 - status events to `/api/agents/events`.
 
 ### Workstream C: Torghut client migration
+
 Owned areas:
+
 - `services/torghut/app/config.py`
 - `services/torghut/app/trading/llm/client.py` (or new decision client module)
 - `services/torghut/app/trading/scheduler.py`
 
 Deliverables:
+
 - feature-flagged client path to bespoke endpoint,
 - long-connection timeout/retry policy,
 - fallback behavior to current path for staged rollout.
 
 ### Workstream D: Temporal hardening (phase 2)
+
 Owned areas:
+
 - Jangar Temporal integration points (`services/jangar/src/server/**`)
 - workflow definitions for `decision-workflow` (new)
 
 Deliverables:
+
 - temporal workflow start/wait/cancel semantics,
 - durable retries and timeout envelopes,
 - SSE bridge from workflow state to caller.
 
 ## Guardrails and Failure Handling
+
 - Hard timeout per decision run with explicit `decision.error`.
 - Caller disconnect must not lose run state.
 - Duplicate triggers (`request_id`) must return existing run.
@@ -315,6 +372,7 @@ Deliverables:
   - never auto-escalate risk budget.
 
 ## Verification
+
 ```bash
 kubectl -n jangar get deploy jangar
 kubectl -n torghut get ksvc torghut
@@ -324,6 +382,7 @@ kubectl -n jangar logs deploy/jangar --tail=200
 ```
 
 ## AgentRun Handoff Bundle
+
 - `ImplementationSpec`: `torghut-v3-bespoke-decision-endpoint-impl-v1`
 - Required keys:
   - `repository`

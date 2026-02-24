@@ -146,13 +146,13 @@ reload its configuration.
 
 ### 6) Validate runtime behavior
 
-1) RuntimeClass exists:
+1. RuntimeClass exists:
 
 ```bash
 kubectl --context=ryzen get runtimeclass
 ```
 
-2) Run the Firecracker test pod:
+2. Run the Firecracker test pod:
 
 ```yaml
 apiVersion: v1
@@ -166,10 +166,10 @@ spec:
   containers:
     - name: busybox
       image: busybox:1.36
-      command: ["sh", "-c", "echo kata-fc-ok && sleep 3600"]
+      command: ['sh', '-c', 'echo kata-fc-ok && sleep 3600']
 ```
 
-3) Validate Firecracker is actually running:
+3. Validate Firecracker is actually running:
 
 - Talos host process list should show `firecracker --id ...`.
 - Socket should exist under `/run/vc/firecracker/.../root/run/firecracker.socket`.
@@ -282,7 +282,6 @@ kubectl -n kubevirt delete pdb virt-controller-pdb
 - `kata-fc-test` pod reached `Running`.
 - `talosctl ps` showed active `/firecracker --id ...` processes.
 
-
 ### Validation (kata-fc)
 
 Pod manifest (PodSecurity compliant):
@@ -306,11 +305,11 @@ spec:
   containers:
     - name: busybox
       image: busybox:1.36
-      command: ["sh", "-c", "echo kata-fc-ok && sleep 3600"]
+      command: ['sh', '-c', 'echo kata-fc-ok && sleep 3600']
       securityContext:
         allowPrivilegeEscalation: false
         capabilities:
-          drop: ["ALL"]
+          drop: ['ALL']
 ```
 
 Verify:

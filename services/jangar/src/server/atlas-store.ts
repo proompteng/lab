@@ -1062,23 +1062,27 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         'created_at',
       ])
 
-    const row = await (resolvedChunkId
-      ? insertQuery.onConflict((oc) =>
-          oc.columns(['file_version_id', 'chunk_id', 'kind', 'source']).doUpdateSet({
-            content: sql`excluded.content`,
-            summary: sql`excluded.summary`,
-            tags: sql`excluded.tags`,
-            metadata: sql`excluded.metadata`,
-          }),
-        )
-      : insertQuery.onConflict((oc) =>
-          oc.columns(['file_version_id', 'kind', 'source']).where('chunk_id', 'is', null).doUpdateSet({
-            content: sql`excluded.content`,
-            summary: sql`excluded.summary`,
-            tags: sql`excluded.tags`,
-            metadata: sql`excluded.metadata`,
-          }),
-        )
+    const row = await (
+      resolvedChunkId
+        ? insertQuery.onConflict((oc) =>
+            oc.columns(['file_version_id', 'chunk_id', 'kind', 'source']).doUpdateSet({
+              content: sql`excluded.content`,
+              summary: sql`excluded.summary`,
+              tags: sql`excluded.tags`,
+              metadata: sql`excluded.metadata`,
+            }),
+          )
+        : insertQuery.onConflict((oc) =>
+            oc
+              .columns(['file_version_id', 'kind', 'source'])
+              .where('chunk_id', 'is', null)
+              .doUpdateSet({
+                content: sql`excluded.content`,
+                summary: sql`excluded.summary`,
+                tags: sql`excluded.tags`,
+                metadata: sql`excluded.metadata`,
+              }),
+          )
     ).executeTakeFirst()
 
     if (!row) throw new Error('enrichment upsert failed')

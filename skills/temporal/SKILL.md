@@ -1,6 +1,6 @@
 ---
 name: temporal
-description: "Operate Temporal workflows in this repo: start/list/inspect workflows, fetch history, debug nondeterminism, reset/cancel/terminate, and check task queues via Temporal CLI."
+description: 'Operate Temporal workflows in this repo: start/list/inspect workflows, fetch history, debug nondeterminism, reset/cancel/terminate, and check task queues via Temporal CLI.'
 ---
 
 # Temporal

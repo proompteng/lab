@@ -23,7 +23,7 @@ bun install
 # Clean all node_modules
 bun run clean
 
-# Format code using Biome
+# Format code using Oxfmt
 bun run format
 ```
 
@@ -104,7 +104,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - **Backend**: Go 1.24, Node.js 22.20, Python 3.9-3.13
 - **Data**: Dagster, Temporal, PostgreSQL, Kafka, Milvus
 - **Infrastructure**: Kubernetes (K3s), ArgoCD, Harvester, Ansible
-- **Tooling**: Bun 1.3.9, Biome, Turbo, Docker, UV
+- **Tooling**: Bun 1.3.9, Oxfmt, Oxlint, Turbo, Docker, UV
 
 ### Application Patterns
 
@@ -126,7 +126,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 
 ### Formatting & Linting
 
-- Use Biome for formatting and linting (configured in biome.json)
+- Use Oxfmt for formatting (configured in `.oxfmtrc.json`) and Oxlint for linting (configured in `.oxlintrc.json`)
 - Settings: 2 spaces indentation, single quotes, trailing commas, 120 char line width
 - Run `bun run format` to format all files
 

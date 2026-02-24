@@ -2,14 +2,15 @@
   "name": "@proompteng/temporal-bun-sdk",
   "version": "0.6.1",
   "license": "MIT",
-  "type": "module",
-  "main": "./dist/src/index.js",
-  "module": "./dist/src/index.js",
-  "types": "./dist/src/index.d.ts",
   "repository": {
     "type": "git",
     "url": "https://github.com/proompteng/lab.git",
     "directory": "packages/temporal-bun-sdk"
+  },
+  "bin": {
+    "temporal-bun": "./dist/src/bin/temporal-bun.js",
+    "temporal-bun-skill": "./dist/src/bin/temporal-bun-skill.js",
+    "temporal-bun-worker": "./dist/src/bin/start-worker.js"
   },
   "files": [
     "dist",
@@ -17,11 +18,10 @@
     "skills",
     "README.md"
   ],
-  "bin": {
-    "temporal-bun-worker": "./dist/src/bin/start-worker.js",
-    "temporal-bun": "./dist/src/bin/temporal-bun.js",
-    "temporal-bun-skill": "./dist/src/bin/temporal-bun-skill.js"
-  },
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "module": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
@@ -74,9 +74,6 @@
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json --ignore-pattern tests ."
   },
-  "engines": {
-    "bun": ">=1.1.20"
-  },
   "dependencies": {
     "@bufbuild/protobuf": "^2.1.0",
     "@connectrpc/connect": "^2.1.0",
@@ -88,5 +85,8 @@
   "devDependencies": {
     "@types/node": "^22.7.5",
     "bun-types": "^1.1.20"
+  },
+  "engines": {
+    "bun": ">=1.1.20"
   }
 }

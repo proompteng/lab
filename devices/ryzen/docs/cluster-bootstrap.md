@@ -5,11 +5,13 @@ It keeps the setup reproducible by using the patches in `devices/ryzen/manifests
 plus the existing Talos/KubeVirt docs in this repo.
 
 Cluster inventory / current state:
+
 - `devices/galactic/README.md`
 
 ## Manifest inventory (ryzen)
 
 Node-level patches:
+
 - `devices/ryzen/manifests/ephemeral-volume.patch.yaml` (limit system disk to 200GB)
 - `devices/ryzen/manifests/local-path.patch.yaml` (user volume for local-path, grows to consume remaining system disk space)
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (allow workloads on single-node controlplane)
@@ -22,6 +24,7 @@ Node-level patches:
 - `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (Image Factory schematic: tailscale + AMD GPU + kernel args)
 
 Related docs:
+
 - `devices/ryzen/docs/amdgpu-device-plugin.md`
 - `devices/ryzen/docs/bosgame-m5-talos-drivers.md`
 - `devices/ryzen/docs/node-level-dependencies.md`
@@ -31,6 +34,7 @@ Related docs:
 ## 1) Generate Talos config (store in `devices/ryzen/`)
 
 These files are gitignored on purpose:
+
 - `devices/ryzen/controlplane.yaml`
 - `devices/ryzen/worker.yaml`
 - `devices/ryzen/talosconfig`
@@ -89,6 +93,7 @@ If you need to re-layout these volumes on an already-installed node, follow:
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml`
 
 Image Factory schematic (boot assets, not a config patch):
+
 - `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (tailscale + AMD GPU + kernel args)
 
 ### 2.4.1 Generate the Tailscale extension service patch
@@ -161,6 +166,7 @@ talosctl get extensions -n 192.168.1.194
 ```
 
 Notes:
+
 - Extensions only activate during install/upgrade.
 - See `devices/ryzen/docs/relayout-volumes.md` for the operational runbook when
   re-laying out `EPHEMERAL` + `local-path-provisioner` on an existing install.
@@ -207,6 +213,7 @@ talosctl -n 192.168.1.194 -e 192.168.1.194 get machineconfig -o yaml > devices/r
 KubeVirt is installed via Argo CD.
 
 Runbook:
+
 - `docs/kubevirt/workers-ryzen.md`
 
 ## 5) Argo CD cluster re-registration (ryzen)

@@ -24,12 +24,7 @@ import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'
 import { promptList, promptText } from '../prompt'
 
-const resolvePromptText = (
-  value: Option.Option<string>,
-  question: string,
-  allowEmpty = false,
-  defaultValue?: string,
-) =>
+const resolvePromptText = (value: Option.Option<string>, question: string, allowEmpty = false, defaultValue?: string) =>
   Option.isSome(value)
     ? Effect.succeed(value.value)
     : Effect.tryPromise({

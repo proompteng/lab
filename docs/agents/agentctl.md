@@ -22,6 +22,7 @@ brew install proompteng/tap/agentctl
 ```
 
 ## Modes
+
 - **Kube mode (default):** uses your kubeconfig + context and talks to the Kubernetes API directly.
 - **gRPC mode (optional):** uses the Jangar gRPC endpoint; enable with `--grpc` or `AGENTCTL_MODE=grpc`.
 
@@ -52,17 +53,20 @@ If you set a token here, the Jangar server must be configured with the same
 `JANGAR_GRPC_TOKEN` value (for example via `env.vars.JANGAR_GRPC_TOKEN` in the chart values).
 
 Kube mode uses:
+
 - `--kubeconfig` or `AGENTCTL_KUBECONFIG` (optional)
 - `--context` or `AGENTCTL_CONTEXT` (optional)
 
 Transport selection:
+
 - `--grpc` (or `AGENTCTL_MODE=grpc`) to use gRPC
 - `--kube` (or `AGENTCTL_MODE=kube`) to force kube mode
 
 TLS is supported on the client side. Use `--tls` and set:
+
 - `AGENTCTL_CA_CERT` (optional)
 - `AGENTCTL_CLIENT_CERT` / `AGENTCTL_CLIENT_KEY` (optional mTLS)
-Jangar itself does not terminate TLS; use a gateway/mesh if you need TLS in production.
+  Jangar itself does not terminate TLS; use a gateway/mesh if you need TLS in production.
 
 ## Usage
 
@@ -87,6 +91,7 @@ agentctl watch run --selector app=my-agent
 ```
 
 Use gRPC mode explicitly when needed:
+
 ```bash
 agentctl --grpc --server 127.0.0.1:50051 status
 ```

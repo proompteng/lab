@@ -1,23 +1,23 @@
 server:
-  listen_address: ":8080"
+  listen_address: ':8080'
 discord:
-  bot_token: "local-token"
-  application_id: "000000000000000001"
-  public_key: "local-public-key"
-  guild_id: "000000000000000002"
+  bot_token: 'local-token'
+  application_id: '000000000000000001'
+  public_key: 'local-public-key'
+  guild_id: '000000000000000002'
 redis:
-  url: "redis://redis:6379/0"
+  url: 'redis://redis:6379/0'
 postgres:
-  dsn: "postgres://facteur:facteur@postgres:5432/facteur_kb?sslmode=disable"
+  dsn: 'postgres://facteur:facteur@postgres:5432/facteur_kb?sslmode=disable'
 argo:
-  namespace: "argo"
-  workflow_template: "facteur-dispatch"
-  service_account: "facteur"
+  namespace: 'argo'
+  workflow_template: 'facteur-dispatch'
+  service_account: 'facteur'
   parameters:
-    environment: "local"
+    environment: 'local'
 role_map:
-  plan: ["role"]
-  implement: ["role"]
-  review: ["role"]
+  plan: ['role']
+  implement: ['role']
+  review: ['role']
 codex_listener:
   enabled: false

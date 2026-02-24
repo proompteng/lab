@@ -3,19 +3,24 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The chart renders a separate controllers deployment that forces `JANGAR_GRPC_ENABLED=0` unless explicitly overridden. This is a good safety default (controllers do not need to expose gRPC externally), but it is undocumented and can be surprising when operators expect agentctl gRPC to be available everywhere.
 
 This doc defines the intended behavior and introduces a controlled enablement path if needed.
 
 ## Goals
+
 - Document why gRPC is disabled in controllers.
 - Provide a safe opt-in for controller gRPC only when required.
 
 ## Non-Goals
+
 - Making controllers gRPC publicly accessible.
 
 ## Current State
+
 - Chart forces defaults in `charts/agents/templates/deployment-controllers.yaml`:
   - Sets `JANGAR_GRPC_ENABLED` to `"0"` unless present in `controllers.env.vars`.
 - Control plane gRPC behavior is implemented in:
@@ -24,50 +29,61 @@ This doc defines the intended behavior and introduces a controlled enablement pa
 - Cluster desired state sets gRPC enabled for control plane in `argocd/applications/agents/values.yaml`.
 
 ## Design
+
 ### Contract
+
 - Controllers gRPC remains disabled by default.
 - If controller gRPC is needed (e.g., for internal debugging), enable it explicitly with:
   - `controllers.env.vars.JANGAR_GRPC_ENABLED: "true"`
-and require `controllers.service.enabled=true` (see chart design) to avoid “listening but unreachable” states.
+    and require `controllers.service.enabled=true` (see chart design) to avoid “listening but unreachable” states.
 
 ### Additional guardrails
+
 - Add a startup log line in controllers indicating whether gRPC server started.
 - Add chart validation: if `controllers.env.vars.JANGAR_GRPC_ENABLED=true`, require `controllers.service.enabled=true`.
 
 ## Config Mapping
-| Helm value | Env var | Intended behavior |
-|---|---|---|
-| `controllers.env.vars.JANGAR_GRPC_ENABLED` | `JANGAR_GRPC_ENABLED` | Explicit opt-in for controllers gRPC server. |
-| (unset) | `JANGAR_GRPC_ENABLED=0` | Default: controllers do not start gRPC server. |
+
+| Helm value                                 | Env var                 | Intended behavior                              |
+| ------------------------------------------ | ----------------------- | ---------------------------------------------- |
+| `controllers.env.vars.JANGAR_GRPC_ENABLED` | `JANGAR_GRPC_ENABLED`   | Explicit opt-in for controllers gRPC server.   |
+| (unset)                                    | `JANGAR_GRPC_ENABLED=0` | Default: controllers do not start gRPC server. |
 
 ## Rollout Plan
+
 1. Document current forced default.
 2. Add guardrails and optional Service support.
 3. If needed, canary-enable controller gRPC in non-prod only.
 
 Rollback:
+
 - Remove the explicit env var and disable controller Service.
 
 ## Validation
+
 ```bash
 helm template agents charts/agents --set controllers.enabled=true | rg -n \"JANGAR_GRPC_ENABLED\"
 kubectl -n agents logs deploy/agents-controllers | rg -n \"gRPC|Agentctl\"
 ```
 
 ## Failure Modes and Mitigations
+
 - Operators think gRPC is enabled due to `grpc.enabled=true`: mitigate by documenting that it affects only the control plane.
 - gRPC enabled without Service: mitigate with render-time validation and an opt-in Service template.
 
 ## Acceptance Criteria
+
 - It is clear (from values + render) whether controllers will run gRPC.
 - Enabling controller gRPC requires explicit opt-in and is not accidental.
 
 ## References
+
 - gRPC basics: https://grpc.io/docs/what-is-grpc/introduction/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -82,7 +98,9 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"gRPC|Agentctl\"
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -115,13 +133,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -137,6 +158,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -149,6 +171,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

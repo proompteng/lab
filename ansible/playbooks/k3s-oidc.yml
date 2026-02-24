@@ -22,7 +22,7 @@
 
     - name: Write k3s OIDC config
       ansible.builtin.template:
-        src: "{{ playbook_dir }}/../templates/k3s-oidc.yaml.j2"
+        src: '{{ playbook_dir }}/../templates/k3s-oidc.yaml.j2'
         dest: /etc/rancher/k3s/config.yaml.d/oidc.yaml
         owner: root
         group: root

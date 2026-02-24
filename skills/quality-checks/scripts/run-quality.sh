@@ -11,9 +11,9 @@ shift
 
 if [[ "$TARGET" == "all" ]]; then
   bun run format
-  bunx biome check .
+  bunx oxfmt --check .
 else
   bun run --filter "$TARGET" lint || true
   bun run --filter "$TARGET" tsc || true
-  bunx biome check "services/$TARGET" "packages/$TARGET" "apps/$TARGET" || true
+  bunx oxfmt --check "services/$TARGET" "packages/$TARGET" "apps/$TARGET" || true
 fi

@@ -3,7 +3,7 @@
 k3s_version: v1.33.4+k3s1
 
 # IMPORTANT: replace this token (or vault/encrypt it) before running the playbook.
-token: "CHANGE_ME_WITH_SECURE_TOKEN"
+token: 'CHANGE_ME_WITH_SECURE_TOKEN'
 
 # Default to the first master host for the API endpoint; override if using an LB.
 api_endpoint: "{{ hostvars[groups['master'][0]]['ansible_host'] | default(groups['master'][0]) }}"

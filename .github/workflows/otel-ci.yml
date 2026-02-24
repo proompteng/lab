@@ -17,7 +17,8 @@ jobs:
     uses: ./.github/workflows/common-monorepo.yml
     with:
       install-command: bun install --frozen-lockfile --ignore-scripts
-      lint-command: bunx biome check packages/otel/src packages/otel/tests
+      lint-command: bunx oxfmt --check packages/otel/src packages/otel/tests
+      oxlint-command: bunx oxlint --config .oxlintrc.json packages/otel/src packages/otel/tests
       test-command: bun run --filter @proompteng/otel test
       build-command: bun run --filter @proompteng/otel build
     secrets: inherit

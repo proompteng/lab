@@ -6,11 +6,13 @@ AmpereOne (ASRock Rack `AMPONED8-2T/BCM`).
 ## "Good" vs "bad" boot signals
 
 Good (DDR init succeeded):
+
 - `MemoryInitExtEntryPoint Done.`
 - A `DRAM: <size> DDR5 <speed> ... ECC` line
 - UEFI starts (`UEFI firmware ...`) and POST checkpoints advance
 
 Bad (DDR training failure / boot will usually abort):
+
 - `DIMM_VREFDQ SWTrain FAIL`
 - `Window = 0 too small (< 6)`
 - `PI INIT DONE timeout`
@@ -20,6 +22,7 @@ Bad (DDR training failure / boot will usually abort):
 ## Slot population order (from the board manual)
 
 Recommended configs:
+
 - `1 DIMM`: `A1`
 - `4 DIMMs`: `A1 C1 E1 G1`
 - `8 DIMMs`: `A1 B1 C1 D1 E1 F1 G1 H1`
@@ -53,6 +56,7 @@ appear at higher population / higher speed.
 ## "Same model" is not always "same DIMM"
 
 DDR5 RDIMMs can share the same base module part number but still differ in:
+
 - SPD contents / revision
 - RCD vendor/revision (registering clock driver)
 - PMIC vendor/revision
@@ -62,6 +66,7 @@ When a mixed set is installed, training can pass at lower population and fail at
 with `DIMM_VREFDQ SWTrain FAIL` across multiple channels.
 
 Practically:
+
 - Prefer a matched set where all DIMMs report the same SPD/RCD/PMIC signatures in the
   `DRAM populated DIMMs:` boot inventory.
 - If the board memory QVL lists a specific suffix (example: `... IMCC`), match that suffix
@@ -82,4 +87,3 @@ retraining.
   adding the last 4 DIMMs.
 - BMC SDR DIMM sensors can be `No Reading` while stuck in training; trust the SOL logs
   (`DRAM populated DIMMs:` + training errors) over SDR in that situation.
-

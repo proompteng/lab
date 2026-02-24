@@ -3,6 +3,7 @@
 Goal: safely power down `ampone` for physical memory work while minimizing cluster risk.
 
 Targets:
+
 - Kubernetes node: `talos-192-168-1-203` (`ampone`)
 - BMC/IPMI: `192.168.1.224`
 
@@ -59,6 +60,7 @@ kubectl get pods -A \
 ```
 
 Expected:
+
 - only `DaemonSet` and static control-plane pods (`OWNER=Node`) remain
 - no regular workload Deployments/StatefulSets remain on this node
 
@@ -88,6 +90,7 @@ kubectl get lease -n kube-node-lease talos-192-168-1-203 \
 ```
 
 Expected shortly after shutdown:
+
 - node transitions from `Ready=True` to `Ready=Unknown`/`NotReady`
 - lease `renewTime` stops advancing
 

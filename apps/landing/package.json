@@ -7,10 +7,11 @@
     "prebuild": "bash -lc 'if [ -n \"${CONVEX_DEPLOYMENT:-}\" ]; then bun run --filter @proompteng/backend codegen; elif [ -d ../../packages/backend/convex/_generated ]; then echo \"Skipping Convex codegen (CONVEX_DEPLOYMENT not set; using committed _generated).\"; else echo \"Missing packages/backend/convex/_generated and CONVEX_DEPLOYMENT is not set.\" >&2; exit 1; fi'",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "bunx biome check",
-    "format": "bunx biome format --write",
+    "lint": "bunx oxfmt --check",
+    "format": "bunx oxfmt",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
-    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
+    "format:check": "bunx oxfmt --check ."
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -65,7 +66,6 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.3.8",
     "@tailwindcss/postcss": "^4",
     "@types/node": "25.2.3",
     "@types/react": "19.2.14",

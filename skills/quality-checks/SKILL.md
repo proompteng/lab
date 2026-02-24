@@ -15,7 +15,7 @@ Run the smallest set of checks for touched code. Use workspace filters and targe
 bun run format
 bun run --filter @proompteng/bumba lint
 bun run --filter @proompteng/bumba tsc
-bunx biome check services/bumba
+bunx oxfmt --check services/bumba
 ```
 
 ## Go

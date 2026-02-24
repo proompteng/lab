@@ -15,6 +15,7 @@ This runbook covers Headlamp deployment, OIDC wiring with Keycloak, control-plan
 Create a confidential OpenID Connect client (e.g., `kubernetes`) and use it for both Headlamp and the kube-apiserver.
 
 Capabilities:
+
 - Client authentication: **On**
 - Standard flow: **On**
 - Direct access grants: Off
@@ -23,6 +24,7 @@ Capabilities:
 - PKCE: None
 
 Login settings:
+
 - Root URL: `https://headlamp.ide-newton.ts.net`
 - Home URL: `https://headlamp.ide-newton.ts.net`
 - Valid redirect URIs: `https://headlamp.ide-newton.ts.net/oidc-callback`
@@ -30,11 +32,13 @@ Login settings:
 - Valid post logout redirect URIs: `https://headlamp.ide-newton.ts.net`
 
 OIDC values:
+
 - Issuer: `https://auth.proompteng.ai/realms/master`
 - Scopes: `openid profile email`
   - For longer-lived Headlamp sessions, include `offline_access` and ensure it is assigned to the client (Default or Optional + requested).
 
 Optional (recommended) group mapper:
+
 - Mapper type: **Group Membership**
 - Token claim name: `groups`
 - Add to ID token: On
@@ -64,6 +68,7 @@ Commit and sync the Headlamp Argo CD app.
 Headlamp relies on refresh tokens to avoid frequent logouts. Set realm and client session values in Keycloak:
 
 Balanced profile (recommended for Headlamp):
+
 - Realm settings → Sessions
   - SSO Session Idle: 8 hours
   - SSO Session Max: 1 day
@@ -83,6 +88,7 @@ Log out/in to Headlamp after changes so it receives a new refresh token.
 Headlamp tokens are validated by the kube-apiserver, so OIDC settings must be applied on all control-plane nodes.
 
 Talos patch files (cluster inventory: `devices/galactic/docs/tailscale.md`):
+
 - `devices/ryzen/manifests/oidc-keycloak.patch.yaml`
 - `devices/ampone/manifests/oidc-keycloak.patch.yaml`
 - `devices/altra/manifests/oidc-keycloak.patch.yaml`
@@ -117,6 +123,7 @@ to that path in `cluster.apiServer.extraArgs`.
 Grant permissions using a ClusterRoleBinding in GitOps.
 
 Default binding (user-based):
+
 - `argocd/applications/headlamp/headlamp-oidc-rbac.yaml`
 - Binds `User: oidc:gregkonush` to `cluster-admin`.
 

@@ -1053,7 +1053,10 @@ export const createCodexJudgeStore = (
   }
 
   const updateRunStatus = async (runId: string, status: string) => {
-    let query = db.updateTable('codex_judge.runs').set({ status, updated_at: sql`now()` }).where('id', '=', runId)
+    let query = db
+      .updateTable('codex_judge.runs')
+      .set({ status, updated_at: sql`now()` })
+      .where('id', '=', runId)
     if (status !== 'superseded') {
       query = query.where('status', 'not in', ['superseded'])
     }

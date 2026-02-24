@@ -7,7 +7,7 @@
     "dev": "bun --hot src/index.ts",
     "start": "bun src/index.ts",
     "test": "bun test",
-    "lint": "bunx biome check --config-path ../../biome.json src",
+    "lint": "bunx oxfmt --check src",
     "tsc": "bunx tsc --noEmit",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json ."

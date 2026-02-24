@@ -5,24 +5,29 @@ Status: Current (2026-01-20)
 Docs index: [README](README.md)
 
 See also:
+
 - `README.md` (docs index)
 - `designs/handoff-common.md` (GitOps render + live verification commands)
 - `ci-validation-plan.md` (what to run before/after rollout)
 
 ## Install
+
 1. `helm install agents charts/agents -n agents --create-namespace`
 2. Verify CRDs: `kubectl get crd | rg agents.proompteng.ai`
 3. Verify Jangar: `kubectl -n agents get deploy,svc`
 
 ## Upgrade
+
 1. `helm upgrade agents charts/agents -n agents`
 2. Confirm rollout: `kubectl -n agents rollout status deploy/agents`
 
 ## Rollback
+
 1. `helm rollback agents <REV> -n agents`
 2. Verify status and re-run smoke test.
 
 ## Argo CD Application (GitOps, optional)
+
 If you use Argo CD for GitOps (optional), use the sample Application manifest in
 `argocd/applications/agents/application.yaml`:
 
@@ -41,6 +46,7 @@ The chart defaults `controller.jobTtlSecondsAfterFinished` to a safe value; set 
 If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
 
 GitOps rollout notes (native workflow runtime):
+
 - No external workflow engine is required for native AgentRun/OrchestrationRun execution.
 - Keep `controller.enabled`, `orchestrationController.enabled`, and `supportingController.enabled` at their defaults
   unless you are intentionally disabling native runtime components.
@@ -52,6 +58,7 @@ CI runners use `argocd/applications/agents-ci` to provision the `agents-ci` name
 so GitHub Actions can execute smoke tests against the chart.
 
 Optional Argo CD smoke test (only for Argo CD-based installs):
+
 ```bash
 kubectl -n argocd get applications.argoproj.io agents -o yaml
 kubectl -n agents get deploy,svc
@@ -67,12 +74,14 @@ kubectl -n agents wait --for=condition=complete job \
 ```
 
 ## Smoke test (kind/minikube)
+
 ```bash
 packages/scripts/src/agents/smoke-agents.ts
 ```
 
 This installs the chart, applies deterministic smoke CRs, submits a multi-step workflow runtime
 AgentRun via `agentctl` (kube mode), and validates:
+
 - AgentRun phase transitions Pending → Running → Succeeded.
 - Workflow job creation (one Job per step) and Job completion.
 - Runtime ref is set to the workflow job runner.
@@ -85,7 +94,9 @@ Ensure the `agentrun-workflow-smoke.yaml` workload image includes `agent-runner`
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
 
 ## Workflow runtime validation (native)
+
 Confirm the workflow adapter is healthy and no Argo Workflows are required:
+
 ```bash
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.runtime_adapters'
 kubectl api-resources --api-group=argoproj.io --no-headers || true
@@ -93,29 +104,35 @@ kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
 ```
 
 Expected outcomes:
+
 - `runtime_adapters` contains `workflow` with `status: healthy` and a native runtime message.
 - The Argo Workflows resource check returns empty output (no CRD or no workflows).
 
 ## Native workflow e2e proof
+
 This runbook validates the native workflow runtime end-to-end (AgentProvider → Agent → ImplementationSpec → AgentRun)
 and confirms that the Codex implementation step opens a PR against `proompteng/lab`.
 
 Prereqs:
+
 - `codex-github-token` secret in the target namespace (GH token with repo permissions).
 - OpenAI key available via `AGENTS_E2E_OPENAI_KEY` or an existing `codex-openai-key` secret
   (the script will create/update it when the env var is set).
 
 Prereqs:
+
 - Agents chart is installed in `agents` and Jangar is reachable.
 - A GitHub token secret exists (see below).
 
 Create the GitHub token secret once (or set `AGENTS_E2E_GH_TOKEN`):
+
 ```bash
 kubectl -n agents create secret generic codex-github-token \
   --from-literal=GH_TOKEN="<token>"
 ```
 
 Run the native workflow script (override the issue/task as needed):
+
 ```bash
 AGENTS_E2E_ISSUE_NUMBER=2614 \
 AGENTS_E2E_PROMPT="Add optional autoscaling support to the Agents Helm chart (HPA + values schema + README)." \
@@ -123,41 +140,48 @@ scripts/agents/native-workflow-e2e.sh
 ```
 
 Expected outputs:
+
 - AgentRun reaches `Succeeded` with `status.runtimeRef.type=workflow`.
 - Output directory contains:
   - `agentrun.json` (final status snapshot)
   - `jobs.txt` (Job → Pod mapping)
   - `logs/<job>.log` (job logs)
   - `artifacts/<job>-runner.log` and `artifacts/<job>-status.json` (agent-runner artifacts)
- - Script summary includes the output paths and, when available, the PR URL.
+- Script summary includes the output paths and, when available, the PR URL.
 
 Verify the PR was created:
+
 ```bash
 gh pr list --repo proompteng/lab --head "codex/agents/${AGENTS_E2E_ISSUE_NUMBER}"
 ```
 
 Notes:
+
 - The script applies `charts/agents/examples/agentprovider-native-workflow.yaml`,
   `charts/agents/examples/agent-native-workflow.yaml`, and
   `charts/agents/examples/implementationspec-native-workflow.yaml` before submitting the AgentRun.
 - Set `AGENTS_E2E_VERIFY_PR=false` to skip the optional PR lookup (uses `gh` if available).
 
 Troubleshooting:
+
 - AgentRun failed: `kubectl -n agents get agentrun <name> -o yaml` and inspect job logs in the output directory.
 - No PR created: confirm `codex-github-token` exists and includes `GH_TOKEN`, and the agent image has `gh` + `git`.
 - Stuck in Pending/Running: check `kubectl -n agents get job -l agents.proompteng.ai/agent-run=<name>` and controller logs.
 
 ## Codex reruns/system improvements (native)
+
 - Configure `JANGAR_CODEX_RERUN_ORCHESTRATION` and/or `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` (plus the matching
   `*_NAMESPACE` variables if needed).
 - Ensure the referenced Orchestration exists and watch OrchestrationRun status for progress.
 
 ## Torghut v3 orchestration guard checks
+
 - Source templates:
   - `docs/torghut/design-system/v3/full-loop/templates/agentruns.yaml`
   - `docs/torghut/design-system/v3/full-loop/templates/orchestration-policy.yaml`
   - `docs/torghut/design-system/v3/full-loop/templates/orchestration-observability.yaml`
 - Validate stage transition guard decisions before advancing a candidate:
+
 ```bash
 cd services/torghut
 uv run python scripts/orchestration_guard.py check-transition \
@@ -172,7 +196,9 @@ uv run python scripts/orchestration_guard.py check-transition \
   --execution-controls-passed \
   --mode gitops
 ```
+
 - Evaluate retry/pause behavior after a stage failure:
+
 ```bash
 cd services/torghut
 uv run python scripts/orchestration_guard.py evaluate-failure \
@@ -181,30 +207,36 @@ uv run python scripts/orchestration_guard.py evaluate-failure \
   --failure-class transient \
   --attempt 2
 ```
+
 - Use emergency mode only for ticketed incidents. Mutable actions remain GitOps-first by default.
 
 ## Jangar /health 500 (router init error)
+
 - Symptom: `/health` returns 500 with `ReferenceError: Cannot access 'aE' before initialization`.
 - Root cause: Jangar builds picked up an incompatible Nitro `latest` bundle output.
 - Fix: Pin Nitro to `3.0.0` in `services/jangar/package.json` and deploy a pinned Jangar image digest
   (avoid `latest`).
 
 ## Stuck AgentRun
+
 - Check status/conditions: `kubectl -n agents get agentrun <name> -o yaml`
 - If runtimeRef exists, check runtime object (job/workflow).
 - If no runtimeRef, inspect Jangar logs for submission errors.
 
 ## Failed Integration Sync
+
 - Inspect ImplementationSource status.
 - Check credentials secret exists and is valid.
 - Verify webhook delivery logs and signature headers.
 
 ## Memory Outage
+
 - Check Memory status and connection secret.
 - Failover to alternative Memory (set default).
 - Re-run failed AgentRuns.
 
 ## CRD Missing
+
 - Reinstall chart or apply CRD YAMLs directly.
 - Verify `kubectl api-resources | rg agents`.
 

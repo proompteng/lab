@@ -5,18 +5,18 @@ on:
     branches:
       - main
     paths:
-      - "proto/**"
-      - "buf.work.yaml"
-      - "buf.gen.yaml"
-      - "scripts/generate-proto.sh"
-      - ".github/workflows/buf-ci.yml"
+      - 'proto/**'
+      - 'buf.work.yaml'
+      - 'buf.gen.yaml'
+      - 'scripts/generate-proto.sh'
+      - '.github/workflows/buf-ci.yml'
   pull_request:
     paths:
-      - "proto/**"
-      - "buf.work.yaml"
-      - "buf.gen.yaml"
-      - "scripts/generate-proto.sh"
-      - ".github/workflows/buf-ci.yml"
+      - 'proto/**'
+      - 'buf.work.yaml'
+      - 'buf.gen.yaml'
+      - 'scripts/generate-proto.sh'
+      - '.github/workflows/buf-ci.yml'
 
 jobs:
   lint:

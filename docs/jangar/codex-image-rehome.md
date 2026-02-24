@@ -69,17 +69,17 @@ primary Jangar app code.
 
 ### File move map
 
-| Current path | New path |
-| --- | --- |
-| `apps/froussard/Dockerfile.codex` | `services/jangar/Dockerfile.codex` |
-| `apps/froussard/src/codex/cli/build-codex-image.ts` | `services/jangar/scripts/build-codex-image.ts` |
+| Current path                                         | New path                                              |
+| ---------------------------------------------------- | ----------------------------------------------------- |
+| `apps/froussard/Dockerfile.codex`                    | `services/jangar/Dockerfile.codex`                    |
+| `apps/froussard/src/codex/cli/build-codex-image.ts`  | `services/jangar/scripts/build-codex-image.ts`        |
 | `apps/froussard/scripts/codex-config-container.toml` | `services/jangar/scripts/codex-config-container.toml` |
-| `apps/froussard/src/codex/cli/*` | `services/jangar/scripts/codex/*` |
-| `apps/froussard/src/codex/cli/lib/*` | `services/jangar/scripts/codex/lib/*` |
-| `apps/froussard/src/codex/cli/__tests__/*` | `services/jangar/scripts/codex/__tests__/*` |
-| `apps/froussard/scripts/codex-nats-publish.ts` | `services/jangar/scripts/codex-nats-publish.ts` |
-| `apps/froussard/scripts/codex-nats-soak.ts` | `services/jangar/scripts/codex-nats-soak.ts` |
-| `apps/froussard/scripts/discord-channel.ts` | `services/jangar/scripts/discord-channel.ts` |
+| `apps/froussard/src/codex/cli/*`                     | `services/jangar/scripts/codex/*`                     |
+| `apps/froussard/src/codex/cli/lib/*`                 | `services/jangar/scripts/codex/lib/*`                 |
+| `apps/froussard/src/codex/cli/__tests__/*`           | `services/jangar/scripts/codex/__tests__/*`           |
+| `apps/froussard/scripts/codex-nats-publish.ts`       | `services/jangar/scripts/codex-nats-publish.ts`       |
+| `apps/froussard/scripts/codex-nats-soak.ts`          | `services/jangar/scripts/codex-nats-soak.ts`          |
+| `apps/froussard/scripts/discord-channel.ts`          | `services/jangar/scripts/discord-channel.ts`          |
 
 ### Consolidate duplicate scripts
 

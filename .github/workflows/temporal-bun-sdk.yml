@@ -106,8 +106,8 @@ jobs:
               ;;
           esac
 
-      - name: Run Biome check (temporal-bun-sdk)
-        run: bunx biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
+      - name: Run Oxfmt check (temporal-bun-sdk)
+        run: bunx oxfmt --check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
 
       - name: Run Oxlint (temporal-bun-sdk, non-blocking)
         continue-on-error: true

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { buildTanstackStartService } from './create-service'
+import { buildTanstackStartService, mergeTanstackServiceScripts } from './create-service'
 import type { TanstackServiceOptions } from './types'
 
 const asPaths = (files: { path: string }[]) => files.map((f) => f.path)
@@ -7,6 +7,26 @@ const asPaths = (files: { path: string }[]) => files.map((f) => f.path)
 const stubScaffold = async (opts: TanstackServiceOptions) => [
   { path: `services/${opts.name}/package.json`, contents: '{}' },
 ]
+
+test('adds oxlint scripts required by generated CI', () => {
+  const scripts = mergeTanstackServiceScripts({})
+
+  expect(scripts['lint:oxlint']).toBe('oxlint --config ../../.oxlintrc.json .')
+  expect(scripts['lint:oxlint:type']).toBe(
+    'oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .',
+  )
+})
+
+test('keeps oxlint scripts when Postgres scripts are enabled', () => {
+  const scripts = mergeTanstackServiceScripts({}, { enablePostgres: true })
+
+  expect(scripts.generate).toBe('bunx drizzle-kit generate --config drizzle.config.ts')
+  expect(scripts.migrate).toBe('bunx drizzle-kit push --config drizzle.config.ts')
+  expect(scripts['lint:oxlint']).toBe('oxlint --config ../../.oxlintrc.json .')
+  expect(scripts['lint:oxlint:type']).toBe(
+    'oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .',
+  )
+})
 
 test('includes domain mapping and cluster-domain-claim when exposure is external-dns', async () => {
   const files = await buildTanstackStartService(

@@ -28,5 +28,5 @@ spec:
         cpu: 50m
         memory: 64Mi
   parameters:
-    task: "Workflow smoke validation"
-    priority: "medium"
+    task: 'Workflow smoke validation'
+    priority: 'medium'

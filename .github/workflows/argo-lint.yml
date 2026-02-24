@@ -3,15 +3,15 @@ name: argo-lint
 on:
   pull_request:
     paths:
-      - "**/*.yaml"
-      - "scripts/argo-lint.sh"
-      - ".github/workflows/argo-lint.yml"
+      - '**/*.yaml'
+      - 'scripts/argo-lint.sh'
+      - '.github/workflows/argo-lint.yml'
   push:
     branches:
       - main
     paths:
-      - "**/*.yaml"
-      - "scripts/argo-lint.sh"
+      - '**/*.yaml'
+      - 'scripts/argo-lint.sh'
 
 jobs:
   lint:

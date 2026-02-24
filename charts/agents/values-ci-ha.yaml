@@ -17,7 +17,7 @@ env:
   vars:
     # CI runs with a fresh Postgres, so we must run migrations to create schema
     # (otherwise controllers will fail to reconcile AgentRuns).
-    JANGAR_MIGRATIONS: "auto"
+    JANGAR_MIGRATIONS: 'auto'
 
 resources:
   requests:
@@ -29,7 +29,7 @@ controllers:
   replicaCount: 2
   env:
     vars:
-      JANGAR_MIGRATIONS: "auto"
+      JANGAR_MIGRATIONS: 'auto'
 
 controller:
   leaderElection:

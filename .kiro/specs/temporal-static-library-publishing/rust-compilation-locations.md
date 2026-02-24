@@ -9,6 +9,7 @@ Based on a comprehensive scan of the codebase, the following locations have been
 ### 1. GitHub Actions Workflows
 
 #### `.github/workflows/temporal-static-libraries.yml`
+
 - **Status**: Active Rust compilation (intentional)
 - **Purpose**: Builds static libraries for distribution
 - **Rust Usage**:
@@ -18,6 +19,7 @@ Based on a comprehensive scan of the codebase, the following locations have been
 - **Action Required**: None - this is the intended build pipeline for creating static libraries
 
 #### `.github/workflows/temporal-bun-sdk.yml`
+
 - **Status**: Updated to use pre-built libraries
 - **Rust Usage**: None (already migrated)
 - **Current Approach**: Uses `bun run libs:download` to fetch pre-built libraries
@@ -26,9 +28,10 @@ Based on a comprehensive scan of the codebase, the following locations have been
 ### 2. Docker Images
 
 #### `packages/temporal-bun-sdk/Dockerfile`
+
 - **Status**: Updated to use pre-built libraries
 - **Previous Rust Usage**: Comments indicate Rust toolchain was previously required
-- **Current Approach**: 
+- **Current Approach**:
   - Uses `USE_PREBUILT_LIBS=true` environment variable
   - Runs `bun run libs:download` to fetch pre-built libraries
   - Comments mention "Rust toolchain no longer needed"
@@ -37,6 +40,7 @@ Based on a comprehensive scan of the codebase, the following locations have been
 ### 3. Build System Files
 
 #### `packages/temporal-bun-sdk/native/temporal-bun-bridge-zig/build.zig`
+
 - **Status**: Updated to use pre-built libraries with no fallback
 - **Previous Rust Usage**: Comments reference linking "Temporal Rust static libraries emitted by cargo+cbindgen"
 - **Current Approach**:
@@ -46,6 +50,7 @@ Based on a comprehensive scan of the codebase, the following locations have been
 - **Action Required**: None - already updated
 
 #### `packages/temporal-bun-sdk/package.json`
+
 - **Status**: Updated to use pre-built libraries
 - **Rust Usage**: None in scripts
 - **Current Approach**: All build scripts use `USE_PREBUILT_LIBS=true` and `bun run libs:download`
@@ -54,11 +59,13 @@ Based on a comprehensive scan of the codebase, the following locations have been
 ### 4. Documentation References
 
 #### `packages/temporal-bun-sdk/docs/ffi-surface.md`
+
 - **Status**: Contains reference to vendor Rust directory
 - **Content**: References `<repo>/vendor/sdk-core/core/src/lib.rs` for documentation
 - **Action Required**: Update documentation to reflect new architecture
 
 #### `packages/temporal-bun-sdk/README.md`
+
 - **Status**: Contains outdated information about Rust toolchain
 - **Content**: Mentions keeping Rust toolchain installed alongside Zig
 - **Action Required**: Update documentation to reflect pre-built library approach
@@ -66,6 +73,7 @@ Based on a comprehensive scan of the codebase, the following locations have been
 ### 5. Deprecated/Missing Files
 
 #### `packages/temporal-bun-sdk/scripts/run-with-rust-toolchain.ts`
+
 - **Status**: Referenced in design document but not found in codebase
 - **Action Required**: Confirm this file has already been removed or never existed
 
@@ -74,6 +82,7 @@ Based on a comprehensive scan of the codebase, the following locations have been
 The following locations were scanned but do not contain Rust compilation:
 
 ### Docker Images (No Rust Usage)
+
 - `apps/base/Dockerfile` - Node.js base image
 - `apps/docs/Dockerfile` - Next.js application
 - `apps/proompteng/Dockerfile` - Next.js application
@@ -88,10 +97,12 @@ The following locations were scanned but do not contain Rust compilation:
 - `packages/bonjour/Dockerfile` - Node.js application
 
 ### CI Workflows (No Rust Usage)
+
 - All other workflows in `.github/workflows/` directory
 - No cargo, rust, rustup, or rustc references found
 
 ### Build Scripts (No Rust Usage)
+
 - No shell scripts (`.sh` files) contain Rust compilation
 - No Makefiles contain Rust compilation
 - No other package.json files contain Rust references

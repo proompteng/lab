@@ -14,12 +14,12 @@
 
 ## Timeline (UTC)
 
-| Time | Event |
-| --- | --- |
-| ~2026-02-17 06:2xZ | `altra` observed `NotReady`; Talos shows kubelet unhealthy and/or stuck stopping. |
+| Time               | Event                                                                                                                                                                                                    |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ~2026-02-17 06:2xZ | `altra` observed `NotReady`; Talos shows kubelet unhealthy and/or stuck stopping.                                                                                                                        |
 | ~2026-02-17 06:3xZ | Investigation finds ARC runner pods configured with `hostNetwork: true` and a privileged `docker:dind` sidecar. Host networking shows unexpected `docker0` bridge address (`172.17.0.1/16`) on the node. |
-| ~2026-02-17 06:4xZ | GitOps fix applied to ARC to remove `hostNetwork: true` from runner/listener templates. |
-| ~2026-02-17 06:5xZ | Node recovered after a forced Talos reboot; kubelet returns to healthy and node becomes `Ready`. |
+| ~2026-02-17 06:4xZ | GitOps fix applied to ARC to remove `hostNetwork: true` from runner/listener templates.                                                                                                                  |
+| ~2026-02-17 06:5xZ | Node recovered after a forced Talos reboot; kubelet returns to healthy and node becomes `Ready`.                                                                                                         |
 
 ## Root Cause
 

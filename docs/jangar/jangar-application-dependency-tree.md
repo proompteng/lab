@@ -55,6 +55,7 @@ graph TD
 ## 3. Hard vs optional dependencies
 
 Hard dependencies:
+
 1. `sealed-secrets` (for decrypting all SealedSecret resources).
 1. `rook-ceph` (`rook-ceph-block` and `rook-cephfs` storage classes).
 1. `cloudnative-pg` (CNPG `Cluster` + generated DB secrets).
@@ -66,6 +67,7 @@ Hard dependencies:
 1. `tailscale-operator` (for `LoadBalancer` services using `loadBalancerClass: tailscale`).
 
 Optional or feature-gated integrations:
+
 1. `torghut` (`torghut-db-app` is optional; clickhouse integration depends on `torghut-clickhouse` service/creds).
 1. `facteur` (`facteur-internal` URL is configured; behavior depends on enabled feature paths).
 

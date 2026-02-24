@@ -19,21 +19,21 @@
 
 ## Timeline (Pacific Time)
 
-| Time | Event |
-|------|-------|
-| 2025-12-20 11:39:36 | Argo CD reports Longhorn sync failure: CRDs invalid because `spec.conversion.strategy` missing while conversion webhook config present. |
-| 2025-12-20 ~11:49 | Argo CD still OutOfSync; Kubernetes API intermittently refuses connections during sync/patch attempts. |
-| 2025-12-20 12:22 | Kafka pod `kafka-pool-a-2` reports `FailedMount`: fsck detects filesystem errors and requires manual repair. |
-| 2025-12-20 ~12:30 | Manual fsck executed on Longhorn device for PVC `pvc-40d29f68-1901-457b-8313-1ca1310861c6`. |
-| 2025-12-20 ~12:40 | Stale VolumeAttachment cleared; Kafka pod reattached to PVC and became Ready. |
-| 2025-12-20 ~12:50 | Temporal Elasticsearch (`elasticsearch-master-0`) reports I/O errors and attach timeouts on PVC `pvc-a794ca22-df7d-4053-9cfb-fb2a4211794a`. |
-| 2025-12-20 ~13:00 | Temporal set to single-node Cassandra and ES; ES PVCs deleted and recreated. |
-| 2025-12-20 ~13:10 | ES single-node bootstrap adjustments applied; readiness probe relaxed to `yellow`. |
-| 2025-12-20 ~13:25 | Torghut ClickHouse/ClickHouse Keeper manifests fail Argo CD apply due to `podTemplates`/`volumeClaimTemplates` schema mismatch. |
-| 2025-12-20 ~13:30 | Torghut manifests updated to move templates under `spec.templates` and referenced by name in cluster-level templates. |
-| 2025-12-20 ~14:10 | MinIO CRD sync fails: `policybindings.sts.min.io` has `status.storedVersions` set to `v1beta1` but `spec.versions` no longer includes `v1beta1`. |
-| 2025-12-20 ~14:20 | Temporal frontend errors with `Cannot achieve consistency level LOCAL_QUORUM` after Cassandra downscaled. Removed dead nodes from ring and restarted Temporal services. |
-| 2025-12-20 ~14:35 | MinIO observability tenant PVC `pvc-e438ed00...` could not attach (Longhorn replica stuck on kube-worker-29). Deleted the stuck replica and volume attached. |
+| Time                | Event                                                                                                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2025-12-20 11:39:36 | Argo CD reports Longhorn sync failure: CRDs invalid because `spec.conversion.strategy` missing while conversion webhook config present.                                 |
+| 2025-12-20 ~11:49   | Argo CD still OutOfSync; Kubernetes API intermittently refuses connections during sync/patch attempts.                                                                  |
+| 2025-12-20 12:22    | Kafka pod `kafka-pool-a-2` reports `FailedMount`: fsck detects filesystem errors and requires manual repair.                                                            |
+| 2025-12-20 ~12:30   | Manual fsck executed on Longhorn device for PVC `pvc-40d29f68-1901-457b-8313-1ca1310861c6`.                                                                             |
+| 2025-12-20 ~12:40   | Stale VolumeAttachment cleared; Kafka pod reattached to PVC and became Ready.                                                                                           |
+| 2025-12-20 ~12:50   | Temporal Elasticsearch (`elasticsearch-master-0`) reports I/O errors and attach timeouts on PVC `pvc-a794ca22-df7d-4053-9cfb-fb2a4211794a`.                             |
+| 2025-12-20 ~13:00   | Temporal set to single-node Cassandra and ES; ES PVCs deleted and recreated.                                                                                            |
+| 2025-12-20 ~13:10   | ES single-node bootstrap adjustments applied; readiness probe relaxed to `yellow`.                                                                                      |
+| 2025-12-20 ~13:25   | Torghut ClickHouse/ClickHouse Keeper manifests fail Argo CD apply due to `podTemplates`/`volumeClaimTemplates` schema mismatch.                                         |
+| 2025-12-20 ~13:30   | Torghut manifests updated to move templates under `spec.templates` and referenced by name in cluster-level templates.                                                   |
+| 2025-12-20 ~14:10   | MinIO CRD sync fails: `policybindings.sts.min.io` has `status.storedVersions` set to `v1beta1` but `spec.versions` no longer includes `v1beta1`.                        |
+| 2025-12-20 ~14:20   | Temporal frontend errors with `Cannot achieve consistency level LOCAL_QUORUM` after Cassandra downscaled. Removed dead nodes from ring and restarted Temporal services. |
+| 2025-12-20 ~14:35   | MinIO observability tenant PVC `pvc-e438ed00...` could not attach (Longhorn replica stuck on kube-worker-29). Deleted the stuck replica and volume attached.            |
 
 ## Root Cause
 

@@ -68,7 +68,7 @@ Facteur persists Codex deliveries under `/codex/tasks` by normalising the `proom
 1. Ensure the service is running with Postgres and Redis reachable (see above).
 2. Encode the sample payload provided in `docs/examples/codex-task.json`:
    ```bash
-  buf beta protoc \
+   buf beta protoc \
     --proto_path=proto \
     --encode proompteng.froussard.v1.CodexTask \
     proto/proompteng/froussard/v1/codex_task.proto \

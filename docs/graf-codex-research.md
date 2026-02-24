@@ -8,20 +8,20 @@
 
 Set the following secrets/configmaps for the Knative Graf service:
 
-| Env var | Description | Default |
-| --- | --- | --- |
-| `TEMPORAL_ADDRESS` | gRPC endpoint for Temporal frontend (`temporal-frontend.temporal.svc.cluster.local:7233`). | required |
-| `TEMPORAL_NAMESPACE` | Namespace Graf worker should use. | `default` |
-| `TEMPORAL_TASK_QUEUE` | Task queue the Codex research workflow listens on. | `graf-codex-research` |
-| `TEMPORAL_IDENTITY` | Worker identity string sent to Temporal. | `graf` |
-| `ARGO_API_SERVER` | Kubernetes API host (usually `https://kubernetes.default.svc`). | default |
-| `ARGO_NAMESPACE` | Namespace where the Argo workflow lives. | `argo-workflows` |
-| `ARGO_WORKFLOW_TEMPLATE_NAME` | Template Graf submits. | `codex-research-workflow` |
-| `MINIO_ENDPOINT` | MinIO URL (e.g., `http://observability-minio.minio.svc.cluster.local:9000`). | required |
-| `MINIO_BUCKET` | Archive bucket where Argo stores the artifact. | required |
-| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | Credentials for Graf to talk to MinIO. | required |
-| `MINIO_REGION` | Optional region hint passed to both Graf and the Argo template. | _unset_ |
-| `MINIO_SECURE` | `true/false` toggle when `MINIO_ENDPOINT` omits the scheme. | `true` |
+| Env var                                 | Description                                                                                | Default                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------- |
+| `TEMPORAL_ADDRESS`                      | gRPC endpoint for Temporal frontend (`temporal-frontend.temporal.svc.cluster.local:7233`). | required                  |
+| `TEMPORAL_NAMESPACE`                    | Namespace Graf worker should use.                                                          | `default`                 |
+| `TEMPORAL_TASK_QUEUE`                   | Task queue the Codex research workflow listens on.                                         | `graf-codex-research`     |
+| `TEMPORAL_IDENTITY`                     | Worker identity string sent to Temporal.                                                   | `graf`                    |
+| `ARGO_API_SERVER`                       | Kubernetes API host (usually `https://kubernetes.default.svc`).                            | default                   |
+| `ARGO_NAMESPACE`                        | Namespace where the Argo workflow lives.                                                   | `argo-workflows`          |
+| `ARGO_WORKFLOW_TEMPLATE_NAME`           | Template Graf submits.                                                                     | `codex-research-workflow` |
+| `MINIO_ENDPOINT`                        | MinIO URL (e.g., `http://observability-minio.minio.svc.cluster.local:9000`).               | required                  |
+| `MINIO_BUCKET`                          | Archive bucket where Argo stores the artifact.                                             | required                  |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | Credentials for Graf to talk to MinIO.                                                     | required                  |
+| `MINIO_REGION`                          | Optional region hint passed to both Graf and the Argo template.                            | _unset_                   |
+| `MINIO_SECURE`                          | `true/false` toggle when `MINIO_ENDPOINT` omits the scheme.                                | `true`                    |
 
 Graf now bundles the Knative service account with a `Role`/`RoleBinding` in `argocd/applications/argo-workflows/codex-research-rbac.yaml` so it can create and poll workflows in `argo-workflows`.
 

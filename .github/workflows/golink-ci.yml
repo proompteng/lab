@@ -5,20 +5,20 @@ on:
     branches:
       - main
     paths:
-      - "services/golink/**"
-      - "packages/scripts/src/golink/**"
-      - "argocd/applications/golink/**"
-      - ".github/workflows/golink-ci.yml"
-      - "package.json"
-      - "bun.lock"
+      - 'services/golink/**'
+      - 'packages/scripts/src/golink/**'
+      - 'argocd/applications/golink/**'
+      - '.github/workflows/golink-ci.yml'
+      - 'package.json'
+      - 'bun.lock'
   pull_request:
     paths:
-      - "services/golink/**"
-      - "packages/scripts/src/golink/**"
-      - "argocd/applications/golink/**"
-      - ".github/workflows/golink-ci.yml"
-      - "package.json"
-      - "bun.lock"
+      - 'services/golink/**'
+      - 'packages/scripts/src/golink/**'
+      - 'argocd/applications/golink/**'
+      - '.github/workflows/golink-ci.yml'
+      - 'package.json'
+      - 'bun.lock'
   workflow_dispatch:
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
     uses: ./.github/workflows/common-monorepo.yml
     with:
       install-command: bun install --frozen-lockfile --ignore-scripts
-      lint-command: bunx biome check services/golink
+      lint-command: bunx oxfmt --check services/golink
       oxlint-command: bun run --cwd services/golink lint:oxlint
       oxlint-type-command: bun run --cwd services/golink lint:oxlint:type
       test-command: bun run test:golink

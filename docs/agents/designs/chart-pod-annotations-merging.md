@@ -3,17 +3,22 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The chart applies `.Values.podAnnotations` and `.Values.podLabels` to both the control plane pod template and the controllers pod template. Operators often need different annotations per component (e.g., different scraping, sidecar settings, or rollout controls). Today that requires global annotations that may not be appropriate for both.
 
 ## Goals
+
 - Define current behavior and its limits.
 - Propose component-scoped pod metadata overrides without breaking existing installs.
 
 ## Non-Goals
+
 - Standardizing on a specific mesh/observability stack.
 
 ## Current State
+
 - Values: `charts/agents/values.yaml` includes `podAnnotations` and `podLabels` (global).
 - Templates:
   - Control plane pod template: `charts/agents/templates/deployment.yaml`
@@ -21,35 +26,44 @@ The chart applies `.Values.podAnnotations` and `.Values.podLabels` to both the c
 - No `controlPlane.podAnnotations` / `controllers.podAnnotations` values exist.
 
 ## Design
+
 ### Proposed values
+
 Add component-scoped fields:
+
 - `controlPlane.podAnnotations` / `controlPlane.podLabels`
 - `controllers.podAnnotations` / `controllers.podLabels`
 
 ### Precedence
+
 1. Component-scoped annotations/labels (if set)
 2. Global `podAnnotations` / `podLabels`
 
 ### Backward compatibility
+
 - Keep global keys working unchanged.
 - Implement component keys as additive overrides.
 
 ## Config Mapping
-| Helm value | Pod template target | Behavior |
-|---|---|---|
-| `podAnnotations` | both Deployments | Global baseline annotations. |
-| `controlPlane.podAnnotations` | `deploy/agents` only | Overrides/extends globals for control plane. |
-| `controllers.podAnnotations` | `deploy/agents-controllers` only | Overrides/extends globals for controllers. |
+
+| Helm value                    | Pod template target              | Behavior                                     |
+| ----------------------------- | -------------------------------- | -------------------------------------------- |
+| `podAnnotations`              | both Deployments                 | Global baseline annotations.                 |
+| `controlPlane.podAnnotations` | `deploy/agents` only             | Overrides/extends globals for control plane. |
+| `controllers.podAnnotations`  | `deploy/agents-controllers` only | Overrides/extends globals for controllers.   |
 
 ## Rollout Plan
+
 1. Add new values keys with no defaults (no behavior change).
 2. Update `values.schema.json` and README examples.
 3. Migrate any component-specific annotations from global to component keys in GitOps.
 
 Rollback:
+
 - Remove component keys and move annotations back to global.
 
 ## Validation
+
 ```bash
 mise exec helm@3 -- helm template agents charts/agents -f argocd/applications/agents/values.yaml | rg -n \"annotations:\"
 kubectl -n agents get deploy agents -o jsonpath='{.spec.template.metadata.annotations}'; echo
@@ -57,19 +71,23 @@ kubectl -n agents get deploy agents-controllers -o jsonpath='{.spec.template.met
 ```
 
 ## Failure Modes and Mitigations
+
 - Global annotation breaks controllers (or control plane): mitigate by component scoping.
 - Annotation changes do not trigger rollout: mitigate via checksum annotations (see separate design).
 
 ## Acceptance Criteria
+
 - Component-scoped pod metadata can be set without affecting the other component.
 - Backward compatibility: existing installs using `podAnnotations` continue to work.
 
 ## References
+
 - Kubernetes pod template metadata: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -84,7 +102,9 @@ kubectl -n agents get deploy agents-controllers -o jsonpath='{.spec.template.met
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -117,13 +137,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -139,6 +162,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -151,6 +175,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

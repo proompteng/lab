@@ -54,7 +54,7 @@ The last command should print `codex-mcp-server`. Use the `Authorization: Bearer
 
 ## Expose through Tailscale
 
-Open WebUI’s frontend also needs to reach the MCP endpoint *and* the chat UI over HTTPS. Proxy both through Tailscale:
+Open WebUI’s frontend also needs to reach the MCP endpoint _and_ the chat UI over HTTPS. Proxy both through Tailscale:
 
 ```bash
 sudo tailscale set --operator=$USER                   # allow non-root serve commands

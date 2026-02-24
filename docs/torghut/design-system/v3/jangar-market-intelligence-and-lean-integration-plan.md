@@ -1,24 +1,29 @@
 # Jangar Market-Intelligence and LEAN Integration Plan
 
 ## Status
+
 - Version: `v1`
 - Date: `2026-02-12`
 - Maturity: `proposed implementation plan`
 
 ## Objective
+
 Define a production-safe plan to:
+
 - upgrade Jangar's agent environment with market-aware skills (market conditions, news, research, fundamentals, technicals),
 - feed that context into Torghut's bounded LLM advisory path,
 - integrate LEAN into Torghut as an execution-capable framework without violating existing deterministic risk authority.
 
 Detailed endpoint/loop contract:
+
 - `docs/torghut/design-system/v3/jangar-bespoke-decision-endpoint-and-intraday-loop-design.md`
-Detailed control-plane quant metrics contract:
+  Detailed control-plane quant metrics contract:
 - `docs/agents/designs/jangar-quant-performance-control-plane.md`
 
 ## Current State Baseline (2026-02-12 UTC)
 
 ### Live Kubernetes state
+
 - Namespaces `jangar`, `torghut`, and `agents` are active.
 - `ksvc/torghut` is ready on revision `torghut-00062`.
 - `deployment/jangar` is healthy at `1/1` and running image:
@@ -26,17 +31,22 @@ Detailed control-plane quant metrics contract:
 - `deployment/agents` and `deployment/agents-controllers` are running in namespace `agents`.
 
 ### Verified data posture (CNPG + ClickHouse)
+
 From CNPG (`torghut-db`) sampled on `2026-02-12`:
+
 - `trade_decisions_total=2852` (`rejected=2364`, `filled=379`).
 - `executions_total=484` (`filled_total=379`).
 - `position_snapshots_total=3932`, latest snapshot at `2026-02-11T21:59:28Z`.
 
 From ClickHouse sampled on `2026-02-12`:
+
 - `ta_signals` latest event `2026-02-11T21:58:42Z` with `rows_24h=50450`.
 - `ta_microbars` latest `window_end=2026-02-11T21:58:42Z` with `rows_24h=47217`.
 
 ### Torghut runtime posture
+
 From live `/trading/status` on `2026-02-12`:
+
 - `mode=paper`, `TRADING_LIVE_ENABLED=false`.
 - `TRADING_ENABLED=true`, `TRADING_KILL_SWITCH_ENABLED=false`.
 - LLM path enabled in shadow mode (`LLM_SHADOW_MODE=true`).
@@ -47,16 +57,19 @@ From live `/trading/status` on `2026-02-12`:
   - `llm_error_total=2`
 
 ### Observed integration blocker
+
 - Jangar Torghut trading endpoints returned `self signed certificate in certificate chain`:
   - `/api/torghut/trading/strategies`
   - `/api/torghut/trading/summary`
-This indicates a Torghut DB TLS trust-chain issue in the current Jangar runtime path and must be resolved before
-market-intel context and quant control-plane dashboards can be considered reliable.
+    This indicates a Torghut DB TLS trust-chain issue in the current Jangar runtime path and must be resolved before
+    market-intel context and quant control-plane dashboards can be considered reliable.
 
 ### Evidence collection playbook
+
 - `docs/agents/designs/jangar-torghut-live-analysis-playbook.md`
 
 ### Jangar skill/environment posture
+
 - Jangar runtime image already copies repo skills via:
   - `services/jangar/Dockerfile` (`COPY skills/ /root/.codex/skills/`).
 - Current `skills/` set is platform/ops focused only:
@@ -68,6 +81,7 @@ market-intel context and quant control-plane dashboards can be considered reliab
   - technical regime synthesis.
 
 ### Data/API surface posture
+
 - Jangar currently exposes Torghut APIs for:
   - symbols (`/api/torghut/symbols`),
   - TA (`/api/torghut/ta/*`),
@@ -78,24 +92,36 @@ market-intel context and quant control-plane dashboards can be considered reliab
   - (`services/torghut/app/trading/llm/schema.py`).
 
 ### LEAN posture in current design docs
+
 - Existing v3 docs classify LEAN as "benchmark standard" and research lane:
   - `docs/torghut/design-system/v3/oss-library-standard-and-selection.md`
   - `docs/torghut/design-system/v3/backtesting-walkforward-and-research-ledger.md`
 - LEAN is not yet integrated as a Torghut runtime execution adapter.
 
 ## Gap Analysis
+
 1. Decision context gap:
+
 - LLM advisory path lacks structured, freshness-checked fundamentals/news context.
+
 2. Skills gap:
+
 - Jangar has no domain-specific quant skill contracts to normalize market intelligence.
+
 3. Integration gap:
+
 - No Torghut-to-Jangar contract for "market intelligence snapshot by symbol/time".
+
 4. Execution gap:
+
 - LEAN is documented as benchmark/research, not wired into live Torghut execution contracts.
+
 5. Governance gap:
+
 - No explicit promotion gate that validates "LEAN execution parity vs Torghut native adapter".
 
 ## Design Principles
+
 - Deterministic risk and execution firewall remain final authority.
 - LLM remains bounded advisory unless explicit gate approvals are satisfied.
 - Every decision-time context payload must be versioned, timestamped, and freshness-scored.
@@ -121,14 +147,17 @@ flowchart LR
 ## Workstream 0: Integration trust-chain hardening (prerequisite)
 
 ### Why this is first
+
 Current Jangar Torghut trading endpoints fail with TLS chain validation error, so downstream control-plane and
 market-intel correctness cannot be trusted until fixed.
 
 ### Owned code/config areas
+
 - `argocd/applications/jangar/deployment.yaml`
 - `services/jangar/src/server/torghut-trading-db.ts`
 
 ### Deliverables
+
 - define and enforce `TORGHUT_DB_DSN` TLS contract (CA trust + SSL mode),
 - restore stable `GET /api/torghut/trading/strategies` and `GET /api/torghut/trading/summary`,
 - add regression check in Jangar startup/readiness diagnostics.
@@ -136,6 +165,7 @@ market-intel correctness cannot be trusted until fixed.
 ## Workstream A: Jangar Quant Skill Pack
 
 ### Planned skills (new)
+
 - `skills/market-context/SKILL.md`
   - Builds a normalized context bundle for one symbol/time horizon.
 - `skills/news-sentiment/SKILL.md`
@@ -148,7 +178,9 @@ market-intel correctness cannot be trusted until fixed.
   - Produces concise research context with citations and uncertainty.
 
 ### Skill output contract (minimum)
+
 Each skill must emit machine-readable JSON with:
+
 - `context_version`
 - `as_of_utc`
 - `symbol`
@@ -159,6 +191,7 @@ Each skill must emit machine-readable JSON with:
 - `citations` (URL + published timestamp when available)
 
 ### Freshness targets
+
 - Technical/price context: <= 60 seconds stale.
 - News context: <= 5 minutes stale.
 - Fundamentals context: <= 24 hours stale (or explicit next filing date).
@@ -167,12 +200,14 @@ Each skill must emit machine-readable JSON with:
 ## Workstream B: Jangar Market Context Service
 
 ### New API contracts (planned)
+
 - `GET /api/torghut/market-context?symbol=...`
   - Returns merged bundle (technicals + fundamentals + news + regime + quality).
 - `GET /api/torghut/market-context/health`
   - Freshness and source-availability diagnostics by domain.
 
 ### Owned code/config areas
+
 - `services/jangar/src/server/torghut-market-context.ts` (new)
 - `services/jangar/src/routes/api/torghut/market-context.ts` (new)
 - `services/jangar/src/routes/api/torghut/market-context/health.ts` (new)
@@ -180,6 +215,7 @@ Each skill must emit machine-readable JSON with:
 - `services/jangar/src/server/migrations/*` (optional cache/index tables)
 
 ### Environment changes (planned)
+
 - Add explicit flags in `argocd/applications/jangar/deployment.yaml`:
   - `JANGAR_MARKET_CONTEXT_ENABLED=true`
   - `JANGAR_MARKET_CONTEXT_CACHE_SECONDS=60`
@@ -189,6 +225,7 @@ Each skill must emit machine-readable JSON with:
 ## Workstream C: Torghut LLM Context Upgrade
 
 ### Planned Torghut code changes
+
 - Extend LLM schema:
   - `services/torghut/app/trading/llm/schema.py`
   - add nested `market_context` blocks for technicals/fundamentals/news.
@@ -203,6 +240,7 @@ Each skill must emit machine-readable JSON with:
   - enforce fail-closed or shadow-only behavior when context quality is below threshold.
 
 ### Policy behavior
+
 - If market context is unavailable or stale:
   - keep deterministic strategy/risk path active,
   - force LLM shadow or skip depending on configured fail mode,
@@ -211,7 +249,9 @@ Each skill must emit machine-readable JSON with:
 ## Workstream D: LEAN Integration for Execution
 
 ## Decision
+
 Adopt a staged hybrid model:
+
 - keep existing Torghut execution path as primary during migration,
 - introduce a LEAN-backed execution adapter for paper first,
 - promote to live only after parity and TCA gates pass.
@@ -219,14 +259,17 @@ Adopt a staged hybrid model:
 This preserves current safety invariants while enabling LEAN execution semantics where beneficial.
 
 ### Why this is feasible
+
 LEAN is open-source (Apache-2.0), supports local/live deploy workflows, and supports multiple broker integrations.
 Primary references:
+
 - [LEAN GitHub repository](https://github.com/QuantConnect/Lean)
 - [LEAN engine docs](https://www.quantconnect.com/docs/v2/lean-engine)
 - [LEAN supported brokerages](https://www.quantconnect.com/docs/v2/lean-cli/live-trading/brokerages)
 - [Alpaca brokerage in LEAN](https://www.quantconnect.com/docs/v2/cloud-platform/live-trading/brokerages/alpaca)
 
 ### Planned adapter model
+
 - Introduce `LeanExecutionAdapter` under Torghut execution abstraction:
   - submit/cancel/replace/status against a LEAN runner service.
 - Keep `AlpacaExecutionAdapter` and route per policy flag.
@@ -234,6 +277,7 @@ Primary references:
   - same `OrderIntent` replayed against both adapters in paper to measure drift.
 
 ### Owned code/config areas
+
 - `services/torghut/app/trading/execution_policy.py` (adapter selection hooks)
 - `services/torghut/app/trading/reconcile.py` (LEAN status reconciliation path)
 - `argocd/applications/torghut/` (LEAN runner deployment/service, feature flags)
@@ -242,43 +286,49 @@ Primary references:
 ## Phased Rollout Plan
 
 ### Phase 0: Baseline hardening (now)
+
 - Capture and freeze baseline metrics for LLM, execution, and rejection reasons.
 - Add regression test fixtures for current request/response contracts.
 - Fix Torghut DB TLS trust-chain path in Jangar (`self signed certificate` blocker).
-Exit criteria:
+  Exit criteria:
 - baseline dashboards and metrics snapshots committed as artifacts.
 - Jangar trading summary endpoints healthy from in-cluster path.
 
 ### Phase 1: Skill pack + context API
+
 - Add new skills and market context API in Jangar.
 - Validate freshness/quality scoring and citation outputs.
-Exit criteria:
+  Exit criteria:
 - API contract tests pass,
 - stale-data behavior verified.
 
 ### Phase 2: Torghut context consumption (shadow)
+
 - Torghut consumes context bundle in LLM request building.
 - LLM remains shadow-only.
-Exit criteria:
+  Exit criteria:
 - no increase in rejection errors from schema/validation failures,
 - guardrail metrics stable for 7 consecutive days.
 
 ### Phase 3: LEAN adapter in paper mode
+
 - Deploy LEAN runner and wire `LeanExecutionAdapter`.
 - Run parity testing vs Alpaca adapter on same intents.
-Exit criteria:
+  Exit criteria:
 - parity pass thresholds met,
 - no idempotency regressions,
 - TCA within allowed drift budget.
 
 ### Phase 4: Controlled live canary
+
 - Enable LEAN adapter for a narrow symbol/account subset.
 - Keep immediate rollback path to native adapter.
-Exit criteria:
+  Exit criteria:
 - canary SLOs green for agreed window,
 - explicit approval token and governance sign-off.
 
 ## Risk Register
+
 - Data quality risk:
   - Mitigation: freshness and quality scoring in every context payload.
 - Hallucinated/unverified news synthesis:
@@ -291,6 +341,7 @@ Exit criteria:
 ## Verification and Rollback
 
 ### Verification commands (representative)
+
 ```bash
 kubectl get ksvc -n torghut torghut
 kubectl get deploy -n jangar jangar
@@ -300,6 +351,7 @@ kubectl logs -n jangar deploy/jangar --tail=200
 ```
 
 ### Rollback controls
+
 - Disable new context path in Torghut:
   - `TRADING_MARKET_CONTEXT_ENABLED=false` (planned env)
 - Disable LEAN adapter routing:
@@ -309,6 +361,7 @@ kubectl logs -n jangar deploy/jangar --tail=200
   - `argocd/applications/torghut/`
 
 ## AgentRun Handoff Bundle
+
 - `ImplementationSpec`: `torghut-v3-jangar-market-intel-lean-impl-v1`
 - Required keys:
   - `repository`

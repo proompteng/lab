@@ -38,7 +38,7 @@ services:
         condition: service_healthy
     environment:
       FACTEUR_CONFIG_FILE: /config/docker-compose.yaml
-      FACTEUR_DISABLE_DISPATCHER: "true"
+      FACTEUR_DISABLE_DISPATCHER: 'true'
     ports:
       - '18080:8080'
     volumes:

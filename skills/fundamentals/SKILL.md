@@ -8,7 +8,9 @@ description: Produce normalized fundamentals factors and deltas for one symbol.
 Produce normalized fundamentals factors and deltas for one symbol.
 
 ## Output contract
+
 Return JSON keys:
+
 - `context_version`
 - `as_of_utc`
 - `symbol`
@@ -19,5 +21,6 @@ Return JSON keys:
 - `citations`
 
 ## Rules
+
 - Include filing freshness or next expected filing date when known.
 - Mark unsupported factors in payload with null values.

@@ -3,6 +3,7 @@
 This note documents how we pass the NVIDIA GA102 GPU on the `altra` Harvester node through to the `docker-host` VM (`kalmyk@192.168.1.190`).
 
 ## What this does (and doesn’t)
+
 - Enables Harvester PCI passthrough for `000c:01:00.0` (RTX 3090) so KubeVirt can assign it to a VM.
 - Attaches the GPU to `default/docker-host` via the KubeVirt `VirtualMachine` spec.
 - Does **not** attach the GPU’s audio function (`000c:01:00.1`) to the VM.
@@ -10,6 +11,7 @@ This note documents how we pass the NVIDIA GA102 GPU on the `altra` Harvester no
 Important: even if you don’t want audio in the guest, the VGA + audio functions share the same IOMMU group on this host (group `18`). Harvester/KubeVirt can refuse the GPU unless the group is fully “claimed/known”. In practice we keep a `PCIDeviceClaim` for `000c:01:00.1`, but we do not attach it to the VM.
 
 ## Inventory
+
 From your workstation:
 
 ```bash
@@ -17,19 +19,24 @@ kubectl --kubeconfig ~/.kube/altra.yaml -n default get pcidevices.devices.harves
 ```
 
 Expected devices:
+
 - GPU: `altra-000c01000` (`000c:01:00.0`, resource name `nvidia.com/GA102_GEFORCE_RTX_3090`)
 - Audio: `altra-000c01001` (`000c:01:00.1`, resource name `nvidia.com/GA102_HIGH_DEFINITION_AUDIO_CONTROLLER`)
 
 ## Declarative resources (stored in-repo)
+
 These templates are the “source of intent” for passthrough on `altra`:
+
 - `tofu/harvester/templates/pcideviceclaim-altra-000c01000.yaml` (claim GPU + enable passthrough)
 - `tofu/harvester/templates/pcideviceclaim-altra-000c01001.yaml` (claim audio function so the IOMMU group is fully tracked)
 - `tofu/harvester/patches/vm-docker-host-nvidia-gpu.patch.json` (merge-patch to attach GPU to the VM)
 
 ## Why this isn’t in `tofu/harvester/main.tf`
+
 We can’t express “attach this PCI device to the VM” through the `harvester/harvester` OpenTofu provider today (even on the latest provider release — `v1.6.0` as of 2025-12-15). The workaround is to apply the Harvester CRDs (`PCIDeviceClaim`) and patch the underlying KubeVirt `VirtualMachine` spec directly via `kubectl`.
 
 ## Apply (cluster)
+
 Apply the claims:
 
 ```bash
@@ -52,6 +59,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml -n default delete vmi docker-host
 ```
 
 ## Verify
+
 Wait for it to come back:
 
 ```bash
@@ -66,6 +74,7 @@ sudo lspci -nn | grep -i nvidia
 ```
 
 ## Prevent drift after Harvester reboots
+
 The Harvester host can come back with the GPU no longer bound to `vfio-pci`,
 which makes the PCI device controller report `missing group for address: 000c:01:00.0`
 and prevents `docker-host` from starting. To keep the binding consistent, apply
@@ -76,12 +85,14 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f tofu/harvester/templates/ga102-
 ```
 
 Notes:
+
 - The DaemonSet is scoped to node `altra` and the GPU address `000c:01:00.0`.
 - If the GPU moves to another node or address, update the `nodeSelector` and
   PCI address in `tofu/harvester/templates/ga102-vfio-bind-daemonset.yaml`.
 - Remove with `kubectl --kubeconfig ~/.kube/altra.yaml -n harvester-system delete ds/ga102-vfio-bind`.
 
 ## Troubleshooting
+
 - If the VM gets stuck `Pending` with `GPU ... is not permitted in permittedHostDevices configuration`, ensure the `harvester-pcidevices-controller` has created a device plugin for `nvidia.com/GA102_GEFORCE_RTX_3090` and requeue/restart it if needed:
   - `kubectl --kubeconfig ~/.kube/altra.yaml -n harvester-system get pods | grep harvester-pcidevices-controller`
   - `kubectl --kubeconfig ~/.kube/altra.yaml -n harvester-system logs <pod> -c agent --tail=200`

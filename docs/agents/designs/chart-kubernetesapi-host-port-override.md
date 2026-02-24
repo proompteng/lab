@@ -3,17 +3,22 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The chart exposes `kubernetesApi.host` and `kubernetesApi.port` which map to `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`. This is a sharp tool: it can help run outside-cluster or in unusual networking environments, but can also break in-cluster discovery if misused.
 
 ## Goals
+
 - Document when and how to use the override safely.
 - Add guardrails to prevent accidental use in normal in-cluster deployments.
 
 ## Non-Goals
+
 - Providing full out-of-cluster deployment support.
 
 ## Current State
+
 - Values: `charts/agents/values.yaml` includes `kubernetesApi.host` and `kubernetesApi.port`.
 - Templates set env vars for both deployments:
   - `charts/agents/templates/deployment.yaml`
@@ -21,44 +26,54 @@ The chart exposes `kubernetesApi.host` and `kubernetesApi.port` which map to `KU
 - Default is empty (Kubernetes default service env vars apply).
 
 ## Design
+
 ### Contract
+
 - In-cluster installs SHOULD leave `kubernetesApi.*` empty.
 - If either `kubernetesApi.host` or `kubernetesApi.port` is set, both MUST be set.
 - The chart SHOULD validate the above in `values.schema.json`.
 
 ## Config Mapping
-| Helm value | Env var | Intended behavior |
-|---|---|---|
+
+| Helm value           | Env var                   | Intended behavior            |
+| -------------------- | ------------------------- | ---------------------------- |
 | `kubernetesApi.host` | `KUBERNETES_SERVICE_HOST` | Overrides API endpoint host. |
 | `kubernetesApi.port` | `KUBERNETES_SERVICE_PORT` | Overrides API endpoint port. |
 
 ## Rollout Plan
+
 1. Add schema validation requiring both host and port together.
 2. Add README guidance and examples (in-cluster vs special cases).
 
 Rollback:
+
 - Clear the override values and re-sync.
 
 ## Validation
+
 ```bash
 helm template agents charts/agents | rg -n \"KUBERNETES_SERVICE_HOST|KUBERNETES_SERVICE_PORT\"
 kubectl -n agents get deploy agents -o yaml | rg -n \"KUBERNETES_SERVICE_HOST|KUBERNETES_SERVICE_PORT\"
 ```
 
 ## Failure Modes and Mitigations
+
 - Override breaks in-cluster API access: mitigate by default empty + schema guardrails.
 - Only host or port set causes confusing behavior: mitigate by schema enforcement.
 
 ## Acceptance Criteria
+
 - It is impossible (via schema) to set only one of host/port.
 - Operators can identify overrides in rendered manifests.
 
 ## References
+
 - Kubernetes in-cluster configuration: https://kubernetes.io/docs/tasks/run-application/access-api-from-pod/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -73,7 +88,9 @@ kubectl -n agents get deploy agents -o yaml | rg -n \"KUBERNETES_SERVICE_HOST|KU
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -106,13 +123,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -128,6 +148,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -140,6 +161,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

@@ -87,4 +87,3 @@ kubectl -n rook-ceph get pods
 ```
 
 2. Confirm a pod mounting the PVC starts successfully (no CephFS mount errors) and that the app becomes `Healthy` in Argo CD.
-

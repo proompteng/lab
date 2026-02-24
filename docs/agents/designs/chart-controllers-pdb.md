@@ -3,17 +3,22 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The chart can deploy a separate controllers Deployment (`agents-controllers`), but the chart’s PodDisruptionBudget (PDB) template currently only targets the control plane pods. This creates an availability gap: controllers may all be evicted during node drains or cluster maintenance even when the control plane is protected.
 
 ## Goals
+
 - Add optional PDB support for `agents-controllers`.
 - Keep backward compatibility for existing installs using `podDisruptionBudget.*`.
 
 ## Non-Goals
+
 - Enforcing a single organization-wide disruption policy.
 
 ## Current State
+
 - Existing PDB template: `charts/agents/templates/poddisruptionbudget.yaml`
   - Selects `{{ include "agents.selectorLabels" . }}` (control plane).
 - Controllers selector labels differ: `charts/agents/templates/_helpers.tpl` (`agents.controllersSelectorLabels`).
@@ -21,49 +26,61 @@ The chart can deploy a separate controllers Deployment (`agents-controllers`), b
 - Cluster desired state: `argocd/applications/agents/values.yaml` does not enable a PDB.
 
 ## Design
+
 ### Proposed values
+
 Add component-scoped PDBs:
+
 - `controlPlane.podDisruptionBudget` (defaults to existing `podDisruptionBudget`)
 - `controllers.podDisruptionBudget` (new)
 
 ### Defaults
+
 - Keep existing `podDisruptionBudget.enabled=false`.
 - When controllers are enabled, recommend enabling a PDB with `maxUnavailable: 1` for controllers.
 
 ## Config Mapping
-| Helm value | Rendered object | Intended behavior |
-|---|---|---|
-| `podDisruptionBudget.*` | `PodDisruptionBudget/agents` | Backward compatible control plane PDB. |
+
+| Helm value                                     | Rendered object                          | Intended behavior                                               |
+| ---------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------- |
+| `podDisruptionBudget.*`                        | `PodDisruptionBudget/agents`             | Backward compatible control plane PDB.                          |
 | `controllers.podDisruptionBudget.enabled=true` | `PodDisruptionBudget/agents-controllers` | Prevents full controller eviction during voluntary disruptions. |
 
 ## Rollout Plan
+
 1. Add `controllers.podDisruptionBudget` with defaults (disabled).
 2. Enable in non-prod and validate node-drain behavior.
 3. Enable in prod after confirming controllers can roll without downtime.
 
 Rollback:
+
 - Disable `controllers.podDisruptionBudget.enabled`.
 
 ## Validation
+
 ```bash
 helm template agents charts/agents --set controllers.enabled=true --set controllers.podDisruptionBudget.enabled=true | rg -n \"kind: PodDisruptionBudget\"
 kubectl -n agents get pdb
 ```
 
 ## Failure Modes and Mitigations
+
 - PDB too strict blocks node drain: mitigate with `maxUnavailable: 1` and by matching replicas.
 - Selector mismatch means PDB protects nothing: mitigate with render-time tests and explicit selector labels.
 
 ## Acceptance Criteria
+
 - When enabled, a PDB exists for `agents-controllers` selecting the correct pods.
 - Node drains do not evict all controller replicas at once.
 
 ## References
+
 - Kubernetes PodDisruptionBudget: https://kubernetes.io/docs/tasks/run-application/configure-pdb/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -78,7 +95,9 @@ kubectl -n agents get pdb
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -111,13 +130,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -133,6 +155,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -145,6 +168,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

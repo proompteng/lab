@@ -92,6 +92,7 @@ talosctl reset -n 192.168.1.203 -e 192.168.1.85 \
 ```
 
 2. Apply config from maintenance mode, including these patches:
+
 - `devices/ampone/manifests/ephemeral-volume.patch.yaml` (`EPHEMERAL` fixed at 300GB)
 - `devices/ampone/manifests/local-path.patch.yaml` (`local-path-provisioner` consumes remaining space)
 
@@ -112,6 +113,7 @@ talosctl mounts -n 192.168.1.203 -e 192.168.1.85 | rg -n ' /var$|/var/mnt/local-
 ```
 
 Expected:
+
 - `EPHEMERAL` is ~300GB.
 - `u-local-path-provisioner` exists and consumes the remaining free space.
 - `/var/mnt/local-path-provisioner` is mounted.
@@ -128,14 +130,17 @@ kubectl uncordon talos-192-168-1-203
 ## Pitfall: Duplicate `machine.files` paths break kubelet/bootstrap
 
 Symptom:
+
 - Logs show:
   - `writeUserFiles failed ... resource EtcFileSpecs... already exists`
   - `error writing kubelet PKI ... /etc/kubernetes/bootstrap-kubeconfig: read-only file system`
 
 Cause:
+
 - Machine config contains multiple `machine.files` entries with the same `path`.
 
 Fix:
+
 1. Download the machine config and remove the duplicate file spec.
 2. Apply the corrected full config.
 

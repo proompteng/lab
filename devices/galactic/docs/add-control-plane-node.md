@@ -4,6 +4,7 @@ This runbook is the canonical, reproducible procedure to add a new control plane
 node to the existing cluster.
 
 Assumptions:
+
 - Existing control planes are healthy and reachable:
   - `ryzen` (`192.168.1.194`)
   - `ampone` (`192.168.1.203`)
@@ -91,6 +92,7 @@ talosctl apply-config --insecure -n <new_ip> -e <new_ip> \
 ```
 
 Important:
+
 - The node IP may change after install/reboot (DHCP). Use console/KVM to confirm
   the post-install IP before troubleshooting.
 

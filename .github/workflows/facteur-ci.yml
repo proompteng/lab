@@ -46,7 +46,7 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg18-bookworm
         ports:
-          - "15432:5432"
+          - '15432:5432'
         env:
           POSTGRES_DB: facteur_kb
           POSTGRES_USER: facteur
@@ -57,7 +57,7 @@ jobs:
       redis:
         image: redis:8.2.2
         ports:
-          - "16379:6379"
+          - '16379:6379'
         options: >-
           --health-cmd "redis-cli ping || exit 1"
           --health-interval 5s --health-timeout 5s --health-retries 12
@@ -94,10 +94,10 @@ jobs:
           FACTEUR_POSTGRES_DSN: postgres://facteur:facteur@127.0.0.1:15432/facteur_kb?sslmode=disable
           FACTEUR_REDIS_URL: redis://127.0.0.1:16379/0
           FACTEUR_DISCORD_BOT_TOKEN: local-token
-          FACTEUR_DISCORD_APPLICATION_ID: "000000000000000001"
+          FACTEUR_DISCORD_APPLICATION_ID: '000000000000000001'
           FACTEUR_DISCORD_PUBLIC_KEY: local-public-key
-          FACTEUR_DISCORD_GUILD_ID: "000000000000000002"
-          FACTEUR_DISABLE_DISPATCHER: "true"
+          FACTEUR_DISCORD_GUILD_ID: '000000000000000002'
+          FACTEUR_DISABLE_DISPATCHER: 'true'
         run: |
           chmod +x ./facteur-e2e
           nohup ./facteur-e2e serve --config config/docker-compose.yaml \

@@ -21,7 +21,7 @@ this runbook as a quick reference for triggering and validating releases.
    - Trigger the workflow with `release_mode=prepare` (optionally set
      `npm_tag`). This runs release-please to open/update the automated release
      PR (`release-please--branches--main--components--temporal-bun-sdk`).
-   - The job runs Biome + build + unit + load suites against the release PR
+   - The job runs Oxfmt + build + unit + load suites against the release PR
      branch so we can verify artifacts before merging. Review the PR and merge
      after CI is green.
 2. **Publish mode**
@@ -29,7 +29,7 @@ this runbook as a quick reference for triggering and validating releases.
      rehearsal) **from the `main` branch only**; the workflow refuses to run on
      other refs. The job reads the merged `package.json` version on `main`, reruns
      the validations, then executes `npm publish --provenance --access public
-     --tag <dist>`.
+--tag <dist>`.
    - Keep the workflow logs + artifacts linked to the tracking issue/PR as proof
      of the dry-run and the final publish.
 

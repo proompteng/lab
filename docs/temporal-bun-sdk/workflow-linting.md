@@ -55,10 +55,7 @@ Output:
 
 ```json
 {
-  "entries": [
-    "services/bumba/src/workflows/index.ts",
-    "packages/*/src/workflows/**/*.ts"
-  ],
+  "entries": ["services/bumba/src/workflows/index.ts", "packages/*/src/workflows/**/*.ts"],
   "allow": {
     "imports": ["effect", "@effect/schema"],
     "globals": ["TextEncoder", "TextDecoder"]
@@ -151,4 +148,3 @@ Use TODO markers:
 3. Lint fails on `const now = Date.now` in a workflow module.
 4. Lint fails when a workflow imports `@proompteng/temporal-bun-sdk/client`.
 5. `--format json` emits stable output suitable for CI annotations.
-

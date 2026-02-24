@@ -17,10 +17,12 @@ cp services/oirat/.env.example services/oirat/.env
 ## Environment
 
 Required:
+
 - `DISCORD_BOT_TOKEN`
 - `JANGAR_BASE_URL` (e.g. `http://127.0.0.1:3000`)
 
 Optional:
+
 - `JANGAR_MODEL` (defaults to Jangar server default)
 - `JANGAR_API_KEY` (sent as `Authorization: Bearer ...`)
 - `JANGAR_SYSTEM_PROMPT` (system message at top of each thread)

@@ -5,6 +5,7 @@ Talos/Kubernetes control plane endpoint on the LAN by running HAProxy as a TCP
 load balancer on port `6443`.
 
 Design:
+
 - Clients (Talos nodes, `kubectl`) can talk to either `https://nuc:6443` or `https://192.168.1.130:6443`.
 - HAProxy forwards to the control plane nodes on the LAN (TCP passthrough).
 - Do not expose `:6443` to the internet.
@@ -61,6 +62,7 @@ When generating Talos machine configs, set:
 - `cluster.controlPlane.endpoint: https://192.168.1.130:6443` (compatibility default)
 
 Also supported for clients:
+
 - `https://nuc:6443` (requires hostname resolution)
 
 For an existing cluster, you must update the endpoint across all control plane
