@@ -293,7 +293,7 @@ spec:
                 namespace: inngest
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: airbyte
                 path: argocd/applications/airbyte
@@ -424,6 +424,9 @@ spec:
           - CreateNamespace=true
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
+          - ApplyOutOfSyncOnly=true
+          - PruneLast=true
+          - ClientSideApplyMigration=false
       ignoreDifferences:
         - kind: StatefulSet
           group: apps
@@ -618,8 +621,16 @@ spec:
       syncPolicy:
       {{- if $auto }}
         automated:
+          enabled: true
           prune: true
           selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+          refresh: true
       {{- end }}
       {{- if $hasManagedNS }}
         managedNamespaceMetadata:
