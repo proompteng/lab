@@ -32,11 +32,22 @@ spec:
         namespace: "{{.namespace}}"
       syncPolicy:
         automated:
+          enabled: true
           prune: true
           selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+          refresh: true
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
+          - ApplyOutOfSyncOnly=true
+          - PruneLast=true
+          - ClientSideApplyMigration=false
       source:
         repoURL: "{{.repoUrl}}"
         chart: "{{.chart}}"

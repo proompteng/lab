@@ -297,6 +297,9 @@ spec:
           - CreateNamespace=true
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
+          - ApplyOutOfSyncOnly=true
+          - PruneLast=true
+          - ClientSideApplyMigration=false
   templatePatch: |
     {{- if .annotations }}
     metadata:
@@ -335,8 +338,16 @@ spec:
       {{- end }}
       {{- if $auto }}
         automated:
+          enabled: true
           prune: true
           selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+          refresh: true
       {{- end }}
     {{- end }}
     {{- if hasKey . "ignoreDifferences" }}
