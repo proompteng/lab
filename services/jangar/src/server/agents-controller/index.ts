@@ -46,6 +46,14 @@ import {
   createMutableState,
   type RateBucket,
 } from './mutable-state'
+import {
+  type ImagePolicyCandidate,
+  matchesAnyPattern,
+  normalizeLabelMap,
+  validateAuthSecretPolicy,
+  validateImagePolicy,
+  validateLabelPolicy,
+} from './policy'
 import { normalizeVcsMode, resolveVcsAuthMethod, type VcsMode, validateVcsAuthConfig } from './vcs-auth'
 
 const DEFAULT_NAMESPACES = ['agents']
@@ -1108,107 +1116,6 @@ const collectBlockedSecrets = (secrets: string[]) => {
   return Array.from(new Set(secrets.filter((secret) => blockedSet.has(secret))))
 }
 
-const normalizeLabelMap = (labels: Record<string, unknown>) => {
-  const output: Record<string, string> = {}
-  for (const [key, value] of Object.entries(labels)) {
-    if (!key) continue
-    if (typeof value !== 'string') continue
-    const trimmed = value.trim()
-    if (!trimmed) continue
-    output[key] = trimmed
-  }
-  return output
-}
-
-const validateLabelPolicy = (labels: Record<string, string>) => {
-  const required = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED')
-  const allowed = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_ALLOWED')
-  const denied = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_DENIED')
-
-  if (required.length > 0) {
-    const missing = required.filter((key) => !labels[key])
-    if (missing.length > 0) {
-      return {
-        ok: false as const,
-        reason: 'MissingRequiredLabels',
-        message: `missing required labels: ${missing.join(', ')}`,
-      }
-    }
-  }
-
-  const labelKeys = Object.keys(labels)
-  if (denied.length > 0) {
-    const blocked = labelKeys.filter((key) => matchesAnyPattern(key, denied))
-    if (blocked.length > 0) {
-      return {
-        ok: false as const,
-        reason: 'LabelBlocked',
-        message: `labels blocked by controller policy: ${blocked.join(', ')}`,
-      }
-    }
-  }
-
-  if (allowed.length > 0) {
-    const disallowed = labelKeys.filter((key) => !matchesAnyPattern(key, allowed))
-    if (disallowed.length > 0) {
-      return {
-        ok: false as const,
-        reason: 'LabelNotAllowed',
-        message: `labels not allowed by controller policy: ${disallowed.join(', ')}`,
-      }
-    }
-  }
-
-  return { ok: true as const }
-}
-
-type ImagePolicyCandidate = {
-  image: string
-  context?: string
-}
-
-const validateImagePolicy = (images: ImagePolicyCandidate[]) => {
-  const allowed = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_IMAGES_ALLOWED')
-  const denied = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED')
-  if (images.length === 0) return { ok: true as const }
-
-  for (const entry of images) {
-    const { image, context } = entry
-    if (denied.length > 0 && matchesAnyPattern(image, denied)) {
-      return {
-        ok: false as const,
-        reason: 'ImageBlocked',
-        message: context
-          ? `image ${image} for ${context} is blocked by controller policy`
-          : `image ${image} is blocked by controller policy`,
-      }
-    }
-    if (allowed.length > 0 && !matchesAnyPattern(image, allowed)) {
-      return {
-        ok: false as const,
-        reason: 'ImageNotAllowed',
-        message: context
-          ? `image ${image} for ${context} is not allowed by controller policy`
-          : `image ${image} is not allowed by controller policy`,
-      }
-    }
-  }
-
-  return { ok: true as const }
-}
-
-const validateAuthSecretPolicy = (allowedSecrets: string[], authSecret: AuthSecretConfig | null) => {
-  if (!authSecret) return { ok: true as const }
-  if (allowedSecrets.length > 0 && !allowedSecrets.includes(authSecret.name)) {
-    return {
-      ok: false as const,
-      reason: 'SecretNotAllowed',
-      message: `auth secret ${authSecret.name} is not allowlisted by the Agent`,
-    }
-  }
-  return { ok: true as const }
-}
-
 const encodeBase64Url = (value: string | Buffer) =>
   Buffer.from(value).toString('base64').replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_')
 
@@ -1237,17 +1144,6 @@ const secretHasKey = (secret: Record<string, unknown>, key: string) => {
   const stringData = asRecord(secret.stringData) ?? {}
   return key in data || key in stringData
 }
-
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-const matchesPattern = (value: string, pattern: string) => {
-  if (pattern === '*') return true
-  const regex = new RegExp(`^${pattern.split('*').map(escapeRegex).join('.*')}$`)
-  return regex.test(value)
-}
-
-const matchesAnyPattern = (value: string, patterns: string[]) =>
-  patterns.some((pattern) => matchesPattern(value, pattern))
 
 const fetchGithubAppToken = async (input: {
   apiBaseUrl: string
