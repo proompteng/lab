@@ -1,0 +1,207 @@
+{
+  "run_id": "wp-e6b6e2733f931d46d120d999",
+  "paper": {
+    "title": "Trading-R1: Financial Trading with LLM Reasoning via Reinforcement Learning",
+    "arxiv_id": "2509.11420",
+    "pdf_url": "https://arxiv.org/pdf/2509.11420",
+    "version": "v1",
+    "date": "2025-09-14"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 58,
+    "included_sections": [
+      "main_text",
+      "references",
+      "supplementary_S1_to_S6"
+    ]
+  },
+  "executive_summary": "Trading-R1 introduces a staged finance-reasoning training recipe (structure, evidence, decision) over a 4B model with SFT plus GRPO-based RFT, using a 100k multi-modal corpus and volatility-normalized five-class labels. Reported backtests are directionally strong against listed baselines, but production viability is constrained by split/reproducibility ambiguity, missing statistical rigor, and limited regime diversity.",
+  "problem_statement": "General LLMs and existing reasoning models are not reliably aligned to structured, auditable, and market-grounded trading decisions under noisy multi-source financial inputs.",
+  "methodology_summary": "The system combines multi-source data collection (news/technicals/fundamentals/sentiment/macro), reverse reasoning distillation for SFT targets, volatility-aware multi-horizon label generation (Algorithm S1), and three-stage reward shaping optimized with GRPO. Rewards explicitly score structure quality, evidence grounding, and asymmetric decision correctness.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "Trading-R1 is reported as best or near-best on most Sharpe/return cells among compared model categories.",
+      "evidence": [
+        "Section 5",
+        "Table 3",
+        "Table 4",
+        "Figure 5"
+      ],
+      "details": {
+        "sample_points": {
+          "nvda": {
+            "cr_percent": 8.08,
+            "sr": 2.72,
+            "hr_percent": 70.0,
+            "mdd_percent": 3.8
+          },
+          "aapl": {
+            "cr_percent": 5.82,
+            "sr": 1.8,
+            "hr_percent": 63.6,
+            "mdd_percent": 3.68
+          },
+          "spy": {
+            "cr_percent": 3.34,
+            "sr": 1.6,
+            "hr_percent": 64.0,
+            "mdd_percent": 1.52
+          }
+        }
+      }
+    },
+    {
+      "id": "KF-2",
+      "finding": "Interleaving SFT and RFT outperforms one-stage variants in the authors' setup.",
+      "evidence": [
+        "Section 3.3",
+        "Section 5",
+        "Table 1",
+        "Table 3",
+        "Table 4"
+      ]
+    },
+    {
+      "id": "KF-3",
+      "finding": "Explicit evidence-format rewards are used to mitigate hallucination and enforce traceable claims.",
+      "evidence": [
+        "Section 3.3",
+        "Section 3.7",
+        "Supplement S4",
+        "Supplement S5"
+      ]
+    },
+    {
+      "id": "KF-4",
+      "finding": "Authors explicitly position Trading-R1 for analyst support and high-throughput research workflows rather than high-stakes autonomous trading.",
+      "evidence": [
+        "Industrial Applications and Future Work (pages 17-18)"
+      ]
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "Reverse reasoning distillation reconstructs useful reasoning traces from stronger black-box models.",
+      "assessment": "moderately_novel",
+      "notes": "Novel pipeline engineering contribution; empirical gain attribution versus simpler distillation baselines is not fully isolated."
+    },
+    {
+      "claim": "Three-stage structure/evidence/decision curriculum improves trading-oriented reasoning quality.",
+      "assessment": "supported_in_scope",
+      "notes": "Supported by in-paper comparisons and R0 failure analysis, but lacks rigorous statistical significance reporting."
+    },
+    {
+      "claim": "Robust superiority over open/proprietary baselines in trading tasks.",
+      "assessment": "partially_supported",
+      "notes": "Directional gains are shown in provided backtests; broader external validity remains uncertain."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "split_leakage_ambiguity",
+      "severity": "high",
+      "detail": "Held-out interval claim (Sec. 4.3) is not fully reconciled with corpus date range and sample-generation description (Sec. 1, S1.3)."
+    },
+    {
+      "risk": "statistical_rigor",
+      "severity": "high",
+      "detail": "No confidence intervals, repeated-seed variance bands, or significance tests for headline deltas."
+    },
+    {
+      "risk": "regime_generalization",
+      "severity": "high",
+      "detail": "Universe is concentrated in mega-cap/blue-chip names and authors acknowledge structural long bias."
+    },
+    {
+      "risk": "benchmark_parity",
+      "severity": "medium_high",
+      "detail": "Comparability across heterogeneous baselines and format-compliance behavior is under-specified."
+    },
+    {
+      "risk": "execution_realism",
+      "severity": "medium_high",
+      "detail": "Backtest framing exists, but production-grade slippage/impact/turnover realism is limited."
+    },
+    {
+      "risk": "hallucination_long_context",
+      "severity": "medium_high",
+      "detail": "Paper explicitly notes faithfulness challenges for smaller models with long noisy contexts."
+    }
+  ],
+  "assumptions": [
+    "Volatility-normalized percentile labels are stable proxies for tradable signal quality.",
+    "Reverse-distilled reasoning traces preserve financially relevant causal structure.",
+    "Asymmetric decision penalties match institutional risk priorities in deployment context."
+  ],
+  "implementation_implications": [
+    "Adopt the staged curriculum and reward decomposition as a reusable design pattern for financial reasoning systems.",
+    "Implement Algorithm S1 as a deterministic baseline labeler with versioned data snapshots and hash-locked manifests.",
+    "Gate deployment with anti-leak split assertions, repeated-seed uncertainty reporting, and walk-forward regime tests.",
+    "Use the model primarily for analyst-support thesis generation and paper-trading/shadow workflows until robustness criteria are met."
+  ],
+  "unresolved_questions": [
+    "What exact train/validation/test split manifests were used to guarantee no temporal leakage?",
+    "How stable are gains across random seeds, alternate cost assumptions, and longer out-of-sample windows?",
+    "Do results hold outside mega-cap-heavy universes and non-bull regimes?",
+    "What is the exact baseline prompt/format normalization protocol for strict apples-to-apples comparisons?"
+  ],
+  "citations": [
+    {
+      "section": "3.3",
+      "pointer": "Figure 1 and Table 1",
+      "claim": "Three-stage curriculum with interleaved SFT and RFT."
+    },
+    {
+      "section": "3.4",
+      "pointer": "Figure 2",
+      "claim": "Reverse reasoning distillation workflow."
+    },
+    {
+      "section": "3.5",
+      "pointer": "Algorithm S1 and Table 2",
+      "claim": "Volatility-aware multi-horizon labeling and class distribution."
+    },
+    {
+      "section": "3.7",
+      "pointer": "Equation 1",
+      "claim": "GRPO policy objective and KL anchoring."
+    },
+    {
+      "section": "4.3",
+      "pointer": "Evaluation period and methodology",
+      "claim": "Held-out historical backtest protocol."
+    },
+    {
+      "section": "5",
+      "pointer": "Table 3-4 and Figure 5",
+      "claim": "Comparative quantitative outcomes across model categories."
+    },
+    {
+      "section": "S1",
+      "pointer": "S1.1-S1.3",
+      "claim": "Data sources, assembly, and token statistics."
+    },
+    {
+      "section": "S4",
+      "pointer": "Stage reward definitions",
+      "claim": "Formal structure/evidence/decision reward components."
+    },
+    {
+      "section": "S5",
+      "pointer": "S5.3 observations",
+      "claim": "Failure modes from mixed reward training (R0)."
+    },
+    {
+      "section": "Industrial Applications and Future Work",
+      "pointer": "pages 17-18",
+      "claim": "Recommended analyst-support usage and limitations."
+    }
+  ],
+  "confidence": 0.79
+}
