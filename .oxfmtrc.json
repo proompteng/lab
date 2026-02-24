@@ -47,6 +47,7 @@
     "packages/codex/src/app-server",
     "packages/temporal-bun-sdk/tests",
     "packages/temporal-bun-sdk-example",
+    "charts/**/crds",
     "charts/**/templates",
     "apps/docs/.source"
   ]
