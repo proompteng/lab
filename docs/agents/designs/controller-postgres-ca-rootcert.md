@@ -3,18 +3,23 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The chart supports mounting a Postgres CA bundle via `database.caSecret` and sets `PGSSLROOTCERT` to the mounted path. This is essential for production TLS, but it needs a documented contract (secret key naming, mount paths, rotation).
 
 ## Goals
+
 - Ensure TLS CA mounting is consistent for both deployments.
 - Provide clear rotation and rollback guidance.
 - Validate misconfigurations at render time.
 
 ## Non-Goals
+
 - Managing Postgres certificates themselves (CNPG/cert-manager concerns).
 
 ## Current State
+
 - Values: `charts/agents/values.yaml` → `database.caSecret.name`, `database.caSecret.key`.
 - Templates:
   - Mount secret to `/etc/jangar/ca` and set `PGSSLROOTCERT`: `charts/agents/templates/deployment.yaml` and `deployment-controllers.yaml`.
@@ -22,50 +27,61 @@ The chart supports mounting a Postgres CA bundle via `database.caSecret` and set
 - Runtime relies on libpq behavior; TLS settings are implied by `DATABASE_URL` parameters + `PGSSLROOTCERT`.
 
 ## Design
+
 ### Contract
+
 - If `database.caSecret.name` is set:
   - Chart MUST mount the Secret as a read-only volume.
   - Chart MUST set `PGSSLROOTCERT` to `/etc/jangar/ca/<key>`.
 - The Secret MUST contain the key specified by `database.caSecret.key` (default `ca.crt`).
 
 ### Validation
+
 - Render-time validation should fail if:
   - `database.caSecret.name` is set but `database.caSecret.key` is empty.
 
 ## Config Mapping
-| Helm value | Rendered field/env | Intended behavior |
-|---|---|---|
-| `database.caSecret.name` | Secret volume + mount | Enables CA bundle injection. |
-| `database.caSecret.key` | `PGSSLROOTCERT=/etc/jangar/ca/<key>` | Points libpq to the CA cert file. |
+
+| Helm value               | Rendered field/env                   | Intended behavior                 |
+| ------------------------ | ------------------------------------ | --------------------------------- |
+| `database.caSecret.name` | Secret volume + mount                | Enables CA bundle injection.      |
+| `database.caSecret.key`  | `PGSSLROOTCERT=/etc/jangar/ca/<key>` | Points libpq to the CA cert file. |
 
 ## Rollout Plan
+
 1. Add documentation for required Secret contents and examples.
 2. Canary-enable CA secret in non-prod, verify DB connects with TLS.
 3. Rotate CA by updating Secret; if using checksum rollouts, pods restart automatically.
 
 Rollback:
+
 - Remove `database.caSecret.*` values and revert Secret to prior version.
 
 ## Validation
+
 ```bash
 helm template agents charts/agents --set database.caSecret.name=my-ca --set database.caSecret.key=ca.crt | rg -n \"PGSSLROOTCERT|db-ca-cert\"
 kubectl -n agents get deploy agents -o yaml | rg -n \"PGSSLROOTCERT|db-ca-cert\"
 ```
 
 ## Failure Modes and Mitigations
+
 - Wrong key name causes connection failures: mitigate with validation and clear error logs.
 - CA rotation requires pod restart: mitigate with checksum-triggered rollouts.
 
 ## Acceptance Criteria
+
 - Both deployments mount the CA secret identically when enabled.
 - Render-time validation prevents empty key configurations.
 
 ## References
+
 - Kubernetes Secrets volumes: https://kubernetes.io/docs/concepts/storage/volumes/#secret
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -80,7 +96,9 @@ kubectl -n agents get deploy agents -o yaml | rg -n \"PGSSLROOTCERT|db-ca-cert\"
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -113,13 +131,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -135,6 +156,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -147,6 +169,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

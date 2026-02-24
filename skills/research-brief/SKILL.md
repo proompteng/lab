@@ -8,7 +8,9 @@ description: Generate a concise research brief with uncertainty and citations.
 Generate a concise research brief with uncertainty and citations.
 
 ## Output contract
+
 Return JSON keys:
+
 - `context_version`
 - `as_of_utc`
 - `symbol`
@@ -20,5 +22,6 @@ Return JSON keys:
 - `citations`
 
 ## Rules
+
 - Keep summary short and evidence-backed.
 - Never omit uncertainty when data quality is low.

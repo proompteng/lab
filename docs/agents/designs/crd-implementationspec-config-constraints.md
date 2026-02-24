@@ -3,26 +3,33 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 ImplementationSpec contains runtime configuration that is later executed by controllers/runners. Without constraints, it is easy to create specs that are invalid or unsafe (e.g., missing required fields, invalid enum values, or overly large embedded configs).
 
 This doc defines validation constraints and how to phase them in safely.
 
 ## Goals
+
 - Improve CRD validation so invalid ImplementationSpecs fail fast.
 - Avoid breaking existing specs via opt-in validation phases.
 
 ## Non-Goals
+
 - Building a full policy engine for ImplementationSpecs.
 
 ## Current State
+
 - Go types: `services/jangar/api/agents/v1alpha1/types.go` (ImplementationSpec types live in the same API package).
 - Generated CRD: `charts/agents/crds/agents.proompteng.ai_implementationspecs.yaml`.
 - Controller uses ImplementationSpecs during run submission:
   - `services/jangar/src/server/agents-controller.ts` (resolves ImplementationSpecRef / inline implementation).
 
 ## Design
+
 ### Validation constraints (examples)
+
 - Enums for runtime type already exist for AgentRun runtime (`workflow|job|temporal|custom`); extend similarly where needed.
 - Add size limits:
   - `maxProperties` on config maps
@@ -30,40 +37,49 @@ This doc defines validation constraints and how to phase them in safely.
 - Add CEL rules to enforce mutual exclusivity patterns (like existing systemPrompt vs systemPromptRef).
 
 ### Phased enforcement
+
 - Add new validations as warnings first (controller condition) before baking into CRD schema.
 - Once confirmed, move into CRD `x-kubernetes-validations` (CEL).
 
 ## Config Mapping
-| Helm value / env var (proposed) | Effect | Behavior |
-|---|---|---|
+
+| Helm value / env var (proposed)                                  | Effect     | Behavior                                                                  |
+| ---------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------- |
 | `controllers.env.vars.JANGAR_IMPLEMENTATIONSPEC_VALIDATE_STRICT` | strictness | If true, invalid specs are marked Ready=False and blocked from execution. |
 
 ## Rollout Plan
+
 1. Add controller-side validations + Ready=False conditions.
 2. After a canary window, promote the most important constraints into the CRD schema.
 
 Rollback:
+
 - Disable strict validation env var and revert schema change if needed (requires CRD management plan).
 
 ## Validation
+
 ```bash
 kubectl -n agents get implementationspec -o yaml | rg -n \"spec:|x-kubernetes-validations\"
 ```
 
 ## Failure Modes and Mitigations
+
 - Schema changes reject previously accepted objects: mitigate by phased controller-first validation and careful CRD upgrades.
 - Overly strict constraints block legitimate use: mitigate by documenting intent and providing escape hatches when safe.
 
 ## Acceptance Criteria
+
 - Invalid ImplementationSpecs are rejected or clearly marked not-ready before execution.
 - The most common spec errors are caught by CRD validation, not runtime failures.
 
 ## References
+
 - Kubernetes CRD validation rules (CEL): https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definitions/#validation-rules
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -78,7 +94,9 @@ kubectl -n agents get implementationspec -o yaml | rg -n \"spec:|x-kubernetes-va
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -111,13 +129,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -133,6 +154,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -145,6 +167,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

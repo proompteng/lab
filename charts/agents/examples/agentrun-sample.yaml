@@ -29,9 +29,9 @@ spec:
         memory: 512Mi
   parameters:
     repository: proompteng/lab
-    issueNumber: "1234"
+    issueNumber: '1234'
     base: main
     head: codex/onboarding-flow
     url: https://example.com/tasks/1234
-    task: "Update onboarding flow"
-    priority: "medium"
+    task: 'Update onboarding flow'
+    priority: 'medium'

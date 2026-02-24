@@ -1,5 +1,5 @@
 name: k8s-arm64
-version: "1.0.32"
+version: '1.0.32'
 display_name: Kubernetes Workspace (arm64)
 description: Coder workspace on Kubernetes with arm64 agent and code-server.
 icon: https://raw.githubusercontent.com/coder/coder/main/site/static/icon/code.svg
@@ -7,20 +7,20 @@ maintainer: you
 parameters:
   - name: cpu
     type: string
-    default: "4"
+    default: '4'
   - name: memory
     type: string
-    default: "8"
+    default: '8'
   - name: home_disk_size
     type: number
     default: 30
   - name: repository_url
     type: string
-    default: "https://github.com/proompteng/lab"
+    default: 'https://github.com/proompteng/lab'
     description: Git URL to clone into the workspace
   - name: repository_directory
     type: string
-    default: "~/github.com"
+    default: '~/github.com'
     description: Parent directory for the cloned repository
 provisioners:
   - type: terraform

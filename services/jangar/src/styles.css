@@ -1,5 +1,5 @@
-@import "@proompteng/design/globals.css";
-@import "@xterm/xterm/css/xterm.css";
+@import '@proompteng/design/globals.css';
+@import '@xterm/xterm/css/xterm.css';
 
 @source "./**/*.{js,jsx,ts,tsx}";
 @source not "../node_modules";
@@ -9,28 +9,28 @@
 @source not "../../../.bun";
 
 @font-face {
-  font-family: "JetBrains Mono Nerd Font";
+  font-family: 'JetBrains Mono Nerd Font';
   font-style: normal;
   font-display: swap;
   font-weight: 400;
-  src: url("./assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf") format("truetype");
+  src: url('./assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf') format('truetype');
 }
 
 @font-face {
-  font-family: "JetBrains Mono Nerd Font";
+  font-family: 'JetBrains Mono Nerd Font';
   font-style: normal;
   font-display: swap;
   font-weight: 700;
-  src: url("./assets/fonts/JetBrainsMonoNerdFontMono-Bold.ttf") format("truetype");
+  src: url('./assets/fonts/JetBrainsMonoNerdFontMono-Bold.ttf') format('truetype');
 }
 
 :root {
   --font-sans:
-    "JetBrains Mono Nerd Font", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
-    Consolas, monospace;
+    'JetBrains Mono Nerd Font', 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo,
+    Monaco, Consolas, monospace;
   --font-mono:
-    "JetBrains Mono Nerd Font", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
-    Consolas, monospace;
+    'JetBrains Mono Nerd Font', 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo,
+    Monaco, Consolas, monospace;
   --jangar-grid-line: color-mix(in oklch, var(--border) 45%, transparent);
   --jangar-glow: color-mix(in oklch, var(--accent) 16%, transparent);
 }

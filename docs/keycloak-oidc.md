@@ -23,12 +23,12 @@ For Headlamp-specific wiring (OIDC secret, RBAC, control-plane OIDC args), see `
 
 Keycloak warns if you are still using the bootstrap admin. Create a permanent admin and delete the temporary account.
 
-1) In the **master** realm, create a new user (Users → Add user) and set a non-temporary password.
-2) Assign realm roles:
+1. In the **master** realm, create a new user (Users → Add user) and set a non-temporary password.
+2. Assign realm roles:
    - Go to the user → **Role mapping** → **Assign role**.
    - Under **Realm roles**, select **admin** and assign it.
-3) Log out and log in with the new user.
-4) Delete the temporary bootstrap admin user.
+3. Log out and log in with the new user.
+4. Delete the temporary bootstrap admin user.
 
 Note: In this Keycloak build, the realm-level admin role is named **admin** under Realm roles (not `realm-admin`).
 
@@ -37,6 +37,7 @@ Note: In this Keycloak build, the realm-level admin role is named **admin** unde
 Use a single confidential OIDC client for both the kube-apiserver and Headlamp (example client ID: `kubernetes`).
 
 Capabilities:
+
 - Client authentication: **On**
 - Standard flow: **On**
 - Direct access grants: Off
@@ -45,6 +46,7 @@ Capabilities:
 - PKCE: None
 
 Login settings (Headlamp):
+
 - Root URL: `https://headlamp.ide-newton.ts.net`
 - Home URL: `https://headlamp.ide-newton.ts.net`
 - Valid redirect URIs: `https://headlamp.ide-newton.ts.net/oidc-callback`
@@ -52,10 +54,12 @@ Login settings (Headlamp):
 - Valid post logout redirect URIs: `https://headlamp.ide-newton.ts.net`
 
 Issuer and scopes:
+
 - Issuer: Realm → **Realm settings** → **Endpoints** → **OpenID Endpoint Configuration** (`issuer`)
 - Scopes: `openid profile email`
 
 Optional (recommended) group mapper:
+
 - Mapper type: **Group Membership**
 - Token claim name: `groups`
 - Add to ID token: On
@@ -94,7 +98,7 @@ location / {
 The bootstrap admin credentials are sealed in `argocd/applications/keycloak/keycloak-admin-sealedsecret.yaml`.
 To rotate:
 
-1) Generate a new secret (do not commit plaintext):
+1. Generate a new secret (do not commit plaintext):
 
 ```bash
 kubectl create secret generic keycloak-admin \
@@ -107,7 +111,7 @@ kubectl create secret generic keycloak-admin \
   > argocd/applications/keycloak/keycloak-admin-sealedsecret.yaml
 ```
 
-2) Commit the updated sealed secret and sync Argo CD.
+2. Commit the updated sealed secret and sync Argo CD.
 
 ## Applying manifests locally
 

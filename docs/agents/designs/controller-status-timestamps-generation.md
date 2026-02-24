@@ -3,12 +3,15 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 Many Agents CRDs include `status.updatedAt` and `status.observedGeneration`. Consistent semantics across controllers are essential for debugging, automation, and eventual UI/CLI behavior.
 
 This doc defines a consistent contract and identifies places in code that should be aligned.
 
 ## Goals
+
 - Define consistent meanings for:
   - `status.observedGeneration`
   - `status.updatedAt`
@@ -16,9 +19,11 @@ This doc defines a consistent contract and identifies places in code that should
 - Ensure controllers update these fields in a predictable way.
 
 ## Non-Goals
+
 - Redesigning full status schemas for every CRD.
 
 ## Current State
+
 - CRD types include these fields in Go:
   - `services/jangar/api/agents/v1alpha1/types.go` (e.g. `AgentStatus`, `AgentRunStatus`)
 - Controllers update status using helpers (varies by resource):
@@ -27,7 +32,9 @@ This doc defines a consistent contract and identifies places in code that should
 - Chart does not map any values for this behavior (code-defined).
 
 ## Design
+
 ### Contract
+
 - `observedGeneration`:
   - Set to `.metadata.generation` of the last reconciled spec that produced the current status.
 - `updatedAt`:
@@ -38,40 +45,49 @@ This doc defines a consistent contract and identifies places in code that should
   - Must be immutable once set.
 
 ### Implementation alignment
+
 - Add a shared helper module for timestamp/observedGeneration updates and use it across controllers.
 - Add unit tests to lock semantics (parallel to existing `agents-controller.test.ts`).
 
 ## Config Mapping
-| Config surface | Behavior |
-|---|---|
-| (code only) | Status semantics are not configurable; must be consistent by convention and tests. |
+
+| Config surface | Behavior                                                                           |
+| -------------- | ---------------------------------------------------------------------------------- |
+| (code only)    | Status semantics are not configurable; must be consistent by convention and tests. |
 
 ## Rollout Plan
+
 1. Document semantics and add tests enforcing immutability of startedAt/finishedAt.
 2. Refactor controllers to use shared helpers.
 
 Rollback:
+
 - Revert refactor; keep tests/docs.
 
 ## Validation
+
 ```bash
 kubectl -n agents get agentrun <name> -o jsonpath='{.metadata.generation} {.status.observedGeneration} {.status.startedAt} {.status.finishedAt} {.status.updatedAt}'; echo
 ```
 
 ## Failure Modes and Mitigations
+
 - observedGeneration lag makes status misleading: mitigate by updating observedGeneration on every successful reconcile of spec.
 - updatedAt not updated hides active reconciliation: mitigate with shared helper and tests.
 
 ## Acceptance Criteria
+
 - All controllers follow the same semantics for observedGeneration and timestamps.
 - startedAt/finishedAt are immutable once set.
 
 ## References
+
 - Kubernetes generation and status patterns: https://kubernetes.io/docs/concepts/overview/working-with-objects/kubernetes-objects/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -86,7 +102,9 @@ kubectl -n agents get agentrun <name> -o jsonpath='{.metadata.generation} {.stat
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -119,13 +137,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -141,6 +162,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -153,6 +175,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

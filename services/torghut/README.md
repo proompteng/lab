@@ -3,6 +3,7 @@
 FastAPI service scaffold for an autonomous Alpaca paper trading bot powered by Codex.
 
 ## Local dev (uv-native)
+
 ```bash
 cd services/torghut
 uv venv .venv
@@ -29,23 +30,30 @@ uv run pyright
 ```
 
 Health checks:
+
 - `GET /healthz` – liveness (default port 8181)
 - `GET /db-check` – requires reachable Postgres at `DB_DSN` and matching Alembic heads (default port 8181)
 
 ## Whitepaper workflow (GitHub issue -> Kafka -> AgentRun)
+
 - Kickoff contract in issue body:
+
 ```md
 <!-- TORGHUT_WHITEPAPER:START -->
+
 workflow: whitepaper-analysis-v1
 base_branch: main
+
 <!-- TORGHUT_WHITEPAPER:END -->
 ```
+
 - Include a `.pdf` attachment URL in the issue body.
 - Froussard forwards issue webhook events to Kafka (`WHITEPAPER_KAFKA_TOPIC`) and Torghut consumes them whenever `WHITEPAPER_WORKFLOW_ENABLED=true`.
 - Torghut stores source metadata/artifact refs in whitepaper tables, uploads source PDF to Ceph, emits an Inngest event (`torghut/whitepaper.analysis.requested`), and the Torghut Inngest function dispatches a Codex AgentRun via Jangar (`/v1/agent-runs`) in namespace `agents`.
 - Dispatch endpoint uses `WHITEPAPER_AGENTRUN_SUBMIT_URL`; default fallback is `http://agents.agents.svc.cluster.local/v1/agent-runs`.
 
 Endpoints:
+
 - `GET /whitepapers/status`
 - `POST /whitepapers/events/github-issue` (manual replay/debug ingest)
 - `POST /whitepapers/runs/{run_id}/dispatch-agentrun`
@@ -53,6 +61,7 @@ Endpoints:
 - `GET /whitepapers/runs/{run_id}`
 
 ## Feature flags (Flipt)
+
 - Torghut runtime gates are resolved via Flipt boolean evaluations when `TRADING_FEATURE_FLAGS_ENABLED=true`.
 - Configure:
   - `TRADING_FEATURE_FLAGS_URL` (feature-flags service URL)
@@ -63,6 +72,7 @@ Endpoints:
 - Migration and rollout runbook: `docs/torghut/feature-flags-rollout.md`.
 
 ## Deploy automation (main -> Argo CD)
+
 - `torghut-ci` validates code changes on PR and push.
 - `torghut-build-push` runs on `main` merges touching Torghut sources/scripts, builds/pushes image, and emits a release contract artifact.
 - `torghut-release` consumes that artifact, updates `argocd/applications/torghut/knative-service.yaml` digest/version metadata, and opens a release PR (`codex/torghut-release-<tag>`).
@@ -71,6 +81,7 @@ Endpoints:
 - Migration safety gate: if the promoted source commit touches `services/torghut/migrations/**`, the release PR is created as draft with `do-not-automerge` and requires manual approval before merge.
 
 ## Order-feed ingestion (v3 execution accuracy)
+
 - `TRADING_ORDER_FEED_ENABLED=true` enables Kafka order-update ingestion in the main trading runtime.
 - `TRADING_ORDER_FEED_BOOTSTRAP_SERVERS=<host:port,...>` must be set when enabled.
 - `TRADING_ORDER_FEED_TOPIC` defaults to `torghut.trade-updates.v1`.
@@ -81,6 +92,7 @@ Endpoints:
 - `TRADING_ORDER_FEED_BATCH_SIZE` (default `200`) controls max records per poll.
 
 Metrics emitted on `/metrics`:
+
 - `torghut_trading_order_feed_messages_total`
 - `torghut_trading_order_feed_events_persisted_total`
 - `torghut_trading_order_feed_duplicates_total`
@@ -90,6 +102,7 @@ Metrics emitted on `/metrics`:
 - `torghut_trading_order_feed_consumer_errors_total`
 
 ## v3 autonomous lane (phase 1/2 foundation)
+
 Deterministic research -> gate evaluation -> paper candidate patch pipeline:
 
 ```bash
@@ -102,6 +115,7 @@ uv run python scripts/run_autonomous_lane.py \
 ```
 
 Outputs:
+
 - `artifacts/autonomy-lane/research/candidate-spec.json`
 - `artifacts/autonomy-lane/backtest/walkforward-results.json`
 - `artifacts/autonomy-lane/backtest/evaluation-report.json`
@@ -109,10 +123,12 @@ Outputs:
 - `artifacts/autonomy-lane/paper-candidate/strategy-configmap-patch.yaml` (only when paper gates pass)
 
 Safety defaults:
+
 - live promotions are blocked unless gate policy explicitly enables them and approval token requirements are satisfied.
 - LLM remains bounded/advisory; deterministic risk/firewall controls remain final authority.
 
 ## v3 orchestration guard CLI
+
 Validate stage transitions and retry/failure actions with policy-driven guardrails:
 
 ```bash

@@ -15,7 +15,7 @@ services:
     image: grafana/alloy:v1.11.2
     container_name: saigak-alloy
     network_mode: host
-    command: ["run", "/etc/alloy/config.alloy"]
+    command: ['run', '/etc/alloy/config.alloy']
     volumes:
       - ./config/alloy:/etc/alloy:ro
     restart: unless-stopped

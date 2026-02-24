@@ -1,11 +1,13 @@
 # proompteng.ai Live Presence Counter Plan
 
 ## Objective
+
 - Ship a live `online now` counter on `https://proompteng.ai`.
 - Prioritize current presence, not cumulative historical visits.
 - Keep the implementation anonymous and lightweight on the existing stack (`apps/landing` + `packages/backend/convex`).
 
 ## Scope
+
 - In scope:
   - Public counter for people currently on the site.
   - Near real-time updates via Convex subscriptions.
@@ -17,6 +19,7 @@
   - Cumulative visit totals as a primary metric.
 
 ## Presence Definition
+
 - `online now` = unique active sessions seen in the last TTL window.
 - Proposed defaults:
   - Heartbeat every 15 seconds while tab is visible.
@@ -26,6 +29,7 @@
 ## Proposed Architecture
 
 ### 1. Presence Tracker (Client)
+
 - Add `apps/landing/src/components/live-presence-tracker.tsx`.
 - On load:
   - Create/restore anonymous visitor cookie (`pv_id`).
@@ -37,6 +41,7 @@
   - Send `leave` best-effort beacon.
 
 ### 2. Presence Endpoint (Server)
+
 - Implement `POST /api/presence` in `apps/landing/src/app/api/presence/route.ts`.
 - Validate and normalize:
   - event type: `join | heartbeat | leave`
@@ -45,6 +50,7 @@
 - Forward accepted events to Convex mutation.
 
 ### 3. Convex Data Model
+
 - Extend `packages/backend/convex/schema.ts` with `liveSessions` table:
   - `site`: string
   - `sessionId`: string
@@ -62,6 +68,7 @@
   - `getOnlineNow` query (counts sessions where `expiresAt > now`).
 
 ### 4. Live UI Counter
+
 - Add `apps/landing/src/components/live-online-counter.tsx`:
   - Uses `useQuery(api.presence.getOnlineNow, { site: 'proompteng.ai' })`.
   - Displays `N online now`.
@@ -69,6 +76,7 @@
 - Mount in hero/metrics area from `apps/landing/src/components/desktop-hero.tsx`.
 
 ## Rollout Plan
+
 1. Phase 1: Convex presence foundation
    - Add schema and `presence.ts`.
    - Run `bun run --filter @proompteng/backend codegen`.
@@ -85,6 +93,7 @@
    - Tune heartbeat/TTL windows for stability and cost.
 
 ## Feature Flags and Config
+
 - `NEXT_PUBLIC_ENABLE_LIVE_PRESENCE_COUNTER=true|false`
 - `PRESENCE_HEARTBEAT_SECONDS=15`
 - `PRESENCE_TTL_SECONDS=45`
@@ -92,6 +101,7 @@
 Default: deploy with flag off, enable after production verification.
 
 ## Validation Plan
+
 - Local/manual:
   - Open 2-3 browsers/devices and verify counter rises within seconds.
   - Close a browser and confirm counter drops after TTL.
@@ -105,6 +115,7 @@ Default: deploy with flag off, enable after production verification.
   - Confirm no visible performance regression on landing page.
 
 ## Risks and Mitigations
+
 - Overcount from multiple tabs:
   - Mitigation: count by session (or unique visitor if preferred) and document behavior.
 - Undercount due to aggressive throttling/background tabs:
@@ -115,6 +126,7 @@ Default: deploy with flag off, enable after production verification.
   - Mitigation: anonymous IDs only, no PII.
 
 ## Success Criteria
+
 - Counter reflects current online presence with <5 second perceived lag.
 - Counter decays correctly when sessions expire.
 - Landing page performance remains stable.

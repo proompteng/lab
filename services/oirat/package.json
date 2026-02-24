@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "start": "bun src/index.ts",
-    "lint": "bunx biome check --config-path ../../biome.json src",
+    "lint": "bunx oxfmt --check src",
     "tsc": "bunx tsc --noEmit",
     "test": "bun test",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

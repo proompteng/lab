@@ -11,10 +11,10 @@
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "dependencies": {
+    "@proompteng/design": "workspace:*",
     "fumadocs-core": "15.8.5",
     "fumadocs-mdx": "12.0.3",
     "fumadocs-ui": "15.8.5",
-    "@proompteng/design": "workspace:*",
     "next": "16.1.6",
     "react": "19.2.4",
     "react-dom": "19.2.4"

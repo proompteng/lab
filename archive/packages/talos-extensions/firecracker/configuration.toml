@@ -13,7 +13,7 @@ image = "/usr/local/share/kata-containers/kata-containers.img"
 #   - ext4 (default)
 #   - xfs
 #   - erofs
-rootfs_type="ext4"
+rootfs_type = "ext4"
 
 # Enable confidential guest support.
 # Toggling that setting may trigger different hardware features, ranging
@@ -40,14 +40,14 @@ rootfs_type="ext4"
 # rootless = true
 
 # disable applying SELinux on the VMM process (default false)
-disable_selinux=false
+disable_selinux = false
 
 # disable applying SELinux on the container process
 # If set to false, the type `container_t` is applied to the container process by default.
 # Note: To enable guest SELinux, the guest rootfs must be CentOS that is created and built
 # with `SELINUX=yes`.
 # (default: true)
-disable_guest_selinux=true
+disable_guest_selinux = true
 
 # Path to the firmware.
 # If you want Cloud Hypervisor to use a specific firmware, set its path below.
@@ -364,14 +364,14 @@ enable_debug = true
 #     Uses tc filter rules to redirect traffic from the network interface
 #     provided by plugin to a tap interface connected to the VM.
 #
-internetworking_model="tcfilter"
+internetworking_model = "tcfilter"
 
 # disable guest seccomp
 # Determines whether container seccomp profiles are passed to the virtual
 # machine and applied by the kata agent. If set to true, seccomp is not applied
 # within the guest
 # (default: true)
-disable_guest_seccomp=true
+disable_guest_seccomp = true
 
 # Apply a custom SELinux security policy to the container process inside the VM.
 # This is used when you want to apply a type other than the default `container_t`,
@@ -410,7 +410,7 @@ disable_guest_seccomp=true
 # The sandbox cgroup path is the parent cgroup of a container with the PodSandbox annotation.
 # The sandbox cgroup is constrained if there is no container type annotation.
 # See: https://pkg.go.dev/github.com/kata-containers/kata-containers/src/runtime/virtcontainers#ContainerType
-sandbox_cgroup_only=false
+sandbox_cgroup_only = false
 
 # If enabled, the runtime will attempt to determine appropriate sandbox size (memory, CPU) before booting the virtual machine. In
 # this case, the runtime will not dynamically update the amount of memory and CPU in the virtual machine. This is generally helpful
@@ -419,13 +419,13 @@ sandbox_cgroup_only=false
 # - When running with pods, sandbox sizing information will only be available if using Kubernetes >= 1.23 and containerd >= 1.6. CRI-O
 #   does not yet support sandbox sizing annotations.
 # - When running single containers using a tool like ctr, container sizing information will be available.
-static_sandbox_resource_mgmt=false
+static_sandbox_resource_mgmt = false
 
 # If specified, sandbox_bind_mounts identifieds host paths to be mounted (ro) into the sandboxes shared path.
 # This is only valid if filesystem sharing is utilized. The provided path(s) will be bindmounted into the shared fs directory.
 # If defaults are utilized, these mounts should be available in the guest at `/run/kata-containers/shared/containers/sandbox-mounts`
 # These will not be exposed to the container workloads, and are only provided for potential guest services.
-sandbox_bind_mounts=[]
+sandbox_bind_mounts = []
 
 # VFIO Mode
 # Determines how VFIO devices should be be presented to the container.
@@ -446,18 +446,18 @@ sandbox_bind_mounts=[]
 #    Using this mode requires specially built workloads that know how
 #    to locate the relevant device interfaces within the VM.
 #
-vfio_mode="guest-kernel"
+vfio_mode = "guest-kernel"
 
 # If enabled, the runtime will not create Kubernetes emptyDir mounts on the guest filesystem. Instead, emptyDir mounts will
 # be created on the host and shared via virtio-fs. This is potentially slower, but allows sharing of files from host to guest.
-disable_guest_empty_dir=false
+disable_guest_empty_dir = false
 
 # Enabled experimental feature list, format: ["a", "b"].
 # Experimental features are features not stable enough for production,
 # they may break compatibility, and are prepared for a big version bump.
 # Supported experimental features:
 # (default: [])
-experimental=[]
+experimental = []
 
 # If enabled, user can run pprof tools with shim v2 process through kata-monitor.
 # (default: false)

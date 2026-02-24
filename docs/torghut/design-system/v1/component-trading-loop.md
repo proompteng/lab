@@ -1,25 +1,30 @@
 # Component: Trading Loop (Torghut Knative Service)
 
 ## Status
+
 - Version: `v1`
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
 
 ## Purpose
+
 Describe the trading loop design, including schedule, signal ingestion from ClickHouse, decision lifecycle, and the
 core safety gates that ensure paper-by-default trading.
 
 ## Non-goals
+
 - Building a high-frequency trading engine (this is a periodic decision loop).
 - Allowing AI to submit orders directly (AI is advisory only).
 
 ## Terminology
+
 - **Decision:** A proposed action (buy/sell/hold) with parameters and rationale.
 - **Execution:** A submitted order with reconciliation state.
 - **Universe:** Set of symbols to trade; in v1 it is often static or derived from Jangar symbols API.
 
 ## Current configuration and code (pointers)
+
 - Knative Service: `argocd/applications/torghut/knative-service.yaml`
 - Strategy config: `argocd/applications/torghut/strategy-configmap.yaml`
 - Trading scheduler: `services/torghut/app/trading/scheduler.py`
@@ -45,6 +50,7 @@ flowchart TD
 ```
 
 ## Configuration (env var contract)
+
 From `argocd/applications/torghut/knative-service.yaml`:
 | Env var | Purpose | Safe default / current |
 | --- | --- | --- |
@@ -76,39 +82,49 @@ From `argocd/applications/torghut/knative-service.yaml`:
 | `JANGAR_SYMBOLS_URL` | Optional universe source (when `TRADING_UNIVERSE_SOURCE=jangar`) | `http://jangar.jangar.svc.cluster.local/api/torghut/symbols` |
 
 Notes:
+
 - The service supports additional trading controls (qty defaults, cooldown, allow-shorts, notional and position caps, signal schema selection).
   See `services/torghut/app/config.py` for the full env surface area.
 - The Knative manifest currently also sets `CLICKHOUSE_*`, but the trading dependency checks use `TA_CLICKHOUSE_*`.
 
 ## Safety gates (v1)
+
 ### Gate 1: Explicit enablement
+
 - Trading loop must be enabled explicitly (`TRADING_ENABLED=true`).
-- Live trading requires a *second explicit* flag: `TRADING_LIVE_ENABLED=true`.
+- Live trading requires a _second explicit_ flag: `TRADING_LIVE_ENABLED=true`.
 
 ### Gate 2: Deterministic risk policy
+
 Risk engine enforces:
+
 - max notional per trade,
 - max position size as % of equity,
 - cooldowns and duplicate decision suppression (idempotency),
 - symbol allowlist (universe).
 
 ### Gate 3: Execution idempotency
+
 Orders must be idempotent across retries (see `v1/component-order-execution-and-idempotency.md`).
 
 ## Failure modes, detection, recovery
-| Failure | Symptoms | Detection | Recovery |
-| --- | --- | --- | --- |
-| ClickHouse stale | no new signals; trading loop idle | `/trading/status` lag; ClickHouse `max(event_ts)` | fix TA pipeline/ClickHouse; see `v1/operations-ta-replay-and-recovery.md` |
-| Postgres write failures | decisions not persisted | service logs; Knative errors | verify `DB_DSN`; CNPG health; retry |
-| UUID-in-JSON crash | Knative revision fails | logs show UUID serialization error | coerce JSON; see `v1/component-postgres-schema-and-migrations.md` |
+
+| Failure                 | Symptoms                          | Detection                                         | Recovery                                                                  |
+| ----------------------- | --------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------- |
+| ClickHouse stale        | no new signals; trading loop idle | `/trading/status` lag; ClickHouse `max(event_ts)` | fix TA pipeline/ClickHouse; see `v1/operations-ta-replay-and-recovery.md` |
+| Postgres write failures | decisions not persisted           | service logs; Knative errors                      | verify `DB_DSN`; CNPG health; retry                                       |
+| UUID-in-JSON crash      | Knative revision fails            | logs show UUID serialization error                | coerce JSON; see `v1/component-postgres-schema-and-migrations.md`         |
 
 ## Security considerations
+
 - Keep trading endpoints cluster-local unless explicitly needed.
 - Use least-privilege Alpaca keys; do not allow live keys in environments without explicit approval.
 - Audit logs must be immutable enough for incident review; avoid “cleanup” jobs without governance.
 
 ## Decisions (ADRs)
+
 ### ADR-10-1: ClickHouse-first trading inputs
+
 - **Decision:** Read signals from ClickHouse for both UI and trading.
 - **Rationale:** Single store for signals reduces mismatch between visualization and trading decisions.
 - **Consequences:** ClickHouse availability/disk become part of the trading SLO.

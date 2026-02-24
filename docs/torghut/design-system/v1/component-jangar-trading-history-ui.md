@@ -1,6 +1,7 @@
 # Component: Jangar Trading History UI
 
 ## Status
+
 - Version: `v1`
 - Last updated: **2026-02-10**
 - Implemented: PR #2958 (merged **2026-02-10**) - `feat(jangar): add torghut trading history UI`
@@ -8,6 +9,7 @@
 - Source of truth (Torghut audit data): Torghut Postgres (`strategies`, `trade_decisions`, `executions`, `position_snapshots`, `llm_decision_reviews`)
 
 ## Purpose
+
 Provide a read-only Jangar UI surface that answers the operational question:
 
 - Is the current Torghut strategy profitable (per trading day, per strategy)?
@@ -21,11 +23,13 @@ This is explicitly part of the Torghut production system because the UI is how h
 - or disable trading.
 
 ## Non-goals
+
 - Executing trades or changing Torghut strategy config from Jangar (read-only).
 - Full accounting (dividends, fees, borrow costs, corporate actions).
 - Long-horizon backtesting (see `v1/backtesting-and-simulation.md`).
 
 ## Placement (Jangar UI)
+
 Jangar already has a **Torghut** sidebar group (`services/jangar/src/components/app-sidebar.tsx`) with:
 
 - `/torghut/symbols`
@@ -36,6 +40,7 @@ Add:
 - `/torghut/trading` (label: `Trading`)
 
 ## Data sources (authoritative)
+
 Torghut Postgres tables (see `services/torghut/app/models/entities.py`):
 
 - `strategies`
@@ -49,6 +54,7 @@ Optional supporting context (not required for MVP):
 - ClickHouse TA signals (already accessible from Jangar via `/api/torghut/ta/*`) for chart overlays.
 
 ## Trading day semantics
+
 The UI must define “trading day” unambiguously:
 
 - Default timezone: `America/New_York` (calendar day buckets).
@@ -58,6 +64,7 @@ The UI must define “trading day” unambiguously:
 - the computed `[startUtc, endUtc)` interval used for queries.
 
 ## Profitability definitions (MVP)
+
 The UI should show two complementary views:
 
 1. **Realized PnL (strategy-attributable)** from filled executions.
@@ -75,6 +82,7 @@ Notes:
 - If Torghut later persists fees/commission/borrow costs, incorporate them into PnL.
 
 ## UI information architecture (MVP)
+
 Route: `/torghut/trading`
 
 Panels:
@@ -100,6 +108,7 @@ Panels:
 - LLM advisory health (reviews by verdict; circuit-open frequency inferred if needed).
 
 ## Jangar API surface (proposed)
+
 Pattern alignment (existing in repo):
 
 - UI routes: `services/jangar/src/routes/torghut/*`
@@ -126,6 +135,7 @@ API constraints:
 - Never allow “unbounded query of all trade_decisions”.
 
 ## Torghut DB connectivity (Jangar)
+
 Jangar needs read-only access to Torghut Postgres.
 
 Constraints:
@@ -139,6 +149,7 @@ Implementation shape:
 - Add a small DB module in Jangar to query Torghut Postgres with strict timeouts.
 
 ## Query sketches (Torghut DB)
+
 Filled executions for `[dayStartUtc, dayEndUtc)`:
 
 ```sql
@@ -202,6 +213,7 @@ order by as_of asc;
 ```
 
 ## PnL computation notes (MVP)
+
 Location: Jangar server helper (pure function) + unit tests.
 
 Algorithm:
@@ -220,6 +232,7 @@ Guards:
 - If shorts are disabled (Torghut default `TRADING_ALLOW_SHORTS=false`), a sell that exceeds the long position should not fill; treat it as a data-quality anomaly and surface in the UI.
 
 ## Short selling via Alpaca (research summary)
+
 Alpaca supports short selling for equities when:
 
 - the account is margin-enabled and eligible, and
@@ -241,6 +254,7 @@ Implications for Torghut:
 - and a risk model that accounts for short exposure.
 
 ## Risks / open questions
+
 - `executions` lacks an explicit `filled_at` timestamp; for UI timelines, prefer parsing from `raw_order` if present, else fall back to `updated_at`.
 - Equity delta is account-level and can diverge from realized PnL if positions remain open at day end.
 - Data volume: `trade_decisions` can be high-cardinality; APIs must paginate and bound by day/range.

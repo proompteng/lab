@@ -3,7 +3,7 @@
   tasks:
     - name: Wait for racher to be running
       wait_for:
-        host: "{{ ansible_host }}"
+        host: '{{ ansible_host }}'
         port: 80
         delay: 10
         timeout: 300

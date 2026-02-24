@@ -8,4 +8,4 @@ spec:
     - /bin/sh
     - -c
   args:
-    - "echo {{parameters.message}}"
+    - 'echo {{parameters.message}}'

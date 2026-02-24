@@ -16,6 +16,7 @@ Jangar is the control plane for all `Memory` resources.
 ## CRDs
 
 ### Memory (claim)
+
 Namespace-scoped, app-facing memory dataset.
 
 ```yaml
@@ -41,6 +42,7 @@ spec:
 ```
 
 ### MemoryStore (internal)
+
 Composite resource that binds the logical memory dataset to a concrete provider.
 
 ## Provider decoupling rules

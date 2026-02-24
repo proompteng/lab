@@ -4,8 +4,7 @@ metadata:
   name: default-budget
 spec:
   limits:
-    tokens: "100000"
-    dollars: "50"
-    cpu: "8"
-    memory: "16Gi"
-
+    tokens: '100000'
+    dollars: '50'
+    cpu: '8'
+    memory: '16Gi'

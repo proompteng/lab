@@ -14,7 +14,7 @@ spec:
         name: codex-impl-sample
       with:
         repository: proompteng/lab
-        issueNumber: "1234"
+        issueNumber: '1234'
     - name: notify
       kind: ToolRun
       dependsOn:
@@ -23,4 +23,4 @@ spec:
       toolRef:
         name: echo-tool
       with:
-        message: "orchestration complete"
+        message: 'orchestration complete'

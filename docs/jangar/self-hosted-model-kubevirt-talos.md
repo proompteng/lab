@@ -66,7 +66,7 @@ Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `a
 3. Sync Argo apps and verify KubeVirt CRDs exist, `virt-operator`/`virt-api`/`virt-controller` are running, and CDI DataVolume imports succeed.
 4. In mixed-arch clusters (arm64 + amd64), enable KubeVirt `MultiArchitecture` feature gate. If you see admission failures like:
    - `MultiArchitecture feature gate is not enabled in kubevirt-config, invalid entry spec.template.spec.architecture`
-   add `MultiArchitecture` under `KubeVirt.spec.configuration.developerConfiguration.featureGates` (see `argocd/applications/kubevirt/kustomization.yaml`).
+     add `MultiArchitecture` under `KubeVirt.spec.configuration.developerConfiguration.featureGates` (see `argocd/applications/kubevirt/kustomization.yaml`).
 
 ### Phase 2: Prepare `altra` For VM GPU Passthrough
 
@@ -76,6 +76,7 @@ Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `a
 4. Verify kubelet advertises the passthrough resource on `altra` (via KubeVirt's built-in device-plugin).
 
 Notes:
+
 1. For VM passthrough, the host typically uses `vfio-pci`, not the NVIDIA datacenter driver.
 2. NVIDIA drivers are required inside the guest (Ubuntu VM) to use the GPU.
 
@@ -91,6 +92,7 @@ Namespace:
 Create a dedicated namespace via ApplicationSet-managed metadata (preferred), or via an Argo app that owns the namespace.
 
 VM resources (GitOps):
+
 1. `DataVolume` root disk (Ubuntu cloud image) via CDI.
 2. A persistent data disk (PVC) mounted at `/var/lib/ollama` for the Ollama model cache.
 3. `VirtualMachine` with node affinity to `altra`, a GPU device under `spec.template.spec.domain.devices.gpus` (with `deviceName` matching the advertised resource), and cloud-init that:
@@ -99,16 +101,18 @@ VM resources (GitOps):
    - pre-pulls `qwen3-embedding:0.6b` and creates `qwen3-embedding-saigak:0.6b`
 
 VM access (debug):
+
 - `virtctl -n saigak ssh ubuntu@vmi/saigak --identity-file ~/.ssh/id_ed25519 --command 'nvidia-smi && ollama list'`
 
 Exposure:
+
 1. `Service` pointing to the VM launcher pod port `11434`.
 2. Optional: a Tailscale `Service` (k8s-operator) if you need access from outside the cluster.
 
 ### Phase 5: Repoint Jangar To The In-Cluster Saigak Endpoint
 
 1. Update `argocd/applications/jangar/deployment.yaml`:
-Set `OPENAI_API_BASE_URL=http://<saigak-service>.<ns>.svc.cluster.local:11434/v1`, `OPENAI_EMBEDDING_MODEL=qwen3-embedding-saigak:0.6b`, and `OPENAI_EMBEDDING_DIMENSION=1024`.
+   Set `OPENAI_API_BASE_URL=http://<saigak-service>.<ns>.svc.cluster.local:11434/v1`, `OPENAI_EMBEDDING_MODEL=qwen3-embedding-saigak:0.6b`, and `OPENAI_EMBEDDING_DIMENSION=1024`.
 2. Sync `argocd/jangar` and verify Jangar can embed (both `GET /api/memories?...` and `POST /api/memories` return `200`).
 
 ## Validation Checklist
@@ -121,22 +125,23 @@ Set `OPENAI_API_BASE_URL=http://<saigak-service>.<ns>.svc.cluster.local:11434/v1
 ## Failure Modes (Expected)
 
 1. VM won’t start on `altra`:
-GPU resource not advertised, or KubeVirt permitted device list missing.
+   GPU resource not advertised, or KubeVirt permitted device list missing.
 2. GPU present but unusable inside VM:
-Guest drivers missing or mismatched, or GPU not actually attached (wrong `deviceName`).
+   Guest drivers missing or mismatched, or GPU not actually attached (wrong `deviceName`).
 3. Ollama crashloops on first boot:
-The `/var/lib/ollama` mountpoint is owned by `root:root`, so the `ollama` systemd unit (runs as user `ollama`) can’t create `blobs/`. Fix:
-`sudo chown -R ollama:ollama /var/lib/ollama && sudo systemctl restart ollama`.
+   The `/var/lib/ollama` mountpoint is owned by `root:root`, so the `ollama` systemd unit (runs as user `ollama`) can’t create `blobs/`. Fix:
+   `sudo chown -R ollama:ollama /var/lib/ollama && sudo systemctl restart ollama`.
 4. Saigak up but embeddings model missing:
-`ollama list` doesn’t contain `qwen3-embedding-saigak:0.6b`.
+   `ollama list` doesn’t contain `qwen3-embedding-saigak:0.6b`.
 5. Jangar still returns `/api/memories` 500:
-Base URL wrong, or Saigak proxy not exposing a `/v1/embeddings` compatible endpoint.
+   Base URL wrong, or Saigak proxy not exposing a `/v1/embeddings` compatible endpoint.
 6. Argo sync fails with KubeVirt admission errors about `spec.template.spec.architecture`:
-`MultiArchitecture` feature gate is not enabled on the KubeVirt CR (see Phase 1).
+   `MultiArchitecture` feature gate is not enabled on the KubeVirt CR (see Phase 1).
 
 ## Migration Notes (Docs)
 
 Harvester-based docs are archived under:
+
 - `archive/docs/harvester/harvester-gpu-pci-passthrough.md`
 - `archive/docs/harvester/harvester-ceph-jbod.md`
 - `archive/docs/harvester/local-llm-deepseek-coder.md`

@@ -740,10 +740,10 @@ const isSafeRelativePath = (filePath: string) => {
 const isNotFoundError = (error: unknown): error is NodeJS.ErrnoException =>
   Boolean(
     error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      typeof (error as { code?: unknown }).code === 'string' &&
-      (error as { code?: string }).code === 'ENOENT',
+    typeof error === 'object' &&
+    'code' in error &&
+    typeof (error as { code?: unknown }).code === 'string' &&
+    (error as { code?: string }).code === 'ENOENT',
   )
 
 const extractSessionIdFromParsedEvent = (parsed: Record<string, unknown>): string | undefined => {

@@ -24,7 +24,7 @@
       ansible.builtin.set_fact:
         tailscale_backend_state: "{{ (tailscale_status.stdout | from_json).BackendState | default('Unknown', true) }}"
         tailscale_auth_url: "{{ (tailscale_status.stdout | from_json).AuthURL | default('', true) }}"
-        tailscale_tags: "{{ ((tailscale_status.stdout | from_json).Self.Tags | default([], true)) }}"
+        tailscale_tags: '{{ ((tailscale_status.stdout | from_json).Self.Tags | default([], true)) }}'
       when: tailscale_status.rc == 0
 
     - name: Force re-login when tags are present (tags require admin/policy; proxies should be user-owned)

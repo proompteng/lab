@@ -8,7 +8,9 @@ description: Extract structured, source-attributed sentiment context for one sym
 Extract structured, source-attributed sentiment context for one symbol.
 
 ## Output contract
+
 Return JSON keys:
+
 - `context_version`
 - `as_of_utc`
 - `symbol`
@@ -19,5 +21,6 @@ Return JSON keys:
 - `citations`
 
 ## Rules
+
 - Prefer recency over volume.
 - Mark missing sources explicitly.

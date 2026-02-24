@@ -3,65 +3,82 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The chart’s HPA template targets only the control plane Deployment (`agents`). Controllers are deployed as a separate Deployment (`agents-controllers`) but do not have autoscaling support. Controllers workload is often bursty (reconcile storms, webhook bursts), and lack of scaling can cause backlog and delayed reconciliation.
 
 ## Goals
+
 - Add optional HPA support for `agents-controllers`.
 - Keep existing `autoscaling.*` behavior unchanged for the control plane.
 
 ## Non-Goals
+
 - Implementing custom metrics autoscaling in this phase.
 
 ## Current State
+
 - Existing HPA template: `charts/agents/templates/hpa.yaml`
   - Targets `Deployment/{{ include "agents.fullname" . }}` only.
 - Values: `charts/agents/values.yaml` exposes a single `autoscaling.*`.
 - Controllers deployment: `charts/agents/templates/deployment-controllers.yaml`.
 
 ## Design
+
 ### Proposed values
+
 Add:
+
 - `controllers.autoscaling` (new)
 
 ### Defaults
+
 - `controllers.autoscaling.enabled=false`
 - Recommend `minReplicas: 1`, `maxReplicas: 3` initially, CPU-based scaling only.
 
 ## Config Mapping
-| Helm value | Rendered object | Intended behavior |
-|---|---|---|
-| `autoscaling.*` | `HPA/agents` | Control plane HPA (existing). |
+
+| Helm value                             | Rendered object          | Intended behavior                                  |
+| -------------------------------------- | ------------------------ | -------------------------------------------------- |
+| `autoscaling.*`                        | `HPA/agents`             | Control plane HPA (existing).                      |
 | `controllers.autoscaling.enabled=true` | `HPA/agents-controllers` | Scales controllers Deployment based on CPU/memory. |
 
 ## Rollout Plan
+
 1. Add new `controllers.autoscaling` keys with defaults disabled.
 2. Enable in non-prod and validate scale-up/down behavior.
 3. Enable in prod after ensuring PDB/strategy supports scaling safely.
 
 Rollback:
+
 - Disable `controllers.autoscaling.enabled`.
 
 ## Validation
+
 ```bash
 helm template agents charts/agents --set controllers.enabled=true --set controllers.autoscaling.enabled=true | rg -n \"kind: HorizontalPodAutoscaler\"
 kubectl -n agents get hpa
 ```
 
 ## Failure Modes and Mitigations
+
 - HPA scales down too aggressively and loses in-flight work: mitigate with conservative scale-down policies and controller graceful shutdown.
 - HPA not created due to missing metrics server: mitigate by documenting prerequisites and keeping disabled by default.
 
 ## Acceptance Criteria
+
 - When enabled, `agents-controllers` has an HPA targeting the correct Deployment.
 - Operators can scale controllers independently of the control plane.
 
 ## References
+
 - Kubernetes HPA v2: https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -76,7 +93,9 @@ kubectl -n agents get hpa
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -109,13 +128,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -131,6 +153,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -143,6 +166,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

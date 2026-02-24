@@ -3,73 +3,91 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 Kubernetes does not automatically restart pods when referenced Secrets/ConfigMaps change (especially when referenced via env vars). In GitOps environments, this frequently leads to “updated Secret, pods still using old value” incidents.
 
 This doc proposes checksum annotations to trigger Deployment rollouts when selected config inputs change.
 
 ## Goals
+
 - Provide an opt-in mechanism to restart control plane/controllers when key Secrets/ConfigMaps change.
 - Make the behavior explicit and easy to validate in Helm renders.
 
 ## Non-Goals
+
 - Automatically restarting on all Secrets/ConfigMaps in the namespace.
 
 ## Current State
+
 - Chart references:
   - DB URL Secret: `charts/agents/templates/deployment.yaml` and `deployment-controllers.yaml`
   - `envFromSecretRefs` / `envFromConfigMapRefs`: same templates
 - No checksum annotations exist in pod templates.
 
 ## Design
+
 ### Proposed values
+
 Add:
+
 - `rolloutChecksums.enabled` (default `false`)
 - `rolloutChecksums.secrets: []`
 - `rolloutChecksums.configMaps: []`
 
 When enabled, annotate pod templates with:
+
 - `checksum/secret/<name>: <sha256>`
 - `checksum/configmap/<name>: <sha256>`
 
 ### Implementation detail
+
 - Hash the rendered Secret/ConfigMap data when defined in-chart, and the name only (or `lookup`) when managed externally.
   - In GitOps, `lookup` behavior varies; prefer explicit operator-provided checksums when needed.
 
 ## Config Mapping
-| Helm value | Rendered annotation | Intended behavior |
-|---|---|---|
-| `rolloutChecksums.enabled=true` | `checksum/*` annotations | Any change triggers a Deployment rollout. |
+
+| Helm value                                               | Rendered annotation                       | Intended behavior                           |
+| -------------------------------------------------------- | ----------------------------------------- | ------------------------------------------- |
+| `rolloutChecksums.enabled=true`                          | `checksum/*` annotations                  | Any change triggers a Deployment rollout.   |
 | `rolloutChecksums.secrets=[\"agents-github-token-env\"]` | `checksum/secret/agents-github-token-env` | Restart when the referenced Secret changes. |
 
 ## Rollout Plan
+
 1. Add feature behind `rolloutChecksums.enabled=false`.
 2. Enable in non-prod with one Secret (e.g. GitHub token) to validate.
 3. Enable in prod after validating rollout behavior and avoiding excessive restarts.
 
 Rollback:
+
 - Disable the flag; annotation removal stops checksum-triggered rollouts.
 
 ## Validation
+
 ```bash
 helm template agents charts/agents | rg -n \"checksum/\"
 kubectl -n agents get deploy agents -o jsonpath='{.spec.template.metadata.annotations}'; echo
 ```
 
 ## Failure Modes and Mitigations
+
 - Too many checksum sources cause frequent rollouts: mitigate with explicit allowlist and opt-in.
 - Checksum cannot be computed for external Secrets: mitigate by allowing user-provided checksum values.
 
 ## Acceptance Criteria
+
 - Enabling the feature causes a deterministic rollout on config changes.
 - Operators can scope restarts to a small list of critical Secrets/ConfigMaps.
 
 ## References
+
 - Kubernetes ConfigMaps/Secrets update behavior: https://kubernetes.io/docs/concepts/configuration/configmap/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -84,7 +102,9 @@ kubectl -n agents get deploy agents -o jsonpath='{.spec.template.metadata.annota
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -117,13 +137,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -139,6 +162,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -151,6 +175,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

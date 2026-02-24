@@ -21,7 +21,7 @@ spec:
         to: issueNumber
       - from: linearUrl
         to: url
-  summary: "Implement onboarding flow"
+  summary: 'Implement onboarding flow'
   text: |
     Implement the onboarding flow described in the spec document.
   acceptanceCriteria:

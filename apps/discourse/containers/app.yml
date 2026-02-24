@@ -1,8 +1,8 @@
 templates:
-  - "templates/postgres.template.yml"
-  - "templates/redis.template.yml"
-  - "templates/web.template.yml"
-  - "templates/web.ratelimited.template.yml"
+  - 'templates/postgres.template.yml'
+  - 'templates/redis.template.yml'
+  - 'templates/web.template.yml'
+  - 'templates/web.ratelimited.template.yml'
 
 env:
   DISCOURSE_HOSTNAME: 'forum.proompteng.ai'
@@ -11,7 +11,7 @@ env:
   DISCOURSE_SMTP_ADDRESS: smtp.resend.com
   DISCOURSE_SMTP_PORT: 587
   DISCOURSE_SMTP_USER_NAME: resend
-  DISCOURSE_SMTP_PASSWORD: "placeholder"
+  DISCOURSE_SMTP_PASSWORD: 'placeholder'
   DISCOURSE_SMTP_DOMAIN: proompteng.ai
   DISCOURSE_SMTP_ENABLE_START_TLS: true
 

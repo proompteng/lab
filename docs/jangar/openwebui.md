@@ -5,6 +5,7 @@ OpenWebUI is installed via the upstream Helm chart (`open-webui` v8.19.0, app v0
 OpenWebUI forwards the chat identifier in the `x-openwebui-chat-id` header (enabled via the chart values). Jangar consumes this header to map conversations to Codex thread ids and to increment turn numbers, persisting the mapping in Redis (`redis://jangar-openwebui-redis:6379/1`) with a 7-day TTL so subsequent turns stay on the same thread.
 
 ## Access
+
 - Via Tailscale: `http://openwebui` (Tailscale LB `openwebui-tailscale` → Service `open-webui:80` → pod :8080).
 - Local smoke test (no tailscale):
   ```bash
@@ -16,6 +17,7 @@ OpenWebUI forwards the chat identifier in the `x-openwebui-chat-id` header (enab
   ```
 
 ## Model & backend wiring
+
 - OpenAI base URL: `http://jangar.jangar.svc.cluster.local/openai/v1` (set via Helm values).
 - Auth/signup remain disabled (`WEBUI_AUTH=false`, `ENABLE_SIGNUP=false`).
 - Websockets: `WEBSOCKET_MANAGER=redis`, `WEBSOCKET_REDIS_URL=redis://jangar-openwebui-redis:6379/0` (Redis provided by the operator, not the chart).
@@ -23,8 +25,10 @@ OpenWebUI forwards the chat identifier in the `x-openwebui-chat-id` header (enab
 - Current code returns configured models from `/v1/models` (default `gpt-5.3-codex,gpt-5.3-codex-spark`); set `JANGAR_MODELS`/`JANGAR_DEFAULT_MODEL` or update `services/jangar/src/server/config.ts` if this needs to change.
 
 ## Image pin
+
 - `ghcr.io/open-webui/open-webui:v0.7.2` (managed by the Helm chart)
 
 ## Dev notes
+
 - Jangar UI no longer embeds OpenWebUI; if you want a quick link, point to `VITE_OPENWEBUI_EXTERNAL_URL` when running locally.
 - For local all-in-one: `cd services/jangar && bun run dev:all` still starts OpenWebUI (Docker) on :3000; override `OPENWEBUI_PORT` if needed.

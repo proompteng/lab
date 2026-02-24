@@ -5,6 +5,7 @@ Production Helm chart for the Agents control plane (Jangar) plus the full Agents
 Run AI workflows natively in Kubernetes with operator-driven orchestration, Jobs/Pods runtime, and first-class CRDs for agents, tools, approvals, schedules, artifacts, and workspaces.
 
 ## Try it now (5 minutes)
+
 ```bash
 # From repo root
 helm lint charts/agents
@@ -17,6 +18,7 @@ curl -sf http://127.0.0.1:8080/health
 ```
 
 Apply the sample CRDs:
+
 ```bash
 kubectl apply -n agents -f charts/agents/examples/agentprovider-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/agent-sample.yaml
@@ -31,6 +33,7 @@ kubectl apply -n agents -f charts/agents/examples/orchestrationrun-sample.yaml
 ```
 
 ## Kind quickstart (end-to-end)
+
 Spin up a local kind cluster, install Postgres, deploy the chart, and run the
 smoke AgentRun with a single command:
 
@@ -42,6 +45,7 @@ The script builds a local Jangar image first (running `bun install` + `bun run b
 if `.output` is missing), then loads the image into kind.
 
 Environment variables you can override:
+
 - `CLUSTER_NAME` (default: `agents`)
 - `NAMESPACE` (default: `agents`)
 - `POSTGRES_RELEASE` (default: `agents-postgres`)
@@ -58,6 +62,7 @@ Environment variables you can override:
 - `BUILD_IMAGE` (default: `1`, set to `0` to skip the Docker build)
 
 ## Why teams use this chart
+
 - **Operator-native orchestration**: run workflows with Kubernetes Jobs/Pods (no external workflow engine required).
 - **Batteries-included CRDs**: agents, tools, orchestration, approvals, schedules, artifacts, workspaces, and more.
 - **Small blast radius**: no ingress, no bundled database, no migrations job baked in.
@@ -65,6 +70,7 @@ Environment variables you can override:
 - **Artifact Hub ready**: metadata, images, CRD docs, and examples included.
 
 ## What this chart installs
+
 - Jangar control-plane Deployment + Service
 - Controllers and CRDs for:
   - Agents (Agent, AgentRun, AgentProvider)
@@ -78,19 +84,24 @@ Environment variables you can override:
   - Supporting primitives (ApprovalPolicy, Budget, SecretBinding, ImplementationSpec, ImplementationSource, Memory)
 
 ## Architecture (at a glance)
+
 - **Control plane**: Jangar reconciles CRDs and schedules runtime Jobs/Pods.
 - **Runtime**: Agents and tools run as Jobs/Pods with input/run spec ConfigMaps.
 - **Storage**: Agent memory configured per Memory CRD and its Secret.
 - **Security**: RBAC, namespace scoping, optional network policy.
 
 ## Requirements
+
 - Kubernetes 1.25+
 - Helm 3.12+
 - Postgres-compatible database connection string for Jangar
 
 ## Configuration essentials
+
 ### Database
+
 Provide one of:
+
 - `database.url` (inline)
 - `database.secretRef` (existing Secret)
 - `database.createSecret.enabled=true` with `database.url`
@@ -98,31 +109,37 @@ Provide one of:
 Agent memory backends are configured separately via the `Memory` CRD.
 
 ### Controller scope
+
 - Single namespace: default
 - Multi-namespace: set `controller.namespaces` and `rbac.clusterScoped=true`
 - Wildcard: set `controller.namespaces=["*"]` and `rbac.clusterScoped=true`
 
 ### AgentRun status artifact limits
+
 AgentRun `status.artifacts` is intentionally bounded to keep Kubernetes objects small.
 
 Configure via Helm values (mapped to controller env vars):
+
 - `controller.agentRunArtifacts.max` → `JANGAR_AGENTRUN_ARTIFACTS_MAX` (default: `50`)
 - `controller.agentRunArtifacts.strict` → `JANGAR_AGENTRUN_ARTIFACTS_STRICT` (default: `false`)
 
 Note: The CRD schema hard-caps `status.artifacts` at 50 entries; controller-side config can only reduce this.
 
 #### Namespaced vs cluster-scoped install matrix
-| Install mode | controller.namespaces | rbac.clusterScoped | RBAC scope |
-| --- | --- | --- | --- |
-| Namespaced (single) | `[]` or `["agents"]` | `false` | Role + RoleBinding |
-| Multi-namespace (explicit) | `["team-a", "team-b"]` | `true` | ClusterRole + ClusterRoleBinding |
-| Wildcard (all namespaces) | `["*"]` | `true` | ClusterRole + ClusterRoleBinding (namespace list/watch) |
+
+| Install mode               | controller.namespaces  | rbac.clusterScoped | RBAC scope                                              |
+| -------------------------- | ---------------------- | ------------------ | ------------------------------------------------------- |
+| Namespaced (single)        | `[]` or `["agents"]`   | `false`            | Role + RoleBinding                                      |
+| Multi-namespace (explicit) | `["team-a", "team-b"]` | `true`             | ClusterRole + ClusterRoleBinding                        |
+| Wildcard (all namespaces)  | `["*"]`                | `true`             | ClusterRole + ClusterRoleBinding (namespace list/watch) |
 
 ### Default scheduling for job pods
+
 Set controller-wide defaults for Job pods using `controller.defaultWorkload`. These defaults apply when the
 AgentRun runtime config does not specify a value.
 
 Common fields:
+
 - `controller.defaultWorkload.nodeSelector`
 - `controller.defaultWorkload.topologySpreadConstraints`
 - `controller.defaultWorkload.affinity`
@@ -135,38 +152,49 @@ Use `spec.runtime.config.topologySpreadConstraints` (array) to override or set a
 defaults for a single run.
 
 ### Concurrency limits
+
 - `controller.concurrency.perNamespace`, `controller.concurrency.perAgent`, `controller.concurrency.cluster`
 - `controller.repoConcurrency.enabled` with `controller.repoConcurrency.default` and optional `controller.repoConcurrency.overrides` per repo
 
 ### gRPC service (optional)
+
 Enable gRPC for agentctl or in-cluster clients:
+
 - `grpc.enabled=true`
 - Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token
 
 ### Observability (Prometheus + Grafana)
+
 The chart ships a Prometheus scrape endpoint and an optional ServiceMonitor plus a Grafana dashboard ConfigMap.
+
 - Metrics endpoint: `metrics.enabled=true` (default) exposes `metrics.path` (default `/metrics`).
 - Metrics service: `metrics.service.enabled=true` publishes a `*-metrics` Service on `metrics.service.port`.
 - ServiceMonitor: set `metrics.serviceMonitor.enabled=true` and add labels/annotations as needed.
 - Grafana dashboard: `metrics.dashboards.enabled=true` creates a ConfigMap labeled for Grafana sidecars.
 
 ### Migrations
+
 Automatic migrations are enabled by default. To skip:
+
 - `env.vars.JANGAR_MIGRATIONS=skip`
 
 ### Codex auth secret (optional)
+
 The controller mounts a writable `emptyDir` at `controller.authSecret.mountPath` (default `/root/.codex`) and then
 mounts the secret file at `auth.json` inside it. It also sets `CODEX_HOME` and `CODEX_AUTH` for the runner pods.
 
 Example:
+
 ```bash
 helm upgrade agents charts/agents --namespace agents --reuse-values   --set controller.authSecret.name=codex-auth   --set controller.authSecret.key=auth.json
 ```
 
 ### Admission control policy
+
 Use admission policy values to reject unsafe AgentRuns before submission. Rejections surface as `InvalidSpec`.
 
 Supported checks (pattern lists accept `*` wildcards):
+
 - `controller.admissionPolicy.labels.required`: label keys that must exist on AgentRuns.
 - `controller.admissionPolicy.labels.allowed`: allowed label key patterns (deny-by-default when set).
 - `controller.admissionPolicy.labels.denied`: blocked label key patterns (deny wins).
@@ -175,6 +203,7 @@ Supported checks (pattern lists accept `*` wildcards):
 - `controller.admissionPolicy.secrets.blocked`: secret names blocked by controller policy.
 
 Example:
+
 ```yaml
 controller:
   admissionPolicy:
@@ -182,41 +211,50 @@ controller:
       required:
         - team
       denied:
-        - "internal/*"
+        - 'internal/*'
     images:
       allowed:
-        - "registry.ide-newton.ts.net/lab/*"
+        - 'registry.ide-newton.ts.net/lab/*'
     secrets:
       blocked:
         - prod-kubeconfig
 ```
 
 ### AgentRun runner defaults (optional)
+
 Set defaults for AgentRun and Schedule workload images when the CRD does not specify one:
+
 - `runtime.agentRunnerImage` → `JANGAR_AGENT_RUNNER_IMAGE`
 - `runtime.agentImage` → `JANGAR_AGENT_IMAGE`
 - `runtime.scheduleRunnerImage` → `JANGAR_SCHEDULE_RUNNER_IMAGE`
 - `runtime.scheduleServiceAccount` → `JANGAR_SCHEDULE_SERVICE_ACCOUNT`
 
 ### Agent comms subjects (optional)
+
 Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:
+
 - `agentComms.subjects`
+
 ### Version control providers
+
 Define a VersionControlProvider resource to decouple repo access from issue intake. This is required for
 agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
 allows the provider's secret.
 
 Auth options (VersionControlProvider `spec.auth`):
+
 - `method: token` with `token.type: pat | fine_grained | api_token | access_token`
 - `method: app` (GitHub only) with `appId`, `installationId`, and `privateKeySecretRef`
 - `method: ssh` with `privateKeySecretRef` (optional `knownHostsConfigMapRef`)
 
 Repository policy (VersionControlProvider `spec.repositoryPolicy`):
+
 - `allow` and `deny` accept `*` wildcards (for example, `acme/*`).
 - Deny rules win. When an allow list is set, repositories must match it.
 - Runs with `spec.vcsPolicy.mode` other than `none` are blocked if the repository is not allowed.
 
 Token scopes & expiry guidance:
+
 - GitHub App installation tokens expire after ~1 hour (default 3600s). Use `spec.auth.app.tokenTtlSeconds` if you need a shorter TTL.
 - GitHub fine-grained PATs should include repository contents + pull request scopes for write flows.
 - GitLab tokens must include `read_repository` for read-only workflows and `write_repository` for pushes/merges.
@@ -226,6 +264,7 @@ Token scopes & expiry guidance:
 - Deprecated token types surface Warning conditions on the provider and runs; configure overrides in values.
 
 Values example (deprecated token types):
+
 ```yaml
 controller:
   vcsProviders:
@@ -236,10 +275,12 @@ controller:
 ```
 
 Branch naming defaults (VersionControlProvider `spec.defaults`):
+
 - `branchTemplate` controls deterministic head branch names (e.g., `codex/{{issueNumber}}`).
 - `branchConflictSuffixTemplate` appends a suffix when another active run uses the same branch.
 
 Example token auth (GitHub fine-grained PAT):
+
 ```yaml
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: VersionControlProvider
@@ -260,6 +301,7 @@ spec:
 ```
 
 Example GitHub App auth (short-lived tokens):
+
 ```yaml
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: VersionControlProvider
@@ -273,21 +315,24 @@ spec:
   auth:
     method: app
     app:
-      appId: "12345"
-      installationId: "7890"
+      appId: '12345'
+      installationId: '7890'
       privateKeySecretRef:
         name: github-app-key
         key: privateKey
       tokenTtlSeconds: 3600
 ```
+
 See `charts/agents/examples/versioncontrolprovider-github-app.yaml` for a full example with repository policy and
 pull request defaults.
 
 ### PR rate limits
+
 To smooth bursts when creating pull requests, configure per-provider rate limits in the chart values. Limits are
 passed to agent runtimes and applied before PR creation with backoff on rate-limit responses.
 
 Example:
+
 ```yaml
 controller:
   vcsProviders:
@@ -303,6 +348,7 @@ controller:
 ```
 
 ## Example production values
+
 ```yaml
 image:
   repository: ghcr.io/proompteng/jangar
@@ -336,7 +382,9 @@ networkPolicy:
 ```
 
 ## agentctl (optional)
+
 Submit runs with agentctl (kube mode by default):
+
 ```bash
 agentctl run submit \
   --agent codex-agent \
@@ -349,10 +397,12 @@ Replace the workload image with your own agent-runner build.
 If your agent-runner uses NATS for context streaming, set `NATS_URL` in the AgentProvider `envTemplate`.
 
 ## Runner image defaults
+
 The chart sets `JANGAR_AGENT_RUNNER_IMAGE` from `runner.image.*` to avoid missing workload image errors.
 Override `runner.image.repository`, `runner.image.tag`, or `runner.image.digest` to point at your own build.
 
 ## Job TTL behavior
+
 Jobs launched by the controller use `controller.jobTtlSeconds` (or `controller.jobTtlSecondsAfterFinished`) as the
 default TTL (seconds).
 The controller applies TTL only after it records the AgentRun/workflow status to avoid cleanup races.
@@ -362,47 +412,58 @@ Log retention hints default to `controller.logRetentionSeconds` (overridable via
 `spec.runtime.config.logRetentionSeconds`).
 
 ## Native orchestration
+
 Native orchestration runs in-cluster and supports:
+
 - `AgentRun`
 - `ToolRun`
 - `SubOrchestration`
 
 Enable reruns or system-improvement flows using:
+
 - `workflowRuntime.native.rerunOrchestration`
 - `workflowRuntime.native.systemImprovementOrchestration`
 
 ## Security notes
+
 - Keep `service.type=ClusterIP` and expose via a gateway/mesh if needed.
 - Use `database.secretRef` and dedicated DB credentials per environment.
 - Scope controllers to specific namespaces unless you need cluster-wide control.
 - Prefer image digests in production (`values-prod.yaml`).
 
 ## Pod Security Admission
+
 Configure PSA labels via `podSecurityAdmission.labels` and enable them with `podSecurityAdmission.enabled=true`.
 Set `podSecurityAdmission.createNamespace=true` when the chart should create and label the namespace.
 For existing namespaces, keep `createNamespace=false` and apply the PSA labels out-of-band to avoid
 Helm ownership conflicts.
 
 ## Admission control
+
 - Configure backpressure with `controller.queue.*` and `controller.rate.*` in `values.yaml`.
 - Queue limits cap pending AgentRuns; rate limits cap submit throughput.
 - The controller enforces queue/rate limits for direct AgentRun CRs with `Blocked` conditions.
 - Webhook ingestion uses `controller.webhook.queueSize` and `controller.webhook.retry.*` for buffering and retries.
 
 ## Webhook ingestion
+
 - Control webhook buffering with `controller.webhook.queueSize`.
 - Tune retry backoff with `controller.webhook.retry.*` (seconds).
 
 ## Publishing (OCI)
+
 ```bash
 bun packages/scripts/src/agents/publish-chart.ts
 ```
 
 ## Values
+
 See `values.yaml` and `values.schema.json` for full configuration.
 
 ## Support
+
 Open issues or discussions in the repo if you want:
+
 - new CRDs
 - additional runtime adapters
 - better tooling around agentctl or observability

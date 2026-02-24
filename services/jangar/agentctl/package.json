@@ -2,18 +2,22 @@
   "name": "@proompteng/agentctl",
   "version": "0.2.2",
   "description": "CLI for managing Agents via Kubernetes or Jangar gRPC",
-  "license": "MIT",
-  "type": "module",
+  "keywords": [
+    "agents",
+    "cli",
+    "grpc",
+    "jangar",
+    "kube",
+    "kubernetes"
+  ],
   "homepage": "https://github.com/proompteng/lab/tree/main/services/jangar/agentctl",
   "bugs": "https://github.com/proompteng/lab/issues",
-  "keywords": [
-    "cli",
-    "agents",
-    "jangar",
-    "grpc",
-    "kubernetes",
-    "kube"
-  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/proompteng/lab.git",
+    "directory": "services/jangar/agentctl"
+  },
   "bin": {
     "agentctl": "./dist/agentctl.js"
   },
@@ -22,13 +26,9 @@
     "proto",
     "README.md"
   ],
+  "type": "module",
   "publishConfig": {
     "access": "public"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/proompteng/lab.git",
-    "directory": "services/jangar/agentctl"
   },
   "scripts": {
     "sync:proto": "bun run scripts/sync-proto.ts",
@@ -37,16 +37,15 @@
     "build:bins": "bun run --filter @proompteng/codex build && bun run sync:proto && bun run scripts/build-binaries.ts --all",
     "build:release": "bun run --filter @proompteng/codex build && bun run sync:proto && bun run scripts/build-release.ts",
     "homebrew:generate": "bun run scripts/generate-homebrew.ts",
-    "lint": "bunx biome check --config-path ../../../biome.json src scripts",
+    "lint": "bunx oxfmt --check src scripts",
     "test": "bun test",
     "validate:metadata": "bun run scripts/validate-npm-metadata.ts",
     "validate:bin": "bun run scripts/validate-binary.ts",
     "prepack": "bun run build && bun run build:bins"
   },
   "dependencies": {
-    "@proompteng/codex": "workspace:*",
-    "@effect/cluster": "^0.56.1",
     "@effect/cli": "^0.73.1",
+    "@effect/cluster": "^0.56.1",
     "@effect/platform": "^0.94.2",
     "@effect/platform-bun": "^0.87.1",
     "@effect/platform-node": "^0.104.1",
@@ -56,6 +55,7 @@
     "@grpc/grpc-js": "^1.12.6",
     "@grpc/proto-loader": "^0.7.13",
     "@kubernetes/client-node": "^1.0.0",
+    "@proompteng/codex": "workspace:*",
     "effect": "^3.19.18",
     "protobufjs": "^7.5.4",
     "yaml": "^2.8.2"

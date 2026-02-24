@@ -4,9 +4,11 @@ This runbook installs Talos on the AmpereOne device ("ampone") and joins it to t
 existing cluster.
 
 Cluster inventory / canonical join procedure:
+
 - `devices/galactic/README.md`
 
 Assumptions:
+
 - You can reach the BMC (example: `192.168.1.224`) for virtual media / boot control.
 - You have a Talos metal ISO available.
 - The cluster control plane endpoint is fronted by the NUC load balancer at `https://nuc:6443` (also `https://192.168.1.130:6443`):
@@ -21,6 +23,7 @@ Assumptions:
 ## 2) Generate Talos configs for the existing cluster (gitignored)
 
 These files should not be committed:
+
 - `devices/ampone/controlplane.yaml`
 - `devices/ampone/worker.yaml`
 - `devices/ampone/talosconfig`
@@ -54,6 +57,7 @@ talosctl gen config ryzen "https://$K8S_LB_ENDPOINT:6443" \
 ## 3) Apply config (install + join)
 
 Apply these patches:
+
 - `devices/ampone/manifests/install-nvme0n1.patch.yaml` (install to `/dev/nvme0n1`, wipe)
 - `devices/ampone/manifests/allow-scheduling-controlplane.patch.yaml`
 - `devices/ampone/manifests/controlplane-endpoint-nuc.patch.yaml` (endpoint + apiserver cert SANs)

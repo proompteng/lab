@@ -318,11 +318,11 @@ spec:
   containers:
     - name: busybox
       image: busybox:1.36
-      command: ["sh", "-c", "echo kata-fc-ok && sleep 3600"]
+      command: ['sh', '-c', 'echo kata-fc-ok && sleep 3600']
       securityContext:
         allowPrivilegeEscalation: false
         capabilities:
-          drop: ["ALL"]
+          drop: ['ALL']
         runAsNonRoot: true
         runAsUser: 65534
         seccompProfile:
@@ -352,14 +352,17 @@ You should see `/firecracker --id ... --config-file /fcConfig.json`.
 ## Troubleshooting
 
 ### blockfile not loaded
+
 - Ensure `/etc/cri/containerd.toml` no longer lists
   `io.containerd.snapshotter.v1.blockfile` under `disabled_plugins`.
 - Reboot after config changes.
 
 ### pause image digest not found
+
 - Re-pull `registry.k8s.io/pause:3.10` using host certs (Step 5).
 
 ### Pod stuck in `ContainerCreating`
+
 - Check `kubectl describe pod` for `FailedCreatePodSandBox`.
 - Check containerd logs:
   ```bash

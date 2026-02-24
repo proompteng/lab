@@ -5,6 +5,43 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "api": [
+        "dist/api.d.ts"
+      ],
+      "auto-instrumentations-node": [
+        "dist/auto-instrumentations-node.d.ts"
+      ],
+      "core": [
+        "dist/core.d.ts"
+      ],
+      "exporter-metrics-otlp-http": [
+        "dist/exporter-metrics-otlp-http.d.ts"
+      ],
+      "exporter-trace-otlp-http": [
+        "dist/exporter-trace-otlp-http.d.ts"
+      ],
+      "resources": [
+        "dist/resources.d.ts"
+      ],
+      "sdk-metrics": [
+        "dist/sdk-metrics.d.ts"
+      ],
+      "sdk-node": [
+        "dist/sdk-node.d.ts"
+      ],
+      "sdk-trace": [
+        "dist/sdk-trace.d.ts"
+      ],
+      "semantic-conventions": [
+        "dist/semantic-conventions.d.ts"
+      ],
+      "*": [
+        "dist/*"
+      ]
+    }
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -49,43 +86,6 @@
     "./semantic-conventions": {
       "types": "./dist/semantic-conventions.d.ts",
       "default": "./dist/semantic-conventions.js"
-    }
-  },
-  "typesVersions": {
-    "*": {
-      "api": [
-        "dist/api.d.ts"
-      ],
-      "auto-instrumentations-node": [
-        "dist/auto-instrumentations-node.d.ts"
-      ],
-      "core": [
-        "dist/core.d.ts"
-      ],
-      "exporter-metrics-otlp-http": [
-        "dist/exporter-metrics-otlp-http.d.ts"
-      ],
-      "exporter-trace-otlp-http": [
-        "dist/exporter-trace-otlp-http.d.ts"
-      ],
-      "resources": [
-        "dist/resources.d.ts"
-      ],
-      "sdk-metrics": [
-        "dist/sdk-metrics.d.ts"
-      ],
-      "sdk-node": [
-        "dist/sdk-node.d.ts"
-      ],
-      "sdk-trace": [
-        "dist/sdk-trace.d.ts"
-      ],
-      "semantic-conventions": [
-        "dist/semantic-conventions.d.ts"
-      ],
-      "*": [
-        "dist/*"
-      ]
     }
   },
   "scripts": {

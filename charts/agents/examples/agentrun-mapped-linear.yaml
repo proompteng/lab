@@ -29,7 +29,7 @@ spec:
         memory: 512Mi
   parameters:
     linearRepo: proompteng/lab
-    linearIssue: "1234"
+    linearIssue: '1234'
     linearUrl: https://linear.app/proompteng/issue/ENG-1234
     base: main
     head: codex/onboarding-flow

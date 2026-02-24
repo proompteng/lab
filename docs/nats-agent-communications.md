@@ -173,8 +173,8 @@ Notes from current runtime templates:
 
 - Codex runtimes already set `JANGAR_BASE_URL` and emit agent/event logs as artifacts.
 - To publish in real time, either:
-  1) Add a lightweight `nats` CLI to the runtime image, or
-  2) Add a `natsio/nats-box` sidecar + helper script in a shared volume.
+  1. Add a lightweight `nats` CLI to the runtime image, or
+  2. Add a `natsio/nats-box` sidecar + helper script in a shared volume.
 
 Either way, standardize subject + payload construction in a small wrapper (bash or node).
 

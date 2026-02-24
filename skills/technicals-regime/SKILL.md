@@ -8,7 +8,9 @@ description: Summarize trend, volatility, and liquidity regime from TA time seri
 Summarize trend, volatility, and liquidity regime from TA time series.
 
 ## Output contract
+
 Return JSON keys:
+
 - `context_version`
 - `as_of_utc`
 - `symbol`
@@ -19,5 +21,6 @@ Return JSON keys:
 - `citations`
 
 ## Rules
+
 - Use bounded numeric ranges when possible.
 - Emit explicit stale flags when data exceeds freshness SLO.

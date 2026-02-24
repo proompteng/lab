@@ -221,24 +221,24 @@ Reference implementation details live in the local extension package:
 
 ### Recommended build outline
 
-1) Create a new extension (`packages/talos-extensions/firecracker`) that:
+1. Create a new extension (`packages/talos-extensions/firecracker`) that:
    - Downloads Firecracker release binaries for the target arch.
    - Installs `firecracker` and `jailer` into `/usr/local/bin`.
    - Installs a Firecracker config into
      `/usr/local/share/kata-containers/configuration.toml` and points
      `ConfigPath` to it.
 
-2) Build and publish the extension image (pin the digest).
+2. Build and publish the extension image (pin the digest).
 
-3) Build a custom installer image with `imager` that includes:
+3. Build a custom installer image with `imager` that includes:
    - `ghcr.io/siderolabs/kata-containers:<version>`
    - `ghcr.io/siderolabs/glibc:<version>`
    - `registry.ide-newton.ts.net/lab/firecracker:<version>`
 
-4) Upgrade the node(s) using the new installer image (extensions only load at
+4. Upgrade the node(s) using the new installer image (extensions only load at
    install/upgrade time).
 
-5) Validate:
+5. Validate:
    - `/usr/local/bin/firecracker` and `/usr/local/bin/jailer` exist.
    - `kata-fc` runtime still points to the Firecracker config.
    - Test pod starts and `firecracker` process/socket exists under `/run/vc/...`.
@@ -277,11 +277,11 @@ spec:
   containers:
     - name: busybox
       image: busybox:1.36
-      command: ["sh", "-c", "echo kata-fc-ok && sleep 3600"]
+      command: ['sh', '-c', 'echo kata-fc-ok && sleep 3600']
       securityContext:
         allowPrivilegeEscalation: false
         capabilities:
-          drop: ["ALL"]
+          drop: ['ALL']
         runAsNonRoot: true
         runAsUser: 65534
         seccompProfile:
@@ -317,11 +317,11 @@ spec:
   containers:
     - name: busybox
       image: busybox:1.36
-      command: ["sh", "-c", "echo kata-fc-demo-ok && sleep 3600"]
+      command: ['sh', '-c', 'echo kata-fc-demo-ok && sleep 3600']
       securityContext:
         allowPrivilegeEscalation: false
         capabilities:
-          drop: ["ALL"]
+          drop: ['ALL']
         runAsNonRoot: true
         runAsUser: 65534
         seccompProfile:
@@ -355,7 +355,7 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
-              drop: ["ALL"]
+              drop: ['ALL']
             runAsNonRoot: true
             runAsUser: 101
             seccompProfile:

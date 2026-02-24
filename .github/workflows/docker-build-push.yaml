@@ -6,15 +6,15 @@ permissions:
 on:
   push:
     branches:
-      - "main"
+      - 'main'
     paths:
-      - "apps/**"
-      - "packages/**"
-      - "services/**"
+      - 'apps/**'
+      - 'packages/**'
+      - 'services/**'
   workflow_dispatch:
     inputs:
       build_proompteng:
-        description: "Build and publish apps/landing image"
+        description: 'Build and publish apps/landing image'
         required: false
         type: boolean
         default: true

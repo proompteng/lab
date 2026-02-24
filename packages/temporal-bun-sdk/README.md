@@ -3,6 +3,7 @@
 A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over HTTP/2 using [Connect](https://connectrpc.com/) and executes workflows with the [Effect](https://effect.website/) runtime so you can run Temporal workers without shipping Node.js or any native bridge.
 
 ## Highlights
+
 - **TypeScript-only runtime** – workflow polling, activity execution, and command generation run in Bun using generated Temporal protobuf stubs.
 - **Effect-based workflows** – define deterministic workflows with `Effect` and let the runtime translate results/failures into Temporal commands.
 - **First-class Workflow Updates** – call `client.workflow.update` from Bun services and register update handlers alongside workflows with `defineWorkflowUpdates`.
@@ -12,11 +13,14 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
 - **Bundled agent skills** – install a ready-to-use Temporal operations skill for Codex-compatible agents via `temporal-bun skill install`.
 
 ## Prerequisites
+
 - **Bun ≥ 1.1.20** – required for the runtime and CLI.
 - **Temporal CLI ≥ 1.4** – optional, but useful for spinning up a local dev server.
 
 ## Quickstart
+
 1. **Install dependencies**
+
    ```bash
    bun install
    ```
@@ -51,7 +55,9 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS=4000     # optional – heartbeat throttle interval in ms
    TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS=5000  # optional – heartbeat RPC timeout in ms
    TEMPORAL_WORKER_BUILD_ID=git-sha                 # optional – build-id for versioning
-```
+   ```
+
+````
 
 Defaults: determinism markers run in `delta` mode, record every 10 workflow tasks, take a full snapshot every 50 tasks, skip unchanged snapshots, and avoid emitting markers whose payloads exceed 1.8MB. Override any value with the env vars above.
 
@@ -60,9 +66,10 @@ Defaults: determinism markers run in `delta` mode, record every 10 workflow task
 3. **Build the SDK once**
    ```bash
    bun run build
-   ```
+````
 
 4. **Run the Bun worker**
+
    ```bash
    # optional: in another shell
    bun scripts/start-temporal-cli.ts
@@ -144,9 +151,13 @@ export const statusWorkflow = defineWorkflow({
 })
 
 // client side
-const value = await client.queryWorkflow(handle, 'status', temporalCallOptions({
-  queryRejectCondition: QueryRejectCondition.NONE,
-}))
+const value = await client.queryWorkflow(
+  handle,
+  'status',
+  temporalCallOptions({
+    queryRejectCondition: QueryRejectCondition.NONE,
+  }),
+)
 ```
 
 ### Invoking workflow updates
@@ -178,6 +189,7 @@ Each update call is idempotent (via `updateId`) and accepts the same `temporalCa
 
 - **Configurable retries** – `loadTemporalConfig()` populates `config.rpcRetryPolicy` from the `TEMPORAL_CLIENT_RETRY_*` env vars (or from defaults). Every WorkflowService RPC is wrapped in `withTemporalRetry()` (decorrelated jitter + exponential backoff). Override per-call values with the new `TemporalClientCallOptions.retryPolicy` field when you need a bespoke attempt budget.
 - **Optional call options on every method** – `startWorkflow`, `signalWorkflow`, `queryWorkflow`, `signalWithStart`, `terminateWorkflow`, and `describeNamespace` accept an optional trailing `callOptions` argument. Wrap them with `temporalCallOptions()` so payload objects are never mistaken for options:
+
   ```ts
   import { temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 
@@ -191,6 +203,7 @@ Each update call is idempotent (via `updateId`) and accepts the same `temporalCa
     }),
   )
   ```
+
 - **Telemetry-friendly interceptors** – the default interceptor builder injects namespace/identity headers, logs RPC attempts, and records latency/error counters with your configured metrics registry/exporter. Provide `interceptors` when creating a client to append custom tracing or auth middleware.
 - **Memo & search attribute helpers** – `client.memo.encode/decode` and `client.searchAttributes.encode/decode` reuse the client’s `DataConverter`, making it trivial to prepare `Memo`/`SearchAttributes` payloads for raw WorkflowService requests.
 - **TLS validation & handshake errors** – TLS buffers are validated up front (missing files, invalid PEMs, and mismatched cert/key pairs throw `TemporalTlsConfigurationError`). Runtime handshake failures raise `TemporalTlsHandshakeError` with remediation hints (verify CA bundles, check `TEMPORAL_TLS_SERVER_NAME`, or use `TEMPORAL_ALLOW_INSECURE=1` in trusted dev clusters).
@@ -309,12 +322,14 @@ The TBS-003 load harness lives under `tests/integration/load/**` and uses CPU-he
 
 1. **Bun test suite** (reuses the Temporal CLI harness):
    ```bash
-  cd packages/temporal-bun-sdk && TEMPORAL_INTEGRATION_TESTS=1 bun test tests/integration/worker-load.test.ts
-  ```
-2. **Developer-friendly CLI runner** (wraps the same scenario without `bun test`):
-  ```bash
-  cd packages/temporal-bun-sdk && bun run test:load
+   cd packages/temporal-bun-sdk && TEMPORAL_INTEGRATION_TESTS=1 bun test tests/integration/worker-load.test.ts
    ```
+
+````
+2. **Developer-friendly CLI runner** (wraps the same scenario without `bun test`):
+```bash
+cd packages/temporal-bun-sdk && bun run test:load
+````
 
 Both commands start the Temporal CLI dev server (unless `TEMPORAL_TEST_SERVER=1` is set), run the worker load scenario, and write artefacts to `.artifacts/worker-load/`:
 
@@ -434,6 +449,7 @@ await runTemporalCliEffect(
 ```
 
 ## CLI commands
+
 ```
 temporal-bun init [directory]        Scaffold a new worker project
 temporal-bun docker-build            Build a Docker image for the current project
@@ -479,7 +495,7 @@ non-zero status when mismatches surface (`0` success, `2` nondeterminism, `1`
 configuration or IO failures).
 
 - **History files** – accept either raw `temporal workflow show --history --output
-  json` output or fixture-style envelopes containing `history` + `info`.
+json` output or fixture-style envelopes containing `history` + `info`.
 - **Live executions** – pass `--execution <workflowId/runId>` and the command
   shells out to the Temporal CLI (`--source cli`) or the WorkflowService RPC API
   (`--source service`). `--source auto` (default) tries the CLI first and falls
@@ -521,6 +537,7 @@ variables consumed by worker/client code (`TEMPORAL_ADDRESS`,
 `TEMPORAL_NAMESPACE`, `TEMPORAL_TLS_*`, etc.).
 
 ## Data conversion
+
 `createDefaultDataConverter()` encodes payloads as JSON. Implement `DataConverter` if you need a custom codec or encryption layer:
 
 ```ts
@@ -530,7 +547,6 @@ const dataConverter = createDefaultDataConverter()
 ```
 
 Pass your converter to both the worker and client factories to keep payload handling consistent.
-
 
 ## Worker versioning and build IDs
 
@@ -545,4 +561,5 @@ When `deployment.versioningMode` is `WorkerVersioningMode.VERSIONED`, the worker
 The Bun SDK does not call the deprecated Build ID Compatibility APIs (Version Set-based “worker versioning v0.1”), since they may be disabled on some namespaces.
 
 ## License
+
 MIT © ProomptEng AI

@@ -3,20 +3,25 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The chart exposes HTTP liveness/readiness probe settings for the control plane, but probes may not be appropriate for controllers (which may not expose HTTP) and there is no startup probe for long initialization (e.g., cache warmup).
 
 This doc defines probe semantics per component and proposes adding startup probes and per-component overrides.
 
 ## Goals
+
 - Ensure probes correctly reflect component health.
 - Avoid flapping restarts due to aggressive liveness probes.
 - Support long startups without false negatives.
 
 ## Non-Goals
+
 - Defining SLOs or alerting policies.
 
 ## Current State
+
 - Values: `charts/agents/values.yaml` has `livenessProbe` and `readinessProbe`.
 - Templates:
   - Control plane probes: `charts/agents/templates/deployment.yaml` (HTTP GET to `.Values.*Probe.path` on `port: http`).
@@ -24,12 +29,16 @@ This doc defines probe semantics per component and proposes adding startup probe
 - No startupProbe values exist.
 
 ## Design
+
 ### Component-specific probes
+
 Add:
+
 - `controlPlane.livenessProbe`, `controlPlane.readinessProbe`, `controlPlane.startupProbe`
 - `controllers.livenessProbe`, `controllers.readinessProbe`, `controllers.startupProbe`
 
 ### Defaults
+
 - Control plane:
   - readiness: `/health` (existing)
   - liveness: `/health` (existing)
@@ -38,39 +47,47 @@ Add:
   - Prefer a simple HTTP `/health` endpoint if available; otherwise allow exec-based probe or disable probes explicitly.
 
 ## Config Mapping
-| Helm value | Rendered probe | Intended behavior |
-|---|---|---|
-| `controlPlane.readinessProbe.path` | readinessProbe.httpGet.path | Control plane only. |
-| `controllers.startupProbe.*` | startupProbe (http/exec) | Prevent premature restarts during controller initialization. |
+
+| Helm value                         | Rendered probe              | Intended behavior                                            |
+| ---------------------------------- | --------------------------- | ------------------------------------------------------------ |
+| `controlPlane.readinessProbe.path` | readinessProbe.httpGet.path | Control plane only.                                          |
+| `controllers.startupProbe.*`       | startupProbe (http/exec)    | Prevent premature restarts during controller initialization. |
 
 ## Rollout Plan
+
 1. Add new component probe keys; default them to current global values for control plane.
 2. Verify controllers have a stable health endpoint (or disable probes explicitly).
 3. Tune thresholds based on observed rollout behavior.
 
 Rollback:
+
 - Remove component overrides and rely on existing global probes.
 
 ## Validation
+
 ```bash
 helm template agents charts/agents | rg -n \"livenessProbe:|readinessProbe:|startupProbe:\"
 kubectl -n agents describe pod -l app.kubernetes.io/name=agents | rg -n \"Liveness|Readiness|Startup\"
 ```
 
 ## Failure Modes and Mitigations
+
 - Liveness probe too strict causes restart loops: mitigate with startupProbe + relaxed thresholds.
 - Readiness probe too lax sends traffic to an unready control plane: mitigate by tying readiness to dependency checks in code.
 
 ## Acceptance Criteria
+
 - Control plane and controllers can be configured independently.
 - StartupProbe prevents false liveness failures during initialization.
 
 ## References
+
 - Kubernetes probes: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -85,7 +102,9 @@ kubectl -n agents describe pod -l app.kubernetes.io/name=agents | rg -n \"Livene
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -118,13 +137,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -140,6 +162,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -152,6 +175,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

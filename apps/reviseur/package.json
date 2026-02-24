@@ -1,21 +1,23 @@
 {
   "name": "reviseur",
   "version": "1.0.0",
+  "private": true,
+  "description": "",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "dev": "mastra dev",
     "build": "mastra build",
-    "lint": "biome lint",
-    "format": "biome format",
+    "lint": "bun run lint:oxlint && bunx oxfmt --check .",
+    "format": "bunx oxfmt",
     "typecheck": "tsc --noEmit",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
-    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
+    "format:check": "bunx oxfmt --check ."
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "type": "module",
   "dependencies": {
     "@ai-sdk/anthropic": "^1.1.15",
     "@mastra/core": "0.24.5",
@@ -24,11 +26,9 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.2.4",
     "@types/bun": "latest",
     "@types/node": "^22.13.9",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"
-  },
-  "private": true
+  }
 }

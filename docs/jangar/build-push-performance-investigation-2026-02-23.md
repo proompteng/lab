@@ -14,13 +14,14 @@
 
 ## Baseline and Validation Runs
 
-| Run | Context | Step 8 (`jangar`) | Step 9 (`control-plane`) | Notes |
-| --- | --- | --- | --- | --- |
-| `22287978059` | `main` baseline before this investigation | `4m59s` | `45s` | `jangar-build 6/6` was `165.8s` |
-| `22288615602` | branch validation with `cache mode=max` | `5m46s` | `1m48s` | `jangar-build 6/6` improved to `139.6s`, but cache export cost was very high |
-| `22288801350` | branch validation after reverting to `cache mode=min` | `3m33s` | `2m26s` | final validated config and successful run |
+| Run           | Context                                               | Step 8 (`jangar`) | Step 9 (`control-plane`) | Notes                                                                        |
+| ------------- | ----------------------------------------------------- | ----------------- | ------------------------ | ---------------------------------------------------------------------------- |
+| `22287978059` | `main` baseline before this investigation             | `4m59s`           | `45s`                    | `jangar-build 6/6` was `165.8s`                                              |
+| `22288615602` | branch validation with `cache mode=max`               | `5m46s`           | `1m48s`                  | `jangar-build 6/6` improved to `139.6s`, but cache export cost was very high |
+| `22288801350` | branch validation after reverting to `cache mode=min` | `3m33s`           | `2m26s`                  | final validated config and successful run                                    |
 
 References:
+
 - <https://github.com/proompteng/lab/actions/runs/22287978059>
 - <https://github.com/proompteng/lab/actions/runs/22288615602>
 - <https://github.com/proompteng/lab/actions/runs/22288801350>
@@ -138,7 +139,7 @@ bun --bun vitest run src/server/__tests__/nitro-config.test.ts
 2. Local lint:
 
 ```bash
-bunx biome check services/jangar/nitro.config.ts services/jangar/src/server/__tests__/nitro-config.test.ts
+bunx oxfmt --check services/jangar/nitro.config.ts services/jangar/src/server/__tests__/nitro-config.test.ts
 ```
 
 3. Local runtime smoke (built output and container targets) to ensure no module-resolution regressions.

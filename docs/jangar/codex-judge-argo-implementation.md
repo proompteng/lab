@@ -7,32 +7,35 @@ The judge pipeline is triggered by the Argo run-complete event (success or failu
 
 This section cross-references the design/implementation plan against current code and open GitHub items in this repo.
 
-| Area / Workstream | Design/Doc Ref | Code Status | Evidence (paths) | Open Issues | Open PRs | Notes / Gaps |
-| --- | --- | --- | --- | --- | --- | --- |
-| A) Argo workflow artifacts | `docs/jangar/codex-judge-argo-implementation.md` | Done | `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml` | - | - | Matches required artifact outputs; aligns with tracking doc “completed.” |
-| B) Notify wrapper | `docs/jangar/codex-judge-argo-implementation.md` | Done | `services/jangar/scripts/codex/codex-implement.ts` | - | - | Emits `.codex-implementation-notify.json` and POSTs `/api/codex/notify`. |
-| C) Run-complete ingest + persistence | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-store.ts`, `services/jangar/src/routes/api/codex/run-complete.tsx` | - | - | Persists run-complete even with partial metadata; sentinel handling prevents treating unknown repo/branch as valid. |
-| D) Artifact retrieval + fallback | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/argo-client.ts` | - | - | Fallback names merged ([#2231](https://github.com/proompteng/lab/pull/2231)); Argo API auth merged ([#2235](https://github.com/proompteng/lab/pull/2235)). |
-| E) CI gating by commit SHA | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/github-client.ts` | - | - | Commit-SHA-only gating merged ([#2230](https://github.com/proompteng/lab/pull/2230)). |
-| F) PR review gate (Codex) | `docs/jangar/codex-judge-argo-implementation.md` | Done | `services/jangar/src/server/github-client.ts`, `services/jangar/src/server/codex-judge.ts` | - | - | Strict review gate + summaries merged ([#2232](https://github.com/proompteng/lab/pull/2232)). |
-| G) Judge engine (gates + LLM) | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-gates.ts` | - | - | Deterministic gates + LLM judge + retries implemented. |
-| H) Rerun orchestration | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/migrations/20251229_codex_rerun_submissions.ts` | - | - | Submits to Facteur with backoff + dedupe. |
-| I) Discord notifications | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts` | - | - | Success + escalation flows include issue/PR/CI/artifact links. |
-| J) Prompt auto-tuning PRs | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts` | - | - | Threshold + cooldown implemented; uses PR template if present. |
-| K) Memory snapshots (10/run) | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts` | - | - | Writes 10 snapshots per run into memories store. |
-| L) Run history API + UI | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/routes/api/codex/runs.tsx`, `services/jangar/src/routes/codex/runs.tsx`, `services/jangar/src/data/codex.ts` | - | - | API + UI implemented with stats + run detail cards. |
-| M) Agent comms ingestion + SSE | `docs/nats-agent-communications.md` | Implemented in code | `services/jangar/src/routes/api/agents/events.ts` | [#2187](https://github.com/proompteng/lab/issues/2187) | - | SSE endpoint exists; remaining deployment/ops tracked in issue. |
-| N) Observability / pipeline ops | `docs/nats-agent-communications.md` | Done | `services/jangar/src/server/metrics.ts`, `argocd/applications/observability/graf-mimir-rules.yaml`, `argocd/applications/observability/codex-pipeline-dashboard-configmap.yaml` | - | - | Metrics + alerts + dashboard for codex pipeline and agent comms. |
-| P) Other open PRs (unrelated to judge) | - | In progress | - | [#2198](https://github.com/proompteng/lab/issues/2198) | [#2234](https://github.com/proompteng/lab/pull/2234), [#2203](https://github.com/proompteng/lab/pull/2203) | PR [#2203](https://github.com/proompteng/lab/pull/2203) addresses [#2198](https://github.com/proompteng/lab/issues/2198) (Oxlint). [#2234](https://github.com/proompteng/lab/pull/2234) is bonjour build changes. |
+| Area / Workstream                      | Design/Doc Ref                                   | Code Status         | Evidence (paths)                                                                                                                                                                | Open Issues                                            | Open PRs                                                                                                   | Notes / Gaps                                                                                                                                                                                                      |
+| -------------------------------------- | ------------------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A) Argo workflow artifacts             | `docs/jangar/codex-judge-argo-implementation.md` | Done                | `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`                                                                                              | -                                                      | -                                                                                                          | Matches required artifact outputs; aligns with tracking doc “completed.”                                                                                                                                          |
+| B) Notify wrapper                      | `docs/jangar/codex-judge-argo-implementation.md` | Done                | `services/jangar/scripts/codex/codex-implement.ts`                                                                                                                              | -                                                      | -                                                                                                          | Emits `.codex-implementation-notify.json` and POSTs `/api/codex/notify`.                                                                                                                                          |
+| C) Run-complete ingest + persistence   | `docs/jangar/codex-judge-argo-design.md`         | Done                | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-store.ts`, `services/jangar/src/routes/api/codex/run-complete.tsx`                         | -                                                      | -                                                                                                          | Persists run-complete even with partial metadata; sentinel handling prevents treating unknown repo/branch as valid.                                                                                               |
+| D) Artifact retrieval + fallback       | `docs/jangar/codex-judge-argo-design.md`         | Done                | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/argo-client.ts`                                                                                        | -                                                      | -                                                                                                          | Fallback names merged ([#2231](https://github.com/proompteng/lab/pull/2231)); Argo API auth merged ([#2235](https://github.com/proompteng/lab/pull/2235)).                                                        |
+| E) CI gating by commit SHA             | `docs/jangar/codex-judge-argo-design.md`         | Done                | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/github-client.ts`                                                                                      | -                                                      | -                                                                                                          | Commit-SHA-only gating merged ([#2230](https://github.com/proompteng/lab/pull/2230)).                                                                                                                             |
+| F) PR review gate (Codex)              | `docs/jangar/codex-judge-argo-implementation.md` | Done                | `services/jangar/src/server/github-client.ts`, `services/jangar/src/server/codex-judge.ts`                                                                                      | -                                                      | -                                                                                                          | Strict review gate + summaries merged ([#2232](https://github.com/proompteng/lab/pull/2232)).                                                                                                                     |
+| G) Judge engine (gates + LLM)          | `docs/jangar/codex-judge-argo-design.md`         | Done                | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-gates.ts`                                                                                  | -                                                      | -                                                                                                          | Deterministic gates + LLM judge + retries implemented.                                                                                                                                                            |
+| H) Rerun orchestration                 | `docs/jangar/codex-judge-argo-design.md`         | Done                | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/migrations/20251229_codex_rerun_submissions.ts`                                                        | -                                                      | -                                                                                                          | Submits to Facteur with backoff + dedupe.                                                                                                                                                                         |
+| I) Discord notifications               | `docs/jangar/codex-judge-argo-design.md`         | Done                | `services/jangar/src/server/codex-judge.ts`                                                                                                                                     | -                                                      | -                                                                                                          | Success + escalation flows include issue/PR/CI/artifact links.                                                                                                                                                    |
+| J) Prompt auto-tuning PRs              | `docs/jangar/codex-judge-argo-design.md`         | Done                | `services/jangar/src/server/codex-judge.ts`                                                                                                                                     | -                                                      | -                                                                                                          | Threshold + cooldown implemented; uses PR template if present.                                                                                                                                                    |
+| K) Memory snapshots (10/run)           | `docs/jangar/codex-judge-argo-design.md`         | Done                | `services/jangar/src/server/codex-judge.ts`                                                                                                                                     | -                                                      | -                                                                                                          | Writes 10 snapshots per run into memories store.                                                                                                                                                                  |
+| L) Run history API + UI                | `docs/jangar/codex-judge-argo-design.md`         | Done                | `services/jangar/src/routes/api/codex/runs.tsx`, `services/jangar/src/routes/codex/runs.tsx`, `services/jangar/src/data/codex.ts`                                               | -                                                      | -                                                                                                          | API + UI implemented with stats + run detail cards.                                                                                                                                                               |
+| M) Agent comms ingestion + SSE         | `docs/nats-agent-communications.md`              | Implemented in code | `services/jangar/src/routes/api/agents/events.ts`                                                                                                                               | [#2187](https://github.com/proompteng/lab/issues/2187) | -                                                                                                          | SSE endpoint exists; remaining deployment/ops tracked in issue.                                                                                                                                                   |
+| N) Observability / pipeline ops        | `docs/nats-agent-communications.md`              | Done                | `services/jangar/src/server/metrics.ts`, `argocd/applications/observability/graf-mimir-rules.yaml`, `argocd/applications/observability/codex-pipeline-dashboard-configmap.yaml` | -                                                      | -                                                                                                          | Metrics + alerts + dashboard for codex pipeline and agent comms.                                                                                                                                                  |
+| P) Other open PRs (unrelated to judge) | -                                                | In progress         | -                                                                                                                                                                               | [#2198](https://github.com/proompteng/lab/issues/2198) | [#2234](https://github.com/proompteng/lab/pull/2234), [#2203](https://github.com/proompteng/lab/pull/2203) | PR [#2203](https://github.com/proompteng/lab/pull/2203) addresses [#2198](https://github.com/proompteng/lab/issues/2198) (Oxlint). [#2234](https://github.com/proompteng/lab/pull/2234) is bonjour build changes. |
 
 Workflow metadata correlation:
+
 - Facteur now attaches `codex.repository`, `codex.issue_number`, `codex.head`, and `codex.base` annotations/labels when
   submitting workflows (`services/facteur/internal/orchestrator/implementation.go`).
 
 Remaining gaps for a fully functional judge system (as of 2026-01-01):
+
 - No functional gaps currently tracked; follow ongoing ops items as needed.
 
 Current production context (see `docs/codex-workflow.md`):
+
 - Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
 - Workflow outputs: `.codex-implementation-changes.tar.gz`, `.codex-implementation.patch`, `.codex-implementation-status.txt`
 - Argo Events -> Kafka completions: `argocd/applications/froussard/workflow-completions-*.yaml`
@@ -52,6 +55,7 @@ I) Prompt auto-tuning PRs
 J) Memory snapshots (10 per run)
 
 Blocking chain:
+
 - A, B, C, D, E can start immediately.
 - F depends on C, D, E.
 - G and H depend on F.
@@ -59,6 +63,7 @@ Blocking chain:
 - J depends on F.
 
 Dependency graph:
+
 ```mermaid
 flowchart LR
   A[Argo workflow] --> F[Judge engine]
@@ -75,13 +80,16 @@ flowchart LR
 ## A) Argo Workflow Updates (Froussard)
 
 ### Required inputs (already in the template)
+
 - `eventBody` (base64 JSON), `rawEvent`, `head`, `base`
 
 ### What already exists
+
 - Workflow `github-codex-implementation` runs `codex-implement.ts` and uploads three artifacts:
   `.codex-implementation-changes.tar.gz`, `.codex-implementation.patch`, `.codex-implementation-status.txt`.
 
 ### Additions needed
+
 - Extend workflow outputs to include:
   - `.codex-implementation.log`
   - `.codex-implementation-events.jsonl`
@@ -94,42 +102,51 @@ flowchart LR
   `argocd/applications/argo-workflows/kustomization.yaml`).
 
 ### Deliverables
+
 - Updated workflow template artifact outputs.
 - Optional: workflow labels/annotations for repo/issue/head/base.
 
 ### Detailed tasks
+
 - Update `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
   `outputs.artifacts` to include new log/resume files.
 - Verify `codex-implement.ts` writes the log paths used by the workflow outputs.
 - Validate Argo artifact repository is reachable in the workflow namespace.
 
 ### Acceptance criteria
+
 - New artifacts appear in MinIO for each run.
 - Jangar can fetch outputs via the Argo Workflow API.
 
 ## B) Notify Wrapper
 
 ### Purpose
+
 Codex notify only provides minimal payload. In the current implementation, Codex runs via
 `CodexRunner` inside `codex-implement.ts`, so notify must be invoked from the runner (or derived
 from JSON event logs) rather than relying on CLI config alone.
 
 ### Inputs
+
 - Raw notify JSON from Codex (if emitted), or parsed summary from `.codex-implementation-events.jsonl`
 - Workflow metadata from the event payload (repo, issue, head/base, workflow name)
 
 ### Output
+
 - POST /api/codex/notify to Jangar
 
 ### Retry
+
 - Simple retry with backoff for transient errors (5xx, network).
 
 ### Deliverables
+
 - Wrapper script or tiny service binary.
 - Unit tests for payload enrichment.
 - Config docs for Codex exec container.
 
 ### Detailed tasks
+
 - Add a post-run hook in `codex-implement.ts` that emits a notify payload derived from
   `runCodexSession` results and/or the JSON event log.
 - Merge workflow metadata (repo/issue/head/base/workflow name).
@@ -139,83 +156,89 @@ from JSON event logs) rather than relying on CLI config alone.
 - Persist notify payload to a local file so it can be uploaded as an Argo artifact.
 
 ### Acceptance criteria
+
 - Jangar receives an enrichment payload even when CLI notify is unavailable.
 - Notify emission does not block workflow completion.
 
 ## C) Jangar Ingestion + Persistence
 
 ### Endpoints
+
 - POST /api/codex/notify
 - POST /api/codex/run-complete (CloudEvent from KafkaSource)
 
 Run-complete is the primary trigger for judging; notify only enriches the run context.
 
 ### notify payload (draft)
+
 {
-  "type": "agent-turn-complete",
-  "repository": "org/repo",
-  "issue_number": "123",
-  "base_branch": "main",
-  "head_branch": "codex/issue-123",
-  "workflow_name": "github-codex-implementation-abc123",
-  "workflow_namespace": "argo-workflows",
-  "session_id": "session-123",
-  "prompt": "...",
-  "input_messages": ["..."],
-  "last_assistant_message": "...",
-  "log_excerpt": {
-    "output": "...",
-    "events": "...",
-    "agent": "...",
-    "runtime": "...",
-    "status": "..."
-  },
-  "output_paths": {
-    "output": "/workspace/lab/.codex-implementation.log",
-    "events": "/workspace/lab/.codex-implementation-events.jsonl",
-    "agent": "/workspace/lab/.codex-implementation-agent.log",
-    "runtime": "/workspace/lab/.codex-implementation-runtime.log",
-    "status": "/workspace/lab/.codex-implementation-status.txt",
-    "patch": "/workspace/lab/.codex-implementation.patch",
-    "changes": "/workspace/lab/.codex-implementation-changes.tar.gz",
-    "notify": "/workspace/lab/.codex-implementation-notify.json"
-  },
-  "issued_at": "2025-12-28T00:00:00Z"
+"type": "agent-turn-complete",
+"repository": "org/repo",
+"issue_number": "123",
+"base_branch": "main",
+"head_branch": "codex/issue-123",
+"workflow_name": "github-codex-implementation-abc123",
+"workflow_namespace": "argo-workflows",
+"session_id": "session-123",
+"prompt": "...",
+"input_messages": ["..."],
+"last_assistant_message": "...",
+"log_excerpt": {
+"output": "...",
+"events": "...",
+"agent": "...",
+"runtime": "...",
+"status": "..."
+},
+"output_paths": {
+"output": "/workspace/lab/.codex-implementation.log",
+"events": "/workspace/lab/.codex-implementation-events.jsonl",
+"agent": "/workspace/lab/.codex-implementation-agent.log",
+"runtime": "/workspace/lab/.codex-implementation-runtime.log",
+"status": "/workspace/lab/.codex-implementation-status.txt",
+"patch": "/workspace/lab/.codex-implementation.patch",
+"changes": "/workspace/lab/.codex-implementation-changes.tar.gz",
+"notify": "/workspace/lab/.codex-implementation-notify.json"
+},
+"issued_at": "2025-12-28T00:00:00Z"
 }
 
 ### run-complete payload (draft, from `argo.workflows.completions` sensor)
+
 {
-  "metadata": {
-    "name": "github-codex-implementation-abc123",
-    "namespace": "argo-workflows",
-    "uid": "...",
-    "labels": { "codex.stage": "implementation" },
-    "annotations": {}
-  },
-  "status": {
-    "phase": "Succeeded" | "Failed" | "Error",
-    "startedAt": "...",
-    "finishedAt": "..."
-  },
-  "arguments": {
-    "parameters": [
-      { "name": "eventBody", "value": "<base64 JSON>" },
-      { "name": "rawEvent", "value": "<base64 JSON>" },
-      { "name": "head", "value": "codex/issue-123" },
-      { "name": "base", "value": "main" }
-    ]
-  },
-  "artifacts": [
-    { "name": "implementation-log", "key": "...", "bucket": "argo-workflows" }
-  ],
-  "stage": "implementation"
+"metadata": {
+"name": "github-codex-implementation-abc123",
+"namespace": "argo-workflows",
+"uid": "...",
+"labels": { "codex.stage": "implementation" },
+"annotations": {}
+},
+"status": {
+"phase": "Succeeded" | "Failed" | "Error",
+"startedAt": "...",
+"finishedAt": "..."
+},
+"arguments": {
+"parameters": [
+{ "name": "eventBody", "value": "<base64 JSON>" },
+{ "name": "rawEvent", "value": "<base64 JSON>" },
+{ "name": "head", "value": "codex/issue-123" },
+{ "name": "base", "value": "main" }
+]
+},
+"artifacts": [
+{ "name": "implementation-log", "key": "...", "bucket": "argo-workflows" }
+],
+"stage": "implementation"
 }
 
 Note: KafkaSource delivers the payload as a CloudEvent. Jangar should read the JSON body
 from the CloudEvent `data` field (or directly if the source is configured to pass raw data).
 
 ### Storage
+
 Tables (or collections):
+
 - runs(id, issue_id, workflow_id, attempt, branch, status, turn_id, thread_id, timestamps)
 - artifacts(run_id, type, url, sha256)
 - judge_evaluations(run_id, decision, confidence, reasons, missing_items, next_prompt)
@@ -223,9 +246,11 @@ Tables (or collections):
 Use the existing Postgres wiring in `services/jangar/src/server/db.ts` (jangar-db).
 
 ### Idempotency
+
 - Unique key: workflow name + workflow uid (from run-complete); attach notify by workflow name.
 
 ### Deliverables
+
 - Ingestion endpoint with validation.
 - DB migrations for new tables.
 - Run state machine implementation.
@@ -233,6 +258,7 @@ Use the existing Postgres wiring in `services/jangar/src/server/db.ts` (jangar-d
   (new manifest under `argocd/applications/jangar`).
 
 ### Detailed tasks
+
 - Validate payload schema and reject malformed input.
 - Upsert run record; store artifacts metadata.
 - Create run record on run-complete even if notify never arrived.
@@ -244,12 +270,13 @@ Use the existing Postgres wiring in `services/jangar/src/server/db.ts` (jangar-d
 - Fall back to workflow labels/annotations or `rawEvent` metadata when `eventBody` is missing or malformed,
   and still persist a minimal run record for failed workflows.
 - Query Argo Workflow API for artifact outputs (or extend the sensor payload).
- - Unpack `implementation-changes` archive and read `metadata/manifest.json` for prompt/session details.
+- Unpack `implementation-changes` archive and read `metadata/manifest.json` for prompt/session details.
 - Add `services/jangar/src/routes/api/codex/run-complete.ts` and
   `services/jangar/src/routes/api/codex/notify.ts` (TanStack router).
 - Configure KafkaSource sink to `jangar` service with `uri: /api/codex/run-complete`.
 
 ### Acceptance criteria
+
 - Duplicate notifications do not create duplicate runs.
 - Artifacts and run metadata are queryable by issue_id.
 - Failed runs without notify are still recorded and retried.
@@ -258,13 +285,16 @@ Use the existing Postgres wiring in `services/jangar/src/server/db.ts` (jangar-d
 ## D) GitHub Actions Status Integration
 
 ### Goal
+
 Provide CI status for the attempt commit SHA (prefer PR head SHA).
 
 ### Options
+
 - Froussard filters GitHub webhook events Jangar cares about and publishes them to a dedicated Kafka topic;
   Jangar consumes that topic to update CI/review state (no direct webhook fan-out to Jangar).
 
 ### Events to include in the filtered stream
+
 - `check_run` / `check_suite` (CI conclusion + URL for commit SHA)
 - `pull_request` (PR head SHA updates)
 - `pull_request_review` (review submitted/edited/dismissed)
@@ -272,27 +302,32 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 - `issue_comment` (Codex comment-as-review fallback)
 
 ### Expected fields
+
 - ci_status: pending | success | failure
 - ci_url
 - conclusion_time
 - commit_sha (must match attempt commit_sha)
 
 ### Commit-scoped gating
+
 - Use the attempt commit SHA (from artifacts) as the key for CI checks.
 - Do not use branch-level status, because shared resumable branches can show stale green checks.
 
 ### Implementation notes
+
 - Jangar already has `GITHUB_TOKEN` in `argocd/applications/jangar/deployment.yaml`; use it to
   enrich data from GitHub APIs when Kafka payloads are insufficient.
 - Prefer PR head SHA (from GitHub API) over branch head to avoid stale results.
 - Jangar does not poll. CI/review updates are delivered via the filtered Kafka stream and re-trigger judge evaluation.
 
 ### Deliverables
+
 - Filtered GitHub webhook stream for Jangar (Kafka topic + publisher).
   - Topic: `github.webhook.codex.judge` (producer: Froussard, consumer: Jangar).
 - Mapping of CI status to run records.
 
 ### Detailed tasks
+
 - Confirm Froussard webhook delivery for check runs/suites and review events.
 - Filter relevant GitHub events into the Jangar Kafka topic.
 - Add a Jangar consumer to read that topic and update runs.
@@ -300,19 +335,23 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 - Store CI status in run record; re-trigger judge once final.
 
 ### Acceptance criteria
+
 - Judge runs only after CI conclusion is success or failure.
 - CI URLs are stored and surfaced in Discord messages.
 
 ## E) PR Review Gate (Codex Review)
 
 ### Goal
+
 Ensure the Codex review is complete and all Codex review threads are resolved before completion.
 
 ### Signals
+
 - PR reviews by configured reviewers (`codex`, `codex[bot]`, or configured list)
 - Review thread resolution status (no unresolved threads authored by Codex)
 
 ### Implementation notes
+
 - Use GitHub GraphQL to fetch PR review threads (include comment body/path/line) and reviews.
 - Gate on:
   - Latest Codex review state is `APPROVED` or `COMMENTED` with all threads resolved.
@@ -324,18 +363,21 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
   as a `commented` review state and continue.
 
 ### Deliverables
+
 - PR review gate keyed by PR number + commit SHA.
 - Configuration for Codex reviewer identities.
 
 ### Detailed tasks
+
 - Add config `JANGAR_CODEX_REVIEWERS` (comma-separated GitHub logins).
 - Query PR metadata + reviews + review threads (including comment bodies).
 - Map review threads to unresolved items; store in run record.
 - Build a `next_prompt` that lists each unresolved comment (path/line/body) when reruns are required.
 - Block judge completion until resolved; if unresolved after timeout, classify as needs_iteration.
- - Re-trigger judge on review updates via Froussard webhook delivery.
+- Re-trigger judge on review updates via Froussard webhook delivery.
 
 ### Acceptance criteria
+
 - Jangar does not mark success until Codex review is complete and threads are resolved.
 - Codex review comments are surfaced in the failure reasons and next_prompt.
 - Review-comment iterations always include a prompt section enumerating the Codex review comments.
@@ -343,29 +385,33 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
 ## F) Judge Engine
 
 ### Deterministic gates
+
 - ci_status must be success for the attempt commit_sha
 - Codex PR review completed and all Codex review threads resolved
 - merge conflict detection: check if patch apply failed or conflict markers present
 - diff non-empty (unless task allows no-op)
 
 ### LLM judge input
+
 - Issue title/body
 - diff
 - codex summary (last-assistant-message)
 - artifacts and logs
 
 ### LLM judge output (JSON)
+
 {
-  "decision": "pass" | "fail",
-  "confidence": 0-1,
-  "requirements_coverage": ["..."],
-  "missing_items": ["..."],
-  "suggested_fixes": ["..."],
-  "next_prompt": "...",
-  "system_improvement_suggestions": ["..."]
+"decision": "pass" | "fail",
+"confidence": 0-1,
+"requirements_coverage": ["..."],
+"missing_items": ["..."],
+"suggested_fixes": ["..."],
+"next_prompt": "...",
+"system_improvement_suggestions": ["..."]
 }
 
 ### Memory snapshot output (post-judge)
+
 - Create 10 memory records per run using Jangar memories storage.
 - Each snapshot should include:
   - summary: 1-2 sentence distilled insight
@@ -374,20 +420,23 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
   - metadata: commit SHA, CI url, workflow name, timestamps
 
 ### Deliverables
+
 - Gate evaluator with deterministic checks.
 - LLM judge with JSON schema validation.
 - Stored evaluation record with reasons and fixes.
 
 ### Detailed tasks
+
 - Implement CI gate (block until success, fail on failure).
 - Implement PR review gate integration (block until Codex review resolved).
 - Merge conflict detection using diff/markers.
 - Define rubric prompt template and schema.
 - Validate LLM output and handle retries on invalid JSON.
 - Generate next_prompt for reruns when failing.
- - If `needs_iteration` or `needs_human`, include system prompt improvements + system-level suggestions in the output.
+- If `needs_iteration` or `needs_human`, include system prompt improvements + system-level suggestions in the output.
 
 ### Acceptance criteria
+
 - Deterministic gates block incomplete work before LLM.
 - LLM output is always valid JSON or retried.
 - Decision is persisted and correlated to run.
@@ -395,20 +444,24 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
 ## G) Orchestration (Rerun Trigger)
 
 ### Behavior
+
 - If decision == fail: trigger new Argo run
 - Use same branch codex/issue-<id>
 - Provide next_prompt
 - Increment attempt
 
 ### Implementation
+
 - Jangar calls Facteur `/codex/tasks` to submit the Argo workflow rerun
 - Include run metadata + prompt in submission
 
 ### Deliverables
+
 - Rerun submission logic with idempotency.
 - Attempt counter stored per issue.
 
 ### Detailed tasks
+
 - Construct a `CodexTask` protobuf payload with the same repo/issue/head/base and updated prompt.
 - Use schema from `proto/proompteng/froussard/v1/codex_task.proto`.
 - Use `delivery_id` derived from issue + attempt for idempotency.
@@ -419,69 +472,82 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
 - Record link between run and rerun parent.
 
 ### Acceptance criteria
+
 - Rerun starts with correct branch and prompt via Facteur.
 - Attempts are monotonic and capped by policy.
 
 ## H) Discord Notifications
 
 ### Success only (general channel)
+
 - Include issue link, PR link, CI link, summary, artifacts
 
 ### Escalation (rare)
+
 - Only on hard failures (conflicts, repeated infra failure, repeated same failure)
 
 ### Deliverables
+
 - Discord webhook integration.
 - Standard message template.
 
 ### Detailed tasks
+
 - Compose message with links + short summary.
 - Only send on success, unless escalation conditions met.
 - Rate limit and error handling.
 - Configure `DISCORD_SUCCESS_CHANNEL_ID` secret in the `jangar` namespace for the general channel.
 
 ### Acceptance criteria
+
 - Success notifications appear in general channel with correct links.
 - Escalations are rare and only for defined hard failures.
 
 ## I) Prompt Auto-tuning PRs
 
 ### Pipeline
+
 - Aggregate repeated failure reasons
 - Modify prompt template
 - Create PR with summary and run references
 - Track PR status in Jangar
- - For needs_iteration and needs_human outcomes, always create a PR with system prompt and
-   system-level improvement suggestions (not just prompt text edits).
+- For needs_iteration and needs_human outcomes, always create a PR with system prompt and
+  system-level improvement suggestions (not just prompt text edits).
 
 ### Deliverables
+
 - Prompt tuning job producing PRs.
 - Prompt version metadata stored in Jangar.
 
 ### Detailed tasks
+
 - Prompt template location: `apps/froussard/src/codex.ts` (`buildImplementationPrompt`).
 - Define edit strategy that keeps scope minimal and preserves existing constraints.
 - Generate patch from tuning suggestions.
 - Create PR branch and open PR automatically using the repo PR template.
 - Track PR status and link to runs that caused change.
- - Include system-level improvement suggestions in the PR description or companion doc.
+- Include system-level improvement suggestions in the PR description or companion doc.
 
 ### Acceptance criteria
+
 - PR created with minimal diff and clear rationale.
 - Prompt version updated only via PR merge.
 
 ## J) Memory Snapshots (10 per run)
 
 ### Purpose
+
 Persist structured learning from each run so future prompts and judge decisions can use semantic recall.
 
 ### Implementation
+
 - Use Jangar memories endpoint (`POST /api/memories`) or direct store.
 - Namespace: `codex:<repo>:<issue_number>` (or equivalent).
 - Create exactly 10 entries per run; fill missing slots with generalized observations
   (e.g., environment, CI status, run timing).
 
 ### Embeddings
+
 - Jangar creates embeddings internally on persist (see `services/jangar/src/server/memories-store.ts`).
 - Embedding provider is controlled by:
   - `OPENAI_API_BASE_URL` / `OPENAI_API_KEY`
@@ -490,6 +556,7 @@ Persist structured learning from each run so future prompts and judge decisions 
   - OpenAI defaults: `text-embedding-3-small`, dimension `1536`
 
 ### Acceptance criteria
+
 - 10 memories written for each run (success or failure).
 - Entries are retrievable by namespace and query.
 
@@ -507,13 +574,15 @@ Agent 9: System-improvement PRs (Workstream I)
 Agent 10: Memory snapshots (Workstream J)
 
 ## Minimal Blocking Sequence
-1) Complete A, B, C, D, E in parallel.
-2) Once C + D + E complete, implement F.
-3) G + H depend on F.
-4) I depends on F.
-5) J depends on F.
+
+1. Complete A, B, C, D, E in parallel.
+2. Once C + D + E complete, implement F.
+3. G + H depend on F.
+4. I depends on F.
+5. J depends on F.
 
 ## Validation Checklist
+
 - Argo runs produce artifacts even on failure.
 - Notify wrapper posts to Jangar with expected schema.
 - Jangar waits for CI and stores judge output.

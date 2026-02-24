@@ -20,6 +20,7 @@ brew install proompteng/tap/agentctl
 ```
 
 ## Modes
+
 - **Kube mode (default):** uses kubeconfig + context and shells out to `kubectl` (JSON output). Requires `kubectl` on PATH.
 - **gRPC mode (optional):** uses the Jangar gRPC endpoint; enable with `--grpc` or `AGENTCTL_MODE=grpc`.
 
@@ -180,6 +181,7 @@ agentctl run cancel <name>
 ```
 
 Notes:
+
 - `apply` accepts `-f -` to read manifests from stdin.
 - `create impl --text` accepts inline text, `@file`, or `-` for stdin.
 - Use `--dry-run` with `apply` or `delete` to preview changes.

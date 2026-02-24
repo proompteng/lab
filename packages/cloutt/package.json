@@ -1,9 +1,9 @@
 {
   "name": "cloutt",
   "version": "1.0.0",
-  "main": "main.ts",
-  "license": "Apache-2.0",
   "private": true,
+  "license": "Apache-2.0",
+  "main": "main.ts",
   "scripts": {
     "import": "cdk8s import",
     "synth": "cdk8s synth",
@@ -19,12 +19,12 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "cdk8s-cli": "^2.200.9",
-    "@types/node": "^22",
     "@types/jest": "^29",
+    "@types/node": "^22",
+    "cdk8s-cli": "^2.200.9",
     "jest": "^29",
     "ts-jest": "^29",
-    "typescript": "^5.8.2",
-    "ts-node": "^10"
+    "ts-node": "^10",
+    "typescript": "^5.8.2"
   }
 }

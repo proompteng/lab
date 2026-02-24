@@ -6,6 +6,7 @@ single surface area and defines goals, requirements, API sketches, and
 acceptance criteria.
 
 ## Index
+
 - `testing-environment.md` - Bun-native test environment with time skipping and
   ephemeral server orchestration.
 - `nondeterminism-guardrails.md` - Defense-in-depth plan to prevent production

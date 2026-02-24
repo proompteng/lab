@@ -2,14 +2,14 @@
   "name": "@proompteng/schematic",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "bin": {
     "schematic": "./dist/cli.js"
   },
+  "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -w -p tsconfig.json",
-    "lint": "bunx biome check src",
+    "lint": "bunx oxfmt --check src",
     "start": "bun run build && node dist/cli.js",
     "test": "bun test",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

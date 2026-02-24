@@ -3,17 +3,22 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 Agents controllers schedule Kubernetes Jobs for agent runs. The chart includes a `runnerServiceAccount` block and multiple runtime defaults (`runtime.scheduleServiceAccount`, workload defaults, and controller env vars). The defaulting hierarchy must be explicit so operators can ensure jobs run with the intended permissions.
 
 ## Goals
+
 - Define a single, deterministic defaulting chain for runner Jobs.
 - Avoid accidental privilege escalation (jobs using a more-privileged SA than intended).
 
 ## Non-Goals
+
 - Replacing per-run workload overrides in CRDs.
 
 ## Current State
+
 - Values:
   - `runnerServiceAccount.*` in `charts/agents/values.yaml`
   - `runtime.scheduleServiceAccount` in `charts/agents/values.yaml`
@@ -24,7 +29,9 @@ Agents controllers schedule Kubernetes Jobs for agent runs. The chart includes a
 - Runtime uses these env vars while creating Jobs: `services/jangar/src/server/agents-controller.ts`.
 
 ## Design
+
 ### Defaulting chain (recommended)
+
 1. `AgentRun.spec.workload.serviceAccountName` (per-run explicit)
 2. `Agent.spec.security.allowedServiceAccounts` (policy gate; deny if not allowed)
 3. `controller.defaultWorkload.serviceAccountName` (cluster/operator default)
@@ -32,45 +39,54 @@ Agents controllers schedule Kubernetes Jobs for agent runs. The chart includes a
 5. Fallback: chart-created `runnerServiceAccount` when `runnerServiceAccount.setAsDefault=true`
 
 ### Chart changes
+
 - Prefer a single chart value that maps to the controller default runner SA, e.g.:
   - `runner.defaultServiceAccountName`
-and deprecate `runtime.scheduleServiceAccount` for job execution.
+    and deprecate `runtime.scheduleServiceAccount` for job execution.
 
 ## Config Mapping
-| Helm value | Env var | Intended behavior |
-|---|---|---|
-| `controller.defaultWorkload.serviceAccountName` | `JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT` | Primary default SA for agent-run Jobs. |
-| `runtime.scheduleServiceAccount` | `JANGAR_SCHEDULE_SERVICE_ACCOUNT` | Legacy/secondary default; should be deprecated for Jobs. |
-| `runnerServiceAccount.setAsDefault` | (chart behavior) | If enabled, set the above to created runner SA name. |
+
+| Helm value                                      | Env var                               | Intended behavior                                        |
+| ----------------------------------------------- | ------------------------------------- | -------------------------------------------------------- |
+| `controller.defaultWorkload.serviceAccountName` | `JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT` | Primary default SA for agent-run Jobs.                   |
+| `runtime.scheduleServiceAccount`                | `JANGAR_SCHEDULE_SERVICE_ACCOUNT`     | Legacy/secondary default; should be deprecated for Jobs. |
+| `runnerServiceAccount.setAsDefault`             | (chart behavior)                      | If enabled, set the above to created runner SA name.     |
 
 ## Rollout Plan
+
 1. Document the defaulting chain in chart README and in controller logs.
 2. Add warnings when legacy `runtime.scheduleServiceAccount` is used for Jobs.
 3. Introduce the new `runner.defaultServiceAccountName` value and migrate GitOps values.
 
 Rollback:
+
 - Keep both env vars supported; revert to legacy configuration.
 
 ## Validation
+
 ```bash
 mise exec helm@3 -- helm template agents charts/agents -f argocd/applications/agents/values.yaml | rg -n \"JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT|JANGAR_SCHEDULE_SERVICE_ACCOUNT\"
 kubectl -n agents get deploy agents-controllers -o yaml | rg -n \"JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT|JANGAR_SCHEDULE_SERVICE_ACCOUNT\"
 ```
 
 ## Failure Modes and Mitigations
+
 - Job runs under an unintended SA: mitigate by making the defaulting chain explicit and enforcing allowed-service-accounts policy.
 - Missing SA causes Job create failure: mitigate with schema validation and chart-created SA defaults.
 
 ## Acceptance Criteria
+
 - Render output shows exactly one “default runner SA” configured for controllers.
 - Controller logs indicate the SA used for each created Job.
 
 ## References
+
 - Kubernetes ServiceAccounts: https://kubernetes.io/docs/concepts/security/service-accounts/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -85,7 +101,9 @@ kubectl -n agents get deploy agents-controllers -o yaml | rg -n \"JANGAR_AGENT_R
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -118,13 +136,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -140,6 +161,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -152,6 +174,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

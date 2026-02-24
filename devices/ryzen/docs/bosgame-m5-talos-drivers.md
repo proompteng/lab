@@ -20,6 +20,7 @@ Last reviewed: 2026-01-24
 ## Vendor driver package inventory (Windows)
 
 Bosgame's download center lists these driver packages for the M5:
+
 - Chipset
 - Graphics
 - Audio
@@ -48,10 +49,12 @@ https://www.talos.dev/v1.9/introduction/whats-new/#removed-amdgpu-from-the-base-
 ### Required for Ryzen AI Max+ 395 GPU
 
 The Talos AMD GPU guide indicates AMD GPU support requires these official extensions:
+
 - siderolabs/amdgpu
 - siderolabs/amd-ucode
 
 For AMD Ryzen AI Max+ 395 (Strix Halo), the guide also lists extra kernel args:
+
 - amd_iommu=off
 - amdgpu.gttsize=131072
 - ttm.pages_limit=33554432

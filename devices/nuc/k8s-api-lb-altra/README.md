@@ -4,6 +4,7 @@ This runs a second HAProxy instance on the NUC (`kalmyk@192.168.1.130`) listenin
 TCP `:6444` and forwarding to the `altra` control plane nodes on `:6443`.
 
 Why a second port:
+
 - The existing cluster uses `192.168.1.130:6443`.
 - This keeps `altra` independent (`192.168.1.130:6444`).
 
@@ -40,4 +41,3 @@ docker compose logs --tail=200 -f
 ## 3) Firewall reminder
 
 Keep `6444/tcp` LAN-only.
-

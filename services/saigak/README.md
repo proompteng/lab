@@ -36,7 +36,7 @@ Base tags are pruned after alias creation unless `SAIGAK_PRUNE_BASE_MODELS=0`.
 - Docker with the compose plugin (the Harvester `ubuntu-docker` cloud-init already installs this)
 - systemd
 - network access to LGTM endpoints (Tailscale DNS names `mimir`, `tempo`, and `grafana`)
-If Docker is missing, install it first or use the `ubuntu-docker` cloud-init profile.
+  If Docker is missing, install it first or use the `ubuntu-docker` cloud-init profile.
 
 ## Configuration
 
@@ -50,6 +50,7 @@ If Docker is missing, install it first or use the `ubuntu-docker` cloud-init pro
   - Optional reverse proxy (listens on `:8080`)
 
 Systemd drop-in installed at:
+
 - `/etc/systemd/system/ollama.service.d/99-saigak.conf`
 
 ## Grafana dashboard

@@ -8,19 +8,21 @@ associated control-plane APIs via the Operator and Cloud clients.
 Workflows can schedule and cancel Nexus operations through the workflow context:
 
 ```ts
-const result = yield* ctx.nexus.schedule(
-  'endpoint',
-  'service',
-  'operation',
-  { payload: 'value' },
-  {
-    scheduleToCloseTimeoutMs: 60_000,
-    operationId: 'op-123',
-  },
-)
+const result =
+  yield *
+  ctx.nexus.schedule(
+    'endpoint',
+    'service',
+    'operation',
+    { payload: 'value' },
+    {
+      scheduleToCloseTimeoutMs: 60_000,
+      operationId: 'op-123',
+    },
+  )
 
 // Cancel by operation id (or by scheduled event id when available)
-yield* ctx.nexus.cancel('op-123')
+yield * ctx.nexus.cancel('op-123')
 ```
 
 ### Behavior

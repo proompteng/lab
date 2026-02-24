@@ -3,17 +3,22 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 Controllers interact with the Kubernetes API by spawning the `kubectl` binary (`primitives-kube.ts` and `kube-watch.ts`). This implicitly makes controller correctness dependent on the `kubectl` version baked into the image. We should document and enforce a compatibility policy.
 
 ## Goals
+
 - Define a supported `kubectl` version skew policy for controller images.
 - Make it easy to verify which `kubectl` version is running.
 
 ## Non-Goals
+
 - Migrating controllers to a full Kubernetes client SDK in this phase.
 
 ## Current State
+
 - `kubectl` is invoked directly:
   - `services/jangar/src/server/primitives-kube.ts` calls `spawn('kubectl', ...)`
   - `services/jangar/src/server/kube-watch.ts` calls `spawn('kubectl', ['get', ..., '--watch', ...])`
@@ -21,47 +26,58 @@ Controllers interact with the Kubernetes API by spawning the `kubectl` binary (`
 - Cluster Kubernetes version is not tracked in this repo; GitOps manifests do not pin it.
 
 ## Design
+
 ### Compatibility policy
+
 - Controller image must include `kubectl` within a supported skew of the cluster (documented per Kubernetes guidance).
 - Operationally: bake `kubectl` version into the image build and expose it via:
   - `JANGAR_KUBECTL_VERSION` env var (build-time)
   - or a startup log line running `kubectl version --client --short`
 
 ### Chart changes (optional)
+
 - Add `controllers.env.vars.JANGAR_KUBECTL_VERSION` passthrough (documented).
 
 ## Config Mapping
-| Helm value | Env var | Intended behavior |
-|---|---|---|
+
+| Helm value                                    | Env var                  | Intended behavior                                 |
+| --------------------------------------------- | ------------------------ | ------------------------------------------------- |
 | `controllers.env.vars.JANGAR_KUBECTL_VERSION` | `JANGAR_KUBECTL_VERSION` | Exposes build-time kubectl version for debugging. |
 
 ## Rollout Plan
+
 1. Add runtime logging of `kubectl version --client`.
 2. Add CI check that controller image build pins a known kubectl version (build pipeline work).
 
 Rollback:
+
 - Disable the logging; keep pinned version in images.
 
 ## Validation
+
 ```bash
 kubectl -n agents exec deploy/agents-controllers -- kubectl version --client --short
 kubectl -n agents logs deploy/agents-controllers | rg -n \"kubectl\"
 ```
 
 ## Failure Modes and Mitigations
+
 - kubectl/client-server incompatibility causes subtle failures: mitigate with a documented skew policy and proactive logging.
 - Missing kubectl binary in image: mitigate by adding a startup self-check that fails fast with a clear error.
 
 ## Acceptance Criteria
+
 - Operators can determine the kubectl client version from logs or exec.
 - Controller images follow an explicit kubectl skew policy.
 
 ## References
+
 - Kubernetes version skew policy: https://kubernetes.io/releases/version-skew-policy/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -76,7 +92,9 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"kubectl\"
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -109,13 +127,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -131,6 +152,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -143,6 +165,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

@@ -29,6 +29,7 @@ Facteur via `argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasou
 `codex_implementation_orchestrator.enabled` is `false` the handler logs stage/repository/issue metadata for observability; once
 enabled, implementation payloads enqueue the `github-codex-implementation` WorkflowTemplate, persist intake data, emit structured
 logs (`workflow submitted: stage=implementation`), and surface workflow metadata before committing the Kafka message.
+
 ## Prerequisites
 
 - Use the **Codex Task** GitHub issue template (`.github/ISSUE_TEMPLATE/codex-task.md`) when opening automation requests. The form keeps summary, scope guardrails, validation commands, and the Codex prompt structured so Froussard can forward them directly to the Argo workflows.

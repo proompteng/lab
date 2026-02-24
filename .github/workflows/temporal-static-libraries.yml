@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version tag for the release (e.g., v1.0.0)"
+        description: 'Version tag for the release (e.g., v1.0.0)'
         required: true
         type: string
       create_release:
-        description: "Create a new GitHub release"
+        description: 'Create a new GitHub release'
         required: false
         default: true
         type: boolean

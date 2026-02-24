@@ -11,6 +11,7 @@ Match the local binary to the cluster version. Current deployments use `grafana/
 ### Option A: Homebrew (preferred when available)
 
 Install the Homebrew formula and confirm the binary:
+
 ```bash
 brew install grafana-alloy
 /opt/homebrew/opt/grafana-alloy/bin/alloy --version
@@ -23,6 +24,7 @@ so only `*.alloy` files in that directory are loaded.
 ### Option B: Download the macOS release tarball
 
 Download the Grafana Alloy v1.11.2 macOS tarball from the official release page, then unpack and place the `alloy` binary on your PATH:
+
 ```bash
 tar -xzf alloy-darwin-*.tar.gz
 sudo install -m 0755 alloy /usr/local/bin/alloy
@@ -33,12 +35,14 @@ alloy --version
 
 Homebrew runs Alloy from `/opt/homebrew/etc/grafana-alloy/config.alloy` (this is the file `brew services` uses). The current config on this host forwards OTLP logs to Loki over Tailscale (via the Loki push API) and keeps trace/metric exporters commented out.
 
-1) Ensure the config directory exists:
+1. Ensure the config directory exists:
+
 ```bash
 mkdir -p /opt/homebrew/etc/grafana-alloy
 ```
 
-2) Save the config below to `/opt/homebrew/etc/grafana-alloy/config.alloy`:
+2. Save the config below to `/opt/homebrew/etc/grafana-alloy/config.alloy`:
+
 ```alloy
 logging {
   level = "info"
@@ -85,6 +89,7 @@ loki.write "tailscale" {
 ```
 
 Notes:
+
 - The OTLP HTTP receiver listens on `127.0.0.1:4318` for local apps (for example, Codex).
 - Loki, Tempo, and Mimir are exposed on the Tailscale network as `http://loki`, `http://tempo`, and `http://mimir`.
 - Loki OTLP ingestion is not enabled in this stack, so we send logs through the Loki push API at `http://loki/loki/api/v1/push`. Tempo expects OTLP traces at `/v1/traces`, and Mimir expects OTLP metrics at `/v1/metrics`.
@@ -92,6 +97,7 @@ Notes:
 ### Codex OTEL config (this host)
 
 Codex is configured to emit OTLP logs locally so Alloy can forward them to Loki. The config lives at `~/.codex/config.toml`:
+
 ```toml
 [otel]
 log_user_prompt = true
@@ -101,6 +107,7 @@ exporter = { otlp-http = { endpoint = "http://127.0.0.1:4318/v1/logs", protocol 
 Keep the endpoint on `127.0.0.1:4318` to match the Alloy `otelcol.receiver.otlp` block.
 
 To label logs under `service="codex"` in Loki, set the originator override when launching Codex:
+
 ```bash
 export CODEX_INTERNAL_ORIGINATOR_OVERRIDE=codex
 ```
@@ -108,6 +115,7 @@ export CODEX_INTERNAL_ORIGINATOR_OVERRIDE=codex
 ## Run
 
 Start Alloy in the foreground:
+
 ```bash
 /opt/homebrew/opt/grafana-alloy/bin/alloy run \
   --storage.path=/opt/homebrew/var/lib/grafana-alloy/data \
@@ -115,6 +123,7 @@ Start Alloy in the foreground:
 ```
 
 Or start it as a background service:
+
 ```bash
 brew services start grafana-alloy
 ```
@@ -122,6 +131,7 @@ brew services start grafana-alloy
 ## Pointing to the cluster over Tailscale
 
 Make sure your machine is on Tailscale. The Tailscale load balancers publish the endpoints:
+
 - Loki logs: `http://loki/loki/api/v1/push`
 - Tempo traces: `http://tempo` (OTLP HTTP `/v1/traces`)
 - Mimir metrics: `http://mimir/otlp` (OTLP HTTP `/v1/metrics`)

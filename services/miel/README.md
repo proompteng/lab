@@ -26,20 +26,20 @@ services/miel/
 
 Set the following environment variables before running the service. Paper-trading endpoints are used by default.
 
-| Variable                              | Description                                   | Default                                   |
-| ------------------------------------- | --------------------------------------------- | ----------------------------------------- |
-| `HTTP_PORT`                           | HTTP listen port. Prefix with `:` if desired. | `8080`                                    |
-| `ALPACA_API_KEY`                      | Alpaca API key (paper or live).               | _required_                                |
-| `ALPACA_SECRET_KEY`                   | Alpaca API secret.                            | _required_                                |
-| `ALPACA_BASE_URL`                     | Trading REST base URL.                        | `https://paper-api.alpaca.markets`        |
-| `ALPACA_DATA_BASE_URL`                | Market data REST base URL.                    | `https://data.alpaca.markets`             |
-| `ALPACA_REQUEST_TIMEOUT_SECONDS`      | Timeout applied to outbound Alpaca calls.     | `30`                                      |
-| `BACKTEST_MAX_BARS`                   | Maximum bars fetched per backtest request.    | `5000`                                    |
-| `OTEL_SERVICE_NAME`                   | Service name reported to OpenTelemetry/observability. | `miel`                                    |
-| `OTEL_EXPORTER_OTLP_PROTOCOL`         | OTLP transport protocol.                      | `http/protobuf`                           |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | OTLP traces endpoint (observability Tempo).   | `http://observability-tempo-distributor.observability:4318` |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | OTLP metrics endpoint (observability Mimir).  | `http://observability-mimir-nginx.observability/otlp`       |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`    | OTLP logs endpoint (observability Loki).      | `http://observability-loki-loki-distributed-gateway.observability/otlp`      |
+| Variable                              | Description                                           | Default                                                                 |
+| ------------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------- |
+| `HTTP_PORT`                           | HTTP listen port. Prefix with `:` if desired.         | `8080`                                                                  |
+| `ALPACA_API_KEY`                      | Alpaca API key (paper or live).                       | _required_                                                              |
+| `ALPACA_SECRET_KEY`                   | Alpaca API secret.                                    | _required_                                                              |
+| `ALPACA_BASE_URL`                     | Trading REST base URL.                                | `https://paper-api.alpaca.markets`                                      |
+| `ALPACA_DATA_BASE_URL`                | Market data REST base URL.                            | `https://data.alpaca.markets`                                           |
+| `ALPACA_REQUEST_TIMEOUT_SECONDS`      | Timeout applied to outbound Alpaca calls.             | `30`                                                                    |
+| `BACKTEST_MAX_BARS`                   | Maximum bars fetched per backtest request.            | `5000`                                                                  |
+| `OTEL_SERVICE_NAME`                   | Service name reported to OpenTelemetry/observability. | `miel`                                                                  |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`         | OTLP transport protocol.                              | `http/protobuf`                                                         |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | OTLP traces endpoint (observability Tempo).           | `http://observability-tempo-distributor.observability:4318`             |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | OTLP metrics endpoint (observability Mimir).          | `http://observability-mimir-nginx.observability/otlp`                   |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`    | OTLP logs endpoint (observability Loki).              | `http://observability-loki-loki-distributed-gateway.observability/otlp` |
 
 ### TigerBeetle ledger (optional)
 

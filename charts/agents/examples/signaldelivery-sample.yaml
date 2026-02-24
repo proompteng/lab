@@ -5,7 +5,6 @@ metadata:
 spec:
   signalRef:
     name: human-approval
-  deliveryId: "delivery-001"
+  deliveryId: 'delivery-001'
   payload:
     approved: true
-

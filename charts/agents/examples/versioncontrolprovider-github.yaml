@@ -24,11 +24,11 @@ spec:
   defaults:
     baseBranch: main
     branchTemplate: codex/{{issueNumber}}
-    branchConflictSuffixTemplate: "{{agentRun.name}}"
+    branchConflictSuffixTemplate: '{{agentRun.name}}'
     commitAuthorName: codex
     commitAuthorEmail: codex@proompt.com
     pullRequest:
       enabled: true
       draft: false
-      titleTemplate: "Codex: {{repository}}"
-      bodyTemplate: "Closes #{{issueNumber}}"
+      titleTemplate: 'Codex: {{repository}}'
+      bodyTemplate: 'Closes #{{issueNumber}}'

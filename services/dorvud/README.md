@@ -1,6 +1,7 @@
 # Dorvud (placeholder)
 
 Multi-project Kotlin service scaffold aligned to the Dorvud design outline. Modules:
+
 - `platform`: shared foundations and configuration placeholders.
 - `technical-analysis`: stub for analytics logic.
 - `websockets`: stub for realtime gateway.

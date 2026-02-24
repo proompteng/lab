@@ -10,8 +10,8 @@ spec:
   auth:
     method: app
     app:
-      appId: "12345"
-      installationId: "67890"
+      appId: '12345'
+      installationId: '67890'
       privateKeySecretRef:
         name: codex-github-app-key
         key: privateKey
@@ -30,5 +30,5 @@ spec:
     pullRequest:
       enabled: true
       draft: false
-      titleTemplate: "Codex: {{repository}}"
-      bodyTemplate: "Closes #{{issueNumber}}"
+      titleTemplate: 'Codex: {{repository}}'
+      bodyTemplate: 'Closes #{{issueNumber}}'

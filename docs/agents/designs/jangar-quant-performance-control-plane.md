@@ -5,26 +5,32 @@ Status: Proposed (2026-02-12)
 Docs index: [README](../README.md)
 
 ## Objective
+
 Design a full control plane in Jangar that exposes strategy performance in near real time with standard quant metrics,
 so operators can answer at any moment:
+
 - Is the strategy making money after costs?
 - Is risk/exposure inside policy?
 - Is execution quality degrading?
 - Are data quality or pipeline lags invalidating decisions?
 
 ## Scope
+
 - Jangar control-plane APIs and streams for quant performance.
 - Metric computation contracts (definitions, formulas, freshness rules).
 - Storage and aggregation design for near-real-time and historical views.
 - Dashboard and alert contracts for operations and promotion gates.
 
 Non-goals:
+
 - Replacing Torghut deterministic risk/firewall authority.
 - Direct broker execution from Jangar control-plane endpoints.
 - Introducing live cutover logic without policy gates.
 
 ## Current Baseline (2026-02-12)
+
 Existing surfaces are useful but not sufficient for full quant control plane:
+
 - Jangar has Torghut summary endpoints:
   - `services/jangar/src/routes/api/torghut/trading/summary.ts`
   - `services/jangar/src/routes/api/torghut/trading/executions.ts`
@@ -37,12 +43,14 @@ Existing surfaces are useful but not sufficient for full quant control plane:
   - `services/jangar/src/routes/api/agents/control-plane/stream.ts`
 
 Primary gaps:
+
 1. No single quant snapshot endpoint with risk-adjusted return + TCA + exposure.
 2. No standardized metric dictionary with explicit formulas and window semantics.
 3. No near-real-time metric stream for dashboard updates.
 4. No alert contract tied to quant thresholds and rollout gates.
 
 ### Verified live evidence snapshot (2026-02-12 06:31-06:35 UTC)
+
 - Runtime posture:
   - `ksvc/torghut` ready on `torghut-00062`.
   - `deployment/jangar` healthy (`1/1`).
@@ -67,6 +75,7 @@ Primary gaps:
   - `docs/agents/designs/jangar-torghut-live-analysis-playbook.md`
 
 ## Design Principles
+
 - Deterministic risk engine remains final authority for execution approval.
 - Metrics must be reproducible (same inputs, same formula version, same output).
 - Every metric includes quality/freshness metadata.
@@ -74,6 +83,7 @@ Primary gaps:
 - Control-plane outputs are read-only and auditable.
 
 ## Near-Real-Time SLOs
+
 - Event-to-control-plane ingestion latency p95: <= 2s.
 - Metric recomputation cycle:
   - light metrics: every 1s,
@@ -105,6 +115,7 @@ flowchart LR
 ## Data Model
 
 ### Canonical facts (input)
+
 - `trade_execution_fact`
   - strategy, symbol, side, qty, fill price, submit/fill timestamps, adapter, venue.
 - `decision_fact`
@@ -117,6 +128,7 @@ flowchart LR
   - news/fundamentals/technicals freshness and quality (when enabled).
 
 ### Derived stores
+
 - `quant_metrics_latest`
   - one row per `strategy_id + account + window + metric_name`.
 - `quant_metrics_series`
@@ -127,14 +139,17 @@ flowchart LR
   - lag, last success, error counters per stage.
 
 Proposed migration owner:
+
 - `services/jangar/src/server/migrations/20260212_torghut_quant_control_plane.ts` (new)
 
 ## Standard Quant Metric Pack
 
 All metrics must include:
+
 - `metric_name`, `window`, `value`, `unit`, `as_of`, `freshness_seconds`, `quality`, `formula_version`.
 
 ### Performance and return
+
 - `realized_pnl` (USD)
 - `unrealized_pnl` (USD)
 - `net_pnl` (USD)
@@ -144,6 +159,7 @@ All metrics must include:
 - `cost_bps` (bps)
 
 ### Risk-adjusted return
+
 - `volatility_annualized`
 - `downside_volatility_annualized`
 - `sharpe_annualized`
@@ -155,6 +171,7 @@ All metrics must include:
 - `cvar_95_historical`
 
 ### Trade statistics
+
 - `trade_count`
 - `win_rate`
 - `profit_factor`
@@ -166,6 +183,7 @@ All metrics must include:
 - `avg_holding_minutes`
 
 ### Execution and TCA
+
 - `fill_ratio`
 - `reject_rate`
 - `cancel_rate`
@@ -177,6 +195,7 @@ All metrics must include:
 - `submit_to_fill_latency_ms_p95`
 
 ### Exposure and portfolio risk
+
 - `gross_exposure`
 - `net_exposure`
 - `leverage_gross_over_equity`
@@ -186,6 +205,7 @@ All metrics must include:
 - `beta_vs_benchmark` (optional when benchmark feed available)
 
 ### Data/pipeline quality
+
 - `ta_freshness_seconds`
 - `context_freshness_seconds`
 - `metrics_pipeline_lag_seconds`
@@ -193,6 +213,7 @@ All metrics must include:
 - `missing_signal_rate`
 
 ## Formula and window contract
+
 - Windows: `1m`, `5m`, `15m`, `1h`, `1d`, `5d`, `20d`.
 - Annualization factor must be window-aware and explicit in metadata.
 - Decimal precision:
@@ -204,21 +225,26 @@ All metrics must include:
 ## API Contract
 
 ### Snapshot
+
 - `GET /api/torghut/trading/control-plane/quant/snapshot?strategy_id=...&account=...&window=1d`
 - Returns latest metric frame + quality + active alerts.
 
 ### Time series
+
 - `GET /api/torghut/trading/control-plane/quant/series?strategy_id=...&metrics=net_pnl,sharpe_annualized&window=1d&from=...&to=...`
 - Returns aligned time-series points for charting.
 
 ### Alerts
+
 - `GET /api/torghut/trading/control-plane/quant/alerts?strategy_id=...&state=open`
 
 ### Health
+
 - `GET /api/torghut/trading/control-plane/quant/health`
 - Exposes ingestion lag, compute lag, and last successful frame by stage.
 
 ### Near-real-time stream
+
 - `GET /api/torghut/trading/control-plane/quant/stream?strategy_id=...&window=1d`
 - SSE event types:
   - `quant.metrics.snapshot`
@@ -230,26 +256,31 @@ All metrics must include:
 ## UI Contract (Jangar Control Plane)
 
 ### Dashboard A: Strategy Scoreboard
+
 - Net PnL, cumulative return, Sharpe, Sortino, max drawdown, profit factor.
 - Strategy and account filters.
 - Freshness badge per metric group.
 
 ### Dashboard B: Execution Quality (TCA)
+
 - Slippage and shortfall distributions.
 - Fill/reject/cancel rates and latency bands.
 - Adapter split (`alpaca` vs `lean`) when LEAN path enabled.
 
 ### Dashboard C: Exposure and Risk
+
 - Gross/net exposure, leverage, concentration, VaR/CVaR.
 - Intraday drawdown curve and drawdown duration.
 - Risk-limit breaches timeline.
 
 ### Dashboard D: Data/Pipeline Health
+
 - TA/context freshness.
 - Metrics pipeline lag and dropped frame counters.
 - End-to-end staleness (source -> control plane).
 
 ## Alert Policy (initial)
+
 - `max_drawdown_1d > policy.max_drawdown_1d` for 2 consecutive frames.
 - `sharpe_5d < policy.min_sharpe_5d` for 3 consecutive frames.
 - `slippage_bps_vs_mid_15m > policy.max_slippage_bps_15m`.
@@ -258,38 +289,48 @@ All metrics must include:
 - `ta_freshness_seconds > 120` during active strategies.
 
 Session-aware rule:
+
 - freshness alerts must be market-session aware to avoid paging on expected out-of-session inactivity.
 
 Alert payload fields:
+
 - `alert_id`, `strategy_id`, `severity`, `metric_name`, `window`, `threshold`, `observed`, `opened_at`, `state`.
 
 ## Implementation Plan
 
 ### Workstream 0: Data trust-chain and scrape path hardening (prerequisite)
+
 Owned areas:
+
 - `argocd/applications/jangar/deployment.yaml`
 - `services/jangar/src/server/torghut-trading-db.ts`
 - `services/jangar/server.ts`
 - `services/jangar/src/server/metrics.ts`
 
 Deliverables:
+
 - fix Torghut DB TLS trust path so `/api/torghut/trading/*` endpoints can read reliably from Jangar,
 - define explicit DSN/SSL contract for `TORGHUT_DB_DSN`,
 - make `/metrics` route reliably scrapeable on `agents-metrics`.
 
 ### Workstream A: Quant metric engine and storage
+
 Owned areas:
+
 - `services/jangar/src/server/torghut-quant-metrics.ts` (new)
 - `services/jangar/src/server/torghut-quant-metrics-store.ts` (new)
 - `services/jangar/src/server/migrations/20260212_torghut_quant_control_plane.ts` (new)
 
 Deliverables:
+
 - deterministic metric calculator with formula versioning,
 - windowed incremental recompute scheduler,
 - persistent latest + series stores.
 
 ### Workstream B: API and stream endpoints
+
 Owned areas:
+
 - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts` (new)
 - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/series.ts` (new)
 - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/alerts.ts` (new)
@@ -297,27 +338,34 @@ Owned areas:
 - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/stream.ts` (new)
 
 Deliverables:
+
 - schema-validated request params,
 - SSE stream with heartbeat and typed events,
 - explicit quality and freshness metadata in every response.
 
 ### Workstream C: Dashboard integration
+
 Owned areas:
+
 - `services/jangar/src/routes/control-plane/torghut/quant/index.tsx` (new)
 - `services/jangar/src/components/control-plane/torghut-quant/*.tsx` (new)
 
 Deliverables:
+
 - four dashboard views defined above,
 - filter state for strategy/account/window,
 - stale-data visual states and alert drill-down.
 
 ### Workstream D: GitOps and observability
+
 Owned areas:
+
 - `argocd/applications/jangar/deployment.yaml`
 - `argocd/applications/agents/values.yaml`
 - `charts/agents/templates/metrics-servicemonitor.yaml`
 
 Deliverables:
+
 - env flags for quant control plane,
 - scrape config and alerting rules,
 - rollout toggles and safe defaults.
@@ -325,6 +373,7 @@ Deliverables:
 ## Configuration Contract
 
 Required environment flags (initial):
+
 - `JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED=true`
 - `JANGAR_TORGHUT_QUANT_COMPUTE_INTERVAL_MS=1000`
 - `JANGAR_TORGHUT_QUANT_HEAVY_COMPUTE_INTERVAL_MS=30000`
@@ -332,22 +381,26 @@ Required environment flags (initial):
 - `JANGAR_TORGHUT_QUANT_MAX_STALENESS_SECONDS=15`
 
 Safety defaults:
+
 - disabled by default in production until dashboards and alerts are validated in paper mode.
 
 ## Validation Plan
 
 ### Functional
+
 - Unit tests for each metric formula (edge cases, no-data windows, decimal precision).
 - Integration tests for API contracts and SSE event sequence.
 - Replay tests using recorded execution/decision fixtures.
 
 ### Operational
+
 - Load test with 100+ symbols and 1s update cadence.
 - Verify p95 staleness SLO and stream continuity.
 - Chaos test: pause upstream feed and verify stale flags + alerts.
 - Verify session-aware suppression for feed freshness alerts outside trading session.
 
 Representative commands:
+
 ```bash
 bun run --filter jangar test -- src/server/__tests__/torghut-trading-pnl.test.ts
 bun run --filter jangar test -- src/server/__tests__/torghut-ta.test.ts
@@ -355,15 +408,18 @@ kubectl -n jangar logs deploy/jangar --tail=200 | rg "quant-control-plane|metric
 ```
 
 ## Rollout Strategy
+
 1. Phase 1: shadow compute only, no UI exposure.
 2. Phase 2: read-only UI + APIs for internal users.
 3. Phase 3: enable alerts and oncall paging.
 4. Phase 4: bind quant alerts to promotion gates.
 
 Rollback:
+
 - set `JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED=false` and revert GitOps manifests.
 
 ## Risks and Mitigations
+
 - Metric drift between Torghut and Jangar computations:
   - maintain shared fixtures and parity tests.
 - High-cardinality storage pressure:
@@ -372,6 +428,7 @@ Rollback:
   - separate data-quality alerts from strategy-quality alerts.
 
 ## AgentRun Handoff Bundle
+
 - `ImplementationSpec`: `jangar-quant-performance-control-plane-impl-v1`
 - Required keys:
   - `repository`

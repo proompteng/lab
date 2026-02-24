@@ -3,15 +3,15 @@ name: kubeconform
 on:
   pull_request:
     paths:
-      - "argocd/**/*.yaml"
-      - "scripts/kubeconform.sh"
-      - ".github/workflows/kubeconform.yml"
+      - 'argocd/**/*.yaml'
+      - 'scripts/kubeconform.sh'
+      - '.github/workflows/kubeconform.yml'
   push:
     branches:
       - main
     paths:
-      - "argocd/**/*.yaml"
-      - "scripts/kubeconform.sh"
+      - 'argocd/**/*.yaml'
+      - 'scripts/kubeconform.sh'
 
 jobs:
   validate:

@@ -178,8 +178,8 @@ jobs:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/jangar-rollback-${{ github.run_id }}-${{ github.run_attempt }}
           base: main
-          title: "rollback(jangar): revert failed promotion ${{ github.sha }}"
-          commit-message: "rollback(jangar): revert failed promotion ${{ github.sha }}"
+          title: 'rollback(jangar): revert failed promotion ${{ github.sha }}'
+          commit-message: 'rollback(jangar): revert failed promotion ${{ github.sha }}'
           delete-branch: true
           add-paths: |
             argocd/applications/jangar/kustomization.yaml

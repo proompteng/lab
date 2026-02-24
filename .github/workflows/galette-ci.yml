@@ -5,12 +5,12 @@ on:
     branches:
       - main
     paths:
-      - "services/galette/**"
-      - ".github/workflows/galette-ci.yml"
+      - 'services/galette/**'
+      - '.github/workflows/galette-ci.yml'
   pull_request:
     paths:
-      - "services/galette/**"
-      - ".github/workflows/galette-ci.yml"
+      - 'services/galette/**'
+      - '.github/workflows/galette-ci.yml'
 
 jobs:
   build-and-test:
@@ -22,7 +22,7 @@ jobs:
       - name: Set up Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
-          version: "0.15.1"
+          version: '0.15.1'
 
       - name: Build
         working-directory: services/galette

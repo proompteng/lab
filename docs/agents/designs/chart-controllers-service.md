@@ -3,8 +3,11 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The controllers Deployment is currently internal-only and has no Service. That is usually fine, but it complicates:
+
 - NetworkPolicy authoring (targeting stable endpoints)
 - Debug access to health endpoints (if provided)
 - Future webhook endpoints or internal RPC
@@ -12,13 +15,16 @@ The controllers Deployment is currently internal-only and has no Service. That i
 This doc proposes an optional Service for controllers with a conservative default (disabled).
 
 ## Goals
+
 - Provide an opt-in ClusterIP Service for `agents-controllers`.
 - Keep default behavior unchanged.
 
 ## Non-Goals
+
 - Exposing controllers publicly.
 
 ## Current State
+
 - Controllers Deployment exists when `controllers.enabled=true`: `charts/agents/templates/deployment-controllers.yaml`.
 - Services exist only for control plane HTTP and optional gRPC:
   - `charts/agents/templates/service.yaml`
@@ -26,31 +32,39 @@ This doc proposes an optional Service for controllers with a conservative defaul
 - No Service selects `agents.controllersSelectorLabels`.
 
 ## Design
+
 ### Proposed values
+
 Add:
+
 - `controllers.service.enabled` (default `false`)
 - `controllers.service.port` (default `8080` if controllers expose HTTP health)
 - `controllers.service.annotations` / `labels`
 
 ### Selector + ports
+
 - Selector MUST match `agents.controllersSelectorLabels`.
 - Port naming should align with container ports if present.
 
 ## Config Mapping
-| Helm value | Rendered object | Intended behavior |
-|---|---|---|
-| `controllers.service.enabled=false` | none | Current behavior. |
-| `controllers.service.enabled=true` | `Service/agents-controllers` | Stable in-cluster endpoint for debug/health as needed. |
+
+| Helm value                          | Rendered object              | Intended behavior                                      |
+| ----------------------------------- | ---------------------------- | ------------------------------------------------------ |
+| `controllers.service.enabled=false` | none                         | Current behavior.                                      |
+| `controllers.service.enabled=true`  | `Service/agents-controllers` | Stable in-cluster endpoint for debug/health as needed. |
 
 ## Rollout Plan
+
 1. Add values and template behind disabled default.
 2. Enable in non-prod to confirm selector and endpoints.
 3. Use as a dependency for any future controller webhooks or debug tooling.
 
 Rollback:
+
 - Disable `controllers.service.enabled`.
 
 ## Validation
+
 ```bash
 helm template agents charts/agents --set controllers.enabled=true --set controllers.service.enabled=true | rg -n \"kind: Service|agents-controllers\"
 kubectl -n agents get svc
@@ -58,19 +72,23 @@ kubectl -n agents get endpoints agents-controllers
 ```
 
 ## Failure Modes and Mitigations
+
 - Service selects wrong pods: mitigate with stable selector helpers and render tests.
 - Service unintentionally exposed via mesh or gateway defaults: mitigate by ClusterIP default and explicit docs.
 
 ## Acceptance Criteria
+
 - Enabling the value renders a Service selecting only controller pods.
 - Default install remains unchanged.
 
 ## References
+
 - Kubernetes Service type ClusterIP: https://kubernetes.io/docs/concepts/services-networking/service/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -85,7 +103,9 @@ kubectl -n agents get endpoints agents-controllers
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -118,13 +138,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -140,6 +163,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -152,6 +176,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

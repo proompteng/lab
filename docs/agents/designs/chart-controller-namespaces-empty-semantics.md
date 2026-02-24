@@ -3,18 +3,23 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 Controllers reconcile CRDs in a set of namespaces. The chart exposes `controller.namespaces`, but it is not documented what an empty list means (disabled? all namespaces? release namespace only?). Ambiguity here creates production risk.
 
 ## Goals
+
 - Define an explicit meaning for `controller.namespaces: []`.
 - Prevent accidental cluster-wide reconciliation in namespaced installs.
 - Make namespace scope observable and testable.
 
 ## Non-Goals
+
 - Redesigning multi-namespace support (covered separately).
 
 ## Current State
+
 - Values: `charts/agents/values.yaml` exposes `controller.namespaces: []`.
 - Template renders namespaces into env vars:
   - `JANGAR_AGENTS_CONTROLLER_NAMESPACES`: `charts/agents/templates/deployment-controllers.yaml`
@@ -25,49 +30,59 @@ Controllers reconcile CRDs in a set of namespaces. The chart exposes `controller
 - Cluster desired state sets `controller.namespaces: [agents]` in `argocd/applications/agents/values.yaml`.
 
 ## Design
+
 ### Semantics
+
 - `controller.namespaces` MUST be required when `rbac.clusterScoped=false`.
 - Empty list MUST mean “no namespaces configured” and controllers SHOULD refuse to start (fail-fast) to avoid a false sense of safety.
 - For `rbac.clusterScoped=true`, introduce an explicit value:
   - `controller.namespaces: [\"*\"]` to mean “all namespaces”, rather than interpreting empty as all.
 
 ## Config Mapping
-| Helm value | Env var | Intended behavior |
-|---|---|---|
-| `controller.namespaces: [\"agents\"]` | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"agents\"]` | Reconcile only `agents` namespace resources. |
-| `controller.namespaces: []` | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[]` (or unset) | Fail-fast at startup unless clusterScoped=true and explicit wildcard used. |
-| `controller.namespaces: [\"*\"]` | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"*\"]` | (When clusterScoped=true) reconcile all namespaces. |
+
+| Helm value                            | Env var                                             | Intended behavior                                                          |
+| ------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------- |
+| `controller.namespaces: [\"agents\"]` | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"agents\"]`  | Reconcile only `agents` namespace resources.                               |
+| `controller.namespaces: []`           | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[]` (or unset) | Fail-fast at startup unless clusterScoped=true and explicit wildcard used. |
+| `controller.namespaces: [\"*\"]`      | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"*\"]`       | (When clusterScoped=true) reconcile all namespaces.                        |
 
 ## Rollout Plan
+
 1. Document semantics and recommend non-empty namespaces for prod.
 2. Add controller startup validation in `services/jangar/src/server/*`:
    - If env var is empty/unset: exit with clear error.
 3. Add chart schema rule: when `controller.enabled=true`, require at least one namespace unless clusterScoped=true and wildcard is used.
 
 Rollback:
+
 - Disable fail-fast validation (code rollback).
 
 ## Validation
+
 ```bash
 mise exec helm@3 -- helm template agents charts/agents -f argocd/applications/agents/values.yaml | rg -n \"JANGAR_AGENTS_CONTROLLER_NAMESPACES\"
 kubectl -n agents logs deploy/agents-controllers | rg -n \"NAMESPACES|namespace\"
 ```
 
 ## Failure Modes and Mitigations
+
 - Empty list interpreted as “all namespaces” unexpectedly: mitigate by banning that interpretation.
 - Controllers start but do nothing due to empty scope: mitigate with fail-fast.
 - Wildcard scope used with namespaced RBAC: mitigate by schema validation and startup checks.
 
 ## Acceptance Criteria
+
 - Empty namespaces configuration is rejected with a clear, actionable error.
 - Wildcard all-namespaces requires explicit `\"*\"` and cluster-scoped RBAC.
 
 ## References
+
 - Kubernetes controller patterns (namespace scoping best practices): https://kubernetes.io/docs/concepts/architecture/controller/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -82,7 +97,9 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"NAMESPACES|namespace\
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -115,13 +132,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -137,6 +157,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -149,6 +170,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

@@ -1,20 +1,20 @@
 {
   "name": "@proompteng/cx-tools",
-  "private": true,
   "version": "0.0.0",
+  "private": true,
+  "bin": {
+    "cx-codex-run": "./dist/cx-codex-run.js",
+    "cx-workflow-cancel": "./dist/cx-workflow-cancel.js",
+    "cx-workflow-query": "./dist/cx-workflow-query.js",
+    "cx-workflow-signal": "./dist/cx-workflow-signal.js",
+    "cx-workflow-start": "./dist/cx-workflow-start.js"
+  },
   "type": "module",
   "scripts": {
     "build": "echo \"TODO(jng-010): build cx-tools binaries\"",
-    "lint": "biome lint --error-on-warnings || true",
+    "lint": "bun run lint:oxlint || true",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
-  },
-  "bin": {
-    "cx-codex-run": "./dist/cx-codex-run.js",
-    "cx-workflow-start": "./dist/cx-workflow-start.js",
-    "cx-workflow-signal": "./dist/cx-workflow-signal.js",
-    "cx-workflow-query": "./dist/cx-workflow-query.js",
-    "cx-workflow-cancel": "./dist/cx-workflow-cancel.js"
   },
   "devDependencies": {
     "bun-types": "^1.1.20",

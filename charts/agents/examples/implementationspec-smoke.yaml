@@ -6,5 +6,5 @@ spec:
   contract:
     requiredKeys:
       - task
-  summary: "Agents chart smoke workflow"
-  text: "Run the smoke workflow steps for the agents chart."
+  summary: 'Agents chart smoke workflow'
+  text: 'Run the smoke workflow steps for the agents chart.'

@@ -17,6 +17,7 @@ Jangar is the control plane for orchestration resources.
 ## CRDs
 
 ### Orchestration (definition)
+
 Defines the DAG, steps, and policies.
 
 ```yaml
@@ -33,7 +34,7 @@ spec:
       agentRef: codex-implementation
       with:
         repository: proompteng/lab
-        issueNumber: "1966"
+        issueNumber: '1966'
     - name: judge
       kind: AgentRun
       dependsOn: [implement]
@@ -58,6 +59,7 @@ spec:
 ```
 
 ### OrchestrationRun (execution)
+
 Executes a definition with concrete parameters and records status.
 
 ```yaml
@@ -71,7 +73,7 @@ spec:
     name: codex-autonomous
   parameters:
     repository: proompteng/lab
-    issueNumber: "1966"
+    issueNumber: '1966'
 ```
 
 ## Step model

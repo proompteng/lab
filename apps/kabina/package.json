@@ -2,9 +2,9 @@
   "name": "kabina",
   "version": "0.1.0",
   "private": true,
+  "author": "",
   "type": "module",
   "main": "dist-electron/main.js",
-  "author": "",
   "scripts": {
     "dev": "run-p dev:renderer dev:main",
     "dev:renderer": "vite --clearScreen false",

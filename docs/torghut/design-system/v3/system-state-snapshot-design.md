@@ -1,20 +1,25 @@
 # Torghut System Snapshot Design (Human Review)
 
 ## Purpose
+
 Define what a "system snapshot" means for Torghut, how to interpret it, and how to use it for operational decisions.
 
 This document is the design contract behind:
+
 - `current-state-snapshot-2026-02-12.md`
 - `system-state-assessment-runbook.md`
 
 ## Design Goals
+
 - Single-page operational truth for current state.
 - Clear separation between observed facts and interpretation.
 - Fast triage path from symptom to affected layer.
 - Human-review friendly structure with diagrams and explicit probes.
 
 ## Snapshot Model
+
 The snapshot is a four-plane model:
+
 - Control plane: orchestration and rollout state.
 - Compute plane: workload readiness and revisions.
 - Data plane: storage health, freshness, and throughput.
@@ -65,6 +70,7 @@ flowchart LR
 ```
 
 ## Assessment Workflow Design
+
 The workflow is intentionally staged so failures are localized quickly.
 
 ```mermaid
@@ -113,7 +119,9 @@ flowchart TD
 ```
 
 ## Data Contract for a Snapshot Artifact
+
 Each snapshot should capture:
+
 - Metadata:
   - capture window (UTC),
   - operator identity,
@@ -133,11 +141,13 @@ Each snapshot should capture:
   - universe consistency verification.
 
 ## Interpretation Rules
+
 - Snapshot facts are time-bound and must include exact UTC timestamps.
 - Any inferred conclusion must be explicitly labeled as interpretation.
 - If control plane availability is intermittent, confidence in all concurrent probes is reduced and must be noted.
 
 ## Review Checklist
+
 - Are all four planes represented?
 - Are timestamps explicit and recent?
 - Are probe commands reproducible?
@@ -145,6 +155,6 @@ Each snapshot should capture:
 - Are next actions mapped to concrete owners?
 
 ## Relationship to Existing v1/v3 Docs
+
 - v1 docs remain source of truth for component-level recovery runbooks.
 - This v3 design defines the operational "snapshot grammar" used to summarize current state quickly for human reviewers.
-

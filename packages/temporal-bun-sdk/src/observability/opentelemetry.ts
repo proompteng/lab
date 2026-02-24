@@ -229,11 +229,11 @@ const shouldEnableOpenTelemetry = (options: OpenTelemetryConfig): boolean => {
   }
   return Boolean(
     process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ||
-      process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ||
-      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ||
-      process.env.OTEL_SERVICE_NAME ||
-      process.env.LGTM_TEMPO_TRACES_ENDPOINT ||
-      process.env.LGTM_MIMIR_METRICS_ENDPOINT,
+    process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ||
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT ||
+    process.env.OTEL_SERVICE_NAME ||
+    process.env.LGTM_TEMPO_TRACES_ENDPOINT ||
+    process.env.LGTM_MIMIR_METRICS_ENDPOINT,
   )
 }
 

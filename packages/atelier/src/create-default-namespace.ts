@@ -388,10 +388,10 @@ async function ensurePortForward(options: PortForwardOptions): Promise<PortForwa
 async function buildTlsConfig(options: CliOptions): Promise<TLSConfig | undefined> {
   const needsTls = Boolean(
     options.tlsEnabled ||
-      options.caCertPath ||
-      options.clientCertPath ||
-      options.clientKeyPath ||
-      options.serverNameOverride,
+    options.caCertPath ||
+    options.clientCertPath ||
+    options.clientKeyPath ||
+    options.serverNameOverride,
   )
   if (!needsTls) {
     return undefined

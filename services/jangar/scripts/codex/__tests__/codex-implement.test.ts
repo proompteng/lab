@@ -266,7 +266,7 @@ describe('runCodexImplementation', () => {
     )
     await chmod(publishScriptPath, 0o755)
 
-    // Avoid `${...}` sequences directly in JS string literals (Biome false-positive),
+    // Avoid `${...}` sequences directly in JS string literals (lint false-positive),
     // while still generating a bash script that uses parameter expansion.
     const natsContextPathExpansion = '$' + '{NATS_CONTEXT_PATH:-}'
     const natsContextPathVariable = '$' + '{NATS_CONTEXT_PATH}'

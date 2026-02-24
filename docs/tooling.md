@@ -10,10 +10,10 @@ This guide consolidates the CLI and runtime tooling we keep standardised across 
   nvm install 24.11.1
   nvm alias default 24.11.1
   ```
-- **Bun** – Default package manager/runtime (1.3.x). Install from the official script documented on bun.sh:  
+- **Bun** – Default package manager/runtime (1.3.x). Install from the official script documented on bun.sh:
   ```bash
   curl -fsSL https://bun.sh/install | bash
-  ```  
+  ```
   (See [Bun installation docs](https://bun.sh/docs/installation) for platform notes.)
 
 ## OpenTofu / Terraform
@@ -30,10 +30,10 @@ This guide consolidates the CLI and runtime tooling we keep standardised across 
 
 ## Kubernetes Tooling
 
-- Install `kubectl` following the upstream guidance from [kubernetes.io](https://kubernetes.io/docs/tasks/tools/):  
+- Install `kubectl` following the upstream guidance from [kubernetes.io](https://kubernetes.io/docs/tasks/tools/):
   ```bash
   brew install kubectl
-  ```  
+  ```
   (Reference: [Kubernetes install guide](https://kubernetes.io/docs/tasks/tools/).)
 - Optional helpers:
   - `./kubernetes/install.sh` seeds the base manifests for local clusters.
@@ -42,37 +42,38 @@ This guide consolidates the CLI and runtime tooling we keep standardised across 
 ## Ansible
 
 Used for host bootstrap and configuration stored under `ansible/`. Install from Homebrew (or follow the [Ansible installation guide](https://docs.ansible.com/ansible/latest/installation_guide/installation_distros.html) for other OSes):
+
 ```bash
 brew install ansible
 ```
 
 ## PostgreSQL Client Utilities
 
-- macOS:  
+- macOS:
   ```bash
   brew install postgresql
   ```
-- Ubuntu:  
+- Ubuntu:
   ```bash
   sudo apt update && sudo apt install postgresql-client
   ```
-Check the main repository README for connection parameters and authentication requirements when targeting CloudNativePG clusters.
+  Check the main repository README for connection parameters and authentication requirements when targeting CloudNativePG clusters.
 
 ## Python Tooling
 
 We standardise on Python 3.12 for automation scripts.
 
-- pyenv installs via Homebrew per the [upstream instructions](https://github.com/pyenv/pyenv#installation):  
+- pyenv installs via Homebrew per the [upstream instructions](https://github.com/pyenv/pyenv#installation):
   ```bash
   brew install pyenv
   pyenv install 3.12.5
   ```
-- Install pipx to manage isolated CLI tools ([pipx docs](https://pipx.pypa.io/stable/installation/)):  
+- Install pipx to manage isolated CLI tools ([pipx docs](https://pipx.pypa.io/stable/installation/)):
   ```bash
   brew install pipx
   pipx ensurepath
   ```
-- Install Poetry (used by several helper scripts) via pipx ([Poetry install guide](https://python-poetry.org/docs/#installing-with-pipx)):  
+- Install Poetry (used by several helper scripts) via pipx ([Poetry install guide](https://python-poetry.org/docs/#installing-with-pipx)):
   ```bash
   pipx install poetry
   ```
@@ -80,6 +81,7 @@ We standardise on Python 3.12 for automation scripts.
 ## GitHub CLI
 
 Automation scripts under `scripts/` depend on `gh` for release management and PR operations. Install from Homebrew or the [official GitHub CLI installer](https://cli.github.com/manual/installation):
+
 ```bash
 brew install gh
 ```

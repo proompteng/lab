@@ -18,6 +18,7 @@ must pass through Jangar.
 ## CRDs
 
 ### Agent (claim)
+
 Namespace-scoped, app-facing. Describes intent and desired runtime.
 
 ```yaml
@@ -41,11 +42,12 @@ spec:
     natsEnabled: true
     kafkaCompletions: true
   resources:
-    cpu: "2"
-    memory: "4Gi"
+    cpu: '2'
+    memory: '4Gi'
 ```
 
 ### AgentRun (execution)
+
 Namespace-scoped execution record. One AgentRun maps to one runtime execution.
 
 ```yaml
@@ -67,6 +69,7 @@ spec:
 ```
 
 ### AgentProvider (CLI adapter)
+
 Defines how to invoke a provider’s CLI without baking provider-specific logic into workflows.
 
 AgentProvider is cluster-scoped at the composite level. The claim (`AgentProvider`) is namespaced
@@ -83,16 +86,16 @@ spec:
   argsTemplate:
     - exec
     - --repo
-    - "{{inputs.repository}}"
+    - '{{inputs.repository}}'
     - --base
-    - "{{inputs.base}}"
+    - '{{inputs.base}}'
     - --head
-    - "{{inputs.head}}"
+    - '{{inputs.head}}'
   envTemplate:
-    WORKFLOW_STAGE: "{{inputs.stage}}"
+    WORKFLOW_STAGE: '{{inputs.stage}}'
   inputFiles:
     - path: /workspace/agent/prompt.json
-      content: "{{payloads.promptJson}}"
+      content: '{{payloads.promptJson}}'
   outputArtifacts:
     - name: implementation-log
       path: /workspace/lab/.codex-implementation.log
@@ -101,6 +104,7 @@ spec:
 ## Unified entrypoint
 
 ### Requirement: `agent-runner`
+
 All runtimes must invoke a single entrypoint binary that applies the `AgentProvider` adapter and executes the
 provider CLI. This keeps the platform provider-agnostic.
 
@@ -109,6 +113,7 @@ provider CLI. This keeps the platform provider-agnostic.
 - Output: standard status + artifacts
 
 ### Runtime image requirements
+
 The unified entrypoint must exist in every runtime image used for agent execution.
 
 - Codex runtime image must include:

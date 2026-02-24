@@ -1,10 +1,13 @@
 # Torghut System Design (Consolidated)
 
 ## Status
+
 Legacy snapshot. Canonical production-facing design docs are `docs/torghut/design-system/README.md` (v1).
 
 ## Scope
+
 Torghut is a streaming market-data and technical-analysis (TA) system with a trading loop on top of ClickHouse-backed signals. It includes:
+
 - Alpaca WS ingestion and TA computation.
 - Persistent storage in ClickHouse.
 - Optional automated trading (paper by default, live gated).
@@ -14,6 +17,7 @@ Torghut is a streaming market-data and technical-analysis (TA) system with a tra
 The torghut main service does **not** consume TA topics directly; it reads TA data from ClickHouse.
 
 ## Goals
+
 - Low-latency TA signals with stable correctness guarantees.
 - Repeatable, auditable trading decisions and executions.
 - Safe-by-default controls for trading (paper first, live gated).
@@ -21,6 +25,7 @@ The torghut main service does **not** consume TA topics directly; it reads TA da
 - A future-proof design that can expand to multi-venue and LLM oversight.
 
 ## Non-goals
+
 - Multi-broker execution in the initial build.
 - LLM-only trading decisions without deterministic controls.
 - Unbounded data retention for signals and logs.
@@ -77,94 +82,118 @@ flowchart LR
 ```
 
 ## Core Data Flow
-1) **Alpaca WS** provides trades/quotes/bars. Alpaca limits most subscriptions to **one** WS connection per account and returns 406 on a second connection; the forwarder must be single-replica or otherwise enforce a single active connection. (Alpaca WS docs)
-2) **WS Forwarder** deduplicates and publishes to Kafka with idempotent producer settings.
-3) **Flink TA** consumes Kafka, computes microbars/signals, and emits TA topics plus status.
-4) **ClickHouse** stores TA outputs and is the authoritative source for trading signals and visualization.
-5) **Torghut Trading** polls ClickHouse, makes deterministic decisions, optionally applies LLM review, then executes via Alpaca Trading API.
-6) **Reconciler** compares Alpaca state and persists to Postgres.
-7) **Jangar** reads ClickHouse to visualize TA indicators and streams.
+
+1. **Alpaca WS** provides trades/quotes/bars. Alpaca limits most subscriptions to **one** WS connection per account and returns 406 on a second connection; the forwarder must be single-replica or otherwise enforce a single active connection. (Alpaca WS docs)
+2. **WS Forwarder** deduplicates and publishes to Kafka with idempotent producer settings.
+3. **Flink TA** consumes Kafka, computes microbars/signals, and emits TA topics plus status.
+4. **ClickHouse** stores TA outputs and is the authoritative source for trading signals and visualization.
+5. **Torghut Trading** polls ClickHouse, makes deterministic decisions, optionally applies LLM review, then executes via Alpaca Trading API.
+6. **Reconciler** compares Alpaca state and persists to Postgres.
+7. **Jangar** reads ClickHouse to visualize TA indicators and streams.
 
 ## Reliability and Consistency Guarantees
+
 ### Flink Checkpointing
+
 Flink checkpoints provide exactly-once semantics when configured with durable storage and connectors that support transactional semantics. Production guidance:
+
 - Enable checkpointing and store checkpoints in durable storage (S3/MinIO). (Flink docs)
 - Use exactly-once checkpoints for TA pipelines. (Flink docs)
 - Savepoints are the primary tool for upgrades and migrations. (Flink docs)
 
 ### Kafka Retention and Compaction
+
 Kafka topics should use retention policies that match data semantics:
+
 - `cleanup.policy=delete` for time-series events (trades/quotes/bars). (Kafka topic configs)
 - `cleanup.policy=compact,delete` for status topics to retain latest status while limiting growth. (Kafka configs + compaction docs)
 - `retention.ms` defines the max time data is kept before deletion. (Kafka configs)
-Schema evolution should follow compatibility rules (backward/forward/full) enforced in CI via schema registry checks. (Schema Registry compatibility)
+  Schema evolution should follow compatibility rules (backward/forward/full) enforced in CI via schema registry checks. (Schema Registry compatibility)
 
 ### ClickHouse Retention
+
 Use TTLs to control growth and avoid full-disk incidents:
+
 - Table-level TTLs remove data during merges; TTLs are not immediate and are applied on merge schedules. (ClickHouse TTL docs)
 - Prefer `ttl_only_drop_parts=1` and partition by the TTL unit to avoid costly row-level mutations. (ClickHouse TTL docs)
 - Avoid overly granular partitions; ClickHouse recommends partitioning no more granular than month in most cases. (ClickHouse MergeTree docs)
 
 ### Replica Recovery
+
 If replication metadata is lost, ClickHouse replicas can be restored using `SYSTEM RESTORE REPLICA`. (Altinity guidance)
 
 ## Failure Scenarios and Recovery (Operational)
+
 ### Alpaca WS Forwarder
+
 - **Symptom:** 401/403 auth failures or 406 connection limit.
 - **Detection:** readiness fails; logs show auth or 406.
 - **Recovery:** verify one replica, rotate keys, restart forwarder, confirm status topic emits `healthy`.
 
 ### Kafka Produce/Consume
+
 - **Symptom:** produce errors, consumer lag spikes.
 - **Detection:** readiness false on forwarder, Flink lag metrics, broker errors in logs.
 - **Recovery:** verify KafkaUser/SASL secrets, broker health, restart clients after fix.
 
 ### Flink Checkpoint Stall
+
 - **Symptom:** checkpoint age increases; job still running but lag grows.
 - **Detection:** watermark/lag dashboards, checkpoint age alert.
 - **Recovery:** verify MinIO/S3 access, restart FlinkDeployment with last-state or savepoint.
 
 ### ClickHouse Disk/Replica Issues
+
 - **Symptom:** inserts fail, replicas read-only, increasing queue.
 - **Detection:** ClickHouse logs, `SYSTEM REPLICA STATUS`, disk alerts.
 - **Recovery:** free space (TTL/retention), restore replicas, ensure keeper metadata present.
 
 ### Trading Loop Failures
+
 - **Symptom:** no decisions/executions, reconcile lag.
 - **Detection:** `/trading/health` and decision lag metrics.
 - **Recovery:** validate ClickHouse connectivity, Alpaca API keys, and restart torghut service.
 
 ### Jangar Visualization
+
 - **Symptom:** empty charts or errors for TA endpoints.
 - **Detection:** `/api/torghut/ta/latest` returns error or stale data.
 - **Recovery:** verify ClickHouse DB config and API query errors; ensure `CH_DATABASE=torghut`.
 
 ## Trading Loop Design (ClickHouse-first)
+
 - **Signal source:** ClickHouse `ta_signals`.
 - **Decision pipeline:** deterministic decision -> optional LLM review -> risk checks -> order execution -> reconciliation.
 - **Idempotency:** decision hash (strategy_id + symbol + event_ts + action + params) stored as unique key.
 - **Execution gating:** paper by default; live requires explicit enablement flags.
 
 ## LLM Intelligence Layer (Optional)
+
 The intelligence layer evaluates deterministic decisions and can veto or adjust within strict bounds. It is advisory and cannot bypass risk gates. The design aligns to:
+
 - NIST AI RMF (govern/map/measure/manage). (NIST AI RMF)
 - NIST AI RMF Playbook for actionable operationalization. (NIST AI RMF Playbook)
 - OWASP LLM Top 10 for app security risks (prompt injection, output handling, overreliance). (OWASP LLM Top 10)
 - Federal Reserve SR 11-7 model risk management principles (inventory, validation, effective challenge). (SR 11-7)
 
 ## Observability and Tracing
+
 - Use structured logs and OpenTelemetry semantic conventions for Kafka messaging (producer/consumer spans, messaging attributes). (OpenTelemetry Kafka semconv)
 - Avoid high-cardinality labels in Loki; keep labels bounded and store dynamic fields as log content or structured metadata. (Loki label cardinality best practices)
 
 ## Interfaces and APIs (Proposed)
+
 ### Torghut Trading API
+
 - `GET /trading/status` -> current mode, enabled flags, last decision timestamp.
 - `GET /trading/health` -> dependency readiness (Alpaca, ClickHouse, Postgres).
 - `GET /trading/decisions?symbol=&since=` -> decisions audit trail.
 - `GET /trading/executions?symbol=&since=` -> executions and reconciliation state.
 
 ### Example Trading API Shapes
+
 `GET /trading/status`:
+
 ```json
 {
   "enabled": false,
@@ -175,6 +204,7 @@ The intelligence layer evaluates deterministic decisions and can veto or adjust 
 ```
 
 `GET /trading/health`:
+
 ```json
 {
   "clickhouse": "ok",
@@ -185,43 +215,53 @@ The intelligence layer evaluates deterministic decisions and can veto or adjust 
 ```
 
 ### Jangar TA API (Current)
+
 - `GET /api/torghut/ta/bars?symbol=&from=&to=` -> microbars.
 - `GET /api/torghut/ta/signals?symbol=&from=&to=` -> indicators/signals.
 - `GET /api/torghut/ta/latest?symbol=` -> last signal timestamp + lag.
 
 ## Kubernetes Readiness/Liveness
+
 - Readiness probes remove pods from service endpoints without killing them, enabling safe backpressure and dependency warm-up. (Kubernetes probes docs)
 - Startup probes prevent premature restarts for slow-starting services. (Kubernetes probes docs)
 
 ## Autoscaling Considerations
+
 - Knative concurrency settings control per-revision request limits. Hard limits use `containerConcurrency`; soft limits use autoscaler metrics/targets. (Knative concurrency docs)
 - Autoscaling must be constrained for the Alpaca WS forwarder to enforce single-connection rules.
 
 ## Network Policy
+
 - NetworkPolicy supports ingress/egress isolation with `podSelector`, `policyTypes`, and explicit `ingress`/`egress` rules. (Kubernetes NetworkPolicy docs)
 
 ## Security and Secrets
+
 - Kafka auth via SASL/SCRAM; prefer TLS when feasible.
 - Secrets stored in Kubernetes Secrets or SealedSecrets; rotation documented in runbooks.
 - Avoid logging credentials; ensure log redaction.
 
 ## Data Models (Summary)
+
 ### ClickHouse
+
 - `ta_microbars`: computed bars keyed by `(symbol, event_ts, seq)` with `DateTime64(3, 'UTC')` timestamps.
 - `ta_signals`: indicators and strategy outputs keyed by `(symbol, event_ts, seq)` with `DateTime64(3, 'UTC')`.
 
 Trading ingestion queries ClickHouse based on `TRADING_SIGNAL_SCHEMA`:
+
 - `auto` (default): inspect columns and choose envelope (`event_ts`) or flat (`ts`).
 - `envelope`: select only envelope columns (`event_ts`, `ingest_ts`, `symbol`, `payload`, `window`, `seq`, `source`).
 - `flat`: select only flat columns (`ts`, `symbol`, `macd`, `macd_signal`, `signal`, `rsi`, `rsi14`, `ema`, `vwap`,
   `signal_json`, `timeframe`, `price`, `close`, `spread`).
 
 ### Postgres
+
 - `trade_decisions`: decision_hash unique, decision metadata, timestamps.
 - `executions`: Alpaca order ids, state transitions, reconciliation timestamps.
 - `llm_decision_reviews`: model/prompt metadata and verdicts.
 
 ### Example DDL (ClickHouse)
+
 ```sql
 CREATE TABLE torghut.ta_microbars (
   symbol LowCardinality(String),
@@ -287,6 +327,7 @@ SETTINGS index_granularity = 8192;
 ```
 
 ### Backward-compatible flat view (optional)
+
 If you must preserve a flat consumer (ts/macd/rsi/etc), create a view that projects
 the envelope payload into columns and alias `event_ts` to `ts`.
 
@@ -303,6 +344,7 @@ FROM torghut.ta_signals;
 ```
 
 ### Example DDL (Postgres)
+
 ```sql
 CREATE TABLE trade_decisions (
   id uuid PRIMARY KEY,
@@ -328,6 +370,7 @@ CREATE INDEX trade_decisions_symbol_created_at_idx
 ```
 
 ## Backtesting and Promotion Gates
+
 - Maintain a reproducible backtest harness that replays ClickHouse data windows.
 - Require strategy changes to pass a baseline of metrics before paper enablement.
 - Shadow mode: log LLM decisions without affecting execution and compare against deterministic outcomes.
@@ -338,15 +381,18 @@ CREATE INDEX trade_decisions_symbol_created_at_idx
   - human review sign-off for model/prompt changes.
 
 ## SLOs and SLIs (Proposed)
+
 - **TA end-to-end latency p95:** 500ms target (WS -> CH).
 - **Flink checkpoint age:** <2x checkpoint interval.
 - **Trading decision lag:** <2x poll interval.
 - **Jangar API latency p95:** <200ms for cached TA queries.
 
 ## Ingest Lag Findings (2026-02-19, Interim Merge)
+
 This section captures a point-in-time production check and merges current findings into one operational view.
 
 ### Snapshot (2026-02-19 14:16 UTC)
+
 - Cluster context: `galactic`.
 - `flinkdeployment/torghut-ta` status: `RUNNING/STABLE`.
 - Latest observed `torghut.ta_signals` row at check time:
@@ -356,20 +402,25 @@ This section captures a point-in-time production check and merges current findin
 - Freshness at read time was about `19s` (`now - ingest_ts`), but event-to-ingest delay was `272s` for the latest row.
 
 ### Findings
-1) Data flow is active, but staleness is material.
+
+1. Data flow is active, but staleness is material.
+
 - Stream is not fully down; new rows continue to land in `ta_microbars`/`ta_signals`.
 - Recent sampled `ta_signals` rows showed `dateDiff(event_ts, ingest_ts)` in the `22s` to `494s` range.
 
-2) Continuity watchdog is firing repeatedly.
+2. Continuity watchdog is firing repeatedly.
+
 - `torghut` service logs repeatedly emitted `Signal continuity alert` with `reason=cursor_tail_stable`.
 - Observed `lag_seconds` commonly around `180-233s`, with bursts above `280s`.
 
-3) WS symbol-source dependency had transient failures.
+3. WS symbol-source dependency had transient failures.
+
 - `torghut-ws` logged `desired symbols fetch failed` with `Connection refused` against
   `http://jangar.jangar.svc.cluster.local/api/torghut/symbols` (observed around `2026-02-19 14:11 UTC`).
 - Forwarder behavior was fail-soft: it reused cached symbols and continued producing Kafka records.
 
-4) GitOps drift exists even while app health is green.
+4. GitOps drift exists even while app health is green.
+
 - Argo CD app `torghut` reported `Healthy` and `OutOfSync`.
 - Out-of-sync resources observed:
   - `ConfigMap/torghut-autonomy-config`
@@ -377,6 +428,7 @@ This section captures a point-in-time production check and merges current findin
   - `Service/torghut` (Knative Service)
 
 ### Interim Merged Diagnosis (For Now)
+
 - This is a degraded-latency condition, not a hard outage.
 - Primary user-facing issue is stale trading/indicator context (`event_ts` trails `ingest_ts` by minutes).
 - Most likely combined contributors are:
@@ -386,12 +438,14 @@ This section captures a point-in-time production check and merges current findin
 - Next diagnostic step should trace end-to-end lag budget across `torghut-ws -> Kafka -> Flink TA -> ClickHouse -> torghut continuity checks`.
 
 ### Immediate Follow-ups
+
 - Add first-class SLI for `dateDiff(event_ts, ingest_ts)` on `ta_signals` (`p50/p95/p99`).
 - Alert on continuity counters (`consecutive_no_signal`) alongside lag.
 - Add explicit metrics/log fields for symbol-poll fallback mode and cache age in `torghut-ws`.
 - Resolve Argo `OutOfSync` drift items to keep runtime and manifests aligned.
 
 ## Known Gaps / Future Work
+
 - Full disaster recovery runbook for Kafka + ClickHouse + Flink.
 - CI checks that validate schema compatibility rules for TA schemas.
 - Backtesting harness implementation with data replay automation and report generation.
@@ -400,11 +454,13 @@ This section captures a point-in-time production check and merges current findin
 - LLM shadow evaluation dashboards and automated veto-precision metrics.
 
 ## Roadmap (Future)
+
 - Finalize ClickHouse TTLs, add schema validation in CI, define explicit DDL migrations, and tighten runbooks for ClickHouse and Flink recovery.
 - Complete trading loop, add shadow-mode evaluation, and introduce decision review dashboards with policy-driven overrides.
 - Multi-broker execution, portfolio-level risk, advanced anomaly detection on signals, and LLM co-pilot for strategy maintenance.
 
 ## Related Docs
+
 - Streaming architecture: `docs/torghut/architecture.md`
 - Automated trading (one-shot execution): `docs/torghut/automated-trading.md`
 - LLM intelligence layer: `docs/torghut/llm-intelligence-layer.md`
@@ -414,6 +470,7 @@ This section captures a point-in-time production check and merges current findin
 - Ops recovery note: `docs/torghut/ops-2026-01-01-ta-recovery.md`
 
 ## References (research)
+
 - Alpaca WS connection limits: https://docs.alpaca.markets/docs/streaming-market-data
 - Kafka topic configs (cleanup.policy, retention.ms): https://kafka.apache.org/41/configuration/topic-configs/
 - Kafka retention.ms details: https://kafka.apache.org/41/configuration/topic-configs/

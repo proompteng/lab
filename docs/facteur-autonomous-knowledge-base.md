@@ -1,10 +1,12 @@
 # Facteur Autonomous Knowledge Base (2025-10-30)
 
 ## Purpose
+
 - Provide a single, self-improving knowledge base (KB) that captures every autonomous run, reflection, artifact, and outcome.
 - Ensure each new automation cycle both **reads from** and **contributes to** the KB, improving accuracy, latency, and reliability over time.
 
 ## Key Design Principles
+
 1. **Unified ingestion** – All structured payloads from Froussard webhooks, orchestrated tasks, and downstream workflows flow into the KB automatically.
 2. **Reflection-driven learning** – Store agent reflections with vector search to enable Self-RAG style retrieval of lessons before new runs.[^self-rag]
 3. **Router feedback** – Log when retrieval is skipped or invoked so Self-Routing RAG models reduce redundant queries while protecting quality.[^self-routing]
@@ -35,6 +37,7 @@ flowchart TD
 ```
 
 ## Data Model Integration
+
 - **ideas / tasks / task_runs** provide the relational spine for orchestration status.
 - **reflections** (vector-enabled) record critiques, postmortems, and rationales tied to each `task_run_id`.
 - **artifacts** maintain URIs for plan PDFs, diffs, logs, SSFO preference pairs, and router decision logs.
@@ -43,6 +46,7 @@ flowchart TD
 - **run_metrics** surfaces latency/throughput/SLO performance for continuous monitoring.
 
 ## End-to-End Lifecycle
+
 1. **Ingest** – Froussard sends normalized issue payload → Facteur stores in `ideas`; tasks created per stage.
 2. **Execute** – Orchestrator dispatches stage-specific workflow; results tracked in `task_runs` + `run_events`. (Implementation is now orchestrator-only; legacy direct dispatch removed and Knative Service is cluster-local with Tailscale-only access.)
 3. **Reflect** – Each agent produces a reflection (success/failure rationale, improvement ideas) saved in `reflections` with embeddings.
@@ -55,6 +59,7 @@ flowchart TD
 7. **Continuous Monitoring** – Synthetic anomaly generation + real incidents feed detectors; results logged in `policy_checks` and drive retraining per quarter.[^swift-hydra]
 
 ## Self-Learning Loops
+
 - **Reflection Retrieval (D1)**: Query `reflections` for top-N similar past lessons, append to prompts, and log reuse in `run_events`.
 - **Router Feedback (D2)**: Capture router decisions in `policy_checks` and retrain router weights with accumulated telemetry.
 - **Faithfulness (D3)**: Build `artifacts` entries for SSFO preference pairs, run DPO fine-tuning nightly, and publish metrics in `run_metrics`.
@@ -63,6 +68,7 @@ flowchart TD
 - **Retrieval Reinforcement (D6)**: Store re-ranker keep/drop decisions in `artifacts` and feed back into scoring models alongside SSFO results.
 
 ### Reflection Persistence & Validation
+
 - Apply goose migration `000003_reflection_idempotency.sql` after deduping any conflicting rows; it adds `updated_at` and enforces `UNIQUE (task_run_id, reflection_type)` so repeated saves stay idempotent. Run `go run ./cmd/facteur migrate --config config/example.yaml` in each environment before enabling the store.
 - Save operations update `updated_at` on conflict and emit `facteur_reflections_saved_total`; retrieval increments `facteur_reflections_retrieved_total` so observability dashboards can track usage.
 - Retrieval callers may raise recall by issuing `SET LOCAL ivfflat.probes = <n>` inside the session before querying. Start with 10 in staging, 20 in production hot paths, and reset to defaults after the transaction when not needed.
@@ -70,6 +76,7 @@ flowchart TD
 - Manual spot check: `psql "$FACTEUR_POSTGRES_DSN" -c "SELECT task_run_id, reflection_type, content FROM codex_kb.reflections ORDER BY embedding <-> (SELECT embedding FROM codex_kb.reflections WHERE task_run_id = '<seed-run>' LIMIT 1) LIMIT 3;"` verifies cosine ordering against a known seed reflection.
 
 ## Implementation Roadmap
+
 1. **Phase 0** – Baseline schema cleanup (complete).
 2. **Phase 1** – Create `reflections` table, expand orchestrator to log router decisions, and persist SSFO artifacts.
 3. **Phase 2** – Implement nightly SSFO pipeline, monthly router retraining, and REFINE-based embedding updates.
@@ -77,6 +84,7 @@ flowchart TD
 5. **Phase 4** – Establish automated evaluators (faithfulness, relevance, anomaly precision) with dashboards fed by `run_metrics`.
 
 ## Operational Guardrails
+
 - **Index maintenance**: monitor reflection corpus size; rebuild IVFFlat indexes when growth >4× or drift detected.[^pgvector-guidelines]
 - **Idempotent intake**: reuse `delivery_id` when retrying Codex deliveries—`codex_kb.task_runs.delivery_id` is unique and replay-safe (`ON CONFLICT (delivery_id) DO UPDATE`).
 - **Quality gates**: require faithfulness delta ≥0 and retrieval relevance improvement before promoting new models.
@@ -84,9 +92,15 @@ flowchart TD
 - **Access**: Facteur service account owns writes; analytics roles granted read-only to history tables.
 
 ## References
+
 [^self-rag]: [Self-RAG: Self-Reflective Retrieval-Augmented Generation](https://selfrag.github.io/)
+
 [^self-routing]: [Self-Routing RAG](https://arxiv.org/abs/2504.01018)
+
 [^ssfo]: [Self-Supervised Faithfulness Optimization](https://arxiv.org/abs/2508.17225)
+
 [^refine]: [REFINE: Fused Embeddings for Retrieval](https://arxiv.org/abs/2410.12890)
+
 [^pgvector-guidelines]: [pgvector Documentation – IVFFlat Index Guidelines](https://access.crunchydata.com/documentation/pgvector/0.5.1/)
+
 [^swift-hydra]: [Swift-Hydra: Safe RL for Autonomous Driving](https://arxiv.org/abs/2503.06413)

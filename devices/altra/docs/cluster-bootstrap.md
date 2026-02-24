@@ -4,16 +4,19 @@ This runbook installs Talos on the `altra` node and joins it to the existing clu
 (`ryzen` cluster name, kubeconfig context `galactic`).
 
 Goals:
+
 - `altra` is installed to NVMe and joins the existing control plane/etcd.
 - Kubernetes API stays reachable via the NUC HAProxy endpoint: `https://nuc:6443` (also `https://192.168.1.130:6443`)
 - `kubectl` continues to work by default with context name `galactic`
 
 Assumptions:
+
 - `ryzen` and `ampone` are already running Talos and form a working cluster.
 - `altra` boots Talos in maintenance mode (ISO/USB/PXE) and has an IP on the LAN.
 - The NUC (`kalmyk@192.168.1.130`) can run HAProxy (Docker).
 
 Current inventory:
+
 - `ryzen`: `192.168.1.194`
 - `ampone`: `192.168.1.203`
 - `altra`: `192.168.1.85`
@@ -21,12 +24,15 @@ Current inventory:
 ## 0) Ensure the NUC load balancer includes `altra`
 
 Follow:
+
 - `devices/nuc/k8s-api-lb/README.md`
 
 This should create a stable endpoint on the LAN:
+
 - `nuc:6443` (also `192.168.1.130:6443`, TCP passthrough to control planes on `:6443`)
 
 Reminder:
+
 - Adding a new control plane requires:
   - adding it to the NUC HAProxy backends, and
   - adding its IP to `cluster.apiServer.certSANs` on the existing control planes
@@ -35,6 +41,7 @@ Reminder:
 ## 1) Generate join configs for `altra` (gitignored)
 
 These files are intentionally gitignored:
+
 - `devices/altra/controlplane.yaml`
 - `devices/altra/talosconfig`
 
@@ -79,11 +86,12 @@ talosctl apply-config --insecure -n "$ALTRA_IP" -e "$ALTRA_IP" \
 ```
 
 Note:
+
 - The IP can change after reboot/install (DHCP). Use console/KVM to confirm the
   post-install IP if `talosctl` can’t connect.
- - `devices/altra/manifests/vfio-modules.patch.yaml` is required for KubeVirt GPU
-   passthrough on Talos (it preloads `vfio_pci` so the GPU Operator VFIO manager
-   can bind the GPU without `modprobe` privileges).
+- `devices/altra/manifests/vfio-modules.patch.yaml` is required for KubeVirt GPU
+  passthrough on Talos (it preloads `vfio_pci` so the GPU Operator VFIO manager
+  can bind the GPU without `modprobe` privileges).
 
 ## 3) Update local Talos config to include all 3 nodes
 

@@ -10,31 +10,31 @@ Configuration can be supplied via YAML or environment variables prefixed with `F
 
 ### Required fields
 
-| Path | Env var | Description |
-| --- | --- | --- |
-| `discord.bot_token` | `FACTEUR_DISCORD_BOT_TOKEN` | Discord bot token used for interactions API calls. |
-| `discord.application_id` | `FACTEUR_DISCORD_APPLICATION_ID` | Discord application identifier for validating interaction payloads. |
-| `redis.url` | `FACTEUR_REDIS_URL` | Redis connection string (e.g. `redis://host:6379/0`) for session storage. |
-| `postgres.dsn` | `FACTEUR_POSTGRES_DSN` | Postgres connection string for Facteur-managed schema migrations and application state. |
-| `argo.namespace` | `FACTEUR_ARGO_NAMESPACE` | Kubernetes namespace containing the Argo Workflows controller (see the [Argo Workflows install docs](https://argo-workflows.readthedocs.io/en/stable/getting-started/)). |
-| `argo.workflow_template` | `FACTEUR_ARGO_WORKFLOW_TEMPLATE` | WorkflowTemplate name to clone when dispatching workflows. |
+| Path                     | Env var                          | Description                                                                                                                                                              |
+| ------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `discord.bot_token`      | `FACTEUR_DISCORD_BOT_TOKEN`      | Discord bot token used for interactions API calls.                                                                                                                       |
+| `discord.application_id` | `FACTEUR_DISCORD_APPLICATION_ID` | Discord application identifier for validating interaction payloads.                                                                                                      |
+| `redis.url`              | `FACTEUR_REDIS_URL`              | Redis connection string (e.g. `redis://host:6379/0`) for session storage.                                                                                                |
+| `postgres.dsn`           | `FACTEUR_POSTGRES_DSN`           | Postgres connection string for Facteur-managed schema migrations and application state.                                                                                  |
+| `argo.namespace`         | `FACTEUR_ARGO_NAMESPACE`         | Kubernetes namespace containing the Argo Workflows controller (see the [Argo Workflows install docs](https://argo-workflows.readthedocs.io/en/stable/getting-started/)). |
+| `argo.workflow_template` | `FACTEUR_ARGO_WORKFLOW_TEMPLATE` | WorkflowTemplate name to clone when dispatching workflows.                                                                                                               |
 
 ### Optional fields
 
-| Path | Env var | Description |
-| --- | --- | --- |
-| `discord.public_key` | `FACTEUR_DISCORD_PUBLIC_KEY` | Discord public key for signature verification. |
-| `discord.guild_id` | `FACTEUR_DISCORD_GUILD_ID` | Guild identifier used for scoping role checks. |
-| `argo.service_account` | `FACTEUR_ARGO_SERVICE_ACCOUNT` | Service account name supplied to workflow submissions (defaults to controller value). |
-| `argo.parameters` | `FACTEUR_ARGO_PARAMETERS` | Key/value overrides applied to every workflow submission. Expect a JSON object when sourced from env vars. |
-| `role_map` | `FACTEUR_ROLE_MAP` | Mapping of command names to the Discord role IDs that can invoke them. See [role map schema](../schemas/facteur-discord-role-map.schema.json).
-| `codex_dispatch.planning_enabled` | `FACTEUR_CODEX_DISPATCH_PLANNING_ENABLED` | Feature flag guarding Codex planning dispatch. Keep `false` until codex_kb ingestion (#1635) and dispatch plumbing (#1636) land, then flip during the rollout playbook. |
-| `codex_dispatch.payload_overrides` | `FACTEUR_CODEX_DISPATCH_PAYLOAD_OVERRIDES` | Optional map merged into the planning payload before Argo submission (values parsed as JSON when possible). |
-| `codex_listener.enabled` | `FACTEUR_CODEX_LISTENER_ENABLED` | Set to `true` to stream the structured Codex task topic for debugging (
-`facteur codex-listen`). |
-| `codex_listener.brokers` | `FACTEUR_CODEX_LISTENER_BROKERS` | Comma-separated Kafka bootstrap brokers used by the listener. |
-| `codex_listener.topic` | `FACTEUR_CODEX_LISTENER_TOPIC` | Structured Codex task topic (default `github.issues.codex.tasks`). |
-| `codex_listener.group_id` | `FACTEUR_CODEX_LISTENER_GROUP_ID` | Kafka consumer group name for the listener (defaults to `facteur-codex-listener`). |
+| Path                               | Env var                                    | Description                                                                                                                                                             |
+| ---------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `discord.public_key`               | `FACTEUR_DISCORD_PUBLIC_KEY`               | Discord public key for signature verification.                                                                                                                          |
+| `discord.guild_id`                 | `FACTEUR_DISCORD_GUILD_ID`                 | Guild identifier used for scoping role checks.                                                                                                                          |
+| `argo.service_account`             | `FACTEUR_ARGO_SERVICE_ACCOUNT`             | Service account name supplied to workflow submissions (defaults to controller value).                                                                                   |
+| `argo.parameters`                  | `FACTEUR_ARGO_PARAMETERS`                  | Key/value overrides applied to every workflow submission. Expect a JSON object when sourced from env vars.                                                              |
+| `role_map`                         | `FACTEUR_ROLE_MAP`                         | Mapping of command names to the Discord role IDs that can invoke them. See [role map schema](../schemas/facteur-discord-role-map.schema.json).                          |
+| `codex_dispatch.planning_enabled`  | `FACTEUR_CODEX_DISPATCH_PLANNING_ENABLED`  | Feature flag guarding Codex planning dispatch. Keep `false` until codex_kb ingestion (#1635) and dispatch plumbing (#1636) land, then flip during the rollout playbook. |
+| `codex_dispatch.payload_overrides` | `FACTEUR_CODEX_DISPATCH_PAYLOAD_OVERRIDES` | Optional map merged into the planning payload before Argo submission (values parsed as JSON when possible).                                                             |
+| `codex_listener.enabled`           | `FACTEUR_CODEX_LISTENER_ENABLED`           | Set to `true` to stream the structured Codex task topic for debugging (                                                                                                 |
+| `facteur codex-listen`).           |
+| `codex_listener.brokers`           | `FACTEUR_CODEX_LISTENER_BROKERS`           | Comma-separated Kafka bootstrap brokers used by the listener.                                                                                                           |
+| `codex_listener.topic`             | `FACTEUR_CODEX_LISTENER_TOPIC`             | Structured Codex task topic (default `github.issues.codex.tasks`).                                                                                                      |
+| `codex_listener.group_id`          | `FACTEUR_CODEX_LISTENER_GROUP_ID`          | Kafka consumer group name for the listener (defaults to `facteur-codex-listener`).                                                                                      |
 
 The sample at `services/facteur/config/example.yaml` includes the `codex_dispatch` defaults so operators can see the disabled state before rollout. Coordinate with the planning handoff playbook prior to enabling the flag.
 
@@ -90,11 +90,11 @@ Future changes to the embedding dimensionality will require `ALTER TABLE codex_k
 
 The first public cut will ship three Discord slash commands that map to the existing workflow submission bridge. All commands run against the configured `argo.workflow_template`; the dispatcher injects an `action` parameter that mirrors the command name, and the Discord option names become workflow parameters after merging with static defaults defined under `argo.parameters`. The dispatcher still prefixes workflow names with the command that was invoked so we can trace intent in Argo.
 
-| Command | Primary goal | Required options | Optional options | Workflow parameters |
-| --- | --- | --- | --- | --- |
-| `/plan` | Shape upcoming work and capture acceptance checkpoints. | `objective` | `project` | `action=plan`, `project`, `objective` |
-| `/implement` | Kick off execution for an approved plan. | `project`, `branch` | `ticket`, `notes` | `action=implement`, `project`, `branch`, `ticket`, `notes` |
-| `/review` | Collect artefacts for async review and notify approvers. | `project`, `artifact` | `notes`, `deadline` | `action=review`, `project`, `artifact`, `notes`, `deadline` |
+| Command      | Primary goal                                             | Required options      | Optional options    | Workflow parameters                                         |
+| ------------ | -------------------------------------------------------- | --------------------- | ------------------- | ----------------------------------------------------------- |
+| `/plan`      | Shape upcoming work and capture acceptance checkpoints.  | `objective`           | `project`           | `action=plan`, `project`, `objective`                       |
+| `/implement` | Kick off execution for an approved plan.                 | `project`, `branch`   | `ticket`, `notes`   | `action=implement`, `project`, `branch`, `ticket`, `notes`  |
+| `/review`    | Collect artefacts for async review and notify approvers. | `project`, `artifact` | `notes`, `deadline` | `action=review`, `project`, `artifact`, `notes`, `deadline` |
 
 ### Event transport
 
@@ -171,14 +171,14 @@ feed before deeper integrations are wired up.
 
 Facteur initialises OpenTelemetry during startup, enabling spans and metrics across the HTTP server (via `otelfiber`), Kafka consumer, and Argo dispatcher. The Knative Service populates default observability endpoints:
 
-| Variable | Value | Purpose |
-| --- | --- | --- |
-| `OTEL_SERVICE_NAME` | `facteur` | Identifies the service in telemetry backends. |
-| `OTEL_SERVICE_NAMESPACE` | `metadata.namespace` | Mirrors the Kubernetes namespace in resource metadata. |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | Aligns with the observability stack's OTLP HTTP gateways. |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces` | Tempo ingestion endpoint. |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics` | Mimir ingestion endpoint. |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | `http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push` | Loki ingestion endpoint (reserved for future log exporting). |
+| Variable                              | Value                                                                                                 | Purpose                                                      |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `OTEL_SERVICE_NAME`                   | `facteur`                                                                                             | Identifies the service in telemetry backends.                |
+| `OTEL_SERVICE_NAMESPACE`              | `metadata.namespace`                                                                                  | Mirrors the Kubernetes namespace in resource metadata.       |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`         | `http/protobuf`                                                                                       | Aligns with the observability stack's OTLP HTTP gateways.    |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | `http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces`                   | Tempo ingestion endpoint.                                    |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics`                    | Mimir ingestion endpoint.                                    |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`    | `http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push` | Loki ingestion endpoint (reserved for future log exporting). |
 
 Knative does not inject the observability wiring automatically; the Argo CD overlay now provisions a dedicated Grafana Alloy deployment (`facteur-alloy`) that tails all pods in the `facteur` namespace and pushes the output to the in-cluster Loki gateway. The manifests live in `argocd/applications/facteur/overlays/cluster/alloy-*.yaml`, keeping the observability routing alongside the rest of the service configuration.
 

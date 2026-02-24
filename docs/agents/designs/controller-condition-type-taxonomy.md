@@ -3,19 +3,24 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 Agents CRDs expose Kubernetes-style conditions (e.g. `Ready`, `Succeeded`, `Blocked`). Without a consistent taxonomy, automation and operator expectations diverge between resources.
 
 This doc defines a minimal, consistent condition set and naming conventions.
 
 ## Goals
+
 - Standardize condition types and meanings across Agents CRDs.
 - Ensure conditions are stable, machine-consumable signals (not free-form logs).
 
 ## Non-Goals
+
 - Defining every possible controller-specific reason code.
 
 ## Current State
+
 - CRD types use `[]metav1.Condition`:
   - `services/jangar/api/agents/v1alpha1/types.go`
 - Controllers construct and upsert conditions:
@@ -24,8 +29,11 @@ This doc defines a minimal, consistent condition set and naming conventions.
 - No centralized spec exists for condition types and transitions.
 
 ## Design
+
 ### Recommended condition types
+
 Across reconciled resources:
+
 - `Ready`: resource is valid and reconciled.
 - For run-like resources:
   - `Accepted`: controller accepted the run.
@@ -37,41 +45,50 @@ Across reconciled resources:
   - `Blocked`: policy/concurrency blocked.
 
 ### Transition rules
+
 - Only one terminal condition (`Succeeded`/`Failed`/`Cancelled`) may be `True` at a time.
 - `Ready` should be `False` when terminal failure is reached, or be omitted if not meaningful.
 
 ## Config Mapping
-| Surface | Behavior |
-|---|---|
+
+| Surface     | Behavior                                                                 |
+| ----------- | ------------------------------------------------------------------------ |
 | (code only) | Condition taxonomy is a controller contract; enforce via tests and docs. |
 
 ## Rollout Plan
+
 1. Document the taxonomy and update controller code to match.
 2. Add unit tests that validate terminal condition exclusivity and stable type names.
 
 Rollback:
+
 - Revert controller changes; keep doc and tests for future alignment.
 
 ## Validation
+
 ```bash
 kubectl -n agents get agentrun <name> -o jsonpath='{.status.conditions[*].type}'; echo
 kubectl -n agents get agentrun <name> -o jsonpath='{.status.conditions[?(@.type==\"Succeeded\")].status}'; echo
 ```
 
 ## Failure Modes and Mitigations
+
 - Multiple terminal conditions become true: mitigate with a shared condition helper enforcing exclusivity.
 - Controllers use inconsistent type strings: mitigate by constants and tests.
 
 ## Acceptance Criteria
+
 - Condition types are consistent across CRDs and reconciler code.
 - Automation can reliably determine run state from conditions alone.
 
 ## References
+
 - Kubernetes API conventions (Conditions): https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -86,7 +103,9 @@ kubectl -n agents get agentrun <name> -o jsonpath='{.status.conditions[?(@.type=
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -119,13 +138,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -141,6 +163,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -153,6 +176,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

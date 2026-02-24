@@ -1,4 +1,4 @@
-@import "@proompteng/design/globals.css";
+@import '@proompteng/design/globals.css';
 
 @source "../**/*.{js,jsx,ts,tsx,mdx}";
 @source not "../../node_modules";
@@ -45,8 +45,7 @@
     --terminal-bottom-left-radius: clamp(0.8rem, 1.22vw, 1.06rem);
     --terminal-squircle-h-radius: 1.28rem;
     --terminal-squircle-v-radius: 1.18rem;
-    border-radius:
-      var(--terminal-top-left-radius) var(--terminal-top-right-radius) var(--terminal-bottom-right-radius)
+    border-radius: var(--terminal-top-left-radius) var(--terminal-top-right-radius) var(--terminal-bottom-right-radius)
       var(--terminal-bottom-left-radius) / var(--terminal-squircle-h-radius) var(--terminal-squircle-h-radius)
       var(--terminal-squircle-v-radius) var(--terminal-squircle-v-radius);
     border: 1px solid rgb(var(--terminal-shell-border) / var(--terminal-shell-border-alpha));
@@ -66,18 +65,18 @@
 
   .font-display {
     font-family:
-      var(--font-space-grotesk, "Space Grotesk"), "Space Grotesk", var(--font-jetbrains-mono, "JetBrains Mono"),
+      var(--font-space-grotesk, 'Space Grotesk'), 'Space Grotesk', var(--font-jetbrains-mono, 'JetBrains Mono'),
       ui-sans-serif, sans-serif;
   }
 
   .font-inter {
-    font-family: var(--font-inter, "Inter"), Inter, ui-sans-serif, sans-serif;
+    font-family: var(--font-inter, 'Inter'), Inter, ui-sans-serif, sans-serif;
   }
 
   .font-terminal {
     font-family:
-      var(--font-jetbrains-mono, "JetBrains Mono"), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      "Liberation Mono", "Courier New", monospace;
+      var(--font-jetbrains-mono, 'JetBrains Mono'), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', 'Courier New', monospace;
   }
 
   .animate-hero-glow {
@@ -89,7 +88,7 @@
   html,
   body {
     font-family:
-      var(--font-jetbrains-mono, "JetBrains Mono"), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      "Liberation Mono", "Courier New", monospace;
+      var(--font-jetbrains-mono, 'JetBrains Mono'), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', 'Courier New', monospace;
   }
 }

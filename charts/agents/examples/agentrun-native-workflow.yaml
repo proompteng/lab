@@ -31,9 +31,9 @@ spec:
     mode: read-write
   parameters:
     repository: proompteng/lab
-    issueNumber: "2614"
-    issueTitle: "agents: native workflow e2e proof + runbook"
-    issueUrl: "https://github.com/proompteng/lab/issues/2614"
+    issueNumber: '2614'
+    issueTitle: 'agents: native workflow e2e proof + runbook'
+    issueUrl: 'https://github.com/proompteng/lab/issues/2614'
     base: main
     head: codex/agents/2614
     prompt: |

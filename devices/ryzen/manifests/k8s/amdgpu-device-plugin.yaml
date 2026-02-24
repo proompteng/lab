@@ -15,23 +15,23 @@ spec:
       restartPolicy: Always
       nodeSelector:
         kubernetes.io/arch: amd64
-        lab.proompteng.ai/amdgpu: "true"
+        lab.proompteng.ai/amdgpu: 'true'
       priorityClassName: system-node-critical
       tolerations:
-      - key: CriticalAddonsOnly
-        operator: Exists
+        - key: CriticalAddonsOnly
+          operator: Exists
       containers:
-      - image: rocm/k8s-device-plugin@sha256:e42d51ddaf66af07a2d983eb10bbaf2a6068dbc4ddcf90ddbb1e91a396b0c447
-        name: amdgpu-dp-cntr
-        securityContext:
-          privileged: true
-          capabilities:
-            drop: ["ALL"]
-        volumeMounts:
-          - name: dp
-            mountPath: /var/lib/kubelet/device-plugins
-          - name: sys
-            mountPath: /sys
+        - image: rocm/k8s-device-plugin@sha256:e42d51ddaf66af07a2d983eb10bbaf2a6068dbc4ddcf90ddbb1e91a396b0c447
+          name: amdgpu-dp-cntr
+          securityContext:
+            privileged: true
+            capabilities:
+              drop: ['ALL']
+          volumeMounts:
+            - name: dp
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: sys
+              mountPath: /sys
       volumes:
         - name: dp
           hostPath:

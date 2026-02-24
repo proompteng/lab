@@ -10,11 +10,13 @@ This runbook documents how to bring up Argo CD on the `galactic` cluster in a wa
    - `kubectl -n kube-system get pods | rg -n 'coredns|kube-flannel|kube-proxy'`
 
 If Argo CD pods are failing with Redis timeouts or probe failures, fix networking first:
+
 - `devices/galactic/docs/troubleshooting-networking.md`
 
 ## Install the ApplicationSet CRD first
 
 Symptoms when missing:
+
 - `argocd-applicationset-controller` CrashLoopBackOff.
 - Logs contain: `no matches for kind "ApplicationSet" in version "argoproj.io/v1alpha1"`.
 
@@ -45,6 +47,7 @@ kubectl get crd applicationsets.argoproj.io
 ## Install Traefik CRDs (required by this repo's Argo CD manifests)
 
 This repo's Argo CD install includes `IngressRoute` resources (Traefik CRDs):
+
 - `argocd/applications/argocd/base/ingressroute.yaml`
 
 On a fresh cluster, applying `argocd/applications/argocd` will fail until the Traefik CRDs exist.

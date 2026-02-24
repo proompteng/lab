@@ -253,7 +253,7 @@ const scaffoldWithTanstackCli = async (opts: TanstackServiceOptions): Promise<Ge
       dev: 'vite dev --host --port 3000',
       build: 'vite build',
       start: 'bun .output/server/index.mjs',
-      lint: 'bunx biome check src',
+      lint: 'bunx oxfmt --check src',
       test: 'vitest run',
     }
 

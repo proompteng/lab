@@ -6,4 +6,4 @@ spec:
   orchestrationRef:
     name: sample-orchestration
   parameters:
-    message: "hello from orchestration"
+    message: 'hello from orchestration'

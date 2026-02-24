@@ -10,7 +10,7 @@
   tasks:
     - name: Fail if TAILSCALE_AUTHKEY is not set
       ansible.builtin.fail:
-        msg: "TAILSCALE_AUTHKEY is required to authorize Tailscale on nodes."
+        msg: 'TAILSCALE_AUTHKEY is required to authorize Tailscale on nodes.'
       when: tailscale_authkey == ''
 
     - name: Ensure tailscaled service is enabled and started
@@ -44,7 +44,7 @@
 
     - name: Parse Tailscale status JSON
       ansible.builtin.set_fact:
-        tailscale_status_json: "{{ tailscale_status.stdout | from_json }}"
+        tailscale_status_json: '{{ tailscale_status.stdout | from_json }}'
       when: tailscale_status.rc == 0
 
     - name: Parse Tailscale backend state
@@ -55,7 +55,7 @@
     - name: Capture current Tailscale hostname and tags
       ansible.builtin.set_fact:
         tailscale_current_hostname: "{{ tailscale_status_json.Self.HostName | default('', true) }}"
-        tailscale_current_tags: "{{ tailscale_status_json.Self.Tags | default([], true) }}"
+        tailscale_current_tags: '{{ tailscale_status_json.Self.Tags | default([], true) }}'
       when: tailscale_status.rc == 0
 
     - name: Normalize desired tags
@@ -114,7 +114,7 @@
 
     - name: Fail if Tailscale is not running after login
       ansible.builtin.fail:
-        msg: "Tailscale failed to reach Running state on {{ inventory_hostname }}."
+        msg: 'Tailscale failed to reach Running state on {{ inventory_hostname }}.'
       when: (tailscale_status_after.stdout | from_json).BackendState | default('Unknown', true) != 'Running'
 
     - name: Ensure Tailscale keeps advertising cluster routes

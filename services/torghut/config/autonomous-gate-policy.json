@@ -26,15 +26,8 @@
     "backtest/evaluation-report.json",
     "gates/gate-evaluation.json"
   ],
-  "promotion_require_patch_targets": [
-    "paper",
-    "live"
-  ],
-  "rollback_required_checks": [
-    "killSwitchDryRunPassed",
-    "gitopsRevertDryRunPassed",
-    "strategyDisableDryRunPassed"
-  ],
+  "promotion_require_patch_targets": ["paper", "live"],
+  "rollback_required_checks": ["killSwitchDryRunPassed", "gitopsRevertDryRunPassed", "strategyDisableDryRunPassed"],
   "rollback_dry_run_max_age_hours": 72,
   "rollback_require_human_approval": true
 }

@@ -346,34 +346,34 @@ These links allow full traceability from webhook event → workflow run → file
 
 Use these slices to create one GitHub issue per task (Codex workflow friendly).
 
-1) Atlas schema + Jangar store layer  
-   - Scope: create `atlas` schema and Jangar store/service.  
-   - Touch: `services/jangar/src/server/atlas-store.ts`, `services/jangar/src/server/atlas.ts`, tests.  
+1. Atlas schema + Jangar store layer
+   - Scope: create `atlas` schema and Jangar store/service.
+   - Touch: `services/jangar/src/server/atlas-store.ts`, `services/jangar/src/server/atlas.ts`, tests.
    - Output: auto‑create tables + idempotent upserts.
 
-2) REST + MCP endpoints (generic)  
-   - Scope: `POST /api/enrich`, `GET /api/search`, MCP tools `atlas.index|search|stats`.  
-   - Touch: `services/jangar/src/routes/api/enrich.ts`, `services/jangar/src/routes/api/search.ts`, MCP handler.  
+2. REST + MCP endpoints (generic)
+   - Scope: `POST /api/enrich`, `GET /api/search`, MCP tools `atlas.index|search|stats`.
+   - Touch: `services/jangar/src/routes/api/enrich.ts`, `services/jangar/src/routes/api/search.ts`, MCP handler.
    - Depends on: task 1 interface.
 
-3) Bumba workflow activities (Tree‑sitter + model + embedding)  
-   - Scope: workflow activities + idempotent orchestration.  
-   - Touch: `services/bumba/src/activities/*`, `services/bumba/src/workflows/index.ts`.  
+3. Bumba workflow activities (Tree‑sitter + model + embedding)
+   - Scope: workflow activities + idempotent orchestration.
+   - Touch: `services/bumba/src/activities/*`, `services/bumba/src/workflows/index.ts`.
    - Depends on: task 1 schema.
 
-4) Jangar UI + sidebar entry  
-   - Scope: atlas page with indexed file table + search + enrich trigger.  
-   - Touch: `services/jangar/src/components/app-sidebar.tsx`, `services/jangar/src/routes/atlas.tsx`.  
+4. Jangar UI + sidebar entry
+   - Scope: atlas page with indexed file table + search + enrich trigger.
+   - Touch: `services/jangar/src/components/app-sidebar.tsx`, `services/jangar/src/routes/atlas.tsx`.
    - Depends on: task 2 endpoints.
 
-5) Script helpers for agents  
-   - Scope: bun script that queries `/api/search`.  
-   - Touch: `packages/scripts/src/atlas/search.ts`, root script `atlas:search`.  
+5. Script helpers for agents
+   - Scope: bun script that queries `/api/search`.
+   - Touch: `packages/scripts/src/atlas/search.ts`, root script `atlas:search`.
    - Depends on: task 2 endpoints.
 
-6) Froussard webhook integration  
-   - Scope: GitHub webhook -> `/api/enrich` with idempotency.  
-   - Touch: `services/froussard/**`.  
+6. Froussard webhook integration
+   - Scope: GitHub webhook -> `/api/enrich` with idempotency.
+   - Touch: `services/froussard/**`.
    - Depends on: task 2 endpoints + atlas event tables.
 
 ## Tree‑sitter Extraction (per file)

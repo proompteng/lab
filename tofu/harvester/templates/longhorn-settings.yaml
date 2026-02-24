@@ -10,11 +10,11 @@ kind: Setting
 metadata:
   name: storage-minimal-available-percentage
   namespace: longhorn-system
-value: "5"
+value: '5'
 ---
 apiVersion: longhorn.io/v1beta2
 kind: Setting
 metadata:
   name: storage-reserved-percentage-for-default-disk
   namespace: longhorn-system
-value: "5"
+value: '5'

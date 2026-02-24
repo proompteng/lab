@@ -22,12 +22,12 @@ The parameter provided to the function endpoint at invocation is a `Context` obj
 
 ```js
 function handleRequest(context) {
-  const log = context.log;
-  log.info(context.httpVersion);
-  log.info(context.method); // the HTTP request method (only GET or POST supported)
-  log.info(context.query); // if query parameters are provided in a GET request
-  log.info(context.body); // contains the request body for a POST request
-  log.info(context.headers); // all HTTP headers sent with the event
+  const log = context.log
+  log.info(context.httpVersion)
+  log.info(context.method) // the HTTP request method (only GET or POST supported)
+  log.info(context.query) // if query parameters are provided in a GET request
+  log.info(context.body) // contains the request body for a POST request
+  log.info(context.headers) // all HTTP headers sent with the event
 }
 ```
 
@@ -54,24 +54,24 @@ The `Function` interface is defined as:
 export interface Function {
   // The initialization function, called before the server is started
   // This function is optional and should be synchronous.
-  init?: () => any;
+  init?: () => any
 
   // The shutdown function, called after the server is stopped
   // This function is optional and should be synchronous.
-  shutdown?: () => any;
+  shutdown?: () => any
 
   // The liveness function, called to check if the server is alive
   // This function is optional and should return 200/OK if the server is alive.
-  liveness?: HealthCheck;
+  liveness?: HealthCheck
 
   // The readiness function, called to check if the server is ready to accept requests
   // This function is optional and should return 200/OK if the server is ready.
-  readiness?: HealthCheck;
+  readiness?: HealthCheck
 
-  logLevel?: LogLevel;
+  logLevel?: LogLevel
 
   // The function to handle HTTP requests
-  handle: CloudEventFunction | HTTPFunction;
+  handle: CloudEventFunction | HTTPFunction
 }
 ```
 
@@ -81,23 +81,23 @@ The HTTP function interface is defined as:
 
 ```typescript
 interface HTTPFunction {
-  (context: Context, body?: IncomingBody): HTTPFunctionReturn;
+  (context: Context, body?: IncomingBody): HTTPFunctionReturn
 }
 ```
 
 Where the `IncomingBody` is either a string, a Buffer, a JavaScript object, or undefined, depending on what was supplied in the HTTP POST message body. The `HTTTPFunctionReturn` type is defined as:
 
 ```typescript
-type HTTPFunctionReturn = Promise<StructuredReturn> | StructuredReturn | ResponseBody | void;
+type HTTPFunctionReturn = Promise<StructuredReturn> | StructuredReturn | ResponseBody | void
 ```
 
 Where the `StructuredReturn` is a JavaScript object with the following properties:
 
 ```typescript
 interface StructuredReturn {
-  statusCode?: number;
-  headers?: Record<string, string>;
-  body?: ResponseBody;
+  statusCode?: number
+  headers?: Record<string, string>
+  body?: ResponseBody
 }
 ```
 
@@ -117,8 +117,8 @@ A health check function is defined as:
  * including the optional path to which it should be bound.
  */
 export interface HealthCheck {
-  (request: Http2ServerRequest, reply: Http2ServerResponse): any;
-  path?: string;
+  (request: Http2ServerRequest, reply: Http2ServerResponse): any
+  path?: string
 }
 ```
 

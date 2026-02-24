@@ -15,19 +15,19 @@
 
 ## Timeline (PST)
 
-| Time | Event |
-| --- | --- |
-| ~20:38 | `curl http://jangar/healthz` fails with `Connection refused`; memories CLI also fails to reach `http://jangar/api/memories`. |
-| ~20:39 | Kubernetes checks show `deployment/jangar` at `0/1` available; pod is `1/2` ready. |
+| Time   | Event                                                                                                                                                    |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ~20:38 | `curl http://jangar/healthz` fails with `Connection refused`; memories CLI also fails to reach `http://jangar/api/memories`.                             |
+| ~20:39 | Kubernetes checks show `deployment/jangar` at `0/1` available; pod is `1/2` ready.                                                                       |
 | ~20:39 | Pod events show repeated readiness failures: `Get "http://<pod-ip>:8080/health": context deadline exceeded`, with thousands of probe failures over ~19h. |
-| ~20:40 | CNPG cluster `jangar-db` verified healthy (`Ready=True`), services/endpoints present; DB not down. |
-| ~20:40 | In-pod connectivity test confirms TCP reachability to `jangar-db-rw:5432`; DB URL resolves correctly. |
-| ~20:41 | In-pod health checks show `/health` returning `200` but taking ~2.4s–3.9s. |
-| ~20:41 | `kubectl top` shows Jangar app container pinned near CPU limit (`~2000m`), indicating sustained saturation. |
-| ~20:42 | Emergency mitigation applied: readiness probe `timeoutSeconds` raised from `1` to `5`, `failureThreshold` to `6`; deployment rolled out. |
-| ~20:43 | New Jangar pod becomes `2/2` ready; deployment returns to `1/1` available. |
-| ~20:43 | External validation succeeds: `http://jangar/health` returns `200`; `http://jangar/api/memories` returns `200`. |
-| ~20:44 | GitOps manifest updated with the same readiness settings to prevent regression on Argo resync. |
+| ~20:40 | CNPG cluster `jangar-db` verified healthy (`Ready=True`), services/endpoints present; DB not down.                                                       |
+| ~20:40 | In-pod connectivity test confirms TCP reachability to `jangar-db-rw:5432`; DB URL resolves correctly.                                                    |
+| ~20:41 | In-pod health checks show `/health` returning `200` but taking ~2.4s–3.9s.                                                                               |
+| ~20:41 | `kubectl top` shows Jangar app container pinned near CPU limit (`~2000m`), indicating sustained saturation.                                              |
+| ~20:42 | Emergency mitigation applied: readiness probe `timeoutSeconds` raised from `1` to `5`, `failureThreshold` to `6`; deployment rolled out.                 |
+| ~20:43 | New Jangar pod becomes `2/2` ready; deployment returns to `1/1` available.                                                                               |
+| ~20:43 | External validation succeeds: `http://jangar/health` returns `200`; `http://jangar/api/memories` returns `200`.                                          |
+| ~20:44 | GitOps manifest updated with the same readiness settings to prevent regression on Argo resync.                                                           |
 
 ## Root Cause
 
@@ -104,4 +104,3 @@ kubectl -n jangar patch deployment jangar --type='json' -p='[
 ]'
 kubectl -n jangar rollout status deploy/jangar
 ```
-

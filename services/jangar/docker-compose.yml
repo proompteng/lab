@@ -5,11 +5,11 @@ services:
     command:
       - redis-server
       - --save
-      - ""
+      - ''
       - --appendonly
-      - "no"
+      - 'no'
     ports:
-      - "6379:6379"
+      - '6379:6379'
     restart: unless-stopped
 
   postgres:
@@ -22,7 +22,7 @@ services:
     volumes:
       - openwebui-pg-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U openwebui"]
+      test: ['CMD-SHELL', 'pg_isready -U openwebui']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -32,7 +32,7 @@ services:
     image: ghcr.io/open-webui/open-webui:v0.7.2
     container_name: jangar-openwebui
     ports:
-      - "${OPENWEBUI_PORT:-8080}:8080"
+      - '${OPENWEBUI_PORT:-8080}:8080'
     environment:
       - DATABASE_URL=postgresql://openwebui:${OPENWEBUI_DB_PASSWORD:-openwebui}@postgres:5432/openwebui
       - DATABASE_TYPE=postgresql
@@ -53,13 +53,13 @@ services:
     volumes:
       - openwebui-data:/app/backend/data
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - 'host.docker.internal:host-gateway'
     depends_on:
       - postgres
       - redis
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:8080']
       interval: 10s
       timeout: 3s
       retries: 10

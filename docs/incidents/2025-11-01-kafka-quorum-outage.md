@@ -14,18 +14,18 @@
 
 ## Timeline (Pacific Time)
 
-| Time | Event |
-|------|-------|
-| 2025-11-01 14:56 | Strimzi rollout produced new revision `froussard-00062`; Kafka brokers began restarting. |
-| 2025-11-01 15:10 | Strimzi operator reported repeated reconciliation failures; brokers in `CrashLoopBackOff`. |
-| 2025-11-01 15:30 | User noticed `execute plan` comment did not trigger Codex workflow; investigation found Froussard readiness failing due to Kafka connection errors. |
-| 2025-11-01 15:35 | Confirmed Kafka brokers were unable to join the KRaft quorum; logs showed `Fatal error during broker startup` and corrupted `quorum-state`. |
+| Time                     | Event                                                                                                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2025-11-01 14:56         | Strimzi rollout produced new revision `froussard-00062`; Kafka brokers began restarting.                                                                    |
+| 2025-11-01 15:10         | Strimzi operator reported repeated reconciliation failures; brokers in `CrashLoopBackOff`.                                                                  |
+| 2025-11-01 15:30         | User noticed `execute plan` comment did not trigger Codex workflow; investigation found Froussard readiness failing due to Kafka connection errors.         |
+| 2025-11-01 15:35         | Confirmed Kafka brokers were unable to join the KRaft quorum; logs showed `Fatal error during broker startup` and corrupted `quorum-state`.                 |
 | 2025-11-01 15:40 – 15:55 | Paused ArgoCD autosync for Kafka, scaled Strimzi components down, detached broker PVCs, manually repaired quorum metadata and replication checkpoint files. |
-| 2025-11-01 15:56 | Restored quorum metadata (`quorum-state`) on all brokers, reset corrupted `replication-offset-checkpoint` files, remounted PVCs. |
-| 2025-11-01 15:57 | Scaled brokers back up; all three brokers started successfully and formed quorum. |
-| 2025-11-01 15:58 | Restarted entity operator for clean state. |
-| 2025-11-01 15:59 | Re-enabled ArgoCD autosync; Kafka application returned to `Synced/Healthy`. |
-| 2025-11-01 16:00 | Confirmed Kafka `Ready=True` and Froussard readiness probe passing. |
+| 2025-11-01 15:56         | Restored quorum metadata (`quorum-state`) on all brokers, reset corrupted `replication-offset-checkpoint` files, remounted PVCs.                            |
+| 2025-11-01 15:57         | Scaled brokers back up; all three brokers started successfully and formed quorum.                                                                           |
+| 2025-11-01 15:58         | Restarted entity operator for clean state.                                                                                                                  |
+| 2025-11-01 15:59         | Re-enabled ArgoCD autosync; Kafka application returned to `Synced/Healthy`.                                                                                 |
+| 2025-11-01 16:00         | Confirmed Kafka `Ready=True` and Froussard readiness probe passing.                                                                                         |
 
 ## Root Cause
 
@@ -97,4 +97,3 @@ argocd app patch-resource argocd/root --group argoproj.io --kind ApplicationSet 
   --patch-type application/json-patch+json
 argocd app set argocd/kafka --sync-policy automated --self-heal --auto-prune
 ```
-

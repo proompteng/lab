@@ -51,21 +51,21 @@ spec:
     repository: proompteng/lab
     base: main
     head: codex/agents/leader-election-implementation-20260207
-    issueNumber: "0"
+    issueNumber: '0'
     issueTitle: Implement leader election (code + chart)
     issueUrl: https://github.com/proompteng/lab/blob/main/docs/agents/leader-election-design.md
     stage: implementation
   runtime:
     type: workflow
   secrets:
-  - codex-github-token
-  - codex-openai-key
+    - codex-github-token
+    - codex-openai-key
   workflow:
     steps:
-    - name: implement
-      parameters:
-        stage: implement
-      timeoutSeconds: 7200
+      - name: implement
+        parameters:
+          stage: implement
+        timeoutSeconds: 7200
   workload:
     resources:
       requests:

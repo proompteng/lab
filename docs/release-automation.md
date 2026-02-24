@@ -14,7 +14,7 @@ PRs created from release branches can be auto-merged by [`.github/workflows/rele
 - Label `do-not-automerge` is not present.
 - All changed files are allowlisted release artifacts (currently:
   - `argocd/applications/proompteng/kustomization.yaml`
-  ).
+    ).
 
 The workflow enables squash auto-merge (`gh pr merge --auto --squash`) only after all eligibility checks pass. GitHub still enforces required checks and merge rules before the merge actually executes.
 

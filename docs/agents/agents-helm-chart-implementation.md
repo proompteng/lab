@@ -5,6 +5,7 @@ Status: Current (2026-01-19)
 Docs index: [README](README.md)
 
 See also:
+
 - `README.md` (index)
 - `designs/handoff-common.md` (repo/chart/cluster source-of-truth + validation commands)
 - `agents-helm-chart-design.md` (high-level chart intent)
@@ -14,7 +15,7 @@ See also:
 
 Define the next iteration required to make `charts/agents` a fully functional, production‑ready Helm chart that installs CRDs, deploys the Jangar control plane, and supports the full primitive lifecycle (Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory, Orchestration, OrchestrationRun, ApprovalPolicy, Budget, SecretBinding, Signal, SignalDelivery, Tool, ToolRun, Schedule, Artifact, Workspace).
 
-This document is implementation‑grade: it describes *what* needs to exist in the chart, controller, and CI validation to make the chart “complete” and operable in real clusters.
+This document is implementation‑grade: it describes _what_ needs to exist in the chart, controller, and CI validation to make the chart “complete” and operable in real clusters.
 
 ## Goals
 
@@ -38,7 +39,7 @@ This document is implementation‑grade: it describes *what* needs to exist in t
 
 ## Current Chart Topology (Observed 2026-02-07)
 
-This section captures the *current* deployed shape of Agents in the lab cluster (GitOps desired state + live objects)
+This section captures the _current_ deployed shape of Agents in the lab cluster (GitOps desired state + live objects)
 so the rest of this document has a concrete reference point when discussing “fully functional”.
 
 ### GitOps render + overlays
@@ -111,11 +112,11 @@ graph TD
 
 ## Design Principles
 
-1) **CRDs are installed by Helm, not at runtime**. Jangar should verify CRD availability and emit actionable errors; it should not create CRDs by default. This aligns with Artifact Hub and Helm best practices.
-2) **Controller behavior matches CRD schema**. Any schema change must be reflected in Jangar’s reconciliation logic.
-3) **Vendor-neutral runtime and webhook ingestion**. The workflow runtime is native by default and external adapters are opt-in; ingestion relies on webhooks only (no polling). Agent event streaming is push-based via NATS → Jangar storage → SSE (no periodic polling).
-4) **Minimal defaults, explicit overrides**. Only the necessary defaults in `values.yaml`; real deployments pass secrets and images explicitly.
-5) **Deterministic upgrades**. CRDs and examples are static YAML, version‑controlled, and validated in CI.
+1. **CRDs are installed by Helm, not at runtime**. Jangar should verify CRD availability and emit actionable errors; it should not create CRDs by default. This aligns with Artifact Hub and Helm best practices.
+2. **Controller behavior matches CRD schema**. Any schema change must be reflected in Jangar’s reconciliation logic.
+3. **Vendor-neutral runtime and webhook ingestion**. The workflow runtime is native by default and external adapters are opt-in; ingestion relies on webhooks only (no polling). Agent event streaming is push-based via NATS → Jangar storage → SSE (no periodic polling).
+4. **Minimal defaults, explicit overrides**. Only the necessary defaults in `values.yaml`; real deployments pass secrets and images explicitly.
+5. **Deterministic upgrades**. CRDs and examples are static YAML, version‑controlled, and validated in CI.
 
 ## Scope: What “Fully Functional” Means
 
@@ -287,8 +288,8 @@ sequenceDiagram
 ### Runtime adapters (expected to exist)
 
 - `workflow` (native step runner), `job`, `temporal`, `custom` adapters with clear error messages when configuration is missing.
-The Helm chart enables the native workflow runtime controllers by default; external adapters are opt-in via explicit
-environment overrides (for example, `env.vars.*`).
+  The Helm chart enables the native workflow runtime controllers by default; external adapters are opt-in via explicit
+  environment overrides (for example, `env.vars.*`).
 
 ### Orchestration runtime (native)
 
@@ -406,18 +407,18 @@ A release is considered “fully functional” when:
 
 ## Implementation Plan (Next Iteration)
 
-1) **CRD and Schema Lock‑in**
+1. **CRD and Schema Lock‑in**
    - Regenerate CRDs from `services/jangar/api/agents/v1alpha1` and commit to `charts/agents/crds/`.
    - Validate schemas and CRD size limits.
-2) **RBAC Mode Update**
+2. **RBAC Mode Update**
    - Add a cluster‑scoped RBAC toggle for multi‑namespace reconciliation.
-3) **Values Schema Completion**
+3. **Values Schema Completion**
    - Ensure `values.schema.json` fully reflects `values.yaml`.
-4) **Controller Guardrails**
+4. **Controller Guardrails**
    - Add startup validation for missing CRDs with actionable logs/errors.
-5) **CI Validation**
+5. **CI Validation**
    - Add CI steps for CRD generation diff, kubeconform example validation, and Helm lint.
-6) **Crossplane**
+6. **Crossplane**
    - Document that Crossplane is unsupported and must be uninstalled before deploying the chart.
 
 ## Open Questions

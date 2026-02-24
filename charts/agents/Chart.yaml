@@ -6,7 +6,7 @@ sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
 type: application
 version: 0.9.2
-appVersion: "0.9.0"
+appVersion: '0.9.0'
 icon: https://avatars.githubusercontent.com/u/234536857
 keywords:
   - agents
@@ -187,4 +187,4 @@ annotations:
       description: "Controllers are watch-driven only (no periodic polling resync)."
     - kind: changed
       description: "Expose gRPC via a dedicated ClusterIP service for in-cluster agentctl access."
-  artifacthub.io/operator: "true"
+  artifacthub.io/operator: 'true'

@@ -1,9 +1,10 @@
 ## Summary
 
 <!-- 3-5 concise bullets describing what changed. -->
-- 
-- 
-- 
+
+-
+-
+-
 
 ## Related Issues
 
@@ -12,7 +13,8 @@
 ## Testing
 
 <!-- List each command or manual step used to verify the change. Use `N/A` only when nothing could be tested. -->
-- 
+
+-
 
 ## Screenshots (if applicable)
 

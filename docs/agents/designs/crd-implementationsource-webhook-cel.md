@@ -3,65 +3,81 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 ImplementationSource supports webhook-driven ingestion. Certain fields must be present together (e.g., `webhook.enabled` implies a `secretRef`). Today, some of these invariants are enforced in code, but encoding them in CRD CEL rules provides immediate feedback at apply time.
 
 ## Goals
+
 - Encode basic webhook invariants as CRD CEL rules.
 - Reduce runtime “misconfigured source” errors.
 
 ## Non-Goals
+
 - Encoding provider-specific rules that require external calls.
 
 ## Current State
+
 - CRD exists: `charts/agents/crds/agents.proompteng.ai_implementationsources.yaml`.
 - Webhook runtime logic: `services/jangar/src/server/implementation-source-webhooks.ts`.
 - Signature verification expects a secret when webhook enabled (see `selectVerifiedSources(...)`).
 
 ## Design
+
 ### Proposed CEL validations
+
 - If `spec.webhook.enabled == true` then `spec.webhook.secretRef.name` and `.key` must be non-empty.
 - If provider is GitHub, require that `spec.webhook.events` includes the expected event types (optional).
 
 Example CEL:
+
 ```yaml
 x-kubernetes-validations:
   - rule: '!(has(self.spec.webhook) && self.spec.webhook.enabled) || (has(self.spec.webhook.secretRef) && self.spec.webhook.secretRef.name != "" && self.spec.webhook.secretRef.key != "")'
-    message: "webhook.enabled requires webhook.secretRef.{name,key}"
+    message: 'webhook.enabled requires webhook.secretRef.{name,key}'
 ```
 
 ## Config Mapping
-| Helm value / env var | Effect | Behavior |
-|---|---|---|
+
+| Helm value / env var                                      | Effect                 | Behavior                                                                      |
+| --------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------- |
 | `controller.enabled` / `JANGAR_AGENTS_CONTROLLER_ENABLED` | toggles reconciliation | CEL rules validate at API server on apply, independent of controller runtime. |
 
 ## Rollout Plan
+
 1. Add CEL rules in CRD generation (Go markers) and regenerate `charts/agents/crds`.
 2. Canary in non-prod by applying misconfigured ImplementationSources and confirming rejection.
 
 Rollback:
+
 - Revert CRD validation rules (requires CRD management plan).
 
 ## Validation
+
 ```bash
 helm template agents charts/agents --include-crds | rg -n \"implementationsources|x-kubernetes-validations\"
 kubectl -n agents apply -f charts/agents/examples/implementationsource-github.yaml
 ```
 
 ## Failure Modes and Mitigations
+
 - Validation is too strict for legacy objects: mitigate by introducing rules only when fields exist, and by staging rollouts.
 - Cluster API server older than CEL support level: mitigate by checking Kubernetes version and gating rules accordingly.
 
 ## Acceptance Criteria
+
 - Misconfigured webhook-enabled ImplementationSources are rejected at apply time.
 - Valid sources continue to work without modification.
 
 ## References
+
 - Kubernetes CRD validation rules (CEL): https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definitions/#validation-rules
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -76,7 +92,9 @@ kubectl -n agents apply -f charts/agents/examples/implementationsource-github.ya
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -109,13 +127,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -131,6 +152,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -143,6 +165,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

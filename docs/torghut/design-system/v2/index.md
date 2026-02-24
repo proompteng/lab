@@ -1,11 +1,13 @@
 # Torghut Design System v2 (Research): Profitable Autonomous Trading + Intelligence Layer
 
 ## Status
+
 - Version: `v2` (research / proposal)
 - Last updated: **2026-02-10**
 - Relationship to v1: `docs/torghut/design-system/v1/` remains the production-facing source of truth.
 
 ## Purpose
+
 Capture a research-backed blueprint for evolving Torghut from a safe paper-first automated trading loop into a more
 robust, higher-signal, more profitable autonomous trading system with a bounded intelligence layer.
 
@@ -13,10 +15,12 @@ This is not investment advice and does not guarantee profitability. The goal is 
 (overfitting, hidden costs, regime breaks, unsafe autonomy) and increase the probability of positive expectancy.
 
 ## How To Use This Pack
+
 - Start with the MVP track below. Add strategy families only after you have credible evaluation + cost realism.
 - Treat \"Advanced\" items as optional until you have strong evidence you need them.
 
 ## MVP Track (Build This First)
+
 - `profitability-discipline.md`
 - `backtesting-and-walkforward.md`
 - `overfitting-and-statistical-validity.md`
@@ -29,10 +33,12 @@ This is not investment advice and does not guarantee profitability. The goal is 
 - `governance-compliance-and-ops.md`
 
 Pick one initial alpha family:
+
 - `time-series-momentum.md` (trend)
 - `mean-reversion-and-stat-arb.md` (mean reversion)
 
 ## Next (Once MVP Is Stable)
+
 - `alpha-discovery-loop.md`
 - `quant-research-merge-and-alpha-tsmom-v1.md`
 - `research-ledger.md`
@@ -44,17 +50,20 @@ Pick one initial alpha family:
 - `volatility-strategies.md`
 
 ## Advanced / Optional
+
 - `market-making.md` (requires order book data + low-latency loop + toxicity controls)
 - `ml-stack-transformers-and-lob.md` (requires stronger data + evaluation discipline)
 - `rl-trading-and-execution.md` (requires credible simulators; easiest to overfit)
 
 ## Design Constraints (Non-Negotiable)
+
 - Paper-by-default. Live requires explicit gate(s) and change control.
 - Deterministic risk controls remain final authority.
 - LLM/agent layer is advisory unless a separate, audited actuation path is intentionally built.
 - Every decision must be reproducible (inputs, config, model/prompt versions, and outputs).
 
 ## Recommended Reading (Shortlist)
+
 - Trend following and crisis performance (managed futures): AQR overview and research links.
 - Market access risk controls (US): SEC 15c3-5 (Market Access Rule) summary.
 - Algo trading organizational requirements (EU): MiFID II RTS 6 delegated regulation.

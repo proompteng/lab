@@ -28,7 +28,7 @@
         "name": "lint",
         "conclusion": "failure",
         "url": "https://github.com/proompteng/lab/actions/runs/123456789",
-        "details": "Biome reported formatting issues in store.go"
+        "details": "Oxfmt reported formatting issues in store.go"
       }
     ],
     "additionalNotes": ["Retry after applying database migrations."]

@@ -3,66 +3,82 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The Agents control plane runs as the `agents` Deployment. The chart supports an explicit `controlPlane.image.*` override separate from `image.*`. This doc defines a contract for selecting that image and recommended promotion paths.
 
 ## Goals
+
 - Clarify image selection rules for the control plane.
 - Support independent pinning/promotion between control plane and controllers.
 
 ## Non-Goals
+
 - Supporting multiple control plane deployments per release.
 
 ## Current State
+
 - Template: `charts/agents/templates/deployment.yaml` computes `$imageRepo/$imageTag/$imageDigest` using `controlPlane.image.*` with fallbacks to `image.*`.
 - Values: `charts/agents/values.yaml` under `controlPlane.image.*`.
 - GitOps pins the control plane image in `argocd/applications/agents/values.yaml`.
 
 ## Design
+
 ### Precedence for control plane image
+
 1. `controlPlane.image.*` (if field non-empty)
 2. `image.*` (root defaults)
 
 ### Promotion policy
+
 - Canary controllers first (separate deployment), then promote control plane.
 - When changing API behavior that affects CRD reconciliation, promote controllers and control plane in lockstep (same git SHA + digest set).
 
 ## Config Mapping
-| Helm value | Rendered image for `agents` | Notes |
-|---|---|---|
-| `controlPlane.image.repository` | repo | Defaults to `image.repository` if empty. |
-| `controlPlane.image.tag` | tag | Defaults to `image.tag` if empty. |
-| `controlPlane.image.digest` | digest | Defaults to `image.digest` if empty. |
-| `controlPlane.image.pullSecrets` | imagePullSecrets | Defaults to `image.pullSecrets` if empty. |
+
+| Helm value                       | Rendered image for `agents` | Notes                                     |
+| -------------------------------- | --------------------------- | ----------------------------------------- |
+| `controlPlane.image.repository`  | repo                        | Defaults to `image.repository` if empty.  |
+| `controlPlane.image.tag`         | tag                         | Defaults to `image.tag` if empty.         |
+| `controlPlane.image.digest`      | digest                      | Defaults to `image.digest` if empty.      |
+| `controlPlane.image.pullSecrets` | imagePullSecrets            | Defaults to `image.pullSecrets` if empty. |
 
 ## Rollout Plan
+
 1. Document contract in `charts/agents/README.md`.
 2. Add `imagePolicy.requireDigest` enforcement in prod (optional, see `chart-image-digest-tag-precedence.md`).
 3. Promote via GitOps value change; wait for rollout status.
 
 Rollback:
+
 - Revert digest and re-sync.
 
 ## Validation
+
 ```bash
 mise exec helm@3 -- helm template agents charts/agents -f argocd/applications/agents/values.yaml | rg -n \"kind: Deployment|name: agents$|image:\"
 kubectl -n agents rollout status deploy/agents
 ```
 
 ## Failure Modes and Mitigations
+
 - Control plane and controllers drift to incompatible versions: mitigate via CI rule enforcing same git SHA tag in prod overlays.
 - Digest omitted causes unexpected image pull changes: mitigate with digest enforcement.
 
 ## Acceptance Criteria
+
 - Rendered image for `agents` is predictable from values.
 - Operators can roll back by reverting a single digest in GitOps.
 
 ## References
+
 - Helm best practices for values: https://helm.sh/docs/chart_best_practices/values/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -77,7 +93,9 @@ kubectl -n agents rollout status deploy/agents
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -110,13 +128,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -132,6 +153,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -144,6 +166,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

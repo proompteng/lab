@@ -245,8 +245,8 @@ jobs:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/jangar-release-${{ steps.meta.outputs.tag }}
           base: main
-          title: "chore(jangar): promote image ${{ steps.meta.outputs.tag }}"
-          commit-message: "chore(jangar): promote image ${{ steps.meta.outputs.tag }}"
+          title: 'chore(jangar): promote image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(jangar): promote image ${{ steps.meta.outputs.tag }}'
           delete-branch: true
           add-paths: |
             argocd/applications/jangar/kustomization.yaml

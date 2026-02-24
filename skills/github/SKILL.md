@@ -1,6 +1,6 @@
 ---
 name: github
-description: "Work with GitHub in this repo: PR creation, CI checks, and gh CLI operations."
+description: 'Work with GitHub in this repo: PR creation, CI checks, and gh CLI operations.'
 ---
 
 # GitHub

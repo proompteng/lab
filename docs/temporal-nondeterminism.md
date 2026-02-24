@@ -126,7 +126,7 @@ Use `temporal workflow show` output to identify a safe reset point.
 
 Heuristic that works well when the divergence is "new code schedules extra commands earlier":
 
-- Find the last `EVENT_TYPE_WORKFLOW_TASK_COMPLETED` event *before* the first scheduled event you need to reschedule
+- Find the last `EVENT_TYPE_WORKFLOW_TASK_COMPLETED` event _before_ the first scheduled event you need to reschedule
   (e.g., before `EVENT_TYPE_ACTIVITY_TASK_SCHEDULED` for the activity that diverged).
 
 Then reset to that event ID:
@@ -145,4 +145,3 @@ Reset creates a new run ID. Re-check progress on the new run.
 - `skills/temporal/assets/temporal-triage.md`
 - `docs/replay-runbook.md`
 - `packages/temporal-bun-sdk/docs/production-design.md` (determinism guard / replay harness)
-

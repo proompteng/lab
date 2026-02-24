@@ -1,15 +1,19 @@
 # Lean Router and Execution Governance Spec
 
 ## Status
+
 - Version: `v3-exec-governance`
 - Last updated: `2026-02-12`
 - Maturity: `draft`
 
 ## Objective
+
 Define a deterministic, observable order-routing contract so LEAN and Alpaca execution behavior is safe, explainable, and recoverable.
 
 ## Problem Statement
+
 Live config uses `TRADING_EXECUTION_ADAPTER=lean` with fallback to Alpaca and policy `all`. Current behavior does not yet guarantee:
+
 - persistent adapter-route provenance on every execution,
 - formal kill/rollback conditions when LEAN degrades,
 - paper/live parity checks between routed and non-routed symbols.
@@ -17,6 +21,7 @@ Live config uses `TRADING_EXECUTION_ADAPTER=lean` with fallback to Alpaca and po
 ## Target Architecture
 
 ### Components
+
 1. **Adapter Builder**
    - Source-of-truth env: `TRADING_EXECUTION_ADAPTER`, `TRADING_EXECUTION_ADAPTER_POLICY`, `TRADING_EXECUTION_ADAPTER_SYMBOLS`, `TRADING_EXECUTION_FALLBACK_ADAPTER`, `TRADING_LEAN_RUNNER_URL`.
    - Builds a single execution object used by scheduler and reconciliation.
@@ -42,6 +47,7 @@ Live config uses `TRADING_EXECUTION_ADAPTER=lean` with fallback to Alpaca and po
      - stale runner health.
 
 ## Implementation Requirements
+
 - Add structured route fields in execution metadata JSON.
 - Emit counters:
   - `execution_requests_total{adapter="lean|alpaca"}`
@@ -54,11 +60,13 @@ Live config uses `TRADING_EXECUTION_ADAPTER=lean` with fallback to Alpaca and po
   - `execution_route` is correct in DB row.
 
 ## Failure Modes and Containment
+
 - LEAN runner down: disable LEAN by gate and continue with Alpaca.
 - Repeated fallback on one symbol window: promote to explicit manual-review state for symbol.
 - Divergent LEAN/Alpaca order ids: reject strategy enablement until route parity tests pass.
 
 ## Acceptance Criteria
+
 - Every order has route evidence in persistent row.
 - Fallback path is observable and bounded.
 - Manual kill command can disable LEAN globally without redeploying service code.

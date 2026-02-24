@@ -5,6 +5,7 @@ AMD GPU Operator is **not** supported for Radeon/Ryzen devices; it targets
 AMD Instinct GPUs only. Use the ROCm Kubernetes device plugin instead.
 
 Refs:
+
 - https://instinct.docs.amd.com/projects/gpu-operator/en/release-v1.3.0/index.html
 - https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityryz/native_linux/native_linux_compatibility.html
 - https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/
@@ -12,10 +13,12 @@ Refs:
 ## Manifests (pinned)
 
 We vendor the upstream manifests under:
+
 - `devices/ryzen/manifests/k8s/amdgpu-device-plugin.yaml`
 - `devices/ryzen/manifests/k8s/amdgpu-device-labeller.yaml`
 
 Images are pinned by digest for reproducibility (pulled from Docker Hub):
+
 - `rocm/k8s-device-plugin@sha256:e42d51ddaf66af07a2d983eb10bbaf2a6068dbc4ddcf90ddbb1e91a396b0c447`
 - `rocm/k8s-device-plugin@sha256:302ef02bff5190fbac61922fc6fe7e15a8b5936fa78b080472fb7931597ec7bb`
 
@@ -45,6 +48,7 @@ kubectl --context ryzen get node ryzen -o json | jq -r '.status.capacity["amd.co
 ```
 
 Expected:
+
 - `amdgpu-device-plugin-daemonset` and `amdgpu-labeller-daemonset` Running in `kube-system`.
 - Node labels like `amd.com/gpu.product-name=Radeon_8060S_Graphics`.
 - Capacity `amd.com/gpu: 1`.
@@ -61,11 +65,13 @@ Expected:
 ## Fix: GPU present but `amdgpu` driver not loaded (Talos)
 
 Symptom:
+
 - `amdgpu-labeller-daemonset` CrashLoopBackOff with `amdgpu driver unavailable`
 - `/sys/module/amdgpu` missing on the host
 - Node has no `amd.com/gpu` capacity
 
 Cause:
+
 - On Talos, GPU drivers come from **system extensions** which only take effect
   on **install/upgrade**. Having a Kubernetes DaemonSet is not enough.
 
@@ -73,7 +79,6 @@ Procedure (Talos v1.12.4, non-deprecated boot-assets workflow):
 
 1. Generate an Image Factory schematic that includes `siderolabs/amdgpu` and
    `siderolabs/amd-ucode` (we keep the schematic source in-repo):
-
    - `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml`
 
    ```bash

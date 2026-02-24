@@ -56,12 +56,7 @@ const transportErrorTag = (error: unknown) => {
   return 'KubeError'
 }
 
-const resolvePromptText = (
-  value: Option.Option<string>,
-  question: string,
-  allowEmpty = false,
-  defaultValue?: string,
-) =>
+const resolvePromptText = (value: Option.Option<string>, question: string, allowEmpty = false, defaultValue?: string) =>
   Option.isSome(value)
     ? Effect.succeed(value.value)
     : Effect.tryPromise({

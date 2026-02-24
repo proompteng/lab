@@ -22,7 +22,7 @@ jobs:
     uses: ./.github/workflows/common-monorepo.yml
     with:
       install-command: bun install --frozen-lockfile
-      lint-command: bunx biome check services/${name} packages/scripts/src/${name} argocd/applications/${name}
+      lint-command: bunx oxfmt --check services/${name} packages/scripts/src/${name} argocd/applications/${name}
       test-command: cd services/${name} && bun run test
       build-command: cd services/${name} && bun run build
 `

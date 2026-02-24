@@ -3,13 +3,13 @@ name: Auto PR for release branches
 on:
   push:
     branches:
-      - "release/**"
+      - 'release/**'
     paths:
-      - "argocd/applications/*/kustomization.yaml"
+      - 'argocd/applications/*/kustomization.yaml'
   workflow_dispatch:
     inputs:
       head_branch:
-        description: "Branch to create the PR from (for manual runs, provide value like release/<sha256>)"
+        description: 'Branch to create the PR from (for manual runs, provide value like release/<sha256>)'
         required: false
 
 permissions:

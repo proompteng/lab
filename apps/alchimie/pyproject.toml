@@ -4,18 +4,10 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.9,<3.13"
-dependencies = [
-    "dagster==1.11.11",
-    "dagster-k8s==0.27.11",
-    "psycopg2-binary==2.9.10",
-    "polars==1.33.1",
-]
+dependencies = ["dagster==1.11.11", "dagster-k8s==0.27.11", "psycopg2-binary==2.9.10", "polars==1.33.1"]
 
 [project.optional-dependencies]
-dev = [
-    "dagster-webserver==1.11.11",
-    "pytest==8.4.2",
-]
+dev = ["dagster-webserver==1.11.11", "pytest==8.4.2"]
 
 [build-system]
 requires = ["setuptools"]
@@ -26,4 +18,4 @@ module_name = "alchimie.definitions"
 code_location_name = "alchimie"
 
 [tool.setuptools.packages.find]
-exclude=["alchimie_tests"]
+exclude = ["alchimie_tests"]

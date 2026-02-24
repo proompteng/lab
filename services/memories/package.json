@@ -1,8 +1,8 @@
 {
   "name": "memories",
-  "module": "index.ts",
-  "type": "module",
   "private": true,
+  "type": "module",
+  "module": "index.ts",
   "scripts": {
     "save-memory": "bun run ./save.ts",
     "retrieve-memory": "bun run ./retrieve.ts",

@@ -105,6 +105,7 @@ talosctl mounts -n 192.168.1.194 -e 192.168.1.85 | rg -n ' /var$|/var/mnt/local-
 ```
 
 Expected:
+
 - `EPHEMERAL` is ~200GB.
 - `u-local-path-provisioner` exists and consumes the remaining free space.
 - `/var/mnt/local-path-provisioner` is mounted.
@@ -112,16 +113,19 @@ Expected:
 ## Step 7: Fix Talos boot failures caused by duplicate `machine.files` paths (pitfall)
 
 Symptom:
+
 - Node is `NotReady`, `cri`/`kubelet` don’t come up.
 - Logs show:
   - `writeUserFiles failed ... resource EtcFileSpecs... already exists`
   - `error writing kubelet PKI ... /etc/kubernetes/bootstrap-kubeconfig: read-only file system`
 
 Cause:
+
 - Machine config contains multiple `machine.files` entries with the same `path`
   (for example `/etc/cri/conf.d/20-customization.part`).
 
 Fix:
+
 1. Download the machine config and remove the duplicate file spec.
 2. Apply the corrected full config (multi-document configs are hard to patch surgically).
 

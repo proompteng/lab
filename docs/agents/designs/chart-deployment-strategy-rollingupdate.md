@@ -3,32 +3,41 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 The chart currently relies on Kubernetes default `RollingUpdate` behavior for Deployments. For production, we should explicitly control surge/unavailable and optionally support safer strategies (e.g. `Recreate` for DB-migration-sensitive components).
 
 ## Goals
+
 - Provide explicit, chart-configurable Deployment strategies for:
   - `deploy/agents`
   - `deploy/agents-controllers`
 - Enable safe canary/rollback patterns with predictable availability.
 
 ## Non-Goals
+
 - Replacing GitOps rollout control (Argo CD) with Helm hooks.
 
 ## Current State
+
 - Templates:
   - Control plane Deployment: `charts/agents/templates/deployment.yaml` has no `spec.strategy`.
   - Controllers Deployment: `charts/agents/templates/deployment-controllers.yaml` has no `spec.strategy`.
 - Values: no strategy knobs exist in `charts/agents/values.yaml`.
 
 ## Design
+
 ### Proposed values
+
 Add:
+
 - `controlPlane.deploymentStrategy`
 - `controllers.deploymentStrategy`
 - `deploymentStrategy` (global default)
 
 Each can accept:
+
 ```yaml
 type: RollingUpdate
 rollingUpdate:
@@ -37,27 +46,32 @@ rollingUpdate:
 ```
 
 ### Defaults
+
 - Control plane:
   - `maxUnavailable: 0` (prefer availability)
 - Controllers:
   - `maxUnavailable: 1` (prefer continuity but allow roll)
 
 ## Config Mapping
-| Helm value | Rendered field | Intended behavior |
-|---|---|---|
-| `deploymentStrategy` | `Deployment.spec.strategy` | Global default used if component overrides are absent. |
-| `controlPlane.deploymentStrategy` | `deploy/agents.spec.strategy` | Component-specific override. |
-| `controllers.deploymentStrategy` | `deploy/agents-controllers.spec.strategy` | Component-specific override. |
+
+| Helm value                        | Rendered field                            | Intended behavior                                      |
+| --------------------------------- | ----------------------------------------- | ------------------------------------------------------ |
+| `deploymentStrategy`              | `Deployment.spec.strategy`                | Global default used if component overrides are absent. |
+| `controlPlane.deploymentStrategy` | `deploy/agents.spec.strategy`             | Component-specific override.                           |
+| `controllers.deploymentStrategy`  | `deploy/agents-controllers.spec.strategy` | Component-specific override.                           |
 
 ## Rollout Plan
+
 1. Add new values with conservative defaults matching Kubernetes defaults (no behavior change).
 2. In production, set explicit `maxUnavailable`/`maxSurge` values.
 3. Validate rollout behavior during a canary image bump.
 
 Rollback:
+
 - Remove values; cluster falls back to defaults.
 
 ## Validation
+
 ```bash
 helm template agents charts/agents | rg -n \"strategy:\"
 kubectl -n agents get deploy agents -o yaml | rg -n \"strategy:\"
@@ -65,19 +79,23 @@ kubectl -n agents rollout status deploy/agents
 ```
 
 ## Failure Modes and Mitigations
+
 - Too aggressive `maxUnavailable` causes downtime: mitigate by defaulting to `0` for control plane.
 - Surge causes resource pressure: mitigate by setting explicit `maxSurge` and sizing cluster capacity.
 
 ## Acceptance Criteria
+
 - Operators can tune rollout availability without editing templates.
 - Both Deployments render with explicit strategy when configured.
 
 ## References
+
 - Kubernetes Deployment strategy: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -92,7 +110,9 @@ kubectl -n agents rollout status deploy/agents
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -125,13 +145,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -147,6 +170,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -159,6 +183,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

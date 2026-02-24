@@ -6,13 +6,13 @@ Jangar terminals now run on a dedicated `jangar-terminal` deployment that owns P
 
 ## Deployment
 
-1) Build + push the Jangar image:
+1. Build + push the Jangar image:
 
 ```bash
 bun run packages/scripts/src/jangar/deploy-service.ts
 ```
 
-2) Apply GitOps updates (Argo CD will reconcile):
+2. Apply GitOps updates (Argo CD will reconcile):
 
 ```bash
 argocd app sync jangar

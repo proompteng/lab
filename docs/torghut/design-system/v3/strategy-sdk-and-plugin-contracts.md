@@ -1,20 +1,23 @@
 # Strategy SDK and Plugin Contracts
 
 ## Status
+
 - Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
 
-
 ## Objective
+
 Define a strict strategy plugin SDK so research can iterate quickly while preserving runtime safety and deterministic
 behavior in Torghut production loops.
 
 ## Design Principles
+
 - Plugins generate intents, not orders.
 - Plugins are pure functions over canonical feature vectors and local state.
 - Plugin interfaces are versioned and backward-compatible by policy.
 - Plugin failures degrade locally and do not crash the scheduler.
 
 ## SDK Surface (Proposed)
+
 ```python
 from dataclasses import dataclass
 from datetime import datetime
@@ -57,13 +60,16 @@ class StrategyPlugin(Protocol):
 ```
 
 ## Built-In Plugin Families (v1)
+
 - `legacy_macd_rsi@1.0.0` for migration parity.
 - `trend_multifactor@1.0.0`.
 - `mean_reversion@1.0.0`.
 - `volatility_overlay@1.0.0`.
 
 ## Strategy Catalog Contract Extension
+
 Extend strategy catalog model from `services/torghut/app/strategies/catalog.py` with:
+
 - `strategy_type: str`
 - `version: str`
 - `params: dict[str, Any]`
@@ -73,11 +79,13 @@ Extend strategy catalog model from `services/torghut/app/strategies/catalog.py` 
 - `priority: int`
 
 Validation policy:
+
 - unknown plugin type/version => strategy disabled (fail closed).
 - invalid params => strategy disabled + reason persisted.
 - catalog reload is atomic.
 
 ## Runtime Packaging and Loading
+
 - Plugin package location:
   - `services/torghut/app/trading/strategies/plugins/`
 - One module per plugin family and semantic version.
@@ -85,6 +93,7 @@ Validation policy:
 - Plugin imports must be deterministic and auditable.
 
 ## Plugin Lifecycle
+
 1. Register plugin in registry map.
 2. Validate strategy config against plugin schema.
 3. Warmup period consumes features without emitting intents.
@@ -93,12 +102,14 @@ Validation policy:
 6. Re-enable by config or automatic cooldown policy.
 
 ## Security and Runtime Restrictions
+
 - No outbound HTTP from plugin code path.
 - No broker client references in plugins.
 - No file writes in runtime evaluation.
 - No mutable global state shared across plugins.
 
 ## Test Matrix (Required Per Plugin)
+
 - deterministic unit tests using fixture feature vectors,
 - param-validation tests,
 - warmup boundary tests,
@@ -107,7 +118,9 @@ Validation policy:
 - replay parity test against frozen fixture set.
 
 ## Observability Contract
+
 Per plugin labels:
+
 - `strategy_plugin_loaded`
 - `strategy_plugin_enabled`
 - `strategy_events_total`
@@ -117,12 +130,14 @@ Per plugin labels:
 - `strategy_circuit_open_total`
 
 ## Versioning and Deprecation Policy
+
 - Breaking changes require major version bump.
 - Minor versions may add optional params/features only.
 - Removal requires one release deprecation window.
 - Rollback path must remain config-only for previous stable major.
 
 ## AgentRun Handoff Bundle
+
 - `ImplementationSpec`: `torghut-v3-plugin-sdk-impl-v1`.
 - Required keys:
   - `repository`

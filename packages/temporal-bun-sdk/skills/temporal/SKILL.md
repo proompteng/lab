@@ -1,6 +1,6 @@
 ---
 name: temporal
-description: "Operate Temporal workflows with explicit namespace/address: inspect runs, fetch history, debug nondeterminism, reset/cancel/terminate, and inspect task queues."
+description: 'Operate Temporal workflows with explicit namespace/address: inspect runs, fetch history, debug nondeterminism, reset/cancel/terminate, and inspect task queues.'
 ---
 
 # Temporal

@@ -18,14 +18,14 @@ graph TD
     A[Manual Trigger] --> B[GitHub Action]
     B --> C[Build Static Libraries]
     C --> D[Linux ARM64 Build]
-    C --> E[Linux x64 Build] 
+    C --> E[Linux x64 Build]
     C --> F[macOS ARM64 Build]
     D --> G[Generate Checksums]
     E --> G
     F --> G
     G --> H[Create GitHub Release]
     H --> I[Publish Release Artifacts]
-    
+
     J[Local Build] --> K[Download Client]
     J[CI Build] --> K
     J[Docker Build] --> K
@@ -46,19 +46,19 @@ graph LR
         D --> E[Artifact Packaging]
         E --> F[Release Publishing]
     end
-    
+
     subgraph "Download Client"
         G[Platform Detection] --> H[GitHub API Client]
         H --> I[Artifact Download]
         I --> J[Checksum Verification]
         J --> K[Local Cache Management]
     end
-    
+
     subgraph "Integration Layer"
         L[Zig Build System] --> M[Library Linking]
         M --> N[Final Binary Output]
     end
-    
+
     F --> H
     K --> L
 ```
@@ -70,6 +70,7 @@ graph LR
 **File**: `.github/workflows/temporal-static-libraries.yml`
 
 **Responsibilities**:
+
 - Build static libraries for target platforms (Linux ARM64, Linux x64, macOS ARM64)
 - Use arm64 runners from cluster resources
 - Generate checksums for integrity verification
@@ -77,6 +78,7 @@ graph LR
 - Support manual triggering via workflow_dispatch
 
 **Key Features**:
+
 - Matrix build strategy for multiple platforms
 - Rust toolchain setup with cross-compilation support
 - Artifact naming convention: `temporal-static-libs-{platform}-{arch}-{version}.tar.gz`
@@ -87,6 +89,7 @@ graph LR
 **File**: `packages/temporal-bun-sdk/scripts/download-temporal-libs.ts` (Bun script)
 
 **Interface**:
+
 ```typescript
 interface DownloadClient {
   downloadLibraries(version?: string): Promise<LibrarySet>
@@ -110,6 +113,7 @@ interface StaticLibrary {
 ```
 
 **Responsibilities**:
+
 - Detect current platform and architecture
 - Query GitHub releases API for available artifacts
 - Download appropriate static libraries
@@ -120,12 +124,14 @@ interface StaticLibrary {
 ### 3. Build System Integration
 
 **Modified Files**:
+
 - `packages/temporal-bun-sdk/native/temporal-bun-bridge-zig/build.zig`
 - `packages/temporal-bun-sdk/package.json`
 - `packages/temporal-bun-sdk/scripts/run-with-rust-toolchain.ts` (deprecated)
 - All scripts implemented as Bun scripts with `#!/usr/bin/env bun` shebang
 
 **Integration Points**:
+
 - Zig build system modified to use pre-built libraries
 - Package.json scripts updated to use download client
 - Environment variable `USE_PREBUILT_LIBS=true` to enable new behavior
@@ -136,6 +142,7 @@ interface StaticLibrary {
 **Location**: `packages/temporal-bun-sdk/.temporal-libs-cache/`
 
 **Structure**:
+
 ```
 .temporal-libs-cache/
 ├── v1.0.0/
@@ -184,8 +191,8 @@ interface TemporalLibsConfig {
 }
 
 interface PlatformConfig {
-  os: "linux" | "macos"
-  arch: "arm64" | "x64"
+  os: 'linux' | 'macos'
+  arch: 'arm64' | 'x64'
   enabled: boolean
 }
 ```
@@ -266,26 +273,31 @@ interface PlatformConfig {
 ## Migration Strategy
 
 ### Phase 1: Infrastructure Setup
+
 1. Create GitHub Action workflow
 2. Implement download client
 3. Set up initial release with static libraries
 
 ### Phase 2: Integration
+
 1. Modify Zig build system to support pre-built libraries
 2. Update package.json scripts
 3. Add environment variable controls
 
 ### Phase 3: CI/CD Updates
+
 1. Update temporal-bun-sdk.yml workflow
 2. Remove Rust toolchain dependencies
 3. Update Docker images
 
 ### Phase 4: Cleanup
+
 1. Deprecate run-with-rust-toolchain.ts
 2. Remove Rust-related dependencies
 3. Update documentation
 
 ### Rollback Plan
+
 - Environment variable `USE_PREBUILT_LIBS=false` reverts to old behavior
 - Keep Rust compilation code until migration is proven stable
 - Maintain vendor directory setup as fallback

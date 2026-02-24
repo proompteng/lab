@@ -55,7 +55,9 @@ const comparePackagesByContents = async (newPackagePath: string, existingPackage
 
   const extractExistingResult = Bun.spawnSync(['tar', '-xzf', existingPackagePath, '-C', existingExtractDir])
   if (extractExistingResult.exitCode !== 0) {
-    throw new Error(`failed to unpack ${existingPackagePath}: ${decode(extractExistingResult.stderr) || 'unknown error'}`)
+    throw new Error(
+      `failed to unpack ${existingPackagePath}: ${decode(extractExistingResult.stderr) || 'unknown error'}`,
+    )
   }
 
   const diffResult = Bun.spawnSync(['diff', '-qr', newExtractDir, existingExtractDir])
@@ -88,7 +90,15 @@ if (!packagePath.endsWith(`-${chartVersion}.tgz`)) {
   throw new Error(`Packaged chart version does not match Chart.yaml (${chartVersion}).`)
 }
 
-const pullResult = Bun.spawnSync(['helm', 'pull', chartPackageRef, '--version', chartVersion, '--destination', existingPackageDir])
+const pullResult = Bun.spawnSync([
+  'helm',
+  'pull',
+  chartPackageRef,
+  '--version',
+  chartVersion,
+  '--destination',
+  existingPackageDir,
+])
 if (pullResult.exitCode === 0) {
   const existingPackagePath = resolve(existingPackageDir, `agents-${chartVersion}.tgz`)
   if (!(await Bun.file(existingPackagePath).exists())) {

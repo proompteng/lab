@@ -9,7 +9,7 @@ spec:
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
+  storageClassName: ''
   local:
     path: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M
   nodeAffinity:
@@ -32,7 +32,7 @@ spec:
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
+  storageClassName: ''
   local:
     path: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA12R7C
   nodeAffinity:
@@ -55,7 +55,7 @@ spec:
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
+  storageClassName: ''
   local:
     path: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D
   nodeAffinity:
@@ -78,7 +78,7 @@ spec:
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
+  storageClassName: ''
   local:
     path: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9
   nodeAffinity:
@@ -101,7 +101,7 @@ spec:
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
+  storageClassName: ''
   local:
     path: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LKW9
   nodeAffinity:
@@ -124,7 +124,7 @@ spec:
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
+  storageClassName: ''
   local:
     path: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0HS7E
   nodeAffinity:
@@ -148,7 +148,7 @@ spec:
   resources:
     requests:
       storage: 22Ti
-  storageClassName: ""
+  storageClassName: ''
   volumeName: pv-osd-01
 ---
 apiVersion: v1
@@ -163,7 +163,7 @@ spec:
   resources:
     requests:
       storage: 22Ti
-  storageClassName: ""
+  storageClassName: ''
   volumeName: pv-osd-02
 ---
 apiVersion: v1
@@ -178,7 +178,7 @@ spec:
   resources:
     requests:
       storage: 22Ti
-  storageClassName: ""
+  storageClassName: ''
   volumeName: pv-osd-03
 ---
 apiVersion: v1
@@ -193,7 +193,7 @@ spec:
   resources:
     requests:
       storage: 22Ti
-  storageClassName: ""
+  storageClassName: ''
   volumeName: pv-osd-04
 ---
 apiVersion: v1
@@ -208,7 +208,7 @@ spec:
   resources:
     requests:
       storage: 22Ti
-  storageClassName: ""
+  storageClassName: ''
   volumeName: pv-osd-05
 ---
 apiVersion: v1
@@ -223,5 +223,5 @@ spec:
   resources:
     requests:
       storage: 22Ti
-  storageClassName: ""
+  storageClassName: ''
   volumeName: pv-osd-06

@@ -1,7 +1,8 @@
 # Temporal Bun Worker – Build ID Registration Investigation
 
 **Last updated:** 2026-02-10  
-**Owner:** Codex automation (gregkonush workspace)  
+**Owner:** Codex automation (gregkonush workspace)
+
 > **Historical note:** `TEMPORAL_BUN_SDK_USE_ZIG` has been retired; the Zig bridge
 > is no longer selectable at runtime. This document remains for archival
 > reference while the TypeScript runtime is the supported path.
@@ -12,7 +13,7 @@
 > longer calls these APIs in worker startup; worker versioning is handled via
 > deployment metadata (deployment name + build ID) and `WorkerVersioningMode.VERSIONED`.
 
-**Scope:** `packages/temporal-bun-sdk` TypeScript worker runtime (Bun)  
+**Scope:** `packages/temporal-bun-sdk` TypeScript worker runtime (Bun)
 
 ---
 
@@ -30,13 +31,13 @@
 
 ## Environment & Reproduction
 
-| Item | Details |
-| --- | --- |
-| Host | macOS 15 (arm64) |
+| Item         | Details                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------- |
+| Host         | macOS 15 (arm64)                                                                                        |
 | Temporal CLI | `temporal server start-dev` via `cd packages/temporal-bun-sdk && bun run scripts/start-temporal-cli.ts` |
-| Bun Runtime | `bun test` (bundled with repo) |
-| Feature Flag | _Removed (legacy `TEMPORAL_BUN_SDK_USE_ZIG`)_ |
-| Build ID | Derived automatically (`<identity>-build`) unless `TEMPORAL_WORKER_BUILD_ID` is set |
+| Bun Runtime  | `bun test` (bundled with repo)                                                                          |
+| Feature Flag | _Removed (legacy `TEMPORAL_BUN_SDK_USE_ZIG`)_                                                           |
+| Build ID     | Derived automatically (`<identity>-build`) unless `TEMPORAL_WORKER_BUILD_ID` is set                     |
 
 ### Steps to Reproduce Hang (before fix)
 
@@ -53,10 +54,10 @@
 
 ## Root Cause Analysis
 
-| Finding | Evidence |
-| --- | --- |
-| Build ID never registered with server | The Bun worker did **not** call any worker-versioning RPC; the server treated the process as incompatible. |
-| TS SDK handles registration automatically | `packages/client/src/task-queue-client.ts` issues `UpdateWorkerBuildIdCompatibility`. |
+| Finding                                          | Evidence                                                                                                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Build ID never registered with server            | The Bun worker did **not** call any worker-versioning RPC; the server treated the process as incompatible.                                                   |
+| TS SDK handles registration automatically        | `packages/client/src/task-queue-client.ts` issues `UpdateWorkerBuildIdCompatibility`.                                                                        |
 | Bun bridge relies solely on core worker creation | The worker runtime passed the build ID through deployment options but never issued `UpdateWorkerBuildIdCompatibility`, so matching refused to deliver tasks. |
 
 **Conclusion:** Without registering the build ID, the matching service declines to hand out activations, causing the poll loop to starve.
@@ -73,12 +74,12 @@ bootstrap wiring. As of 2026-02-10, the SDK no longer uses that wiring in
 
 ## Current Status
 
-| Component | Status | Notes |
-| --- | --- | --- |
-| Worker versioning v0.1 APIs | ⚠️ Not used | Disabled on some namespaces. |
-| Worker deployments versioning | ✅ Used | `WorkerVersioningMode.VERSIONED` + `VersioningBehavior.PINNED` when strict. |
-| Nondeterminism runtime guards | ✅ Enabled by default | Strict in production; strict by default. |
-| Documentation | ✅ Updated | This file is archival; see `docs/temporal-bun-sdk/` for current design/runbooks. |
+| Component                     | Status                | Notes                                                                            |
+| ----------------------------- | --------------------- | -------------------------------------------------------------------------------- |
+| Worker versioning v0.1 APIs   | ⚠️ Not used           | Disabled on some namespaces.                                                     |
+| Worker deployments versioning | ✅ Used               | `WorkerVersioningMode.VERSIONED` + `VersioningBehavior.PINNED` when strict.      |
+| Nondeterminism runtime guards | ✅ Enabled by default | Strict in production; strict by default.                                         |
+| Documentation                 | ✅ Updated            | This file is archival; see `docs/temporal-bun-sdk/` for current design/runbooks. |
 
 ---
 
@@ -88,7 +89,7 @@ bootstrap wiring. As of 2026-02-10, the SDK no longer uses that wiring in
    - Ensure `WorkerRuntime.create` still surfaces errors from the Zig layer (expect `NativeBridgeError` when registration fails).
 
 2. **Re-run integration suite end-to-end**
-   - Command:  
+   - Command:
      ```bash
      TEMPORAL_BUN_SDK_USE_ZIG=1 TEMPORAL_TEST_SERVER=1 \
       cd packages/temporal-bun-sdk && bun test tests/native.integration.test.ts
@@ -130,11 +131,11 @@ DYLD_LIBRARY_PATH=/Users/gregkonush/github.com/sdk-core/target/debug \
 
 ### Essential Breakpoints
 
-| Command | Purpose |
-| --- | --- |
-| `br set -n temporal_core_worker_poll_workflow_activation` | Break inside the Rust core poller; confirms bridge is invoking the C-API. |
-| `br set --file worker.zig --name pollWorkflowTaskWorker` | Stops on Zig poll loop entry; inspect pending handles and state machine. |
-| `br set --name pollWorkflowTaskCallback` | Verifies callback receives activations; check for `user_data == null` cases. |
+| Command                                                   | Purpose                                                                      |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `br set -n temporal_core_worker_poll_workflow_activation` | Break inside the Rust core poller; confirms bridge is invoking the C-API.    |
+| `br set --file worker.zig --name pollWorkflowTaskWorker`  | Stops on Zig poll loop entry; inspect pending handles and state machine.     |
+| `br set --name pollWorkflowTaskCallback`                  | Verifies callback receives activations; check for `user_data == null` cases. |
 
 If symbols fail to resolve, ensure the debug dylib is on the `DYLD_LIBRARY_PATH` and LLDB is pointed at the correct binary.
 
@@ -188,6 +189,7 @@ Documenting these steps reduced round-trips when verifying the build ID registra
 ## Next Review Checkpoint
 
 - After confirming integration tests pass and documenting the retry/backoff strategy, migrate this note into long-form developer docs or the issue tracker.
+
 ## Build ID registration update
 
 The Bun worker now performs a capability probe (via `GetWorkerBuildIdCompatibility`) during `WorkerRuntime.create()` whenever `WorkerVersioningMode.VERSIONED` is enabled. If the WorkflowService supports worker versioning, the runtime registers the build ID with `UpdateWorkerBuildIdCompatibility` before starting pollers and logs the success.

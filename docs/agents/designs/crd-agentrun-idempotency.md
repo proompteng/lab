@@ -3,49 +3,62 @@
 Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
+
 ## Overview
+
 AgentRun includes `spec.idempotencyKey`. This field is intended to avoid duplicate runs when clients retry requests. Without a contract (scope, retention, collision handling), the field is under-specified.
 
 This doc defines idempotency behavior and how controllers should implement it.
 
 ## Goals
+
 - Ensure a given idempotency key creates at most one effective execution per scope.
 - Provide predictable behavior for retries and duplicates.
 
 ## Non-Goals
+
 - Exactly-once execution across cluster failures.
 
 ## Current State
+
 - Field exists in Go types: `services/jangar/api/agents/v1alpha1/types.go` (`AgentRunSpec.IdempotencyKey`).
 - Controller currently deduplicates webhook-driven orchestration submissions via DB store (`orchestration-submit.ts`), but AgentRun idempotency is not explicitly implemented/documented.
 
 ## Design
+
 ### Scope
+
 - Idempotency key scope is `(namespace, agentRef.name, idempotencyKey)`.
 
 ### Behavior
+
 - On creating a new AgentRun:
   - If another AgentRun exists with same scope and is non-terminal: reject creation with a clear error.
   - If terminal: return the existing run reference (or allow new run only if `force=true` via a separate mechanism).
 
 ### Implementation approach
+
 - Add an index (DB-side) or controller cache keyed by the tuple above.
 - Prefer durable store (DB) so restarts don’t break idempotency.
 
 ## Config Mapping
-| Helm value / env var (proposed) | Effect | Behavior |
-|---|---|---|
-| `controllers.env.vars.JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED` | toggle | Allows phased rollout (default `true`). |
+
+| Helm value / env var (proposed)                                   | Effect    | Behavior                                             |
+| ----------------------------------------------------------------- | --------- | ---------------------------------------------------- |
+| `controllers.env.vars.JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED`        | toggle    | Allows phased rollout (default `true`).              |
 | `controllers.env.vars.JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS` | retention | How long to remember keys after terminal completion. |
 
 ## Rollout Plan
+
 1. Implement as best-effort in-controller cache (warn-only) in non-prod.
 2. Promote to durable store-based enforcement in prod.
 
 Rollback:
+
 - Disable enforcement and rely on client-side de-dupe.
 
 ## Validation
+
 ```bash
 kubectl -n agents apply -f charts/agents/examples/agentrun-sample.yaml
 kubectl -n agents apply -f charts/agents/examples/agentrun-sample.yaml
@@ -53,19 +66,23 @@ kubectl -n agents get agentrun -o json | rg -n \"idempotencyKey\"
 ```
 
 ## Failure Modes and Mitigations
+
 - Key collisions across unrelated workloads: mitigate by scoping to agentRef and namespace.
 - Retention too short allows duplicates: mitigate by conservative default retention and pruning.
 
 ## Acceptance Criteria
+
 - Duplicate creates with same idempotency key do not create duplicate effective runs.
 - Behavior is consistent across controller restarts.
 
 ## References
+
 - HTTP request idempotency (general definition): https://www.rfc-editor.org/rfc/rfc9110.html#name-idempotent-methods
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 
 ### Source of truth
+
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
@@ -80,7 +97,9 @@ kubectl -n agents get agentrun -o json | rg -n \"idempotencyKey\"
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
+
 As of 2026-02-07 (repo `main`):
+
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
@@ -113,13 +132,16 @@ kubectl rollout status -n agents deploy/agents-controllers
 ```
 
 ### Values → env var mapping (chart)
+
 Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
 - Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
+
 - `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
@@ -135,6 +157,7 @@ Common mappings:
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
+
 1. Update code + chart + CRDs in one PR when changing APIs:
    - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
@@ -147,6 +170,7 @@ Common mappings:
 4. Merge to `main`; Argo CD reconciles the `agents` application.
 
 ### Validation (smoke)
+
 - Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 - Schema + example validation: `scripts/agents/validate-agents.sh`
 - In-cluster (requires sufficient RBAC):

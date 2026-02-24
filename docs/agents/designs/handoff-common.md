@@ -50,11 +50,11 @@ As of 2026-02-07 (repo `main`), the repo declares:
 - Database connection:
   - `database.secretRef.name: jangar-db-app`
   - `database.secretRef.key: uri`
-  See `argocd/applications/agents/values.yaml`.
+    See `argocd/applications/agents/values.yaml`.
 - gRPC is enabled and explicitly managed via both chart values and env vars:
   - `grpc.enabled: true`
   - `env.vars.JANGAR_GRPC_ENABLED: "true"`
-  See `argocd/applications/agents/values.yaml`.
+    See `argocd/applications/agents/values.yaml`.
 - GitHub VersionControlProvider is declared in GitOps as `VersionControlProvider/github`. See
   `argocd/applications/agents/codex-versioncontrolprovider.yaml`.
 

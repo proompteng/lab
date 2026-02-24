@@ -5,6 +5,7 @@
 The current home lab Kubernetes cluster is Talos-based and documented under `devices/galactic`.
 
 Start here:
+
 1. `devices/galactic/README.md`
 1. `devices/galactic/docs/bootstrap-argocd.md`
 1. `devices/galactic/docs/tailscale.md` (required if you reference `*.ts.net` registries in image references)
@@ -87,7 +88,7 @@ Server flags (applied via `k3sup install` and server `k3sup join --server`):
 - **--flannel-backend=host-gw**: Use simple L2 routing, avoiding VXLAN encapsulation and lowering east-west latency on flat LANs.
 - **--etcd-arg=auto-compaction-mode=periodic** / **--etcd-arg=auto-compaction-retention=1h**: Compact etcd hourly to keep the datastore responsive.
 - **--etcd-arg=quota-backend-bytes=8589934592**: Raise the etcd data size limit to ~8 GiB to accommodate the larger cluster safely.
-- **--etcd-snapshot-schedule-cron="0 */6 * * *"** / **--etcd-snapshot-retention=20**: Take automated snapshots every six hours and retain ~5 days of restore points.
+- **--etcd-snapshot-schedule-cron="0 _/6 _ \* \*"** / **--etcd-snapshot-retention=20**: Take automated snapshots every six hours and retain ~5 days of restore points.
 - **--kube-proxy-arg=proxy-mode=ipvs** / **--kube-proxy-arg=ipvs-scheduler=wrr**: Leverage IPVS with weighted round robin for scalable service routing.
 - **--kubelet-arg=cpu-manager-policy=static** / **--kubelet-arg=topology-manager-policy=single-numa-node**: Pin Guaranteed pods to dedicated cores within the same NUMA domain to minimize jitter.
 - **--kubelet-arg=reserved-cpus=0-1**: Hold two cores per node for the OS and control-plane daemons, aligning with the 8 vCPU sizing in `tofu/harvester/main.tf`.
