@@ -11,14 +11,37 @@ from pathlib import Path
 from app.trading.autonomy.lane import run_autonomous_lane
 
 
+def _run_git_rev_parse() -> subprocess.CompletedProcess[str]:
+    if Path('/usr/bin/git').exists():
+        return subprocess.run(
+            ['/usr/bin/git', 'rev-parse', 'HEAD'],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    if Path('/usr/local/bin/git').exists():
+        return subprocess.run(
+            ['/usr/local/bin/git', 'rev-parse', 'HEAD'],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    if Path('/opt/homebrew/bin/git').exists():
+        return subprocess.run(
+            ['/opt/homebrew/bin/git', 'rev-parse', 'HEAD'],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    raise FileNotFoundError('git not found in expected paths')
+
+
 def _resolve_git_sha() -> str:
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
-        )
+        result = _run_git_rev_parse()
     except (subprocess.SubprocessError, FileNotFoundError):
-        return "unknown"
-    return result.stdout.strip() or "unknown"
+        return 'unknown'
+    return result.stdout.strip() or 'unknown'
 
 
 def main() -> int:

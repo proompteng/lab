@@ -181,49 +181,20 @@ def submit_order(
         return payload
 
     trading = _client()
-    side_enum = OrderSide(body.side.lower())
-    tif_enum = TimeInForce(body.time_in_force.lower())
-    payload: dict[str, Any] = {
-        'symbol': body.symbol,
-        'qty': body.qty,
-        'side': side_enum,
-        'time_in_force': tif_enum,
-    }
-    if body.extra_params:
-        payload.update(body.extra_params)
-
-    order_type = body.order_type.lower()
+    payload = _build_submit_order_payload(body)
     try:
-        if order_type == 'market':
-            request = MarketOrderRequest(**payload)
-        elif order_type == 'limit':
-            if body.limit_price is None:
-                raise ValueError('limit_price is required for limit orders')
-            request = LimitOrderRequest(limit_price=body.limit_price, **payload)
-        elif order_type == 'stop':
-            if body.stop_price is None:
-                raise ValueError('stop_price is required for stop orders')
-            request = StopOrderRequest(stop_price=body.stop_price, **payload)
-        elif order_type == 'stop_limit':
-            if body.limit_price is None or body.stop_price is None:
-                raise ValueError('stop_limit orders require both stop_price and limit_price')
-            request = StopLimitOrderRequest(limit_price=body.limit_price, stop_price=body.stop_price, **payload)
-        else:
-            raise ValueError(f'unsupported_order_type:{body.order_type}')
+        request = _build_submit_order_request(body, payload)
         order = trading.submit_order(request)
     except Exception as exc:
         taxonomy = _classify_error_taxonomy(exc)
         _metrics.record(operation=operation, latency_ms=_latency_ms(started), failure_taxonomy=taxonomy)
         raise HTTPException(status_code=502, detail=f'lean_submit_failed:{taxonomy}:{exc}') from exc
 
-    result = _model_to_dict(order)
-    result['_execution_adapter'] = 'lean'
-    result['_lean_contract_version'] = 'v2'
-    result['_lean_audit'] = _audit_payload(
+    result = _build_submitted_order_response(
+        order=order,
         operation=operation,
         correlation_id=correlation_id,
         idempotency_key=resolved_idempotency_key,
-        idempotent_replay=False,
     )
     _write_idempotency_cache(resolved_idempotency_key, result)
     _metrics.record(operation=operation, latency_ms=_latency_ms(started))
@@ -452,6 +423,60 @@ def _build_trading_client() -> TradingClient:
     )
 
 
+def _build_submit_order_payload(body: SubmitOrderBody) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        'symbol': body.symbol,
+        'qty': body.qty,
+        'side': OrderSide(body.side.lower()),
+        'time_in_force': TimeInForce(body.time_in_force.lower()),
+    }
+    if body.extra_params:
+        payload.update(body.extra_params)
+    return payload
+
+
+def _build_submit_order_request(body: SubmitOrderBody, payload: dict[str, Any]) -> Any:
+    order_type = body.order_type.lower()
+    if order_type == 'market':
+        return MarketOrderRequest(**payload)
+    if order_type == 'limit':
+        if body.limit_price is None:
+            raise ValueError('limit_price is required for limit orders')
+        return LimitOrderRequest(limit_price=body.limit_price, **payload)
+    if order_type == 'stop':
+        if body.stop_price is None:
+            raise ValueError('stop_price is required for stop orders')
+        return StopOrderRequest(stop_price=body.stop_price, **payload)
+    if order_type == 'stop_limit':
+        if body.limit_price is None or body.stop_price is None:
+            raise ValueError('stop_limit orders require both stop_price and limit_price')
+        return StopLimitOrderRequest(
+            limit_price=body.limit_price,
+            stop_price=body.stop_price,
+            **payload,
+        )
+    raise ValueError(f'unsupported_order_type:{body.order_type}')
+
+
+def _build_submitted_order_response(
+    *,
+    order: Any,
+    operation: str,
+    correlation_id: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    result = _model_to_dict(order)
+    result['_execution_adapter'] = 'lean'
+    result['_lean_contract_version'] = 'v2'
+    result['_lean_audit'] = _audit_payload(
+        operation=operation,
+        correlation_id=correlation_id,
+        idempotency_key=idempotency_key,
+        idempotent_replay=False,
+    )
+    return result
+
+
 def _lookup_order_by_client_id(client_order_id: str) -> Any | None:
     client = _client()
 
@@ -484,37 +509,48 @@ def _normalize_alpaca_base_url(base_url: Optional[str]) -> Optional[str]:
 
 
 def _model_to_dict(model: Any) -> dict[str, Any]:
-    def to_jsonable(value: Any) -> Any:
-        if value is None or isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, UUID):
-            return str(value)
-        if isinstance(value, datetime):
-            return value.isoformat()
-        if isinstance(value, Enum):
-            return to_jsonable(value.value)
-        if is_dataclass(value) and not isinstance(value, type):
-            return to_jsonable(asdict(value))
-        if isinstance(value, Mapping):
-            mapped = cast(Mapping[object, Any], value)
-            return {str(key): to_jsonable(item) for key, item in mapped.items()}
-        if isinstance(value, (list, tuple, set, frozenset)):
-            items = cast(Iterable[Any], value)
-            return [to_jsonable(item) for item in items]
-        return str(value)
+    dumped = _model_dump_payload(model)
+    if dumped is not None:
+        return _mapping_to_json_dict(dumped)
+    return {'value': _to_jsonable(model)}
 
+
+def _model_dump_payload(model: Any) -> Mapping[str, Any] | None:
     if hasattr(model, 'model_dump'):
         dumped = model.model_dump(mode='json')
         if isinstance(dumped, Mapping):
-            return cast(dict[str, Any], to_jsonable(dumped))
-        return {'value': to_jsonable(dumped)}
+            return cast(Mapping[str, Any], dumped)
+        return {'value': dumped}
     if isinstance(model, Mapping):
-        mapped = cast(Mapping[str, Any], model)
-        return {str(key): to_jsonable(item) for key, item in mapped.items()}
+        return cast(Mapping[str, Any], model)
     if hasattr(model, '__dict__'):
         attrs = {key: value for key, value in model.__dict__.items() if not key.startswith('_')}
-        return cast(dict[str, Any], to_jsonable(attrs))
-    return {'value': to_jsonable(model)}
+        return cast(Mapping[str, Any], attrs)
+    return None
+
+
+def _mapping_to_json_dict(mapped: Mapping[str, Any]) -> dict[str, Any]:
+    return {str(key): _to_jsonable(item) for key, item in mapped.items()}
+
+
+def _to_jsonable(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return _to_jsonable(value.value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return _to_jsonable(asdict(value))
+    if isinstance(value, Mapping):
+        mapped = cast(Mapping[object, Any], value)
+        return {str(key): _to_jsonable(item) for key, item in mapped.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items = cast(Iterable[Any], value)
+        return [_to_jsonable(item) for item in items]
+    return str(value)
 
 
 def _resolve_correlation_id(value: str | None) -> str:

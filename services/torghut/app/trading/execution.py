@@ -123,41 +123,15 @@ class OrderExecutor:
         execution_policy_context = _extract_execution_policy_context(
             decision, decision_row=decision_row
         )
-
-        existing_order = self._fetch_existing_order(
-            execution_client, decision_row.decision_hash
-        )
-        if existing_order is not None:
-            existing_payload = dict(existing_order)
-            advice_provenance = _extract_execution_advice_provenance(decision)
-            if advice_provenance is not None:
-                existing_payload["_execution_advice_provenance"] = advice_provenance
-            route_expected, route_actual, fallback_reason, fallback_count = (
-                resolve_order_route_metadata(
-                    expected_adapter=execution_expected_adapter,
-                    execution_client=execution_client,
-                    order_response=existing_payload,
-                )
-            )
-            execution = sync_order_to_db(
-                session,
-                existing_payload,
-                trade_decision_id=str(decision_row.id),
-                alpaca_account_label=account_label,
-                execution_expected_adapter=route_expected,
-                execution_actual_adapter=route_actual,
-                execution_fallback_reason=fallback_reason,
-                execution_fallback_count=fallback_count,
-            )
-            _attach_execution_policy_context(execution, execution_policy_context)
-            upsert_execution_tca_metric(session, execution)
-            _apply_execution_status(decision_row, execution, account_label)
-            session.add(decision_row)
-            session.commit()
-            logger.info(
-                "Backfilled execution for decision %s from broker state",
-                decision_row.id,
-            )
+        if self._sync_existing_order_if_present(
+            session=session,
+            execution_client=execution_client,
+            decision=decision,
+            decision_row=decision_row,
+            account_label=account_label,
+            execution_expected_adapter=execution_expected_adapter,
+            execution_policy_context=execution_policy_context,
+        ):
             return None
 
         request = ExecutionRequest(
@@ -177,62 +151,13 @@ class OrderExecutor:
 
         if retry_delays is None:
             retry_delays = []
-
-        conflicting_order = self._find_conflicting_open_order(execution_client, request)
-        if conflicting_order is not None:
-            existing_order_id = (
-                conflicting_order.get("id")
-                or conflicting_order.get("order_id")
-                or conflicting_order.get("client_order_id")
-            )
-            existing_order_type = str(
-                conflicting_order.get("type")
-                or conflicting_order.get("order_type")
-                or "unknown"
-            ).lower()
-            existing_order_side = str(
-                conflicting_order.get("side") or "unknown"
-            ).lower()
-            payload = {
-                "source": "broker_precheck",
-                "code": "precheck_opposite_side_open_order",
-                "reject_reason": f"opposite side {existing_order_type} order exists",
-                "existing_order_id": existing_order_id,
-                "existing_order_side": existing_order_side,
-                "existing_order_type": existing_order_type,
-            }
-            raise RuntimeError(json.dumps(payload))
-
-        attempt = 0
-        while True:
-            try:
-                order_response = execution_client.submit_order(
-                    symbol=request.symbol,
-                    side=request.side,
-                    qty=float(request.qty),
-                    order_type=request.order_type,
-                    time_in_force=request.time_in_force,
-                    limit_price=float(request.limit_price)
-                    if request.limit_price is not None
-                    else None,
-                    stop_price=float(request.stop_price)
-                    if request.stop_price is not None
-                    else None,
-                    extra_params={"client_order_id": request.client_order_id},
-                )
-                break
-            except Exception as exc:
-                if attempt >= len(retry_delays) or not should_retry_order_error(exc):
-                    raise
-                delay = retry_delays[attempt]
-                attempt += 1
-                logger.warning(
-                    "Retrying order submission attempt=%s decision_id=%s error=%s",
-                    attempt,
-                    decision_row.id,
-                    exc,
-                )
-                time.sleep(delay)
+        self._raise_if_conflicting_open_order(execution_client, request)
+        order_response = self._submit_order_with_retry(
+            execution_client=execution_client,
+            request=request,
+            retry_delays=retry_delays,
+            decision_id=str(decision_row.id),
+        )
 
         route_expected, route_actual, fallback_reason, fallback_count = (
             resolve_order_route_metadata(
@@ -273,6 +198,121 @@ class OrderExecutor:
         session.add(decision_row)
         session.commit()
         return execution
+
+    def _sync_existing_order_if_present(
+        self,
+        *,
+        session: Session,
+        execution_client: Any,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        account_label: str,
+        execution_expected_adapter: Optional[str],
+        execution_policy_context: dict[str, Any],
+    ) -> bool:
+        existing_order = self._fetch_existing_order(
+            execution_client, decision_row.decision_hash
+        )
+        if existing_order is None:
+            return False
+        existing_payload = dict(existing_order)
+        advice_provenance = _extract_execution_advice_provenance(decision)
+        if advice_provenance is not None:
+            existing_payload["_execution_advice_provenance"] = advice_provenance
+        route_expected, route_actual, fallback_reason, fallback_count = (
+            resolve_order_route_metadata(
+                expected_adapter=execution_expected_adapter,
+                execution_client=execution_client,
+                order_response=existing_payload,
+            )
+        )
+        execution = sync_order_to_db(
+            session,
+            existing_payload,
+            trade_decision_id=str(decision_row.id),
+            alpaca_account_label=account_label,
+            execution_expected_adapter=route_expected,
+            execution_actual_adapter=route_actual,
+            execution_fallback_reason=fallback_reason,
+            execution_fallback_count=fallback_count,
+        )
+        _attach_execution_policy_context(execution, execution_policy_context)
+        upsert_execution_tca_metric(session, execution)
+        _apply_execution_status(decision_row, execution, account_label)
+        session.add(decision_row)
+        session.commit()
+        logger.info(
+            "Backfilled execution for decision %s from broker state",
+            decision_row.id,
+        )
+        return True
+
+    def _raise_if_conflicting_open_order(
+        self,
+        execution_client: Any,
+        request: ExecutionRequest,
+    ) -> None:
+        conflicting_order = self._find_conflicting_open_order(execution_client, request)
+        if conflicting_order is None:
+            return
+        existing_order_id = (
+            conflicting_order.get("id")
+            or conflicting_order.get("order_id")
+            or conflicting_order.get("client_order_id")
+        )
+        existing_order_type = str(
+            conflicting_order.get("type")
+            or conflicting_order.get("order_type")
+            or "unknown"
+        ).lower()
+        existing_order_side = str(conflicting_order.get("side") or "unknown").lower()
+        payload = {
+            "source": "broker_precheck",
+            "code": "precheck_opposite_side_open_order",
+            "reject_reason": f"opposite side {existing_order_type} order exists",
+            "existing_order_id": existing_order_id,
+            "existing_order_side": existing_order_side,
+            "existing_order_type": existing_order_type,
+        }
+        raise RuntimeError(json.dumps(payload))
+
+    def _submit_order_with_retry(
+        self,
+        *,
+        execution_client: Any,
+        request: ExecutionRequest,
+        retry_delays: list[float],
+        decision_id: str,
+    ) -> Any:
+        attempt = 0
+        while True:
+            try:
+                return execution_client.submit_order(
+                    symbol=request.symbol,
+                    side=request.side,
+                    qty=float(request.qty),
+                    order_type=request.order_type,
+                    time_in_force=request.time_in_force,
+                    limit_price=float(request.limit_price)
+                    if request.limit_price is not None
+                    else None,
+                    stop_price=float(request.stop_price)
+                    if request.stop_price is not None
+                    else None,
+                    extra_params={"client_order_id": request.client_order_id},
+                )
+            except Exception as exc:
+                if attempt >= len(retry_delays) or not should_retry_order_error(exc):
+                    raise
+                delay = retry_delays[attempt]
+                attempt += 1
+                logger.warning(
+                    "Retrying order submission attempt=%s decision_id=%s error=%s",
+                    attempt,
+                    decision_id,
+                    exc,
+                )
+                time.sleep(delay)
 
     def mark_rejected(
         self, session: Session, decision_row: TradeDecision, reason: str

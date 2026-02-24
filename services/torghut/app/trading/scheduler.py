@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -783,153 +784,218 @@ class TradingPipeline:
 
     def run_once(self) -> None:
         with self.session_factory() as session:
-            self._ingest_order_feed(session)
-            self.order_firewall.cancel_open_orders_if_kill_switch()
-            if self.strategy_catalog is not None:
-                self.strategy_catalog.refresh(session)
-            strategies = self._load_strategies(session)
+            strategies = self._prepare_run_once(session)
             if not strategies:
-                logger.info("No enabled strategies found; skipping trading cycle")
                 return
 
             batch = self.ingestor.fetch_signals(session)
-            self.state.last_ingest_signals_total = len(batch.signals)
-            self.state.last_ingest_window_start = batch.query_start
-            self.state.last_ingest_window_end = batch.query_end
-            self.state.last_ingest_reason = batch.no_signal_reason
-            if not batch.signals:
-                self.record_no_signal_batch(batch)
+            self._record_ingest_window(batch)
+            if not self._prepare_batch_for_decisions(session, batch):
+                return
+
+            context = self._build_run_context(session)
+            if context is None:
                 self.ingestor.commit_cursor(session, batch)
                 return
-            if settings.trading_feature_quality_enabled:
-                quality_thresholds = FeatureQualityThresholds(
-                    max_required_null_rate=settings.trading_feature_max_required_null_rate,
-                    max_staleness_ms=settings.trading_feature_max_staleness_ms,
-                    max_duplicate_ratio=settings.trading_feature_max_duplicate_ratio,
-                )
-                quality_report = evaluate_feature_batch_quality(
-                    batch.signals, thresholds=quality_thresholds
-                )
-                self.state.metrics.feature_batch_rows_total += quality_report.rows_total
-                self.state.metrics.feature_null_rate = quality_report.null_rate_by_field
-                self.state.metrics.feature_staleness_ms_p95 = (
-                    quality_report.staleness_ms_p95
-                )
-                self.state.metrics.feature_duplicate_ratio = (
-                    quality_report.duplicate_ratio
-                )
-                self.state.metrics.feature_schema_mismatch_total += (
-                    quality_report.schema_mismatch_total
-                )
-                if not quality_report.accepted:
-                    self.state.metrics.feature_quality_rejections_total += 1
-                    logger.error(
-                        "Feature quality gate failed rows=%s reasons=%s staleness_ms_p95=%s duplicate_ratio=%s",
-                        quality_report.rows_total,
-                        quality_report.reasons,
-                        quality_report.staleness_ms_p95,
-                        quality_report.duplicate_ratio,
-                    )
-                    self.ingestor.commit_cursor(session, batch)
-                    return
-            self.state.metrics.no_signal_reason_streak = {}
-            self.state.metrics.no_signal_streak = 0
-            self.state.metrics.signal_lag_seconds = None
-
-            account_snapshot = self._get_account_snapshot(session)
-            account = {
-                "equity": str(account_snapshot.equity),
-                "cash": str(account_snapshot.cash),
-                "buying_power": str(account_snapshot.buying_power),
-            }
-            positions = account_snapshot.positions
-
-            universe_resolution = self.universe_resolver.get_resolution()
-            self.state.universe_source_status = universe_resolution.status
-            self.state.universe_source_reason = universe_resolution.reason
-            self.state.universe_symbols_count = len(universe_resolution.symbols)
-            self.state.universe_cache_age_seconds = (
-                universe_resolution.cache_age_seconds
+            account_snapshot, account, positions, allowed_symbols = context
+            self._process_batch_signals(
+                session=session,
+                batch=batch,
+                strategies=strategies,
+                account_snapshot=account_snapshot,
+                account=account,
+                positions=positions,
+                allowed_symbols=allowed_symbols,
             )
-            allowed_symbols = universe_resolution.symbols
-            if universe_resolution.status == "degraded":
-                self.state.metrics.record_signal_staleness_alert(
-                    "universe_source_stale_cache"
-                )
-            if (
-                settings.trading_universe_source == "jangar"
-                and settings.trading_universe_require_non_empty_jangar
-                and not allowed_symbols
-            ):
-                self.state.metrics.record_signal_staleness_alert(
-                    "universe_source_unavailable"
-                )
-                self.state.last_error = (
-                    f"universe_source_unavailable reason={universe_resolution.reason}"
-                )
+            self.ingestor.commit_cursor(session, batch)
+
+    def _prepare_run_once(self, session: Session) -> list[Strategy]:
+        self._ingest_order_feed(session)
+        self.order_firewall.cancel_open_orders_if_kill_switch()
+        if self.strategy_catalog is not None:
+            self.strategy_catalog.refresh(session)
+        strategies = self._load_strategies(session)
+        if not strategies:
+            logger.info("No enabled strategies found; skipping trading cycle")
+        return strategies
+
+    def _record_ingest_window(self, batch: SignalBatch) -> None:
+        self.state.last_ingest_signals_total = len(batch.signals)
+        self.state.last_ingest_window_start = batch.query_start
+        self.state.last_ingest_window_end = batch.query_end
+        self.state.last_ingest_reason = batch.no_signal_reason
+
+    def _prepare_batch_for_decisions(self, session: Session, batch: SignalBatch) -> bool:
+        if not batch.signals:
+            self.record_no_signal_batch(batch)
+            self.ingestor.commit_cursor(session, batch)
+            return False
+
+        if settings.trading_feature_quality_enabled:
+            quality_thresholds = FeatureQualityThresholds(
+                max_required_null_rate=settings.trading_feature_max_required_null_rate,
+                max_staleness_ms=settings.trading_feature_max_staleness_ms,
+                max_duplicate_ratio=settings.trading_feature_max_duplicate_ratio,
+            )
+            quality_report = evaluate_feature_batch_quality(
+                batch.signals, thresholds=quality_thresholds
+            )
+            self.state.metrics.feature_batch_rows_total += quality_report.rows_total
+            self.state.metrics.feature_null_rate = quality_report.null_rate_by_field
+            self.state.metrics.feature_staleness_ms_p95 = (
+                quality_report.staleness_ms_p95
+            )
+            self.state.metrics.feature_duplicate_ratio = quality_report.duplicate_ratio
+            self.state.metrics.feature_schema_mismatch_total += (
+                quality_report.schema_mismatch_total
+            )
+            if not quality_report.accepted:
+                self.state.metrics.feature_quality_rejections_total += 1
                 logger.error(
-                    "Blocking decision execution: authoritative Jangar universe unavailable reason=%s status=%s",
-                    universe_resolution.reason,
-                    universe_resolution.status,
+                    "Feature quality gate failed rows=%s reasons=%s staleness_ms_p95=%s duplicate_ratio=%s",
+                    quality_report.rows_total,
+                    quality_report.reasons,
+                    quality_report.staleness_ms_p95,
+                    quality_report.duplicate_ratio,
                 )
                 self.ingestor.commit_cursor(session, batch)
-                return
+                return False
 
-            for signal in batch.signals:
-                try:
-                    decisions = self.decision_engine.evaluate(
-                        signal, strategies, equity=account_snapshot.equity
-                    )
-                    self.state.metrics.record_strategy_runtime(
-                        self.decision_engine.consume_runtime_telemetry()
-                    )
-                    for telemetry in self.decision_engine.consume_forecast_telemetry():
-                        self.state.metrics.record_forecast_telemetry(
-                            telemetry.to_payload()
-                        )
-                except Exception:
-                    logger.exception(
-                        "Decision evaluation failed symbol=%s timeframe=%s",
-                        signal.symbol,
-                        signal.timeframe,
-                    )
-                    continue
+        self.state.metrics.no_signal_reason_streak = {}
+        self.state.metrics.no_signal_streak = 0
+        self.state.metrics.signal_lag_seconds = None
+        return True
 
-                if not decisions:
-                    continue
+    def _build_run_context(
+        self, session: Session
+    ) -> tuple[Any, dict[str, str], list[dict[str, Any]], set[str]] | None:
+        account_snapshot = self._get_account_snapshot(session)
+        account = {
+            "equity": str(account_snapshot.equity),
+            "cash": str(account_snapshot.cash),
+            "buying_power": str(account_snapshot.buying_power),
+        }
+        positions = account_snapshot.positions
 
-                regime_label = _resolve_signal_regime(signal)
-                allocator = allocator_from_settings(account_snapshot.equity)
-                allocation_results = allocator.allocate(
-                    decisions,
-                    account=account,
-                    positions=positions,
-                    regime_label=regime_label,
+        universe_resolution = self.universe_resolver.get_resolution()
+        self.state.universe_source_status = universe_resolution.status
+        self.state.universe_source_reason = universe_resolution.reason
+        self.state.universe_symbols_count = len(universe_resolution.symbols)
+        self.state.universe_cache_age_seconds = universe_resolution.cache_age_seconds
+        allowed_symbols = universe_resolution.symbols
+        if universe_resolution.status == "degraded":
+            self.state.metrics.record_signal_staleness_alert(
+                "universe_source_stale_cache"
+            )
+        if (
+            settings.trading_universe_source == "jangar"
+            and settings.trading_universe_require_non_empty_jangar
+            and not allowed_symbols
+        ):
+            self.state.metrics.record_signal_staleness_alert(
+                "universe_source_unavailable"
+            )
+            self.state.last_error = (
+                f"universe_source_unavailable reason={universe_resolution.reason}"
+            )
+            logger.error(
+                "Blocking decision execution: authoritative Jangar universe unavailable reason=%s status=%s",
+                universe_resolution.reason,
+                universe_resolution.status,
+            )
+            return None
+
+        return account_snapshot, account, positions, allowed_symbols
+
+    def _process_batch_signals(
+        self,
+        *,
+        session: Session,
+        batch: SignalBatch,
+        strategies: list[Strategy],
+        account_snapshot: Any,
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        allowed_symbols: set[str],
+    ) -> None:
+        allocator = allocator_from_settings(account_snapshot.equity)
+        for signal in batch.signals:
+            decisions = self._evaluate_signal_decisions(
+                signal,
+                strategies,
+                equity=account_snapshot.equity,
+            )
+            if not decisions:
+                continue
+            allocation_results = allocator.allocate(
+                decisions,
+                account=account,
+                positions=positions,
+                regime_label=_resolve_signal_regime(signal),
+            )
+            self._apply_allocation_results(
+                session=session,
+                allocation_results=allocation_results,
+                strategies=strategies,
+                account=account,
+                positions=positions,
+                allowed_symbols=allowed_symbols,
+            )
+
+    def _evaluate_signal_decisions(
+        self,
+        signal: SignalEnvelope,
+        strategies: list[Strategy],
+        *,
+        equity: Decimal,
+    ) -> list[StrategyDecision]:
+        try:
+            decisions = self.decision_engine.evaluate(signal, strategies, equity=equity)
+            self.state.metrics.record_strategy_runtime(
+                self.decision_engine.consume_runtime_telemetry()
+            )
+            for telemetry in self.decision_engine.consume_forecast_telemetry():
+                self.state.metrics.record_forecast_telemetry(telemetry.to_payload())
+            return decisions
+        except Exception:
+            logger.exception(
+                "Decision evaluation failed symbol=%s timeframe=%s",
+                signal.symbol,
+                signal.timeframe,
+            )
+            return []
+
+    def _apply_allocation_results(
+        self,
+        *,
+        session: Session,
+        allocation_results: list[AllocationResult],
+        strategies: list[Strategy],
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        allowed_symbols: set[str],
+    ) -> None:
+        for allocation_result in allocation_results:
+            self.state.metrics.record_allocator_result(allocation_result)
+            decision = allocation_result.decision
+            self.state.metrics.decisions_total += 1
+            try:
+                self._handle_decision(
+                    session,
+                    decision,
+                    strategies,
+                    account,
+                    positions,
+                    allowed_symbols,
                 )
-                for allocation_result in allocation_results:
-                    self.state.metrics.record_allocator_result(allocation_result)
-                    decision = allocation_result.decision
-                    self.state.metrics.decisions_total += 1
-                    try:
-                        self._handle_decision(
-                            session,
-                            decision,
-                            strategies,
-                            account,
-                            positions,
-                            allowed_symbols,
-                        )
-                    except Exception:
-                        # Keep the loop alive and commit the cursor so we don't reprocess the same signals forever.
-                        logger.exception(
-                            "Decision handling failed strategy_id=%s symbol=%s timeframe=%s",
-                            decision.strategy_id,
-                            decision.symbol,
-                            decision.timeframe,
-                        )
-                        self.state.metrics.orders_rejected_total += 1
-
-            self.ingestor.commit_cursor(session, batch)
+            except Exception:
+                logger.exception(
+                    "Decision handling failed strategy_id=%s symbol=%s timeframe=%s",
+                    decision.strategy_id,
+                    decision.symbol,
+                    decision.timeframe,
+                )
+                self.state.metrics.orders_rejected_total += 1
 
     def _ingest_order_feed(self, session: Session) -> None:
         counters = self.order_feed_ingestor.ingest_once(session)
@@ -1014,386 +1080,71 @@ class TradingPipeline:
     ) -> None:
         decision_row: Optional[TradeDecision] = None
         try:
-            strategy = next(
-                (s for s in strategies if str(s.id) == decision.strategy_id), None
+            strategy_context = self._resolve_strategy_context(
+                decision=decision,
+                strategies=strategies,
+                allowed_symbols=allowed_symbols,
             )
-            if strategy is None:
+            if strategy_context is None:
                 return
+            strategy, symbol_allowlist = strategy_context
 
-            strategy_symbols = _coerce_strategy_symbols(strategy.universe_symbols)
-            if strategy_symbols:
-                if allowed_symbols:
-                    symbol_allowlist = strategy_symbols & allowed_symbols
-                else:
-                    symbol_allowlist = strategy_symbols
-            else:
-                symbol_allowlist = allowed_symbols
-
-            decision_row = self.executor.ensure_decision(
-                session, decision, strategy, self.account_label
+            decision_row = self._ensure_pending_decision_row(
+                session=session,
+                decision=decision,
+                strategy=strategy,
             )
-            if decision_row.status != "planned":
-                return
-            if self.executor.execution_exists(session, decision_row):
+            if decision_row is None:
                 return
 
-            allocator_rejection = _allocator_rejection_reasons(decision)
-            if allocator_rejection:
-                self.state.metrics.orders_rejected_total += 1
-                for reason in allocator_rejection:
-                    logger.info(
-                        "Decision rejected by allocator strategy_id=%s symbol=%s reason=%s",
-                        decision.strategy_id,
-                        decision.symbol,
-                        reason,
-                    )
-                self.executor.mark_rejected(
-                    session, decision_row, ";".join(allocator_rejection)
-                )
-                return
-
-            decision, snapshot = self._ensure_decision_price(
-                decision, signal_price=decision.params.get("price")
-            )
-            if snapshot is not None:
-                params_update = decision.model_dump(mode="json").get("params", {})
-                if isinstance(params_update, Mapping):
-                    self.executor.update_decision_params(
-                        session, decision_row, cast(Mapping[str, Any], params_update)
-                    )
-
-            sizing_result = self._apply_portfolio_sizing(
-                decision, strategy, account, positions
-            )
-            decision = sizing_result.decision
-            sizing_params = decision.model_dump(mode="json").get("params", {})
-            if (
-                isinstance(sizing_params, Mapping)
-                and "portfolio_sizing" in sizing_params
-            ):
-                self.executor.update_decision_params(
-                    session, decision_row, cast(Mapping[str, Any], sizing_params)
-                )
-            if not sizing_result.approved:
-                self.state.metrics.orders_rejected_total += 1
-                for reason in sizing_result.reasons:
-                    logger.info(
-                        "Decision rejected by portfolio sizing strategy_id=%s symbol=%s reason=%s",
-                        decision.strategy_id,
-                        decision.symbol,
-                        reason,
-                    )
-                self.executor.mark_rejected(
-                    session, decision_row, ";".join(sizing_result.reasons)
-                )
-                return
-
-            decision, gate_payload, gate_rejection = self._apply_runtime_uncertainty_gate(
-                decision,
+            prepared = self._prepare_decision_for_submission(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                strategy=strategy,
+                account=account,
                 positions=positions,
             )
-            gate_params = decision.model_dump(mode="json").get("params", {})
-            if isinstance(gate_params, Mapping):
-                merged_gate_params = dict(cast(Mapping[str, Any], gate_params))
-                merged_gate_params["runtime_uncertainty_gate"] = gate_payload
-                self.executor.update_decision_params(
-                    session,
-                    decision_row,
-                    merged_gate_params,
-                )
-            else:
-                self.executor.update_decision_params(
-                    session,
-                    decision_row,
-                    {"runtime_uncertainty_gate": gate_payload},
-                )
-            gate_action = str(gate_payload.get("action") or "pass").strip().lower()
-            if gate_action in {"pass", "degrade", "abstain", "fail"}:
-                self.state.metrics.record_runtime_uncertainty_gate(
-                    cast(RuntimeUncertaintyGateAction, gate_action),
-                    blocked=gate_rejection is not None,
-                )
-                self.state.last_runtime_uncertainty_gate_action = gate_action
-            else:
-                self.state.last_runtime_uncertainty_gate_action = None
-            self.state.last_runtime_uncertainty_gate_source = str(
-                gate_payload.get("source") or ""
-            ).strip() or None
-            self.state.last_runtime_uncertainty_gate_reason = gate_rejection
-            if gate_rejection:
-                self.state.metrics.orders_rejected_total += 1
-                self.executor.mark_rejected(session, decision_row, gate_rejection)
-                logger.info(
-                    "Decision rejected by runtime uncertainty gate strategy_id=%s symbol=%s reason=%s",
-                    decision.strategy_id,
-                    decision.symbol,
-                    gate_rejection,
-                )
+            if prepared is None:
                 return
+            decision, snapshot = prepared
 
-            decision, llm_reject_reason = self._apply_llm_review(
-                session,
-                decision,
-                decision_row,
-                account,
-                positions,
-            )
-            if llm_reject_reason:
-                self.state.metrics.orders_rejected_total += 1
-                self.executor.mark_rejected(session, decision_row, llm_reject_reason)
-                return
-
-            adaptive_policy = derive_adaptive_execution_policy(
-                session,
-                symbol=decision.symbol,
-                regime_label=_resolve_decision_regime_label(decision),
-            )
-            policy_outcome = self.execution_policy.evaluate(
-                decision,
+            policy_stage = self._evaluate_execution_policy_outcome(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
                 strategy=strategy,
                 positions=positions,
-                market_snapshot=snapshot,
-                kill_switch_enabled=self.order_firewall.status().kill_switch_enabled,
-                adaptive_policy=adaptive_policy,
+                snapshot=snapshot,
             )
-            decision = policy_outcome.decision
-            self.executor.update_decision_params(
-                session, decision_row, policy_outcome.params_update()
-            )
-            self.state.metrics.record_adaptive_policy_result(
-                adaptive_policy,
-                applied=bool(
-                    policy_outcome.adaptive is not None
-                    and policy_outcome.adaptive.applied
-                ),
-            )
-            if not policy_outcome.approved:
-                self.state.metrics.orders_rejected_total += 1
-                for reason in policy_outcome.reasons:
-                    logger.info(
-                        "Decision rejected by execution policy strategy_id=%s symbol=%s reason=%s",
-                        decision.strategy_id,
-                        decision.symbol,
-                        reason,
-                    )
-                self.executor.mark_rejected(
-                    session, decision_row, ";".join(policy_outcome.reasons)
-                )
+            if policy_stage is None:
                 return
+            decision, policy_outcome = policy_stage
 
-            verdict = self.risk_engine.evaluate(
-                session,
-                decision,
-                strategy,
-                account,
-                positions,
-                symbol_allowlist,
-                execution_advisor=policy_outcome.advisor_metadata,
-            )
-            if not verdict.approved:
-                self.state.metrics.orders_rejected_total += 1
-                for reason in verdict.reasons:
-                    logger.info(
-                        "Decision rejected strategy_id=%s symbol=%s reason=%s",
-                        decision.strategy_id,
-                        decision.symbol,
-                        reason,
-                    )
-                self.executor.mark_rejected(
-                    session, decision_row, ";".join(verdict.reasons)
-                )
-                return
-
-            if not settings.trading_enabled:
-                return
-            if (
-                settings.trading_emergency_stop_enabled
-                and self.state.emergency_stop_active
-            ):
-                self.state.metrics.orders_rejected_total += 1
-                reason = self.state.emergency_stop_reason or "emergency_stop_active"
-                self.executor.mark_rejected(session, decision_row, reason)
-                logger.error(
-                    "Decision blocked by emergency stop strategy_id=%s decision_id=%s symbol=%s reason=%s",
-                    decision.strategy_id,
-                    decision_row.id,
-                    decision.symbol,
-                    reason,
-                )
-                return
-
-            execution_client = self._execution_client_for_symbol(
-                decision.symbol,
+            if not self._passes_risk_verdict(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                strategy=strategy,
+                account=account,
+                positions=positions,
                 symbol_allowlist=symbol_allowlist,
-            )
-            selected_adapter_name = self._execution_client_name(execution_client)
-            if (
-                selected_adapter_name == 'lean'
-                and settings.trading_lean_strategy_shadow_enabled
-                and not settings.trading_lean_lane_disable_switch
+                execution_advisor=policy_outcome.advisor_metadata,
             ):
-                evaluator = getattr(execution_client, 'evaluate_strategy_shadow', None)
-                if callable(evaluator):
-                    try:
-                        strategy_shadow = evaluator(
-                            {
-                                'strategy_id': decision.strategy_id,
-                                'symbol': decision.symbol,
-                                'action': decision.action,
-                                'qty': str(decision.qty),
-                                'order_type': decision.order_type,
-                                'time_in_force': decision.time_in_force,
-                            }
-                        )
-                        if isinstance(strategy_shadow, Mapping):
-                            shadow_map = cast(Mapping[str, Any], strategy_shadow)
-                            parity_status = str(
-                                shadow_map.get('parity_status') or 'unknown'
-                            )
-                            self.state.metrics.record_lean_strategy_shadow(
-                                parity_status
-                            )
-                            self.lean_lane_manager.record_strategy_shadow(
-                                session,
-                                strategy_id=decision.strategy_id,
-                                symbol=decision.symbol,
-                                intent={
-                                    'action': decision.action,
-                                    'qty': str(decision.qty),
-                                    'order_type': decision.order_type,
-                                    'time_in_force': decision.time_in_force,
-                                },
-                                shadow_result=shadow_map,
-                            )
-                    except Exception as exc:
-                        logger.warning(
-                            'LEAN strategy shadow evaluation failed strategy_id=%s symbol=%s error=%s',
-                            decision.strategy_id,
-                            decision.symbol,
-                            exc,
-                        )
-                        self.state.metrics.record_lean_strategy_shadow('error')
-            self.state.metrics.record_execution_request(selected_adapter_name)
-            self.executor.update_decision_params(
-                session,
-                decision_row,
-                {
-                    "execution_adapter": {
-                        "selected": selected_adapter_name,
-                        "policy": settings.trading_execution_adapter_policy,
-                        "symbol": decision.symbol,
-                    }
-                },
-            )
-            try:
-                execution = self.executor.submit_order(
-                    session,
-                    execution_client,
-                    decision,
-                    decision_row,
-                    self.account_label,
-                    execution_expected_adapter=selected_adapter_name,
-                    retry_delays=policy_outcome.retry_delays,
-                )
-            except OrderFirewallBlocked as exc:
-                self.state.metrics.orders_rejected_total += 1
-                self.executor.mark_rejected(session, decision_row, str(exc))
-                logger.warning(
-                    "Order blocked by firewall strategy_id=%s decision_id=%s symbol=%s reason=%s",
-                    decision.strategy_id,
-                    decision_row.id,
-                    decision.symbol,
-                    exc,
-                )
                 return
-            except Exception as exc:
-                self.state.metrics.orders_rejected_total += 1
-                payload = _extract_json_error_payload(exc) or {}
-                existing_order_id = payload.get("existing_order_id")
-                if existing_order_id:
-                    try:
-                        self.order_firewall.cancel_order(str(existing_order_id))
-                        logger.info(
-                            "Canceled conflicting Alpaca order decision_id=%s existing_order_id=%s",
-                            decision_row.id,
-                            existing_order_id,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Failed to cancel conflicting Alpaca order decision_id=%s existing_order_id=%s",
-                            decision_row.id,
-                            existing_order_id,
-                        )
-                reason = _format_order_submit_rejection(exc)
-                self.executor.mark_rejected(session, decision_row, reason)
-                logger.warning(
-                    "Order submission failed strategy_id=%s decision_id=%s symbol=%s error=%s",
-                    decision.strategy_id,
-                    decision_row.id,
-                    decision.symbol,
-                    exc,
-                )
+            if not self._is_trading_submission_allowed(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+            ):
                 return
 
-            if execution is None:
-                self._sync_lean_observability(execution_client)
-                self.state.metrics.orders_submitted_total += 1
-                return
-
-            actual_adapter_name = str(
-                getattr(execution_client, "last_route", selected_adapter_name)
-            )
-            if actual_adapter_name == "alpaca_fallback":
-                actual_adapter_name = "alpaca"
-            if actual_adapter_name != selected_adapter_name:
-                fallback_reason = execution.execution_fallback_reason
-                self.state.metrics.record_execution_fallback(
-                    expected_adapter=selected_adapter_name,
-                    actual_adapter=actual_adapter_name,
-                    fallback_reason=fallback_reason or "adaptive_fallback",
-                )
-                self._evaluate_lean_canary_guard(
-                    session,
-                    symbol=decision.symbol,
-                )
-                self.executor.update_decision_params(
-                    session,
-                    decision_row,
-                    {
-                        "execution_adapter": {
-                            "selected": selected_adapter_name,
-                            "actual": actual_adapter_name,
-                            "policy": settings.trading_execution_adapter_policy,
-                            "symbol": decision.symbol,
-                        }
-                    },
-                )
-            raw_order_payload = getattr(execution, 'raw_order', None)
-            if isinstance(raw_order_payload, Mapping):
-                raw_order_source = cast(Mapping[object, Any], raw_order_payload)
-                raw_order: dict[str, Any] = {str(key): value for key, value in raw_order_source.items()}
-                shadow_event = raw_order.get('_lean_shadow')
-                if isinstance(shadow_event, Mapping):
-                    shadow_map = cast(Mapping[str, Any], shadow_event)
-                    parity_status = str(shadow_map.get('parity_status') or 'unknown')
-                    failure_taxonomy = (
-                        str(shadow_map.get('failure_taxonomy')).strip()
-                        if shadow_map.get('failure_taxonomy') is not None
-                        else None
-                    )
-                    self.state.metrics.record_lean_shadow(
-                        parity_status=parity_status,
-                        failure_taxonomy=failure_taxonomy,
-                    )
-            self._sync_lean_observability(execution_client)
-            self.state.metrics.orders_submitted_total += 1
-            logger.info(
-                "Order submitted strategy_id=%s decision_id=%s symbol=%s adapter=%s alpaca_order_id=%s",
-                decision.strategy_id,
-                decision_row.id,
-                decision.symbol,
-                actual_adapter_name,
-                execution.alpaca_order_id,
+            self._submit_decision_execution(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                policy_outcome=policy_outcome,
+                symbol_allowlist=symbol_allowlist,
             )
         except Exception as exc:
             logger.exception(
@@ -1410,6 +1161,504 @@ class TradingPipeline:
                     f"decision_handler_error {type(exc).__name__}",
                 )
             return
+
+    def _resolve_strategy_context(
+        self,
+        *,
+        decision: StrategyDecision,
+        strategies: list[Strategy],
+        allowed_symbols: set[str],
+    ) -> tuple[Strategy, set[str]] | None:
+        strategy = next((s for s in strategies if str(s.id) == decision.strategy_id), None)
+        if strategy is None:
+            return None
+
+        strategy_symbols = _coerce_strategy_symbols(strategy.universe_symbols)
+        if strategy_symbols and allowed_symbols:
+            return strategy, strategy_symbols & allowed_symbols
+        if strategy_symbols:
+            return strategy, strategy_symbols
+        return strategy, allowed_symbols
+
+    def _ensure_pending_decision_row(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        strategy: Strategy,
+    ) -> TradeDecision | None:
+        decision_row = self.executor.ensure_decision(
+            session, decision, strategy, self.account_label
+        )
+        if decision_row.status != "planned":
+            return None
+        if self.executor.execution_exists(session, decision_row):
+            return None
+        return decision_row
+
+    def _prepare_decision_for_submission(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        strategy: Strategy,
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+    ) -> tuple[StrategyDecision, Optional[MarketSnapshot]] | None:
+        allocator_rejection = _allocator_rejection_reasons(decision)
+        if allocator_rejection:
+            self._record_decision_rejection(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reasons=allocator_rejection,
+                log_template=(
+                    "Decision rejected by allocator strategy_id=%s symbol=%s reason=%s"
+                ),
+            )
+            return None
+
+        decision, snapshot = self._ensure_decision_price(
+            decision, signal_price=decision.params.get("price")
+        )
+        if snapshot is not None:
+            price_params_update = cast(
+                Mapping[str, Any],
+                decision.model_dump(mode="json").get("params", {}),
+            )
+            self.executor.update_decision_params(session, decision_row, price_params_update)
+
+        sizing_result = self._apply_portfolio_sizing(decision, strategy, account, positions)
+        decision = sizing_result.decision
+        sizing_params = decision.model_dump(mode="json").get("params", {})
+        if isinstance(sizing_params, Mapping) and "portfolio_sizing" in sizing_params:
+            self.executor.update_decision_params(
+                session, decision_row, cast(Mapping[str, Any], sizing_params)
+            )
+        if not sizing_result.approved:
+            self._record_decision_rejection(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reasons=sizing_result.reasons,
+                log_template=(
+                    "Decision rejected by portfolio sizing strategy_id=%s symbol=%s reason=%s"
+                ),
+            )
+            return None
+
+        decision, gate_payload, gate_rejection = self._apply_runtime_uncertainty_gate(
+            decision, positions=positions
+        )
+        gate_params = decision.model_dump(mode="json").get("params", {})
+        params_update: dict[str, Any] = {"runtime_uncertainty_gate": gate_payload}
+        if isinstance(gate_params, Mapping):
+            params_update = dict(cast(Mapping[str, Any], gate_params))
+            params_update["runtime_uncertainty_gate"] = gate_payload
+        self.executor.update_decision_params(session, decision_row, params_update)
+
+        gate_action = str(gate_payload.get("action") or "pass").strip().lower()
+        if gate_action in {"pass", "degrade", "abstain", "fail"}:
+            self.state.metrics.record_runtime_uncertainty_gate(
+                cast(RuntimeUncertaintyGateAction, gate_action),
+                blocked=gate_rejection is not None,
+            )
+            self.state.last_runtime_uncertainty_gate_action = gate_action
+        else:
+            self.state.last_runtime_uncertainty_gate_action = None
+        self.state.last_runtime_uncertainty_gate_source = (
+            str(gate_payload.get("source") or "").strip() or None
+        )
+        self.state.last_runtime_uncertainty_gate_reason = gate_rejection
+        if gate_rejection:
+            self._record_decision_rejection(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reasons=[gate_rejection],
+                log_template=(
+                    "Decision rejected by runtime uncertainty gate strategy_id=%s symbol=%s reason=%s"
+                ),
+            )
+            return None
+
+        decision, llm_reject_reason = self._apply_llm_review(
+            session, decision, decision_row, account, positions
+        )
+        if llm_reject_reason:
+            self._record_decision_rejection(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reasons=[llm_reject_reason],
+                log_template="Decision rejected by llm review strategy_id=%s symbol=%s reason=%s",
+            )
+            return None
+        return decision, snapshot
+
+    def _record_decision_rejection(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        reasons: list[str],
+        log_template: str,
+    ) -> None:
+        if not reasons:
+            return
+        self.state.metrics.orders_rejected_total += 1
+        for reason in reasons:
+            logger.info(log_template, decision.strategy_id, decision.symbol, reason)
+        self.executor.mark_rejected(session, decision_row, ";".join(reasons))
+
+    def _evaluate_execution_policy_outcome(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        strategy: Strategy,
+        positions: list[dict[str, Any]],
+        snapshot: Optional[MarketSnapshot],
+    ) -> tuple[StrategyDecision, Any] | None:
+        adaptive_policy = derive_adaptive_execution_policy(
+            session,
+            symbol=decision.symbol,
+            regime_label=_resolve_decision_regime_label(decision),
+        )
+        policy_outcome = self.execution_policy.evaluate(
+            decision,
+            strategy=strategy,
+            positions=positions,
+            market_snapshot=snapshot,
+            kill_switch_enabled=self.order_firewall.status().kill_switch_enabled,
+            adaptive_policy=adaptive_policy,
+        )
+        decision = policy_outcome.decision
+        self.executor.update_decision_params(
+            session, decision_row, policy_outcome.params_update()
+        )
+        self.state.metrics.record_adaptive_policy_result(
+            adaptive_policy,
+            applied=bool(
+                policy_outcome.adaptive is not None and policy_outcome.adaptive.applied
+            ),
+        )
+        if not policy_outcome.approved:
+            self._record_decision_rejection(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reasons=list(policy_outcome.reasons),
+                log_template=(
+                    "Decision rejected by execution policy strategy_id=%s symbol=%s reason=%s"
+                ),
+            )
+            return None
+        return decision, policy_outcome
+
+    def _passes_risk_verdict(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        strategy: Strategy,
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        symbol_allowlist: set[str],
+        execution_advisor: Mapping[str, Any] | None,
+    ) -> bool:
+        verdict = self.risk_engine.evaluate(
+            session,
+            decision,
+            strategy,
+            account,
+            positions,
+            symbol_allowlist,
+            execution_advisor=execution_advisor,
+        )
+        if verdict.approved:
+            return True
+        self._record_decision_rejection(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            reasons=list(verdict.reasons),
+            log_template="Decision rejected strategy_id=%s symbol=%s reason=%s",
+        )
+        return False
+
+    def _is_trading_submission_allowed(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+    ) -> bool:
+        if not settings.trading_enabled:
+            return False
+        if not (
+            settings.trading_emergency_stop_enabled and self.state.emergency_stop_active
+        ):
+            return True
+        self.state.metrics.orders_rejected_total += 1
+        reason = self.state.emergency_stop_reason or "emergency_stop_active"
+        self.executor.mark_rejected(session, decision_row, reason)
+        logger.error(
+            "Decision blocked by emergency stop strategy_id=%s decision_id=%s symbol=%s reason=%s",
+            decision.strategy_id,
+            decision_row.id,
+            decision.symbol,
+            reason,
+        )
+        return False
+
+    def _submit_decision_execution(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        policy_outcome: Any,
+        symbol_allowlist: set[str],
+    ) -> None:
+        execution_client = self._execution_client_for_symbol(
+            decision.symbol,
+            symbol_allowlist=symbol_allowlist,
+        )
+        selected_adapter_name = self._execution_client_name(execution_client)
+        self._maybe_record_lean_strategy_shadow(
+            session=session,
+            decision=decision,
+            execution_client=execution_client,
+            selected_adapter_name=selected_adapter_name,
+        )
+        self.state.metrics.record_execution_request(selected_adapter_name)
+        self.executor.update_decision_params(
+            session,
+            decision_row,
+            {
+                "execution_adapter": {
+                    "selected": selected_adapter_name,
+                    "policy": settings.trading_execution_adapter_policy,
+                    "symbol": decision.symbol,
+                }
+            },
+        )
+
+        execution, rejected = self._submit_order_with_handling(
+            session=session,
+            execution_client=execution_client,
+            decision=decision,
+            decision_row=decision_row,
+            selected_adapter_name=selected_adapter_name,
+            retry_delays=policy_outcome.retry_delays,
+        )
+        if rejected:
+            return
+        if execution is None:
+            self._sync_lean_observability(execution_client)
+            self.state.metrics.orders_submitted_total += 1
+            return
+
+        actual_adapter_name = str(
+            getattr(execution_client, "last_route", selected_adapter_name)
+        )
+        if actual_adapter_name == "alpaca_fallback":
+            actual_adapter_name = "alpaca"
+        self._handle_execution_fallback(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            execution=execution,
+            selected_adapter_name=selected_adapter_name,
+            actual_adapter_name=actual_adapter_name,
+        )
+        self._record_lean_shadow_from_execution(execution)
+        self._sync_lean_observability(execution_client)
+        self.state.metrics.orders_submitted_total += 1
+        logger.info(
+            "Order submitted strategy_id=%s decision_id=%s symbol=%s adapter=%s alpaca_order_id=%s",
+            decision.strategy_id,
+            decision_row.id,
+            decision.symbol,
+            actual_adapter_name,
+            execution.alpaca_order_id,
+        )
+
+    def _maybe_record_lean_strategy_shadow(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        execution_client: Any,
+        selected_adapter_name: str,
+    ) -> None:
+        if selected_adapter_name != "lean":
+            return
+        if not settings.trading_lean_strategy_shadow_enabled:
+            return
+        if settings.trading_lean_lane_disable_switch:
+            return
+        evaluator = getattr(execution_client, "evaluate_strategy_shadow", None)
+        if not callable(evaluator):
+            return
+        try:
+            strategy_shadow = evaluator(
+                {
+                    "strategy_id": decision.strategy_id,
+                    "symbol": decision.symbol,
+                    "action": decision.action,
+                    "qty": str(decision.qty),
+                    "order_type": decision.order_type,
+                    "time_in_force": decision.time_in_force,
+                }
+            )
+            if not isinstance(strategy_shadow, Mapping):
+                return
+            shadow_map = cast(Mapping[str, Any], strategy_shadow)
+            parity_status = str(shadow_map.get("parity_status") or "unknown")
+            self.state.metrics.record_lean_strategy_shadow(parity_status)
+            self.lean_lane_manager.record_strategy_shadow(
+                session,
+                strategy_id=decision.strategy_id,
+                symbol=decision.symbol,
+                intent={
+                    "action": decision.action,
+                    "qty": str(decision.qty),
+                    "order_type": decision.order_type,
+                    "time_in_force": decision.time_in_force,
+                },
+                shadow_result=shadow_map,
+            )
+        except Exception as exc:
+            logger.warning(
+                "LEAN strategy shadow evaluation failed strategy_id=%s symbol=%s error=%s",
+                decision.strategy_id,
+                decision.symbol,
+                exc,
+            )
+            self.state.metrics.record_lean_strategy_shadow("error")
+
+    def _submit_order_with_handling(
+        self,
+        *,
+        session: Session,
+        execution_client: Any,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        selected_adapter_name: str,
+        retry_delays: list[int],
+    ) -> tuple[Any | None, bool]:
+        try:
+            retry_delays_seconds = [float(delay) for delay in retry_delays]
+            execution = self.executor.submit_order(
+                session,
+                execution_client,
+                decision,
+                decision_row,
+                self.account_label,
+                execution_expected_adapter=selected_adapter_name,
+                retry_delays=retry_delays_seconds,
+            )
+            return execution, False
+        except OrderFirewallBlocked as exc:
+            self.state.metrics.orders_rejected_total += 1
+            self.executor.mark_rejected(session, decision_row, str(exc))
+            logger.warning(
+                "Order blocked by firewall strategy_id=%s decision_id=%s symbol=%s reason=%s",
+                decision.strategy_id,
+                decision_row.id,
+                decision.symbol,
+                exc,
+            )
+            return None, True
+        except Exception as exc:
+            self.state.metrics.orders_rejected_total += 1
+            payload = _extract_json_error_payload(exc) or {}
+            existing_order_id = payload.get("existing_order_id")
+            if existing_order_id:
+                try:
+                    self.order_firewall.cancel_order(str(existing_order_id))
+                    logger.info(
+                        "Canceled conflicting Alpaca order decision_id=%s existing_order_id=%s",
+                        decision_row.id,
+                        existing_order_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to cancel conflicting Alpaca order decision_id=%s existing_order_id=%s",
+                        decision_row.id,
+                        existing_order_id,
+                    )
+            reason = _format_order_submit_rejection(exc)
+            self.executor.mark_rejected(session, decision_row, reason)
+            logger.warning(
+                "Order submission failed strategy_id=%s decision_id=%s symbol=%s error=%s",
+                decision.strategy_id,
+                decision_row.id,
+                decision.symbol,
+                exc,
+            )
+            return None, True
+
+    def _handle_execution_fallback(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        execution: Any,
+        selected_adapter_name: str,
+        actual_adapter_name: str,
+    ) -> None:
+        if actual_adapter_name == selected_adapter_name:
+            return
+        fallback_reason = execution.execution_fallback_reason
+        self.state.metrics.record_execution_fallback(
+            expected_adapter=selected_adapter_name,
+            actual_adapter=actual_adapter_name,
+            fallback_reason=fallback_reason or "adaptive_fallback",
+        )
+        self._evaluate_lean_canary_guard(session, symbol=decision.symbol)
+        self.executor.update_decision_params(
+            session,
+            decision_row,
+            {
+                "execution_adapter": {
+                    "selected": selected_adapter_name,
+                    "actual": actual_adapter_name,
+                    "policy": settings.trading_execution_adapter_policy,
+                    "symbol": decision.symbol,
+                }
+            },
+        )
+
+    def _record_lean_shadow_from_execution(self, execution: Any) -> None:
+        raw_order_payload = getattr(execution, "raw_order", None)
+        if not isinstance(raw_order_payload, Mapping):
+            return
+        raw_order_source = cast(Mapping[object, Any], raw_order_payload)
+        raw_order: dict[str, Any] = {
+            str(key): value for key, value in raw_order_source.items()
+        }
+        shadow_event = raw_order.get("_lean_shadow")
+        if not isinstance(shadow_event, Mapping):
+            return
+        shadow_map = cast(Mapping[str, Any], shadow_event)
+        parity_status = str(shadow_map.get("parity_status") or "unknown")
+        failure_taxonomy = (
+            str(shadow_map.get("failure_taxonomy")).strip()
+            if shadow_map.get("failure_taxonomy") is not None
+            else None
+        )
+        self.state.metrics.record_lean_shadow(
+            parity_status=parity_status,
+            failure_taxonomy=failure_taxonomy,
+        )
 
     def _resolve_runtime_uncertainty_gate(
         self, decision: StrategyDecision
@@ -1665,277 +1914,449 @@ class TradingPipeline:
             effective_fail_mode=guardrails.effective_fail_mode,
             guardrail_reasons=guardrails.reasons,
         )
+        self._record_llm_policy_resolution_metrics(policy_resolution)
+
+        guardrail_block = self._handle_llm_guardrail_block(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            account=account,
+            positions=positions,
+            guardrails=guardrails,
+            policy_resolution=policy_resolution,
+        )
+        if guardrail_block is not None:
+            return guardrail_block
+
+        engine = self.llm_review_engine or LLMReviewEngine()
+        circuit_open = self._handle_llm_circuit_open(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            account=account,
+            positions=positions,
+            guardrails=guardrails,
+            policy_resolution=policy_resolution,
+            engine=engine,
+        )
+        if circuit_open is not None:
+            return circuit_open
+
+        request_json: dict[str, Any] = {}
+        try:
+            return self._run_llm_review_request(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                account=account,
+                positions=positions,
+                guardrails=guardrails,
+                policy_resolution=policy_resolution,
+                engine=engine,
+                request_json=request_json,
+            )
+        except Exception as exc:
+            return self._handle_llm_review_error(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                guardrails=guardrails,
+                policy_resolution=policy_resolution,
+                engine=engine,
+                request_json=request_json,
+                error=exc,
+            )
+
+    def _record_llm_policy_resolution_metrics(
+        self, policy_resolution: Mapping[str, Any]
+    ) -> None:
         self.state.metrics.record_llm_policy_resolution(
             cast(str | None, policy_resolution.get("classification"))
         )
-        if bool(policy_resolution["stage_policy_violation"]):
+        if bool(policy_resolution.get("stage_policy_violation")):
             self.state.metrics.llm_stage_policy_violation_total += 1
-        if bool(policy_resolution["fail_mode_exception_active"]):
+        if bool(policy_resolution.get("fail_mode_exception_active")):
             self.state.metrics.llm_fail_mode_exception_total += 1
-        elif bool(policy_resolution["fail_mode_violation_active"]):
+            return
+        if bool(policy_resolution.get("fail_mode_violation_active")):
             self.state.metrics.llm_fail_mode_override_total += 1
-        if not guardrails.allow_requests:
-            self.state.metrics.llm_guardrail_block_total += 1
-            return self._handle_llm_unavailable(
-                session,
-                decision,
-                decision_row,
-                account,
-                positions,
-                reason="llm_guardrail_blocked",
-                shadow_mode=True,
-                effective_fail_mode=guardrails.effective_fail_mode,
-                risk_flags=list(guardrails.reasons),
-                market_context=None,
-                policy_resolution=policy_resolution,
+
+    def _handle_llm_guardrail_block(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        guardrails: Any,
+        policy_resolution: dict[str, Any],
+    ) -> tuple[StrategyDecision, Optional[str]] | None:
+        if guardrails.allow_requests:
+            return None
+        self.state.metrics.llm_guardrail_block_total += 1
+        return self._handle_llm_unavailable(
+            session,
+            decision,
+            decision_row,
+            account,
+            positions,
+            reason="llm_guardrail_blocked",
+            shadow_mode=True,
+            effective_fail_mode=guardrails.effective_fail_mode,
+            risk_flags=list(guardrails.reasons),
+            market_context=None,
+            policy_resolution=policy_resolution,
+        )
+
+    def _handle_llm_circuit_open(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        guardrails: Any,
+        policy_resolution: dict[str, Any],
+        engine: LLMReviewEngine,
+    ) -> tuple[StrategyDecision, Optional[str]] | None:
+        if not engine.circuit_breaker.is_open():
+            return None
+        self.state.metrics.llm_circuit_open_total += 1
+        return self._handle_llm_unavailable(
+            session,
+            decision,
+            decision_row,
+            account,
+            positions,
+            reason="llm_circuit_open",
+            shadow_mode=guardrails.shadow_mode,
+            effective_fail_mode=guardrails.effective_fail_mode,
+            market_context=None,
+            policy_resolution=policy_resolution,
+        )
+
+    def _run_llm_review_request(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        guardrails: Any,
+        policy_resolution: dict[str, Any],
+        engine: LLMReviewEngine,
+        request_json: dict[str, Any],
+    ) -> tuple[StrategyDecision, Optional[str]]:
+        self.state.metrics.llm_requests_total += 1
+        market_context, market_context_error = self._fetch_market_context(decision.symbol)
+        if market_context_error is not None:
+            self.state.metrics.llm_market_context_error_total += 1
+
+        portfolio_snapshot = _build_portfolio_snapshot(account, positions)
+        market_snapshot = self._build_market_snapshot(decision)
+        recent_decisions = _load_recent_decisions(
+            session,
+            decision.strategy_id,
+            decision.symbol,
+        )
+        market_context_block = self._maybe_handle_market_context_block(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            account=account,
+            positions=positions,
+            guardrails=guardrails,
+            policy_resolution=policy_resolution,
+            market_context=market_context,
+            market_context_error=market_context_error,
+        )
+        if market_context_block is not None:
+            return market_context_block
+
+        request = engine.build_request(
+            decision,
+            account,
+            positions,
+            portfolio_snapshot,
+            market_snapshot,
+            market_context,
+            recent_decisions,
+            adjustment_allowed=guardrails.adjustment_allowed,
+        )
+        request_json.update(request.model_dump(mode="json"))
+        outcome = engine.review(
+            decision,
+            account,
+            positions,
+            request=request,
+            portfolio=portfolio_snapshot,
+            market=market_snapshot,
+            market_context=market_context,
+            recent_decisions=recent_decisions,
+        )
+        self._record_llm_verdict_counter(outcome.response.verdict)
+        policy_outcome = apply_policy(
+            decision,
+            outcome.response,
+            adjustment_allowed=guardrails.adjustment_allowed,
+        )
+        response_json = self._build_llm_response_json(
+            outcome=outcome,
+            policy_outcome=policy_outcome,
+            guardrails=guardrails,
+            policy_resolution=policy_resolution,
+        )
+        self._record_llm_committee_metrics(response_json)
+        self._record_llm_token_metrics(outcome)
+        adjusted_qty, adjusted_order_type = self._apply_llm_policy_verdict(
+            session=session,
+            decision_row=decision_row,
+            policy_outcome=policy_outcome,
+        )
+        self._persist_llm_review(
+            session=session,
+            decision_row=decision_row,
+            model=outcome.model,
+            prompt_version=outcome.prompt_version,
+            request_json=outcome.request_json,
+            response_json=response_json,
+            verdict=policy_outcome.verdict,
+            confidence=outcome.response.confidence,
+            adjusted_qty=adjusted_qty,
+            adjusted_order_type=adjusted_order_type,
+            rationale=outcome.response.rationale,
+            risk_flags=outcome.response.risk_flags,
+            tokens_prompt=outcome.tokens_prompt,
+            tokens_completion=outcome.tokens_completion,
+        )
+        engine.circuit_breaker.record_success()
+        return self._finalize_llm_review_outcome(
+            decision=decision,
+            outcome=outcome,
+            policy_outcome=policy_outcome,
+            guardrails=guardrails,
+        )
+
+    def _maybe_handle_market_context_block(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        guardrails: Any,
+        policy_resolution: dict[str, Any],
+        market_context: Optional[MarketContextBundle],
+        market_context_error: Optional[str],
+    ) -> tuple[StrategyDecision, Optional[str]] | None:
+        market_context_status = evaluate_market_context(market_context)
+        if market_context_error is not None:
+            market_context_status = MarketContextStatus(
+                allow_llm=False,
+                reason="market_context_fetch_error",
+                risk_flags=["market_context_fetch_error"],
+            )
+        if market_context_status.allow_llm:
+            return None
+
+        self.state.metrics.llm_market_context_block_total += 1
+        market_context_shadow_mode = (
+            guardrails.shadow_mode
+            or settings.trading_market_context_fail_mode == "shadow_only"
+        )
+        self.state.metrics.record_market_context_result(
+            market_context_status.reason,
+            shadow_mode=market_context_shadow_mode,
+        )
+        return self._handle_llm_unavailable(
+            session,
+            decision,
+            decision_row,
+            account,
+            positions,
+            reason=market_context_status.reason or "market_context_unavailable",
+            shadow_mode=market_context_shadow_mode,
+            effective_fail_mode=guardrails.effective_fail_mode,
+            risk_flags=market_context_status.risk_flags,
+            market_context=market_context,
+            policy_resolution=policy_resolution,
+        )
+
+    def _record_llm_verdict_counter(self, verdict: str) -> None:
+        if verdict == "abstain":
+            self.state.metrics.llm_abstain_total += 1
+            return
+        if verdict == "escalate":
+            self.state.metrics.llm_escalate_total += 1
+
+    def _build_llm_response_json(
+        self,
+        *,
+        outcome: Any,
+        policy_outcome: Any,
+        guardrails: Any,
+        policy_resolution: dict[str, Any],
+    ) -> dict[str, Any]:
+        response_json: dict[str, Any] = dict(outcome.response_json)
+        response_json["advisory_only"] = True
+        response_json["request_hash"] = outcome.request_hash
+        response_json["response_hash"] = outcome.response_hash
+        if policy_outcome.reason:
+            response_json["policy_override"] = policy_outcome.reason
+            response_json["policy_verdict"] = policy_outcome.verdict
+            if "_fallback_" in policy_outcome.reason:
+                self.state.metrics.llm_policy_fallback_total += 1
+        if policy_outcome.guardrail_reasons:
+            response_json["deterministic_guardrails"] = list(
+                policy_outcome.guardrail_reasons
+            )
+        if guardrails.reasons:
+            response_json["mrm_guardrails"] = list(guardrails.reasons)
+        response_json["policy_resolution"] = policy_resolution
+        response_json["guardrail_controls"] = _llm_guardrail_controls_snapshot()
+        return response_json
+
+    def _record_llm_committee_metrics(self, response_json: Mapping[str, Any]) -> None:
+        committee_payload = response_json.get("committee")
+        if not isinstance(committee_payload, Mapping):
+            return
+        committee_roles = cast(Mapping[str, Any], committee_payload).get("roles", {})
+        if not isinstance(committee_roles, Mapping):
+            return
+        for role, role_payload in cast(Mapping[str, Any], committee_roles).items():
+            if not isinstance(role_payload, Mapping):
+                continue
+            role_data = cast(Mapping[str, Any], role_payload)
+            self.state.metrics.record_llm_committee_member(
+                role=str(role),
+                verdict=str(role_data.get("verdict", "unknown")),
+                latency_ms=_optional_int(role_data.get("latency_ms")),
+                schema_error=bool(role_data.get("schema_error", False)),
             )
 
-        engine = self.llm_review_engine or LLMReviewEngine()
-        if engine.circuit_breaker.is_open():
-            self.state.metrics.llm_circuit_open_total += 1
-            return self._handle_llm_unavailable(
-                session,
-                decision,
-                decision_row,
-                account,
-                positions,
-                reason="llm_circuit_open",
-                shadow_mode=guardrails.shadow_mode,
-                effective_fail_mode=guardrails.effective_fail_mode,
-                market_context=None,
-                policy_resolution=policy_resolution,
-            )
-        request_json: dict[str, Any] = {}
-        market_context: Optional[MarketContextBundle] = None
-        try:
-            self.state.metrics.llm_requests_total += 1
-            market_context, market_context_error = self._fetch_market_context(
-                decision.symbol
-            )
-            if market_context_error is not None:
-                self.state.metrics.llm_market_context_error_total += 1
-            portfolio_snapshot = _build_portfolio_snapshot(account, positions)
-            market_snapshot = self._build_market_snapshot(decision)
-            recent_decisions = _load_recent_decisions(
-                session,
-                decision.strategy_id,
-                decision.symbol,
-            )
-            market_context_status = evaluate_market_context(market_context)
-            if market_context_error is not None:
-                market_context_status = MarketContextStatus(
-                    allow_llm=False,
-                    reason="market_context_fetch_error",
-                    risk_flags=["market_context_fetch_error"],
-                )
-            if not market_context_status.allow_llm:
-                self.state.metrics.llm_market_context_block_total += 1
-                market_context_shadow_mode = (
-                    guardrails.shadow_mode
-                    or settings.trading_market_context_fail_mode == "shadow_only"
-                )
-                self.state.metrics.record_market_context_result(
-                    market_context_status.reason,
-                    shadow_mode=market_context_shadow_mode,
-                )
-                return self._handle_llm_unavailable(
-                    session,
-                    decision,
-                    decision_row,
-                    account,
-                    positions,
-                    reason=market_context_status.reason or "market_context_unavailable",
-                    shadow_mode=market_context_shadow_mode,
-                    effective_fail_mode=guardrails.effective_fail_mode,
-                    risk_flags=market_context_status.risk_flags,
-                    market_context=market_context,
-                    policy_resolution=policy_resolution,
-                )
-            request = engine.build_request(
-                decision,
-                account,
-                positions,
-                portfolio_snapshot,
-                market_snapshot,
-                market_context,
-                recent_decisions,
-                adjustment_allowed=guardrails.adjustment_allowed,
-            )
-            request_json = request.model_dump(mode="json")
-            outcome = engine.review(
-                decision,
-                account,
-                positions,
-                request=request,
-                portfolio=portfolio_snapshot,
-                market=market_snapshot,
-                market_context=market_context,
-                recent_decisions=recent_decisions,
-            )
-            if outcome.response.verdict == "abstain":
-                self.state.metrics.llm_abstain_total += 1
-            elif outcome.response.verdict == "escalate":
-                self.state.metrics.llm_escalate_total += 1
-            policy_outcome = apply_policy(
-                decision,
-                outcome.response,
-                adjustment_allowed=guardrails.adjustment_allowed,
-            )
+    def _record_llm_token_metrics(self, outcome: Any) -> None:
+        if outcome.tokens_prompt is not None:
+            self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
+        if outcome.tokens_completion is not None:
+            self.state.metrics.llm_tokens_completion_total += outcome.tokens_completion
 
-            response_json: dict[str, Any] = dict(outcome.response_json)
-            response_json["advisory_only"] = True
-            response_json["request_hash"] = outcome.request_hash
-            response_json["response_hash"] = outcome.response_hash
-            if policy_outcome.reason:
-                response_json["policy_override"] = policy_outcome.reason
-                response_json["policy_verdict"] = policy_outcome.verdict
-                if "_fallback_" in policy_outcome.reason:
-                    self.state.metrics.llm_policy_fallback_total += 1
-            if policy_outcome.guardrail_reasons:
-                response_json["deterministic_guardrails"] = list(
-                    policy_outcome.guardrail_reasons
-                )
-            if guardrails.reasons:
-                response_json["mrm_guardrails"] = list(guardrails.reasons)
-            response_json["policy_resolution"] = policy_resolution
-            response_json["guardrail_controls"] = _llm_guardrail_controls_snapshot()
-
-            committee_payload = response_json.get("committee")
-            if isinstance(committee_payload, Mapping):
-                committee_roles = cast(Mapping[str, Any], committee_payload).get(
-                    "roles", {}
-                )
-                if isinstance(committee_roles, Mapping):
-                    for role, role_payload in cast(
-                        Mapping[str, Any], committee_roles
-                    ).items():
-                        if not isinstance(role_payload, Mapping):
-                            continue
-                        role_data = cast(Mapping[str, Any], role_payload)
-                        self.state.metrics.record_llm_committee_member(
-                            role=str(role),
-                            verdict=str(role_data.get("verdict", "unknown")),
-                            latency_ms=_optional_int(role_data.get("latency_ms")),
-                            schema_error=bool(role_data.get("schema_error", False)),
-                        )
-
-            if outcome.tokens_prompt is not None:
-                self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
-            if outcome.tokens_completion is not None:
-                self.state.metrics.llm_tokens_completion_total += (
-                    outcome.tokens_completion
-                )
-
-            adjusted_qty = None
-            adjusted_order_type = None
-            if policy_outcome.verdict == "adjust":
-                self.state.metrics.llm_adjust_total += 1
-                adjusted_qty = Decimal(str(policy_outcome.decision.qty))
-                adjusted_order_type = policy_outcome.decision.order_type
-                self._persist_llm_adjusted_decision(
-                    session, decision_row, policy_outcome.decision
-                )
-            elif policy_outcome.verdict == "approve":
-                self.state.metrics.llm_approve_total += 1
-            elif policy_outcome.verdict == "veto":
-                self.state.metrics.llm_veto_total += 1
-
-            if outcome.tokens_prompt is not None:
-                self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
-            if outcome.tokens_completion is not None:
-                self.state.metrics.llm_tokens_completion_total += (
-                    outcome.tokens_completion
-                )
-
-            self._persist_llm_review(
-                session=session,
-                decision_row=decision_row,
-                model=outcome.model,
-                prompt_version=outcome.prompt_version,
-                request_json=outcome.request_json,
-                response_json=response_json,
-                verdict=policy_outcome.verdict,
-                confidence=outcome.response.confidence,
-                adjusted_qty=adjusted_qty,
-                adjusted_order_type=adjusted_order_type,
-                rationale=outcome.response.rationale,
-                risk_flags=outcome.response.risk_flags,
-                tokens_prompt=outcome.tokens_prompt,
-                tokens_completion=outcome.tokens_completion,
+    def _apply_llm_policy_verdict(
+        self,
+        *,
+        session: Session,
+        decision_row: TradeDecision,
+        policy_outcome: Any,
+    ) -> tuple[Optional[Decimal], Optional[str]]:
+        if policy_outcome.verdict == "adjust":
+            self.state.metrics.llm_adjust_total += 1
+            adjusted_qty = Decimal(str(policy_outcome.decision.qty))
+            adjusted_order_type = policy_outcome.decision.order_type
+            self._persist_llm_adjusted_decision(
+                session, decision_row, policy_outcome.decision
             )
+            return adjusted_qty, adjusted_order_type
+        if policy_outcome.verdict == "approve":
+            self.state.metrics.llm_approve_total += 1
+            return None, None
+        if policy_outcome.verdict == "veto":
+            self.state.metrics.llm_veto_total += 1
+        return None, None
 
-            engine.circuit_breaker.record_success()
-            if guardrails.shadow_mode:
-                self.state.metrics.llm_shadow_total += 1
-                if not settings.llm_shadow_mode:
-                    self.state.metrics.llm_guardrail_shadow_total += 1
-                return decision, None
-            if policy_outcome.verdict == "veto":
-                self.state.metrics.record_llm_committee_veto_alignment(
-                    committee_veto=bool(outcome.response.committee),
-                    deterministic_veto=True,
-                )
-                return decision, policy_outcome.reason or "llm_veto"
-
-            return policy_outcome.decision, None
-        except Exception as exc:
-            engine.circuit_breaker.record_error()
-            self.state.metrics.llm_error_total += 1
-            error_label = _classify_llm_error(exc)
-            if error_label == "llm_response_not_json":
-                self.state.metrics.llm_parse_error_total += 1
-            elif error_label == "llm_response_invalid":
-                self.state.metrics.llm_validation_error_total += 1
-            fallback = self._resolve_llm_fallback(guardrails.effective_fail_mode)
-            effective_verdict = "veto" if fallback == "veto" else "approve"
-            response_json = {
-                "error": str(exc),
-                "fallback": fallback,
-                "effective_verdict": effective_verdict,
-                "policy_resolution": policy_resolution,
-                "guardrail_controls": _llm_guardrail_controls_snapshot(),
-            }
-            if guardrails.reasons:
-                response_json["mrm_guardrails"] = list(guardrails.reasons)
-            if not request_json:
-                request_json = {"decision": decision.model_dump(mode="json")}
-            response_json["advisory_only"] = True
-            response_json["request_hash"] = _hash_payload(request_json)
-            response_json["response_hash"] = _hash_payload(response_json)
-            self._persist_llm_review(
-                session=session,
-                decision_row=decision_row,
-                model=settings.llm_model,
-                prompt_version=settings.llm_prompt_version,
-                request_json=request_json,
-                response_json=response_json,
-                verdict="error",
-                confidence=None,
-                adjusted_qty=None,
-                adjusted_order_type=None,
-                rationale=f"llm_error_{fallback}",
-                risk_flags=[type(exc).__name__] + list(guardrails.reasons),
-                tokens_prompt=None,
-                tokens_completion=None,
-            )
-            if guardrails.shadow_mode:
-                self.state.metrics.llm_shadow_total += 1
-                if not settings.llm_shadow_mode:
-                    self.state.metrics.llm_guardrail_shadow_total += 1
-                return decision, None
-            if fallback == "veto":
-                logger.warning(
-                    "LLM review failed; vetoing decision_id=%s error=%s",
-                    decision_row.id,
-                    exc,
-                )
-                return decision, "llm_error"
-            logger.warning(
-                "LLM review failed; pass-through decision_id=%s error=%s",
-                decision_row.id,
-                exc,
-            )
+    def _finalize_llm_review_outcome(
+        self,
+        *,
+        decision: StrategyDecision,
+        outcome: Any,
+        policy_outcome: Any,
+        guardrails: Any,
+    ) -> tuple[StrategyDecision, Optional[str]]:
+        if guardrails.shadow_mode:
+            self.state.metrics.llm_shadow_total += 1
+            if not settings.llm_shadow_mode:
+                self.state.metrics.llm_guardrail_shadow_total += 1
             return decision, None
+        if policy_outcome.verdict != "veto":
+            return policy_outcome.decision, None
+        self.state.metrics.record_llm_committee_veto_alignment(
+            committee_veto=bool(outcome.response.committee),
+            deterministic_veto=True,
+        )
+        return decision, policy_outcome.reason or "llm_veto"
+
+    def _handle_llm_review_error(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        guardrails: Any,
+        policy_resolution: dict[str, Any],
+        engine: LLMReviewEngine,
+        request_json: dict[str, Any],
+        error: Exception,
+    ) -> tuple[StrategyDecision, Optional[str]]:
+        engine.circuit_breaker.record_error()
+        self.state.metrics.llm_error_total += 1
+        error_label = _classify_llm_error(error)
+        if error_label == "llm_response_not_json":
+            self.state.metrics.llm_parse_error_total += 1
+        elif error_label == "llm_response_invalid":
+            self.state.metrics.llm_validation_error_total += 1
+
+        fallback = self._resolve_llm_fallback(guardrails.effective_fail_mode)
+        effective_verdict = "veto" if fallback == "veto" else "approve"
+        if not request_json:
+            request_json = {"decision": decision.model_dump(mode="json")}
+        response_json: dict[str, Any] = {
+            "error": str(error),
+            "fallback": fallback,
+            "effective_verdict": effective_verdict,
+            "policy_resolution": policy_resolution,
+            "guardrail_controls": _llm_guardrail_controls_snapshot(),
+            "advisory_only": True,
+        }
+        if guardrails.reasons:
+            response_json["mrm_guardrails"] = list(guardrails.reasons)
+        response_json["request_hash"] = _hash_payload(request_json)
+        response_json["response_hash"] = _hash_payload(response_json)
+        self._persist_llm_review(
+            session=session,
+            decision_row=decision_row,
+            model=settings.llm_model,
+            prompt_version=settings.llm_prompt_version,
+            request_json=request_json,
+            response_json=response_json,
+            verdict="error",
+            confidence=None,
+            adjusted_qty=None,
+            adjusted_order_type=None,
+            rationale=f"llm_error_{fallback}",
+            risk_flags=[type(error).__name__] + list(guardrails.reasons),
+            tokens_prompt=None,
+            tokens_completion=None,
+        )
+        if guardrails.shadow_mode:
+            self.state.metrics.llm_shadow_total += 1
+            if not settings.llm_shadow_mode:
+                self.state.metrics.llm_guardrail_shadow_total += 1
+            return decision, None
+        if fallback == "veto":
+            logger.warning(
+                "LLM review failed; vetoing decision_id=%s error=%s",
+                decision_row.id,
+                error,
+            )
+            return decision, "llm_error"
+        logger.warning(
+            "LLM review failed; pass-through decision_id=%s error=%s",
+            decision_row.id,
+            error,
+        )
+        return decision, None
 
     def _handle_llm_unavailable(
         self,
@@ -2337,7 +2758,12 @@ def _coerce_strategy_symbols(raw: object) -> set[str]:
 
 def _resolve_autonomy_artifact_root(raw_root: Path) -> Path:
     preferred_root = raw_root.expanduser()
-    fallback_roots = [Path("/tmp/torghut/autonomy"), Path("/tmp/torghut"), Path("/tmp")]
+    system_temp_root = Path(tempfile.gettempdir())
+    fallback_roots = [
+        system_temp_root / "torghut" / "autonomy",
+        system_temp_root / "torghut",
+        system_temp_root,
+    ]
 
     for root in [preferred_root, *fallback_roots]:
         try:
@@ -2886,6 +3312,18 @@ class TradingScheduler:
                 self._clear_emergency_stop(reason="disabled")
             return
 
+        reasons, fallback_ratio, drawdown = self._collect_emergency_stop_reasons()
+        if self.state.emergency_stop_active:
+            self._evaluate_emergency_stop_recovery(reasons)
+            return
+        if reasons:
+            self._trigger_emergency_stop(
+                reasons=reasons,
+                fallback_ratio=fallback_ratio,
+                drawdown=drawdown,
+            )
+
+    def _collect_emergency_stop_reasons(self) -> tuple[list[str], float, float | None]:
         reasons: list[str] = []
         lag_seconds = self.state.metrics.signal_lag_seconds
         if (
@@ -2936,14 +3374,7 @@ class TradingScheduler:
             and drawdown >= settings.trading_rollback_max_drawdown_limit
         ):
             reasons.append(f"max_drawdown_exceeded:{drawdown:.4f}")
-
-        if self.state.emergency_stop_active:
-            self._evaluate_emergency_stop_recovery(reasons)
-            return
-        if reasons:
-            self._trigger_emergency_stop(
-                reasons=reasons, fallback_ratio=fallback_ratio, drawdown=drawdown
-            )
+        return reasons, fallback_ratio, drawdown
 
     def _evaluate_emergency_stop_recovery(self, current_reasons: list[str]) -> None:
         latched_reasons = _split_emergency_stop_reasons(
@@ -3221,86 +3652,105 @@ class TradingScheduler:
         last_evidence_check = datetime.now(timezone.utc)
 
         while not self._stop_event.is_set():
-            try:
-                if self._pipeline is None:
-                    raise RuntimeError("trading_pipeline_not_initialized")
-                active_pipelines = self._pipelines or [self._pipeline]
-                for pipeline in active_pipelines:
-                    try:
-                        await asyncio.to_thread(pipeline.run_once)
-                    except Exception as lane_exc:
-                        logger.exception(
-                            "Trading lane failed account=%s: %s",
-                            pipeline.account_label,
-                            lane_exc,
-                        )
-                self.state.last_run_at = datetime.now(timezone.utc)
-                self.state.last_error = None
-            except Exception as exc:  # pragma: no cover - loop guard
-                logger.exception("Trading loop failed: %s", exc)
-                self.state.last_error = str(exc)
-            finally:
-                self._evaluate_safety_controls()
-
+            await self._run_trading_iteration()
             now = datetime.now(timezone.utc)
-            if now - last_reconcile >= timedelta(seconds=reconcile_interval):
-                try:
-                    if self._pipeline is None:
-                        raise RuntimeError("trading_pipeline_not_initialized")
-                    updates = 0
-                    active_pipelines = self._pipelines or [self._pipeline]
-                    for pipeline in active_pipelines:
-                        try:
-                            updates += await asyncio.to_thread(pipeline.reconcile)
-                        except Exception as lane_exc:
-                            logger.exception(
-                                "Reconcile lane failed account=%s: %s",
-                                pipeline.account_label,
-                                lane_exc,
-                            )
-                    if updates:
-                        logger.info("Reconciled %s executions", updates)
-                    self.state.last_reconcile_at = datetime.now(timezone.utc)
-                    self.state.last_error = None
-                except Exception as exc:  # pragma: no cover - loop guard
-                    logger.exception("Reconcile loop failed: %s", exc)
-                    self.state.last_error = str(exc)
-                finally:
-                    self._evaluate_safety_controls()
+            if self._interval_elapsed(last_reconcile, reconcile_interval, now=now):
+                await self._run_reconcile_iteration()
                 last_reconcile = now
 
-            if settings.trading_autonomy_enabled and now - last_autonomy >= timedelta(
-                seconds=autonomy_interval
+            if settings.trading_autonomy_enabled and self._interval_elapsed(
+                last_autonomy, autonomy_interval, now=now
             ):
-                try:
-                    if self._pipeline is None:
-                        raise RuntimeError("trading_pipeline_not_initialized")
-                    await asyncio.to_thread(self._run_autonomous_cycle)
-                    self.state.last_autonomy_error = None
-                except Exception as exc:  # pragma: no cover - loop guard
-                    logger.exception("Autonomous loop failed: %s", exc)
-                    self.state.last_error = str(exc)
-                    self.state.last_autonomy_error = str(exc)
-                    self.state.autonomy_failure_streak += 1
-                finally:
-                    self._evaluate_safety_controls()
-                    last_autonomy = now
+                await self._run_autonomy_iteration()
+                last_autonomy = now
 
             if (
                 settings.trading_evidence_continuity_enabled
-                and now - last_evidence_check >= timedelta(seconds=evidence_interval)
+                and self._interval_elapsed(last_evidence_check, evidence_interval, now=now)
             ):
-                try:
-                    if self._pipeline is None:
-                        raise RuntimeError("trading_pipeline_not_initialized")
-                    await asyncio.to_thread(self._run_evidence_continuity_check)
-                except Exception as exc:  # pragma: no cover - loop guard
-                    logger.exception("Evidence continuity check failed: %s", exc)
-                    self.state.last_error = str(exc)
-                finally:
-                    last_evidence_check = now
+                await self._run_evidence_iteration()
+                last_evidence_check = now
 
             await asyncio.sleep(poll_interval)
+
+    @staticmethod
+    def _interval_elapsed(
+        last_run: datetime,
+        interval_seconds: float,
+        *,
+        now: datetime,
+    ) -> bool:
+        return now - last_run >= timedelta(seconds=interval_seconds)
+
+    async def _run_trading_iteration(self) -> None:
+        try:
+            if self._pipeline is None:
+                raise RuntimeError("trading_pipeline_not_initialized")
+            active_pipelines = self._pipelines or [self._pipeline]
+            for pipeline in active_pipelines:
+                try:
+                    await asyncio.to_thread(pipeline.run_once)
+                except Exception as lane_exc:
+                    logger.exception(
+                        "Trading lane failed account=%s: %s",
+                        pipeline.account_label,
+                        lane_exc,
+                    )
+            self.state.last_run_at = datetime.now(timezone.utc)
+            self.state.last_error = None
+        except Exception as exc:  # pragma: no cover - loop guard
+            logger.exception("Trading loop failed: %s", exc)
+            self.state.last_error = str(exc)
+        finally:
+            self._evaluate_safety_controls()
+
+    async def _run_reconcile_iteration(self) -> None:
+        try:
+            if self._pipeline is None:
+                raise RuntimeError("trading_pipeline_not_initialized")
+            updates = 0
+            active_pipelines = self._pipelines or [self._pipeline]
+            for pipeline in active_pipelines:
+                try:
+                    updates += await asyncio.to_thread(pipeline.reconcile)
+                except Exception as lane_exc:
+                    logger.exception(
+                        "Reconcile lane failed account=%s: %s",
+                        pipeline.account_label,
+                        lane_exc,
+                    )
+            if updates:
+                logger.info("Reconciled %s executions", updates)
+            self.state.last_reconcile_at = datetime.now(timezone.utc)
+            self.state.last_error = None
+        except Exception as exc:  # pragma: no cover - loop guard
+            logger.exception("Reconcile loop failed: %s", exc)
+            self.state.last_error = str(exc)
+        finally:
+            self._evaluate_safety_controls()
+
+    async def _run_autonomy_iteration(self) -> None:
+        try:
+            if self._pipeline is None:
+                raise RuntimeError("trading_pipeline_not_initialized")
+            await asyncio.to_thread(self._run_autonomous_cycle)
+            self.state.last_autonomy_error = None
+        except Exception as exc:  # pragma: no cover - loop guard
+            logger.exception("Autonomous loop failed: %s", exc)
+            self.state.last_error = str(exc)
+            self.state.last_autonomy_error = str(exc)
+            self.state.autonomy_failure_streak += 1
+        finally:
+            self._evaluate_safety_controls()
+
+    async def _run_evidence_iteration(self) -> None:
+        try:
+            if self._pipeline is None:
+                raise RuntimeError("trading_pipeline_not_initialized")
+            await asyncio.to_thread(self._run_evidence_continuity_check)
+        except Exception as exc:  # pragma: no cover - loop guard
+            logger.exception("Evidence continuity check failed: %s", exc)
+            self.state.last_error = str(exc)
 
     def _run_evidence_continuity_check(self) -> None:
         if self._pipeline is None:
@@ -3335,17 +3785,10 @@ class TradingScheduler:
         if self._pipeline is None:
             raise RuntimeError("trading_pipeline_not_initialized")
 
-        strategy_config_path = settings.trading_strategy_config_path
-        gate_policy_path = settings.trading_autonomy_gate_policy_path
-        if not strategy_config_path:
-            raise RuntimeError("strategy_config_path_missing_for_autonomy")
-        if not gate_policy_path:
-            raise RuntimeError("autonomy_gate_policy_path_missing")
-
+        strategy_config_path, gate_policy_path = self._resolve_autonomy_config_paths()
         artifact_root = _resolve_autonomy_artifact_root(
             Path(settings.trading_autonomy_artifact_dir)
         )
-
         now = datetime.now(timezone.utc)
         lookback_minutes = max(
             1, int(settings.trading_autonomy_signal_lookback_minutes)
@@ -3355,116 +3798,192 @@ class TradingScheduler:
             start=start, end=now
         )
         signals = autonomy_batch.signals
-        self.state.last_ingest_signals_total = len(signals)
-        self.state.last_ingest_window_start = autonomy_batch.query_start
-        self.state.last_ingest_window_end = autonomy_batch.query_end
-        self.state.last_ingest_reason = autonomy_batch.no_signal_reason
-        self.state.last_autonomy_run_at = now
-        self.state.autonomy_signals_total = len(signals)
+        self._record_autonomy_batch_state(now=now, batch=autonomy_batch, signals=signals)
         if not signals:
-            self._pipeline.record_no_signal_batch(autonomy_batch)
-            self.state.autonomy_no_signal_streak += 1
-            self.state.metrics.no_signal_streak = self.state.autonomy_no_signal_streak
-            run_output_dir = artifact_root / now.strftime("%Y%m%dT%H%M%S")
-            run_output_dir.mkdir(parents=True, exist_ok=True)
-            no_signal_path = run_output_dir / "no-signals.json"
-            reason = autonomy_batch.no_signal_reason or "no_signal"
-            no_signal_reason_record = {
-                "status": "skipped",
-                "no_signal_reason": reason,
-                "query_start": autonomy_batch.query_start.isoformat()
-                if autonomy_batch.query_start
-                else None,
-                "query_end": autonomy_batch.query_end.isoformat()
-                if autonomy_batch.query_end
-                else None,
-            }
-            no_signal_path.write_text(
-                json.dumps(no_signal_reason_record, indent=2), encoding="utf-8"
+            self._handle_autonomy_no_signal_cycle(
+                batch=autonomy_batch,
+                now=now,
+                start=start,
+                artifact_root=artifact_root,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
             )
-
-            self.state.last_autonomy_run_id = None
-            self.state.last_autonomy_candidate_id = None
-            self.state.last_autonomy_gates = str(no_signal_path)
-            self.state.last_autonomy_patch = None
-            self.state.last_autonomy_recommendation = None
-            self.state.last_autonomy_promotion_action = "hold"
-            self.state.last_autonomy_promotion_eligible = False
-            self.state.last_autonomy_recommendation_trace_id = None
-            self.state.last_autonomy_throughput = {
-                "signal_count": 0,
-                "decision_count": 0,
-                "trade_count": 0,
-                "fold_metrics_count": 0,
-                "stress_metrics_count": 0,
-                "no_signal_window": True,
-                "no_signal_reason": reason,
-            }
-            self.state.metrics.autonomy_last_signal_count = 0
-            self.state.metrics.autonomy_last_decision_count = 0
-            self.state.metrics.autonomy_last_trade_count = 0
-            self.state.metrics.autonomy_last_fold_metrics_count = 0
-            self.state.metrics.autonomy_last_stress_metrics_count = 0
-            self.state.last_autonomy_error = None
-            self.state.last_autonomy_reason = reason
-            self.state.metrics.record_autonomy_promotion_outcome(
-                signal_count=0,
-                decision_count=0,
-                trade_count=0,
-                recommendation="shadow",
-                promotion_allowed=False,
-                outcome="skipped_no_signal",
-            )
-            query_start = autonomy_batch.query_start or start
-            query_end = autonomy_batch.query_end or now
-            try:
-                self.state.last_autonomy_run_id = upsert_autonomy_no_signal_run(
-                    session_factory=self._pipeline.session_factory,
-                    query_start=query_start,
-                    query_end=query_end,
-                    strategy_config_path=Path(strategy_config_path),
-                    gate_policy_path=Path(gate_policy_path),
-                    no_signal_reason=reason,
-                    now=now,
-                    code_version="live",
-                )
-            except Exception as exc:
-                self.state.autonomy_failure_streak += 1
-                self.state.last_autonomy_reason = (
-                    "autonomy_no_signal_persistence_failed"
-                )
-                self.state.last_autonomy_error = str(exc)
-                logger.exception(
-                    "Autonomy no-signal persistence failed; ingest_reason=%s window_start=%s window_end=%s",
-                    reason,
-                    query_start,
-                    query_end,
-                )
-                return
-            logger.warning(
-                "Autonomy cycle skipped due to no signals; ingest_reason=%s window_start=%s window_end=%s",
-                autonomy_batch.no_signal_reason,
-                autonomy_batch.query_start,
-                autonomy_batch.query_end,
-            )
-            self._evaluate_safety_controls()
             return
 
+        run_output_dir, signals_path = self._prepare_autonomy_signal_artifacts(
+            artifact_root=artifact_root,
+            now=now,
+            signals=signals,
+        )
+        self._reset_autonomy_signal_state(signal_count=len(signals))
+        drift_gate_evidence = self._current_drift_gate_evidence(now=now)
+        promotion_target, approval_token = self._resolve_autonomy_promotion_target(
+            drift_gate_evidence
+        )
+        result = self._execute_autonomous_lane(
+            signals_path=signals_path,
+            strategy_config_path=strategy_config_path,
+            gate_policy_path=gate_policy_path,
+            run_output_dir=run_output_dir,
+            promotion_target=promotion_target,
+            approval_token=approval_token,
+            drift_gate_evidence=drift_gate_evidence,
+        )
+        if result is None:
+            return
+
+        self._apply_autonomy_lane_result(
+            result=result,
+            run_output_dir=run_output_dir,
+            signals=signals,
+            now=now,
+        )
+
+    @staticmethod
+    def _resolve_autonomy_config_paths() -> tuple[Path, Path]:
+        strategy_config_path = settings.trading_strategy_config_path
+        gate_policy_path = settings.trading_autonomy_gate_policy_path
+        if not strategy_config_path:
+            raise RuntimeError("strategy_config_path_missing_for_autonomy")
+        if not gate_policy_path:
+            raise RuntimeError("autonomy_gate_policy_path_missing")
+        return Path(strategy_config_path), Path(gate_policy_path)
+
+    def _record_autonomy_batch_state(
+        self,
+        *,
+        now: datetime,
+        batch: SignalBatch,
+        signals: list[SignalEnvelope],
+    ) -> None:
+        self.state.last_ingest_signals_total = len(signals)
+        self.state.last_ingest_window_start = batch.query_start
+        self.state.last_ingest_window_end = batch.query_end
+        self.state.last_ingest_reason = batch.no_signal_reason
+        self.state.last_autonomy_run_at = now
+        self.state.autonomy_signals_total = len(signals)
+
+    def _handle_autonomy_no_signal_cycle(
+        self,
+        *,
+        batch: SignalBatch,
+        now: datetime,
+        start: datetime,
+        artifact_root: Path,
+        strategy_config_path: Path,
+        gate_policy_path: Path,
+    ) -> None:
+        if self._pipeline is None:
+            raise RuntimeError("trading_pipeline_not_initialized")
+        self._pipeline.record_no_signal_batch(batch)
+        self.state.autonomy_no_signal_streak += 1
+        self.state.metrics.no_signal_streak = self.state.autonomy_no_signal_streak
+        run_output_dir = artifact_root / now.strftime("%Y%m%dT%H%M%S")
+        run_output_dir.mkdir(parents=True, exist_ok=True)
+        no_signal_path = run_output_dir / "no-signals.json"
+        reason = batch.no_signal_reason or "no_signal"
+        no_signal_path.write_text(
+            json.dumps(
+                {
+                    "status": "skipped",
+                    "no_signal_reason": reason,
+                    "query_start": batch.query_start.isoformat()
+                    if batch.query_start
+                    else None,
+                    "query_end": batch.query_end.isoformat() if batch.query_end else None,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        self.state.last_autonomy_run_id = None
+        self.state.last_autonomy_candidate_id = None
+        self.state.last_autonomy_gates = str(no_signal_path)
+        self.state.last_autonomy_patch = None
+        self.state.last_autonomy_recommendation = None
+        self.state.last_autonomy_promotion_action = "hold"
+        self.state.last_autonomy_promotion_eligible = False
+        self.state.last_autonomy_recommendation_trace_id = None
+        self.state.last_autonomy_throughput = {
+            "signal_count": 0,
+            "decision_count": 0,
+            "trade_count": 0,
+            "fold_metrics_count": 0,
+            "stress_metrics_count": 0,
+            "no_signal_window": True,
+            "no_signal_reason": reason,
+        }
+        self.state.metrics.autonomy_last_signal_count = 0
+        self.state.metrics.autonomy_last_decision_count = 0
+        self.state.metrics.autonomy_last_trade_count = 0
+        self.state.metrics.autonomy_last_fold_metrics_count = 0
+        self.state.metrics.autonomy_last_stress_metrics_count = 0
+        self.state.last_autonomy_error = None
+        self.state.last_autonomy_reason = reason
+        self.state.metrics.record_autonomy_promotion_outcome(
+            signal_count=0,
+            decision_count=0,
+            trade_count=0,
+            recommendation="shadow",
+            promotion_allowed=False,
+            outcome="skipped_no_signal",
+        )
+        query_start = batch.query_start or start
+        query_end = batch.query_end or now
+        try:
+            self.state.last_autonomy_run_id = upsert_autonomy_no_signal_run(
+                session_factory=self._pipeline.session_factory,
+                query_start=query_start,
+                query_end=query_end,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                no_signal_reason=reason,
+                now=now,
+                code_version="live",
+            )
+        except Exception as exc:
+            self.state.autonomy_failure_streak += 1
+            self.state.last_autonomy_reason = "autonomy_no_signal_persistence_failed"
+            self.state.last_autonomy_error = str(exc)
+            logger.exception(
+                "Autonomy no-signal persistence failed; ingest_reason=%s window_start=%s window_end=%s",
+                reason,
+                query_start,
+                query_end,
+            )
+            return
+        logger.warning(
+            "Autonomy cycle skipped due to no signals; ingest_reason=%s window_start=%s window_end=%s",
+            batch.no_signal_reason,
+            batch.query_start,
+            batch.query_end,
+        )
+        self._evaluate_safety_controls()
+
+    @staticmethod
+    def _prepare_autonomy_signal_artifacts(
+        *,
+        artifact_root: Path,
+        now: datetime,
+        signals: list[SignalEnvelope],
+    ) -> tuple[Path, Path]:
         run_output_dir = artifact_root / now.strftime("%Y%m%dT%H%M%S")
         run_output_dir.mkdir(parents=True, exist_ok=True)
         signals_path = run_output_dir / "signals.json"
         signal_payloads = [signal.model_dump(mode="json") for signal in signals]
         signals_path.write_text(json.dumps(signal_payloads, indent=2), encoding="utf-8")
+        return run_output_dir, signals_path
 
+    def _reset_autonomy_signal_state(self, *, signal_count: int) -> None:
         self.state.autonomy_no_signal_streak = 0
         self.state.metrics.no_signal_streak = 0
         self.state.metrics.no_signal_reason_streak = {}
         self.state.metrics.signal_lag_seconds = None
-        self.state.autonomy_signals_total = len(signals)
-        drift_gate_evidence = self._current_drift_gate_evidence(now=now)
+        self.state.autonomy_signals_total = signal_count
 
-        promotion_target: Literal["paper", "live"]
-        approval_token: str | None
+    def _resolve_autonomy_promotion_target(
+        self, drift_gate_evidence: Mapping[str, Any]
+    ) -> tuple[Literal["paper", "live"], str | None]:
         if (
             settings.trading_autonomy_allow_live_promotion
             and settings.trading_autonomy_approval_token
@@ -3477,35 +3996,41 @@ class TradingScheduler:
                     drift_gate_evidence.get("reasons"),
                 )
                 self.state.metrics.drift_promotion_block_total += 1
-                promotion_target = "paper"
-                approval_token = None
-            else:
-                promotion_target = "live"
-                approval_token = settings.trading_autonomy_approval_token
-        elif (
+                return "paper", None
+            return "live", settings.trading_autonomy_approval_token
+        if (
             settings.trading_autonomy_allow_live_promotion
             and not settings.trading_autonomy_approval_token
         ):
             logger.warning(
                 "Autonomy live promotion enabled but no approval token configured; fallback to paper target."
             )
-            promotion_target = "paper"
-            approval_token = None
-        else:
-            promotion_target = "paper"
-            approval_token = None
+        return "paper", None
 
+    def _execute_autonomous_lane(
+        self,
+        *,
+        signals_path: Path,
+        strategy_config_path: Path,
+        gate_policy_path: Path,
+        run_output_dir: Path,
+        promotion_target: Literal["paper", "live"],
+        approval_token: str | None,
+        drift_gate_evidence: Mapping[str, Any],
+    ) -> Any | None:
+        if self._pipeline is None:
+            raise RuntimeError("trading_pipeline_not_initialized")
         try:
-            result = run_autonomous_lane(
+            return run_autonomous_lane(
                 signals_path=signals_path,
-                strategy_config_path=Path(strategy_config_path),
-                gate_policy_path=Path(gate_policy_path),
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
                 output_dir=run_output_dir,
                 promotion_target=promotion_target,
                 strategy_configmap_path=Path("/etc/torghut/strategies.yaml"),
                 code_version="live",
                 approval_token=approval_token,
-                drift_promotion_evidence=drift_gate_evidence,
+                drift_promotion_evidence=dict(drift_gate_evidence),
                 persist_results=True,
                 session_factory=self._pipeline.session_factory,
             )
@@ -3515,8 +4040,16 @@ class TradingScheduler:
             self.state.last_autonomy_reason = "lane_execution_failed"
             logger.exception("Autonomous lane execution failed: %s", exc)
             self._evaluate_safety_controls()
-            return
+            return None
 
+    def _apply_autonomy_lane_result(
+        self,
+        *,
+        result: Any,
+        run_output_dir: Path,
+        signals: list[SignalEnvelope],
+        now: datetime,
+    ) -> None:
         self.state.autonomy_failure_streak = 0
         self.state.autonomy_runs_total += 1
         previous_candidate_id = self.state.last_autonomy_candidate_id
@@ -3526,14 +4059,14 @@ class TradingScheduler:
         self.state.last_autonomy_reason = None
 
         gate_report_raw = json.loads(result.gate_report_path.read_text(encoding="utf-8"))
-        gate_report: dict[str, Any]
-        if isinstance(gate_report_raw, dict):
-            gate_report = cast(dict[str, Any], gate_report_raw)
-            self.state.metrics.record_uncertainty_gate(
-                cast(Mapping[str, Any], gate_report)
-            )
-        else:
-            gate_report = {}
+        gate_report: dict[str, Any] = (
+            cast(dict[str, Any], gate_report_raw)
+            if isinstance(gate_report_raw, dict)
+            else {}
+        )
+        if gate_report:
+            self.state.metrics.record_uncertainty_gate(cast(Mapping[str, Any], gate_report))
+
         recommended_mode = str(gate_report.get("recommended_mode") or "shadow")
         self.state.last_autonomy_recommendation = recommended_mode
         throughput_raw = gate_report.get("throughput")
@@ -3554,77 +4087,26 @@ class TradingScheduler:
         if promotion_decision_candidate_id:
             self.state.last_autonomy_candidate_id = promotion_decision_candidate_id
         promotion_allowed = bool(promotion_decision.get("promotion_allowed", False))
-        if promotion_allowed:
-            outcome = f"promoted_{recommended_mode}"
-        else:
-            outcome = f"blocked_{recommended_mode}"
         self.state.metrics.record_autonomy_promotion_outcome(
             signal_count=_int_from_mapping(throughput, "signal_count"),
             decision_count=_int_from_mapping(throughput, "decision_count"),
             trade_count=_int_from_mapping(throughput, "trade_count"),
             recommendation=recommended_mode,
             promotion_allowed=promotion_allowed,
-            outcome=outcome,
+            outcome=(
+                f"promoted_{recommended_mode}"
+                if promotion_allowed
+                else f"blocked_{recommended_mode}"
+            ),
         )
-        recommendation_payload = gate_report.get("promotion_recommendation")
-        if isinstance(recommendation_payload, dict):
-            recommendation = cast(dict[str, Any], recommendation_payload)
-            action = str(recommendation.get("action", "")).strip().lower()
-            if action:
-                self.state.last_autonomy_promotion_action = action
-                self.state.metrics.autonomy_promotion_action_total[action] = (
-                    self.state.metrics.autonomy_promotion_action_total.get(action, 0)
-                    + 1
-                )
-            self.state.last_autonomy_promotion_eligible = bool(
-                recommendation.get("eligible", False)
-            )
-            self.state.last_autonomy_recommendation_trace_id = (
-                str(recommendation.get("trace_id", "")).strip() or None
-            )
-            if action == "promote":
-                self.state.metrics.autonomy_promotions_total += 1
-                if (
-                    previous_candidate_id
-                    and promotion_decision_candidate_id
-                    and previous_candidate_id != promotion_decision_candidate_id
-                ):
-                    self.state.metrics.autonomy_demotions_total += 1
-            elif action == "deny":
-                self.state.metrics.autonomy_denials_total += 1
-            elif action == "demote":
-                self.state.metrics.autonomy_demotions_total += 1
-        else:
-            self.state.last_autonomy_promotion_action = None
-            self.state.last_autonomy_promotion_eligible = None
-            self.state.last_autonomy_recommendation_trace_id = None
-
-        throughput_payload = gate_report.get("throughput")
-        if isinstance(throughput_payload, Mapping):
-            throughput = cast(dict[str, Any], throughput_payload)
-            signal_count = int(throughput.get("signal_count", 0) or 0)
-            decision_count = int(throughput.get("decision_count", 0) or 0)
-            trade_count = int(throughput.get("trade_count", 0) or 0)
-            fold_metrics_count = int(throughput.get("fold_metrics_count", 0) or 0)
-            stress_metrics_count = int(throughput.get("stress_metrics_count", 0) or 0)
-            self.state.last_autonomy_throughput = {
-                "signal_count": signal_count,
-                "decision_count": decision_count,
-                "trade_count": trade_count,
-                "fold_metrics_count": fold_metrics_count,
-                "stress_metrics_count": stress_metrics_count,
-                "no_signal_window": bool(throughput.get("no_signal_window", False)),
-                "no_signal_reason": throughput.get("no_signal_reason"),
-            }
-            self.state.metrics.autonomy_last_signal_count = signal_count
-            self.state.metrics.autonomy_last_decision_count = decision_count
-            self.state.metrics.autonomy_last_trade_count = trade_count
-            self.state.metrics.autonomy_last_fold_metrics_count = fold_metrics_count
-            self.state.metrics.autonomy_last_stress_metrics_count = stress_metrics_count
-        else:
-            self.state.last_autonomy_throughput = None
-
+        self._update_autonomy_recommendation_state(
+            recommendation_payload=gate_report.get("promotion_recommendation"),
+            previous_candidate_id=previous_candidate_id,
+            promotion_decision_candidate_id=promotion_decision_candidate_id,
+        )
+        self._update_autonomy_throughput_state(throughput_payload=gate_report.get("throughput"))
         self.state.last_autonomy_error = None
+
         if settings.trading_drift_governance_enabled:
             self._evaluate_drift_governance(
                 run_output_dir=run_output_dir,
@@ -3643,9 +4125,73 @@ class TradingScheduler:
             self.state.autonomy_patches_total += 1
             self._evaluate_safety_controls()
             return
-
         self.state.last_autonomy_patch = None
         self._evaluate_safety_controls()
+
+    def _update_autonomy_recommendation_state(
+        self,
+        *,
+        recommendation_payload: Any,
+        previous_candidate_id: str | None,
+        promotion_decision_candidate_id: str,
+    ) -> None:
+        if not isinstance(recommendation_payload, dict):
+            self.state.last_autonomy_promotion_action = None
+            self.state.last_autonomy_promotion_eligible = None
+            self.state.last_autonomy_recommendation_trace_id = None
+            return
+        recommendation = cast(dict[str, Any], recommendation_payload)
+        action = str(recommendation.get("action", "")).strip().lower()
+        if action:
+            self.state.last_autonomy_promotion_action = action
+            self.state.metrics.autonomy_promotion_action_total[action] = (
+                self.state.metrics.autonomy_promotion_action_total.get(action, 0) + 1
+            )
+        self.state.last_autonomy_promotion_eligible = bool(
+            recommendation.get("eligible", False)
+        )
+        self.state.last_autonomy_recommendation_trace_id = (
+            str(recommendation.get("trace_id", "")).strip() or None
+        )
+        if action == "promote":
+            self.state.metrics.autonomy_promotions_total += 1
+            if (
+                previous_candidate_id
+                and promotion_decision_candidate_id
+                and previous_candidate_id != promotion_decision_candidate_id
+            ):
+                self.state.metrics.autonomy_demotions_total += 1
+            return
+        if action == "deny":
+            self.state.metrics.autonomy_denials_total += 1
+            return
+        if action == "demote":
+            self.state.metrics.autonomy_demotions_total += 1
+
+    def _update_autonomy_throughput_state(self, *, throughput_payload: Any) -> None:
+        if not isinstance(throughput_payload, Mapping):
+            self.state.last_autonomy_throughput = None
+            return
+        throughput = cast(dict[str, Any], throughput_payload)
+        signal_count = int(throughput.get("signal_count", 0) or 0)
+        decision_count = int(throughput.get("decision_count", 0) or 0)
+        trade_count = int(throughput.get("trade_count", 0) or 0)
+        fold_metrics_count = int(throughput.get("fold_metrics_count", 0) or 0)
+        stress_metrics_count = int(throughput.get("stress_metrics_count", 0) or 0)
+        self.state.last_autonomy_throughput = {
+            "signal_count": signal_count,
+            "decision_count": decision_count,
+            "trade_count": trade_count,
+            "fold_metrics_count": fold_metrics_count,
+            "stress_metrics_count": stress_metrics_count,
+            "no_signal_window": bool(throughput.get("no_signal_window", False)),
+            "no_signal_reason": throughput.get("no_signal_reason"),
+        }
+        self.state.metrics.autonomy_last_signal_count = signal_count
+        self.state.metrics.autonomy_last_decision_count = decision_count
+        self.state.metrics.autonomy_last_trade_count = trade_count
+        self.state.metrics.autonomy_last_fold_metrics_count = fold_metrics_count
+        self.state.metrics.autonomy_last_stress_metrics_count = stress_metrics_count
 
 
 __all__ = ["TradingScheduler", "TradingState", "TradingMetrics"]

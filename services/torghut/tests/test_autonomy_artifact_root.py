@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
@@ -19,4 +20,4 @@ class TestAutonomyArtifactRoot(TestCase):
         configured_root = Path("/dev/null")
         resolved = _resolve_autonomy_artifact_root(configured_root)
         self.assertNotEqual(resolved, configured_root)
-        self.assertEqual(resolved, Path("/tmp/torghut/autonomy"))
+        self.assertEqual(resolved, Path(tempfile.gettempdir()) / "torghut" / "autonomy")

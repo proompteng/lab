@@ -115,19 +115,7 @@ class ExecutionPolicy:
             )
         )
         reasons: list[str] = []
-        allocator_meta = _allocator_payload(decision)
-        participation_override = _optional_decimal(
-            allocator_meta.get("max_participation_rate_override")
-        )
-        if participation_override is not None:
-            config = self._sanitize_config(
-                replace(
-                    config,
-                    max_participation_rate=min(
-                        config.max_participation_rate, participation_override
-                    ),
-                )
-            )
+        config = self._apply_allocator_participation_override(config, decision)
         advisor_metadata, advisor_max_participation = self._evaluate_advisor(
             decision=decision,
             baseline_max_participation=config.max_participation_rate,
@@ -153,18 +141,11 @@ class ExecutionPolicy:
         )
 
         price = _resolve_price(decision, market_snapshot)
-        qty = _optional_decimal(decision.qty)
-        min_qty = min_qty_for_symbol(decision.symbol)
-        if qty is None or qty <= 0:
-            reasons.append("qty_non_positive")
-            qty = Decimal("0")
-        elif qty < min_qty:
-            reasons.append("qty_below_min")
-        elif not qty_has_valid_increment(decision.symbol, qty):
-            quantized = quantize_qty_for_symbol(decision.symbol, qty)
-            reasons.append(f"qty_invalid_increment:step={_stringify_decimal(min_qty)}")
-            qty = quantized
-        notional = price * qty if price is not None else None
+        qty, notional = self._resolve_qty_and_notional(
+            decision=decision,
+            price=price,
+            reasons=reasons,
+        )
 
         min_notional = config.min_notional
         if (
@@ -195,23 +176,11 @@ class ExecutionPolicy:
             ),
         )
         execution_seconds = impact_inputs['execution_seconds']
-        cost_inputs = CostModelInputs(
-            price=impact_inputs['price'],
-            spread=impact_inputs.get('spread'),
-            volatility=impact_inputs.get('volatility'),
-            adv=impact_inputs.get('adv'),
+        estimate = self._estimate_execution_costs(
+            decision=decision,
+            qty=qty,
+            impact_inputs=impact_inputs,
             execution_seconds=execution_seconds,
-        )
-        estimate = self.cost_model.estimate_costs(
-            OrderIntent(
-                symbol=decision.symbol,
-                side='buy' if decision.action == 'buy' else 'sell',
-                qty=qty or Decimal('0'),
-                price=impact_inputs['price'],
-                order_type=decision.order_type,
-                time_in_force=decision.time_in_force,
-            ),
-            cost_inputs,
         )
 
         max_participation = advisor_max_participation or config.max_participation_rate
@@ -240,6 +209,74 @@ class ExecutionPolicy:
             selected_order_type=selected_order_type,
             adaptive=adaptive_application,
             advisor_metadata=advisor_metadata,
+        )
+
+    def _apply_allocator_participation_override(
+        self,
+        config: ExecutionPolicyConfig,
+        decision: StrategyDecision,
+    ) -> ExecutionPolicyConfig:
+        allocator_meta = _allocator_payload(decision)
+        participation_override = _optional_decimal(
+            allocator_meta.get("max_participation_rate_override")
+        )
+        if participation_override is None:
+            return config
+        return self._sanitize_config(
+            replace(
+                config,
+                max_participation_rate=min(
+                    config.max_participation_rate, participation_override
+                ),
+            )
+        )
+
+    def _resolve_qty_and_notional(
+        self,
+        *,
+        decision: StrategyDecision,
+        price: Decimal | None,
+        reasons: list[str],
+    ) -> tuple[Decimal, Decimal | None]:
+        qty = _optional_decimal(decision.qty)
+        min_qty = min_qty_for_symbol(decision.symbol)
+        if qty is None or qty <= 0:
+            reasons.append("qty_non_positive")
+            qty = Decimal("0")
+        elif qty < min_qty:
+            reasons.append("qty_below_min")
+        elif not qty_has_valid_increment(decision.symbol, qty):
+            quantized = quantize_qty_for_symbol(decision.symbol, qty)
+            reasons.append(f"qty_invalid_increment:step={_stringify_decimal(min_qty)}")
+            qty = quantized
+        notional = price * qty if price is not None else None
+        return qty, notional
+
+    def _estimate_execution_costs(
+        self,
+        *,
+        decision: StrategyDecision,
+        qty: Decimal,
+        impact_inputs: dict[str, Any],
+        execution_seconds: int,
+    ) -> Any:
+        cost_inputs = CostModelInputs(
+            price=impact_inputs['price'],
+            spread=impact_inputs.get('spread'),
+            volatility=impact_inputs.get('volatility'),
+            adv=impact_inputs.get('adv'),
+            execution_seconds=execution_seconds,
+        )
+        return self.cost_model.estimate_costs(
+            OrderIntent(
+                symbol=decision.symbol,
+                side='buy' if decision.action == 'buy' else 'sell',
+                qty=qty,
+                price=impact_inputs['price'],
+                order_type=decision.order_type,
+                time_in_force=decision.time_in_force,
+            ),
+            cost_inputs,
         )
 
     def _resolve_adaptive_application(

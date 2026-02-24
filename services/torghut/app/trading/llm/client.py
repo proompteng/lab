@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
+from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Optional, cast
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
@@ -23,6 +23,83 @@ from ...config import settings
 class LLMClientResponse:
     content: str
     usage: Optional[dict[str, int]]
+
+
+class _HttpRequest:
+    def __init__(
+        self,
+        *,
+        full_url: str,
+        method: str,
+        data: bytes | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.full_url = full_url
+        self.method = method
+        self.data = data
+        self._headers = dict(headers or {})
+
+    def header_items(self) -> list[tuple[str, str]]:
+        return list(self._headers.items())
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return dict(self._headers)
+
+
+class _HttpResponseHandle:
+    def __init__(self, connection: HTTPConnection | HTTPSConnection, response: Any) -> None:
+        self._connection = connection
+        self._response = response
+        self.status = int(getattr(response, 'status', 200))
+
+    def read(self) -> bytes:
+        return cast(bytes, self._response.read())
+
+    def readline(self) -> bytes:
+        return cast(bytes, self._response.readline())
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self) -> "_HttpResponseHandle":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        self.close()
+        return False
+
+
+def _http_connection_for_url(
+    url: str, *, timeout_seconds: int
+) -> tuple[HTTPConnection | HTTPSConnection, str]:
+    parsed = urlsplit(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {'http', 'https'}:
+        raise RuntimeError(f'jangar completion request failed (scheme): {scheme or "missing"}')
+    if not parsed.hostname:
+        raise RuntimeError('jangar completion request failed (host): missing')
+    request_path = parsed.path or '/'
+    if parsed.query:
+        request_path = f'{request_path}?{parsed.query}'
+    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+    connection = connection_class(
+        parsed.hostname,
+        parsed.port,
+        timeout=max(timeout_seconds, 1),
+    )
+    return connection, request_path
+
+
+def urlopen(request: _HttpRequest, timeout: int) -> _HttpResponseHandle:
+    connection, request_path = _http_connection_for_url(request.full_url, timeout_seconds=timeout)
+    try:
+        connection.request(request.method, request_path, body=request.data, headers=request.headers)
+        response = connection.getresponse()
+    except Exception:
+        connection.close()
+        raise
+    return _HttpResponseHandle(connection, response)
 
 
 class LLMClient:
@@ -139,21 +216,24 @@ class LLMClient:
             headers["authorization"] = f"Bearer {api_key}"
 
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        request = Request(url, method="POST", headers=headers, data=body)
+        request = _HttpRequest(
+            full_url=url,
+            method='POST',
+            data=body,
+            headers=headers,
+        )
 
         try:
-            with urlopen(request, timeout=self._timeout_seconds) as response:
+            with urlopen(request, max(self._timeout_seconds, 1)) as response:
                 status = getattr(response, "status", 200)
                 if status < 200 or status >= 300:
                     raw = response.read().decode("utf-8", errors="replace")
                     raise RuntimeError(f"jangar completion request failed ({status}): {raw}")
                 content, usage = _parse_jangar_sse(response, timeout_seconds=self._timeout_seconds)
                 return LLMClientResponse(content=content, usage=usage)
-        except HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else str(exc)
-            raise RuntimeError(f"jangar completion request failed ({exc.code}): {raw}") from exc
-        except URLError as exc:
+        except OSError as exc:
             raise RuntimeError(f"jangar completion request failed (network): {exc}") from exc
+        raise RuntimeError("jangar completion request failed (no response)")
 
 
 def _coerce_int(value: Any) -> Optional[int]:
@@ -190,62 +270,80 @@ def _parse_jangar_sse(stream: Any, timeout_seconds: Optional[int] = None) -> tup
     deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
 
     while True:
+        data = _next_jangar_sse_data(stream, deadline=deadline)
+        if data is None or data == "[DONE]":
+            break
+
+        frame = _decode_jangar_sse_frame(data)
+        if frame is None:
+            continue
+        _raise_if_jangar_sse_error(frame)
+
+        usage = _coerce_usage(frame.get("usage")) or usage
+        content_parts.extend(_jangar_sse_content_parts(frame))
+
+    return ("".join(content_parts).strip(), usage)
+
+
+def _next_jangar_sse_data(stream: Any, *, deadline: Optional[float]) -> Optional[str]:
+    while True:
         if deadline is not None and time.monotonic() >= deadline:
             raise TimeoutError("jangar completion timed out")
         line_bytes = stream.readline()
         if not line_bytes:
-            break
+            return None
 
         line = line_bytes.decode("utf-8", errors="replace").strip()
         if not line or not line.startswith("data:"):
             continue
+        return line[5:].lstrip()
 
-        data = line[5:].lstrip()
-        if data == "[DONE]":
-            break
 
-        try:
-            parsed = json.loads(data)
-        except json.JSONDecodeError:
-            # Ignore malformed frames; a later valid frame may still terminate the stream.
+def _decode_jangar_sse_frame(data: str) -> Optional[dict[str, Any]]:
+    try:
+        parsed = json.loads(data)
+    except json.JSONDecodeError:
+        # Ignore malformed frames; a later valid frame may still terminate the stream.
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return cast(dict[str, Any], parsed)
+
+
+def _raise_if_jangar_sse_error(frame: dict[str, Any]) -> None:
+    if "error" not in frame:
+        return
+    err = frame.get("error")
+    if isinstance(err, dict):
+        err_dict = cast(dict[str, Any], err)
+        message = err_dict.get("message") or err_dict.get("code") or "unknown_error"
+    else:
+        message = str(cast(object, err))
+    raise RuntimeError(f"jangar completion error: {message}")
+
+
+def _jangar_sse_content_parts(frame: dict[str, Any]) -> list[str]:
+    choices = frame.get("choices")
+    if not isinstance(choices, list):
+        return []
+
+    content_parts: list[str] = []
+    for choice in cast(list[object], choices):
+        if not isinstance(choice, dict):
             continue
+        choice_dict = cast(dict[str, Any], choice)
+        content_parts.extend(_jangar_choice_content(choice_dict))
+    return content_parts
 
-        if not isinstance(parsed, dict):
+
+def _jangar_choice_content(choice: dict[str, Any]) -> list[str]:
+    content_parts: list[str] = []
+    for field in ("delta", "message"):
+        payload = choice.get(field)
+        if not isinstance(payload, dict):
             continue
-
-        frame = cast(dict[str, Any], parsed)
-
-        if "error" in frame:
-            err = frame.get("error")
-            err_dict = cast(dict[str, Any], err) if isinstance(err, dict) else None
-            if err_dict is not None:
-                message = err_dict.get("message") or err_dict.get("code") or "unknown_error"
-            else:
-                message = str(cast(object, err))
-            raise RuntimeError(f"jangar completion error: {message}")
-
-        if "usage" in frame:
-            usage = _coerce_usage(frame.get("usage")) or usage
-
-        choices = frame.get("choices")
-        if not isinstance(choices, list):
-            continue
-
-        for choice in cast(list[object], choices):
-            if not isinstance(choice, dict):
-                continue
-            choice_dict = cast(dict[str, Any], choice)
-            delta = choice_dict.get("delta")
-            if isinstance(delta, dict):
-                delta_dict = cast(dict[str, Any], delta)
-                content = delta_dict.get("content")
-                if isinstance(content, str) and content:
-                    content_parts.append(content)
-            message = choice_dict.get("message")
-            if isinstance(message, dict):
-                message_dict = cast(dict[str, Any], message)
-                content = message_dict.get("content")
-                if isinstance(content, str) and content:
-                    content_parts.append(content)
-
-    return ("".join(content_parts).strip(), usage)
+        payload_dict = cast(dict[str, Any], payload)
+        content = payload_dict.get("content")
+        if isinstance(content, str) and content:
+            content_parts.append(content)
+    return content_parts

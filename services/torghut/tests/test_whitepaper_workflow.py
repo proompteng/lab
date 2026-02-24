@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
+from dataclasses import dataclass
+from typing import Any
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -17,6 +21,8 @@ from app.models import (
     WhitepaperViabilityVerdict,
 )
 from app.whitepapers.workflow import (
+    IssueKickoffResult,
+    WhitepaperKafkaIssueIngestor,
     WhitepaperWorkflowService,
     extract_pdf_urls,
     normalize_github_issue_event,
@@ -36,13 +42,59 @@ class _FakeCephClient:
         }
 
 
-class _AsyncSendInngestClient:
-    async def send(self, _event: object) -> list[str]:
-        return ["evt-async"]
+@dataclass
+class _FakeKafkaRecord:
+    value: bytes
 
 
-class _RunStub:
-    run_id = "wp-test-async-send"
+class _FakeKafkaConsumer:
+    def __init__(self, records: list[_FakeKafkaRecord]) -> None:
+        self._records = records
+        self.commit_calls = 0
+
+    def poll(self, *, timeout_ms: int, max_records: int):
+        del timeout_ms
+        batch = self._records[:max_records]
+        self._records = self._records[max_records:]
+        if not batch:
+            return {}
+        return {("github.webhook.events", 0): batch}
+
+    def commit(self) -> None:
+        self.commit_calls += 1
+
+
+class _FakeKafkaSession:
+    def __init__(self) -> None:
+        self.commit_calls = 0
+        self.rollback_calls = 0
+
+    def commit(self) -> None:
+        self.commit_calls += 1
+
+    def rollback(self) -> None:
+        self.rollback_calls += 1
+
+
+class _FakeKafkaWorkflowService:
+    def ingest_github_issue_event(
+        self,
+        _session: object,
+        payload: dict[str, object],
+        *,
+        source: str,
+    ) -> IssueKickoffResult:
+        if source != "kafka":
+            raise ValueError("unexpected_source")
+        if payload.get("raise_error"):
+            raise RuntimeError("forced_failure")
+        accepted = not bool(payload.get("ignored"))
+        return IssueKickoffResult(
+            accepted=accepted,
+            reason="queued" if accepted else "ignored_event",
+            run_id="wp-test" if accepted else None,
+            document_key="doc-test" if accepted else None,
+        )
 
 
 class TestWhitepaperWorkflow(TestCase):
@@ -110,17 +162,6 @@ https://example.com/paper.pdf
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service.enqueue_inngest_run = (  # type: ignore[method-assign]
-            lambda *, run, issue_event, attachment_url: {
-                "event_name": "torghut/whitepaper.analysis.requested",
-                "event_ids": ["evt-dispatch"],
-                "event_payload": {
-                    "run_id": run.run_id,
-                    "issue_url": issue_event.issue_url,
-                    "attachment_url": attachment_url,
-                },
-            }
-        )
         service._submit_jangar_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "ok": True,
@@ -142,11 +183,6 @@ https://example.com/paper.pdf
             self.assertIsNotNone(kickoff.run_id)
             session.commit()
 
-            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
-            self.assertEqual(run_row.status, "inngest_dispatched")
-
-            service.dispatch_codex_agentrun(session, run_row.run_id)
-            session.commit()
             run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
             self.assertEqual(run_row.status, "agentrun_dispatched")
 
@@ -195,56 +231,107 @@ https://example.com/paper.pdf
             pr_row = session.execute(select(WhitepaperDesignPullRequest)).scalar_one()
             self.assertEqual(pr_row.pr_number, 1234)
 
-    def test_ingest_queues_inngest_when_enabled(self) -> None:
+    def test_failed_run_can_retry_and_replay_latest_non_failed_run(self) -> None:
         service = WhitepaperWorkflowService()
-        service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service.enqueue_inngest_run = (  # type: ignore[method-assign]
-            lambda *, run, issue_event, attachment_url: {
-                "event_name": "torghut/whitepaper.analysis.requested",
-                "event_ids": ["evt-1"],
-                "event_payload": {
-                    "run_id": run.run_id,
-                    "issue_url": issue_event.issue_url,
-                    "attachment_url": attachment_url,
-                },
-            }
-        )
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
 
         with Session(self.engine) as session:
-            kickoff = service.ingest_github_issue_event(
+            service.ceph_client = None
+            service._download_pdf = lambda _url: b"%PDF-1.7 first"  # type: ignore[method-assign]
+            first = service.ingest_github_issue_event(
                 session,
                 self._issue_payload(),
                 source="api",
             )
-            self.assertTrue(kickoff.accepted)
-            self.assertEqual(kickoff.reason, "queued")
+            self.assertTrue(first.accepted)
+            self.assertEqual(first.reason, "failed")
+            self.assertIsNotNone(first.run_id)
             session.commit()
 
-            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
-            self.assertEqual(run_row.status, "inngest_dispatched")
-            self.assertEqual(run_row.inngest_event_id, "evt-1")
-            self.assertEqual(
-                run_row.inngest_function_id,
-                "torghut-whitepaper-analysis-v1",
+            service.ceph_client = _FakeCephClient()
+            service._download_pdf = lambda _url: b"%PDF-1.7 retry"  # type: ignore[method-assign]
+            retry = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
             )
-            self.assertIsNone(
-                session.execute(select(WhitepaperCodexAgentRun)).scalar_one_or_none()
+            self.assertTrue(retry.accepted)
+            self.assertEqual(retry.reason, "queued")
+            self.assertIsNotNone(retry.run_id)
+            assert first.run_id is not None
+            assert retry.run_id is not None
+            self.assertNotEqual(retry.run_id, first.run_id)
+            self.assertTrue(retry.run_id.endswith("-r1"))
+            session.commit()
+
+            run_rows = {
+                row.run_id: row
+                for row in session.execute(select(WhitepaperAnalysisRun)).scalars().all()
+            }
+            self.assertEqual(len(run_rows), 2)
+            self.assertEqual(run_rows[first.run_id].status, "failed")
+            self.assertEqual(run_rows[retry.run_id].status, "queued")
+            self.assertEqual(run_rows[retry.run_id].retry_of_run_id, first.run_id)
+
+            replay = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
             )
+            self.assertTrue(replay.accepted)
+            self.assertEqual(replay.reason, "idempotent_replay")
+            self.assertEqual(replay.run_id, retry.run_id)
 
-    def test_enqueue_inngest_run_supports_async_send(self) -> None:
-        service = WhitepaperWorkflowService()
-        service.build_inngest_client = (  # type: ignore[method-assign]
-            lambda: _AsyncSendInngestClient()
+    def test_kafka_ingestor_skips_offset_commit_when_any_record_fails(self) -> None:
+        os.environ["WHITEPAPER_KAFKA_ENABLED"] = "true"
+        consumer = _FakeKafkaConsumer(
+            [
+                _FakeKafkaRecord(value=json.dumps({"ignored": False}).encode("utf-8")),
+                _FakeKafkaRecord(value=json.dumps({"raise_error": True}).encode("utf-8")),
+            ]
         )
-        issue_event = normalize_github_issue_event(self._issue_payload())
-        self.assertIsNotNone(issue_event)
-        assert issue_event is not None
+        ingestor = WhitepaperKafkaIssueIngestor(workflow_service=_FakeKafkaWorkflowService())
+        ingestor._consumer = consumer
+        session = _FakeKafkaSession()
 
-        result = service.enqueue_inngest_run(
-            run=_RunStub(),  # type: ignore[arg-type]
-            issue_event=issue_event,
-            attachment_url="https://arxiv.org/pdf/2402.03755.pdf",
+        counters = ingestor.ingest_once(session)  # type: ignore[arg-type]
+        self.assertEqual(counters["messages_total"], 2)
+        self.assertEqual(counters["accepted_total"], 1)
+        self.assertEqual(counters["failed_total"], 1)
+        self.assertEqual(consumer.commit_calls, 0)
+        self.assertEqual(session.commit_calls, 1)
+        self.assertEqual(session.rollback_calls, 1)
+
+    def test_kafka_ingestor_commits_offsets_when_batch_has_no_failures(self) -> None:
+        os.environ["WHITEPAPER_KAFKA_ENABLED"] = "true"
+        consumer = _FakeKafkaConsumer(
+            [
+                _FakeKafkaRecord(value=json.dumps({"ignored": True}).encode("utf-8")),
+                _FakeKafkaRecord(value=json.dumps({"ignored": False}).encode("utf-8")),
+            ]
         )
+        ingestor = WhitepaperKafkaIssueIngestor(workflow_service=_FakeKafkaWorkflowService())
+        ingestor._consumer = consumer
+        session = _FakeKafkaSession()
 
-        self.assertEqual(result["event_ids"], ["evt-async"])
+        counters = ingestor.ingest_once(session)  # type: ignore[arg-type]
+        self.assertEqual(counters["messages_total"], 2)
+        self.assertEqual(counters["accepted_total"], 1)
+        self.assertEqual(counters["ignored_total"], 1)
+        self.assertEqual(counters["failed_total"], 0)
+        self.assertEqual(consumer.commit_calls, 1)
+        self.assertEqual(session.commit_calls, 1)
+        self.assertEqual(session.rollback_calls, 1)
+
+    @patch("app.whitepapers.workflow._http_request_bytes")
+    def test_download_pdf_requests_redirect_following(self, mock_http_request: Any) -> None:
+        os.environ["WHITEPAPER_MAX_PDF_BYTES"] = "123"
+        mock_http_request.return_value = (200, {}, b"%PDF-1.7 redirected")
+
+        payload = WhitepaperWorkflowService._download_pdf("https://example.com/paper.pdf")
+
+        self.assertEqual(payload, b"%PDF-1.7 redirected")
+        kwargs = mock_http_request.call_args.kwargs
+        self.assertEqual(kwargs["method"], "GET")
+        self.assertEqual(kwargs["max_response_bytes"], 123)
+        self.assertTrue(kwargs["follow_redirects"])

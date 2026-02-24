@@ -178,147 +178,15 @@ def detect_drift(
 ) -> DriftDetectionReport:
     now = detected_at or datetime.now(timezone.utc)
     signals: list[DriftSignal] = []
-
-    max_null_rate = max(
-        (
-            Decimal(str(value))
-            for value in feature_quality_report.null_rate_by_field.values()
-        ),
-        default=Decimal("0"),
+    signals.extend(_data_drift_signals(feature_quality_report, thresholds))
+    signals.extend(_model_drift_signals(gate_report_payload, thresholds))
+    signals.extend(
+        _performance_drift_signals(
+            gate_report_payload=gate_report_payload,
+            fallback_ratio=fallback_ratio,
+            thresholds=thresholds,
+        )
     )
-    if max_null_rate > thresholds.max_required_null_rate:
-        signals.append(
-            DriftSignal(
-                category="data",
-                reason_code=REASON_DATA_NULL_RATE,
-                observed=str(max_null_rate),
-                threshold=str(thresholds.max_required_null_rate),
-                comparator=">",
-            )
-        )
-
-    staleness = int(feature_quality_report.staleness_ms_p95)
-    if staleness > thresholds.max_staleness_ms_p95:
-        signals.append(
-            DriftSignal(
-                category="data",
-                reason_code=REASON_DATA_STALENESS,
-                observed=str(staleness),
-                threshold=str(thresholds.max_staleness_ms_p95),
-                comparator=">",
-            )
-        )
-
-    duplicate_ratio = Decimal(str(feature_quality_report.duplicate_ratio))
-    if duplicate_ratio > thresholds.max_duplicate_ratio:
-        signals.append(
-            DriftSignal(
-                category="data",
-                reason_code=REASON_DATA_DUPLICATE_RATIO,
-                observed=str(duplicate_ratio),
-                threshold=str(thresholds.max_duplicate_ratio),
-                comparator=">",
-            )
-        )
-
-    if (
-        int(feature_quality_report.schema_mismatch_total)
-        > thresholds.max_schema_mismatch_total
-    ):
-        signals.append(
-            DriftSignal(
-                category="data",
-                reason_code=REASON_DATA_SCHEMA_MISMATCH,
-                observed=str(feature_quality_report.schema_mismatch_total),
-                threshold=str(thresholds.max_schema_mismatch_total),
-                comparator=">",
-            )
-        )
-
-    metrics_payload = _as_mapping(gate_report_payload.get("metrics"))
-    llm_payload = _as_mapping(gate_report_payload.get("llm_metrics"))
-    profitability_payload = _as_mapping(
-        gate_report_payload.get("profitability_evidence")
-    )
-
-    calibration = _extract_profitability_decimal(
-        profitability_payload, ["confidence_calibration", "calibration_error"]
-    )
-    if calibration is not None and calibration > thresholds.max_model_calibration_error:
-        signals.append(
-            DriftSignal(
-                category="model",
-                reason_code=REASON_MODEL_CALIBRATION_ERROR,
-                observed=str(calibration),
-                threshold=str(thresholds.max_model_calibration_error),
-                comparator=">",
-            )
-        )
-
-    llm_error_ratio = _to_decimal(llm_payload.get("error_ratio"))
-    if (
-        llm_error_ratio is not None
-        and llm_error_ratio > thresholds.max_model_llm_error_ratio
-    ):
-        signals.append(
-            DriftSignal(
-                category="model",
-                reason_code=REASON_MODEL_LLM_ERROR_RATIO,
-                observed=str(llm_error_ratio),
-                threshold=str(thresholds.max_model_llm_error_ratio),
-                comparator=">",
-            )
-        )
-
-    net_pnl = _to_decimal(metrics_payload.get("net_pnl"))
-    if net_pnl is not None and net_pnl < thresholds.min_performance_net_pnl:
-        signals.append(
-            DriftSignal(
-                category="performance",
-                reason_code=REASON_PERF_NET_PNL,
-                observed=str(net_pnl),
-                threshold=str(thresholds.min_performance_net_pnl),
-                comparator="<",
-            )
-        )
-
-    max_drawdown = _to_decimal(metrics_payload.get("max_drawdown"))
-    if (
-        max_drawdown is not None
-        and abs(max_drawdown) > thresholds.max_performance_drawdown
-    ):
-        signals.append(
-            DriftSignal(
-                category="performance",
-                reason_code=REASON_PERF_DRAWDOWN,
-                observed=str(abs(max_drawdown)),
-                threshold=str(thresholds.max_performance_drawdown),
-                comparator=">",
-            )
-        )
-
-    cost_bps = _to_decimal(metrics_payload.get("cost_bps"))
-    if cost_bps is not None and cost_bps > thresholds.max_performance_cost_bps:
-        signals.append(
-            DriftSignal(
-                category="performance",
-                reason_code=REASON_PERF_COST_BPS,
-                observed=str(cost_bps),
-                threshold=str(thresholds.max_performance_cost_bps),
-                comparator=">",
-            )
-        )
-
-    if fallback_ratio > thresholds.max_execution_fallback_ratio:
-        signals.append(
-            DriftSignal(
-                category="performance",
-                reason_code=REASON_PERF_FALLBACK_RATIO,
-                observed=str(fallback_ratio),
-                threshold=str(thresholds.max_execution_fallback_ratio),
-                comparator=">",
-            )
-        )
 
     reason_codes = sorted({item.reason_code for item in signals})
     incident_id = _stable_digest(
@@ -336,6 +204,186 @@ def detect_drift(
         reason_codes=reason_codes,
         signals=signals,
         thresholds=thresholds,
+    )
+
+
+def _data_drift_signals(
+    feature_quality_report: FeatureQualityReport,
+    thresholds: DriftThresholds,
+) -> list[DriftSignal]:
+    signals: list[DriftSignal] = []
+    max_null_rate = max(
+        (
+            Decimal(str(value))
+            for value in feature_quality_report.null_rate_by_field.values()
+        ),
+        default=Decimal("0"),
+    )
+    if max_null_rate > thresholds.max_required_null_rate:
+        signals.append(
+            _drift_signal(
+                category="data",
+                reason_code=REASON_DATA_NULL_RATE,
+                observed=max_null_rate,
+                threshold=thresholds.max_required_null_rate,
+                comparator=">",
+            )
+        )
+
+    staleness = int(feature_quality_report.staleness_ms_p95)
+    if staleness > thresholds.max_staleness_ms_p95:
+        signals.append(
+            _drift_signal(
+                category="data",
+                reason_code=REASON_DATA_STALENESS,
+                observed=staleness,
+                threshold=thresholds.max_staleness_ms_p95,
+                comparator=">",
+            )
+        )
+
+    duplicate_ratio = Decimal(str(feature_quality_report.duplicate_ratio))
+    if duplicate_ratio > thresholds.max_duplicate_ratio:
+        signals.append(
+            _drift_signal(
+                category="data",
+                reason_code=REASON_DATA_DUPLICATE_RATIO,
+                observed=duplicate_ratio,
+                threshold=thresholds.max_duplicate_ratio,
+                comparator=">",
+            )
+        )
+
+    schema_mismatch_total = int(feature_quality_report.schema_mismatch_total)
+    if schema_mismatch_total > thresholds.max_schema_mismatch_total:
+        signals.append(
+            _drift_signal(
+                category="data",
+                reason_code=REASON_DATA_SCHEMA_MISMATCH,
+                observed=feature_quality_report.schema_mismatch_total,
+                threshold=thresholds.max_schema_mismatch_total,
+                comparator=">",
+            )
+        )
+    return signals
+
+
+def _model_drift_signals(
+    gate_report_payload: Mapping[str, Any],
+    thresholds: DriftThresholds,
+) -> list[DriftSignal]:
+    signals: list[DriftSignal] = []
+    llm_payload = _as_mapping(gate_report_payload.get("llm_metrics"))
+    profitability_payload = _as_mapping(
+        gate_report_payload.get("profitability_evidence")
+    )
+
+    calibration = _extract_profitability_decimal(
+        profitability_payload, ["confidence_calibration", "calibration_error"]
+    )
+    if calibration is not None and calibration > thresholds.max_model_calibration_error:
+        signals.append(
+            _drift_signal(
+                category="model",
+                reason_code=REASON_MODEL_CALIBRATION_ERROR,
+                observed=calibration,
+                threshold=thresholds.max_model_calibration_error,
+                comparator=">",
+            )
+        )
+
+    llm_error_ratio = _to_decimal(llm_payload.get("error_ratio"))
+    if (
+        llm_error_ratio is not None
+        and llm_error_ratio > thresholds.max_model_llm_error_ratio
+    ):
+        signals.append(
+            _drift_signal(
+                category="model",
+                reason_code=REASON_MODEL_LLM_ERROR_RATIO,
+                observed=llm_error_ratio,
+                threshold=thresholds.max_model_llm_error_ratio,
+                comparator=">",
+            )
+        )
+    return signals
+
+
+def _performance_drift_signals(
+    *,
+    gate_report_payload: Mapping[str, Any],
+    fallback_ratio: Decimal,
+    thresholds: DriftThresholds,
+) -> list[DriftSignal]:
+    signals: list[DriftSignal] = []
+    metrics_payload = _as_mapping(gate_report_payload.get("metrics"))
+
+    net_pnl = _to_decimal(metrics_payload.get("net_pnl"))
+    if net_pnl is not None and net_pnl < thresholds.min_performance_net_pnl:
+        signals.append(
+            _drift_signal(
+                category="performance",
+                reason_code=REASON_PERF_NET_PNL,
+                observed=net_pnl,
+                threshold=thresholds.min_performance_net_pnl,
+                comparator="<",
+            )
+        )
+
+    max_drawdown = _to_decimal(metrics_payload.get("max_drawdown"))
+    if (
+        max_drawdown is not None
+        and abs(max_drawdown) > thresholds.max_performance_drawdown
+    ):
+        signals.append(
+            _drift_signal(
+                category="performance",
+                reason_code=REASON_PERF_DRAWDOWN,
+                observed=abs(max_drawdown),
+                threshold=thresholds.max_performance_drawdown,
+                comparator=">",
+            )
+        )
+
+    cost_bps = _to_decimal(metrics_payload.get("cost_bps"))
+    if cost_bps is not None and cost_bps > thresholds.max_performance_cost_bps:
+        signals.append(
+            _drift_signal(
+                category="performance",
+                reason_code=REASON_PERF_COST_BPS,
+                observed=cost_bps,
+                threshold=thresholds.max_performance_cost_bps,
+                comparator=">",
+            )
+        )
+
+    if fallback_ratio > thresholds.max_execution_fallback_ratio:
+        signals.append(
+            _drift_signal(
+                category="performance",
+                reason_code=REASON_PERF_FALLBACK_RATIO,
+                observed=fallback_ratio,
+                threshold=thresholds.max_execution_fallback_ratio,
+                comparator=">",
+            )
+        )
+    return signals
+
+
+def _drift_signal(
+    *,
+    category: DriftCategory,
+    reason_code: str,
+    observed: object,
+    threshold: object,
+    comparator: str,
+) -> DriftSignal:
+    return DriftSignal(
+        category=category,
+        reason_code=reason_code,
+        observed=str(observed),
+        threshold=str(threshold),
+        comparator=comparator,
     )
 
 

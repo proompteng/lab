@@ -171,24 +171,28 @@ class IntradayTsmomV1Plugin:
     version = '1.1.0'
 
     def validate_params(self, params: dict[str, Any]) -> None:
-        if 'bullish_hist_min' in params:
-            if _decimal(params.get('bullish_hist_min')) is None:
-                raise ValueError('invalid_bullish_hist_min')
-        if 'bearish_hist_min' in params:
-            if _decimal(params.get('bearish_hist_min')) is None:
-                raise ValueError('invalid_bearish_hist_min')
-        if 'min_bull_rsi' in params:
-            min_bull_rsi = _decimal(params.get('min_bull_rsi'))
-            if min_bull_rsi is None:
-                raise ValueError('invalid_min_bull_rsi')
-            if min_bull_rsi < 0 or min_bull_rsi > 100:
-                raise ValueError('min_bull_rsi_out_of_range')
-        if 'max_bull_rsi' in params:
-            max_bull_rsi = _decimal(params.get('max_bull_rsi'))
-            if max_bull_rsi is None:
-                raise ValueError('invalid_max_bull_rsi')
-            if max_bull_rsi < 0 or max_bull_rsi > 100:
-                raise ValueError('max_bull_rsi_out_of_range')
+        _validate_optional_decimal_param(
+            params=params,
+            key='bullish_hist_min',
+            invalid_error='invalid_bullish_hist_min',
+        )
+        _validate_optional_decimal_param(
+            params=params,
+            key='bearish_hist_min',
+            invalid_error='invalid_bearish_hist_min',
+        )
+        _validate_optional_rsi_param(
+            params=params,
+            key='min_bull_rsi',
+            invalid_error='invalid_min_bull_rsi',
+            out_of_range_error='min_bull_rsi_out_of_range',
+        )
+        _validate_optional_rsi_param(
+            params=params,
+            key='max_bull_rsi',
+            invalid_error='invalid_max_bull_rsi',
+            out_of_range_error='max_bull_rsi_out_of_range',
+        )
 
     def required_features(self) -> set[str]:
         return {'price', 'ema12', 'ema26', 'macd', 'macd_signal', 'rsi14', 'vol_realized_w60s'}
@@ -381,6 +385,34 @@ def _decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except (ArithmeticError, TypeError, ValueError):
         return None
+
+
+def _validate_optional_decimal_param(
+    *,
+    params: dict[str, Any],
+    key: str,
+    invalid_error: str,
+) -> None:
+    if key not in params:
+        return
+    if _decimal(params.get(key)) is None:
+        raise ValueError(invalid_error)
+
+
+def _validate_optional_rsi_param(
+    *,
+    params: dict[str, Any],
+    key: str,
+    invalid_error: str,
+    out_of_range_error: str,
+) -> None:
+    if key not in params:
+        return
+    value = _decimal(params.get(key))
+    if value is None:
+        raise ValueError(invalid_error)
+    if value < 0 or value > 100:
+        raise ValueError(out_of_range_error)
 
 
 __all__ = [

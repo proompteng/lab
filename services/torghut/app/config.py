@@ -2,9 +2,12 @@
 
 import json
 import logging
+import tempfile
 from functools import lru_cache
+from http.client import HTTPConnection, HTTPSConnection
+from pathlib import Path
 from typing import Any, List, Literal, Optional, cast
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, BaseModel, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -68,6 +71,78 @@ class TradingAccountLane(BaseModel):
     enabled: bool = True
 
 
+def _http_connection_for_url(
+    url: str, *, timeout_seconds: float
+) -> tuple[HTTPConnection | HTTPSConnection, str]:
+    parsed = urlsplit(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {'http', 'https'}:
+        raise ValueError(f'unsupported_url_scheme:{scheme or "missing"}')
+    if not parsed.hostname:
+        raise ValueError('missing_url_host')
+    path = parsed.path or '/'
+    if parsed.query:
+        path = f'{path}?{parsed.query}'
+    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+    return connection_class(parsed.hostname, parsed.port, timeout=timeout_seconds), path
+
+
+class _HttpRequest:
+    def __init__(
+        self,
+        *,
+        full_url: str,
+        method: str,
+        data: bytes | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.full_url = full_url
+        self.method = method
+        self.data = data
+        self._headers = dict(headers or {})
+
+    def header_items(self) -> list[tuple[str, str]]:
+        return list(self._headers.items())
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return dict(self._headers)
+
+
+class _HttpResponseHandle:
+    def __init__(self, connection: HTTPConnection | HTTPSConnection, response: Any) -> None:
+        self._connection = connection
+        self._response = response
+        self.status = int(getattr(response, 'status', 200))
+
+    def read(self) -> bytes:
+        return cast(bytes, self._response.read())
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self) -> "_HttpResponseHandle":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        self.close()
+        return False
+
+
+def urlopen(request: _HttpRequest, timeout: float) -> _HttpResponseHandle:
+    connection, request_path = _http_connection_for_url(
+        request.full_url,
+        timeout_seconds=max(timeout, 0.001),
+    )
+    try:
+        connection.request(request.method, request_path, body=request.data, headers=request.headers)
+        response = connection.getresponse()
+    except Exception:
+        connection.close()
+        raise
+    return _HttpResponseHandle(connection, response)
+
+
 def _resolve_boolean_feature_flag(
     *,
     endpoint: str,
@@ -85,45 +160,54 @@ def _resolve_boolean_feature_flag(
             "context": {},
         }
     ).encode("utf-8")
-    request = Request(
-        f"{endpoint}/evaluate/v1/boolean",
+    request_url = f"{endpoint.rstrip('/')}/evaluate/v1/boolean"
+    timeout_seconds = max(timeout_ms, 1) / 1000.0
+    request = _HttpRequest(
+        full_url=request_url,
+        method='POST',
         data=payload,
-        method="POST",
         headers={
-            "accept": "application/json",
-            "content-type": "application/json",
+            'accept': 'application/json',
+            'content-type': 'application/json',
         },
     )
-    timeout_seconds = max(timeout_ms, 1) / 1000.0
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:
-            status = int(getattr(response, "status", 200))
+        with urlopen(request, timeout_seconds) as response:
+            status = int(getattr(response, 'status', 200))
             if status < 200 or status >= 300:
                 logger.warning(
-                    "Feature flag resolve HTTP failure for key=%s status=%s; using default.",
+                    'Feature flag resolve HTTP failure for key=%s status=%s; using default.',
                     flag_key,
                     status,
                 )
                 return default_value, False
-            raw_body = json.loads(response.read().decode("utf-8"))
+            raw_body = json.loads(response.read().decode('utf-8'))
             if not isinstance(raw_body, dict):
                 logger.warning(
-                    "Feature flag resolve invalid response for key=%s; using default.",
+                    'Feature flag resolve invalid response for key=%s; using default.',
                     flag_key,
                 )
                 return default_value, False
             body = cast(dict[str, object], raw_body)
-            enabled = body.get("enabled")
+            enabled = body.get('enabled')
             if not isinstance(enabled, bool):
                 logger.warning(
-                    "Feature flag resolve missing boolean `enabled` for key=%s; using default.",
+                    'Feature flag resolve missing boolean `enabled` for key=%s; using default.',
                     flag_key,
                 )
                 return default_value, False
             return enabled, True
-    except Exception:
-        logger.warning("Feature flag resolve failed for key=%s; using default.", flag_key)
+    except ValueError:
+        logger.warning(
+            'Feature flag resolve invalid endpoint for key=%s endpoint=%s; using default.',
+            flag_key,
+            endpoint,
+        )
         return default_value, False
+    except Exception:
+        logger.warning('Feature flag resolve failed for key=%s; using default.', flag_key)
+        return default_value, False
+    return default_value, False
 
 
 class Settings(BaseSettings):
@@ -405,7 +489,7 @@ class Settings(BaseSettings):
         description="Lookback window for signals passed to autonomous lane runs.",
     )
     trading_autonomy_artifact_dir: str = Field(
-        default="/tmp/torghut-autonomy",
+        default=str(Path(tempfile.gettempdir()) / 'torghut-autonomy'),
         alias="TRADING_AUTONOMY_ARTIFACT_DIR",
         description="Output directory for autonomous lane artifacts.",
     )
@@ -1156,185 +1240,100 @@ class Settings(BaseSettings):
                 )
                 break
 
-    def model_post_init(self, __context: Any) -> None:
-        self._apply_feature_flag_overrides()
+    @staticmethod
+    def _normalize_csv_setting(raw: str) -> str:
+        return ",".join([item.strip() for item in raw.split(",") if item.strip()])
+
+    @staticmethod
+    def _validate_non_negative_value(value: float, message: str) -> None:
+        if value < 0:
+            raise ValueError(message)
+
+    @staticmethod
+    def _validate_non_negative_map_values(
+        name: str,
+        values: dict[str, float],
+    ) -> None:
+        for key, value in values.items():
+            if value < 0:
+                raise ValueError(f"{name}[{key}] must be >= 0")
+
+    def _apply_trading_defaults(self) -> None:
         if "trading_account_label" not in self.model_fields_set:
             self.trading_account_label = self.trading_mode
-        if self.trading_mode == "live" and not self.trading_live_enabled:
-            raise ValueError("TRADING_LIVE_ENABLED must be true when TRADING_MODE=live")
-        if self.trading_mode == "paper" and self.trading_live_enabled:
-            raise ValueError(
-                "TRADING_LIVE_ENABLED must be false when TRADING_MODE=paper"
-            )
-        if self.jangar_base_url:
-            self.jangar_base_url = self.jangar_base_url.strip().rstrip("/")
-        if self.trading_market_context_url:
-            self.trading_market_context_url = (
-                self.trading_market_context_url.strip().rstrip("/")
-            )
-        if self.llm_self_hosted_base_url:
-            self.llm_self_hosted_base_url = (
-                self.llm_self_hosted_base_url.strip().rstrip("/")
-            )
-        if self.trading_lean_runner_url:
-            self.trading_lean_runner_url = self.trading_lean_runner_url.strip().rstrip(
-                "/"
-            )
-        if self.trading_order_feed_topic_v2:
-            normalized_topic_v2 = self.trading_order_feed_topic_v2.strip()
-            self.trading_order_feed_topic_v2 = normalized_topic_v2 or None
-        if self.trading_accounts_json:
-            normalized_registry = self.trading_accounts_json.strip()
-            self.trading_accounts_json = normalized_registry or None
-        if self.trading_execution_adapter_symbols_raw:
-            self.trading_execution_adapter_symbols_raw = ",".join(
-                [
-                    item.strip()
-                    for item in self.trading_execution_adapter_symbols_raw.split(",")
-                    if item.strip()
-                ]
-            )
-        if self.trading_lean_live_canary_symbols_raw:
-            self.trading_lean_live_canary_symbols_raw = ",".join(
-                [
-                    item.strip()
-                    for item in self.trading_lean_live_canary_symbols_raw.split(",")
-                    if item.strip()
-                ]
-            )
-        if self.trading_signal_staleness_alert_critical_reasons_raw:
-            self.trading_signal_staleness_alert_critical_reasons_raw = ",".join(
-                [
-                    item.strip()
-                    for item in self.trading_signal_staleness_alert_critical_reasons_raw.split(
-                        ","
-                    )
-                    if item.strip()
-                ]
-            )
-        if self.trading_drift_trigger_retrain_reason_codes_raw:
-            self.trading_drift_trigger_retrain_reason_codes_raw = ",".join(
-                [
-                    item.strip()
-                    for item in self.trading_drift_trigger_retrain_reason_codes_raw.split(
-                        ","
-                    )
-                    if item.strip()
-                ]
-            )
-        if self.trading_drift_trigger_reselection_reason_codes_raw:
-            self.trading_drift_trigger_reselection_reason_codes_raw = ",".join(
-                [
-                    item.strip()
-                    for item in self.trading_drift_trigger_reselection_reason_codes_raw.split(
-                        ","
-                    )
-                    if item.strip()
-                ]
-            )
-        if self.trading_drift_rollback_reason_codes_raw:
-            self.trading_drift_rollback_reason_codes_raw = ",".join(
-                [
-                    item.strip()
-                    for item in self.trading_drift_rollback_reason_codes_raw.split(
-                        ","
-                    )
-                    if item.strip()
-                ]
-            )
-        if self.trading_autonomy_approval_token:
-            self.trading_autonomy_approval_token = (
-                self.trading_autonomy_approval_token.strip() or None
-            )
-        if (
-            self.trading_enabled
-            or self.trading_autonomy_enabled
-            or self.trading_live_enabled
-        ) and self.trading_universe_source != "jangar":
-            raise ValueError(
-                "TRADING_UNIVERSE_SOURCE must be 'jangar' when trading or autonomy is enabled"
-            )
+
+    def _apply_llm_provider_default(self) -> None:
         if "llm_provider" not in self.model_fields_set and self.jangar_base_url:
             self.llm_provider = "jangar"
+
+    def _normalize_optional_url_settings(self) -> None:
+        for field_name in (
+            "jangar_base_url",
+            "trading_market_context_url",
+            "llm_self_hosted_base_url",
+            "trading_lean_runner_url",
+        ):
+            raw_value = cast(str | None, getattr(self, field_name))
+            if not raw_value:
+                continue
+            setattr(self, field_name, raw_value.strip().rstrip("/"))
+
+    def _normalize_optional_nullable_settings(self) -> None:
+        for field_name in (
+            "trading_order_feed_topic_v2",
+            "trading_accounts_json",
+            "trading_autonomy_approval_token",
+        ):
+            raw_value = cast(str | None, getattr(self, field_name))
+            if not raw_value:
+                continue
+            normalized_value = raw_value.strip()
+            setattr(self, field_name, normalized_value or None)
+
+    def _normalize_trading_csv_settings(self) -> None:
+        for field_name in (
+            "trading_execution_adapter_symbols_raw",
+            "trading_lean_live_canary_symbols_raw",
+            "trading_signal_staleness_alert_critical_reasons_raw",
+            "trading_drift_trigger_retrain_reason_codes_raw",
+            "trading_drift_trigger_reselection_reason_codes_raw",
+            "trading_drift_rollback_reason_codes_raw",
+        ):
+            raw_value = cast(str | None, getattr(self, field_name))
+            if not raw_value:
+                continue
+            setattr(self, field_name, self._normalize_csv_setting(raw_value))
+
+    def _normalize_llm_settings(self) -> None:
         if self.llm_allowed_models_raw:
-            self.llm_allowed_models_raw = ",".join(
-                [
-                    item.strip()
-                    for item in self.llm_allowed_models_raw.split(",")
-                    if item.strip()
-                ]
+            self.llm_allowed_models_raw = self._normalize_csv_setting(
+                self.llm_allowed_models_raw
             )
         if self.llm_allowed_prompt_versions_raw:
-            self.llm_allowed_prompt_versions_raw = ",".join(
-                [
-                    item.strip()
-                    for item in self.llm_allowed_prompt_versions_raw.split(",")
-                    if item.strip()
-                ]
+            self.llm_allowed_prompt_versions_raw = self._normalize_csv_setting(
+                self.llm_allowed_prompt_versions_raw
             )
-        if self.llm_evaluation_report:
-            self.llm_evaluation_report = self.llm_evaluation_report.strip()
-        if self.llm_effective_challenge_id:
-            self.llm_effective_challenge_id = self.llm_effective_challenge_id.strip()
-        if self.llm_shadow_completed_at:
-            self.llm_shadow_completed_at = self.llm_shadow_completed_at.strip()
+        for field_name in (
+            "llm_evaluation_report",
+            "llm_effective_challenge_id",
+            "llm_shadow_completed_at",
+        ):
+            raw_value = cast(str | None, getattr(self, field_name))
+            if not raw_value:
+                continue
+            setattr(self, field_name, raw_value.strip())
         if self.llm_model_version_lock is not None:
             normalized_model_version_lock = self.llm_model_version_lock.strip()
             # Model lock evidence must be explicitly configured; never backfill from llm_model.
             self.llm_model_version_lock = normalized_model_version_lock or None
-        self.llm_committee_roles_raw = ",".join(
-            [
-                item.strip()
-                for item in self.llm_committee_roles_raw.split(",")
-                if item.strip()
-            ]
+        self.llm_committee_roles_raw = self._normalize_csv_setting(
+            self.llm_committee_roles_raw
         )
-        self.llm_committee_mandatory_roles_raw = ",".join(
-            [
-                item.strip()
-                for item in self.llm_committee_mandatory_roles_raw.split(",")
-                if item.strip()
-            ]
+        self.llm_committee_mandatory_roles_raw = self._normalize_csv_setting(
+            self.llm_committee_mandatory_roles_raw
         )
-        self.trading_allocator_default_regime = (
-            self.trading_allocator_default_regime.strip() or "neutral"
-        )
-        if self.trading_allocator_default_budget_multiplier < 0:
-            raise ValueError("TRADING_ALLOCATOR_DEFAULT_BUDGET_MULTIPLIER must be >= 0")
-        if self.trading_allocator_default_capacity_multiplier < 0:
-            raise ValueError(
-                "TRADING_ALLOCATOR_DEFAULT_CAPACITY_MULTIPLIER must be >= 0"
-            )
-        if self.trading_drift_max_required_null_rate < 0:
-            raise ValueError("TRADING_DRIFT_MAX_REQUIRED_NULL_RATE must be >= 0")
-        if self.trading_drift_max_staleness_ms_p95 < 0:
-            raise ValueError("TRADING_DRIFT_MAX_STALENESS_MS_P95 must be >= 0")
-        if self.trading_drift_max_duplicate_ratio < 0:
-            raise ValueError("TRADING_DRIFT_MAX_DUPLICATE_RATIO must be >= 0")
-        if self.trading_drift_max_schema_mismatch_total < 0:
-            raise ValueError("TRADING_DRIFT_MAX_SCHEMA_MISMATCH_TOTAL must be >= 0")
-        if self.trading_drift_retrain_cooldown_seconds < 0:
-            raise ValueError("TRADING_DRIFT_RETRAIN_COOLDOWN_SECONDS must be >= 0")
-        if self.trading_drift_reselection_cooldown_seconds < 0:
-            raise ValueError("TRADING_DRIFT_RESELECTION_COOLDOWN_SECONDS must be >= 0")
-        if self.trading_drift_live_promotion_max_evidence_age_seconds < 0:
-            raise ValueError(
-                "TRADING_DRIFT_LIVE_PROMOTION_MAX_EVIDENCE_AGE_SECONDS must be >= 0"
-            )
-        if self.trading_allocator_min_multiplier < 0:
-            raise ValueError("TRADING_ALLOCATOR_MIN_MULTIPLIER must be >= 0")
-        if (
-            self.trading_allocator_max_multiplier
-            < self.trading_allocator_min_multiplier
-        ):
-            raise ValueError(
-                "TRADING_ALLOCATOR_MAX_MULTIPLIER must be >= TRADING_ALLOCATOR_MIN_MULTIPLIER"
-            )
-        for key, value in self.trading_allocator_regime_budget_multipliers.items():
-            if value < 0:
-                raise ValueError(
-                    f"TRADING_ALLOCATOR_REGIME_BUDGET_MULTIPLIERS[{key}] must be >= 0"
-                )
+
+    def _normalize_strategy_notional_caps(self) -> None:
         normalized_strategy_caps: dict[str, float] = {}
         for key, value in self.trading_allocator_strategy_notional_caps.items():
             normalized_key = key.strip()
@@ -1347,6 +1346,7 @@ class Settings(BaseSettings):
             normalized_strategy_caps[normalized_key] = value
         self.trading_allocator_strategy_notional_caps = normalized_strategy_caps
 
+    def _normalize_symbol_notional_caps(self) -> None:
         normalized_symbol_caps: dict[str, float] = {}
         for key, value in self.trading_allocator_symbol_notional_caps.items():
             normalized_key = key.strip().upper()
@@ -1359,6 +1359,7 @@ class Settings(BaseSettings):
             normalized_symbol_caps[normalized_key] = value
         self.trading_allocator_symbol_notional_caps = normalized_symbol_caps
 
+    def _normalize_correlation_symbol_groups(self) -> None:
         normalized_correlation_groups: dict[str, str] = {}
         for key, value in self.trading_allocator_correlation_symbol_groups.items():
             normalized_key = key.strip().upper()
@@ -1368,11 +1369,9 @@ class Settings(BaseSettings):
             normalized_correlation_groups[normalized_key] = normalized_value
         self.trading_allocator_correlation_symbol_groups = normalized_correlation_groups
 
+    def _normalize_correlation_group_notional_caps(self) -> None:
         normalized_correlation_caps: dict[str, float] = {}
-        for (
-            key,
-            value,
-        ) in self.trading_allocator_correlation_group_notional_caps.items():
+        for key, value in self.trading_allocator_correlation_group_notional_caps.items():
             normalized_key = key.strip().lower()
             if not normalized_key:
                 continue
@@ -1381,30 +1380,107 @@ class Settings(BaseSettings):
                     f"TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS[{key}] must be >= 0"
                 )
             normalized_correlation_caps[normalized_key] = value
-        self.trading_allocator_correlation_group_notional_caps = (
-            normalized_correlation_caps
-        )
+        self.trading_allocator_correlation_group_notional_caps = normalized_correlation_caps
 
-        for key, value in self.trading_allocator_regime_capacity_multipliers.items():
-            if value < 0:
-                raise ValueError(
-                    f"TRADING_ALLOCATOR_REGIME_CAPACITY_MULTIPLIERS[{key}] must be >= 0"
-                )
-        for key, value in self.trading_allocator_strategy_notional_caps.items():
-            if value < 0:
-                raise ValueError(
-                    f"TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS[{key}] must be >= 0"
-                )
-        for key, value in self.trading_allocator_symbol_notional_caps.items():
-            if value < 0:
-                raise ValueError(
-                    f"TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS[{key}] must be >= 0"
-                )
-        for key, value in self.trading_allocator_correlation_group_caps.items():
-            if value < 0:
-                raise ValueError(
-                    f"TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS[{key}] must be >= 0"
-                )
+    def _normalize_allocator_settings(self) -> None:
+        self.trading_allocator_default_regime = (
+            self.trading_allocator_default_regime.strip() or "neutral"
+        )
+        self._normalize_strategy_notional_caps()
+        self._normalize_symbol_notional_caps()
+        self._normalize_correlation_symbol_groups()
+        self._normalize_correlation_group_notional_caps()
+
+    def _validate_trading_mode_settings(self) -> None:
+        if self.trading_mode == "live" and not self.trading_live_enabled:
+            raise ValueError("TRADING_LIVE_ENABLED must be true when TRADING_MODE=live")
+        if self.trading_mode == "paper" and self.trading_live_enabled:
+            raise ValueError(
+                "TRADING_LIVE_ENABLED must be false when TRADING_MODE=paper"
+            )
+
+    def _validate_trading_source_settings(self) -> None:
+        if (
+            self.trading_enabled
+            or self.trading_autonomy_enabled
+            or self.trading_live_enabled
+        ) and self.trading_universe_source != "jangar":
+            raise ValueError(
+                "TRADING_UNIVERSE_SOURCE must be 'jangar' when trading or autonomy is enabled"
+            )
+
+    def _validate_allocator_scalar_settings(self) -> None:
+        checks: list[tuple[float, str]] = [
+            (
+                self.trading_allocator_default_budget_multiplier,
+                "TRADING_ALLOCATOR_DEFAULT_BUDGET_MULTIPLIER must be >= 0",
+            ),
+            (
+                self.trading_allocator_default_capacity_multiplier,
+                "TRADING_ALLOCATOR_DEFAULT_CAPACITY_MULTIPLIER must be >= 0",
+            ),
+            (
+                self.trading_drift_max_required_null_rate,
+                "TRADING_DRIFT_MAX_REQUIRED_NULL_RATE must be >= 0",
+            ),
+            (
+                self.trading_drift_max_staleness_ms_p95,
+                "TRADING_DRIFT_MAX_STALENESS_MS_P95 must be >= 0",
+            ),
+            (
+                self.trading_drift_max_duplicate_ratio,
+                "TRADING_DRIFT_MAX_DUPLICATE_RATIO must be >= 0",
+            ),
+            (
+                self.trading_drift_max_schema_mismatch_total,
+                "TRADING_DRIFT_MAX_SCHEMA_MISMATCH_TOTAL must be >= 0",
+            ),
+            (
+                self.trading_drift_retrain_cooldown_seconds,
+                "TRADING_DRIFT_RETRAIN_COOLDOWN_SECONDS must be >= 0",
+            ),
+            (
+                self.trading_drift_reselection_cooldown_seconds,
+                "TRADING_DRIFT_RESELECTION_COOLDOWN_SECONDS must be >= 0",
+            ),
+            (
+                self.trading_drift_live_promotion_max_evidence_age_seconds,
+                "TRADING_DRIFT_LIVE_PROMOTION_MAX_EVIDENCE_AGE_SECONDS must be >= 0",
+            ),
+            (
+                self.trading_allocator_min_multiplier,
+                "TRADING_ALLOCATOR_MIN_MULTIPLIER must be >= 0",
+            ),
+        ]
+        for value, message in checks:
+            self._validate_non_negative_value(value, message)
+        if self.trading_allocator_max_multiplier < self.trading_allocator_min_multiplier:
+            raise ValueError(
+                "TRADING_ALLOCATOR_MAX_MULTIPLIER must be >= TRADING_ALLOCATOR_MIN_MULTIPLIER"
+            )
+
+    def _validate_allocator_map_settings(self) -> None:
+        for name, values in (
+            (
+                "TRADING_ALLOCATOR_REGIME_CAPACITY_MULTIPLIERS",
+                self.trading_allocator_regime_capacity_multipliers,
+            ),
+            (
+                "TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS",
+                self.trading_allocator_strategy_notional_caps,
+            ),
+            (
+                "TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS",
+                self.trading_allocator_symbol_notional_caps,
+            ),
+            (
+                "TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS",
+                self.trading_allocator_correlation_group_caps,
+            ),
+        ):
+            self._validate_non_negative_map_values(name, values)
+
+    def _validate_fragility_settings(self) -> None:
         if not (
             0 <= self.trading_fragility_elevated_threshold <= 1
             and 0 <= self.trading_fragility_stress_threshold <= 1
@@ -1442,6 +1518,8 @@ class Settings(BaseSettings):
             for key, value in self.trading_allocator_symbol_correlation_groups.items()
             if str(key).strip() and str(value).strip()
         }
+
+    def _validate_llm_settings(self) -> None:
         if (
             self.llm_fail_mode_enforcement == "strict_veto"
             and self.llm_fail_mode != "veto"
@@ -1449,24 +1527,53 @@ class Settings(BaseSettings):
             raise ValueError(
                 "LLM_FAIL_MODE must be 'veto' when LLM_FAIL_MODE_ENFORCEMENT=strict_veto"
             )
-        if not 0 <= self.llm_min_confidence <= 1:
-            raise ValueError("LLM_MIN_CONFIDENCE must be within [0, 1]")
-        if not 0 <= self.llm_min_calibrated_top_probability <= 1:
-            raise ValueError("LLM_MIN_CALIBRATED_TOP_PROBABILITY must be within [0, 1]")
-        if not 0 <= self.llm_min_probability_margin <= 1:
-            raise ValueError("LLM_MIN_PROBABILITY_MARGIN must be within [0, 1]")
-        if not 0 <= self.llm_max_uncertainty <= 1:
-            raise ValueError("LLM_MAX_UNCERTAINTY must be within [0, 1]")
-        if not 0 <= self.llm_min_calibration_quality_score <= 1:
-            raise ValueError("LLM_MIN_CALIBRATION_QUALITY_SCORE must be within [0, 1]")
-        if not 0 <= self.trading_lean_live_canary_fallback_ratio_limit <= 1:
-            raise ValueError(
-                "TRADING_LEAN_LIVE_CANARY_FALLBACK_RATIO_LIMIT must be within [0, 1]"
-            )
+        interval_checks: list[tuple[float, str]] = [
+            (self.llm_min_confidence, "LLM_MIN_CONFIDENCE must be within [0, 1]"),
+            (
+                self.llm_min_calibrated_top_probability,
+                "LLM_MIN_CALIBRATED_TOP_PROBABILITY must be within [0, 1]",
+            ),
+            (
+                self.llm_min_probability_margin,
+                "LLM_MIN_PROBABILITY_MARGIN must be within [0, 1]",
+            ),
+            (self.llm_max_uncertainty, "LLM_MAX_UNCERTAINTY must be within [0, 1]"),
+            (
+                self.llm_min_calibration_quality_score,
+                "LLM_MIN_CALIBRATION_QUALITY_SCORE must be within [0, 1]",
+            ),
+            (
+                self.trading_lean_live_canary_fallback_ratio_limit,
+                "TRADING_LEAN_LIVE_CANARY_FALLBACK_RATIO_LIMIT must be within [0, 1]",
+            ),
+        ]
+        for value, message in interval_checks:
+            if not 0 <= value <= 1:
+                raise ValueError(message)
         if self.llm_live_fail_open_requested and not self.llm_fail_open_live_approved:
             raise ValueError(
                 "LLM_FAIL_OPEN_LIVE_APPROVED must be true when live effective fail mode is pass_through"
             )
+
+    def model_post_init(self, __context: Any) -> None:
+        self._apply_feature_flag_overrides()
+        self._apply_trading_defaults()
+        self._validate_trading_mode_settings()
+        self._normalize_optional_url_settings()
+        self._normalize_optional_nullable_settings()
+        self._normalize_trading_csv_settings()
+        self._validate_trading_source_settings()
+        self._apply_llm_provider_default()
+        self._normalize_llm_settings()
+        self._validate_allocator_scalar_settings()
+        self._validate_non_negative_map_values(
+            "TRADING_ALLOCATOR_REGIME_BUDGET_MULTIPLIERS",
+            self.trading_allocator_regime_budget_multipliers,
+        )
+        self._normalize_allocator_settings()
+        self._validate_allocator_map_settings()
+        self._validate_fragility_settings()
+        self._validate_llm_settings()
 
     @property
     def sqlalchemy_dsn(self) -> str:

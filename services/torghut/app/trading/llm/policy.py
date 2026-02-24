@@ -37,21 +37,74 @@ def apply_policy(
     """Apply policy constraints to the LLM review response."""
 
     guardrail_reasons = _deterministic_guardrail_reasons(review)
-    if review.verdict == "abstain":
+    fallback_outcome = _fallback_verdict_outcome(
+        decision,
+        verdict=review.verdict,
+        guardrail_reasons=guardrail_reasons,
+    )
+    if fallback_outcome is not None:
+        return fallback_outcome
+
+    quality_outcome = _quality_gate_outcome(
+        decision,
+        review=review,
+        guardrail_reasons=guardrail_reasons,
+    )
+    if quality_outcome is not None:
+        return quality_outcome
+
+    required_checks_outcome = _required_checks_outcome(decision, review=review)
+    if required_checks_outcome is not None:
+        return required_checks_outcome
+
+    committee_outcome = _committee_guard_outcome(decision, review=review)
+    if committee_outcome is not None:
+        return committee_outcome
+
+    if review.verdict == "veto":
+        return PolicyOutcome("veto", decision, "llm_veto")
+    if review.verdict == "approve":
+        return PolicyOutcome("approve", decision)
+
+    effective_adjustment_allowed = (
+        settings.llm_adjustment_allowed
+        if adjustment_allowed is None
+        else adjustment_allowed
+    )
+    if not effective_adjustment_allowed:
+        return PolicyOutcome("veto", decision, "llm_adjustment_disallowed")
+    return _apply_adjustment_outcome(decision, review=review)
+
+
+def _fallback_verdict_outcome(
+    decision: StrategyDecision,
+    *,
+    verdict: str,
+    guardrail_reasons: list[str],
+) -> PolicyOutcome | None:
+    if verdict == "abstain":
         return _fallback_outcome(
             decision,
             reason="llm_abstain",
             fail_mode=settings.llm_abstain_fail_mode,
             guardrail_reasons=guardrail_reasons,
         )
-    if review.verdict == "escalate":
+    if verdict == "escalate":
         return _fallback_outcome(
             decision,
             reason="llm_escalate",
             fail_mode=settings.llm_escalate_fail_mode,
             guardrail_reasons=guardrail_reasons,
         )
+    return None
 
+
+def _quality_gate_outcome(
+    decision: StrategyDecision,
+    *,
+    review: LLMReviewResponse,
+    guardrail_reasons: list[str],
+) -> PolicyOutcome | None:
     if guardrail_reasons:
         return _fallback_outcome(
             decision,
@@ -59,16 +112,21 @@ def apply_policy(
             fail_mode=settings.llm_quality_fail_mode,
             guardrail_reasons=guardrail_reasons,
         )
-
-    min_confidence = settings.llm_min_confidence
-    if review.confidence < min_confidence:
+    if review.confidence < settings.llm_min_confidence:
         return _fallback_outcome(
             decision,
             reason="llm_confidence_below_min",
             fail_mode=settings.llm_quality_fail_mode,
             guardrail_reasons=guardrail_reasons,
         )
+    return None
 
+
+def _required_checks_outcome(
+    decision: StrategyDecision,
+    *,
+    review: LLMReviewResponse,
+) -> PolicyOutcome | None:
     unknown_checks = sorted(
         {
             check
@@ -78,59 +136,46 @@ def apply_policy(
     )
     if unknown_checks:
         return PolicyOutcome("veto", decision, "llm_required_checks_invalid")
+    return None
 
+
+def _committee_guard_outcome(
+    decision: StrategyDecision,
+    *,
+    review: LLMReviewResponse,
+) -> PolicyOutcome | None:
     committee = review.committee
-    if committee is not None:
-        for role in committee.mandatory_roles:
-            role_review = committee.roles.get(role)
-            if role_review is None or role_review.verdict == "veto":
-                return PolicyOutcome("veto", decision, "llm_committee_mandatory_veto")
+    if committee is None:
+        return None
+    for role in committee.mandatory_roles:
+        role_review = committee.roles.get(role)
+        if role_review is None or role_review.verdict == "veto":
+            return PolicyOutcome("veto", decision, "llm_committee_mandatory_veto")
+    return None
 
-    if review.verdict == "veto":
-        return PolicyOutcome("veto", decision, "llm_veto")
 
-    if review.verdict == "approve":
-        return PolicyOutcome("approve", decision)
+def _apply_adjustment_outcome(
+    decision: StrategyDecision,
+    *,
+    review: LLMReviewResponse,
+) -> PolicyOutcome:
+    adjusted_qty_dec, clamp_reason, qty_error = _resolve_adjusted_qty(
+        decision, review=review
+    )
+    if qty_error is not None:
+        return qty_error
 
-    if adjustment_allowed is None:
-        adjustment_allowed = settings.llm_adjustment_allowed
-
-    if not adjustment_allowed:
-        return PolicyOutcome("veto", decision, "llm_adjustment_disallowed")
-
-    adjusted_qty = review.adjusted_qty
-    if adjusted_qty is None:
-        return PolicyOutcome("veto", decision, "llm_adjustment_missing_qty")
-
-    qty = Decimal(str(decision.qty))
-    min_qty = qty * Decimal(str(settings.llm_min_qty_multiplier))
-    max_qty = qty * Decimal(str(settings.llm_max_qty_multiplier))
-    adjusted_qty_dec = Decimal(str(adjusted_qty))
-    clamp_reason: Optional[str] = None
-
-    if adjusted_qty_dec <= 0:
-        return PolicyOutcome("veto", decision, "llm_adjustment_non_positive")
-
-    if adjusted_qty_dec < min_qty:
-        adjusted_qty_dec = min_qty
-        clamp_reason = "llm_adjustment_clamped_min"
-    elif adjusted_qty_dec > max_qty:
-        adjusted_qty_dec = max_qty
-        clamp_reason = "llm_adjustment_clamped_max"
-
-    adjusted_order_type = review.adjusted_order_type
-    if adjusted_order_type is None:
-        adjusted_order_type = decision.order_type
-
+    adjusted_order_type = review.adjusted_order_type or decision.order_type
     if adjusted_order_type not in allowed_order_types(decision.order_type):
         return PolicyOutcome("veto", decision, "llm_adjustment_order_type_not_allowed")
 
-    limit_price = decision.limit_price
-    if adjusted_order_type in {"limit", "stop_limit"}:
-        if review.limit_price is not None:
-            limit_price = Decimal(str(review.limit_price))
-        elif adjusted_order_type != decision.order_type or limit_price is None:
-            return PolicyOutcome("veto", decision, "llm_adjustment_missing_limit_price")
+    limit_price = _resolve_limit_price(
+        decision,
+        review=review,
+        adjusted_order_type=adjusted_order_type,
+    )
+    if isinstance(limit_price, PolicyOutcome):
+        return limit_price
 
     updated = decision.model_copy(
         update={
@@ -140,6 +185,51 @@ def apply_policy(
         }
     )
     return PolicyOutcome("adjust", updated, clamp_reason)
+
+
+def _resolve_adjusted_qty(
+    decision: StrategyDecision,
+    *,
+    review: LLMReviewResponse,
+) -> tuple[Decimal, Optional[str], PolicyOutcome | None]:
+    adjusted_qty = review.adjusted_qty
+    if adjusted_qty is None:
+        return Decimal("0"), None, PolicyOutcome(
+            "veto", decision, "llm_adjustment_missing_qty"
+        )
+
+    qty = Decimal(str(decision.qty))
+    min_qty = qty * Decimal(str(settings.llm_min_qty_multiplier))
+    max_qty = qty * Decimal(str(settings.llm_max_qty_multiplier))
+    adjusted_qty_dec = Decimal(str(adjusted_qty))
+    if adjusted_qty_dec <= 0:
+        return Decimal("0"), None, PolicyOutcome(
+            "veto", decision, "llm_adjustment_non_positive"
+        )
+
+    clamp_reason: Optional[str] = None
+    if adjusted_qty_dec < min_qty:
+        adjusted_qty_dec = min_qty
+        clamp_reason = "llm_adjustment_clamped_min"
+    elif adjusted_qty_dec > max_qty:
+        adjusted_qty_dec = max_qty
+        clamp_reason = "llm_adjustment_clamped_max"
+    return adjusted_qty_dec, clamp_reason, None
+
+
+def _resolve_limit_price(
+    decision: StrategyDecision,
+    *,
+    review: LLMReviewResponse,
+    adjusted_order_type: str,
+) -> Decimal | None | PolicyOutcome:
+    if adjusted_order_type not in {"limit", "stop_limit"}:
+        return decision.limit_price
+    if review.limit_price is not None:
+        return Decimal(str(review.limit_price))
+    if adjusted_order_type != decision.order_type or decision.limit_price is None:
+        return PolicyOutcome("veto", decision, "llm_adjustment_missing_limit_price")
+    return decision.limit_price
 
 
 def _fallback_outcome(

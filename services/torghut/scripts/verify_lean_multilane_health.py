@@ -6,12 +6,17 @@ This script is intended for operational validation in stage/prod clusters.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
-from urllib.request import Request, urlopen
+from urllib.parse import urlparse
+
+
+SUPPORTED_NAMESPACE = 'torghut'
 
 
 @dataclass
@@ -22,9 +27,23 @@ class CheckResult:
 
 
 def _http_json(url: str, timeout: int = 5) -> dict[str, Any]:
-    request = Request(url=url, headers={'accept': 'application/json'})
-    with urlopen(request, timeout=timeout) as response:
+    parsed = urlparse(url)
+    if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+        raise ValueError(f'unsupported URL: {url!r}')
+
+    path = parsed.path or '/'
+    if parsed.query:
+        path = f'{path}?{parsed.query}'
+
+    connection_cls = http.client.HTTPSConnection if parsed.scheme == 'https' else http.client.HTTPConnection
+    connection = connection_cls(parsed.netloc, timeout=timeout)
+    try:
+        connection.request('GET', path, headers={'accept': 'application/json'})
+        response = connection.getresponse()
         raw = response.read().decode('utf-8').strip()
+    finally:
+        connection.close()
+
     if not raw:
         return {}
     payload = json.loads(raw)
@@ -33,13 +52,79 @@ def _http_json(url: str, timeout: int = 5) -> dict[str, Any]:
     return {}
 
 
-def _kubectl(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ['kubectl', *args],
-        check=False,
-        text=True,
-        capture_output=True,
-    )
+def _kubectl_get_kafka_topic() -> subprocess.CompletedProcess[str]:
+    if Path('/usr/bin/kubectl').exists():
+        return subprocess.run(
+            ['/usr/bin/kubectl', '-n', 'kafka', 'get', 'kafkatopic', 'torghut.ta.signals.v1'],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    if Path('/usr/local/bin/kubectl').exists():
+        return subprocess.run(
+            ['/usr/local/bin/kubectl', '-n', 'kafka', 'get', 'kafkatopic', 'torghut.ta.signals.v1'],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    if Path('/opt/homebrew/bin/kubectl').exists():
+        return subprocess.run(
+            ['/opt/homebrew/bin/kubectl', '-n', 'kafka', 'get', 'kafkatopic', 'torghut.ta.signals.v1'],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    return subprocess.CompletedProcess(args=['kubectl'], returncode=127, stdout='', stderr='kubectl not found')
+
+
+def _kubectl_get_torghut_flink() -> subprocess.CompletedProcess[str]:
+    if Path('/usr/bin/kubectl').exists():
+        return subprocess.run(
+            ['/usr/bin/kubectl', '-n', 'torghut', 'get', 'flinkdeployment', 'torghut-ta', '-o', 'json'],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    if Path('/usr/local/bin/kubectl').exists():
+        return subprocess.run(
+            ['/usr/local/bin/kubectl', '-n', 'torghut', 'get', 'flinkdeployment', 'torghut-ta', '-o', 'json'],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    if Path('/opt/homebrew/bin/kubectl').exists():
+        return subprocess.run(
+            ['/opt/homebrew/bin/kubectl', '-n', 'torghut', 'get', 'flinkdeployment', 'torghut-ta', '-o', 'json'],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    return subprocess.CompletedProcess(args=['kubectl'], returncode=127, stdout='', stderr='kubectl not found')
+
+
+def _kubectl_get_torghut_clickhouse() -> subprocess.CompletedProcess[str]:
+    if Path('/usr/bin/kubectl').exists():
+        return subprocess.run(
+            ['/usr/bin/kubectl', '-n', 'torghut', 'get', 'clickhouseinstallation', 'torghut-clickhouse'],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    if Path('/usr/local/bin/kubectl').exists():
+        return subprocess.run(
+            ['/usr/local/bin/kubectl', '-n', 'torghut', 'get', 'clickhouseinstallation', 'torghut-clickhouse'],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    if Path('/opt/homebrew/bin/kubectl').exists():
+        return subprocess.run(
+            ['/opt/homebrew/bin/kubectl', '-n', 'torghut', 'get', 'clickhouseinstallation', 'torghut-clickhouse'],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    return subprocess.CompletedProcess(args=['kubectl'], returncode=127, stdout='', stderr='kubectl not found')
 
 
 def check_http(base_url: str) -> list[CheckResult]:
@@ -62,8 +147,17 @@ def check_http(base_url: str) -> list[CheckResult]:
 
 def check_kafka_flink_clickhouse(namespace: str) -> list[CheckResult]:
     checks: list[CheckResult] = []
+    if namespace != SUPPORTED_NAMESPACE:
+        checks.append(
+            CheckResult(
+                name='namespace_supported',
+                passed=False,
+                detail=f'namespace must be {SUPPORTED_NAMESPACE!r}, got {namespace!r}',
+            )
+        )
+        return checks
 
-    topic_result = _kubectl(['-n', 'kafka', 'get', 'kafkatopic', 'torghut.ta.signals.v1'])
+    topic_result = _kubectl_get_kafka_topic()
     checks.append(
         CheckResult(
             name='kafka_topic_torghut_ta_signals',
@@ -72,7 +166,7 @@ def check_kafka_flink_clickhouse(namespace: str) -> list[CheckResult]:
         )
     )
 
-    flink_result = _kubectl(['-n', namespace, 'get', 'flinkdeployment', 'torghut-ta', '-o', 'json'])
+    flink_result = _kubectl_get_torghut_flink()
     if flink_result.returncode != 0:
         checks.append(
             CheckResult(
@@ -83,12 +177,7 @@ def check_kafka_flink_clickhouse(namespace: str) -> list[CheckResult]:
         )
     else:
         payload = json.loads(flink_result.stdout)
-        state = (
-            payload.get('status', {})
-            .get('jobManagerDeploymentStatus', '')
-            .strip()
-            .lower()
-        )
+        state = payload.get('status', {}).get('jobManagerDeploymentStatus', '').strip().lower()
         checks.append(
             CheckResult(
                 name='flink_ta_deployment',
@@ -97,12 +186,7 @@ def check_kafka_flink_clickhouse(namespace: str) -> list[CheckResult]:
             )
         )
 
-    clickhouse_result = _kubectl([
-        '-n', namespace,
-        'get',
-        'clickhouseinstallation',
-        'torghut-clickhouse',
-    ])
+    clickhouse_result = _kubectl_get_torghut_clickhouse()
     checks.append(
         CheckResult(
             name='clickhouse_installation',

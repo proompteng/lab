@@ -117,6 +117,110 @@ def _retry_policies(policy: JsonDict) -> dict[str, RetryPolicy]:
     return parsed
 
 
+def _deny(reason: str, next_action: str = 'halt') -> JsonDict:
+    return {'allowed': False, 'reason': reason, 'nextAction': next_action}
+
+
+def _transition_map(policy: JsonDict) -> dict[str, list[str]]:
+    transitions = policy.get('transitions')
+    if not isinstance(transitions, dict):
+        raise GuardError('Policy must include transitions map')
+    return cast(dict[str, list[str]], transitions)
+
+
+def _active_stage_from_state(
+    state: JsonDict,
+    stage_definitions: dict[str, StageDefinition],
+) -> str | None:
+    active_stage_raw = state.get('activeStage')
+    if not isinstance(active_stage_raw, str):
+        return None
+    active_stage = active_stage_raw.strip()
+    if not active_stage:
+        return None
+    if active_stage not in stage_definitions:
+        raise GuardError(f'Unknown active stage in state: {active_stage}')
+    return active_stage
+
+
+def _state_run_id(state: JsonDict) -> str | None:
+    state_run_id_raw = state.get('runId')
+    if not isinstance(state_run_id_raw, str):
+        state_run_id_raw = state.get('run_id')
+    if not isinstance(state_run_id_raw, str):
+        return None
+    state_run_id = state_run_id_raw.strip()
+    return state_run_id or None
+
+
+def _validate_transition_state(
+    *,
+    state: JsonDict,
+    candidate_id: str,
+    run_id: str,
+    from_stage: str | None,
+    to_stage: str,
+    active_stage: str | None,
+    transitions_map: dict[str, list[str]],
+) -> JsonDict | None:
+    if active_stage and from_stage and active_stage != from_stage:
+        return _deny(f'active_stage_mismatch:{active_stage}')
+
+    state_run_id = _state_run_id(state)
+    if not state_run_id:
+        return _deny('missing_run_id')
+    if state_run_id != run_id:
+        return _deny(f'run_mismatch:{state_run_id}')
+
+    source_stage = from_stage or active_stage
+    if not source_stage:
+        return _deny('missing_source_stage')
+
+    allowed_targets = transitions_map.get(source_stage, [])
+    if to_stage not in allowed_targets:
+        return _deny(f'illegal_transition:{source_stage}->{to_stage}')
+
+    if str(state.get('candidateId', candidate_id)) != candidate_id:
+        return _deny('candidate_mismatch')
+    if bool(state.get('paused', False)):
+        return _deny('candidate_paused_for_review', 'human_review')
+    return None
+
+
+def _validate_stage_controls(
+    *,
+    stage_policy: StageDefinition,
+    previous_artifact: Path | None,
+    previous_gate_passed: bool,
+    risk_controls_passed: bool,
+    execution_controls_passed: bool,
+) -> JsonDict | None:
+    if stage_policy.require_previous_artifact and (previous_artifact is None or not previous_artifact.exists()):
+        return _deny('missing_previous_artifact')
+    if stage_policy.require_previous_gate_pass and not previous_gate_passed:
+        return _deny('previous_gate_failed', 'rollback')
+    if not risk_controls_passed:
+        return _deny('risk_controls_not_passed', 'rollback')
+    if not execution_controls_passed:
+        return _deny('execution_controls_not_passed', 'rollback')
+    return None
+
+
+def _validate_mutable_action(
+    *,
+    stage_policy: StageDefinition,
+    mode: str,
+    emergency_ticket: str | None,
+) -> JsonDict | None:
+    if not stage_policy.mutable_action:
+        return None
+    if mode == 'gitops':
+        return None
+    if mode == 'emergency' and emergency_ticket:
+        return None
+    return _deny('mutable_action_requires_gitops_or_ticketed_emergency')
+
+
 def evaluate_transition(
     *,
     policy: JsonDict,
@@ -140,67 +244,39 @@ def evaluate_transition(
         raise GuardError(f'Unknown destination stage: {to_stage}')
     if from_stage and from_stage not in stage_definitions:
         raise GuardError(f'Unknown source stage: {from_stage}')
+    transitions_map = _transition_map(policy)
+    active_stage = _active_stage_from_state(state, stage_definitions)
 
-    transitions = policy.get('transitions')
-    if not isinstance(transitions, dict):
-        raise GuardError('Policy must include transitions map')
-    transitions_map = cast(dict[str, list[str]], transitions)
-
-    active_stage_raw = state.get('activeStage')
-    active_stage = str(active_stage_raw).strip() if isinstance(active_stage_raw, str) else None
-    if active_stage and active_stage not in stage_definitions:
-        raise GuardError(f'Unknown active stage in state: {active_stage}')
-
-    if active_stage and from_stage and active_stage != from_stage:
-        return {'allowed': False, 'reason': f'active_stage_mismatch:{active_stage}', 'nextAction': 'halt'}
-
-    state_run_id_raw = state.get('runId')
-    if not isinstance(state_run_id_raw, str):
-        state_run_id_raw = state.get('run_id')
-    state_run_id = str(state_run_id_raw).strip() if isinstance(state_run_id_raw, str) else None
-    if not state_run_id:
-        return {'allowed': False, 'reason': 'missing_run_id', 'nextAction': 'halt'}
-    if state_run_id != run_id:
-        return {'allowed': False, 'reason': f'run_mismatch:{state_run_id}', 'nextAction': 'halt'}
-
-    source_stage = from_stage or active_stage
-    if not source_stage:
-        return {'allowed': False, 'reason': 'missing_source_stage', 'nextAction': 'halt'}
-    allowed_targets = transitions_map.get(source_stage, [])
-    if to_stage not in allowed_targets:
-        return {
-            'allowed': False,
-            'reason': f'illegal_transition:{source_stage}->{to_stage}',
-            'nextAction': 'halt',
-        }
-
-    if str(state.get('candidateId', candidate_id)) != candidate_id:
-        return {'allowed': False, 'reason': 'candidate_mismatch', 'nextAction': 'halt'}
-
-    paused = bool(state.get('paused', False))
-    if paused:
-        return {'allowed': False, 'reason': 'candidate_paused_for_review', 'nextAction': 'human_review'}
+    transition_error = _validate_transition_state(
+        state=state,
+        candidate_id=candidate_id,
+        run_id=run_id,
+        from_stage=from_stage,
+        to_stage=to_stage,
+        active_stage=active_stage,
+        transitions_map=transitions_map,
+    )
+    if transition_error:
+        return transition_error
 
     stage_policy = stage_definitions[to_stage]
-    if stage_policy.require_previous_artifact:
-        if previous_artifact is None or not previous_artifact.exists():
-            return {'allowed': False, 'reason': 'missing_previous_artifact', 'nextAction': 'halt'}
-    if stage_policy.require_previous_gate_pass and not previous_gate_passed:
-        return {'allowed': False, 'reason': 'previous_gate_failed', 'nextAction': 'rollback'}
+    controls_error = _validate_stage_controls(
+        stage_policy=stage_policy,
+        previous_artifact=previous_artifact,
+        previous_gate_passed=previous_gate_passed,
+        risk_controls_passed=risk_controls_passed,
+        execution_controls_passed=execution_controls_passed,
+    )
+    if controls_error:
+        return controls_error
 
-    # Final authority: deterministic risk + execution controls.
-    if not risk_controls_passed:
-        return {'allowed': False, 'reason': 'risk_controls_not_passed', 'nextAction': 'rollback'}
-    if not execution_controls_passed:
-        return {'allowed': False, 'reason': 'execution_controls_not_passed', 'nextAction': 'rollback'}
-
-    if stage_policy.mutable_action:
-        if mode == 'gitops':
-            pass
-        elif mode == 'emergency' and emergency_ticket:
-            pass
-        else:
-            return {'allowed': False, 'reason': 'mutable_action_requires_gitops_or_ticketed_emergency', 'nextAction': 'halt'}
+    mutable_error = _validate_mutable_action(
+        stage_policy=stage_policy,
+        mode=mode,
+        emergency_ticket=emergency_ticket,
+    )
+    if mutable_error:
+        return mutable_error
 
     return {
         'allowed': True,

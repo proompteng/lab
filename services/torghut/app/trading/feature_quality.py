@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime
 from statistics import quantiles
 
@@ -63,6 +63,19 @@ class FeatureQualityError(RuntimeError):
     """Raised when a quality report fails hard thresholds."""
 
 
+@dataclass
+class _FeatureQualityScan:
+    null_counts: dict[str, int]
+    seen_keys: set[tuple[datetime, str, int]] = dataclass_field(
+        default_factory=lambda: set[tuple[datetime, str, int]]()
+    )
+    duplicate_total: int = 0
+    schema_mismatch_total: int = 0
+    staleness_values: list[int] = dataclass_field(default_factory=lambda: list[int]())
+    non_monotonic_detected: bool = False
+    previous_key: tuple[datetime, str, int] | None = None
+
+
 def evaluate_feature_batch_quality(
     signals: list[SignalEnvelope],
     *,
@@ -71,60 +84,92 @@ def evaluate_feature_batch_quality(
     policy = thresholds or FeatureQualityThresholds()
     rows_total = len(signals)
     if rows_total == 0:
-        return FeatureQualityReport(
-            accepted=True,
-            rows_total=0,
-            null_rate_by_field={
-                field: 0.0 for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS
-            },
-            staleness_ms_p95=0,
-            duplicate_ratio=0.0,
-            schema_mismatch_total=0,
-            reasons=[],
+        return _empty_feature_quality_report()
+
+    scan = _scan_feature_batch(signals)
+
+    null_rate_by_field = {
+        field: scan.null_counts[field] / rows_total
+        for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS
+    }
+    duplicate_ratio = scan.duplicate_total / rows_total
+    staleness_ms_p95 = _p95(scan.staleness_values)
+    unique_reasons = sorted(
+        set(
+            _derive_quality_reasons(
+                scan=scan,
+                null_rate_by_field=null_rate_by_field,
+                duplicate_ratio=duplicate_ratio,
+                staleness_ms_p95=staleness_ms_p95,
+                policy=policy,
+            )
         )
+    )
+    return FeatureQualityReport(
+        accepted=len(unique_reasons) == 0,
+        rows_total=rows_total,
+        null_rate_by_field=null_rate_by_field,
+        staleness_ms_p95=staleness_ms_p95,
+        duplicate_ratio=duplicate_ratio,
+        schema_mismatch_total=scan.schema_mismatch_total,
+        reasons=unique_reasons,
+    )
 
-    null_counts = {field: 0 for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS}
-    seen_keys: set[tuple[datetime, str, int]] = set()
-    duplicate_total = 0
-    schema_mismatch_total = 0
-    staleness_values: list[int] = []
-    reasons: list[str] = []
 
-    previous: tuple[datetime, str, int] | None = None
+def _empty_feature_quality_report() -> FeatureQualityReport:
+    return FeatureQualityReport(
+        accepted=True,
+        rows_total=0,
+        null_rate_by_field={field: 0.0 for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS},
+        staleness_ms_p95=0,
+        duplicate_ratio=0.0,
+        schema_mismatch_total=0,
+        reasons=[],
+    )
+
+
+def _scan_feature_batch(signals: list[SignalEnvelope]) -> _FeatureQualityScan:
+    scan = _FeatureQualityScan(
+        null_counts={field: 0 for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS},
+    )
     for signal in signals:
         if not signal_declares_compatible_schema(signal):
-            schema_mismatch_total += 1
+            scan.schema_mismatch_total += 1
 
         values = map_feature_values_v3(signal)
         for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS:
             if values.get(field) is None:
-                null_counts[field] += 1
+                scan.null_counts[field] += 1
 
         staleness_raw = values.get("staleness_ms")
         staleness = int(staleness_raw) if isinstance(staleness_raw, (int, float)) else 0
-        staleness_values.append(staleness)
+        scan.staleness_values.append(staleness)
 
         key = (signal.event_ts, signal.symbol, signal.seq or 0)
-        if key in seen_keys:
-            duplicate_total += 1
+        if key in scan.seen_keys:
+            scan.duplicate_total += 1
         else:
-            seen_keys.add(key)
+            scan.seen_keys.add(key)
 
-        if previous is not None and key < previous:
-            reasons.append(REASON_NON_MONOTONIC)
-        previous = key
+        if scan.previous_key is not None and key < scan.previous_key:
+            scan.non_monotonic_detected = True
+        scan.previous_key = key
+    return scan
 
-    null_rate_by_field = {
-        field: null_counts[field] / rows_total
-        for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS
-    }
-    duplicate_ratio = duplicate_total / rows_total
-    staleness_ms_p95 = _p95(staleness_values)
 
-    if schema_mismatch_total > 0:
+def _derive_quality_reasons(
+    *,
+    scan: _FeatureQualityScan,
+    null_rate_by_field: dict[str, float],
+    duplicate_ratio: float,
+    staleness_ms_p95: int,
+    policy: FeatureQualityThresholds,
+) -> list[str]:
+    reasons: list[str] = []
+    if scan.non_monotonic_detected:
+        reasons.append(REASON_NON_MONOTONIC)
+    if scan.schema_mismatch_total > 0:
         reasons.append(REASON_SCHEMA_MISMATCH)
-    # Price can be enriched downstream by price fetchers, so null-rate gating is applied
-    # only to indicator fields that must be present at signal ingest time.
     if any(
         null_rate_by_field[field] > policy.max_required_null_rate
         for field in QUALITY_GATED_REQUIRED_FIELDS
@@ -134,17 +179,7 @@ def evaluate_feature_batch_quality(
         reasons.append(REASON_STALENESS)
     if duplicate_ratio > policy.max_duplicate_ratio:
         reasons.append(REASON_DUPLICATE_RATIO)
-
-    unique_reasons = sorted(set(reasons))
-    return FeatureQualityReport(
-        accepted=len(unique_reasons) == 0,
-        rows_total=rows_total,
-        null_rate_by_field=null_rate_by_field,
-        staleness_ms_p95=staleness_ms_p95,
-        duplicate_ratio=duplicate_ratio,
-        schema_mismatch_total=schema_mismatch_total,
-        reasons=unique_reasons,
-    )
+    return reasons
 
 
 def enforce_feature_batch_quality(

@@ -73,6 +73,14 @@ class AdaptiveExecutionPolicyDecision:
         }
 
 
+@dataclass(frozen=True)
+class _AdaptiveWindowSummary:
+    sample_size: int
+    adaptive_samples: int
+    slippages: list[Decimal]
+    shortfalls: list[Decimal]
+
+
 def upsert_execution_tca_metric(
     session: Session, execution: Execution
 ) -> ExecutionTCAMetric:
@@ -215,92 +223,43 @@ def derive_adaptive_execution_policy(
     generated_at = datetime.now(timezone.utc)
 
     if not normalized_symbol:
-        return AdaptiveExecutionPolicyDecision(
+        return _empty_adaptive_execution_policy(
             key=key,
             symbol=normalized_symbol,
             regime_label=normalized_regime,
-            sample_size=0,
-            adaptive_samples=0,
-            baseline_slippage_bps=None,
-            recent_slippage_bps=None,
-            baseline_shortfall_notional=None,
-            recent_shortfall_notional=None,
-            effect_size_bps=None,
-            degradation_bps=None,
-            fallback_active=False,
-            fallback_reason=None,
-            prefer_limit=None,
-            participation_rate_scale=Decimal('1'),
-            execution_seconds_scale=Decimal('1'),
-            aggressiveness='neutral',
             generated_at=generated_at,
         )
 
     rows = _load_recent_tca_rows(session, symbol=normalized_symbol, regime_label=normalized_regime)
-    sample_size = len(rows)
-    adaptive_samples = 0
-    slippages: list[Decimal] = []
-    shortfalls: list[Decimal] = []
-    for row in rows:
-        if row['adaptive_applied']:
-            adaptive_samples += 1
-        slippage = row['slippage_bps']
-        shortfall = row['shortfall_notional']
-        if slippage is not None:
-            slippages.append(abs(slippage))
-        if shortfall is not None:
-            shortfalls.append(abs(shortfall))
-
-    baseline_slippage, recent_slippage = _split_window_average(slippages)
-    baseline_shortfall, recent_shortfall = _split_window_average(shortfalls)
-
-    effect_size_bps: Decimal | None = None
-    degradation_bps: Decimal | None = None
-    if baseline_slippage is not None and recent_slippage is not None:
-        effect_size_bps = baseline_slippage - recent_slippage
-        degradation_bps = recent_slippage - baseline_slippage
-
-    fallback_active = False
-    fallback_reason: str | None = None
-    if (
-        adaptive_samples >= max(2, ADAPTIVE_MIN_SAMPLE_SIZE // 2)
-        and degradation_bps is not None
-        and degradation_bps >= ADAPTIVE_DEGRADE_FALLBACK_BPS
-    ):
-        fallback_active = True
-        fallback_reason = 'adaptive_policy_degraded'
-
-    prefer_limit: bool | None = None
-    participation_rate_scale = Decimal('1')
-    execution_seconds_scale = Decimal('1')
-    aggressiveness = 'neutral'
-    if sample_size >= ADAPTIVE_MIN_SAMPLE_SIZE and not fallback_active:
-        if (
-            recent_slippage is not None
-            and recent_shortfall is not None
-            and (recent_slippage > ADAPTIVE_MAX_SLIPPAGE_BPS or recent_shortfall > ADAPTIVE_MAX_SHORTFALL)
-        ):
-            prefer_limit = True
-            participation_rate_scale = ADAPTIVE_PARTICIPATION_TIGHTEN
-            execution_seconds_scale = ADAPTIVE_EXECUTION_SLOWDOWN
-            aggressiveness = 'defensive'
-        elif (
-            recent_slippage is not None
-            and recent_shortfall is not None
-            and recent_slippage <= ADAPTIVE_TARGET_SLIPPAGE_BPS
-            and recent_shortfall <= ADAPTIVE_MAX_SHORTFALL
-        ):
-            prefer_limit = False
-            participation_rate_scale = ADAPTIVE_PARTICIPATION_RELAX
-            execution_seconds_scale = ADAPTIVE_EXECUTION_SPEEDUP
-            aggressiveness = 'offensive'
+    window_summary = _collect_adaptive_windows(rows)
+    baseline_slippage, recent_slippage = _split_window_average(window_summary.slippages)
+    baseline_shortfall, recent_shortfall = _split_window_average(window_summary.shortfalls)
+    effect_size_bps, degradation_bps = _derive_effect_size(
+        baseline_slippage=baseline_slippage,
+        recent_slippage=recent_slippage,
+    )
+    fallback_active, fallback_reason = _resolve_fallback_state(
+        adaptive_samples=window_summary.adaptive_samples,
+        degradation_bps=degradation_bps,
+    )
+    (
+        prefer_limit,
+        participation_rate_scale,
+        execution_seconds_scale,
+        aggressiveness,
+    ) = _resolve_adaptive_controls(
+        sample_size=window_summary.sample_size,
+        fallback_active=fallback_active,
+        recent_slippage=recent_slippage,
+        recent_shortfall=recent_shortfall,
+    )
 
     return AdaptiveExecutionPolicyDecision(
         key=key,
         symbol=normalized_symbol,
         regime_label=normalized_regime,
-        sample_size=sample_size,
-        adaptive_samples=adaptive_samples,
+        sample_size=window_summary.sample_size,
+        adaptive_samples=window_summary.adaptive_samples,
         baseline_slippage_bps=baseline_slippage,
         recent_slippage_bps=recent_slippage,
         baseline_shortfall_notional=baseline_shortfall,
@@ -315,6 +274,123 @@ def derive_adaptive_execution_policy(
         aggressiveness=aggressiveness,
         generated_at=generated_at,
     )
+
+
+def _empty_adaptive_execution_policy(
+    *,
+    key: str,
+    symbol: str,
+    regime_label: str,
+    generated_at: datetime,
+) -> AdaptiveExecutionPolicyDecision:
+    return AdaptiveExecutionPolicyDecision(
+        key=key,
+        symbol=symbol,
+        regime_label=regime_label,
+        sample_size=0,
+        adaptive_samples=0,
+        baseline_slippage_bps=None,
+        recent_slippage_bps=None,
+        baseline_shortfall_notional=None,
+        recent_shortfall_notional=None,
+        effect_size_bps=None,
+        degradation_bps=None,
+        fallback_active=False,
+        fallback_reason=None,
+        prefer_limit=None,
+        participation_rate_scale=Decimal('1'),
+        execution_seconds_scale=Decimal('1'),
+        aggressiveness='neutral',
+        generated_at=generated_at,
+    )
+
+
+def _collect_adaptive_windows(rows: list[dict[str, Any]]) -> _AdaptiveWindowSummary:
+    adaptive_samples = 0
+    slippages: list[Decimal] = []
+    shortfalls: list[Decimal] = []
+    for row in rows:
+        if row['adaptive_applied']:
+            adaptive_samples += 1
+        slippage = row['slippage_bps']
+        shortfall = row['shortfall_notional']
+        if slippage is not None:
+            slippages.append(abs(slippage))
+        if shortfall is not None:
+            shortfalls.append(abs(shortfall))
+    return _AdaptiveWindowSummary(
+        sample_size=len(rows),
+        adaptive_samples=adaptive_samples,
+        slippages=slippages,
+        shortfalls=shortfalls,
+    )
+
+
+def _derive_effect_size(
+    *,
+    baseline_slippage: Decimal | None,
+    recent_slippage: Decimal | None,
+) -> tuple[Decimal | None, Decimal | None]:
+    if baseline_slippage is None or recent_slippage is None:
+        return None, None
+    return baseline_slippage - recent_slippage, recent_slippage - baseline_slippage
+
+
+def _resolve_fallback_state(
+    *,
+    adaptive_samples: int,
+    degradation_bps: Decimal | None,
+) -> tuple[bool, str | None]:
+    fallback_required = (
+        adaptive_samples >= max(2, ADAPTIVE_MIN_SAMPLE_SIZE // 2)
+        and degradation_bps is not None
+        and degradation_bps >= ADAPTIVE_DEGRADE_FALLBACK_BPS
+    )
+    if fallback_required:
+        return True, 'adaptive_policy_degraded'
+    return False, None
+
+
+def _resolve_adaptive_controls(
+    *,
+    sample_size: int,
+    fallback_active: bool,
+    recent_slippage: Decimal | None,
+    recent_shortfall: Decimal | None,
+) -> tuple[bool | None, Decimal, Decimal, str]:
+    prefer_limit: bool | None = None
+    participation_rate_scale = Decimal('1')
+    execution_seconds_scale = Decimal('1')
+    aggressiveness = 'neutral'
+    if sample_size < ADAPTIVE_MIN_SAMPLE_SIZE or fallback_active:
+        return prefer_limit, participation_rate_scale, execution_seconds_scale, aggressiveness
+    if (
+        recent_slippage is not None
+        and recent_shortfall is not None
+        and (
+            recent_slippage > ADAPTIVE_MAX_SLIPPAGE_BPS
+            or recent_shortfall > ADAPTIVE_MAX_SHORTFALL
+        )
+    ):
+        return (
+            True,
+            ADAPTIVE_PARTICIPATION_TIGHTEN,
+            ADAPTIVE_EXECUTION_SLOWDOWN,
+            'defensive',
+        )
+    if (
+        recent_slippage is not None
+        and recent_shortfall is not None
+        and recent_slippage <= ADAPTIVE_TARGET_SLIPPAGE_BPS
+        and recent_shortfall <= ADAPTIVE_MAX_SHORTFALL
+    ):
+        return (
+            False,
+            ADAPTIVE_PARTICIPATION_RELAX,
+            ADAPTIVE_EXECUTION_SPEEDUP,
+            'offensive',
+        )
+    return prefer_limit, participation_rate_scale, execution_seconds_scale, aggressiveness
 
 
 def _derive_churn(

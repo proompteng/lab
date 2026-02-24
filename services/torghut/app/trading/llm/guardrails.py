@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...config import settings
+
+
+_ALLOWED_COMMITTEE_ROLES = {
+    "researcher",
+    "risk_critic",
+    "execution_critic",
+    "policy_judge",
+}
+
+
+def _empty_reasons() -> list[str]:
+    return []
 
 
 @dataclass(frozen=True)
@@ -22,107 +34,39 @@ class LLMRiskGuardrails:
     reasons: tuple[str, ...]
 
 
+@dataclass
+class _GuardrailState:
+    allow_requests: bool
+    shadow_mode: bool
+    adjustment_allowed: bool
+    effective_fail_mode: str
+    reasons: list[str] = field(default_factory=_empty_reasons)
+
+
 def evaluate_llm_guardrails() -> LLMRiskGuardrails:
     """Evaluate MRM guardrails and return the effective LLM policy surface."""
 
-    reasons: list[str] = []
-    allow_requests = True
-    shadow_mode = settings.llm_shadow_mode
-    adjustment_allowed = settings.llm_adjustment_allowed
-    effective_fail_mode = settings.llm_effective_fail_mode()
     rollout_stage = _normalize_rollout_stage(settings.llm_rollout_stage)
+    state = _initial_guardrail_state()
+    _apply_token_budget_guardrail(state)
+    _apply_prompt_allowlist_guardrail(state)
+    _apply_rollout_stage_guardrail(state, rollout_stage)
+    _apply_prompt_template_guardrail(state)
 
-    if settings.llm_max_tokens > settings.llm_token_budget_max:
-        allow_requests = False
-        shadow_mode = True
-        adjustment_allowed = False
-        reasons.append("llm_token_budget_exceeded")
-
-    allowed_prompt_versions = settings.llm_allowed_prompt_versions
-    if (
-        allowed_prompt_versions
-        and settings.llm_prompt_version not in allowed_prompt_versions
-    ):
-        allow_requests = False
-        shadow_mode = True
-        adjustment_allowed = False
-        reasons.append("llm_prompt_version_not_allowlisted")
-
-    if rollout_stage == "stage0":
-        shadow_mode = True
-        adjustment_allowed = False
-        if settings.llm_enabled:
-            reasons.append("llm_stage0_forces_shadow")
-    elif rollout_stage == "stage1":
-        shadow_mode = True
-        adjustment_allowed = False
-        effective_fail_mode = settings.llm_effective_fail_mode(rollout_stage="stage1")
-    elif rollout_stage == "stage2":
-        effective_fail_mode = settings.llm_effective_fail_mode(rollout_stage="stage2")
-
-    if not _prompt_template_exists(settings.llm_prompt_version):
-        allow_requests = False
-        shadow_mode = True
-        adjustment_allowed = False
-        reasons.append("llm_prompt_template_missing")
-
-    evidence_missing: list[str] = []
-    allowed_models = settings.llm_allowed_models
-    if not allowed_models:
-        evidence_missing.append("llm_model_inventory_missing")
-    elif settings.llm_model not in allowed_models:
-        evidence_missing.append("llm_model_not_in_inventory")
-
-    if rollout_stage in {"stage2", "stage3"}:
-        if not settings.llm_evaluation_report:
-            evidence_missing.append("llm_evaluation_report_missing")
-        if not settings.llm_effective_challenge_id:
-            evidence_missing.append("llm_effective_challenge_missing")
-        if not settings.llm_shadow_completed_at:
-            evidence_missing.append("llm_shadow_completion_missing")
-        if not settings.llm_model_version_lock:
-            evidence_missing.append("llm_model_version_lock_missing")
-        elif not _matches_model_version_lock(
-            settings.llm_model, settings.llm_model_version_lock
-        ):
-            evidence_missing.append("llm_model_version_lock_mismatch")
-
+    evidence_missing = _governance_evidence_missing(rollout_stage)
     governance_evidence_complete = len(evidence_missing) == 0
     if evidence_missing:
-        shadow_mode = True
-        adjustment_allowed = False
-        reasons.extend(evidence_missing)
+        _force_shadow_without_adjustment(state, evidence_missing)
 
-    if adjustment_allowed and not settings.llm_adjustment_approved:
-        adjustment_allowed = False
-        reasons.append("llm_adjustment_not_approved")
-
-    committee_enabled = settings.llm_committee_enabled
-    if committee_enabled:
-        roles = settings.llm_committee_roles
-        mandatory_roles = settings.llm_committee_mandatory_roles
-        allowed_roles = {
-            "researcher",
-            "risk_critic",
-            "execution_critic",
-            "policy_judge",
-        }
-        invalid_roles = sorted({role for role in roles if role not in allowed_roles})
-        invalid_mandatory_roles = sorted(
-            {role for role in mandatory_roles if role not in allowed_roles}
-        )
-        if invalid_roles or invalid_mandatory_roles:
-            allow_requests = False
-            shadow_mode = True
-            committee_enabled = False
-            reasons.append("llm_committee_roles_invalid")
+    _apply_adjustment_approval_guardrail(state)
+    committee_enabled = _resolve_committee_enabled(state)
 
     return LLMRiskGuardrails(
-        allow_requests=allow_requests,
-        shadow_mode=shadow_mode,
-        adjustment_allowed=adjustment_allowed,
+        allow_requests=state.allow_requests,
+        shadow_mode=state.shadow_mode,
+        adjustment_allowed=state.adjustment_allowed,
         committee_enabled=committee_enabled,
-        effective_fail_mode=effective_fail_mode,
+        effective_fail_mode=state.effective_fail_mode,
         rollout_stage=rollout_stage,
         governance_evidence_complete=governance_evidence_complete,
         quality_thresholds={
@@ -136,8 +80,123 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
             "abstain_fail_mode": settings.llm_abstain_fail_mode,
             "escalate_fail_mode": settings.llm_escalate_fail_mode,
         },
-        reasons=tuple(reasons),
+        reasons=tuple(state.reasons),
     )
+
+
+def _initial_guardrail_state() -> _GuardrailState:
+    return _GuardrailState(
+        allow_requests=True,
+        shadow_mode=settings.llm_shadow_mode,
+        adjustment_allowed=settings.llm_adjustment_allowed,
+        effective_fail_mode=settings.llm_effective_fail_mode(),
+    )
+
+
+def _block_requests(state: _GuardrailState, reason: str) -> None:
+    state.allow_requests = False
+    _force_shadow_without_adjustment(state, [reason])
+
+
+def _force_shadow_without_adjustment(
+    state: _GuardrailState, reasons: list[str]
+) -> None:
+    state.shadow_mode = True
+    state.adjustment_allowed = False
+    state.reasons.extend(reasons)
+
+
+def _apply_token_budget_guardrail(state: _GuardrailState) -> None:
+    if settings.llm_max_tokens <= settings.llm_token_budget_max:
+        return
+    _block_requests(state, "llm_token_budget_exceeded")
+
+
+def _apply_prompt_allowlist_guardrail(state: _GuardrailState) -> None:
+    allowed_prompt_versions = settings.llm_allowed_prompt_versions
+    if (
+        allowed_prompt_versions
+        and settings.llm_prompt_version not in allowed_prompt_versions
+    ):
+        _block_requests(state, "llm_prompt_version_not_allowlisted")
+
+
+def _apply_rollout_stage_guardrail(state: _GuardrailState, rollout_stage: str) -> None:
+    if rollout_stage == "stage0":
+        state.shadow_mode = True
+        state.adjustment_allowed = False
+        if settings.llm_enabled:
+            state.reasons.append("llm_stage0_forces_shadow")
+        return
+    if rollout_stage == "stage1":
+        state.shadow_mode = True
+        state.adjustment_allowed = False
+        state.effective_fail_mode = settings.llm_effective_fail_mode(rollout_stage="stage1")
+        return
+    if rollout_stage == "stage2":
+        state.effective_fail_mode = settings.llm_effective_fail_mode(rollout_stage="stage2")
+
+
+def _apply_prompt_template_guardrail(state: _GuardrailState) -> None:
+    if _prompt_template_exists(settings.llm_prompt_version):
+        return
+    _block_requests(state, "llm_prompt_template_missing")
+
+
+def _governance_evidence_missing(rollout_stage: str) -> list[str]:
+    missing: list[str] = []
+    allowed_models = settings.llm_allowed_models
+    if not allowed_models:
+        missing.append("llm_model_inventory_missing")
+    elif settings.llm_model not in allowed_models:
+        missing.append("llm_model_not_in_inventory")
+
+    if rollout_stage not in {"stage2", "stage3"}:
+        return missing
+    if not settings.llm_evaluation_report:
+        missing.append("llm_evaluation_report_missing")
+    if not settings.llm_effective_challenge_id:
+        missing.append("llm_effective_challenge_missing")
+    if not settings.llm_shadow_completed_at:
+        missing.append("llm_shadow_completion_missing")
+    if not settings.llm_model_version_lock:
+        missing.append("llm_model_version_lock_missing")
+        return missing
+    if not _matches_model_version_lock(settings.llm_model, settings.llm_model_version_lock):
+        missing.append("llm_model_version_lock_mismatch")
+    return missing
+
+
+def _apply_adjustment_approval_guardrail(state: _GuardrailState) -> None:
+    if not state.adjustment_allowed:
+        return
+    if settings.llm_adjustment_approved:
+        return
+    state.adjustment_allowed = False
+    state.reasons.append("llm_adjustment_not_approved")
+
+
+def _resolve_committee_enabled(state: _GuardrailState) -> bool:
+    if not settings.llm_committee_enabled:
+        return False
+    if not _committee_roles_valid():
+        _block_requests(state, "llm_committee_roles_invalid")
+        return False
+    return True
+
+
+def _committee_roles_valid() -> bool:
+    invalid_roles = sorted(
+        {role for role in settings.llm_committee_roles if role not in _ALLOWED_COMMITTEE_ROLES}
+    )
+    invalid_mandatory_roles = sorted(
+        {
+            role
+            for role in settings.llm_committee_mandatory_roles
+            if role not in _ALLOWED_COMMITTEE_ROLES
+        }
+    )
+    return not invalid_roles and not invalid_mandatory_roles
 
 
 def _prompt_template_exists(version: str) -> bool:

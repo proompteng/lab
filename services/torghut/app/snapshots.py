@@ -57,6 +57,73 @@ def sync_order_to_db(
     if alpaca_order_id is None:
         raise ValueError("order_response must include an 'id' field")
 
+    (
+        resolved_expected_adapter,
+        resolved_actual_adapter,
+        resolved_fallback_reason,
+        resolved_fallback_count,
+    ) = _resolve_execution_route_metadata(
+        order_response=order_response,
+        execution_expected_adapter=execution_expected_adapter,
+        execution_actual_adapter=execution_actual_adapter,
+        execution_fallback_reason=execution_fallback_reason,
+        execution_fallback_count=execution_fallback_count,
+    )
+
+    account_label = _resolve_account_label(
+        alpaca_account_label=alpaca_account_label,
+        order_response=order_response,
+    )
+    client_order_id = order_response.get("client_order_id")
+    existing = _find_existing_execution(
+        session=session,
+        alpaca_order_id=alpaca_order_id,
+        account_label=account_label,
+        client_order_id=client_order_id,
+        warn_on_reuse=True,
+    )
+
+    data = _build_execution_payload(
+        order_response=order_response,
+        trade_decision_id=trade_decision_id,
+        account_label=account_label,
+        alpaca_order_id=alpaca_order_id,
+        resolved_expected_adapter=resolved_expected_adapter,
+        resolved_actual_adapter=resolved_actual_adapter,
+        resolved_fallback_reason=resolved_fallback_reason,
+        resolved_fallback_count=resolved_fallback_count,
+    )
+    if existing is not None:
+        return _persist_existing_execution(session=session, existing=existing, data=data)
+
+    execution = Execution(**data)
+    session.add(execution)
+    try:
+        session.commit()
+        session.refresh(execution)
+        return execution
+    except IntegrityError:
+        session.rollback()
+        existing = _find_existing_execution(
+            session=session,
+            alpaca_order_id=alpaca_order_id,
+            account_label=account_label,
+            client_order_id=client_order_id,
+            warn_on_reuse=False,
+        )
+        if existing is None:
+            raise
+        return _persist_existing_execution(session=session, existing=existing, data=data)
+
+
+def _resolve_execution_route_metadata(
+    *,
+    order_response: dict[str, Any],
+    execution_expected_adapter: str | None,
+    execution_actual_adapter: str | None,
+    execution_fallback_reason: str | None,
+    execution_fallback_count: int | None,
+) -> tuple[str, str, str | None, int]:
     resolved_expected_adapter = (
         execution_expected_adapter
         or coerce_route_text(order_response.get("execution_expected_adapter"))
@@ -82,36 +149,67 @@ def sync_order_to_db(
         if execution_fallback_count is not None
         else coerce_route_int(order_response.get("_execution_fallback_count"))
     )
-    resolved_expected_adapter, resolved_actual_adapter, resolved_fallback_reason, resolved_fallback_count = (
-        normalize_route_provenance(
-            expected_adapter=resolved_expected_adapter,
-            actual_adapter=resolved_actual_adapter,
-            fallback_reason=resolved_fallback_reason,
-            fallback_count=raw_fallback_count,
-        )
+    return normalize_route_provenance(
+        expected_adapter=resolved_expected_adapter,
+        actual_adapter=resolved_actual_adapter,
+        fallback_reason=resolved_fallback_reason,
+        fallback_count=raw_fallback_count,
     )
 
+
+def _resolve_account_label(
+    *,
+    alpaca_account_label: str | None,
+    order_response: dict[str, Any],
+) -> str:
     account_label = alpaca_account_label or order_response.get("alpaca_account_label")
     if not account_label:
-        account_label = "paper"
+        return "paper"
+    return str(account_label)
 
+
+def _find_existing_execution(
+    *,
+    session: Session,
+    alpaca_order_id: Any,
+    account_label: str,
+    client_order_id: Any,
+    warn_on_reuse: bool,
+) -> Execution | None:
     stmt = select(Execution).where(
         Execution.alpaca_order_id == alpaca_order_id,
         Execution.alpaca_account_label == account_label,
     )
     existing = session.execute(stmt).scalar_one_or_none()
-    if existing is None:
-        client_order_id = order_response.get("client_order_id")
-        if client_order_id:
-            stmt = select(Execution).where(
-                Execution.client_order_id == client_order_id,
-                Execution.alpaca_account_label == account_label,
-            )
-            existing = session.execute(stmt).scalar_one_or_none()
-            if existing and existing.alpaca_order_id != alpaca_order_id:
-                logger.warning("Execution client_order_id reused with new alpaca_order_id")
+    if existing is not None or not client_order_id:
+        return existing
 
-    data = {
+    stmt = select(Execution).where(
+        Execution.client_order_id == client_order_id,
+        Execution.alpaca_account_label == account_label,
+    )
+    existing = session.execute(stmt).scalar_one_or_none()
+    if (
+        warn_on_reuse
+        and existing is not None
+        and existing.alpaca_order_id != alpaca_order_id
+    ):
+        logger.warning("Execution client_order_id reused with new alpaca_order_id")
+    return existing
+
+
+def _build_execution_payload(
+    *,
+    order_response: dict[str, Any],
+    trade_decision_id: str | None,
+    account_label: str,
+    alpaca_order_id: Any,
+    resolved_expected_adapter: str,
+    resolved_actual_adapter: str,
+    resolved_fallback_reason: str | None,
+    resolved_fallback_count: int,
+) -> dict[str, Any]:
+    return {
         "trade_decision_id": trade_decision_id,
         "alpaca_account_label": account_label,
         "alpaca_order_id": alpaca_order_id,
@@ -141,43 +239,19 @@ def sync_order_to_db(
         "last_update_at": datetime.now(timezone.utc),
     }
 
-    if existing:
-        for key, value in data.items():
-            setattr(existing, key, value)
-        session.add(existing)
-        session.commit()
-        session.refresh(existing)
-        return existing
 
-    execution = Execution(**data)
-    session.add(execution)
-    try:
-        session.commit()
-        session.refresh(execution)
-        return execution
-    except IntegrityError:
-        session.rollback()
-        stmt = select(Execution).where(
-            Execution.alpaca_order_id == alpaca_order_id,
-            Execution.alpaca_account_label == account_label,
-        )
-        existing = session.execute(stmt).scalar_one_or_none()
-        if existing is None:
-            client_order_id = order_response.get("client_order_id")
-            if client_order_id:
-                stmt = select(Execution).where(
-                    Execution.client_order_id == client_order_id,
-                    Execution.alpaca_account_label == account_label,
-                )
-                existing = session.execute(stmt).scalar_one_or_none()
-        if existing is None:
-            raise
-        for key, value in data.items():
-            setattr(existing, key, value)
-        session.add(existing)
-        session.commit()
-        session.refresh(existing)
-        return existing
+def _persist_existing_execution(
+    *,
+    session: Session,
+    existing: Execution,
+    data: dict[str, Any],
+) -> Execution:
+    for key, value in data.items():
+        setattr(existing, key, value)
+    session.add(existing)
+    session.commit()
+    session.refresh(existing)
+    return existing
 
 
 def _coerce_text(value: Any) -> Optional[str]:
