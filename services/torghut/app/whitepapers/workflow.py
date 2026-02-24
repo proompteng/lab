@@ -89,14 +89,6 @@ def whitepaper_workflow_enabled() -> bool:
     return _bool_env("WHITEPAPER_WORKFLOW_ENABLED", default=False)
 
 
-def whitepaper_kafka_enabled() -> bool:
-    return True
-
-
-def whitepaper_inngest_enabled() -> bool:
-    return True
-
-
 def whitepaper_inngest_event_name() -> str:
     return _str_env(
         "WHITEPAPER_INNGEST_EVENT_NAME",
@@ -818,8 +810,6 @@ class WhitepaperWorkflowService:
 
     @staticmethod
     def build_inngest_client() -> Any | None:
-        if not whitepaper_inngest_enabled():
-            return None
         if inngest_sdk is None:
             return None
 
@@ -1224,7 +1214,7 @@ class WhitepaperKafkaIssueIngestor:
             "consumer_errors_total": 0,
         }
 
-        if not whitepaper_workflow_enabled() or not whitepaper_kafka_enabled():
+        if not whitepaper_workflow_enabled():
             return counters
 
         consumer = self._ensure_consumer()
@@ -1391,7 +1381,7 @@ class WhitepaperKafkaWorker:
     async def start(self) -> None:
         if self._task is not None:
             return
-        if not whitepaper_workflow_enabled() or not whitepaper_kafka_enabled():
+        if not whitepaper_workflow_enabled():
             return
         self._task = asyncio.create_task(self._run(), name="whitepaper-kafka-worker")
 
@@ -1428,8 +1418,6 @@ def mount_inngest_whitepaper_function(
     session_factory: Any,
     workflow_service: WhitepaperWorkflowService,
 ) -> bool:
-    if not whitepaper_inngest_enabled():
-        return False
     if inngest_sdk is None or inngest_fast_api is None:
         logger.warning("Inngest SDK unavailable; whitepaper orchestration function not mounted")
         return False
@@ -1503,7 +1491,5 @@ __all__ = [
     "extract_pdf_urls",
     "normalize_github_issue_event",
     "parse_marker_block",
-    "whitepaper_inngest_enabled",
-    "whitepaper_kafka_enabled",
     "whitepaper_workflow_enabled",
 ]

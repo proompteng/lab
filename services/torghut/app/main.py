@@ -37,8 +37,6 @@ from .whitepapers import (
     WhitepaperKafkaWorker,
     WhitepaperWorkflowService,
     mount_inngest_whitepaper_function,
-    whitepaper_inngest_enabled,
-    whitepaper_kafka_enabled,
     whitepaper_workflow_enabled,
 )
 
@@ -153,8 +151,8 @@ def whitepaper_status() -> dict[str, object]:
     worker_running = bool(task is not None and not task.done())
     return {
         "workflow_enabled": whitepaper_workflow_enabled(),
-        "kafka_enabled": whitepaper_kafka_enabled(),
-        "inngest_enabled": whitepaper_inngest_enabled(),
+        "kafka_enabled": True,
+        "inngest_enabled": True,
         "inngest_registered": bool(getattr(app.state, "whitepaper_inngest_registered", False)),
         "worker_running": worker_running,
     }
