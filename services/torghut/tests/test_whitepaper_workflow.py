@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from typing import Any
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -320,3 +322,14 @@ https://example.com/paper.pdf
         self.assertEqual(consumer.commit_calls, 1)
         self.assertEqual(session.commit_calls, 1)
         self.assertEqual(session.rollback_calls, 1)
+
+    @patch("app.whitepapers.workflow._http_request_bytes")
+    def test_download_pdf_requests_redirect_following(self, mock_http_request: Any) -> None:
+        mock_http_request.return_value = (200, {}, b"%PDF-1.7 redirected")
+
+        payload = WhitepaperWorkflowService._download_pdf("https://example.com/paper.pdf")
+
+        self.assertEqual(payload, b"%PDF-1.7 redirected")
+        kwargs = mock_http_request.call_args.kwargs
+        self.assertEqual(kwargs["method"], "GET")
+        self.assertTrue(kwargs["follow_redirects"])

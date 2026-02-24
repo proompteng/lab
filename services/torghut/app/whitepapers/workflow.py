@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Mapping, cast
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -42,28 +42,70 @@ def _http_request_bytes(
     headers: Mapping[str, str] | None = None,
     body: bytes | None = None,
     timeout_seconds: int,
+    follow_redirects: bool = False,
+    max_redirects: int = 5,
 ) -> tuple[int, dict[str, str], bytes]:
-    parsed = urlparse(url)
-    scheme = parsed.scheme.lower()
-    if scheme not in {'http', 'https'}:
-        raise RuntimeError(f'unsupported_url_scheme:{scheme or "missing"}')
-    if not parsed.hostname:
-        raise RuntimeError('invalid_url_host')
-
-    path = parsed.path or '/'
-    if parsed.query:
-        path = f'{path}?{parsed.query}'
+    current_url = url
+    current_method = method
+    current_body = body
     request_headers = dict(headers or {})
-    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
-    connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout_seconds, 1))
-    try:
-        connection.request(method, path, body=body, headers=request_headers)
-        response = connection.getresponse()
-        payload = response.read()
-        response_headers = {key: value for key, value in response.getheaders()}
-        return response.status, response_headers, payload
-    finally:
-        connection.close()
+    redirect_statuses = {301, 302, 303, 307, 308}
+    max_allowed_redirects = max(max_redirects, 0)
+
+    for redirect_index in range(max_allowed_redirects + 1):
+        parsed = urlparse(current_url)
+        scheme = parsed.scheme.lower()
+        if scheme not in {'http', 'https'}:
+            raise RuntimeError(f'unsupported_url_scheme:{scheme or "missing"}')
+        if not parsed.hostname:
+            raise RuntimeError('invalid_url_host')
+
+        path = parsed.path or '/'
+        if parsed.query:
+            path = f'{path}?{parsed.query}'
+        connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+        connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout_seconds, 1))
+        try:
+            connection.request(current_method, path, body=current_body, headers=request_headers)
+            response = connection.getresponse()
+            payload = response.read()
+            response_headers = {key: value for key, value in response.getheaders()}
+            status_code = int(response.status)
+        finally:
+            connection.close()
+
+        if not follow_redirects or status_code not in redirect_statuses:
+            return status_code, response_headers, payload
+
+        location = response_headers.get('Location') or response_headers.get('location')
+        if not location:
+            return status_code, response_headers, payload
+        if redirect_index >= max_allowed_redirects:
+            raise RuntimeError('http_redirect_limit_exceeded')
+
+        next_url = urljoin(current_url, location)
+        next_parsed = urlparse(next_url)
+        if (
+            parsed.scheme.lower(),
+            parsed.hostname,
+            parsed.port,
+        ) != (
+            next_parsed.scheme.lower(),
+            next_parsed.hostname,
+            next_parsed.port,
+        ):
+            request_headers.pop('Authorization', None)
+            request_headers.pop('authorization', None)
+            request_headers.pop('Cookie', None)
+            request_headers.pop('cookie', None)
+
+        if status_code == 303 or (status_code in {301, 302} and current_method.upper() not in {'GET', 'HEAD'}):
+            current_method = 'GET'
+            current_body = None
+
+        current_url = next_url
+
+    raise RuntimeError('http_redirect_processing_failed')
 
 
 _GITHUB_ISSUE_ACTIONS = {"opened", "edited", "reopened", "labeled"}
@@ -1321,6 +1363,7 @@ class WhitepaperWorkflowService:
                 **({"Authorization": f"Bearer {token}"} if token else {}),
             },
             timeout_seconds=timeout,
+            follow_redirects=True,
         )
         if status < 200 or status >= 300:
             raise RuntimeError(f'pdf_download_http_{status}')

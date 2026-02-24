@@ -36,6 +36,7 @@ from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .whitepapers import (
     WhitepaperKafkaWorker,
     WhitepaperWorkflowService,
+    whitepaper_kafka_enabled,
     whitepaper_workflow_enabled,
 )
 
@@ -146,7 +147,7 @@ def whitepaper_status() -> dict[str, object]:
     worker_running = bool(task is not None and not task.done())
     return {
         "workflow_enabled": whitepaper_workflow_enabled(),
-        "kafka_enabled": True,
+        "kafka_enabled": whitepaper_kafka_enabled(),
         "inngest_enabled": False,
         "inngest_registered": False,
         "worker_running": worker_running,
