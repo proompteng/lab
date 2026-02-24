@@ -212,6 +212,81 @@ describe('memories store', () => {
     expect(records[0]?.metadata).toEqual({ foo: 'bar' })
   })
 
+  it('filters out semantically distant rows when there is no lexical overlap', async () => {
+    const { db } = makeFakeDb({
+      selectRows: [
+        {
+          id: 'mem-1',
+          task_name: 'default',
+          content: 'Casual greeting from user.',
+          summary: 'Greeting',
+          tags: ['chat'],
+          metadata: {},
+          created_at: new Date('2020-01-01T00:00:00.000Z'),
+          distance: 0.63,
+        },
+        {
+          id: 'mem-2',
+          task_name: 'default',
+          content: 'Another short social exchange.',
+          summary: 'Chat follow-up',
+          tags: ['conversation'],
+          metadata: {},
+          created_at: new Date('2020-01-01T00:00:00.000Z'),
+          distance: 0.64,
+        },
+      ],
+    })
+    const store = createPostgresMemoriesStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+      embedText: async () => [0, 0, 0],
+    })
+
+    const records = await store.retrieve({
+      query: 'ivfflat probes tuning embedding dimension checks',
+      limit: 5,
+    })
+
+    expect(records).toEqual([])
+  })
+
+  it('keeps lexical matches even when semantic distance is outside the strict cutoff', async () => {
+    const { db } = makeFakeDb({
+      selectRows: [
+        {
+          id: 'mem-1',
+          task_name: 'default',
+          content: 'Pulled latest main into bengaluru worktree branch.',
+          summary: 'git pull result',
+          tags: ['git', 'pull', 'bengaluru'],
+          metadata: {},
+          created_at: new Date('2020-01-01T00:00:00.000Z'),
+          distance: 0.44,
+        },
+        {
+          id: 'mem-2',
+          task_name: 'default',
+          content: 'Bengaluru branch pull notes and command history.',
+          summary: 'branch notes',
+          tags: ['bengaluru'],
+          metadata: {},
+          created_at: new Date('2020-01-01T00:00:00.000Z'),
+          distance: 0.7,
+        },
+      ],
+    })
+    const store = createPostgresMemoriesStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+      embedText: async () => [0, 0, 0],
+    })
+
+    const records = await store.retrieve({ query: 'git pull bengaluru', limit: 5 })
+
+    expect(records.map((record) => record.id)).toEqual(['mem-1', 'mem-2'])
+  })
+
   it('retries schema bootstrap after transient failure', async () => {
     const { db, calls } = makeFakeDb({ failOnceOnExtensionsQuery: true })
     const store = createPostgresMemoriesStore({
