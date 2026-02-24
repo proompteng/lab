@@ -1,0 +1,196 @@
+{
+  "run_id": "wp-1ab43855719738595436383e",
+  "paper": {
+    "title": "Navigating the Alpha Jungle: An LLM-Powered MCTS Framework for Formulaic Factor Mining",
+    "arxiv_id": "2505.11122",
+    "version_reviewed": "v3",
+    "submitted_at_utc": "2025-05-16",
+    "last_revised_at_utc": "2025-11-12",
+    "pdf_url": "https://arxiv.org/pdf/2505.11122",
+    "issue_url": "https://github.com/proompteng/lab/issues/3592"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "workflow": "whitepaper-analysis-v1",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 31,
+    "included_sections": [
+      "main_text",
+      "references",
+      "appendix"
+    ],
+    "source_artifacts": [
+      "arxiv_pdf",
+      "arxiv_source_tex"
+    ]
+  },
+  "executive_summary": "The paper contributes a practical LLM+MCTS architecture for symbolic alpha mining, where multi-dimensional backtest signals guide iterative formula refinement and Frequent Subtree Avoidance mitigates structural collapse. In-scope experiments show strong relative gains and efficiency, but production viability is constrained by missing statistical confidence reporting, incomplete reproducibility packaging, and limited execution-realism stress evidence.",
+  "methodology_summary": {
+    "search": "MCTS over formula trees with UCT and an internal-node virtual expansion action.",
+    "expansion": "Dimension-targeted refinement selection via softmax over weakness scores, then LLM suggestion and concrete formula generation.",
+    "evaluation": "Relative-rank multi-dimensional scoring (effectiveness, stability, turnover, diversity, overfitting risk), aggregate reward, and max-backprop Q updates.",
+    "regularization": "Frequent Subtree Avoidance mines frequent closed root genes from the alpha repository and forbids them in new proposals."
+  },
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "Ablations indicate MCTS+FSA is the strongest tested configuration under the paper's setup.",
+      "details": {
+        "lightgbm": {
+          "ic": 0.0549,
+          "rankic": 0.0512,
+          "aer": 0.1107,
+          "ir": 1.1792
+        },
+        "mlp": {
+          "ic": 0.0522,
+          "rankic": 0.0503,
+          "aer": 0.1234,
+          "ir": 1.2712
+        }
+      },
+      "evidence": [
+        "Experiment Section: Ablation Study Table"
+      ]
+    },
+    {
+      "id": "KF-2",
+      "finding": "The framework is reported to outperform listed baselines on IC/RankIC/AER/IR in China-market experiments.",
+      "evidence": [
+        "Experiment Section: Prediction Performance Comparison",
+        "Figure method_performance",
+        "Appendix full results tables"
+      ]
+    },
+    {
+      "id": "KF-3",
+      "finding": "Cross-market transfer appears directionally positive on S&P500 IC/RankIC comparisons.",
+      "evidence": [
+        "Appendix Section: Additional Results on the U.S. Stock Market",
+        "Table experimental_result_sp500"
+      ]
+    },
+    {
+      "id": "KF-4",
+      "finding": "Cost-performance is highly sensitive to LLM choice, with large spread in run cost and risk-adjusted return.",
+      "details": {
+        "ours_gpt41_total_cost_usd": 74.402,
+        "ours_gemini_2_flash_lite_total_cost_usd": 7.537
+      },
+      "evidence": [
+        "Appendix Section: Cost Estimation Details",
+        "Table cost_comparison"
+      ]
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "Formulaic alpha mining reframed as LLM-guided MCTS with internal-node expansion.",
+      "assessment": "supported",
+      "notes": "The search-controller design is explicit and operationally distinct from direct one-shot prompting."
+    },
+    {
+      "claim": "Frequent Subtree Avoidance improves diversity and downstream performance.",
+      "assessment": "supported_in_scope",
+      "notes": "Ablation improvements are reported in-paper; broader regime transfer remains unverified."
+    },
+    {
+      "claim": "Generated formulas are more interpretable than alternatives.",
+      "assessment": "partially_supported",
+      "notes": "Evidence is mainly LLM-ranked plus qualitative examples; no blinded human rater study."
+    }
+  ],
+  "assumptions": [
+    "Backtest metric improvements are sufficient proxies for deployable alpha quality.",
+    "LLM-based overfitting-risk scoring is calibrated enough to control complexity growth.",
+    "Frequent root-gene suppression is a stable regularizer across market regimes."
+  ],
+  "risk_assessment": [
+    {
+      "risk": "statistical_rigor",
+      "severity": "high",
+      "detail": "Primary results do not report confidence intervals, significance tests, or robust multi-seed uncertainty."
+    },
+    {
+      "risk": "reproducibility_gap",
+      "severity": "high",
+      "detail": "No full immutable artifact package with exact prompts, seeds, hashes, and run manifests."
+    },
+    {
+      "risk": "execution_realism",
+      "severity": "medium_high",
+      "detail": "Backtest realism is constrained by simplified cost model and limited impact/slippage stress coverage."
+    },
+    {
+      "risk": "external_validity",
+      "severity": "medium",
+      "detail": "Most evidence is from CN datasets; U.S. extension is narrower in metric breadth."
+    },
+    {
+      "risk": "llm_evaluator_bias",
+      "severity": "medium",
+      "detail": "Interpretability and overfitting assessments partially rely on LLM judgments, risking evaluator circularity."
+    }
+  ],
+  "implementation_implications": [
+    "Implement node-level deterministic logging (prompt hash, formula AST, lineage, metrics) for auditability.",
+    "Adopt dimension-targeted refinement and FSA as reusable policy modules in alpha search pipelines.",
+    "Require replayability and significance gates before any production promotion.",
+    "Treat the approach as a research/paper-trading system first, not direct live deployment."
+  ],
+  "unresolved_questions": [
+    "How large is run-to-run variance across seeds and calendar splits?",
+    "Do gains survive stricter transaction cost, slippage, and turnover constraints?",
+    "How does FSA scale when repository size and market diversity grow?"
+  ],
+  "citations": [
+    {
+      "section": "Introduction",
+      "pointer": "Contributions and motivation",
+      "claim": "Why LLM+MCTS is proposed for interpretability and search efficiency."
+    },
+    {
+      "section": "Methodology / Selection",
+      "pointer": "UCT with virtual expansion action",
+      "claim": "Internal nodes can be expanded for iterative refinement."
+    },
+    {
+      "section": "Methodology / Expansion",
+      "pointer": "Eq. refinement sampling and generation equations",
+      "claim": "Weak-dimension targeting and two-step LLM generation."
+    },
+    {
+      "section": "Methodology / Multi-Dimensional Evaluation",
+      "pointer": "Eq. relative rank, dim score, aggregate score",
+      "claim": "Adaptive reward from evolving repository."
+    },
+    {
+      "section": "Methodology / Frequent Subtree Avoidance",
+      "pointer": "Support and forbidden-structure constraints",
+      "claim": "Diversity regularization over formula structures."
+    },
+    {
+      "section": "Experiment / Ablation Study",
+      "pointer": "Ablation table",
+      "claim": "MCTS+FSA and multi-dimensional feedback provide additive gains."
+    },
+    {
+      "section": "Appendix / sec:appendix_sp500",
+      "pointer": "Table experimental_result_sp500",
+      "claim": "Directional transfer signal on U.S. data."
+    },
+    {
+      "section": "Appendix / sec:cost_estimation",
+      "pointer": "Table cost_comparison",
+      "claim": "Large LLM-backbone sensitivity in cost-performance."
+    },
+    {
+      "section": "Appendix / sec:limitation",
+      "pointer": "Limitations section",
+      "claim": "Authors acknowledge novelty/diversity scaling limits."
+    }
+  ],
+  "confidence": 0.78
+}
