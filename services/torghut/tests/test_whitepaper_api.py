@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -16,6 +17,11 @@ from app.whitepapers.workflow import IssueKickoffResult
 
 class TestWhitepaperApi(TestCase):
     def setUp(self) -> None:
+        self._saved_whitepaper_token = os.environ.get("WHITEPAPER_WORKFLOW_API_TOKEN")
+        self._saved_jangar_api_key = os.environ.get("JANGAR_API_KEY")
+        os.environ.pop("WHITEPAPER_WORKFLOW_API_TOKEN", None)
+        os.environ.pop("JANGAR_API_KEY", None)
+
         self.engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             future=True,
@@ -39,6 +45,14 @@ class TestWhitepaperApi(TestCase):
     def tearDown(self) -> None:
         app.dependency_overrides.clear()
         self.engine.dispose()
+        if self._saved_whitepaper_token is not None:
+            os.environ["WHITEPAPER_WORKFLOW_API_TOKEN"] = self._saved_whitepaper_token
+        else:
+            os.environ.pop("WHITEPAPER_WORKFLOW_API_TOKEN", None)
+        if self._saved_jangar_api_key is not None:
+            os.environ["JANGAR_API_KEY"] = self._saved_jangar_api_key
+        else:
+            os.environ.pop("JANGAR_API_KEY", None)
 
     @patch("app.main.whitepaper_workflow_enabled", return_value=True)
     @patch("app.main.whitepaper_kafka_enabled", return_value=False)
@@ -89,3 +103,22 @@ class TestWhitepaperApi(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["status"], "completed")
+
+    def test_control_endpoints_require_token_when_configured(self) -> None:
+        with patch.dict(os.environ, {"WHITEPAPER_WORKFLOW_API_TOKEN": "secret-token"}, clear=False):
+            response = self.client.post("/whitepapers/runs/wp-1/finalize", json={"status": "completed"})
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(response.json()["detail"], "whitepaper_control_auth_required")
+
+    @patch(
+        "app.main.WHITEPAPER_WORKFLOW.finalize_run",
+        return_value={"run_id": "wp-1", "status": "completed"},
+    )
+    def test_control_endpoints_accept_valid_token(self, _mock_finalize: object) -> None:
+        with patch.dict(os.environ, {"WHITEPAPER_WORKFLOW_API_TOKEN": "secret-token"}, clear=False):
+            response = self.client.post(
+                "/whitepapers/runs/wp-1/finalize",
+                json={"status": "completed"},
+                headers={"Authorization": "Bearer secret-token"},
+            )
+            self.assertEqual(response.status_code, 200)

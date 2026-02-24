@@ -24,6 +24,8 @@ from app.whitepapers.workflow import (
     IssueKickoffResult,
     WhitepaperKafkaIssueIngestor,
     WhitepaperWorkflowService,
+    build_whitepaper_run_id,
+    comment_requests_requeue,
     extract_pdf_urls,
     normalize_github_issue_event,
     parse_marker_block,
@@ -134,6 +136,13 @@ Attachment: https://github.com/user-attachments/files/12345/sample-paper.pdf
             "sender": {"login": "alice"},
         }
 
+    def _issue_comment_payload(self, *, comment_body: str) -> dict[str, object]:
+        payload = self._issue_payload()
+        payload["event"] = "issue_comment"
+        payload["action"] = "created"
+        payload["comment"] = {"body": comment_body}
+        return payload
+
     def test_marker_and_attachment_parsing(self) -> None:
         body = """
 foo
@@ -157,6 +166,40 @@ https://example.com/paper.pdf
         assert event is not None
         self.assertEqual(event.repository, "proompteng/lab")
         self.assertEqual(event.issue_number, 42)
+
+    def test_normalize_issue_comment_event_with_requeue_keyword(self) -> None:
+        payload = self._issue_comment_payload(comment_body="research whitepaper")
+        event = normalize_github_issue_event(payload)
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event.event_name, "issue_comment")
+        self.assertTrue(event.requeue_requested)
+
+    def test_comment_requeue_keyword_match(self) -> None:
+        self.assertTrue(comment_requests_requeue("Please retry with research whitepaper"))
+        self.assertFalse(comment_requests_requeue("No retry keyword here"))
+
+    def test_run_id_is_deterministic_for_same_issue_and_pdf(self) -> None:
+        run_id_one = build_whitepaper_run_id(
+            source_identifier="proompteng/lab#42",
+            attachment_url="https://github.com/user-attachments/files/12345/sample-paper.pdf",
+        )
+        run_id_two = build_whitepaper_run_id(
+            source_identifier="proompteng/lab#42",
+            attachment_url="https://github.com/user-attachments/files/12345/sample-paper.pdf",
+        )
+        self.assertEqual(run_id_one, run_id_two)
+
+    def test_comment_without_keyword_is_ignored(self) -> None:
+        service = WhitepaperWorkflowService()
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_comment_payload(comment_body="please rerun"),
+                source="api",
+            )
+            self.assertFalse(kickoff.accepted)
+            self.assertEqual(kickoff.reason, "comment_without_requeue_keyword")
 
     def test_ingest_and_finalize_flow(self) -> None:
         service = WhitepaperWorkflowService()
@@ -231,7 +274,7 @@ https://example.com/paper.pdf
             pr_row = session.execute(select(WhitepaperDesignPullRequest)).scalar_one()
             self.assertEqual(pr_row.pr_number, 1234)
 
-    def test_failed_run_can_retry_and_replay_latest_non_failed_run(self) -> None:
+    def test_failed_run_replay_is_idempotent_without_duplicate_rows(self) -> None:
         service = WhitepaperWorkflowService()
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
 
@@ -250,29 +293,6 @@ https://example.com/paper.pdf
 
             service.ceph_client = _FakeCephClient()
             service._download_pdf = lambda _url: b"%PDF-1.7 retry"  # type: ignore[method-assign]
-            retry = service.ingest_github_issue_event(
-                session,
-                self._issue_payload(),
-                source="api",
-            )
-            self.assertTrue(retry.accepted)
-            self.assertEqual(retry.reason, "queued")
-            self.assertIsNotNone(retry.run_id)
-            assert first.run_id is not None
-            assert retry.run_id is not None
-            self.assertNotEqual(retry.run_id, first.run_id)
-            self.assertTrue(retry.run_id.endswith("-r1"))
-            session.commit()
-
-            run_rows = {
-                row.run_id: row
-                for row in session.execute(select(WhitepaperAnalysisRun)).scalars().all()
-            }
-            self.assertEqual(len(run_rows), 2)
-            self.assertEqual(run_rows[first.run_id].status, "failed")
-            self.assertEqual(run_rows[retry.run_id].status, "queued")
-            self.assertEqual(run_rows[retry.run_id].retry_of_run_id, first.run_id)
-
             replay = service.ingest_github_issue_event(
                 session,
                 self._issue_payload(),
@@ -280,7 +300,14 @@ https://example.com/paper.pdf
             )
             self.assertTrue(replay.accepted)
             self.assertEqual(replay.reason, "idempotent_replay")
-            self.assertEqual(replay.run_id, retry.run_id)
+            assert first.run_id is not None
+            self.assertEqual(replay.run_id, first.run_id)
+            session.commit()
+
+            runs = session.execute(select(WhitepaperAnalysisRun)).scalars().all()
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0].run_id, first.run_id)
+            self.assertEqual(runs[0].status, "failed")
 
     def test_kafka_ingestor_skips_offset_commit_when_any_record_fails(self) -> None:
         os.environ["WHITEPAPER_KAFKA_ENABLED"] = "true"
@@ -335,3 +362,52 @@ https://example.com/paper.pdf
         self.assertEqual(kwargs["method"], "GET")
         self.assertEqual(kwargs["max_response_bytes"], 123)
         self.assertTrue(kwargs["follow_redirects"])
+
+    def test_comment_requeue_reuses_existing_run_without_duplication(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+
+        submit_attempts = {"count": 0}
+
+        def _fake_submit(_payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+            submit_attempts["count"] += 1
+            phase = "failed" if submit_attempts["count"] == 1 else "pending"
+            return {
+                "resource": {
+                    "metadata": {
+                        "name": f"agentrun-{submit_attempts['count']}",
+                        "uid": f"uid-{idempotency_key}",
+                    },
+                    "status": {"phase": phase},
+                }
+            }
+
+        service._submit_jangar_agentrun = _fake_submit  # type: ignore[method-assign]
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            requeue = service.ingest_github_issue_event(
+                session,
+                self._issue_comment_payload(comment_body="research whitepaper"),
+                source="api",
+            )
+            self.assertTrue(requeue.accepted)
+            self.assertEqual(requeue.reason, "requeued")
+            session.commit()
+
+            runs = session.execute(select(WhitepaperAnalysisRun)).scalars().all()
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0].status, "agentrun_dispatched")
+
+            agentruns = session.execute(
+                select(WhitepaperCodexAgentRun).where(WhitepaperCodexAgentRun.analysis_run_id == runs[0].id)
+            ).scalars().all()
+            self.assertEqual(len(agentruns), 2)
