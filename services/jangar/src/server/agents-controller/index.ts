@@ -236,6 +236,24 @@ let runtimeMutableState: AgentsControllerMutableState<ControllerState> = createM
   crdCheckState: controllerState.crdCheckState,
 })
 
+const hasActiveControllerRuntimeState = (state: AgentsControllerMutableState<ControllerState>) =>
+  state.started ||
+  state.starting ||
+  state.reconciling ||
+  state.watchHandles.length > 0 ||
+  state.controllerSnapshot !== null
+
+const initializeRuntimeMutableStateForLayer = () => {
+  if (hasActiveControllerRuntimeState(runtimeMutableState)) {
+    runtimeMutableState.crdCheckState = controllerState.crdCheckState
+    return
+  }
+  runtimeMutableState = createMutableState<ControllerState>({
+    started: controllerState.started,
+    crdCheckState: controllerState.crdCheckState,
+  })
+}
+
 const nowIso = () => new Date().toISOString()
 
 const isKubeNotFoundError = (error: unknown) => {
@@ -5785,10 +5803,7 @@ export class AgentsController extends Context.Tag('AgentsController')<AgentsCont
 export const AgentsControllerLive = Layer.scoped(
   AgentsController,
   Effect.gen(function* () {
-    runtimeMutableState = createMutableState<ControllerState>({
-      started: controllerState.started,
-      crdCheckState: controllerState.crdCheckState,
-    })
+    initializeRuntimeMutableStateForLayer()
     yield* Effect.addFinalizer(() => Effect.sync(() => stopAgentsControllerInternal()))
     return {
       start: Effect.tryPromise({
@@ -5821,6 +5836,8 @@ export const stopAgentsController = () => {
 }
 
 export const __test = {
+  initializeRuntimeMutableStateForLayer,
+  getRuntimeMutableState: () => runtimeMutableState,
   checkCrds,
   clearGithubAppTokenCache,
   resetControllerRateState,

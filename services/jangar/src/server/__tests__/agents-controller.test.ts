@@ -196,6 +196,18 @@ describe('agents controller startup', () => {
       }
     }
   })
+
+  it('preserves active watch handles when initializing effect layer state', () => {
+    const stopWatch = vi.fn()
+    const runtimeState = __test.getRuntimeMutableState()
+    runtimeState.started = true
+    runtimeState.watchHandles = [{ stop: stopWatch }]
+
+    __test.initializeRuntimeMutableStateForLayer()
+    stopAgentsController()
+
+    expect(stopWatch).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('AgentRun artifacts limits', () => {
