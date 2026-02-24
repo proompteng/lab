@@ -8,7 +8,6 @@ import json
 import shutil
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -45,96 +44,40 @@ def _require_supported_namespace(namespace: str) -> None:
         raise SystemExit(f'unsupported namespace {namespace!r}; only {SUPPORTED_NAMESPACE!r} is allowed')
 
 
-def _kubectl_variant() -> str:
-    if Path('/usr/bin/kubectl').exists():
-        return 'usr_bin'
-    if Path('/usr/local/bin/kubectl').exists():
-        return 'usr_local_bin'
-    if Path('/opt/homebrew/bin/kubectl').exists():
-        return 'opt_homebrew_bin'
-    raise SystemExit('kubectl not found in expected absolute paths')
+def _kubectl_binary() -> str:
+    kubectl = shutil.which('kubectl')
+    if not kubectl:
+        raise SystemExit('kubectl not found in PATH')
+    return kubectl
+
+
+def _run_kubectl(
+    args: list[str],
+    *,
+    input: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [_kubectl_binary(), *args],
+        check=True,
+        text=True,
+        capture_output=True,
+        input=input,
+    )
 
 
 def _kubectl_get_ta_config_json() -> dict[str, Any]:
-    variant = _kubectl_variant()
-    if variant == 'usr_bin':
-        result = subprocess.run(
-            ['/usr/bin/kubectl', '-n', 'torghut', 'get', 'configmap', 'torghut-ta-config', '-o', 'json'],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-    elif variant == 'usr_local_bin':
-        result = subprocess.run(
-            ['/usr/local/bin/kubectl', '-n', 'torghut', 'get', 'configmap', 'torghut-ta-config', '-o', 'json'],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-    else:
-        result = subprocess.run(
-            ['/opt/homebrew/bin/kubectl', '-n', 'torghut', 'get', 'configmap', 'torghut-ta-config', '-o', 'json'],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
+    result = _run_kubectl(['-n', SUPPORTED_NAMESPACE, 'get', 'configmap', TA_CONFIGMAP, '-o', 'json'])
     return json.loads(result.stdout)
 
 
 def _kubectl_get_ta_deployment_json() -> dict[str, Any]:
-    variant = _kubectl_variant()
-    if variant == 'usr_bin':
-        result = subprocess.run(
-            ['/usr/bin/kubectl', '-n', 'torghut', 'get', 'flinkdeployment', 'torghut-ta', '-o', 'json'],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-    elif variant == 'usr_local_bin':
-        result = subprocess.run(
-            ['/usr/local/bin/kubectl', '-n', 'torghut', 'get', 'flinkdeployment', 'torghut-ta', '-o', 'json'],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-    else:
-        result = subprocess.run(
-            ['/opt/homebrew/bin/kubectl', '-n', 'torghut', 'get', 'flinkdeployment', 'torghut-ta', '-o', 'json'],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
+    result = _run_kubectl(['-n', SUPPORTED_NAMESPACE, 'get', 'flinkdeployment', TA_DEPLOYMENT, '-o', 'json'])
     return json.loads(result.stdout)
 
 
 def _kubectl_apply_manifest(manifest: dict[str, Any]) -> None:
     payload = yaml.safe_dump(manifest)
-    variant = _kubectl_variant()
-    if variant == 'usr_bin':
-        subprocess.run(
-            ['/usr/bin/kubectl', 'apply', '-f', '-'],
-            check=True,
-            text=True,
-            capture_output=True,
-            input=payload,
-        )
-        return
-    if variant == 'usr_local_bin':
-        subprocess.run(
-            ['/usr/local/bin/kubectl', 'apply', '-f', '-'],
-            check=True,
-            text=True,
-            capture_output=True,
-            input=payload,
-        )
-        return
-    subprocess.run(
-        ['/opt/homebrew/bin/kubectl', 'apply', '-f', '-'],
-        check=True,
-        text=True,
-        capture_output=True,
-        input=payload,
-    )
+    _run_kubectl(['apply', '-f', '-'], input=payload)
 
 
 def _parse_int(value: object, fallback: int = 0) -> int:
