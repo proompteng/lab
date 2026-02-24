@@ -77,6 +77,12 @@ const appNav: AppNavItem[] = [
       { to: '/atlas/enrich', label: 'Enrichment' },
     ],
   },
+  {
+    to: '/library',
+    label: 'Library',
+    icon: IconFileText,
+    children: [{ to: '/library/whitepapers', label: 'Whitepapers' }],
+  },
 ]
 
 const agentsStudioNav: AppNavItem = {

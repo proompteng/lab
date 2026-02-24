@@ -15,6 +15,7 @@ import { Route as McpRouteImport } from './routes/mcp'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TerminalsIndexRouteImport } from './routes/terminals/index'
+import { Route as LibraryIndexRouteImport } from './routes/library/index'
 import { Route as ControlPlaneIndexRouteImport } from './routes/control-plane/index'
 import { Route as AtlasIndexRouteImport } from './routes/atlas/index'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
@@ -45,6 +46,7 @@ import { Route as ApiCodeSearchRouteImport } from './routes/api/code-search'
 import { Route as AgentsGeneralRouteImport } from './routes/agents/general'
 import { Route as AgentsRunIdRouteImport } from './routes/agents/$runId'
 import { Route as TerminalsSessionIdIndexRouteImport } from './routes/terminals/$sessionId/index'
+import { Route as LibraryWhitepapersIndexRouteImport } from './routes/library/whitepapers/index'
 import { Route as GithubPullsIndexRouteImport } from './routes/github/pulls/index'
 import { Route as ControlPlaneWorkspacesIndexRouteImport } from './routes/control-plane/workspaces/index'
 import { Route as ControlPlaneToolsIndexRouteImport } from './routes/control-plane/tools/index'
@@ -65,6 +67,7 @@ import { Route as ControlPlaneApprovalsIndexRouteImport } from './routes/control
 import { Route as ControlPlaneAgentsIndexRouteImport } from './routes/control-plane/agents/index'
 import { Route as ControlPlaneAgentRunsIndexRouteImport } from './routes/control-plane/agent-runs/index'
 import { Route as ControlPlaneAgentProvidersIndexRouteImport } from './routes/control-plane/agent-providers/index'
+import { Route as ApiWhitepapersIndexRouteImport } from './routes/api/whitepapers/index'
 import { Route as V1RunsIdRouteImport } from './routes/v1/runs/$id'
 import { Route as V1OrchestrationsIdRouteImport } from './routes/v1/orchestrations/$id'
 import { Route as V1OrchestrationRunsIdRouteImport } from './routes/v1/orchestration-runs/$id'
@@ -73,6 +76,7 @@ import { Route as V1AgentsIdRouteImport } from './routes/v1/agents/$id'
 import { Route as V1AgentRunsIdRouteImport } from './routes/v1/agent-runs/$id'
 import { Route as TerminalsSessionIdFullscreenRouteImport } from './routes/terminals/$sessionId/fullscreen'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
+import { Route as LibraryWhitepapersRunIdRouteImport } from './routes/library/whitepapers/$runId'
 import { Route as ControlPlaneWorkspacesNameRouteImport } from './routes/control-plane/workspaces/$name'
 import { Route as ControlPlaneToolsNameRouteImport } from './routes/control-plane/tools/$name'
 import { Route as ControlPlaneToolRunsNameRouteImport } from './routes/control-plane/tool-runs/$name'
@@ -110,8 +114,10 @@ import { Route as ApiAtlasFileRouteImport } from './routes/api/atlas/file'
 import { Route as ApiAtlasAstRouteImport } from './routes/api/atlas/ast'
 import { Route as ApiAgentsEventsRouteImport } from './routes/api/agents/events'
 import { Route as ControlPlaneTorghutQuantIndexRouteImport } from './routes/control-plane/torghut/quant/index'
+import { Route as ApiWhitepapersRunIdIndexRouteImport } from './routes/api/whitepapers/$runId/index'
 import { Route as ApiTorghutMarketContextIndexRouteImport } from './routes/api/torghut/market-context/index'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
+import { Route as ApiWhitepapersRunIdPdfRouteImport } from './routes/api/whitepapers/$runId/pdf'
 import { Route as ApiTorghutTradingSummaryRouteImport } from './routes/api/torghut/trading/summary'
 import { Route as ApiTorghutTradingStrategiesRouteImport } from './routes/api/torghut/trading/strategies'
 import { Route as ApiTorghutTradingExecutionsRouteImport } from './routes/api/torghut/trading/executions'
@@ -185,6 +191,11 @@ const IndexRoute = IndexRouteImport.update({
 const TerminalsIndexRoute = TerminalsIndexRouteImport.update({
   id: '/terminals/',
   path: '/terminals/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LibraryIndexRoute = LibraryIndexRouteImport.update({
+  id: '/library/',
+  path: '/library/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ControlPlaneIndexRoute = ControlPlaneIndexRouteImport.update({
@@ -337,6 +348,11 @@ const TerminalsSessionIdIndexRoute = TerminalsSessionIdIndexRouteImport.update({
   path: '/',
   getParentRoute: () => TerminalsSessionIdRoute,
 } as any)
+const LibraryWhitepapersIndexRoute = LibraryWhitepapersIndexRouteImport.update({
+  id: '/library/whitepapers/',
+  path: '/library/whitepapers/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GithubPullsIndexRoute = GithubPullsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -453,6 +469,11 @@ const ControlPlaneAgentProvidersIndexRoute =
     path: '/control-plane/agent-providers/',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiWhitepapersIndexRoute = ApiWhitepapersIndexRouteImport.update({
+  id: '/api/whitepapers/',
+  path: '/api/whitepapers/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const V1RunsIdRoute = V1RunsIdRouteImport.update({
   id: '/v1/runs/$id',
   path: '/v1/runs/$id',
@@ -492,6 +513,11 @@ const TerminalsSessionIdFullscreenRoute =
 const OpenaiV1ModelsRoute = OpenaiV1ModelsRouteImport.update({
   id: '/openai/v1/models',
   path: '/openai/v1/models',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LibraryWhitepapersRunIdRoute = LibraryWhitepapersRunIdRouteImport.update({
+  id: '/library/whitepapers/$runId',
+  path: '/library/whitepapers/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ControlPlaneWorkspacesNameRoute =
@@ -695,6 +721,12 @@ const ControlPlaneTorghutQuantIndexRoute =
     path: '/control-plane/torghut/quant/',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiWhitepapersRunIdIndexRoute =
+  ApiWhitepapersRunIdIndexRouteImport.update({
+    id: '/api/whitepapers/$runId/',
+    path: '/api/whitepapers/$runId/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiTorghutMarketContextIndexRoute =
   ApiTorghutMarketContextIndexRouteImport.update({
     id: '/api/torghut/market-context/',
@@ -704,6 +736,11 @@ const ApiTorghutMarketContextIndexRoute =
 const OpenaiV1ChatCompletionsRoute = OpenaiV1ChatCompletionsRouteImport.update({
   id: '/openai/v1/chat/completions',
   path: '/openai/v1/chat/completions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWhitepapersRunIdPdfRoute = ApiWhitepapersRunIdPdfRouteImport.update({
+  id: '/api/whitepapers/$runId/pdf',
+  path: '/api/whitepapers/$runId/pdf',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiTorghutTradingSummaryRoute =
@@ -999,6 +1036,7 @@ export interface FileRoutesByFullPath {
   '/agents/': typeof AgentsIndexRoute
   '/atlas/': typeof AtlasIndexRoute
   '/control-plane/': typeof ControlPlaneIndexRoute
+  '/library/': typeof LibraryIndexRoute
   '/terminals/': typeof TerminalsIndexRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
@@ -1036,6 +1074,7 @@ export interface FileRoutesByFullPath {
   '/control-plane/tool-runs/$name': typeof ControlPlaneToolRunsNameRoute
   '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
   '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
+  '/library/whitepapers/$runId': typeof LibraryWhitepapersRunIdRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
@@ -1044,6 +1083,7 @@ export interface FileRoutesByFullPath {
   '/v1/orchestration-runs/$id': typeof V1OrchestrationRunsIdRoute
   '/v1/orchestrations/$id': typeof V1OrchestrationsIdRoute
   '/v1/runs/$id': typeof V1RunsIdRoute
+  '/api/whitepapers/': typeof ApiWhitepapersIndexRoute
   '/control-plane/agent-providers/': typeof ControlPlaneAgentProvidersIndexRoute
   '/control-plane/agent-runs/': typeof ControlPlaneAgentRunsIndexRoute
   '/control-plane/agents/': typeof ControlPlaneAgentsIndexRoute
@@ -1064,6 +1104,7 @@ export interface FileRoutesByFullPath {
   '/control-plane/tools/': typeof ControlPlaneToolsIndexRoute
   '/control-plane/workspaces/': typeof ControlPlaneWorkspacesIndexRoute
   '/github/pulls/': typeof GithubPullsIndexRoute
+  '/library/whitepapers/': typeof LibraryWhitepapersIndexRoute
   '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
   '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
   '/api/agents/control-plane/logs': typeof ApiAgentsControlPlaneLogsRoute
@@ -1091,8 +1132,10 @@ export interface FileRoutesByFullPath {
   '/api/torghut/trading/executions': typeof ApiTorghutTradingExecutionsRoute
   '/api/torghut/trading/strategies': typeof ApiTorghutTradingStrategiesRoute
   '/api/torghut/trading/summary': typeof ApiTorghutTradingSummaryRoute
+  '/api/whitepapers/$runId/pdf': typeof ApiWhitepapersRunIdPdfRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
   '/api/torghut/market-context/': typeof ApiTorghutMarketContextIndexRoute
+  '/api/whitepapers/$runId/': typeof ApiWhitepapersRunIdIndexRoute
   '/control-plane/torghut/quant/': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
@@ -1146,6 +1189,7 @@ export interface FileRoutesByTo {
   '/agents': typeof AgentsIndexRoute
   '/atlas': typeof AtlasIndexRoute
   '/control-plane': typeof ControlPlaneIndexRoute
+  '/library': typeof LibraryIndexRoute
   '/terminals': typeof TerminalsIndexRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
@@ -1183,6 +1227,7 @@ export interface FileRoutesByTo {
   '/control-plane/tool-runs/$name': typeof ControlPlaneToolRunsNameRoute
   '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
   '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
+  '/library/whitepapers/$runId': typeof LibraryWhitepapersRunIdRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
@@ -1191,6 +1236,7 @@ export interface FileRoutesByTo {
   '/v1/orchestration-runs/$id': typeof V1OrchestrationRunsIdRoute
   '/v1/orchestrations/$id': typeof V1OrchestrationsIdRoute
   '/v1/runs/$id': typeof V1RunsIdRoute
+  '/api/whitepapers': typeof ApiWhitepapersIndexRoute
   '/control-plane/agent-providers': typeof ControlPlaneAgentProvidersIndexRoute
   '/control-plane/agent-runs': typeof ControlPlaneAgentRunsIndexRoute
   '/control-plane/agents': typeof ControlPlaneAgentsIndexRoute
@@ -1211,6 +1257,7 @@ export interface FileRoutesByTo {
   '/control-plane/tools': typeof ControlPlaneToolsIndexRoute
   '/control-plane/workspaces': typeof ControlPlaneWorkspacesIndexRoute
   '/github/pulls': typeof GithubPullsIndexRoute
+  '/library/whitepapers': typeof LibraryWhitepapersIndexRoute
   '/terminals/$sessionId': typeof TerminalsSessionIdIndexRoute
   '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
   '/api/agents/control-plane/logs': typeof ApiAgentsControlPlaneLogsRoute
@@ -1238,8 +1285,10 @@ export interface FileRoutesByTo {
   '/api/torghut/trading/executions': typeof ApiTorghutTradingExecutionsRoute
   '/api/torghut/trading/strategies': typeof ApiTorghutTradingStrategiesRoute
   '/api/torghut/trading/summary': typeof ApiTorghutTradingSummaryRoute
+  '/api/whitepapers/$runId/pdf': typeof ApiWhitepapersRunIdPdfRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
   '/api/torghut/market-context': typeof ApiTorghutMarketContextIndexRoute
+  '/api/whitepapers/$runId': typeof ApiWhitepapersRunIdIndexRoute
   '/control-plane/torghut/quant': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
@@ -1296,6 +1345,7 @@ export interface FileRoutesById {
   '/agents/': typeof AgentsIndexRoute
   '/atlas/': typeof AtlasIndexRoute
   '/control-plane/': typeof ControlPlaneIndexRoute
+  '/library/': typeof LibraryIndexRoute
   '/terminals/': typeof TerminalsIndexRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
@@ -1333,6 +1383,7 @@ export interface FileRoutesById {
   '/control-plane/tool-runs/$name': typeof ControlPlaneToolRunsNameRoute
   '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
   '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
+  '/library/whitepapers/$runId': typeof LibraryWhitepapersRunIdRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
@@ -1341,6 +1392,7 @@ export interface FileRoutesById {
   '/v1/orchestration-runs/$id': typeof V1OrchestrationRunsIdRoute
   '/v1/orchestrations/$id': typeof V1OrchestrationsIdRoute
   '/v1/runs/$id': typeof V1RunsIdRoute
+  '/api/whitepapers/': typeof ApiWhitepapersIndexRoute
   '/control-plane/agent-providers/': typeof ControlPlaneAgentProvidersIndexRoute
   '/control-plane/agent-runs/': typeof ControlPlaneAgentRunsIndexRoute
   '/control-plane/agents/': typeof ControlPlaneAgentsIndexRoute
@@ -1361,6 +1413,7 @@ export interface FileRoutesById {
   '/control-plane/tools/': typeof ControlPlaneToolsIndexRoute
   '/control-plane/workspaces/': typeof ControlPlaneWorkspacesIndexRoute
   '/github/pulls/': typeof GithubPullsIndexRoute
+  '/library/whitepapers/': typeof LibraryWhitepapersIndexRoute
   '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
   '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
   '/api/agents/control-plane/logs': typeof ApiAgentsControlPlaneLogsRoute
@@ -1388,8 +1441,10 @@ export interface FileRoutesById {
   '/api/torghut/trading/executions': typeof ApiTorghutTradingExecutionsRoute
   '/api/torghut/trading/strategies': typeof ApiTorghutTradingStrategiesRoute
   '/api/torghut/trading/summary': typeof ApiTorghutTradingSummaryRoute
+  '/api/whitepapers/$runId/pdf': typeof ApiWhitepapersRunIdPdfRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
   '/api/torghut/market-context/': typeof ApiTorghutMarketContextIndexRoute
+  '/api/whitepapers/$runId/': typeof ApiWhitepapersRunIdIndexRoute
   '/control-plane/torghut/quant/': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
@@ -1447,6 +1502,7 @@ export interface FileRouteTypes {
     | '/agents/'
     | '/atlas/'
     | '/control-plane/'
+    | '/library/'
     | '/terminals/'
     | '/api/agents/events'
     | '/api/atlas/ast'
@@ -1484,6 +1540,7 @@ export interface FileRouteTypes {
     | '/control-plane/tool-runs/$name'
     | '/control-plane/tools/$name'
     | '/control-plane/workspaces/$name'
+    | '/library/whitepapers/$runId'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/v1/agent-runs/$id'
@@ -1492,6 +1549,7 @@ export interface FileRouteTypes {
     | '/v1/orchestration-runs/$id'
     | '/v1/orchestrations/$id'
     | '/v1/runs/$id'
+    | '/api/whitepapers/'
     | '/control-plane/agent-providers/'
     | '/control-plane/agent-runs/'
     | '/control-plane/agents/'
@@ -1512,6 +1570,7 @@ export interface FileRouteTypes {
     | '/control-plane/tools/'
     | '/control-plane/workspaces/'
     | '/github/pulls/'
+    | '/library/whitepapers/'
     | '/terminals/$sessionId/'
     | '/api/agents/control-plane/events'
     | '/api/agents/control-plane/logs'
@@ -1539,8 +1598,10 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/executions'
     | '/api/torghut/trading/strategies'
     | '/api/torghut/trading/summary'
+    | '/api/whitepapers/$runId/pdf'
     | '/openai/v1/chat/completions'
     | '/api/torghut/market-context/'
+    | '/api/whitepapers/$runId/'
     | '/control-plane/torghut/quant/'
     | '/api/agents/implementation-sources/webhooks/$provider'
     | '/api/torghut/decision-engine/runs/$id'
@@ -1594,6 +1655,7 @@ export interface FileRouteTypes {
     | '/agents'
     | '/atlas'
     | '/control-plane'
+    | '/library'
     | '/terminals'
     | '/api/agents/events'
     | '/api/atlas/ast'
@@ -1631,6 +1693,7 @@ export interface FileRouteTypes {
     | '/control-plane/tool-runs/$name'
     | '/control-plane/tools/$name'
     | '/control-plane/workspaces/$name'
+    | '/library/whitepapers/$runId'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/v1/agent-runs/$id'
@@ -1639,6 +1702,7 @@ export interface FileRouteTypes {
     | '/v1/orchestration-runs/$id'
     | '/v1/orchestrations/$id'
     | '/v1/runs/$id'
+    | '/api/whitepapers'
     | '/control-plane/agent-providers'
     | '/control-plane/agent-runs'
     | '/control-plane/agents'
@@ -1659,6 +1723,7 @@ export interface FileRouteTypes {
     | '/control-plane/tools'
     | '/control-plane/workspaces'
     | '/github/pulls'
+    | '/library/whitepapers'
     | '/terminals/$sessionId'
     | '/api/agents/control-plane/events'
     | '/api/agents/control-plane/logs'
@@ -1686,8 +1751,10 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/executions'
     | '/api/torghut/trading/strategies'
     | '/api/torghut/trading/summary'
+    | '/api/whitepapers/$runId/pdf'
     | '/openai/v1/chat/completions'
     | '/api/torghut/market-context'
+    | '/api/whitepapers/$runId'
     | '/control-plane/torghut/quant'
     | '/api/agents/implementation-sources/webhooks/$provider'
     | '/api/torghut/decision-engine/runs/$id'
@@ -1743,6 +1810,7 @@ export interface FileRouteTypes {
     | '/agents/'
     | '/atlas/'
     | '/control-plane/'
+    | '/library/'
     | '/terminals/'
     | '/api/agents/events'
     | '/api/atlas/ast'
@@ -1780,6 +1848,7 @@ export interface FileRouteTypes {
     | '/control-plane/tool-runs/$name'
     | '/control-plane/tools/$name'
     | '/control-plane/workspaces/$name'
+    | '/library/whitepapers/$runId'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/v1/agent-runs/$id'
@@ -1788,6 +1857,7 @@ export interface FileRouteTypes {
     | '/v1/orchestration-runs/$id'
     | '/v1/orchestrations/$id'
     | '/v1/runs/$id'
+    | '/api/whitepapers/'
     | '/control-plane/agent-providers/'
     | '/control-plane/agent-runs/'
     | '/control-plane/agents/'
@@ -1808,6 +1878,7 @@ export interface FileRouteTypes {
     | '/control-plane/tools/'
     | '/control-plane/workspaces/'
     | '/github/pulls/'
+    | '/library/whitepapers/'
     | '/terminals/$sessionId/'
     | '/api/agents/control-plane/events'
     | '/api/agents/control-plane/logs'
@@ -1835,8 +1906,10 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/executions'
     | '/api/torghut/trading/strategies'
     | '/api/torghut/trading/summary'
+    | '/api/whitepapers/$runId/pdf'
     | '/openai/v1/chat/completions'
     | '/api/torghut/market-context/'
+    | '/api/whitepapers/$runId/'
     | '/control-plane/torghut/quant/'
     | '/api/agents/implementation-sources/webhooks/$provider'
     | '/api/torghut/decision-engine/runs/$id'
@@ -1893,6 +1966,7 @@ export interface RootRouteChildren {
   AgentsIndexRoute: typeof AgentsIndexRoute
   AtlasIndexRoute: typeof AtlasIndexRoute
   ControlPlaneIndexRoute: typeof ControlPlaneIndexRoute
+  LibraryIndexRoute: typeof LibraryIndexRoute
   TerminalsIndexRoute: typeof TerminalsIndexRoute
   ApiAgentsEventsRoute: typeof ApiAgentsEventsRoute
   ApiAtlasAstRoute: typeof ApiAtlasAstRoute
@@ -1927,8 +2001,10 @@ export interface RootRouteChildren {
   ControlPlaneToolRunsNameRoute: typeof ControlPlaneToolRunsNameRoute
   ControlPlaneToolsNameRoute: typeof ControlPlaneToolsNameRoute
   ControlPlaneWorkspacesNameRoute: typeof ControlPlaneWorkspacesNameRoute
+  LibraryWhitepapersRunIdRoute: typeof LibraryWhitepapersRunIdRoute
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
   V1RunsIdRoute: typeof V1RunsIdRoute
+  ApiWhitepapersIndexRoute: typeof ApiWhitepapersIndexRoute
   ControlPlaneAgentProvidersIndexRoute: typeof ControlPlaneAgentProvidersIndexRoute
   ControlPlaneAgentRunsIndexRoute: typeof ControlPlaneAgentRunsIndexRoute
   ControlPlaneAgentsIndexRoute: typeof ControlPlaneAgentsIndexRoute
@@ -1948,6 +2024,7 @@ export interface RootRouteChildren {
   ControlPlaneToolRunsIndexRoute: typeof ControlPlaneToolRunsIndexRoute
   ControlPlaneToolsIndexRoute: typeof ControlPlaneToolsIndexRoute
   ControlPlaneWorkspacesIndexRoute: typeof ControlPlaneWorkspacesIndexRoute
+  LibraryWhitepapersIndexRoute: typeof LibraryWhitepapersIndexRoute
   ApiAgentsControlPlaneEventsRoute: typeof ApiAgentsControlPlaneEventsRoute
   ApiAgentsControlPlaneLogsRoute: typeof ApiAgentsControlPlaneLogsRoute
   ApiAgentsControlPlaneResourceRoute: typeof ApiAgentsControlPlaneResourceRoute
@@ -1965,8 +2042,10 @@ export interface RootRouteChildren {
   ApiTorghutTradingExecutionsRoute: typeof ApiTorghutTradingExecutionsRoute
   ApiTorghutTradingStrategiesRoute: typeof ApiTorghutTradingStrategiesRoute
   ApiTorghutTradingSummaryRoute: typeof ApiTorghutTradingSummaryRoute
+  ApiWhitepapersRunIdPdfRoute: typeof ApiWhitepapersRunIdPdfRoute
   OpenaiV1ChatCompletionsRoute: typeof OpenaiV1ChatCompletionsRoute
   ApiTorghutMarketContextIndexRoute: typeof ApiTorghutMarketContextIndexRoute
+  ApiWhitepapersRunIdIndexRoute: typeof ApiWhitepapersRunIdIndexRoute
   ControlPlaneTorghutQuantIndexRoute: typeof ControlPlaneTorghutQuantIndexRoute
   ApiAgentsImplementationSourcesWebhooksProviderRoute: typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   ApiTorghutTradingControlPlaneLlmRolloutRoute: typeof ApiTorghutTradingControlPlaneLlmRolloutRoute
@@ -2019,6 +2098,13 @@ declare module '@tanstack/react-router' {
       path: '/terminals'
       fullPath: '/terminals/'
       preLoaderRoute: typeof TerminalsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/library/': {
+      id: '/library/'
+      path: '/library'
+      fullPath: '/library/'
+      preLoaderRoute: typeof LibraryIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/control-plane/': {
@@ -2231,6 +2317,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TerminalsSessionIdIndexRouteImport
       parentRoute: typeof TerminalsSessionIdRoute
     }
+    '/library/whitepapers/': {
+      id: '/library/whitepapers/'
+      path: '/library/whitepapers'
+      fullPath: '/library/whitepapers/'
+      preLoaderRoute: typeof LibraryWhitepapersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/github/pulls/': {
       id: '/github/pulls/'
       path: '/'
@@ -2371,6 +2464,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ControlPlaneAgentProvidersIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/whitepapers/': {
+      id: '/api/whitepapers/'
+      path: '/api/whitepapers'
+      fullPath: '/api/whitepapers/'
+      preLoaderRoute: typeof ApiWhitepapersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/v1/runs/$id': {
       id: '/v1/runs/$id'
       path: '/v1/runs/$id'
@@ -2425,6 +2525,13 @@ declare module '@tanstack/react-router' {
       path: '/openai/v1/models'
       fullPath: '/openai/v1/models'
       preLoaderRoute: typeof OpenaiV1ModelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/library/whitepapers/$runId': {
+      id: '/library/whitepapers/$runId'
+      path: '/library/whitepapers/$runId'
+      fullPath: '/library/whitepapers/$runId'
+      preLoaderRoute: typeof LibraryWhitepapersRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/control-plane/workspaces/$name': {
@@ -2686,6 +2793,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ControlPlaneTorghutQuantIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/whitepapers/$runId/': {
+      id: '/api/whitepapers/$runId/'
+      path: '/api/whitepapers/$runId'
+      fullPath: '/api/whitepapers/$runId/'
+      preLoaderRoute: typeof ApiWhitepapersRunIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/torghut/market-context/': {
       id: '/api/torghut/market-context/'
       path: '/api/torghut/market-context'
@@ -2698,6 +2812,13 @@ declare module '@tanstack/react-router' {
       path: '/openai/v1/chat/completions'
       fullPath: '/openai/v1/chat/completions'
       preLoaderRoute: typeof OpenaiV1ChatCompletionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/whitepapers/$runId/pdf': {
+      id: '/api/whitepapers/$runId/pdf'
+      path: '/api/whitepapers/$runId/pdf'
+      fullPath: '/api/whitepapers/$runId/pdf'
+      preLoaderRoute: typeof ApiWhitepapersRunIdPdfRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/torghut/trading/summary': {
@@ -3280,6 +3401,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgentsIndexRoute: AgentsIndexRoute,
   AtlasIndexRoute: AtlasIndexRoute,
   ControlPlaneIndexRoute: ControlPlaneIndexRoute,
+  LibraryIndexRoute: LibraryIndexRoute,
   TerminalsIndexRoute: TerminalsIndexRoute,
   ApiAgentsEventsRoute: ApiAgentsEventsRoute,
   ApiAtlasAstRoute: ApiAtlasAstRoute,
@@ -3318,8 +3440,10 @@ const rootRouteChildren: RootRouteChildren = {
   ControlPlaneToolRunsNameRoute: ControlPlaneToolRunsNameRoute,
   ControlPlaneToolsNameRoute: ControlPlaneToolsNameRoute,
   ControlPlaneWorkspacesNameRoute: ControlPlaneWorkspacesNameRoute,
+  LibraryWhitepapersRunIdRoute: LibraryWhitepapersRunIdRoute,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
   V1RunsIdRoute: V1RunsIdRoute,
+  ApiWhitepapersIndexRoute: ApiWhitepapersIndexRoute,
   ControlPlaneAgentProvidersIndexRoute: ControlPlaneAgentProvidersIndexRoute,
   ControlPlaneAgentRunsIndexRoute: ControlPlaneAgentRunsIndexRoute,
   ControlPlaneAgentsIndexRoute: ControlPlaneAgentsIndexRoute,
@@ -3343,6 +3467,7 @@ const rootRouteChildren: RootRouteChildren = {
   ControlPlaneToolRunsIndexRoute: ControlPlaneToolRunsIndexRoute,
   ControlPlaneToolsIndexRoute: ControlPlaneToolsIndexRoute,
   ControlPlaneWorkspacesIndexRoute: ControlPlaneWorkspacesIndexRoute,
+  LibraryWhitepapersIndexRoute: LibraryWhitepapersIndexRoute,
   ApiAgentsControlPlaneEventsRoute: ApiAgentsControlPlaneEventsRoute,
   ApiAgentsControlPlaneLogsRoute: ApiAgentsControlPlaneLogsRoute,
   ApiAgentsControlPlaneResourceRoute: ApiAgentsControlPlaneResourceRoute,
@@ -3361,8 +3486,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiTorghutTradingExecutionsRoute: ApiTorghutTradingExecutionsRoute,
   ApiTorghutTradingStrategiesRoute: ApiTorghutTradingStrategiesRoute,
   ApiTorghutTradingSummaryRoute: ApiTorghutTradingSummaryRoute,
+  ApiWhitepapersRunIdPdfRoute: ApiWhitepapersRunIdPdfRoute,
   OpenaiV1ChatCompletionsRoute: OpenaiV1ChatCompletionsRoute,
   ApiTorghutMarketContextIndexRoute: ApiTorghutMarketContextIndexRoute,
+  ApiWhitepapersRunIdIndexRoute: ApiWhitepapersRunIdIndexRoute,
   ControlPlaneTorghutQuantIndexRoute: ControlPlaneTorghutQuantIndexRoute,
   ApiAgentsImplementationSourcesWebhooksProviderRoute:
     ApiAgentsImplementationSourcesWebhooksProviderRoute,
