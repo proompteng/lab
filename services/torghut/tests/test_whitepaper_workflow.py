@@ -36,6 +36,15 @@ class _FakeCephClient:
         }
 
 
+class _AsyncSendInngestClient:
+    async def send(self, _event: object) -> list[str]:
+        return ["evt-async"]
+
+
+class _RunStub:
+    run_id = "wp-test-async-send"
+
+
 class TestWhitepaperWorkflow(TestCase):
     def setUp(self) -> None:
         self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -222,3 +231,20 @@ https://example.com/paper.pdf
             self.assertIsNone(
                 session.execute(select(WhitepaperCodexAgentRun)).scalar_one_or_none()
             )
+
+    def test_enqueue_inngest_run_supports_async_send(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.build_inngest_client = (  # type: ignore[method-assign]
+            lambda: _AsyncSendInngestClient()
+        )
+        issue_event = normalize_github_issue_event(self._issue_payload())
+        self.assertIsNotNone(issue_event)
+        assert issue_event is not None
+
+        result = service.enqueue_inngest_run(
+            run=_RunStub(),  # type: ignore[arg-type]
+            issue_event=issue_event,
+            attachment_url="https://arxiv.org/pdf/2402.03755.pdf",
+        )
+
+        self.assertEqual(result["event_ids"], ["evt-async"])
