@@ -75,9 +75,20 @@ def _kubectl_get_ta_deployment_json() -> dict[str, Any]:
     return json.loads(result.stdout)
 
 
-def _kubectl_apply_manifest(manifest: dict[str, Any]) -> None:
-    payload = yaml.safe_dump(manifest)
-    _run_kubectl(['apply', '-f', '-'], input=payload)
+def _kubectl_merge_patch(kind: str, name: str, patch: dict[str, Any]) -> None:
+    _run_kubectl(
+        [
+            '-n',
+            SUPPORTED_NAMESPACE,
+            'patch',
+            kind,
+            name,
+            '--type',
+            'merge',
+            '-p',
+            yaml.safe_dump(patch),
+        ]
+    )
 
 
 def _parse_int(value: object, fallback: int = 0) -> int:
@@ -236,36 +247,27 @@ def _print_plan_text(
 def _apply_plan(state: ReplayState, plan: dict[str, str], namespace: str) -> ReplayState:
     _require_supported_namespace(namespace)
 
-    configmap_manifest = {
-        'apiVersion': 'v1',
-        'kind': 'ConfigMap',
-        'metadata': {'name': TA_CONFIGMAP, 'namespace': SUPPORTED_NAMESPACE},
+    configmap_patch = {
         'data': {
             'TA_GROUP_ID': plan['replay_group_id'],
             'TA_AUTO_OFFSET_RESET': plan['ta_auto_offset_reset'],
         },
     }
-    _kubectl_apply_manifest(configmap_manifest)
+    _kubectl_merge_patch('configmap', TA_CONFIGMAP, configmap_patch)
 
     if state.flink_job_state != 'suspended':
-        suspend_manifest = {
-            'apiVersion': 'flink.apache.org/v1beta1',
-            'kind': 'FlinkDeployment',
-            'metadata': {'name': TA_DEPLOYMENT, 'namespace': SUPPORTED_NAMESPACE},
+        suspend_patch = {
             'spec': {'job': {'state': 'suspended'}},
         }
-        _kubectl_apply_manifest(suspend_manifest)
+        _kubectl_merge_patch('flinkdeployment', TA_DEPLOYMENT, suspend_patch)
 
-    resume_manifest = {
-        'apiVersion': 'flink.apache.org/v1beta1',
-        'kind': 'FlinkDeployment',
-        'metadata': {'name': TA_DEPLOYMENT, 'namespace': SUPPORTED_NAMESPACE},
+    resume_patch = {
         'spec': {
             'restartNonce': state.flink_restart_nonce + 1,
             'job': {'state': 'running'},
         },
     }
-    _kubectl_apply_manifest(resume_manifest)
+    _kubectl_merge_patch('flinkdeployment', TA_DEPLOYMENT, resume_patch)
 
     return _load_state(namespace)
 
