@@ -40,17 +40,18 @@ const VERDICT_OPTIONS = [
 ] as const
 
 const statusTone = (status: string) => {
-  if (status === 'completed') return 'bg-emerald-100 text-emerald-950 border-emerald-200'
-  if (status === 'failed') return 'bg-rose-100 text-rose-950 border-rose-200'
-  if (status === 'agentrun_dispatched') return 'bg-blue-100 text-blue-950 border-blue-200'
-  if (status === 'queued') return 'bg-amber-100 text-amber-950 border-amber-200'
-  return 'bg-zinc-100 text-zinc-950 border-zinc-200'
+  if (status === 'completed') return '!border-emerald-300/60 !bg-emerald-500/25 !text-emerald-100'
+  if (status === 'failed') return '!border-rose-300/60 !bg-rose-500/25 !text-rose-100'
+  if (status === 'agentrun_dispatched') return '!border-cyan-300/60 !bg-cyan-500/25 !text-cyan-100'
+  if (status === 'queued') return '!border-amber-300/60 !bg-amber-500/25 !text-amber-100'
+  return '!border-zinc-300/50 !bg-zinc-500/25 !text-zinc-100'
 }
 
 const verdictTone = (verdict: string) => {
-  if (verdict === 'implement') return 'bg-emerald-100 text-emerald-950 border-emerald-200'
-  if (verdict === 'reject') return 'bg-rose-100 text-rose-950 border-rose-200'
-  return 'bg-zinc-100 text-zinc-950 border-zinc-200'
+  if (verdict === 'implement') return '!border-emerald-300/60 !bg-emerald-500/25 !text-emerald-100'
+  if (verdict === 'investigate') return '!border-amber-300/60 !bg-amber-500/25 !text-amber-100'
+  if (verdict === 'reject') return '!border-rose-300/60 !bg-rose-500/25 !text-rose-100'
+  return '!border-zinc-300/50 !bg-zinc-500/25 !text-zinc-100'
 }
 
 const formatDate = (value: string | null) => {
@@ -115,7 +116,7 @@ function LibraryWhitepapersRoute() {
   }
 
   return (
-    <div className="h-full w-full overflow-auto">
+    <div className="h-full w-full">
       <div className="mx-auto w-full max-w-7xl p-6">
         <div className="mb-6 flex flex-col gap-1">
           <h1 className="text-lg font-semibold tracking-tight">Library</h1>
@@ -192,10 +193,10 @@ function LibraryWhitepapersRoute() {
         ) : null}
 
         {error ? (
-          <Card className="border-rose-300 bg-rose-50">
+          <Card className="border-rose-500/40 bg-rose-500/10">
             <CardHeader>
-              <CardTitle className="text-sm text-rose-950">Library request failed</CardTitle>
-              <CardDescription className="text-rose-900">{error}</CardDescription>
+              <CardTitle className="text-sm text-rose-200">Library request failed</CardTitle>
+              <CardDescription className="[overflow-wrap:anywhere] text-rose-100/90">{error}</CardDescription>
             </CardHeader>
             <CardContent>
               <Button variant="outline" onClick={() => void loadWhitepapers()}>
@@ -232,9 +233,11 @@ function WhitepaperListCard({ item }: { item: WhitepaperListItem }) {
   return (
     <Card>
       <CardHeader className="gap-2 pb-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-base">{item.document.title ?? item.runId}</CardTitle>
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <CardTitle className="min-w-0 flex-1 text-base [overflow-wrap:anywhere]">
+            {item.document.title ?? item.runId}
+          </CardTitle>
+          <div className="flex shrink-0 items-center gap-2">
             <Badge variant="outline" className={cn('font-mono text-[0.65rem] px-2 py-0.5', statusTone(item.status))}>
               {item.status}
             </Badge>
@@ -248,7 +251,7 @@ function WhitepaperListCard({ item }: { item: WhitepaperListItem }) {
             ) : null}
           </div>
         </div>
-        <CardDescription className="font-mono text-[0.7rem]">
+        <CardDescription className="font-mono text-[0.7rem] [overflow-wrap:anywhere]">
           {item.runId}
           {item.document.sourceIdentifier ? ` • ${item.document.sourceIdentifier}` : ''}
         </CardDescription>
@@ -266,13 +269,13 @@ function WhitepaperListCard({ item }: { item: WhitepaperListItem }) {
         <div>
           <span className="font-medium text-foreground">File size:</span> {formatFileSize(item.version.fileSizeBytes)}
         </div>
-        <div className="md:col-span-2">
+        <div className="md:col-span-2 [overflow-wrap:anywhere]">
           <span className="font-medium text-foreground">Failure reason:</span> {item.failureReason ?? 'n/a'}
         </div>
         <div className="md:col-span-2 flex justify-end">
           <Button asChild>
             <Link to="/library/whitepapers/$runId" params={{ runId: item.runId }}>
-              Open split view
+              view
             </Link>
           </Button>
         </div>

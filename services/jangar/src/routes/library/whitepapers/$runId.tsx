@@ -6,7 +6,6 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  ScrollArea,
   Skeleton,
 } from '@proompteng/design/ui'
 import { IconExternalLink } from '@tabler/icons-react'
@@ -22,17 +21,18 @@ export const Route = createFileRoute('/library/whitepapers/$runId')({
 })
 
 const statusTone = (status: string) => {
-  if (status === 'completed') return 'bg-emerald-100 text-emerald-950 border-emerald-200'
-  if (status === 'failed') return 'bg-rose-100 text-rose-950 border-rose-200'
-  if (status === 'agentrun_dispatched') return 'bg-blue-100 text-blue-950 border-blue-200'
-  if (status === 'queued') return 'bg-amber-100 text-amber-950 border-amber-200'
-  return 'bg-zinc-100 text-zinc-950 border-zinc-200'
+  if (status === 'completed') return '!border-emerald-300/60 !bg-emerald-500/25 !text-emerald-100'
+  if (status === 'failed') return '!border-rose-300/60 !bg-rose-500/25 !text-rose-100'
+  if (status === 'agentrun_dispatched') return '!border-cyan-300/60 !bg-cyan-500/25 !text-cyan-100'
+  if (status === 'queued') return '!border-amber-300/60 !bg-amber-500/25 !text-amber-100'
+  return '!border-zinc-300/50 !bg-zinc-500/25 !text-zinc-100'
 }
 
 const verdictTone = (verdict: string) => {
-  if (verdict === 'implement') return 'bg-emerald-100 text-emerald-950 border-emerald-200'
-  if (verdict === 'reject') return 'bg-rose-100 text-rose-950 border-rose-200'
-  return 'bg-zinc-100 text-zinc-950 border-zinc-200'
+  if (verdict === 'implement') return '!border-emerald-300/60 !bg-emerald-500/25 !text-emerald-100'
+  if (verdict === 'investigate') return '!border-amber-300/60 !bg-amber-500/25 !text-amber-100'
+  if (verdict === 'reject') return '!border-rose-300/60 !bg-rose-500/25 !text-rose-100'
+  return '!border-zinc-300/50 !bg-zinc-500/25 !text-zinc-100'
 }
 
 const formatDate = (value: string | null) => {
@@ -89,96 +89,94 @@ function LibraryWhitepaperDetailRoute() {
   const title = detail?.document.title ?? runId
 
   return (
-    <div className="h-full w-full overflow-auto">
-      <div className="mx-auto w-full max-w-[1440px] p-6">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
-            <p className="font-mono text-[0.72rem] text-muted-foreground">{runId}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" asChild>
-              <Link to="/library/whitepapers">Back to list</Link>
-            </Button>
-            {detail?.run.status ? (
-              <Badge
-                variant="outline"
-                className={cn('font-mono text-[0.65rem] px-2 py-0.5', statusTone(detail.run.status))}
-              >
-                {detail.run.status}
-              </Badge>
-            ) : null}
-            {detail?.verdict?.verdict ? (
-              <Badge
-                variant="outline"
-                className={cn('font-mono text-[0.65rem] px-2 py-0.5', verdictTone(detail.verdict.verdict))}
-              >
-                {detail.verdict.verdict}
-              </Badge>
-            ) : null}
-          </div>
+    <div className="flex h-full min-h-0 w-full flex-col p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h1 className="text-lg font-semibold tracking-tight [overflow-wrap:anywhere]">{title}</h1>
+          <p className="font-mono text-[0.72rem] text-muted-foreground [overflow-wrap:anywhere]">{runId}</p>
         </div>
-
-        {loading ? (
-          <Card>
-            <CardHeader>
-              <Skeleton className="h-5 w-1/3" />
-              <Skeleton className="h-4 w-1/2" />
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-4/5" />
-            </CardContent>
-          </Card>
-        ) : null}
-
-        {error ? (
-          <Card className="border-rose-300 bg-rose-50">
-            <CardHeader>
-              <CardTitle className="text-sm text-rose-950">Failed to load whitepaper details</CardTitle>
-              <CardDescription className="text-rose-900">{error}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button variant="outline" onClick={() => void loadDetail()}>
-                Retry
-              </Button>
-            </CardContent>
-          </Card>
-        ) : null}
-
-        {detail ? (
-          <>
-            <div className="hidden h-[72vh] min-h-[680px] overflow-hidden rounded-lg border md:block">
-              <div className="grid h-full grid-cols-2">
-                <div className="border-r">
-                  <PdfPane runId={runId} detail={detail} />
-                </div>
-                <AnalysisPane detail={detail} />
-              </div>
-            </div>
-
-            <div className="space-y-4 md:hidden">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Whitepaper PDF</CardTitle>
-                  <CardDescription>{detail.version.fileName ?? 'source.pdf'}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="h-[52vh] overflow-hidden rounded-md border">
-                    <iframe
-                      src={whitepaperPdfPath(runId)}
-                      title={`whitepaper-${runId}`}
-                      className="h-full w-full border-0"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-              <AnalysisPane detail={detail} />
-            </div>
-          </>
-        ) : null}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="secondary" asChild>
+            <Link to="/library/whitepapers">Back to list</Link>
+          </Button>
+          {detail?.run.status ? (
+            <Badge
+              variant="outline"
+              className={cn('font-mono text-[0.65rem] px-2 py-0.5', statusTone(detail.run.status))}
+            >
+              {detail.run.status}
+            </Badge>
+          ) : null}
+          {detail?.verdict?.verdict ? (
+            <Badge
+              variant="outline"
+              className={cn('font-mono text-[0.65rem] px-2 py-0.5', verdictTone(detail.verdict.verdict))}
+            >
+              {detail.verdict.verdict}
+            </Badge>
+          ) : null}
+        </div>
       </div>
+
+      {loading ? (
+        <Card className="shrink-0">
+          <CardHeader>
+            <Skeleton className="h-5 w-1/3" />
+            <Skeleton className="h-4 w-1/2" />
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-4/5" />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {error ? (
+        <Card className="shrink-0 border-rose-500/40 bg-rose-500/10">
+          <CardHeader>
+            <CardTitle className="text-sm text-rose-200">Failed to load whitepaper details</CardTitle>
+            <CardDescription className="[overflow-wrap:anywhere] text-rose-100/90">{error}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" onClick={() => void loadDetail()}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {detail ? (
+        <>
+          <div className="hidden min-h-0 flex-1 overflow-hidden rounded-lg border md:block">
+            <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="min-h-0 border-r">
+                <PdfPane runId={runId} detail={detail} />
+              </div>
+              <AnalysisPane detail={detail} scrollable />
+            </div>
+          </div>
+
+          <div className="space-y-4 md:hidden">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Whitepaper PDF</CardTitle>
+                <CardDescription>{detail.version.fileName ?? 'source.pdf'}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="h-[52vh] overflow-hidden rounded-md border">
+                  <iframe
+                    src={whitepaperPdfPath(runId)}
+                    title={`whitepaper-${runId}`}
+                    className="h-full w-full border-0"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+            <AnalysisPane detail={detail} />
+          </div>
+        </>
+      ) : null}
     </div>
   )
 }
@@ -194,7 +192,7 @@ function PdfPane({ runId, detail }: { runId: string; detail: WhitepaperDetail })
           </div>
         </div>
         {detail.pdf.sourceAttachmentUrl ? (
-          <Button variant="outline" size="sm" asChild>
+          <Button variant="secondary" size="sm" asChild>
             <a href={detail.pdf.sourceAttachmentUrl} target="_blank" rel="noreferrer">
               Source
               <IconExternalLink className="ml-1 h-3.5 w-3.5" />
@@ -202,19 +200,19 @@ function PdfPane({ runId, detail }: { runId: string; detail: WhitepaperDetail })
           </Button>
         ) : null}
       </div>
-      <div className="flex-1 bg-zinc-100">
+      <div className="flex-1 bg-muted/30">
         <iframe src={whitepaperPdfPath(runId)} title={`whitepaper-${runId}`} className="h-full w-full border-0" />
       </div>
     </div>
   )
 }
 
-function AnalysisPane({ detail }: { detail: WhitepaperDetail }) {
+function AnalysisPane({ detail, scrollable = false }: { detail: WhitepaperDetail; scrollable?: boolean }) {
   const keyFindings = detail.synthesis?.keyFindings ?? []
   const recommendations = detail.verdict?.recommendations ?? []
 
   return (
-    <ScrollArea className="h-full">
+    <div className={cn(scrollable && 'h-full min-h-0 overflow-y-auto')}>
       <div className="space-y-4 p-4">
         <Card>
           <CardHeader className="pb-2">
@@ -233,10 +231,10 @@ function AnalysisPane({ detail }: { detail: WhitepaperDetail }) {
         </Card>
 
         {detail.run.status === 'failed' ? (
-          <Card className="border-amber-300 bg-amber-50">
+          <Card className="border-amber-500/40 bg-amber-500/10">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-amber-950">Requeue support</CardTitle>
-              <CardDescription className="text-amber-900">
+              <CardTitle className="text-sm text-amber-200">Requeue support</CardTitle>
+              <CardDescription className="[overflow-wrap:anywhere] text-amber-100/90">
                 Comment <code>research whitepaper</code> on the source GitHub issue to requeue this run.
               </CardDescription>
             </CardHeader>
@@ -250,7 +248,7 @@ function AnalysisPane({ detail }: { detail: WhitepaperDetail }) {
               {detail.synthesis?.methodologySummary ?? 'No methodology summary available.'}
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm leading-6 text-zinc-900">
+          <CardContent className="space-y-3 text-sm leading-6 text-foreground">
             <p>{detail.synthesis?.executiveSummary ?? 'No synthesis generated yet.'}</p>
             {keyFindings.length ? (
               <div>
@@ -376,7 +374,7 @@ function AnalysisPane({ detail }: { detail: WhitepaperDetail }) {
                       <div>Completed: {formatDate(step.completedAt)}</div>
                       <div>Duration: {step.durationMs ? `${step.durationMs} ms` : 'n/a'}</div>
                       {errorLines.length ? (
-                        <div className="text-rose-700">
+                        <div className="[overflow-wrap:anywhere] text-rose-300">
                           {errorLines.slice(0, 2).map((line, index) => (
                             <div key={`${step.id}-err-${String(index)}`}>{line}</div>
                           ))}
@@ -390,15 +388,15 @@ function AnalysisPane({ detail }: { detail: WhitepaperDetail }) {
           </CardContent>
         </Card>
       </div>
-    </ScrollArea>
+    </div>
   )
 }
 
 function Row({ label, value, className }: { label: string; value: string; className?: string }) {
   return (
-    <div className={cn('text-xs text-muted-foreground', className)}>
+    <div className={cn('text-xs text-muted-foreground [overflow-wrap:anywhere]', className)}>
       <span className="mr-1 font-medium text-foreground">{label}:</span>
-      <span>{value}</span>
+      <span className="break-words">{value}</span>
     </div>
   )
 }
