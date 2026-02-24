@@ -21,6 +21,8 @@ resources:
   - llm-guardrails-exporter.yaml
   - lean-runner-deployment.yaml
   - lean-runner-service.yaml
+  - whitepapers-objectbucketclaim.yaml
+  - whitepapers-bucket-bootstrap-job.yaml
   - clickhouse
   - ws
   - ta

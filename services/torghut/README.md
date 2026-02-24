@@ -32,6 +32,28 @@ Health checks:
 - `GET /healthz` – liveness (default port 8181)
 - `GET /db-check` – requires reachable Postgres at `DB_DSN` and matching Alembic heads (default port 8181)
 
+## Whitepaper workflow (GitHub issue -> Kafka -> AgentRun)
+- Kickoff contract in issue body:
+```md
+<!-- TORGHUT_WHITEPAPER:START -->
+workflow: whitepaper-analysis-v1
+base_branch: main
+<!-- TORGHUT_WHITEPAPER:END -->
+```
+- Include a `.pdf` attachment URL in the issue body.
+- Froussard forwards issue webhook events to Kafka (`WHITEPAPER_KAFKA_TOPIC`), and Torghut consumes them when:
+  - `WHITEPAPER_WORKFLOW_ENABLED=true`
+  - `WHITEPAPER_KAFKA_ENABLED=true`
+- Torghut stores source metadata/artifact refs in whitepaper tables, uploads source PDF to Ceph, and dispatches a Codex AgentRun via Jangar (`/v1/agent-runs`) in namespace `agents`.
+- Dispatch endpoint uses `WHITEPAPER_AGENTRUN_SUBMIT_URL`; default fallback is `http://agents.agents.svc.cluster.local/v1/agent-runs`.
+
+Endpoints:
+- `GET /whitepapers/status`
+- `POST /whitepapers/events/github-issue` (manual replay/debug ingest)
+- `POST /whitepapers/runs/{run_id}/dispatch-agentrun`
+- `POST /whitepapers/runs/{run_id}/finalize` (Inngest/AgentRun completion payload)
+- `GET /whitepapers/runs/{run_id}`
+
 ## Feature flags (Flipt)
 - Torghut runtime gates are resolved via Flipt boolean evaluations when `TRADING_FEATURE_FLAGS_ENABLED=true`.
 - Configure:

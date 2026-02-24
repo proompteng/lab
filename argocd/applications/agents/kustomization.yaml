@@ -4,8 +4,11 @@ namespace: agents
 resources:
   - codex-secretbinding.yaml
   - codex-agent.yaml
+  - codex-whitepaper-secretbinding.yaml
+  - codex-whitepaper-agent.yaml
   - codex-agentprovider.yaml
   - codex-agent-system-prompt-configmap.yaml
+  - codex-whitepaper-agent-system-prompt-configmap.yaml
   - codex-research-secretbinding.yaml
   - codex-research-agent.yaml
   - codex-research-agent-system-prompt-configmap.yaml

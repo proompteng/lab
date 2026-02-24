@@ -1,0 +1,12 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: codex-whitepaper-agent
+spec:
+  providerRef:
+    name: codex
+  defaults:
+    systemPromptRef:
+      kind: ConfigMap
+      name: codex-whitepaper-agent-system-prompt
+      key: system-prompt.md
