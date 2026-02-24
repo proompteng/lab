@@ -105,10 +105,9 @@ function MemoriesPage() {
   }
 
   return (
-    <main className="relative mx-auto flex w-full max-w-6xl flex-col gap-5 p-5">
-      <section className="relative overflow-hidden rounded-lg border border-zinc-500/20 bg-card">
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-zinc-200/40 via-transparent to-zinc-500/10" />
-        <div className="relative flex flex-col gap-4 p-5">
+    <main className="mx-auto flex w-full max-w-6xl flex-col p-5">
+      <section className="overflow-hidden rounded-lg border border-zinc-500/20 bg-card">
+        <div className="flex flex-col gap-4 p-5">
           <header className="flex flex-col gap-2">
             <p className="text-[11px] font-semibold tracking-[0.12em] text-zinc-500">semantic search</p>
             <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
@@ -153,87 +152,88 @@ function MemoriesPage() {
             </Button>
           </form>
         </div>
+
+        {error ? (
+          <div className="border-t border-zinc-500/20 p-5">
+            <Card className="border-destructive/30 bg-destructive/5">
+              <CardHeader>
+                <CardTitle className="text-sm text-destructive">Search failed</CardTitle>
+                <CardDescription className="text-destructive/90">{error}</CardDescription>
+              </CardHeader>
+            </Card>
+          </div>
+        ) : null}
+
+        {!error && hasSearched && results.length === 0 ? (
+          <div className="border-t border-zinc-500/20 p-5">
+            <Empty className="border-zinc-500/30 bg-zinc-500/5">
+              <EmptyHeader>
+                <EmptyTitle>No relevant matches found</EmptyTitle>
+                <EmptyDescription>
+                  {lastQuery ? `No strong matches for "${lastQuery}".` : 'No strong matches for this query.'}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          </div>
+        ) : null}
+
+        {!error && results.length > 0 ? (
+          <section className="grid gap-3 border-t border-zinc-500/20 p-5">
+            {results.map((result) => {
+              const relevanceScore = toRelevanceScore(result.distance)
+              const relevanceClassName = cn('bg-zinc-100 text-zinc-700', {
+                'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300':
+                  relevanceScore != null && relevanceScore >= 75,
+                'bg-amber-500/15 text-amber-700 dark:text-amber-300':
+                  relevanceScore != null && relevanceScore < 75 && relevanceScore >= 60,
+              })
+              return (
+                <Card key={result.id} className="border-zinc-500/20 bg-card transition-colors hover:border-zinc-500/40">
+                  <CardHeader className="gap-2">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <CardTitle className="text-sm text-zinc-900 dark:text-zinc-50">
+                          {result.summary ? truncate(result.summary, 140) : truncate(result.content, 140)}
+                        </CardTitle>
+                        <CardDescription>{truncate(result.content, 260)}</CardDescription>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {relevanceScore != null ? (
+                          <Badge className={relevanceClassName}>{relevanceScore}% relevance</Badge>
+                        ) : null}
+                        <Badge variant="outline">{result.namespace}</Badge>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <Separator />
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-zinc-500 dark:text-zinc-400">
+                      <span className="inline-flex items-center gap-1">
+                        <Clock3 className="size-3.5" />
+                        {formatTimestamp(result.createdAt)}
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <Hash className="size-3.5" />
+                        {result.id}
+                      </span>
+                      {typeof result.distance === 'number' ? <span>distance {result.distance.toFixed(3)}</span> : null}
+                    </div>
+                    {result.tags.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {result.tags.map((tag) => (
+                          <Badge key={`${result.id}-${tag}`} variant="outline">
+                            #{tag}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </section>
+        ) : null}
       </section>
-
-      {error ? (
-        <Card className="border-destructive/30 bg-destructive/5">
-          <CardHeader>
-            <CardTitle className="text-sm text-destructive">Search failed</CardTitle>
-            <CardDescription className="text-destructive/90">{error}</CardDescription>
-          </CardHeader>
-        </Card>
-      ) : null}
-
-      {!error && hasSearched && results.length === 0 ? (
-        <Empty className="border-zinc-500/30 bg-zinc-500/5">
-          <EmptyHeader>
-            <EmptyTitle>No relevant matches found</EmptyTitle>
-            <EmptyDescription>
-              {lastQuery ? `No strong matches for "${lastQuery}".` : 'No strong matches for this query.'}
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : null}
-
-      {!error && results.length > 0 ? (
-        <section className="grid gap-3">
-          {results.map((result) => {
-            const relevanceScore = toRelevanceScore(result.distance)
-            const relevanceClassName = cn('bg-zinc-100 text-zinc-700', {
-              'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300':
-                relevanceScore != null && relevanceScore >= 75,
-              'bg-amber-500/15 text-amber-700 dark:text-amber-300':
-                relevanceScore != null && relevanceScore < 75 && relevanceScore >= 60,
-            })
-            return (
-              <Card
-                key={result.id}
-                className="border-zinc-500/20 bg-card/80 transition-colors hover:border-zinc-500/40"
-              >
-                <CardHeader className="gap-2">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <CardTitle className="text-sm text-zinc-900 dark:text-zinc-50">
-                        {result.summary ? truncate(result.summary, 140) : truncate(result.content, 140)}
-                      </CardTitle>
-                      <CardDescription>{truncate(result.content, 260)}</CardDescription>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {relevanceScore != null ? (
-                        <Badge className={relevanceClassName}>{relevanceScore}% relevance</Badge>
-                      ) : null}
-                      <Badge variant="outline">{result.namespace}</Badge>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <Separator />
-                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-zinc-500 dark:text-zinc-400">
-                    <span className="inline-flex items-center gap-1">
-                      <Clock3 className="size-3.5" />
-                      {formatTimestamp(result.createdAt)}
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <Hash className="size-3.5" />
-                      {result.id}
-                    </span>
-                    {typeof result.distance === 'number' ? <span>distance {result.distance.toFixed(3)}</span> : null}
-                  </div>
-                  {result.tags.length > 0 ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      {result.tags.map((tag) => (
-                        <Badge key={`${result.id}-${tag}`} variant="outline">
-                          #{tag}
-                        </Badge>
-                      ))}
-                    </div>
-                  ) : null}
-                </CardContent>
-              </Card>
-            )
-          })}
-        </section>
-      ) : null}
     </main>
   )
 }
