@@ -4,15 +4,15 @@ metadata:
   name: torghut-ws-config
   namespace: torghut
 data:
-  ALPACA_MARKET_TYPE: "crypto"
+  ALPACA_MARKET_TYPE: "equity"
   ALPACA_CRYPTO_LOCATION: "us"
   ALPACA_FEED: "iex"
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_TRADE_STREAM_URL: "wss://paper-api.alpaca.markets/stream"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
-  JANGAR_SYMBOLS_URL: "http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=crypto"
+  JANGAR_SYMBOLS_URL: "http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity"
   # Fallback so the ws forwarder can become ready if Jangar has no ready endpoints.
-  SYMBOLS: "BTC/USD,ETH/USD,SOL/USD"
+  SYMBOLS: "ARM,CRWD,GOOG,LRCX,MSFT,MU,NVDA,SNDK,TSM"
   SYMBOLS_POLL_INTERVAL_MS: "30000"
   SUBSCRIBE_BATCH_SIZE: "200"
   SHARD_COUNT: "1"
