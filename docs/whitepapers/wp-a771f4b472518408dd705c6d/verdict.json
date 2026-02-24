@@ -1,0 +1,32 @@
+{
+  "run_id": "wp-a771f4b472518408dd705c6d",
+  "verdict": "conditional_implement",
+  "score": 0.65,
+  "confidence": 0.74,
+  "decision_policy": "whitepaper_v1",
+  "gating": {
+    "full_paper_review_completed": true,
+    "implementation_ready_design_doc_present": true,
+    "machine_readable_artifacts_present": true,
+    "theory_assumption_risk": "high",
+    "empirical_rigor": "medium_low",
+    "external_validity": "low",
+    "recommended_mode": "shadow_and_paper_trading_only"
+  },
+  "rationale": "The architecture is practical for staged self-improvement workflows, but immediate production adoption is not justified by current evidence. Theoretical guarantees rely on assumptions that are not validated for deployment conditions, and empirical support is directional with limited breadth.",
+  "rejection_reasons": [
+    "Reject immediate full-production rollout because key theoretical assumptions (implicit Bayesian inference and pessimistic transfer) are not validated for the target market regime.",
+    "Reject direct live-capital promotion because reported experiments are narrow (single market, 2023 horizon) with limited quantitative ablations in the main text.",
+    "Reject uncontrolled deployment without explicit cost-aware risk controls (slippage, turnover, drawdown, exposure constraints)."
+  ],
+  "recommendations": [
+    "Implement the two-loop architecture in shadow mode first, with full artifact capture and reproducibility metadata.",
+    "Add deterministic promotion gates based on walk-forward robustness and cost-aware metrics.",
+    "Run controlled ablations for inner loop, outer loop, and retrieval contribution before paper-trading promotion.",
+    "Introduce KB governance policies (deduplication, scoring, decay, provenance hashing).",
+    "Require human review sign-off for any transition from paper trading to live execution."
+  ],
+  "requires_followup": true,
+  "approved_by": null,
+  "approved_at": null
+}
