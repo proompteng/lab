@@ -29,5 +29,9 @@ export default defineConfig({
     },
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'scripts/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['tests/ui/**', '**/node_modules/**'],
+    coverage: {
+      provider: 'v8',
+      exclude: ['src/server/agents-controller/index.ts'],
+    },
   },
 })

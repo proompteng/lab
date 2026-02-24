@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { createHash, createPrivateKey, createSign } from 'node:crypto'
 
 import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
-
+import { Context, Effect, Layer, ManagedRuntime } from 'effect'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { startResourceWatch } from '~/server/kube-watch'
 import {
@@ -17,6 +17,24 @@ import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { createPrimitivesStore } from '~/server/primitives-store'
 import { shouldApplyStatus } from '~/server/status-utils'
+import {
+  buildArtifactsLimitMessage,
+  limitAgentRunStatusArtifacts,
+  resolveAgentRunArtifactsLimitConfig,
+} from './agentrun-artifacts'
+import { deriveStandardConditionUpdates, normalizeConditions, upsertCondition } from './conditions'
+import {
+  markAgentsControllerStarted,
+  markAgentsControllerStartFailed,
+  requestAgentsControllerStart,
+  requestAgentsControllerStop,
+} from './lifecycle-machine'
+import {
+  type AgentsControllerMutableState,
+  type CrdCheckState,
+  createMutableState,
+  type RateBucket,
+} from './mutable-state'
 
 const DEFAULT_NAMESPACES = ['agents']
 const DEFAULT_CONCURRENCY = {
@@ -54,8 +72,6 @@ const DEFAULT_RUNNER_JOB_TTL_SECONDS = 600
 const DEFAULT_RUNNER_LOG_RETENTION_SECONDS = 7 * 24 * 60 * 60
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
 const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
-const DEFAULT_AGENTRUN_ARTIFACTS_MAX = 50
-const AGENTRUN_ARTIFACT_URL_MAX_LENGTH = 2048
 const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
 const MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 30
 const QUEUED_PHASES = new Set(['pending', 'queued', 'progressing', 'inprogress'])
@@ -89,19 +105,11 @@ const resolveRequiredCrds = () => {
   return [...BASE_REQUIRED_CRDS.slice(0, 5), VCS_PROVIDER_CRD, ...BASE_REQUIRED_CRDS.slice(5)]
 }
 
-type CrdCheckState = {
-  ok: boolean
-  missing: string[]
-  checkedAt: string
-}
-
 type ControllerHealthState = {
   started: boolean
   crdCheckState: CrdCheckState | null
   namespaces: string[] | null
 }
-
-type RateBucket = { count: number; resetAt: number }
 
 type RepoConcurrencyConfig = {
   enabled: boolean
@@ -120,38 +128,7 @@ const controllerState = (() => {
   return initial
 })()
 
-const controllerRateState = {
-  cluster: { count: 0, resetAt: 0 } as RateBucket,
-  perNamespace: new Map<string, RateBucket>(),
-  perRepo: new Map<string, RateBucket>(),
-}
-
-let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
-
-type Condition = {
-  type: string
-  status: 'True' | 'False' | 'Unknown'
-  reason?: string
-  message?: string
-  lastTransitionTime: string
-}
-
 type RuntimeRef = Record<string, unknown>
-
-type AgentRunArtifactsLimitConfig = {
-  maxEntries: number
-  strict: boolean
-  urlMaxLength: number
-}
-
-type AgentRunArtifactsLimitResult = {
-  artifacts: Array<Record<string, unknown>>
-  trimmedCount: number
-  strippedUrlCount: number
-  droppedCount: number
-  strictViolation: boolean
-  reasons: string[]
-}
 
 type VcsMode = 'read-write' | 'read-only' | 'none'
 type VcsAuthMethod = 'token' | 'app' | 'ssh' | 'none'
@@ -251,17 +228,10 @@ type ControllerState = {
   namespaces: Map<string, NamespaceState>
 }
 
-let started = controllerState.started
-let starting = false
-let lifecycleToken = 0
-let reconciling = false
-let temporalClientPromise: ReturnType<typeof createTemporalClient> | null = null
-let watchHandles: Array<{ stop: () => void }> = []
-let _controllerState: ControllerState | null = null
-const namespaceQueues = new Map<string, Promise<void>>()
-const githubAppTokenCache = new Map<string, { token: string; expiresAt: number; refreshAfter: number }>()
-let primitivesStoreRef: ReturnType<typeof createPrimitivesStore> | null = null
-let lastIdempotencyPruneAtMs = 0
+let runtimeMutableState: AgentsControllerMutableState<ControllerState> = createMutableState<ControllerState>({
+  started: controllerState.started,
+  crdCheckState: controllerState.crdCheckState,
+})
 
 const nowIso = () => new Date().toISOString()
 
@@ -350,13 +320,13 @@ const resolveAgentRunIdempotencyRetentionDays = () =>
   parseNumberEnv(process.env.JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS, DEFAULT_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS, 1)
 
 const getPrimitivesStore = async () => {
-  if (primitivesStoreRef) return primitivesStoreRef
+  if (runtimeMutableState.primitivesStoreRef) return runtimeMutableState.primitivesStoreRef
   try {
-    primitivesStoreRef = createPrimitivesStore()
-    await primitivesStoreRef.ready
-    return primitivesStoreRef
+    runtimeMutableState.primitivesStoreRef = createPrimitivesStore()
+    await runtimeMutableState.primitivesStoreRef.ready
+    return runtimeMutableState.primitivesStoreRef
   } catch (error) {
-    primitivesStoreRef = null
+    runtimeMutableState.primitivesStoreRef = null
     console.warn('[jangar] failed to initialize primitives store (idempotency disabled)', error)
     return null
   }
@@ -465,7 +435,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
     missing: [...missing, ...forbidden],
     checkedAt: nowIso(),
   }
-  _crdCheckState = state
+  runtimeMutableState.crdCheckState = state
   controllerState.crdCheckState = state
   if (!state.ok) {
     if (missing.length > 0) {
@@ -490,130 +460,6 @@ export const getAgentsControllerHealth = () => ({
   missingCrds: controllerState.crdCheckState?.missing ?? [],
   lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
 })
-
-const normalizeConditions = (raw: unknown): Condition[] => {
-  if (!Array.isArray(raw)) return []
-  const output: Condition[] = []
-  for (const item of raw) {
-    const record = asRecord(item)
-    if (!record) continue
-    const type = asString(record.type)
-    const status = asString(record.status)
-    if (!type || !status) continue
-    const reason = asString(record.reason)?.trim() || 'Reconciled'
-    const message = asString(record.message) ?? ''
-    output.push({
-      type,
-      status: status === 'True' ? 'True' : status === 'False' ? 'False' : 'Unknown',
-      reason,
-      message,
-      lastTransitionTime: asString(record.lastTransitionTime) ?? nowIso(),
-    })
-  }
-  return output
-}
-
-const normalizeConditionUpdate = (update: Omit<Condition, 'lastTransitionTime'>) => ({
-  ...update,
-  reason: update.reason?.trim() || 'Reconciled',
-  message: update.message ?? '',
-})
-
-const upsertCondition = (conditions: Condition[], update: Omit<Condition, 'lastTransitionTime'>): Condition[] => {
-  const next = [...conditions]
-  const normalized = normalizeConditionUpdate(update)
-  const index = next.findIndex((cond) => cond.type === normalized.type)
-  if (index === -1) {
-    next.push({ ...normalized, lastTransitionTime: nowIso() })
-    return next
-  }
-  const existing = next[index]
-  if (
-    existing.status !== normalized.status ||
-    existing.reason !== normalized.reason ||
-    existing.message !== normalized.message
-  ) {
-    next[index] = { ...existing, ...normalized, lastTransitionTime: nowIso() }
-  }
-  return next
-}
-
-const normalizeConditionStatus = (status?: string): Condition['status'] =>
-  status === 'True' ? 'True' : status === 'False' ? 'False' : 'Unknown'
-
-const findCondition = (conditions: Condition[], types: string[]) =>
-  conditions.find((condition) => types.includes(condition.type))
-
-const phaseCategory = (phase: string | null) => (phase ?? '').toLowerCase()
-
-const deriveStandardConditionUpdates = (conditions: Condition[], phase: string | null) => {
-  const normalizedPhase = phaseCategory(phase)
-  const failureCondition = findCondition(conditions, ['Failed', 'InvalidSpec', 'Unreachable', 'Cancelled'])
-  const runningCondition = findCondition(conditions, ['Running', 'InProgress', 'Progressing'])
-  const successCondition = findCondition(conditions, ['Succeeded', 'Completed'])
-  const readyCondition = findCondition(conditions, ['Ready'])
-
-  const phaseReady = ['ready', 'active', 'succeeded', 'success', 'completed'].includes(normalizedPhase)
-  const phaseProgressing = ['pending', 'running', 'progressing', 'inprogress', 'queued'].includes(normalizedPhase)
-  const phaseDegraded = ['failed', 'invalid', 'cancelled', 'error'].includes(normalizedPhase)
-
-  let readyStatus: Condition['status'] = 'Unknown'
-  let progressingStatus: Condition['status'] = 'Unknown'
-  let degradedStatus: Condition['status'] = 'Unknown'
-  let readyReason = readyCondition?.reason
-  let readyMessage = readyCondition?.message
-  let progressingReason = runningCondition?.reason
-  const progressingMessage = runningCondition?.message
-  let degradedReason = failureCondition?.reason
-  let degradedMessage = failureCondition?.message
-
-  if (phaseDegraded || failureCondition?.status === 'True') {
-    degradedStatus = 'True'
-    progressingStatus = 'False'
-    readyStatus = 'False'
-    degradedReason = degradedReason ?? 'Degraded'
-  } else if (phaseProgressing || runningCondition?.status === 'True') {
-    progressingStatus = 'True'
-    degradedStatus = 'False'
-    readyStatus = 'False'
-    progressingReason = progressingReason ?? 'Progressing'
-  } else if (phaseReady || successCondition?.status === 'True' || readyCondition?.status === 'True') {
-    readyStatus = 'True'
-    progressingStatus = 'False'
-    degradedStatus = 'False'
-    readyReason = readyReason ?? successCondition?.reason ?? 'Ready'
-    readyMessage = readyMessage ?? successCondition?.message
-  } else if (readyCondition?.status === 'False') {
-    readyStatus = 'False'
-    progressingStatus = 'False'
-    degradedStatus = 'True'
-    degradedReason = degradedReason ?? readyReason ?? 'NotReady'
-    degradedMessage = degradedMessage ?? readyMessage
-  } else if (readyCondition) {
-    readyStatus = normalizeConditionStatus(readyCondition.status)
-  }
-
-  return [
-    {
-      type: 'Ready',
-      status: readyStatus,
-      reason: readyReason,
-      message: readyMessage,
-    },
-    {
-      type: 'Progressing',
-      status: progressingStatus,
-      reason: progressingReason ?? 'Progressing',
-      message: progressingMessage,
-    },
-    {
-      type: 'Degraded',
-      status: degradedStatus,
-      reason: degradedReason ?? 'Degraded',
-      message: degradedMessage,
-    },
-  ] satisfies Array<Omit<Condition, 'lastTransitionTime'>>
-}
 
 const setStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
@@ -716,115 +562,6 @@ const setStatus = async (
 }
 
 const parseRuntimeRef = (raw: unknown): RuntimeRef | null => asRecord(raw) ?? null
-
-const resolveAgentRunArtifactsLimitConfig = (
-  overrides: Partial<AgentRunArtifactsLimitConfig> = {},
-): AgentRunArtifactsLimitConfig => {
-  const parsedMax = parseOptionalNumber(process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX)
-  const maxFromEnv =
-    parsedMax === undefined || !Number.isFinite(parsedMax) || parsedMax < 0 ? DEFAULT_AGENTRUN_ARTIFACTS_MAX : parsedMax
-
-  const maxEntries = Math.min(
-    DEFAULT_AGENTRUN_ARTIFACTS_MAX,
-    Math.max(0, Math.floor(overrides.maxEntries ?? maxFromEnv)),
-  )
-  const strict = overrides.strict ?? parseBooleanEnv(process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT, false)
-  return {
-    maxEntries,
-    strict,
-    urlMaxLength: overrides.urlMaxLength ?? AGENTRUN_ARTIFACT_URL_MAX_LENGTH,
-  }
-}
-
-const normalizeArtifactString = (value: unknown) => {
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : null
-}
-
-const limitAgentRunStatusArtifacts = (
-  raw: unknown,
-  config: AgentRunArtifactsLimitConfig,
-): AgentRunArtifactsLimitResult => {
-  const artifacts = Array.isArray(raw) ? raw : []
-  const parsed: Array<Record<string, unknown>> = []
-  let strippedUrlCount = 0
-  let droppedCount = 0
-  let strictViolation = false
-  const reasons = new Set<string>()
-
-  for (const item of artifacts) {
-    const record = asRecord(item)
-    if (!record) continue
-    const name = normalizeArtifactString(record.name)
-    if (!name) {
-      droppedCount += 1
-      reasons.add('MissingName')
-      continue
-    }
-    const path = normalizeArtifactString(record.path)
-    const key = normalizeArtifactString(record.key)
-    const url = normalizeArtifactString(record.url)
-
-    const next: Record<string, unknown> = { name }
-    if (path) next.path = path
-    if (key) next.key = key
-
-    if (url) {
-      const isInline = url.startsWith('data:')
-      const tooLong = url.length > config.urlMaxLength
-      if (isInline || tooLong) {
-        strippedUrlCount += 1
-        reasons.add(isInline ? 'InlineUrlDisallowed' : 'UrlTooLong')
-        if (config.strict) strictViolation = true
-      } else {
-        next.url = url
-      }
-    }
-
-    parsed.push(next)
-  }
-
-  if (parsed.length <= config.maxEntries) {
-    return {
-      artifacts: parsed,
-      trimmedCount: 0,
-      strippedUrlCount,
-      droppedCount,
-      strictViolation,
-      reasons: Array.from(reasons),
-    }
-  }
-
-  const overflow = config.maxEntries === 0 ? parsed.length : parsed.length - config.maxEntries
-  reasons.add('TooManyArtifacts')
-  if (config.strict) strictViolation = true
-
-  return {
-    artifacts: overflow > 0 ? parsed.slice(overflow) : parsed,
-    trimmedCount: Math.max(0, overflow),
-    strippedUrlCount,
-    droppedCount,
-    strictViolation,
-    reasons: Array.from(reasons),
-  }
-}
-
-const buildArtifactsLimitMessage = (result: AgentRunArtifactsLimitResult) => {
-  const parts: string[] = []
-  if (result.trimmedCount > 0) {
-    parts.push(`dropped ${result.trimmedCount} oldest artifact(s)`)
-  }
-  if (result.strippedUrlCount > 0) {
-    parts.push(`stripped ${result.strippedUrlCount} artifact url(s)`)
-  }
-  if (result.droppedCount > 0) {
-    parts.push(`dropped ${result.droppedCount} invalid artifact(s)`)
-  }
-  const reasons = result.reasons.length > 0 ? ` (${result.reasons.join(', ')})` : ''
-  if (parts.length === 0) return `artifacts within limits${reasons}`
-  return `${parts.join(', ')}${reasons}`
-}
 
 const resolveJobImage = (workload: Record<string, unknown>) =>
   asString(workload.image) ?? process.env.JANGAR_AGENT_RUNNER_IMAGE ?? process.env.JANGAR_AGENT_IMAGE ?? null
@@ -972,8 +709,8 @@ const resolvePath = (value: Record<string, unknown>, path: string) => {
 }
 
 const getTemporalClient = async () => {
-  if (!temporalClientPromise) {
-    temporalClientPromise = (async () => {
+  if (!runtimeMutableState.temporalClientPromise) {
+    runtimeMutableState.temporalClientPromise = (async () => {
       const config = await loadTemporalConfig({
         defaults: {
           host: DEFAULT_TEMPORAL_HOST,
@@ -984,7 +721,7 @@ const getTemporalClient = async () => {
       return createTemporalClient({ config })
     })()
   }
-  const { client } = await temporalClientPromise
+  const { client } = await runtimeMutableState.temporalClientPromise
   return client
 }
 
@@ -1707,7 +1444,7 @@ const fetchGithubAppToken = async (input: {
   ttlSeconds?: number
 }) => {
   const cacheKey = `${input.apiBaseUrl}|${input.installationId}`
-  const cached = githubAppTokenCache.get(cacheKey)
+  const cached = runtimeMutableState.githubAppTokenCache.get(cacheKey)
   const now = Date.now()
   if (cached && now < cached.refreshAfter) {
     return cached.token
@@ -1760,7 +1497,7 @@ const fetchGithubAppToken = async (input: {
     Math.max(MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS * 1000, Math.floor(ttlMs * 0.1)),
   )
   const refreshAfter = Math.max(now, expiresAtMs - refreshWindowMs)
-  githubAppTokenCache.set(cacheKey, {
+  runtimeMutableState.githubAppTokenCache.set(cacheKey, {
     token,
     expiresAt: expiresAtMs,
     refreshAfter,
@@ -1769,7 +1506,7 @@ const fetchGithubAppToken = async (input: {
 }
 
 const clearGithubAppTokenCache = () => {
-  githubAppTokenCache.clear()
+  runtimeMutableState.githubAppTokenCache.clear()
 }
 
 const parseJsonEnv = (name: string) => {
@@ -1822,10 +1559,10 @@ const checkRateLimit = (bucket: RateBucket, limit: number, windowMs: number, now
 }
 
 const resetControllerRateState = () => {
-  controllerRateState.cluster.count = 0
-  controllerRateState.cluster.resetAt = 0
-  controllerRateState.perNamespace.clear()
-  controllerRateState.perRepo.clear()
+  runtimeMutableState.controllerRateState.cluster.count = 0
+  runtimeMutableState.controllerRateState.cluster.resetAt = 0
+  runtimeMutableState.controllerRateState.perNamespace.clear()
+  runtimeMutableState.controllerRateState.perRepo.clear()
 }
 
 const validateParameters = (params: Record<string, unknown>) => {
@@ -1958,14 +1695,14 @@ const resolveRepoConcurrencyLimit = (repository: string, config: RepoConcurrency
 }
 
 const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
-  const current = namespaceQueues.get(namespace) ?? Promise.resolve()
+  const current = runtimeMutableState.namespaceQueues.get(namespace) ?? Promise.resolve()
   const next = current
     .catch(() => undefined)
     .then(task)
     .catch((error) => {
       console.warn('[jangar] agents controller task failed', error)
     })
-  namespaceQueues.set(namespace, next)
+  runtimeMutableState.namespaceQueues.set(namespace, next)
 }
 
 const buildRuntimeRef = (
@@ -2567,7 +2304,7 @@ const checkControllerRateLimits = (namespace: string, repository: string | null)
   const windowMs = limits.windowSeconds * 1000
   const now = Date.now()
 
-  const clusterResult = checkRateLimit(controllerRateState.cluster, limits.cluster, windowMs, now)
+  const clusterResult = checkRateLimit(runtimeMutableState.controllerRateState.cluster, limits.cluster, windowMs, now)
   if (!clusterResult.ok) {
     return {
       ok: false,
@@ -2577,7 +2314,7 @@ const checkControllerRateLimits = (namespace: string, repository: string | null)
     } as RateLimitDecision
   }
 
-  const namespaceBucket = getRateBucket(controllerRateState.perNamespace, namespace)
+  const namespaceBucket = getRateBucket(runtimeMutableState.controllerRateState.perNamespace, namespace)
   const namespaceResult = checkRateLimit(namespaceBucket, limits.perNamespace, windowMs, now)
   if (!namespaceResult.ok) {
     return {
@@ -2590,7 +2327,7 @@ const checkControllerRateLimits = (namespace: string, repository: string | null)
 
   if (repository) {
     const repoKey = normalizeRepository(repository)
-    const repoBucket = getRateBucket(controllerRateState.perRepo, repoKey)
+    const repoBucket = getRateBucket(runtimeMutableState.controllerRateState.perRepo, repoKey)
     const repoResult = checkRateLimit(repoBucket, limits.perRepo, windowMs, now)
     if (!repoResult.ok) {
       return {
@@ -2611,7 +2348,7 @@ const buildQueueCounts = (
   normalizedRepo: string,
   namespaceRuns: Record<string, unknown>[],
 ) => {
-  const state = _controllerState
+  const state = runtimeMutableState.controllerSnapshot
   let queuedNamespace = 0
   let queuedCluster = 0
   let queuedRepo = 0
@@ -5992,18 +5729,18 @@ const _reconcileAll = async (
   namespaces: string[],
   concurrency: ReturnType<typeof parseConcurrency>,
 ) => {
-  if (reconciling) return
-  reconciling = true
+  if (runtimeMutableState.reconciling) return
+  runtimeMutableState.reconciling = true
   try {
     if (isAgentRunIdempotencyEnabled()) {
       const now = Date.now()
-      if (now - lastIdempotencyPruneAtMs >= 60 * 60 * 1000) {
+      if (now - runtimeMutableState.lastIdempotencyPruneAtMs >= 60 * 60 * 1000) {
         const store = await getPrimitivesStore()
         if (store) {
           try {
             const retentionDays = resolveAgentRunIdempotencyRetentionDays()
             await store.pruneAgentRunIdempotencyKeys(retentionDays)
-            lastIdempotencyPruneAtMs = now
+            runtimeMutableState.lastIdempotencyPruneAtMs = now
           } catch (error) {
             console.warn('[jangar] failed to prune AgentRun idempotency keys', error)
           }
@@ -6016,7 +5753,7 @@ const _reconcileAll = async (
   } catch (error) {
     console.warn('[jangar] agents controller failed', error)
   } finally {
-    reconciling = false
+    runtimeMutableState.reconciling = false
   }
 }
 
@@ -6194,23 +5931,27 @@ const startNamespaceWatches = (
   )
 }
 
-export const startAgentsController = async () => {
-  if (started || starting) return
-  starting = true
-  lifecycleToken += 1
-  const token = lifecycleToken
+const startAgentsControllerInternal = async () => {
+  const startAccepted = requestAgentsControllerStart(runtimeMutableState.lifecycleActor)
+  if (!startAccepted) return
+  runtimeMutableState.starting = true
+  runtimeMutableState.started = false
+  runtimeMutableState.lifecycleToken += 1
+  const token = runtimeMutableState.lifecycleToken
   let featureEnabled = false
   try {
     featureEnabled = await shouldStartWithFeatureFlag()
   } catch (error) {
-    if (lifecycleToken === token) {
-      starting = false
+    if (runtimeMutableState.lifecycleToken === token) {
+      runtimeMutableState.starting = false
+      markAgentsControllerStartFailed(runtimeMutableState.lifecycleActor)
     }
     throw error
   }
   if (!featureEnabled) {
-    if (lifecycleToken === token) {
-      starting = false
+    if (runtimeMutableState.lifecycleToken === token) {
+      runtimeMutableState.starting = false
+      markAgentsControllerStartFailed(runtimeMutableState.lifecycleActor)
     }
     return
   }
@@ -6219,7 +5960,8 @@ export const startAgentsController = async () => {
     crdsReady = await checkCrds()
   } catch (error) {
     console.error('[jangar] agents controller failed to validate namespace scope', error)
-    starting = false
+    runtimeMutableState.starting = false
+    markAgentsControllerStartFailed(runtimeMutableState.lifecycleActor)
     if (error instanceof Error && error.name === 'NamespaceScopeConfigError') {
       process.exitCode = 1
     }
@@ -6227,13 +5969,14 @@ export const startAgentsController = async () => {
   }
   if (!crdsReady.ok) {
     console.error('[jangar] agents controller will not start without CRDs')
-    starting = false
+    runtimeMutableState.starting = false
+    markAgentsControllerStartFailed(runtimeMutableState.lifecycleActor)
     return
   }
   const handles: Array<{ stop: () => void }> = []
   try {
     const namespaces = await resolveNamespaces()
-    if (lifecycleToken !== token) return
+    if (runtimeMutableState.lifecycleToken !== token) return
     controllerState.namespaces = namespaces
     console.info('[jangar] agents controller namespace scope:', JSON.stringify(namespaces))
     const kube = createKubernetesClient()
@@ -6241,47 +5984,103 @@ export const startAgentsController = async () => {
     const state: ControllerState = { namespaces: new Map() }
     for (const namespace of namespaces) {
       await seedNamespaceState(kube, namespace, state, concurrency)
-      if (lifecycleToken !== token) return
+      if (runtimeMutableState.lifecycleToken !== token) return
     }
     for (const namespace of namespaces) {
       startNamespaceWatches(kube, namespace, state, concurrency, handles)
-      if (lifecycleToken !== token) return
+      if (runtimeMutableState.lifecycleToken !== token) return
     }
-    if (lifecycleToken !== token) return
-    watchHandles = handles
-    _controllerState = state
-    started = true
+    if (runtimeMutableState.lifecycleToken !== token) return
+    runtimeMutableState.watchHandles = handles
+    runtimeMutableState.controllerSnapshot = state
+    runtimeMutableState.started = true
+    markAgentsControllerStarted(runtimeMutableState.lifecycleActor)
     controllerState.started = true
   } catch (error) {
     console.error('[jangar] agents controller failed to start', error)
+    if (runtimeMutableState.lifecycleToken === token) {
+      markAgentsControllerStartFailed(runtimeMutableState.lifecycleActor)
+    }
     if (error instanceof Error && error.name === 'NamespaceScopeConfigError') {
       process.exitCode = 1
       throw error
     }
   } finally {
-    if (lifecycleToken !== token) {
+    if (runtimeMutableState.lifecycleToken !== token) {
       for (const handle of handles) {
         handle.stop()
       }
     }
-    if (lifecycleToken === token) {
-      starting = false
+    if (runtimeMutableState.lifecycleToken === token) {
+      runtimeMutableState.starting = false
+      if (!runtimeMutableState.started) {
+        markAgentsControllerStartFailed(runtimeMutableState.lifecycleActor)
+      }
     }
   }
 }
 
-export const stopAgentsController = () => {
-  lifecycleToken += 1
-  starting = false
-  for (const handle of watchHandles) {
+const stopAgentsControllerInternal = () => {
+  requestAgentsControllerStop(runtimeMutableState.lifecycleActor)
+  runtimeMutableState.lifecycleToken += 1
+  runtimeMutableState.starting = false
+  for (const handle of runtimeMutableState.watchHandles) {
     handle.stop()
   }
-  watchHandles = []
-  _controllerState = null
-  namespaceQueues.clear()
-  started = false
+  runtimeMutableState.watchHandles = []
+  runtimeMutableState.controllerSnapshot = null
+  runtimeMutableState.namespaceQueues.clear()
+  runtimeMutableState.started = false
   controllerState.started = false
   controllerState.namespaces = null
+}
+
+export type AgentsControllerHealth = ReturnType<typeof getAgentsControllerHealth>
+
+export type AgentsControllerService = {
+  start: Effect.Effect<void, Error>
+  stop: Effect.Effect<void, never>
+  getHealth: Effect.Effect<AgentsControllerHealth, never>
+}
+
+export class AgentsController extends Context.Tag('AgentsController')<AgentsController, AgentsControllerService>() {}
+
+export const AgentsControllerLive = Layer.scoped(
+  AgentsController,
+  Effect.gen(function* () {
+    runtimeMutableState = createMutableState<ControllerState>({
+      started: controllerState.started,
+      crdCheckState: controllerState.crdCheckState,
+    })
+    yield* Effect.addFinalizer(() => Effect.sync(() => stopAgentsControllerInternal()))
+    return {
+      start: Effect.tryPromise({
+        try: () => startAgentsControllerInternal(),
+        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+      }),
+      stop: Effect.sync(() => {
+        stopAgentsControllerInternal()
+      }),
+      getHealth: Effect.sync(() => getAgentsControllerHealth()),
+    } satisfies AgentsControllerService
+  }),
+)
+
+const agentsControllerRuntime = ManagedRuntime.make(AgentsControllerLive)
+
+export const startAgentsControllerEffect = Effect.flatMap(AgentsController, (service) => service.start)
+export const stopAgentsControllerEffect = Effect.flatMap(AgentsController, (service) => service.stop)
+export const getAgentsControllerHealthEffect = Effect.flatMap(AgentsController, (service) => service.getHealth)
+
+export const runAgentsControllerEffect = <A, E>(effect: Effect.Effect<A, E, AgentsController>): Promise<A> =>
+  agentsControllerRuntime.runPromise(effect)
+
+export const startAgentsController = async () => {
+  await startAgentsControllerInternal()
+}
+
+export const stopAgentsController = () => {
+  stopAgentsControllerInternal()
 }
 
 export const __test = {
