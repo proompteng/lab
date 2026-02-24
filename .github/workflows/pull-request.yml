@@ -343,7 +343,7 @@ jobs:
         run: bun run lint:oxlint
 
       - name: Format check
-        run: bunx oxfmt --check apps/kitty-krew
+        run: bunx oxfmt --check --no-error-on-unmatched-pattern "apps/kitty-krew/**/*.{js,jsx,mjs,cjs,ts,tsx}"
 
       - name: Type check
         working-directory: apps/kitty-krew
