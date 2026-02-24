@@ -6,8 +6,9 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Optional, cast
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 
 from ..config import settings
 from .clickhouse import normalize_symbol
@@ -29,6 +30,65 @@ class UniverseResolution:
     reason: str
     fetched_at: datetime | None
     cache_age_seconds: int | None
+
+
+class _HttpRequest:
+    def __init__(
+        self,
+        *,
+        full_url: str,
+        method: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.full_url = full_url
+        self.method = method
+        self.data: bytes | None = None
+        self._headers = dict(headers or {})
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return dict(self._headers)
+
+
+class _HttpResponseHandle:
+    def __init__(self, connection: HTTPConnection | HTTPSConnection, response: Any) -> None:
+        self._connection = connection
+        self._response = response
+        self.status = int(getattr(response, 'status', 200))
+
+    def read(self) -> bytes:
+        return cast(bytes, self._response.read())
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self) -> "_HttpResponseHandle":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        self.close()
+        return False
+
+
+def urlopen(request: _HttpRequest, timeout: int) -> _HttpResponseHandle:
+    parsed = urlsplit(request.full_url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {'http', 'https'}:
+        raise ValueError(f'unsupported_url_scheme:{scheme or "missing"}')
+    if not parsed.hostname:
+        raise ValueError('missing_url_host')
+    request_path = parsed.path or '/'
+    if parsed.query:
+        request_path = f'{request_path}?{parsed.query}'
+    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+    connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout, 1))
+    try:
+        connection.request(request.method, request_path, headers=request.headers)
+        response = connection.getresponse()
+    except Exception:
+        connection.close()
+        raise
+    return _HttpResponseHandle(connection, response)
 
 
 class UniverseResolver:
@@ -121,10 +181,33 @@ class UniverseResolver:
                 cache_age_seconds=int((now - self._cache.fetched_at).total_seconds()),
             )
 
-        request = Request(url)
+        request = _HttpRequest(
+            full_url=url,
+            method='GET',
+            headers={'accept': 'application/json'},
+        )
+        payload = ''
         try:
-            with urlopen(request, timeout=settings.trading_universe_timeout_seconds) as response:
+            with urlopen(request, settings.trading_universe_timeout_seconds) as response:
+                raw_status = getattr(response, 'status', 200)
+                status = raw_status if isinstance(raw_status, int) else 200
+                if status < 200 or status >= 300:
+                    logger.warning('Jangar symbols request failed with status=%s', status)
+                    return self._fallback_from_cache(
+                        now=now,
+                        reason='jangar_http_error',
+                    )
                 payload = response.read().decode("utf-8")
+        except ValueError as exc:
+            message = str(exc)
+            reason = 'jangar_url_invalid_scheme'
+            if message == 'missing_url_host':
+                reason = 'jangar_url_invalid_host'
+            logger.warning('Invalid Jangar symbols URL: %s', message)
+            return self._fallback_from_cache(
+                now=now,
+                reason=reason,
+            )
         except Exception as exc:
             logger.warning("Failed to fetch Jangar symbols: %s", exc)
             return self._fallback_from_cache(

@@ -108,35 +108,55 @@ def extract_rsi(payload: dict[str, Any]) -> Optional[Decimal]:
 
 
 def extract_price(payload: dict[str, Any]) -> Optional[Decimal]:
-    payload_map = payload
+    vwap_price = _extract_price_from_vwap(payload)
+    if vwap_price is not None:
+        return vwap_price
 
-    vwap = payload_map.get('vwap')
-    if isinstance(vwap, dict):
-        vwap_map = cast(dict[str, Any], vwap)
-        for key in ('session', 'w5m'):
-            if key in vwap_map:
-                value = optional_decimal(vwap_map.get(key))
-                if value is not None:
-                    return value
+    direct_price = _extract_price_from_direct_keys(payload)
+    if direct_price is not None:
+        return direct_price
 
-    for key in ('price', 'close', 'c', 'last', 'vwap', 'vwap_session', 'vwap_w5m'):
-        if key in payload_map:
-            return optional_decimal(payload_map.get(key))
+    return _extract_price_from_imbalance(payload)
 
-    imbalance = payload_map.get('imbalance')
-    if isinstance(imbalance, dict):
-        imbalance_payload = cast(dict[str, Any], imbalance)
-        bid_px = imbalance_payload.get('bid_px')
-        ask_px = imbalance_payload.get('ask_px')
-        if bid_px is not None and ask_px is not None:
-            try:
-                bid = optional_decimal(bid_px)
-                ask = optional_decimal(ask_px)
-                if bid is not None and ask is not None:
-                    return (bid + ask) / 2
-            except (TypeError, ArithmeticError):
-                pass
+
+def _extract_price_from_vwap(payload: dict[str, Any]) -> Decimal | None:
+    vwap = payload.get('vwap')
+    if not isinstance(vwap, dict):
+        return None
+    vwap_map = cast(dict[str, Any], vwap)
+    for key in ('session', 'w5m'):
+        if key not in vwap_map:
+            continue
+        value = optional_decimal(vwap_map.get(key))
+        if value is not None:
+            return value
     return None
+
+
+def _extract_price_from_direct_keys(payload: dict[str, Any]) -> Decimal | None:
+    for key in ('price', 'close', 'c', 'last', 'vwap', 'vwap_session', 'vwap_w5m'):
+        if key in payload:
+            return optional_decimal(payload.get(key))
+    return None
+
+
+def _extract_price_from_imbalance(payload: dict[str, Any]) -> Decimal | None:
+    imbalance = payload.get('imbalance')
+    if not isinstance(imbalance, dict):
+        return None
+    imbalance_payload = cast(dict[str, Any], imbalance)
+    bid_px = imbalance_payload.get('bid_px')
+    ask_px = imbalance_payload.get('ask_px')
+    if bid_px is None or ask_px is None:
+        return None
+    try:
+        bid = optional_decimal(bid_px)
+        ask = optional_decimal(ask_px)
+    except (TypeError, ArithmeticError):
+        return None
+    if bid is None or ask is None:
+        return None
+    return (bid + ask) / 2
 
 
 def extract_volatility(payload: dict[str, Any]) -> Optional[Decimal]:

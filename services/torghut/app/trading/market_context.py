@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Optional, cast
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode, urlsplit
 
 from ..config import settings
 from .llm.schema import MarketContextBundle
@@ -44,6 +44,65 @@ class MarketContextStatus:
     risk_flags: list[str]
 
 
+class _HttpRequest:
+    def __init__(
+        self,
+        *,
+        full_url: str,
+        method: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.full_url = full_url
+        self.method = method
+        self.data: bytes | None = None
+        self._headers = dict(headers or {})
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return dict(self._headers)
+
+
+class _HttpResponseHandle:
+    def __init__(self, connection: HTTPConnection | HTTPSConnection, response: Any) -> None:
+        self._connection = connection
+        self._response = response
+        self.status = int(getattr(response, 'status', 200))
+
+    def read(self) -> bytes:
+        return cast(bytes, self._response.read())
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self) -> "_HttpResponseHandle":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        self.close()
+        return False
+
+
+def urlopen(request: _HttpRequest, timeout: int) -> _HttpResponseHandle:
+    parsed = urlsplit(request.full_url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {'http', 'https'}:
+        raise RuntimeError(f'market_context_invalid_url_scheme:{scheme or "missing"}')
+    if not parsed.hostname:
+        raise RuntimeError('market_context_invalid_url_host')
+    request_path = parsed.path or '/'
+    if parsed.query:
+        request_path = f'{request_path}?{parsed.query}'
+    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+    connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout, 1))
+    try:
+        connection.request(request.method, request_path, headers=request.headers)
+        response = connection.getresponse()
+    except Exception:
+        connection.close()
+        raise
+    return _HttpResponseHandle(connection, response)
+
+
 class MarketContextClient:
     """HTTP client to fetch Jangar market-context bundles."""
 
@@ -58,9 +117,19 @@ class MarketContextClient:
         query = urlencode({"symbol": symbol})
         url = self._base_url
         delimiter = "&" if "?" in url else "?"
-        request = Request(f"{url}{delimiter}{query}", headers={"accept": "application/json"})
-        with urlopen(request, timeout=self._timeout_seconds) as response:
-            payload = response.read().decode("utf-8")
+        request_url = f'{url}{delimiter}{query}'
+        request = _HttpRequest(
+            full_url=request_url,
+            method='GET',
+            headers={'accept': 'application/json'},
+        )
+        payload = ''
+        with urlopen(request, self._timeout_seconds) as response:
+            raw_status = getattr(response, 'status', 200)
+            status = raw_status if isinstance(raw_status, int) else 200
+            if status < 200 or status >= 300:
+                raise RuntimeError(f'market_context_http_{status}')
+            payload = response.read().decode('utf-8')
         data = json.loads(payload)
         if not isinstance(data, dict):
             raise RuntimeError("market_context_invalid_payload")

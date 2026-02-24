@@ -63,7 +63,35 @@ class OrderFeedIngestor:
         self._disabled_logged = False
 
     def ingest_once(self, session: Session) -> dict[str, int]:
-        counters = {
+        counters = self._new_counters()
+        if not self._preconditions_met():
+            return counters
+
+        consumer = self._ensure_consumer()
+        if consumer is None:
+            counters['consumer_errors_total'] += 1
+            return counters
+
+        records = self._poll_records(consumer=consumer, counters=counters)
+        if not records:
+            return counters
+
+        inserted_any = False
+        for record in records:
+            inserted_any = self._ingest_record(
+                session=session,
+                record=record,
+                counters=counters,
+            ) or inserted_any
+
+        if inserted_any:
+            session.commit()
+            _commit_consumer(consumer)
+        return counters
+
+    @staticmethod
+    def _new_counters() -> dict[str, int]:
+        return {
             'messages_total': 0,
             'events_persisted_total': 0,
             'duplicates_total': 0,
@@ -73,19 +101,17 @@ class OrderFeedIngestor:
             'consumer_errors_total': 0,
         }
 
+    def _preconditions_met(self) -> bool:
         if not settings.trading_order_feed_enabled:
-            return counters
-        if not settings.trading_order_feed_bootstrap_servers:
-            if not self._disabled_logged:
-                logger.info('Order-feed ingestion enabled but TRADING_ORDER_FEED_BOOTSTRAP_SERVERS is not set; skipping')
-                self._disabled_logged = True
-            return counters
+            return False
+        if settings.trading_order_feed_bootstrap_servers:
+            return True
+        if not self._disabled_logged:
+            logger.info('Order-feed ingestion enabled but TRADING_ORDER_FEED_BOOTSTRAP_SERVERS is not set; skipping')
+            self._disabled_logged = True
+        return False
 
-        consumer = self._ensure_consumer()
-        if consumer is None:
-            counters['consumer_errors_total'] += 1
-            return counters
-
+    def _poll_records(self, *, consumer: Any, counters: dict[str, int]) -> list[Any]:
         try:
             polled = consumer.poll(
                 timeout_ms=settings.trading_order_feed_poll_ms,
@@ -94,50 +120,52 @@ class OrderFeedIngestor:
         except Exception as exc:  # pragma: no cover - external Kafka failure
             counters['consumer_errors_total'] += 1
             logger.warning('Order-feed poll failed: %s', exc)
-            return counters
+            return []
+        return _flatten_poll_records(polled)
 
-        records = _flatten_poll_records(polled)
-        if not records:
-            return counters
+    def _ingest_record(
+        self,
+        *,
+        session: Session,
+        record: Any,
+        counters: dict[str, int],
+    ) -> bool:
+        counters['messages_total'] += 1
+        normalized = normalize_order_feed_record(
+            record,
+            default_topic=settings.trading_order_feed_topic,
+            default_account_label=settings.trading_account_label,
+        )
+        if normalized.event is None:
+            counters['missing_fields_total'] += 1
+            if normalized.drop_reason:
+                logger.debug('Dropped order-feed message reason=%s', normalized.drop_reason)
+            return False
 
-        inserted_any = False
-        for record in records:
-            counters['messages_total'] += 1
-            normalized = normalize_order_feed_record(
-                record,
-                default_topic=settings.trading_order_feed_topic,
-                default_account_label=settings.trading_account_label,
-            )
-            if normalized.event is None:
-                counters['missing_fields_total'] += 1
-                if normalized.drop_reason:
-                    logger.debug('Dropped order-feed message reason=%s', normalized.drop_reason)
-                continue
+        event = normalized.event
+        persisted, duplicate = persist_order_event(session, event)
+        if duplicate:
+            counters['duplicates_total'] += 1
+            return False
+        counters['events_persisted_total'] += 1
 
-            event = normalized.event
-            persisted, duplicate = persist_order_event(session, event)
-            if duplicate:
-                counters['duplicates_total'] += 1
-                continue
-            counters['events_persisted_total'] += 1
-            inserted_any = True
+        if persisted.execution_id is None:
+            return True
+        execution = session.get(Execution, persisted.execution_id)
+        if execution is None:
+            return True
 
-            if persisted.execution_id is not None:
-                execution = session.get(Execution, persisted.execution_id)
-                if execution is not None:
-                    updated, out_of_order = apply_order_event_to_execution(execution, persisted)
-                    if out_of_order:
-                        counters['out_of_order_total'] += 1
-                    if updated:
-                        counters['apply_updates_total'] += 1
-                        if execution.trade_decision_id is not None:
-                            _update_trade_decision_from_execution(session, execution)
-                        session.add(execution)
+        updated, out_of_order = apply_order_event_to_execution(execution, persisted)
+        if out_of_order:
+            counters['out_of_order_total'] += 1
+        if not updated:
+            return True
 
-        if inserted_any:
-            session.commit()
-            _commit_consumer(consumer)
-        return counters
+        counters['apply_updates_total'] += 1
+        if execution.trade_decision_id is not None:
+            _update_trade_decision_from_execution(session, execution)
+        session.add(execution)
+        return True
 
     def close(self) -> None:
         if self._consumer is None:
@@ -429,29 +457,30 @@ def _decode_json_payload(raw: Any) -> dict[str, Any] | list[Any] | None:
     if raw is None:
         return None
     if isinstance(raw, (dict, list)):
-        if isinstance(raw, dict):
-            return cast(dict[str, Any], raw)
-        return cast(list[Any], raw)
+        return _normalize_decoded_payload(raw)
     if isinstance(raw, bytes):
         try:
-            decoded = json.loads(raw.decode('utf-8'))
-            if isinstance(decoded, dict):
-                return cast(dict[str, Any], decoded)
-            if isinstance(decoded, list):
-                return cast(list[Any], decoded)
-            return None
-        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _decode_json_text_payload(raw.decode('utf-8'))
+        except UnicodeDecodeError:
             return None
     if isinstance(raw, str):
-        try:
-            decoded = json.loads(raw)
-            if isinstance(decoded, dict):
-                return cast(dict[str, Any], decoded)
-            if isinstance(decoded, list):
-                return cast(list[Any], decoded)
-            return None
-        except json.JSONDecodeError:
-            return None
+        return _decode_json_text_payload(raw)
+    return None
+
+
+def _decode_json_text_payload(raw_text: str) -> dict[str, Any] | list[Any] | None:
+    try:
+        decoded = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return None
+    return _normalize_decoded_payload(decoded)
+
+
+def _normalize_decoded_payload(raw: Any) -> dict[str, Any] | list[Any] | None:
+    if isinstance(raw, dict):
+        return cast(dict[str, Any], raw)
+    if isinstance(raw, list):
+        return cast(list[Any], raw)
     return None
 
 

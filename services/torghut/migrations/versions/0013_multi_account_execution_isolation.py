@@ -20,10 +20,7 @@ def _column_names(inspector: sa.Inspector, table: str) -> set[str]:
     return {column['name'] for column in inspector.get_columns(table)}
 
 
-def upgrade() -> None:
-    bind = op.get_bind()
-    inspector = inspect(bind)
-
+def _ensure_execution_account_scope(inspector: sa.Inspector) -> None:
     execution_columns = _column_names(inspector, 'executions')
     if 'alpaca_account_label' not in execution_columns:
         op.add_column(
@@ -69,6 +66,8 @@ def upgrade() -> None:
     op.execute('ALTER TABLE executions DROP CONSTRAINT IF EXISTS executions_alpaca_order_id_key')
     op.execute('ALTER TABLE executions DROP CONSTRAINT IF EXISTS executions_client_order_id_key')
 
+
+def _ensure_trade_decision_account_scope(inspector: sa.Inspector) -> None:
     trade_decision_indexes = _index_names(inspector, 'trade_decisions')
     if 'ix_trade_decisions_decision_hash' in trade_decision_indexes:
         op.drop_index('ix_trade_decisions_decision_hash', table_name='trade_decisions')
@@ -80,9 +79,10 @@ def upgrade() -> None:
             ['alpaca_account_label', 'decision_hash'],
             unique=True,
         )
-    if 'ix_trade_decisions_decision_hash' not in trade_decision_indexes:
-        op.create_index('ix_trade_decisions_decision_hash', 'trade_decisions', ['decision_hash'])
+    op.create_index('ix_trade_decisions_decision_hash', 'trade_decisions', ['decision_hash'])
 
+
+def _ensure_trade_cursor_account_scope(inspector: sa.Inspector) -> None:
     trade_cursor_columns = _column_names(inspector, 'trade_cursor')
     if 'account_label' not in trade_cursor_columns:
         op.add_column(
@@ -106,17 +106,28 @@ def upgrade() -> None:
             unique=True,
         )
 
+
+def _ensure_order_event_account_scope(inspector: sa.Inspector) -> None:
     order_event_columns = _column_names(inspector, 'execution_order_events')
-    if 'alpaca_account_label' not in order_event_columns:
-        op.add_column(
-            'execution_order_events',
-            sa.Column(
-                'alpaca_account_label',
-                sa.String(length=64),
-                nullable=False,
-                server_default=sa.text("'paper'"),
-            ),
-        )
+    if 'alpaca_account_label' in order_event_columns:
+        return
+    op.add_column(
+        'execution_order_events',
+        sa.Column(
+            'alpaca_account_label',
+            sa.String(length=64),
+            nullable=False,
+            server_default=sa.text("'paper'"),
+        ),
+    )
+
+
+def upgrade() -> None:
+    inspector = inspect(op.get_bind())
+    _ensure_execution_account_scope(inspector)
+    _ensure_trade_decision_account_scope(inspector)
+    _ensure_trade_cursor_account_scope(inspector)
+    _ensure_order_event_account_scope(inspector)
 
 
 def downgrade() -> None:

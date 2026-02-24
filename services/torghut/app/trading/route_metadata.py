@@ -13,47 +13,33 @@ def resolve_order_route_metadata(
 ) -> tuple[str, str, str | None, int]:
     """Resolve execution route provenance from expected adapter, client state, and order payload."""
 
-    expected = coerce_route_text(expected_adapter)
-    if expected is None and execution_client is not None:
-        expected = coerce_route_text(getattr(execution_client, "name", None))
-
-    raw_actual = coerce_route_text(_coerce_order_field(order_response, "_execution_route_actual"))
-    if raw_actual is None and order_response is not None:
-        raw_actual = coerce_route_text(_coerce_order_field(order_response, "_execution_adapter"))
-    if raw_actual is None:
-        raw_actual = coerce_route_text(_coerce_order_field(order_response, "execution_actual_adapter"))
-    if raw_actual is None and execution_client is not None:
-        raw_actual = coerce_route_text(getattr(execution_client, "last_route", None))
-
-    if expected is None:
-        expected = coerce_route_text(_coerce_order_field(order_response, "_execution_route_expected"))
+    expected = _resolve_expected_adapter(
+        expected_adapter=expected_adapter,
+        execution_client=execution_client,
+        order_response=order_response,
+    )
+    raw_actual = _resolve_actual_adapter(
+        execution_client=execution_client,
+        order_response=order_response,
+        expected=expected,
+    )
     if expected is None:
         expected = raw_actual
 
-    if raw_actual is None:
-        raw_actual = coerce_route_text(_coerce_order_field(order_response, "_execution_route_expected"))
-    if raw_actual is None:
-        raw_actual = coerce_route_text(_coerce_order_field(order_response, "execution_expected_adapter"))
-    if raw_actual is None:
-        raw_actual = expected
-
-    fallback_reason = coerce_route_text(_coerce_order_field(order_response, "_execution_fallback_reason"))
-    if fallback_reason is None:
-        fallback_reason = coerce_route_text(_coerce_order_field(order_response, "_fallback_reason"))
-    if fallback_reason is None and execution_client is not None:
-        fallback_reason = coerce_route_text(getattr(execution_client, "last_fallback_reason", None))
-
-    fallback_count = coerce_route_int(_coerce_order_field(order_response, "_execution_fallback_count"))
-    if fallback_count is None and execution_client is not None:
-        fallback_count = coerce_route_int(getattr(execution_client, "last_fallback_count", None))
-
-    if fallback_count is None and expected and raw_actual and expected != raw_actual:
-        fallback_count = 1
-        if fallback_reason is None:
-            fallback_reason = f"fallback_from_{expected}_to_{raw_actual}"
-
-    if fallback_count is not None and fallback_count <= 0 and fallback_reason is not None:
-        fallback_count = 1
+    fallback_reason = _resolve_fallback_reason(
+        execution_client=execution_client,
+        order_response=order_response,
+    )
+    fallback_count = _resolve_fallback_count(
+        execution_client=execution_client,
+        order_response=order_response,
+    )
+    fallback_reason, fallback_count = _normalize_fallback_fields(
+        expected=expected,
+        actual=raw_actual,
+        fallback_reason=fallback_reason,
+        fallback_count=fallback_count,
+    )
 
     normalized_expected, normalized_actual, normalized_reason, normalized_count = normalize_route_provenance(
         expected_adapter=expected,
@@ -62,6 +48,88 @@ def resolve_order_route_metadata(
         fallback_count=fallback_count,
     )
     return normalized_expected, normalized_actual, normalized_reason, normalized_count
+
+
+def _resolve_expected_adapter(
+    *,
+    expected_adapter: Optional[str],
+    execution_client: Any,
+    order_response: Mapping[str, Any] | None,
+) -> str | None:
+    expected = coerce_route_text(expected_adapter)
+    if expected is None and execution_client is not None:
+        expected = coerce_route_text(getattr(execution_client, "name", None))
+    if expected is None:
+        expected = coerce_route_text(_coerce_order_field(order_response, "_execution_route_expected"))
+    return expected
+
+
+def _resolve_actual_adapter(
+    *,
+    execution_client: Any,
+    order_response: Mapping[str, Any] | None,
+    expected: str | None,
+) -> str | None:
+    raw_actual = coerce_route_text(_coerce_order_field(order_response, "_execution_route_actual"))
+    if raw_actual is None:
+        raw_actual = coerce_route_text(_coerce_order_field(order_response, "_execution_adapter"))
+    if raw_actual is None:
+        raw_actual = coerce_route_text(_coerce_order_field(order_response, "execution_actual_adapter"))
+    if raw_actual is None and execution_client is not None:
+        raw_actual = coerce_route_text(getattr(execution_client, "last_route", None))
+    if raw_actual is None:
+        raw_actual = coerce_route_text(_coerce_order_field(order_response, "_execution_route_expected"))
+    if raw_actual is None:
+        raw_actual = coerce_route_text(_coerce_order_field(order_response, "execution_expected_adapter"))
+    if raw_actual is None:
+        raw_actual = expected
+    return raw_actual
+
+
+def _resolve_fallback_reason(
+    *,
+    execution_client: Any,
+    order_response: Mapping[str, Any] | None,
+) -> str | None:
+    fallback_reason = coerce_route_text(
+        _coerce_order_field(order_response, "_execution_fallback_reason")
+    )
+    if fallback_reason is None:
+        fallback_reason = coerce_route_text(_coerce_order_field(order_response, "_fallback_reason"))
+    if fallback_reason is None and execution_client is not None:
+        fallback_reason = coerce_route_text(
+            getattr(execution_client, "last_fallback_reason", None)
+        )
+    return fallback_reason
+
+
+def _resolve_fallback_count(
+    *,
+    execution_client: Any,
+    order_response: Mapping[str, Any] | None,
+) -> int | None:
+    fallback_count = coerce_route_int(
+        _coerce_order_field(order_response, "_execution_fallback_count")
+    )
+    if fallback_count is None and execution_client is not None:
+        fallback_count = coerce_route_int(getattr(execution_client, "last_fallback_count", None))
+    return fallback_count
+
+
+def _normalize_fallback_fields(
+    *,
+    expected: str | None,
+    actual: str | None,
+    fallback_reason: str | None,
+    fallback_count: int | None,
+) -> tuple[str | None, int | None]:
+    if fallback_count is None and expected and actual and expected != actual:
+        fallback_count = 1
+        if fallback_reason is None:
+            fallback_reason = f"fallback_from_{expected}_to_{actual}"
+    if fallback_count is not None and fallback_count <= 0 and fallback_reason is not None:
+        fallback_count = 1
+    return fallback_reason, fallback_count
 
 
 def normalize_route_provenance(

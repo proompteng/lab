@@ -6,10 +6,10 @@ import json
 import logging
 import time
 from collections.abc import Mapping
+from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Optional, Protocol, cast
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from ..alpaca_client import TorghutAlpacaClient
@@ -188,8 +188,10 @@ class LeanExecutionAdapter:
                 if isinstance(shadow_payload, Mapping):
                     extra_params_payload['_lean_shadow'] = dict(cast(Mapping[str, Any], shadow_payload))
             except Exception:
-                # _request_json already records observability failures for this operation.
-                pass
+                logger.debug(
+                    'lean shadow simulation request failed; continuing without shadow context',
+                    exc_info=True,
+                )
         payload = self._with_fallback(
             op='submit_order',
             request=lambda: self._validate_submit_payload(
@@ -278,12 +280,10 @@ class LeanExecutionAdapter:
             )
             self.last_route = self.name
             return self._validate_read_order_payload(payload, adapter='lean')
-        except HTTPError as exc:
-            if exc.code == 404:
+        except Exception as exc:
+            if _is_http_status_error(exc, 404):
                 self.last_route = self.name
                 return None
-            return self._fallback_get_order_by_client_id(client_order_id, exc)
-        except Exception as exc:
             return self._fallback_get_order_by_client_id(client_order_id, exc)
 
     def list_orders(self, status: str = 'all') -> list[dict[str, Any]]:
@@ -324,10 +324,17 @@ class LeanExecutionAdapter:
         if payload is not None:
             request_body = json.dumps(payload).encode('utf-8')
             request_headers['content-type'] = 'application/json'
-        request = Request(url=url, data=request_body, method=method, headers=request_headers)
+
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                body = response.read().decode('utf-8').strip()
+            status, body = _http_request_text(
+                url=url,
+                method=method,
+                headers=request_headers,
+                body=request_body,
+                timeout_seconds=self.timeout_seconds,
+            )
+            if status < 200 or status >= 300:
+                raise RuntimeError(f'lean_runner_http_{status}:{body[:200]}')
         except Exception as exc:
             self._record_observability_failure(operation, exc)
             raise
@@ -363,7 +370,7 @@ class LeanExecutionAdapter:
             self.last_fallback_reason = None
             self.last_fallback_count = 0
             return payload
-        except (HTTPError, URLError, TimeoutError, RuntimeError) as exc:
+        except (TimeoutError, RuntimeError) as exc:
             if self.fallback is None:
                 raise
             fallback_reason = _classify_fallback_reason(op=op, exc=exc)
@@ -668,16 +675,15 @@ def _is_crypto_symbol(symbol: str) -> bool:
 
 
 def _error_summary(exc: Exception) -> str:
-    if isinstance(exc, HTTPError):
-        body = ''
-        try:
-            body = exc.read().decode('utf-8').strip()
-        except Exception:
-            body = ''
-        if body:
-            return f'HTTP {exc.code}: {body[:200]}'
-        return f'HTTP {exc.code}: {exc.reason}'
-    return str(exc)
+    message = str(exc).strip()
+    if message:
+        return message
+    return exc.__class__.__name__
+
+
+def _is_http_status_error(exc: Exception, status_code: int) -> bool:
+    message = str(exc).strip().lower()
+    return message.startswith(f'lean_runner_http_{status_code}')
 
 
 def _classify_fallback_reason(*, op: str, exc: Exception) -> str:
@@ -686,21 +692,28 @@ def _classify_fallback_reason(*, op: str, exc: Exception) -> str:
         return f'lean_{op}_contract_violation'
     if isinstance(exc, TimeoutError) or 'timed out' in message:
         return f'lean_{op}_timeout'
-    if isinstance(exc, URLError):
+    if 'network_error' in message:
         return f'lean_{op}_network_error'
-    if isinstance(exc, HTTPError):
-        return f'lean_{op}_http_{exc.code}'
+    if message.startswith('lean_runner_http_') or '_http_' in message:
+        if message.startswith('lean_runner_http_'):
+            code = message.split(':', 1)[0].replace('lean_runner_http_', '')
+            if code.isdigit():
+                return f'lean_{op}_http_{code}'
+        return f'lean_{op}_http_error'
     return f'lean_{op}_failed'
 
 
 def _classify_failure_taxonomy(exc: Exception) -> str:
     if isinstance(exc, TimeoutError):
         return 'timeout'
-    if isinstance(exc, URLError):
-        return 'network_error'
-    if isinstance(exc, HTTPError):
-        return f'http_{exc.code}'
     message = str(exc).lower().strip()
+    if 'network_error' in message:
+        return 'network_error'
+    if message.startswith('lean_runner_http_'):
+        code = message.split(':', 1)[0].replace('lean_runner_http_', '')
+        if code.isdigit():
+            return f'http_{code}'
+        return 'http_error'
     if 'contract' in message:
         return 'contract_violation'
     if 'invalid_json' in message:
@@ -710,12 +723,16 @@ def _classify_failure_taxonomy(exc: Exception) -> str:
 
 def _check_lean_runner_health(*, base_url: str, timeout_seconds: int) -> tuple[bool, str | None]:
     url = f'{base_url.rstrip("/")}/healthz'
-    request = Request(url=url, method='GET', headers={'accept': 'application/json'})
     try:
-        with urlopen(request, timeout=max(timeout_seconds, 1)) as response:
-            payload_raw = response.read().decode('utf-8').strip()
-            if response.status < 200 or response.status >= 300:
-                return False, f'lean_health_http_{response.status}'
+        status, payload_raw = _http_request_text(
+            url=url,
+            method='GET',
+            headers={'accept': 'application/json'},
+            body=None,
+            timeout_seconds=max(timeout_seconds, 1),
+        )
+        if status < 200 or status >= 300:
+            return False, f'lean_health_http_{status}'
         if not payload_raw:
             return True, None
         payload = json.loads(payload_raw)
@@ -724,14 +741,43 @@ def _check_lean_runner_health(*, base_url: str, timeout_seconds: int) -> tuple[b
             if status and status != 'ok':
                 return False, f'lean_health_status_{status}'
         return True, None
-    except HTTPError as exc:
-        return False, f'lean_health_http_{exc.code}'
-    except URLError as exc:
-        return False, f'lean_health_network_error:{exc.reason}'
     except TimeoutError:
         return False, 'lean_health_timeout'
+    except OSError as exc:
+        return False, f'lean_health_network_error:{exc}'
     except Exception as exc:  # pragma: no cover - defensive
         return False, f'lean_health_unknown_error:{exc}'
+
+
+def _http_request_text(
+    *,
+    url: str,
+    method: str,
+    headers: Mapping[str, str],
+    body: bytes | None,
+    timeout_seconds: int,
+) -> tuple[int, str]:
+    parsed = urlsplit(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {'http', 'https'}:
+        raise RuntimeError(f'unsupported_url_scheme:{scheme or "missing"}')
+    if not parsed.hostname:
+        raise RuntimeError('invalid_url_host')
+
+    path = parsed.path or '/'
+    if parsed.query:
+        path = f'{path}?{parsed.query}'
+    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+    connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout_seconds, 1))
+    try:
+        connection.request(method, path, body=body, headers=dict(headers))
+        response = connection.getresponse()
+        raw = response.read().decode('utf-8', errors='replace').strip()
+        return response.status, raw
+    except OSError as exc:
+        raise RuntimeError(f'network_error:{exc}') from exc
+    finally:
+        connection.close()
 
 
 __all__ = [

@@ -54,13 +54,17 @@ def parse_microstructure_state(payload: Any, *, expected_symbol: str | None = No
         return None
     if liquidity_regime not in {'normal', 'compressed', 'stressed'}:
         return None
-    assert event_ts is not None
-    assert spread_bps is not None
-    assert depth_top5_usd is not None
-    assert imbalance is not None
-    assert latency_ms_estimate is not None
-    assert fill_hazard is not None
-    return MicrostructureStateV5('microstructure_state_v1', symbol, event_ts, spread_bps, depth_top5_usd, imbalance, latency_ms_estimate, fill_hazard, liquidity_regime)
+    return MicrostructureStateV5(
+        'microstructure_state_v1',
+        symbol,
+        cast(datetime, event_ts),
+        cast(Decimal, spread_bps),
+        cast(Decimal, depth_top5_usd),
+        cast(Decimal, imbalance),
+        cast(int, latency_ms_estimate),
+        cast(Decimal, fill_hazard),
+        liquidity_regime,
+    )
 
 def parse_execution_advice(payload: Any) -> ExecutionAdviceV1 | None:
     if not isinstance(payload, Mapping):

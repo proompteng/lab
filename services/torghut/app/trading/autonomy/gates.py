@@ -494,45 +494,8 @@ def _gate1_statistical_robustness(
 def _gate2_risk_and_capacity(
     inputs: GateInputs, policy: GatePolicyMatrix
 ) -> GateResult:
-    reasons: list[str] = []
-    max_drawdown = _decimal(inputs.metrics.get("max_drawdown")) or Decimal("0")
-    turnover_ratio = _decimal(inputs.metrics.get("turnover_ratio")) or Decimal("0")
-    cost_bps = _decimal(inputs.metrics.get("cost_bps")) or Decimal("0")
-
-    if max_drawdown > policy.gate2_max_drawdown:
-        reasons.append("drawdown_exceeds_maximum")
-    if turnover_ratio > policy.gate2_max_turnover_ratio:
-        reasons.append("turnover_ratio_exceeds_maximum")
-    if cost_bps > policy.gate2_max_cost_bps:
-        reasons.append("cost_bps_exceeds_maximum")
-    if inputs.fragility_score > policy.gate2_max_fragility_score:
-        reasons.append("fragility_score_exceeds_maximum")
-    fragility_rank = _fragility_state_rank(inputs.fragility_state)
-    if fragility_rank > policy.gate2_max_fragility_state_rank:
-        reasons.append("fragility_state_exceeds_maximum")
-    if (
-        policy.gate2_require_stability_mode_under_stress
-        and fragility_rank >= _fragility_state_rank("stress")
-        and not inputs.stability_mode_active
-    ):
-        reasons.append("fragility_stability_mode_inactive")
-    tca_order_count = int(inputs.tca_metrics.get("order_count", 0))
-    if tca_order_count > 0:
-        avg_tca_slippage = _decimal(
-            inputs.tca_metrics.get("avg_slippage_bps")
-        ) or Decimal("0")
-        avg_tca_shortfall = _decimal(
-            inputs.tca_metrics.get("avg_shortfall_notional")
-        ) or Decimal("0")
-        avg_tca_churn_ratio = _decimal(
-            inputs.tca_metrics.get("avg_churn_ratio")
-        ) or Decimal("0")
-        if avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
-            reasons.append("tca_slippage_exceeds_maximum")
-        if avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
-            reasons.append("tca_shortfall_exceeds_maximum")
-        if avg_tca_churn_ratio > policy.gate2_max_tca_churn_ratio:
-            reasons.append("tca_churn_ratio_exceeds_maximum")
+    reasons = _gate2_base_reasons(inputs, policy)
+    reasons.extend(_gate2_tca_reasons(inputs, policy))
 
     return GateResult(
         gate_id="gate2_risk_capacity",
@@ -624,69 +587,14 @@ def _gate6_profitability_evidence(
     policy: GatePolicyMatrix,
     promotion_target: PromotionTarget,
 ) -> GateResult:
-    reasons: list[str] = []
-    if promotion_target == "shadow":
-        return GateResult(
-            gate_id="gate6_profitability_evidence", status="pass", reasons=[]
-        )
-
+    early_result = _gate6_early_result(inputs, policy, promotion_target)
+    if early_result is not None:
+        return early_result
     evidence = inputs.profitability_evidence
-    if not policy.gate6_require_profitability_evidence:
-        return GateResult(
-            gate_id="gate6_profitability_evidence", status="pass", reasons=[]
-        )
-    if not evidence:
-        return GateResult(
-            gate_id="gate6_profitability_evidence",
-            status="fail",
-            reasons=["profitability_evidence_missing"],
-        )
-
-    schema_version = str(evidence.get("schema_version", "")).strip()
-    if schema_version != "profitability-evidence-v4":
-        reasons.append("profitability_evidence_schema_invalid")
-
-    benchmark = _dict_from_any(evidence.get("benchmark"))
-    if str(benchmark.get("schema_version", "")).strip() != "profitability-benchmark-v4":
-        reasons.append("profitability_benchmark_schema_invalid")
-
-    validation = _dict_from_any(evidence.get("validation"))
-    if not bool(validation.get("passed", False)):
-        reasons.append("profitability_evidence_validation_failed")
-
-    risk_adjusted = _dict_from_any(evidence.get("risk_adjusted_metrics"))
-    market_delta = _decimal(risk_adjusted.get("market_net_pnl_delta")) or Decimal("0")
-    if market_delta < policy.gate6_min_market_net_pnl_delta:
-        reasons.append("profitability_market_net_pnl_delta_below_threshold")
-    regime_ratio = _decimal(risk_adjusted.get("regime_slice_pass_ratio")) or Decimal(
-        "0"
-    )
-    if regime_ratio < policy.gate6_min_regime_slice_pass_ratio:
-        reasons.append("profitability_regime_slice_ratio_below_threshold")
-    return_over_drawdown = _decimal(
-        risk_adjusted.get("return_over_drawdown")
-    ) or Decimal("0")
-    if return_over_drawdown < policy.gate6_min_return_over_drawdown:
-        reasons.append("profitability_return_over_drawdown_below_threshold")
-
-    realism = _dict_from_any(evidence.get("cost_fill_realism"))
-    cost_bps = _decimal(realism.get("cost_bps")) or Decimal("0")
-    if cost_bps > policy.gate6_max_cost_bps:
-        reasons.append("profitability_cost_bps_exceeds_threshold")
-
-    confidence = _dict_from_any(evidence.get("confidence_calibration"))
-    calibration_error = _decimal(confidence.get("calibration_error")) or Decimal("1")
-    if calibration_error > policy.gate6_max_calibration_error:
-        reasons.append("profitability_calibration_error_exceeds_threshold")
-
-    reproducibility = _dict_from_any(evidence.get("reproducibility"))
-    artifact_hashes_raw = reproducibility.get("artifact_hashes")
-    hash_count = 0
-    if isinstance(artifact_hashes_raw, dict):
-        artifact_hashes = cast(dict[str, Any], artifact_hashes_raw)
-        hash_count = len(artifact_hashes)
-    if hash_count < policy.gate6_min_reproducibility_hashes:
-        reasons.append("profitability_reproducibility_hashes_below_threshold")
+    reasons: list[str] = []
+    reasons.extend(_gate6_schema_reasons(evidence))
+    reasons.extend(_gate6_threshold_reasons(evidence, policy))
+    reasons.extend(_gate6_reproducibility_reasons(evidence, policy))
 
     return GateResult(
         gate_id="gate6_profitability_evidence",
@@ -700,36 +608,13 @@ def _gate7_uncertainty_calibration(
     policy: GatePolicyMatrix,
     promotion_target: PromotionTarget,
 ) -> tuple[GateResult, UncertaintyGateOutcome]:
-    if not policy.gate6_require_profitability_evidence:
-        outcome = UncertaintyGateOutcome(
-            action="pass",
-            coverage_error=Decimal("0"),
-            shift_score=Decimal("0"),
-            avg_interval_width=Decimal("0"),
-            recalibration_run_id=None,
-        )
-        return (
-            GateResult(gate_id="gate7_uncertainty_calibration", status="pass"),
-            outcome,
-        )
-    if promotion_target == "shadow":
-        outcome = UncertaintyGateOutcome(
-            action="pass",
-            coverage_error=Decimal("0"),
-            shift_score=Decimal("0"),
-            avg_interval_width=Decimal("0"),
-            recalibration_run_id=None,
-        )
-        return (
-            GateResult(gate_id="gate7_uncertainty_calibration", status="pass"),
-            outcome,
-        )
+    skipped = _gate7_skipped_result(policy, promotion_target)
+    if skipped is not None:
+        return skipped
 
     confidence = _dict_from_any(
         _dict_from_any(inputs.profitability_evidence).get("confidence_calibration")
     )
-    reasons: list[str] = []
-
     coverage_error = _decimal(confidence.get("coverage_error"))
     shift_score = _decimal(confidence.get("shift_score"))
     avg_interval_width = _decimal(confidence.get("avg_interval_width"))
@@ -742,56 +627,21 @@ def _gate7_uncertainty_calibration(
     recalibration_artifact_ref = str(
         confidence.get("recalibration_artifact_ref", "")
     ).strip()
-
-    if (
-        coverage_error is None
-        or shift_score is None
-        or avg_interval_width is None
-        or target_coverage is None
-        or observed_coverage is None
-    ):
-        reasons.append("uncertainty_inputs_missing_or_invalid")
-    elif (
-        coverage_error < 0
-        or shift_score < 0
-        or shift_score > 1
-        or avg_interval_width < 0
-        or target_coverage < 0
-        or target_coverage > 1
-        or observed_coverage < 0
-        or observed_coverage > 1
-    ):
-        reasons.append("uncertainty_inputs_out_of_range")
-    if target_coverage is not None and target_coverage != policy.gate7_target_coverage:
-        reasons.append("uncertainty_target_coverage_mismatch")
-
-    action: UncertaintyGateAction = "pass"
-    if reasons:
-        action = "abstain"
-    else:
-        assert coverage_error is not None
-        assert shift_score is not None
-        assert avg_interval_width is not None
-        if shift_score >= policy.gate7_shift_score_fail:
-            action = "fail"
-            reasons.append("regime_shift_score_fail_threshold_exceeded")
-        elif (
-            coverage_error > policy.gate7_max_coverage_error_abstain
-            or shift_score >= policy.gate7_shift_score_abstain
-            or avg_interval_width > policy.gate7_max_interval_width_degrade
-        ):
-            action = "abstain"
-            reasons.append("uncertainty_abstain_threshold_exceeded")
-        elif (
-            coverage_error > policy.gate7_max_coverage_error_degrade
-            or shift_score >= policy.gate7_shift_score_degrade
-            or avg_interval_width > policy.gate7_max_interval_width_pass
-        ):
-            action = "degrade"
-            reasons.append("uncertainty_degrade_threshold_exceeded")
-        elif coverage_error > policy.gate7_max_coverage_error_pass:
-            action = "degrade"
-            reasons.append("coverage_error_slo_exceeded")
+    reasons = _gate7_input_reasons(
+        coverage_error=coverage_error,
+        shift_score=shift_score,
+        avg_interval_width=avg_interval_width,
+        target_coverage=target_coverage,
+        observed_coverage=observed_coverage,
+        policy=policy,
+    )
+    action, reasons = _gate7_action_with_reasons(
+        reasons=reasons,
+        coverage_error=coverage_error,
+        shift_score=shift_score,
+        avg_interval_width=avg_interval_width,
+        policy=policy,
+    )
 
     if action in ("degrade", "abstain", "fail") and not recalibration_run_id:
         reasons.append("recalibration_run_id_missing")
@@ -815,6 +665,219 @@ def _gate7_uncertainty_calibration(
         recalibration_run_id=recalibration_run_id,
     )
     return gate, outcome
+
+
+def _gate2_base_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
+    reasons: list[str] = []
+    max_drawdown = _decimal(inputs.metrics.get("max_drawdown")) or Decimal("0")
+    turnover_ratio = _decimal(inputs.metrics.get("turnover_ratio")) or Decimal("0")
+    cost_bps = _decimal(inputs.metrics.get("cost_bps")) or Decimal("0")
+    if max_drawdown > policy.gate2_max_drawdown:
+        reasons.append("drawdown_exceeds_maximum")
+    if turnover_ratio > policy.gate2_max_turnover_ratio:
+        reasons.append("turnover_ratio_exceeds_maximum")
+    if cost_bps > policy.gate2_max_cost_bps:
+        reasons.append("cost_bps_exceeds_maximum")
+    if inputs.fragility_score > policy.gate2_max_fragility_score:
+        reasons.append("fragility_score_exceeds_maximum")
+    fragility_rank = _fragility_state_rank(inputs.fragility_state)
+    if fragility_rank > policy.gate2_max_fragility_state_rank:
+        reasons.append("fragility_state_exceeds_maximum")
+    if (
+        policy.gate2_require_stability_mode_under_stress
+        and fragility_rank >= _fragility_state_rank("stress")
+        and not inputs.stability_mode_active
+    ):
+        reasons.append("fragility_stability_mode_inactive")
+    return reasons
+
+
+def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
+    tca_order_count = int(inputs.tca_metrics.get("order_count", 0))
+    if tca_order_count <= 0:
+        return []
+    reasons: list[str] = []
+    avg_tca_slippage = _decimal(inputs.tca_metrics.get("avg_slippage_bps")) or Decimal(
+        "0"
+    )
+    avg_tca_shortfall = _decimal(
+        inputs.tca_metrics.get("avg_shortfall_notional")
+    ) or Decimal("0")
+    avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get("avg_churn_ratio")) or Decimal(
+        "0"
+    )
+    if avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
+        reasons.append("tca_slippage_exceeds_maximum")
+    if avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
+        reasons.append("tca_shortfall_exceeds_maximum")
+    if avg_tca_churn_ratio > policy.gate2_max_tca_churn_ratio:
+        reasons.append("tca_churn_ratio_exceeds_maximum")
+    return reasons
+
+
+def _gate6_early_result(
+    inputs: GateInputs,
+    policy: GatePolicyMatrix,
+    promotion_target: PromotionTarget,
+) -> GateResult | None:
+    if promotion_target == "shadow":
+        return GateResult(gate_id="gate6_profitability_evidence", status="pass", reasons=[])
+    if not policy.gate6_require_profitability_evidence:
+        return GateResult(gate_id="gate6_profitability_evidence", status="pass", reasons=[])
+    if not inputs.profitability_evidence:
+        return GateResult(
+            gate_id="gate6_profitability_evidence",
+            status="fail",
+            reasons=["profitability_evidence_missing"],
+        )
+    return None
+
+
+def _gate6_schema_reasons(evidence: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    schema_version = str(evidence.get("schema_version", "")).strip()
+    if schema_version != "profitability-evidence-v4":
+        reasons.append("profitability_evidence_schema_invalid")
+    benchmark = _dict_from_any(evidence.get("benchmark"))
+    if str(benchmark.get("schema_version", "")).strip() != "profitability-benchmark-v4":
+        reasons.append("profitability_benchmark_schema_invalid")
+    validation = _dict_from_any(evidence.get("validation"))
+    if not bool(validation.get("passed", False)):
+        reasons.append("profitability_evidence_validation_failed")
+    return reasons
+
+
+def _gate6_threshold_reasons(
+    evidence: dict[str, Any], policy: GatePolicyMatrix
+) -> list[str]:
+    reasons: list[str] = []
+    risk_adjusted = _dict_from_any(evidence.get("risk_adjusted_metrics"))
+    market_delta = _decimal(risk_adjusted.get("market_net_pnl_delta")) or Decimal("0")
+    if market_delta < policy.gate6_min_market_net_pnl_delta:
+        reasons.append("profitability_market_net_pnl_delta_below_threshold")
+    regime_ratio = _decimal(risk_adjusted.get("regime_slice_pass_ratio")) or Decimal(
+        "0"
+    )
+    if regime_ratio < policy.gate6_min_regime_slice_pass_ratio:
+        reasons.append("profitability_regime_slice_ratio_below_threshold")
+    return_over_drawdown = _decimal(risk_adjusted.get("return_over_drawdown")) or Decimal(
+        "0"
+    )
+    if return_over_drawdown < policy.gate6_min_return_over_drawdown:
+        reasons.append("profitability_return_over_drawdown_below_threshold")
+
+    realism = _dict_from_any(evidence.get("cost_fill_realism"))
+    cost_bps = _decimal(realism.get("cost_bps")) or Decimal("0")
+    if cost_bps > policy.gate6_max_cost_bps:
+        reasons.append("profitability_cost_bps_exceeds_threshold")
+
+    confidence = _dict_from_any(evidence.get("confidence_calibration"))
+    calibration_error = _decimal(confidence.get("calibration_error")) or Decimal("1")
+    if calibration_error > policy.gate6_max_calibration_error:
+        reasons.append("profitability_calibration_error_exceeds_threshold")
+    return reasons
+
+
+def _gate6_reproducibility_reasons(
+    evidence: dict[str, Any], policy: GatePolicyMatrix
+) -> list[str]:
+    reproducibility = _dict_from_any(evidence.get("reproducibility"))
+    artifact_hashes_raw = reproducibility.get("artifact_hashes")
+    hash_count = 0
+    if isinstance(artifact_hashes_raw, dict):
+        artifact_hashes = cast(dict[str, Any], artifact_hashes_raw)
+        hash_count = len(artifact_hashes)
+    if hash_count < policy.gate6_min_reproducibility_hashes:
+        return ["profitability_reproducibility_hashes_below_threshold"]
+    return []
+
+
+def _gate7_skipped_result(
+    policy: GatePolicyMatrix,
+    promotion_target: PromotionTarget,
+) -> tuple[GateResult, UncertaintyGateOutcome] | None:
+    if policy.gate6_require_profitability_evidence and promotion_target != "shadow":
+        return None
+    outcome = UncertaintyGateOutcome(
+        action="pass",
+        coverage_error=Decimal("0"),
+        shift_score=Decimal("0"),
+        avg_interval_width=Decimal("0"),
+        recalibration_run_id=None,
+    )
+    return GateResult(gate_id="gate7_uncertainty_calibration", status="pass"), outcome
+
+
+def _gate7_input_reasons(
+    *,
+    coverage_error: Decimal | None,
+    shift_score: Decimal | None,
+    avg_interval_width: Decimal | None,
+    target_coverage: Decimal | None,
+    observed_coverage: Decimal | None,
+    policy: GatePolicyMatrix,
+) -> list[str]:
+    reasons: list[str] = []
+    if (
+        coverage_error is None
+        or shift_score is None
+        or avg_interval_width is None
+        or target_coverage is None
+        or observed_coverage is None
+    ):
+        reasons.append("uncertainty_inputs_missing_or_invalid")
+    elif (
+        coverage_error < 0
+        or shift_score < 0
+        or shift_score > 1
+        or avg_interval_width < 0
+        or target_coverage < 0
+        or target_coverage > 1
+        or observed_coverage < 0
+        or observed_coverage > 1
+    ):
+        reasons.append("uncertainty_inputs_out_of_range")
+    if target_coverage is not None and target_coverage != policy.gate7_target_coverage:
+        reasons.append("uncertainty_target_coverage_mismatch")
+    return reasons
+
+
+def _gate7_action_with_reasons(
+    *,
+    reasons: list[str],
+    coverage_error: Decimal | None,
+    shift_score: Decimal | None,
+    avg_interval_width: Decimal | None,
+    policy: GatePolicyMatrix,
+) -> tuple[UncertaintyGateAction, list[str]]:
+    derived_reasons = list(reasons)
+    if derived_reasons:
+        return "abstain", derived_reasons
+    if coverage_error is None or shift_score is None or avg_interval_width is None:
+        derived_reasons.append("uncertainty_inputs_missing_or_invalid")
+        return "abstain", derived_reasons
+
+    if shift_score >= policy.gate7_shift_score_fail:
+        derived_reasons.append("regime_shift_score_fail_threshold_exceeded")
+        return "fail", derived_reasons
+    if (
+        coverage_error > policy.gate7_max_coverage_error_abstain
+        or shift_score >= policy.gate7_shift_score_abstain
+        or avg_interval_width > policy.gate7_max_interval_width_degrade
+    ):
+        derived_reasons.append("uncertainty_abstain_threshold_exceeded")
+        return "abstain", derived_reasons
+    if (
+        coverage_error > policy.gate7_max_coverage_error_degrade
+        or shift_score >= policy.gate7_shift_score_degrade
+        or avg_interval_width > policy.gate7_max_interval_width_pass
+    ):
+        derived_reasons.append("uncertainty_degrade_threshold_exceeded")
+        return "degrade", derived_reasons
+    if coverage_error > policy.gate7_max_coverage_error_pass:
+        derived_reasons.append("coverage_error_slo_exceeded")
+        return "degrade", derived_reasons
+    return "pass", derived_reasons
 
 
 def _decimal(value: Any) -> Decimal | None:

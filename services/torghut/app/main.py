@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, cast
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
@@ -14,8 +15,7 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from urllib.parse import urlencode
-from urllib.request import Request as URLRequest, urlopen
+from urllib.parse import urlencode, urlsplit
 
 from .alpaca_client import TorghutAlpacaClient
 from .config import settings
@@ -802,21 +802,41 @@ def _check_clickhouse() -> dict[str, object]:
         return {"ok": False, "detail": "clickhouse url missing"}
     query = "SELECT 1 FORMAT JSONEachRow"
     params = {"query": query}
-    request = URLRequest(
-        f"{settings.trading_clickhouse_url.rstrip('/')}/?{urlencode(params)}",
-        headers={"Content-Type": "text/plain"},
-    )
+    url = f"{settings.trading_clickhouse_url.rstrip('/')}/?{urlencode(params)}"
+    parsed = urlsplit(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {'http', 'https'}:
+        return {'ok': False, 'detail': f'clickhouse invalid url scheme: {scheme or "missing"}'}
+    if not parsed.hostname:
+        return {'ok': False, 'detail': 'clickhouse invalid url host'}
+
+    headers: dict[str, str] = {"Content-Type": "text/plain"}
     if settings.trading_clickhouse_username:
-        request.add_header("X-ClickHouse-User", settings.trading_clickhouse_username)
+        headers["X-ClickHouse-User"] = settings.trading_clickhouse_username
     if settings.trading_clickhouse_password:
-        request.add_header("X-ClickHouse-Key", settings.trading_clickhouse_password)
+        headers["X-ClickHouse-Key"] = settings.trading_clickhouse_password
+
+    path = parsed.path or '/'
+    if parsed.query:
+        path = f'{path}?{parsed.query}'
+    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+    connection = connection_class(
+        parsed.hostname,
+        parsed.port,
+        timeout=settings.trading_clickhouse_timeout_seconds,
+    )
+
     try:
-        with urlopen(
-            request, timeout=settings.trading_clickhouse_timeout_seconds
-        ) as response:
-            payload = response.read().decode("utf-8")
+        connection.request('GET', path, headers=headers)
+        response = connection.getresponse()
+        if response.status < 200 or response.status >= 300:
+            return {'ok': False, 'detail': f'clickhouse http status {response.status}'}
+        payload = response.read().decode('utf-8')
     except Exception as exc:  # pragma: no cover - depends on network
         return {"ok": False, "detail": f"clickhouse error: {exc}"}
+    finally:
+        connection.close()
+
     if not payload.strip():
         return {"ok": False, "detail": "clickhouse empty response"}
     return {"ok": True, "detail": "ok"}
@@ -934,22 +954,6 @@ def _load_route_provenance_summary(session: Session) -> dict[str, object]:
 def _aggregate_tca_rows(
     rows: Sequence[ExecutionTCAMetric],
 ) -> dict[str, list[dict[str, object]]]:
-    def _as_int(value: object) -> int:
-        if isinstance(value, bool):
-            return int(value)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            return int(value)
-        return 0
-
-    def _as_float(value: object) -> float:
-        if isinstance(value, bool):
-            return float(value)
-        if isinstance(value, (int, float)):
-            return float(value)
-        return 0.0
-
     by_strategy: dict[tuple[str, str], dict[str, object]] = {}
     by_symbol: dict[tuple[str, str, str], dict[str, object]] = {}
     for row in rows:
@@ -959,76 +963,100 @@ def _aggregate_tca_rows(
 
         strategy_agg = by_strategy.setdefault(
             (strategy_key, account_key),
-            {
-                "strategy_id": strategy_key,
-                "alpaca_account_label": account_key,
-                "order_count": 0,
-                "_slippage_sum": 0.0,
-                "_slippage_count": 0,
-                "_shortfall_sum": 0.0,
-                "_shortfall_count": 0,
-                "_churn_sum": 0.0,
-                "_churn_count": 0,
-            },
+            _new_tca_aggregate(strategy_key, account_key),
         )
         symbol_agg = by_symbol.setdefault(
             (strategy_key, account_key, symbol_key),
-            {
-                "strategy_id": strategy_key,
-                "alpaca_account_label": account_key,
-                "symbol": symbol_key,
-                "order_count": 0,
-                "_slippage_sum": 0.0,
-                "_slippage_count": 0,
-                "_shortfall_sum": 0.0,
-                "_shortfall_count": 0,
-                "_churn_sum": 0.0,
-                "_churn_count": 0,
-            },
+            _new_tca_aggregate(strategy_key, account_key, symbol=symbol_key),
         )
-        for agg in (strategy_agg, symbol_agg):
-            agg["order_count"] = _as_int(agg["order_count"]) + 1
-            if row.slippage_bps is not None:
-                agg["_slippage_sum"] = _as_float(agg["_slippage_sum"]) + float(
-                    row.slippage_bps
-                )
-                agg["_slippage_count"] = _as_int(agg["_slippage_count"]) + 1
-            if row.shortfall_notional is not None:
-                agg["_shortfall_sum"] = _as_float(agg["_shortfall_sum"]) + float(
-                    row.shortfall_notional
-                )
-                agg["_shortfall_count"] = _as_int(agg["_shortfall_count"]) + 1
-            if row.churn_ratio is not None:
-                agg["_churn_sum"] = _as_float(agg["_churn_sum"]) + float(
-                    row.churn_ratio
-                )
-                agg["_churn_count"] = _as_int(agg["_churn_count"]) + 1
-
-    def _finalize(aggregates: list[dict[str, object]]) -> list[dict[str, object]]:
-        payload: list[dict[str, object]] = []
-        for aggregate in aggregates:
-            slippage_count = _as_int(aggregate.pop("_slippage_count"))
-            slippage_sum = _as_float(aggregate.pop("_slippage_sum"))
-            shortfall_count = _as_int(aggregate.pop("_shortfall_count"))
-            shortfall_sum = _as_float(aggregate.pop("_shortfall_sum"))
-            churn_count = _as_int(aggregate.pop("_churn_count"))
-            churn_sum = _as_float(aggregate.pop("_churn_sum"))
-            aggregate["avg_slippage_bps"] = (
-                (slippage_sum / slippage_count) if slippage_count else None
-            )
-            aggregate["avg_shortfall_notional"] = (
-                (shortfall_sum / shortfall_count) if shortfall_count else None
-            )
-            aggregate["avg_churn_ratio"] = (
-                (churn_sum / churn_count) if churn_count else None
-            )
-            payload.append(aggregate)
-        return payload
+        _update_tca_aggregate(strategy_agg, row)
+        _update_tca_aggregate(symbol_agg, row)
 
     return {
-        "strategy": _finalize(list(by_strategy.values())),
-        "symbol": _finalize(list(by_symbol.values())),
+        "strategy": _finalize_tca_aggregates(list(by_strategy.values())),
+        "symbol": _finalize_tca_aggregates(list(by_symbol.values())),
     }
+
+
+def _new_tca_aggregate(
+    strategy_key: str,
+    account_key: str,
+    *,
+    symbol: str | None = None,
+) -> dict[str, object]:
+    aggregate: dict[str, object] = {
+        "strategy_id": strategy_key,
+        "alpaca_account_label": account_key,
+        "order_count": 0,
+        "_slippage_sum": 0.0,
+        "_slippage_count": 0,
+        "_shortfall_sum": 0.0,
+        "_shortfall_count": 0,
+        "_churn_sum": 0.0,
+        "_churn_count": 0,
+    }
+    if symbol is not None:
+        aggregate["symbol"] = symbol
+    return aggregate
+
+
+def _update_tca_aggregate(
+    aggregate: dict[str, object],
+    row: ExecutionTCAMetric,
+) -> None:
+    aggregate["order_count"] = _tca_as_int(aggregate["order_count"]) + 1
+    metric_updates = (
+        ("slippage", row.slippage_bps),
+        ("shortfall", row.shortfall_notional),
+        ("churn", row.churn_ratio),
+    )
+    for prefix, metric_value in metric_updates:
+        if metric_value is None:
+            continue
+        aggregate[f"_{prefix}_sum"] = _tca_as_float(aggregate[f"_{prefix}_sum"]) + float(
+            metric_value
+        )
+        aggregate[f"_{prefix}_count"] = _tca_as_int(aggregate[f"_{prefix}_count"]) + 1
+
+
+def _finalize_tca_aggregates(
+    aggregates: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    payload: list[dict[str, object]] = []
+    for aggregate in aggregates:
+        slippage_count = _tca_as_int(aggregate.pop("_slippage_count"))
+        slippage_sum = _tca_as_float(aggregate.pop("_slippage_sum"))
+        shortfall_count = _tca_as_int(aggregate.pop("_shortfall_count"))
+        shortfall_sum = _tca_as_float(aggregate.pop("_shortfall_sum"))
+        churn_count = _tca_as_int(aggregate.pop("_churn_count"))
+        churn_sum = _tca_as_float(aggregate.pop("_churn_sum"))
+        aggregate["avg_slippage_bps"] = (
+            (slippage_sum / slippage_count) if slippage_count else None
+        )
+        aggregate["avg_shortfall_notional"] = (
+            (shortfall_sum / shortfall_count) if shortfall_count else None
+        )
+        aggregate["avg_churn_ratio"] = (churn_sum / churn_count) if churn_count else None
+        payload.append(aggregate)
+    return payload
+
+
+def _tca_as_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return 0
+
+
+def _tca_as_float(value: object) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return 0.0
 
 
 def _load_llm_evaluation(session: Session) -> dict[str, object]:

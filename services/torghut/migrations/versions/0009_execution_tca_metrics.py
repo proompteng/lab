@@ -15,8 +15,8 @@ branch_labels = None
 depends_on = None
 
 
-_STRATEGY_VIEW_NAME = "execution_tca_strategy_agg_v1"
-_SYMBOL_VIEW_NAME = "execution_tca_symbol_agg_v1"
+_STRATEGY_VIEW_NAME = 'execution_tca_strategy_agg_v1'
+_SYMBOL_VIEW_NAME = 'execution_tca_symbol_agg_v1'
 
 
 def upgrade() -> None:
@@ -70,8 +70,8 @@ def upgrade() -> None:
         op.create_index("ix_execution_tca_metrics_computed_at", "execution_tca_metrics", ["computed_at"])
 
     op.execute(
-        f"""
-        CREATE OR REPLACE VIEW public.{_STRATEGY_VIEW_NAME} AS
+        """
+        CREATE OR REPLACE VIEW public.execution_tca_strategy_agg_v1 AS
         SELECT
             strategy_id,
             COALESCE(alpaca_account_label, 'unknown') AS alpaca_account_label,
@@ -88,8 +88,8 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        f"""
-        CREATE OR REPLACE VIEW public.{_SYMBOL_VIEW_NAME} AS
+        """
+        CREATE OR REPLACE VIEW public.execution_tca_symbol_agg_v1 AS
         SELECT
             strategy_id,
             COALESCE(alpaca_account_label, 'unknown') AS alpaca_account_label,
@@ -106,20 +106,20 @@ def upgrade() -> None:
         """
     )
 
-    op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.execution_tca_metrics TO torghut_app;")
-    op.execute(f"GRANT SELECT ON TABLE public.{_STRATEGY_VIEW_NAME} TO torghut_app;")
-    op.execute(f"GRANT SELECT ON TABLE public.{_SYMBOL_VIEW_NAME} TO torghut_app;")
+    op.execute('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.execution_tca_metrics TO torghut_app;')
+    op.execute('GRANT SELECT ON TABLE public.execution_tca_strategy_agg_v1 TO torghut_app;')
+    op.execute('GRANT SELECT ON TABLE public.execution_tca_symbol_agg_v1 TO torghut_app;')
 
 
 def downgrade() -> None:
     bind = op.get_bind()
     inspector = inspect(bind)
 
-    op.execute(f"REVOKE ALL PRIVILEGES ON TABLE public.{_SYMBOL_VIEW_NAME} FROM torghut_app;")
-    op.execute(f"REVOKE ALL PRIVILEGES ON TABLE public.{_STRATEGY_VIEW_NAME} FROM torghut_app;")
-    op.execute("REVOKE ALL PRIVILEGES ON TABLE public.execution_tca_metrics FROM torghut_app;")
-    op.execute(f"DROP VIEW IF EXISTS public.{_SYMBOL_VIEW_NAME};")
-    op.execute(f"DROP VIEW IF EXISTS public.{_STRATEGY_VIEW_NAME};")
+    op.execute('REVOKE ALL PRIVILEGES ON TABLE public.execution_tca_symbol_agg_v1 FROM torghut_app;')
+    op.execute('REVOKE ALL PRIVILEGES ON TABLE public.execution_tca_strategy_agg_v1 FROM torghut_app;')
+    op.execute('REVOKE ALL PRIVILEGES ON TABLE public.execution_tca_metrics FROM torghut_app;')
+    op.execute('DROP VIEW IF EXISTS public.execution_tca_symbol_agg_v1;')
+    op.execute('DROP VIEW IF EXISTS public.execution_tca_strategy_agg_v1;')
 
     if inspector.has_table("execution_tca_metrics"):
         index_names = {index["name"] for index in inspector.get_indexes("execution_tca_metrics")}

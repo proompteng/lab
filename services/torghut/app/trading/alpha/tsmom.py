@@ -43,6 +43,28 @@ def backtest_tsmom(prices: pd.DataFrame, cfg: TSMOMConfig) -> tuple[pd.Series, p
       (equity_curve, debug_frame)
     """
 
+    _validate_backtest_inputs(prices, cfg)
+    px = _prepare_prices(prices, cfg)
+    rets = px.pct_change(fill_method=None)
+    w = _compute_weights(px, rets, cfg)
+    port_ret_gross, turnover, cost_ret, port_ret_net = _compute_portfolio_returns(
+        w, rets, cfg
+    )
+
+    equity = (1.0 + port_ret_net).cumprod()
+    equity.name = "equity"
+
+    debug = _build_debug_frame(
+        port_ret_gross=port_ret_gross,
+        turnover=turnover,
+        cost_ret=cost_ret,
+        port_ret_net=port_ret_net,
+        weights=w,
+    )
+    return equity, debug
+
+
+def _validate_backtest_inputs(prices: pd.DataFrame, cfg: TSMOMConfig) -> None:
     if prices.empty:
         raise ValueError("prices is empty")
     if cfg.lookback_days <= 1:
@@ -56,6 +78,8 @@ def backtest_tsmom(prices: pd.DataFrame, cfg: TSMOMConfig) -> tuple[pd.Series, p
     if cfg.cost_bps_per_turnover < 0:
         raise ValueError("cost_bps_per_turnover must be >= 0")
 
+
+def _prepare_prices(prices: pd.DataFrame, cfg: TSMOMConfig) -> pd.DataFrame:
     px = prices.copy()
     px = px.sort_index().dropna(how="all")
     if cfg.start is not None:
@@ -65,48 +89,55 @@ def backtest_tsmom(prices: pd.DataFrame, cfg: TSMOMConfig) -> tuple[pd.Series, p
     px = px.dropna(axis=1, how="all")
     if px.empty:
         raise ValueError("prices empty after filtering")
+    return px
 
-    rets = px.pct_change(fill_method=None)
 
-    # Lookback return uses up-to t-1 information.
+def _compute_weights(px: pd.DataFrame, rets: pd.DataFrame, cfg: TSMOMConfig) -> pd.DataFrame:
     lookback_ret = px.shift(1) / px.shift(cfg.lookback_days + 1) - 1.0
     signal = np.sign(lookback_ret)
     if cfg.long_only:
         signal = signal.clip(lower=0.0)
 
-    # Volatility estimate uses returns up to t-1.
     vol = rets.rolling(cfg.vol_lookback_days).std(ddof=0).shift(1)
     inv_vol = cfg.target_daily_vol / vol
     raw_w = signal * inv_vol
     raw_w = raw_w.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-
-    # Clip per-asset weight (pre-scale).
     raw_w = raw_w.clip(lower=-cfg.max_gross_leverage, upper=cfg.max_gross_leverage)
 
     gross = raw_w.abs().sum(axis=1)
     scale = (cfg.max_gross_leverage / gross).clip(upper=1.0).fillna(0.0)
-    w = raw_w.mul(scale, axis=0)
+    return raw_w.mul(scale, axis=0)
 
-    # Held weight at time t applies to return at time t (because weights are computed with shift(1) already).
-    port_ret_gross = (w * rets).sum(axis=1).fillna(0.0)
 
-    turnover = w.diff().abs().sum(axis=1).fillna(0.0)
+def _compute_portfolio_returns(
+    weights: pd.DataFrame,
+    rets: pd.DataFrame,
+    cfg: TSMOMConfig,
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+    port_ret_gross = (weights * rets).sum(axis=1).fillna(0.0)
+    turnover = weights.diff().abs().sum(axis=1).fillna(0.0)
     cost_ret = turnover * (cfg.cost_bps_per_turnover / 10000.0)
     port_ret_net = port_ret_gross - cost_ret
+    return port_ret_gross, turnover, cost_ret, port_ret_net
 
-    equity = (1.0 + port_ret_net).cumprod()
-    equity.name = "equity"
 
-    debug = pd.DataFrame(
+def _build_debug_frame(
+    *,
+    port_ret_gross: pd.Series,
+    turnover: pd.Series,
+    cost_ret: pd.Series,
+    port_ret_net: pd.Series,
+    weights: pd.DataFrame,
+) -> pd.DataFrame:
+    return pd.DataFrame(
         {
             "port_ret_gross": port_ret_gross,
             "turnover": turnover,
             "cost_ret": cost_ret,
             "port_ret_net": port_ret_net,
-            "gross_leverage": w.abs().sum(axis=1),
+            "gross_leverage": weights.abs().sum(axis=1),
         }
     )
-    return equity, debug
 
 
 __all__ = ["TSMOMConfig", "backtest_tsmom"]

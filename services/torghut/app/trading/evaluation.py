@@ -508,124 +508,35 @@ def validate_profitability_evidence_v4(
     reasons: list[str] = []
     details: list[dict[str, object]] = []
 
-    if evidence.schema_version != "profitability-evidence-v4":
-        reasons.append("profitability_evidence_schema_invalid")
-        details.append(
-            {
-                "reason": "profitability_evidence_schema_invalid",
-                "expected": "profitability-evidence-v4",
-            }
-        )
-    if evidence.benchmark.schema_version != "profitability-benchmark-v4":
-        reasons.append("profitability_benchmark_schema_invalid")
-        details.append(
-            {
-                "reason": "profitability_benchmark_schema_invalid",
-                "expected": "profitability-benchmark-v4",
-            }
-        )
-
-    market_delta = _decimal(
-        evidence.risk_adjusted_metrics.get("market_net_pnl_delta")
-    ) or Decimal("0")
-    if market_delta < policy.min_market_net_pnl_delta:
-        reasons.append("market_net_pnl_delta_below_threshold")
-        details.append(
-            {
-                "reason": "market_net_pnl_delta_below_threshold",
-                "actual": str(market_delta),
-                "minimum": str(policy.min_market_net_pnl_delta),
-            }
-        )
-
-    return_over_drawdown = _decimal(
-        evidence.risk_adjusted_metrics.get("return_over_drawdown")
-    ) or Decimal("0")
-    if return_over_drawdown < policy.min_risk_adjusted_return_over_drawdown:
-        reasons.append("risk_adjusted_return_over_drawdown_below_threshold")
-        details.append(
-            {
-                "reason": "risk_adjusted_return_over_drawdown_below_threshold",
-                "actual": str(return_over_drawdown),
-                "minimum": str(policy.min_risk_adjusted_return_over_drawdown),
-            }
-        )
-
-    regime_ratio = _decimal(
-        evidence.risk_adjusted_metrics.get("regime_slice_pass_ratio")
-    ) or Decimal("0")
-    if regime_ratio < policy.min_regime_slice_pass_ratio:
-        reasons.append("regime_slice_pass_ratio_below_threshold")
-        details.append(
-            {
-                "reason": "regime_slice_pass_ratio_below_threshold",
-                "actual": str(regime_ratio),
-                "minimum": str(policy.min_regime_slice_pass_ratio),
-            }
-        )
-
-    cost_bps = _decimal(evidence.cost_fill_realism.get("cost_bps")) or Decimal("0")
-    if cost_bps > policy.max_cost_bps:
-        reasons.append("cost_bps_exceeds_threshold")
-        details.append(
-            {
-                "reason": "cost_bps_exceeds_threshold",
-                "actual": str(cost_bps),
-                "maximum": str(policy.max_cost_bps),
-            }
-        )
-
-    confidence_samples = (
-        _as_int(evidence.confidence_calibration.get("sample_count")) or 0
+    _validate_profitability_schema_versions(
+        evidence=evidence,
+        reasons=reasons,
+        details=details,
     )
-    if confidence_samples < policy.min_confidence_samples:
-        reasons.append("confidence_samples_below_minimum")
-        details.append(
-            {
-                "reason": "confidence_samples_below_minimum",
-                "actual": confidence_samples,
-                "minimum": policy.min_confidence_samples,
-            }
-        )
-    calibration_error = _decimal(
-        evidence.confidence_calibration.get("calibration_error")
-    ) or Decimal("1")
-    if calibration_error > policy.max_calibration_error:
-        reasons.append("calibration_error_exceeds_threshold")
-        details.append(
-            {
-                "reason": "calibration_error_exceeds_threshold",
-                "actual": str(calibration_error),
-                "maximum": str(policy.max_calibration_error),
-            }
-        )
-
-    reproducibility = _as_dict(evidence.reproducibility)
-    hashes = {
-        str(key): str(value)
-        for key, value in _as_dict(reproducibility.get("artifact_hashes")).items()
-        if str(key).strip() and str(value).strip()
-    }
-    if len(hashes) < policy.min_reproducibility_hashes:
-        reasons.append("reproducibility_hash_count_below_minimum")
-        details.append(
-            {
-                "reason": "reproducibility_hash_count_below_minimum",
-                "actual": len(hashes),
-                "minimum": policy.min_reproducibility_hashes,
-            }
-        )
-    missing_hash_keys = sorted(
-        [key for key in policy.required_hash_keys if key not in hashes]
+    _validate_profitability_risk_metrics(
+        evidence=evidence,
+        policy=policy,
+        reasons=reasons,
+        details=details,
     )
-    if missing_hash_keys:
-        reasons.append("reproducibility_hash_keys_missing")
-        details.append(
-            {
-                "reason": "reproducibility_hash_keys_missing",
-                "missing_keys": missing_hash_keys,
-            }
-        )
+    _validate_profitability_cost_metrics(
+        evidence=evidence,
+        policy=policy,
+        reasons=reasons,
+        details=details,
+    )
+    _validate_profitability_confidence_metrics(
+        evidence=evidence,
+        policy=policy,
+        reasons=reasons,
+        details=details,
+    )
+    _validate_profitability_reproducibility(
+        evidence=evidence,
+        policy=policy,
+        reasons=reasons,
+        details=details,
+    )
 
     return ProfitabilityEvidenceValidationResultV4(
         passed=not reasons,
@@ -634,6 +545,184 @@ def validate_profitability_evidence_v4(
         artifact_refs=sorted(set(evidence.artifact_refs)),
         checked_at=checked_at or datetime.now(timezone.utc),
         thresholds=policy,
+    )
+
+
+def _append_profitability_reason(
+    *,
+    reasons: list[str],
+    details: list[dict[str, object]],
+    reason: str,
+    payload: dict[str, object],
+) -> None:
+    reasons.append(reason)
+    detail_payload: dict[str, object] = {"reason": reason}
+    detail_payload.update(payload)
+    details.append(detail_payload)
+
+
+def _validate_profitability_schema_versions(
+    *,
+    evidence: ProfitabilityEvidenceV4,
+    reasons: list[str],
+    details: list[dict[str, object]],
+) -> None:
+    if evidence.schema_version != "profitability-evidence-v4":
+        _append_profitability_reason(
+            reasons=reasons,
+            details=details,
+            reason="profitability_evidence_schema_invalid",
+            payload={"expected": "profitability-evidence-v4"},
+        )
+    if evidence.benchmark.schema_version != "profitability-benchmark-v4":
+        _append_profitability_reason(
+            reasons=reasons,
+            details=details,
+            reason="profitability_benchmark_schema_invalid",
+            payload={"expected": "profitability-benchmark-v4"},
+        )
+
+
+def _validate_profitability_risk_metrics(
+    *,
+    evidence: ProfitabilityEvidenceV4,
+    policy: ProfitabilityEvidenceThresholdsV4,
+    reasons: list[str],
+    details: list[dict[str, object]],
+) -> None:
+    market_delta = _decimal(
+        evidence.risk_adjusted_metrics.get("market_net_pnl_delta")
+    ) or Decimal("0")
+    if market_delta < policy.min_market_net_pnl_delta:
+        _append_profitability_reason(
+            reasons=reasons,
+            details=details,
+            reason="market_net_pnl_delta_below_threshold",
+            payload={
+                "actual": str(market_delta),
+                "minimum": str(policy.min_market_net_pnl_delta),
+            },
+        )
+
+    return_over_drawdown = _decimal(
+        evidence.risk_adjusted_metrics.get("return_over_drawdown")
+    ) or Decimal("0")
+    if return_over_drawdown < policy.min_risk_adjusted_return_over_drawdown:
+        _append_profitability_reason(
+            reasons=reasons,
+            details=details,
+            reason="risk_adjusted_return_over_drawdown_below_threshold",
+            payload={
+                "actual": str(return_over_drawdown),
+                "minimum": str(policy.min_risk_adjusted_return_over_drawdown),
+            },
+        )
+
+    regime_ratio = _decimal(
+        evidence.risk_adjusted_metrics.get("regime_slice_pass_ratio")
+    ) or Decimal("0")
+    if regime_ratio < policy.min_regime_slice_pass_ratio:
+        _append_profitability_reason(
+            reasons=reasons,
+            details=details,
+            reason="regime_slice_pass_ratio_below_threshold",
+            payload={
+                "actual": str(regime_ratio),
+                "minimum": str(policy.min_regime_slice_pass_ratio),
+            },
+        )
+
+
+def _validate_profitability_cost_metrics(
+    *,
+    evidence: ProfitabilityEvidenceV4,
+    policy: ProfitabilityEvidenceThresholdsV4,
+    reasons: list[str],
+    details: list[dict[str, object]],
+) -> None:
+    cost_bps = _decimal(evidence.cost_fill_realism.get("cost_bps")) or Decimal("0")
+    if cost_bps <= policy.max_cost_bps:
+        return
+    _append_profitability_reason(
+        reasons=reasons,
+        details=details,
+        reason="cost_bps_exceeds_threshold",
+        payload={
+            "actual": str(cost_bps),
+            "maximum": str(policy.max_cost_bps),
+        },
+    )
+
+
+def _validate_profitability_confidence_metrics(
+    *,
+    evidence: ProfitabilityEvidenceV4,
+    policy: ProfitabilityEvidenceThresholdsV4,
+    reasons: list[str],
+    details: list[dict[str, object]],
+) -> None:
+    confidence_samples = _as_int(evidence.confidence_calibration.get("sample_count")) or 0
+    if confidence_samples < policy.min_confidence_samples:
+        _append_profitability_reason(
+            reasons=reasons,
+            details=details,
+            reason="confidence_samples_below_minimum",
+            payload={
+                "actual": confidence_samples,
+                "minimum": policy.min_confidence_samples,
+            },
+        )
+
+    calibration_error = _decimal(
+        evidence.confidence_calibration.get("calibration_error")
+    ) or Decimal("1")
+    if calibration_error <= policy.max_calibration_error:
+        return
+    _append_profitability_reason(
+        reasons=reasons,
+        details=details,
+        reason="calibration_error_exceeds_threshold",
+        payload={
+            "actual": str(calibration_error),
+            "maximum": str(policy.max_calibration_error),
+        },
+    )
+
+
+def _validate_profitability_reproducibility(
+    *,
+    evidence: ProfitabilityEvidenceV4,
+    policy: ProfitabilityEvidenceThresholdsV4,
+    reasons: list[str],
+    details: list[dict[str, object]],
+) -> None:
+    reproducibility = _as_dict(evidence.reproducibility)
+    hashes = {
+        str(key): str(value)
+        for key, value in _as_dict(reproducibility.get("artifact_hashes")).items()
+        if str(key).strip() and str(value).strip()
+    }
+    if len(hashes) < policy.min_reproducibility_hashes:
+        _append_profitability_reason(
+            reasons=reasons,
+            details=details,
+            reason="reproducibility_hash_count_below_minimum",
+            payload={
+                "actual": len(hashes),
+                "minimum": policy.min_reproducibility_hashes,
+            },
+        )
+
+    missing_hash_keys = sorted(
+        [key for key in policy.required_hash_keys if key not in hashes]
+    )
+    if not missing_hash_keys:
+        return
+    _append_profitability_reason(
+        reasons=reasons,
+        details=details,
+        reason="reproducibility_hash_keys_missing",
+        payload={"missing_keys": missing_hash_keys},
     )
 
 

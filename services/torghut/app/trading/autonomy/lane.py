@@ -214,13 +214,9 @@ def run_autonomous_lane(
     )
     candidate_id = f"cand-{run_id[:12]}"
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    research_dir = output_dir / "research"
-    backtest_dir = output_dir / "backtest"
-    gates_dir = output_dir / "gates"
-    paper_dir = output_dir / "paper-candidate"
-    for path in (research_dir, backtest_dir, gates_dir, paper_dir):
-        path.mkdir(parents=True, exist_ok=True)
+    research_dir, backtest_dir, gates_dir, paper_dir = _prepare_lane_output_dirs(
+        output_dir
+    )
 
     now = evaluated_at or datetime.now(timezone.utc)
     runtime = StrategyRuntime(default_runtime_registry())
@@ -264,24 +260,20 @@ def run_autonomous_lane(
         ordered_signals = sorted(
             signals, key=lambda item: (item.event_ts, item.symbol, item.seq or 0)
         )
-        for signal in ordered_signals:
-            result = runtime.evaluate(signal, runtime_strategies)
-            runtime_errors.extend(result.errors)
-            features = extract_signal_features(signal)
-            for decision in result.decisions:
-                walk_decisions.append(
-                    WalkForwardDecision(decision=decision, features=features)
-                )
+        walk_decisions, runtime_errors = _collect_walk_decisions_for_runtime(
+            runtime=runtime,
+            ordered_signals=ordered_signals,
+            runtime_strategies=runtime_strategies,
+        )
 
         baseline_runtime_strategies = _baseline_runtime_strategies()
-        for signal in ordered_signals:
-            result = runtime.evaluate(signal, baseline_runtime_strategies)
-            baseline_runtime_errors.extend(result.errors)
-            features = extract_signal_features(signal)
-            for decision in result.decisions:
-                baseline_walk_decisions.append(
-                    WalkForwardDecision(decision=decision, features=features)
-                )
+        baseline_walk_decisions, baseline_runtime_errors = (
+            _collect_walk_decisions_for_runtime(
+                runtime=runtime,
+                ordered_signals=ordered_signals,
+                runtime_strategies=baseline_runtime_strategies,
+            )
+        )
 
         walk_fold = WalkForwardFold(
             name="autonomous_lane",
@@ -415,26 +407,12 @@ def run_autonomous_lane(
             )
         )
         forecast_gate_metrics = _resolve_gate_forecast_metrics(signals=ordered_signals)
-        confidence_calibration_raw = profitability_evidence_payload.get(
-            "confidence_calibration"
-        )
-        confidence_calibration: dict[str, Any]
-        if isinstance(confidence_calibration_raw, dict):
-            confidence_calibration = dict(confidence_calibration_raw)
-        else:
-            confidence_calibration = {}
-        uncertainty_action = str(
-            confidence_calibration.get("gate_action", "abstain")
-        ).strip()
-        recalibration_run_id: str | None = None
-        if uncertainty_action != "pass":
-            recalibration_run_id = f"recal-{run_id[:12]}"
-            confidence_calibration["recalibration_run_id"] = recalibration_run_id
-            confidence_calibration["recalibration_artifact_ref"] = str(
-                recalibration_report_path
+        confidence_calibration, uncertainty_action, recalibration_run_id = (
+            _resolve_confidence_calibration(
+                profitability_evidence_payload=profitability_evidence_payload,
+                run_id=run_id,
+                recalibration_report_path=recalibration_report_path,
             )
-        profitability_evidence_payload["confidence_calibration"] = (
-            confidence_calibration
         )
         recalibration_report_path.write_text(
             json.dumps(
@@ -589,16 +567,13 @@ def run_autonomous_lane(
             json.dumps(research_spec, indent=2), encoding="utf-8"
         )
 
-        if gate_report.promotion_allowed and gate_report.recommended_mode == "paper":
-            resolved_configmap = (
-                strategy_configmap_path or _default_strategy_configmap_path()
-            )
-            patch_path = _write_paper_candidate_patch(
-                configmap_path=resolved_configmap,
-                runtime_strategies=runtime_strategies,
-                candidate_id=candidate_id,
-                output_path=paper_dir / "strategy-configmap-patch.yaml",
-            )
+        patch_path = _resolve_paper_patch_path(
+            gate_report=gate_report,
+            strategy_configmap_path=strategy_configmap_path,
+            runtime_strategies=runtime_strategies,
+            candidate_id=candidate_id,
+            paper_dir=paper_dir,
+        )
 
         raw_gate_policy = gate_policy_payload
         candidate_state_payload = {
@@ -776,40 +751,39 @@ def run_autonomous_lane(
         if not promotion_allowed:
             patch_path = None
 
-        if persist_results:
-            _persist_run_outputs(
-                session_factory=factory,
-                run_id=run_id,
-                candidate_id=candidate_id,
-                candidate_hash=candidate_hash,
-                runtime_strategies=runtime_strategies,
-                signals=signals,
-                walk_results=walk_results,
-                report=report,
-                candidate_spec_path=candidate_spec_path,
-                evaluation_report_path=evaluation_report_path,
-                gate_report_path=gate_report_path,
-                patch_path=patch_path,
-                now=now,
-                promotion_target=promotion_target,
-                promotion_allowed=promotion_allowed,
-                promotion_reasons=promotion_reasons,
-                promotion_recommendation=promotion_recommendation,
-                fold_metrics_count=fold_metrics_count,
-                stress_metrics_count=stress_metrics_count,
-                gate_report_trace_id=gate_report_trace_id,
-                recommendation_trace_id=recommendation_trace_id,
-            )
-
-        if persist_results:
-            _mark_run_passed(
-                session_factory=factory,
-                run_id=run_id,
-                run_row=run_row,
-                now=now,
-                gate_report_trace_id=gate_report_trace_id,
-                recommendation_trace_id=recommendation_trace_id,
-            )
+        _persist_run_outputs_if_requested(
+            persist_results=persist_results,
+            session_factory=factory,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            candidate_hash=candidate_hash,
+            runtime_strategies=runtime_strategies,
+            signals=signals,
+            walk_results=walk_results,
+            report=report,
+            candidate_spec_path=candidate_spec_path,
+            evaluation_report_path=evaluation_report_path,
+            gate_report_path=gate_report_path,
+            patch_path=patch_path,
+            now=now,
+            promotion_target=promotion_target,
+            promotion_allowed=promotion_allowed,
+            promotion_reasons=promotion_reasons,
+            promotion_recommendation=promotion_recommendation,
+            fold_metrics_count=fold_metrics_count,
+            stress_metrics_count=stress_metrics_count,
+            gate_report_trace_id=gate_report_trace_id,
+            recommendation_trace_id=recommendation_trace_id,
+        )
+        _mark_run_passed_if_requested(
+            persist_results=persist_results,
+            session_factory=factory,
+            run_id=run_id,
+            run_row=run_row,
+            now=now,
+            gate_report_trace_id=gate_report_trace_id,
+            recommendation_trace_id=recommendation_trace_id,
+        )
 
         return AutonomousLaneResult(
             run_id=run_id,
@@ -821,11 +795,185 @@ def run_autonomous_lane(
             recommendation_trace_id=recommendation_trace_id,
         )
     except Exception as exc:
-        if persist_results:
-            _mark_run_failed(
-                session_factory=factory, run_id=run_id, run_row=run_row, now=now
-            )
+        _mark_run_failed_if_requested(
+            persist_results=persist_results,
+            session_factory=factory,
+            run_id=run_id,
+            run_row=run_row,
+            now=now,
+        )
         raise RuntimeError(f"autonomous_lane_persistence_failed: {exc}") from exc
+
+
+def _prepare_lane_output_dirs(output_dir: Path) -> tuple[Path, Path, Path, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    research_dir = output_dir / "research"
+    backtest_dir = output_dir / "backtest"
+    gates_dir = output_dir / "gates"
+    paper_dir = output_dir / "paper-candidate"
+    for path in (research_dir, backtest_dir, gates_dir, paper_dir):
+        path.mkdir(parents=True, exist_ok=True)
+    return research_dir, backtest_dir, gates_dir, paper_dir
+
+
+def _collect_walk_decisions_for_runtime(
+    *,
+    runtime: StrategyRuntime,
+    ordered_signals: list[SignalEnvelope],
+    runtime_strategies: list[StrategyRuntimeConfig],
+) -> tuple[list[WalkForwardDecision], list[str]]:
+    walk_decisions: list[WalkForwardDecision] = []
+    runtime_errors: list[str] = []
+    for signal in ordered_signals:
+        result = runtime.evaluate(signal, runtime_strategies)
+        runtime_errors.extend(result.errors)
+        features = extract_signal_features(signal)
+        for decision in result.decisions:
+            walk_decisions.append(
+                WalkForwardDecision(decision=decision, features=features)
+            )
+    return walk_decisions, runtime_errors
+
+
+def _resolve_confidence_calibration(
+    *,
+    profitability_evidence_payload: dict[str, Any],
+    run_id: str,
+    recalibration_report_path: Path,
+) -> tuple[dict[str, Any], str, str | None]:
+    confidence_calibration_raw = profitability_evidence_payload.get(
+        "confidence_calibration"
+    )
+    confidence_calibration = (
+        dict(confidence_calibration_raw)
+        if isinstance(confidence_calibration_raw, dict)
+        else {}
+    )
+    uncertainty_action = str(
+        confidence_calibration.get("gate_action", "abstain")
+    ).strip()
+    recalibration_run_id: str | None = None
+    if uncertainty_action != "pass":
+        recalibration_run_id = f"recal-{run_id[:12]}"
+        confidence_calibration["recalibration_run_id"] = recalibration_run_id
+        confidence_calibration["recalibration_artifact_ref"] = str(
+            recalibration_report_path
+        )
+    profitability_evidence_payload["confidence_calibration"] = confidence_calibration
+    return confidence_calibration, uncertainty_action, recalibration_run_id
+
+
+def _resolve_paper_patch_path(
+    *,
+    gate_report: GateEvaluationReport,
+    strategy_configmap_path: Path | None,
+    runtime_strategies: list[StrategyRuntimeConfig],
+    candidate_id: str,
+    paper_dir: Path,
+) -> Path | None:
+    if not gate_report.promotion_allowed:
+        return None
+    if gate_report.recommended_mode != "paper":
+        return None
+    resolved_configmap = strategy_configmap_path or _default_strategy_configmap_path()
+    return _write_paper_candidate_patch(
+        configmap_path=resolved_configmap,
+        runtime_strategies=runtime_strategies,
+        candidate_id=candidate_id,
+        output_path=paper_dir / "strategy-configmap-patch.yaml",
+    )
+
+
+def _persist_run_outputs_if_requested(
+    *,
+    persist_results: bool,
+    session_factory: Callable[[], Session],
+    run_id: str,
+    candidate_id: str,
+    candidate_hash: str,
+    runtime_strategies: list[StrategyRuntimeConfig],
+    signals: list[SignalEnvelope],
+    walk_results: WalkForwardResults,
+    report: EvaluationReport,
+    candidate_spec_path: Path,
+    evaluation_report_path: Path,
+    gate_report_path: Path,
+    patch_path: Path | None,
+    now: datetime,
+    promotion_target: str,
+    promotion_allowed: bool,
+    promotion_reasons: list[str],
+    promotion_recommendation: PromotionRecommendation,
+    fold_metrics_count: int,
+    stress_metrics_count: int,
+    gate_report_trace_id: str,
+    recommendation_trace_id: str,
+) -> None:
+    if not persist_results:
+        return
+    _persist_run_outputs(
+        session_factory=session_factory,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        candidate_hash=candidate_hash,
+        runtime_strategies=runtime_strategies,
+        signals=signals,
+        walk_results=walk_results,
+        report=report,
+        candidate_spec_path=candidate_spec_path,
+        evaluation_report_path=evaluation_report_path,
+        gate_report_path=gate_report_path,
+        patch_path=patch_path,
+        now=now,
+        promotion_target=promotion_target,
+        promotion_allowed=promotion_allowed,
+        promotion_reasons=promotion_reasons,
+        promotion_recommendation=promotion_recommendation,
+        fold_metrics_count=fold_metrics_count,
+        stress_metrics_count=stress_metrics_count,
+        gate_report_trace_id=gate_report_trace_id,
+        recommendation_trace_id=recommendation_trace_id,
+    )
+
+
+def _mark_run_passed_if_requested(
+    *,
+    persist_results: bool,
+    session_factory: Callable[[], Session],
+    run_id: str,
+    run_row: ResearchRun | None,
+    now: datetime,
+    gate_report_trace_id: str | None,
+    recommendation_trace_id: str | None,
+) -> None:
+    if not persist_results:
+        return
+    _mark_run_passed(
+        session_factory=session_factory,
+        run_id=run_id,
+        run_row=run_row,
+        now=now,
+        gate_report_trace_id=gate_report_trace_id,
+        recommendation_trace_id=recommendation_trace_id,
+    )
+
+
+def _mark_run_failed_if_requested(
+    *,
+    persist_results: bool,
+    session_factory: Callable[[], Session],
+    run_id: str,
+    run_row: ResearchRun | None,
+    now: datetime,
+) -> None:
+    if not persist_results:
+        return
+    _mark_run_failed(
+        session_factory=session_factory,
+        run_id=run_id,
+        run_row=run_row,
+        now=now,
+    )
 
 
 def _upsert_research_run(

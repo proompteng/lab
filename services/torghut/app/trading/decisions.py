@@ -300,51 +300,21 @@ class DecisionEngine:
             return None
         features = extract_signal_features(signal)
 
-        price = features.price
-        snapshot: Optional[MarketSnapshot] = None
-        if price is None and self.price_fetcher is not None:
-            snapshot = self.price_fetcher.fetch_market_snapshot(signal)
-            if snapshot is not None:
-                price = snapshot.price
-        forecast_contract: dict[str, Any] | None = None
-        forecast_audit: dict[str, Any] | None = None
-        if self.forecast_router is not None:
-            normalized_payload = dict(signal.payload)
-            if price is not None and "price" not in normalized_payload:
-                normalized_payload["price"] = price
-            normalized_signal = signal.model_copy(update={"payload": normalized_payload})
-            try:
-                feature_vector = normalize_feature_vector_v3(normalized_signal)
-            except FeatureNormalizationError:
-                feature_vector = None
-            if feature_vector is not None:
-                forecast_result = self.forecast_router.route_and_forecast(
-                    feature_vector=feature_vector,
-                    horizon=timeframe,
-                    event_ts=signal.event_ts,
-                )
-                forecast_contract = forecast_result.contract.to_payload()
-                forecast_audit = forecast_result.audit.to_payload()
-                self._last_forecast_telemetry.append(forecast_result.telemetry)
-
-        if (
-            features.macd is None
-            or features.macd_signal is None
-            or features.rsi is None
-        ):
+        if not _has_legacy_indicator_inputs(features):
             logger.debug("Signal missing indicators for strategy %s", strategy.id)
             return None
 
-        action: Literal["buy", "sell"]
-        rationale_parts: list[str]
-        if features.macd > features.macd_signal and features.rsi < 35:
-            action = "buy"
-            rationale_parts = ["macd_cross_up", "rsi_oversold"]
-        elif features.macd < features.macd_signal and features.rsi > 65:
-            action = "sell"
-            rationale_parts = ["macd_cross_down", "rsi_overbought"]
-        else:
+        action_bundle = _resolve_legacy_action(features)
+        if action_bundle is None:
             return None
+        action, rationale_parts = action_bundle
+
+        price, snapshot = self._resolve_price_and_snapshot(signal, features)
+        forecast_contract, forecast_audit = self._resolve_forecast_payload(
+            signal,
+            timeframe=timeframe,
+            price=price,
+        )
 
         qty, sizing_meta = _resolve_qty(
             strategy,
@@ -382,6 +352,44 @@ class DecisionEngine:
             )
             | {"sizing": sizing_meta},
         )
+
+    def _resolve_price_and_snapshot(
+        self,
+        signal: SignalEnvelope,
+        features: SignalFeatures,
+    ) -> tuple[Optional[Decimal], Optional[MarketSnapshot]]:
+        price = features.price
+        snapshot: Optional[MarketSnapshot] = None
+        if price is None and self.price_fetcher is not None:
+            snapshot = self.price_fetcher.fetch_market_snapshot(signal)
+            if snapshot is not None:
+                price = snapshot.price
+        return price, snapshot
+
+    def _resolve_forecast_payload(
+        self,
+        signal: SignalEnvelope,
+        *,
+        timeframe: str,
+        price: Optional[Decimal],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        if self.forecast_router is None:
+            return None, None
+        normalized_payload = dict(signal.payload)
+        if price is not None and "price" not in normalized_payload:
+            normalized_payload["price"] = price
+        normalized_signal = signal.model_copy(update={"payload": normalized_payload})
+        try:
+            feature_vector = normalize_feature_vector_v3(normalized_signal)
+        except FeatureNormalizationError:
+            return None, None
+        forecast_result = self.forecast_router.route_and_forecast(
+            feature_vector=feature_vector,
+            horizon=timeframe,
+            event_ts=signal.event_ts,
+        )
+        self._last_forecast_telemetry.append(forecast_result.telemetry)
+        return forecast_result.contract.to_payload(), forecast_result.audit.to_payload()
 
 
 def _build_params(
@@ -615,19 +623,7 @@ def _resolve_qty_for_aggregated(
     if not strategies:
         return default_qty, {"method": "default_qty", "reason": "no_strategies"}
 
-    total_budget = Decimal("0")
-    for strategy in strategies:
-        budget = optional_decimal(strategy.max_notional_per_trade)
-        if budget is not None and budget > 0:
-            total_budget += budget
-    if total_budget <= 0:
-        global_budget = optional_decimal(settings.trading_max_notional_per_trade)
-        if global_budget is not None and global_budget > 0:
-            total_budget = global_budget
-    if total_budget <= 0 and equity is not None:
-        pct = optional_decimal(settings.trading_max_position_pct_equity)
-        if pct is not None and pct > 0:
-            total_budget = equity * pct
+    total_budget = _resolve_aggregated_notional_budget(strategies, equity=equity)
     if total_budget <= 0:
         return default_qty, {"method": "default_qty", "reason": "missing_budget"}
 
@@ -640,6 +636,51 @@ def _resolve_qty_for_aggregated(
         "notional_budget": str(total_budget),
         "price": str(price),
     }
+
+
+def _has_legacy_indicator_inputs(features: SignalFeatures) -> bool:
+    return (
+        features.macd is not None
+        and features.macd_signal is not None
+        and features.rsi is not None
+    )
+
+
+def _resolve_legacy_action(
+    features: SignalFeatures,
+) -> tuple[Literal["buy", "sell"], list[str]] | None:
+    if features.macd is None or features.macd_signal is None or features.rsi is None:
+        return None
+    if features.macd > features.macd_signal and features.rsi < 35:
+        return "buy", ["macd_cross_up", "rsi_oversold"]
+    if features.macd < features.macd_signal and features.rsi > 65:
+        return "sell", ["macd_cross_down", "rsi_overbought"]
+    return None
+
+
+def _resolve_aggregated_notional_budget(
+    strategies: list[Strategy],
+    *,
+    equity: Optional[Decimal],
+) -> Decimal:
+    total_budget = Decimal("0")
+    for strategy in strategies:
+        budget = optional_decimal(strategy.max_notional_per_trade)
+        if budget is not None and budget > 0:
+            total_budget += budget
+    if total_budget > 0:
+        return total_budget
+
+    global_budget = optional_decimal(settings.trading_max_notional_per_trade)
+    if global_budget is not None and global_budget > 0:
+        return global_budget
+
+    if equity is None:
+        return Decimal("0")
+    pct = optional_decimal(settings.trading_max_position_pct_equity)
+    if pct is not None and pct > 0:
+        return equity * pct
+    return Decimal("0")
 
 
 def _resolve_signal_timeframe(signal: SignalEnvelope) -> Optional[str]:

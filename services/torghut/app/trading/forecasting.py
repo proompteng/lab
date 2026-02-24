@@ -507,7 +507,8 @@ class ForecastRouterV5:
                 route_key=route_key,
             )
 
-        assert output is not None
+        if output is None:
+            raise RuntimeError('forecast_router_missing_output')
         if self.refiner is not None and not route.disable_refinement:
             output = self.refiner.refine(output, feature_vector=feature_vector)
 

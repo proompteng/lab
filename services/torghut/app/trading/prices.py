@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Optional
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode, urlsplit
 
 from ..config import settings
 from .clickhouse import normalize_symbol, to_datetime64
@@ -60,7 +61,7 @@ class ClickHousePriceFetcher(PriceFetcher):
         self.url = (url or settings.trading_clickhouse_url or "").rstrip("/")
         self.username = username or settings.trading_clickhouse_username
         self.password = password or settings.trading_clickhouse_password
-        self.table = table or settings.trading_price_table
+        self.table = _qualified_table_name(table or settings.trading_price_table)
         self.lookback_minutes = lookback_minutes or settings.trading_price_lookback_minutes
         self._columns: Optional[set[str]] = None
 
@@ -76,15 +77,22 @@ class ClickHousePriceFetcher(PriceFetcher):
         order_clause = "event_ts DESC"
         if self._supports_seq():
             order_clause = "event_ts DESC, seq DESC"
-        query = (
-            "SELECT event_ts, c, vwap "
-            f"FROM {self.table} "
-            f"WHERE symbol = '{symbol}' "
-            f"AND event_ts >= {to_datetime64(lookback)} "
-            f"AND event_ts <= {to_datetime64(target_ts)} "
-            f"ORDER BY {order_clause} "
-            "LIMIT 1 "
-            "FORMAT JSONEachRow"
+        query = ' '.join(
+            [
+                'SELECT event_ts, c, vwap',
+                'FROM',
+                self.table,
+                'WHERE',
+                f'symbol = {_quote_literal(symbol)}',
+                'AND',
+                f'event_ts >= {to_datetime64(lookback)}',
+                'AND',
+                f'event_ts <= {to_datetime64(target_ts)}',
+                'ORDER BY',
+                order_clause,
+                'LIMIT 1',
+                'FORMAT JSONEachRow',
+            ]
         )
         rows = self._query_clickhouse(query)
         if not rows:
@@ -104,15 +112,22 @@ class ClickHousePriceFetcher(PriceFetcher):
         order_clause = "event_ts DESC"
         if self._supports_seq():
             order_clause = "event_ts DESC, seq DESC"
-        query = (
-            "SELECT event_ts, c, vwap "
-            f"FROM {self.table} "
-            f"WHERE symbol = '{symbol}' "
-            f"AND event_ts >= {to_datetime64(lookback)} "
-            f"AND event_ts <= {to_datetime64(target_ts)} "
-            f"ORDER BY {order_clause} "
-            "LIMIT 1 "
-            "FORMAT JSONEachRow"
+        query = ' '.join(
+            [
+                'SELECT event_ts, c, vwap',
+                'FROM',
+                self.table,
+                'WHERE',
+                f'symbol = {_quote_literal(symbol)}',
+                'AND',
+                f'event_ts >= {to_datetime64(lookback)}',
+                'AND',
+                f'event_ts <= {to_datetime64(target_ts)}',
+                'ORDER BY',
+                order_clause,
+                'LIMIT 1',
+                'FORMAT JSONEachRow',
+            ]
         )
         rows = self._query_clickhouse(query)
         if not rows:
@@ -131,18 +146,41 @@ class ClickHousePriceFetcher(PriceFetcher):
 
     def _query_clickhouse(self, query: str) -> list[dict[str, Any]]:
         params = {"query": query}
-        request = Request(
-            f"{self.url}/?{urlencode(params)}",
-            headers={"Content-Type": "text/plain"},
-        )
+        request_url = f"{self.url}/?{urlencode(params)}"
+        parsed = urlsplit(request_url)
+        scheme = parsed.scheme.lower()
+        if scheme not in {'http', 'https'}:
+            raise RuntimeError(f'unsupported_clickhouse_url_scheme:{scheme or "missing"}')
+        if not parsed.hostname:
+            raise RuntimeError('invalid_clickhouse_url_host')
+
+        headers = {"Content-Type": "text/plain"}
         if self.username:
-            request.add_header("X-ClickHouse-User", self.username)
+            headers["X-ClickHouse-User"] = self.username
         if self.password:
-            request.add_header("X-ClickHouse-Key", self.password)
+            headers["X-ClickHouse-Key"] = self.password
+
+        path = parsed.path or '/'
+        if parsed.query:
+            path = f'{path}?{parsed.query}'
+        connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+        connection = connection_class(
+            parsed.hostname,
+            parsed.port,
+            timeout=settings.trading_clickhouse_timeout_seconds,
+        )
 
         rows: list[dict[str, Any]] = []
-        with urlopen(request, timeout=settings.trading_clickhouse_timeout_seconds) as response:
+        try:
+            connection.request('GET', path, headers=headers)
+            response = connection.getresponse()
+            if response.status < 200 or response.status >= 300:
+                detail = response.read().decode('utf-8', errors='replace')
+                raise RuntimeError(f'clickhouse_http_{response.status}:{detail[:200]}')
             payload = response.read().decode("utf-8")
+        finally:
+            connection.close()
+
         for line in payload.splitlines():
             if not line.strip():
                 continue
@@ -162,10 +200,14 @@ class ClickHousePriceFetcher(PriceFetcher):
         if self._columns is not None:
             return self._columns
         database, table = _split_table(self.table)
-        query = (
-            "SELECT name FROM system.columns "
-            f"WHERE database = '{database}' AND table = '{table}' "
-            "FORMAT JSONEachRow"
+        query = ' '.join(
+            [
+                'SELECT name FROM system.columns WHERE',
+                f"database = {_quote_literal(database)}",
+                'AND',
+                f"table = {_quote_literal(table)}",
+                'FORMAT JSONEachRow',
+            ]
         )
         try:
             rows = self._query_clickhouse(query)
@@ -225,6 +267,27 @@ def _split_table(table: str) -> tuple[str, str]:
         database, raw_table = table.split(".", 1)
         return database, raw_table
     return "default", table
+
+
+_IDENTIFIER_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+
+def _safe_identifier(value: str, *, kind: str) -> str:
+    cleaned = value.strip()
+    if not cleaned or not _IDENTIFIER_RE.fullmatch(cleaned):
+        raise ValueError(f'invalid_{kind}_identifier:{value}')
+    return cleaned
+
+
+def _qualified_table_name(table: str) -> str:
+    database, raw_table = _split_table(table)
+    safe_database = _safe_identifier(database, kind='database')
+    safe_table = _safe_identifier(raw_table, kind='table')
+    return f'{safe_database}.{safe_table}'
+
+
+def _quote_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 __all__ = ["ClickHousePriceFetcher", "MarketSnapshot", "PriceFetcher"]

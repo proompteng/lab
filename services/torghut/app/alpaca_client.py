@@ -221,42 +221,47 @@ class TorghutAlpacaClient:
         return parsed
 
     # ------------------- Helpers -------------------
-    @staticmethod
-    def _model_to_dict(model: Any) -> Dict[str, Any]:
-        def to_jsonable(value: Any) -> Any:
-            if value is None or isinstance(value, (str, int, float, bool)):
-                return value
-            if isinstance(value, UUID):
-                return str(value)
-            if isinstance(value, datetime):
-                return value.isoformat()
-            if isinstance(value, Decimal):
-                return str(value)
-            if isinstance(value, Enum):
-                return to_jsonable(value.value)
-            if is_dataclass(value) and not isinstance(value, type):
-                return to_jsonable(asdict(value))
-            if isinstance(value, Mapping):
-                mapping = cast(Mapping[object, Any], value)
-                return {str(key): to_jsonable(val) for key, val in mapping.items()}
-            if isinstance(value, (list, tuple, set, frozenset)):
-                items = cast(Iterable[Any], value)
-                return [to_jsonable(item) for item in items]
-            return str(value)
+    @classmethod
+    def _model_to_dict(cls, model: Any) -> Dict[str, Any]:
+        raw = cls._extract_model_payload(model)
+        return cast(Dict[str, Any], cls._to_jsonable(raw))
 
+    @classmethod
+    def _to_jsonable(cls, value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, Enum):
+            return cls._to_jsonable(value.value)
+        if is_dataclass(value) and not isinstance(value, type):
+            return cls._to_jsonable(asdict(value))
+        if isinstance(value, Mapping):
+            mapping = cast(Mapping[object, Any], value)
+            return {str(key): cls._to_jsonable(val) for key, val in mapping.items()}
+        if isinstance(value, (list, tuple, set, frozenset)):
+            items = cast(Iterable[Any], value)
+            return [cls._to_jsonable(item) for item in items]
+        return str(value)
+
+    @staticmethod
+    def _extract_model_payload(model: Any) -> Mapping[object, Any]:
         if hasattr(model, "model_dump"):
             try:
                 raw = model.model_dump(mode="json")
             except TypeError:
                 raw = model.model_dump()
             if isinstance(raw, Mapping):
-                return cast(Dict[str, Any], to_jsonable(raw))
+                return cast(Mapping[object, Any], raw)
             raise TypeError(f"Unsupported model_dump payload type: {type(raw)}")
         if hasattr(model, "__dict__"):
-            raw = {k: v for k, v in model.__dict__.items() if not k.startswith("_")}
-            return cast(Dict[str, Any], to_jsonable(raw))
+            return {k: v for k, v in model.__dict__.items() if not k.startswith("_")}
         if isinstance(model, Mapping):
-            return cast(Dict[str, Any], to_jsonable(model))
+            return cast(Mapping[object, Any], model)
         raise TypeError(f"Unsupported model type: {type(model)}")
 
     @staticmethod

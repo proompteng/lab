@@ -375,65 +375,122 @@ def _parse_json_object(content: str) -> dict[str, Any]:
 def _normalize_llm_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize common model mistakes into the expected response shape."""
 
-    if "verdict" not in payload and "decision" in payload:
-        payload = dict(payload)
-        payload["verdict"] = payload.pop("decision")
-    if "verdict" in payload:
-        verdict = str(payload["verdict"]).strip().lower()
-        aliases = {
-            "escalate_to_human": "escalate",
-            "escalate_human": "escalate",
-            "defer": "abstain",
-            "hold": "abstain",
-        }
-        payload = dict(payload)
-        payload["verdict"] = aliases.get(verdict, verdict)
+    normalized = _normalize_response_verdict(payload)
+    confidence = _clamp01(normalized.get("confidence"))
+    normalized = _ensure_confidence_fields(normalized, confidence)
+    confidence_band = _normalize_confidence_band(
+        normalized.get("confidence_band"), confidence
+    )
+    normalized = _set_payload_value(normalized, "confidence_band", confidence_band)
+    normalized = _ensure_uncertainty_fields(
+        normalized,
+        confidence=confidence,
+        confidence_band=confidence_band,
+    )
+    normalized = _ensure_calibration_fields(normalized, confidence=confidence)
+    normalized = _normalize_escalation_fields(normalized)
+    normalized = _set_default_risk_flags(normalized)
+    return _normalize_rationale_fields(normalized)
 
-    # Provide defaults for optional-ish fields; schema validation will still enforce
-    # correct verdict and rationale.
-    if "confidence" not in payload:
-        payload = dict(payload)
-        payload["confidence"] = 0.5
-    confidence = _clamp01(payload.get("confidence"))
-    if "confidence_band" not in payload:
-        payload = dict(payload)
-        payload["confidence_band"] = _confidence_band_from_score(confidence)
-    normalized_confidence_band = _normalize_confidence_band(payload.get("confidence_band"), confidence)
-    if payload.get("confidence_band") != normalized_confidence_band:
-        payload = dict(payload)
-        payload["confidence_band"] = normalized_confidence_band
-    confidence_band = normalized_confidence_band
-    if "uncertainty" not in payload:
-        payload = dict(payload)
-        payload["uncertainty"] = {
+
+def _normalize_response_verdict(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = payload
+    if "verdict" not in normalized and "decision" in normalized:
+        moved = dict(normalized)
+        moved["verdict"] = moved.pop("decision")
+        normalized = moved
+    if "verdict" not in normalized:
+        return normalized
+    verdict = str(normalized["verdict"]).strip().lower()
+    aliases = {
+        "escalate_to_human": "escalate",
+        "escalate_human": "escalate",
+        "defer": "abstain",
+        "hold": "abstain",
+    }
+    return _set_payload_value(normalized, "verdict", aliases.get(verdict, verdict))
+
+
+def _ensure_confidence_fields(payload: dict[str, Any], confidence: float) -> dict[str, Any]:
+    normalized = payload
+    if "confidence" not in normalized:
+        normalized = _set_payload_value(normalized, "confidence", 0.5)
+    if "confidence_band" not in normalized:
+        normalized = _set_payload_value(
+            normalized,
+            "confidence_band",
+            _confidence_band_from_score(confidence),
+        )
+    return normalized
+
+
+def _ensure_uncertainty_fields(
+    payload: dict[str, Any],
+    *,
+    confidence: float,
+    confidence_band: str,
+) -> dict[str, Any]:
+    if "uncertainty" in payload:
+        return payload
+    return _set_payload_value(
+        payload,
+        "uncertainty",
+        {
             "score": round(1.0 - confidence, 4),
             "band": _uncertainty_band_from_confidence_band(confidence_band),
-        }
-    if "calibrated_probabilities" not in payload:
-        payload = dict(payload)
-        payload["calibrated_probabilities"] = _default_calibrated_probabilities(
-            str(payload.get("verdict") or ""),
-            confidence,
+        },
+    )
+
+
+def _ensure_calibration_fields(payload: dict[str, Any], *, confidence: float) -> dict[str, Any]:
+    normalized = payload
+    if "calibrated_probabilities" not in normalized:
+        normalized = _set_payload_value(
+            normalized,
+            "calibrated_probabilities",
+            _default_calibrated_probabilities(
+                str(normalized.get("verdict") or ""),
+                confidence,
+            ),
         )
-    if "calibration_metadata" not in payload:
-        payload = dict(payload)
-        payload["calibration_metadata"] = {}
-    if "escalate_reason" not in payload and "escalation_reason" in payload:
-        payload = dict(payload)
-        payload["escalate_reason"] = payload.get("escalation_reason")
-    if "risk_flags" not in payload:
-        payload = dict(payload)
-        payload["risk_flags"] = []
+    if "calibration_metadata" not in normalized:
+        normalized = _set_payload_value(normalized, "calibration_metadata", {})
+    return normalized
+
+
+def _normalize_escalation_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    if "escalate_reason" in payload or "escalation_reason" not in payload:
+        return payload
+    return _set_payload_value(
+        payload,
+        "escalate_reason",
+        payload.get("escalation_reason"),
+    )
+
+
+def _set_default_risk_flags(payload: dict[str, Any]) -> dict[str, Any]:
+    if "risk_flags" in payload:
+        return payload
+    return _set_payload_value(payload, "risk_flags", [])
+
+
+def _normalize_rationale_fields(payload: dict[str, Any]) -> dict[str, Any]:
     rationale = payload.get("rationale")
     rationale_short = payload.get("rationale_short")
+    normalized = payload
     if not rationale and isinstance(rationale_short, str):
-        payload = dict(payload)
-        payload["rationale"] = rationale_short
+        normalized = _set_payload_value(normalized, "rationale", rationale_short)
     if not rationale_short and isinstance(rationale, str):
-        payload = dict(payload)
-        payload["rationale_short"] = rationale
+        normalized = _set_payload_value(normalized, "rationale_short", rationale)
+    return normalized
 
-    return payload
+
+def _set_payload_value(payload: dict[str, Any], key: str, value: Any) -> dict[str, Any]:
+    if payload.get(key) == value:
+        return payload
+    updated = dict(payload)
+    updated[key] = value
+    return updated
 
 
 def _committee_system_prompt(role: str) -> str:
@@ -464,18 +521,55 @@ def _aggregate_committee(
     mandatory_roles: list[str],
     fail_closed_verdict: str,
 ) -> dict[str, Any]:
-    mandatory_veto = any(
-        role_outputs.get(role) is None or role_outputs[role].verdict == "veto"
-        for role in mandatory_roles
+    aggregated_checks = _aggregate_committee_checks(role_outputs)
+    aggregated_risk_flags = _aggregate_committee_risk_flags(role_outputs)
+    if _committee_has_mandatory_veto(role_outputs, mandatory_roles):
+        return _mandatory_committee_veto_payload(
+            required_checks=aggregated_checks,
+            risk_flags=aggregated_risk_flags,
+        )
+
+    verdict = _committee_verdict(role_outputs, fail_closed_verdict=fail_closed_verdict)
+    confidence = _committee_confidence(role_outputs)
+    uncertainty_band = _committee_uncertainty_band(role_outputs)
+    adjusted_qty, adjusted_order_type, limit_price = _committee_adjustment_fields(
+        role_outputs
     )
-    aggregated_checks = sorted(
+    verdict, adjusted_qty, adjusted_order_type, limit_price = _validate_adjustment_payload(
+        verdict=verdict,
+        adjusted_qty=adjusted_qty,
+        adjusted_order_type=adjusted_order_type,
+        limit_price=limit_price,
+        fail_closed_verdict=fail_closed_verdict,
+    )
+    return _committee_payload(
+        verdict=verdict,
+        confidence=confidence,
+        uncertainty_band=uncertainty_band,
+        adjusted_qty=adjusted_qty,
+        adjusted_order_type=adjusted_order_type,
+        limit_price=limit_price,
+        required_checks=aggregated_checks,
+        risk_flags=aggregated_risk_flags,
+    )
+
+
+def _aggregate_committee_checks(
+    role_outputs: dict[str, LLMCommitteeMemberResponse],
+) -> list[str]:
+    return sorted(
         {
             check
             for item in role_outputs.values()
             for check in item.required_checks
         }
     )
-    aggregated_risk_flags = sorted(
+
+
+def _aggregate_committee_risk_flags(
+    role_outputs: dict[str, LLMCommitteeMemberResponse],
+) -> list[str]:
+    return sorted(
         {
             flag
             for item in role_outputs.values()
@@ -483,85 +577,133 @@ def _aggregate_committee(
         }
     )
 
-    if mandatory_veto:
-        verdict = "veto"
-        confidence = 1.0
-        confidence_band = "high"
-        rationale = "mandatory_committee_veto"
-        risk_flags = sorted([*aggregated_risk_flags, "mandatory_committee_veto"])
-        return {
-            "verdict": verdict,
-            "confidence": confidence,
-            "confidence_band": confidence_band,
-            "calibrated_probabilities": _default_calibrated_probabilities(verdict, confidence),
-            "uncertainty": {"score": 0.0, "band": "low"},
-            "calibration_metadata": {},
-            "rationale_short": rationale,
-            "required_checks": aggregated_checks,
-            "rationale": rationale,
-            "risk_flags": risk_flags,
-        }
 
+def _committee_has_mandatory_veto(
+    role_outputs: dict[str, LLMCommitteeMemberResponse],
+    mandatory_roles: list[str],
+) -> bool:
+    return any(
+        role_outputs.get(role) is None or role_outputs[role].verdict == "veto"
+        for role in mandatory_roles
+    )
+
+
+def _mandatory_committee_veto_payload(
+    *,
+    required_checks: list[str],
+    risk_flags: list[str],
+) -> dict[str, Any]:
+    verdict = "veto"
+    confidence = 1.0
+    rationale = "mandatory_committee_veto"
+    return {
+        "verdict": verdict,
+        "confidence": confidence,
+        "confidence_band": "high",
+        "calibrated_probabilities": _default_calibrated_probabilities(verdict, confidence),
+        "uncertainty": {"score": 0.0, "band": "low"},
+        "calibration_metadata": {},
+        "rationale_short": rationale,
+        "required_checks": required_checks,
+        "rationale": rationale,
+        "risk_flags": sorted([*risk_flags, "mandatory_committee_veto"]),
+    }
+
+
+def _committee_verdict(
+    role_outputs: dict[str, LLMCommitteeMemberResponse],
+    *,
+    fail_closed_verdict: str,
+) -> str:
     votes = [member.verdict for member in role_outputs.values()]
     if any(vote == "escalate" for vote in votes):
-        verdict = "escalate"
-    elif any(vote == "abstain" for vote in votes):
-        verdict = fail_closed_verdict
-    elif any(vote == "adjust" for vote in votes):
-        verdict = "adjust"
-    elif any(vote == "approve" for vote in votes):
-        verdict = "approve"
-    else:
-        verdict = fail_closed_verdict
+        return "escalate"
+    if any(vote == "abstain" for vote in votes):
+        return fail_closed_verdict
+    if any(vote == "adjust" for vote in votes):
+        return "adjust"
+    if any(vote == "approve" for vote in votes):
+        return "approve"
+    return fail_closed_verdict
 
+
+def _committee_confidence(role_outputs: dict[str, LLMCommitteeMemberResponse]) -> float:
     confidence_values = [member.confidence for member in role_outputs.values()]
-    confidence = round(
-        (sum(confidence_values) / len(confidence_values)) if confidence_values else 0.0,
-        4,
-    )
-    confidence_band = _confidence_band_from_score(confidence)
+    if not confidence_values:
+        return 0.0
+    return round(sum(confidence_values) / len(confidence_values), 4)
 
+
+def _committee_uncertainty_band(
+    role_outputs: dict[str, LLMCommitteeMemberResponse],
+) -> str:
     uncertainty_rank = {"low": 1, "medium": 2, "high": 3}
     uncertainty = "low"
     for member in role_outputs.values():
         if uncertainty_rank[member.uncertainty] > uncertainty_rank[uncertainty]:
             uncertainty = member.uncertainty
-    uncertainty_score = round(1.0 - confidence, 4)
+    return uncertainty
 
+
+def _committee_adjustment_fields(
+    role_outputs: dict[str, LLMCommitteeMemberResponse],
+) -> tuple[Decimal | None, str | None, Decimal | None]:
     adjusted_source = next(
         (member for member in role_outputs.values() if member.verdict == "adjust"),
         None,
     )
+    if adjusted_source is None:
+        return None, None, None
+    return (
+        adjusted_source.adjusted_qty,
+        adjusted_source.adjusted_order_type,
+        adjusted_source.limit_price,
+    )
 
-    adjusted_qty = adjusted_source.adjusted_qty if adjusted_source else None
-    adjusted_order_type = adjusted_source.adjusted_order_type if adjusted_source else None
-    limit_price = adjusted_source.limit_price if adjusted_source else None
 
-    # Fail closed when an aggregate adjust proposal is structurally invalid.
-    if verdict == "adjust" and adjusted_qty is None:
-        verdict = fail_closed_verdict
-        adjusted_order_type = None
-        limit_price = None
-    if verdict == "adjust" and adjusted_order_type in {"limit", "stop_limit"} and limit_price is None:
-        verdict = fail_closed_verdict
-        adjusted_qty = None
-        adjusted_order_type = None
+def _validate_adjustment_payload(
+    *,
+    verdict: str,
+    adjusted_qty: Decimal | None,
+    adjusted_order_type: str | None,
+    limit_price: Decimal | None,
+    fail_closed_verdict: str,
+) -> tuple[str, Decimal | None, str | None, Decimal | None]:
+    if verdict != "adjust":
+        return verdict, adjusted_qty, adjusted_order_type, limit_price
+    if adjusted_qty is None:
+        return fail_closed_verdict, None, None, None
+    if adjusted_order_type in {"limit", "stop_limit"} and limit_price is None:
+        return fail_closed_verdict, None, None, None
+    return verdict, adjusted_qty, adjusted_order_type, limit_price
 
+
+def _committee_payload(
+    *,
+    verdict: str,
+    confidence: float,
+    uncertainty_band: str,
+    adjusted_qty: Decimal | None,
+    adjusted_order_type: str | None,
+    limit_price: Decimal | None,
+    required_checks: list[str],
+    risk_flags: list[str],
+) -> dict[str, Any]:
     rationale = f"committee_aggregate_{verdict}"
     payload: dict[str, Any] = {
         "verdict": verdict,
         "confidence": confidence,
-        "confidence_band": confidence_band,
+        "confidence_band": _confidence_band_from_score(confidence),
         "calibrated_probabilities": _default_calibrated_probabilities(verdict, confidence),
-        "uncertainty": {"score": uncertainty_score, "band": uncertainty},
+        "uncertainty": {"score": round(1.0 - confidence, 4), "band": uncertainty_band},
         "calibration_metadata": {},
         "rationale_short": rationale,
-        "required_checks": aggregated_checks,
+        "required_checks": required_checks,
         "adjusted_qty": adjusted_qty,
         "adjusted_order_type": adjusted_order_type,
         "limit_price": limit_price,
         "rationale": rationale,
-        "risk_flags": aggregated_risk_flags,
+        "risk_flags": risk_flags,
     }
     if verdict == "escalate":
         payload["escalate_reason"] = "committee_requested_escalation"
