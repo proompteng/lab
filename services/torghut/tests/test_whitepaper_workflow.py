@@ -325,6 +325,7 @@ https://example.com/paper.pdf
 
     @patch("app.whitepapers.workflow._http_request_bytes")
     def test_download_pdf_requests_redirect_following(self, mock_http_request: Any) -> None:
+        os.environ["WHITEPAPER_MAX_PDF_BYTES"] = "123"
         mock_http_request.return_value = (200, {}, b"%PDF-1.7 redirected")
 
         payload = WhitepaperWorkflowService._download_pdf("https://example.com/paper.pdf")
@@ -332,4 +333,5 @@ https://example.com/paper.pdf
         self.assertEqual(payload, b"%PDF-1.7 redirected")
         kwargs = mock_http_request.call_args.kwargs
         self.assertEqual(kwargs["method"], "GET")
+        self.assertEqual(kwargs["max_response_bytes"], 123)
         self.assertTrue(kwargs["follow_redirects"])

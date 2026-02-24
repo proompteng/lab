@@ -42,6 +42,7 @@ def _http_request_bytes(
     headers: Mapping[str, str] | None = None,
     body: bytes | None = None,
     timeout_seconds: int,
+    max_response_bytes: int | None = None,
     follow_redirects: bool = False,
     max_redirects: int = 5,
 ) -> tuple[int, dict[str, str], bytes]:
@@ -68,7 +69,10 @@ def _http_request_bytes(
         try:
             connection.request(current_method, path, body=current_body, headers=request_headers)
             response = connection.getresponse()
-            payload = response.read()
+            read_limit = None
+            if max_response_bytes is not None:
+                read_limit = max(max_response_bytes, 0) + 1
+            payload = response.read(read_limit)
             response_headers = {key: value for key, value in response.getheaders()}
             status_code = int(response.status)
         finally:
@@ -1363,6 +1367,7 @@ class WhitepaperWorkflowService:
                 **({"Authorization": f"Bearer {token}"} if token else {}),
             },
             timeout_seconds=timeout,
+            max_response_bytes=max_bytes,
             follow_redirects=True,
         )
         if status < 200 or status >= 300:
