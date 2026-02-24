@@ -1,0 +1,30 @@
+{
+  "run_id": "wp-c8f866f2b289cb3de96f2fa1",
+  "verdict": "conditional_implement",
+  "score": 0.64,
+  "confidence": 0.71,
+  "decision_policy": "whitepaper_v1",
+  "gating": {
+    "full_paper_review_completed": true,
+    "implementation_ready_design_doc_present": true,
+    "machine_readable_artifacts_present": true,
+    "theory_assumption_risk": "high",
+    "empirical_rigor": "medium_low",
+    "external_validity": "low",
+    "recommended_mode": "shadow_and_paper_trading_only"
+  },
+  "rationale": "The architecture is useful for a staged research workflow, but current evidence does not justify immediate full production deployment. Core guarantees depend on strong assumptions, and empirical reporting is mainly directional with narrow market coverage.",
+  "rejection_reasons": [
+    "Reject immediate full-production deployment because theoretical assumptions are not validated for the intended operating regime.",
+    "Reject direct strategy promotion because experimental evidence is narrow in scope (single market/year) and mostly directional.",
+    "Reject live-capital usage without explicit cost, slippage, turnover, and robustness controls."
+  ],
+  "follow_up_recommendations": [
+    "Implement the two-loop system in deterministic shadow mode with immutable run artifacts.",
+    "Add strict promotion gates for walk-forward stability, cost-aware performance, turnover, and drawdown limits.",
+    "Run ablations to quantify incremental value of inner loop, outer loop, retrieval, and judge configuration.",
+    "Add KB provenance, deduplication, and decay/retirement governance before scaling iteration volume.",
+    "Require human approval before any transition from paper-trading to production exposure."
+  ],
+  "requires_followup": true
+}
