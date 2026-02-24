@@ -113,6 +113,8 @@ def _http_request_bytes(
 
 
 _GITHUB_ISSUE_ACTIONS = {"opened", "edited", "reopened", "labeled"}
+_GITHUB_ISSUE_COMMENT_ACTIONS = {"created", "edited"}
+_RETRYABLE_AGENTRUN_STATUSES = {"failed", "error", "cancelled", "canceled", "timeout", "timed_out"}
 
 
 @dataclass(frozen=True)
@@ -127,6 +129,8 @@ class GithubIssueEvent:
     actor: str | None
     delivery_id: str | None
     raw_payload: dict[str, Any]
+    comment_body: str | None = None
+    requeue_requested: bool = False
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -162,6 +166,10 @@ def whitepaper_kafka_enabled() -> bool:
     return _bool_env("WHITEPAPER_KAFKA_ENABLED", default=False)
 
 
+def whitepaper_requeue_comment_keyword() -> str:
+    return _str_env("WHITEPAPER_REQUEUE_COMMENT_KEYWORD", "research whitepaper") or "research whitepaper"
+
+
 def marker_start() -> str:
     return _str_env("WHITEPAPER_ISSUE_MARKER_START", "<!-- TORGHUT_WHITEPAPER:START -->") or ""
 
@@ -191,6 +199,35 @@ def parse_marker_block(issue_body: str) -> dict[str, str] | None:
         key, raw_value = line.split(":", 1)
         parsed[key.strip().lower()] = raw_value.strip()
     return parsed if parsed else None
+
+
+def normalize_attachment_url(url: str) -> str:
+    raw = url.strip()
+    if not raw:
+        return ""
+
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return raw
+
+    normalized = parsed._replace(
+        scheme=parsed.scheme.lower(),
+        netloc=parsed.netloc.lower(),
+        fragment="",
+    )
+    return normalized.geturl()
+
+
+def build_whitepaper_run_id(*, source_identifier: str, attachment_url: str) -> str:
+    run_seed = f"{source_identifier}|{normalize_attachment_url(attachment_url)}"
+    return f"wp-{hashlib.sha256(run_seed.encode('utf-8')).hexdigest()[:24]}"
+
+
+def comment_requests_requeue(comment_body: str) -> bool:
+    keyword = whitepaper_requeue_comment_keyword().strip().lower()
+    if not keyword:
+        return False
+    return keyword in comment_body.lower()
 
 
 def extract_pdf_urls(text: str) -> list[str]:
@@ -265,13 +302,21 @@ def normalize_github_issue_event(payload: Mapping[str, Any]) -> GithubIssueEvent
         event_name = str(envelope.get("event") or envelope.get("event_name") or "").strip() or None
 
     github_payload = _extract_github_issue_payload(envelope)
-    if not event_name and "issue" in github_payload and "repository" in github_payload:
-        event_name = "issues"
-    if event_name != "issues":
+    if not event_name:
+        if "comment" in github_payload and "issue" in github_payload and "repository" in github_payload:
+            event_name = "issue_comment"
+        elif "issue" in github_payload and "repository" in github_payload:
+            event_name = "issues"
+
+    if event_name == "issues":
+        allowed_actions = _GITHUB_ISSUE_ACTIONS
+    elif event_name == "issue_comment":
+        allowed_actions = _GITHUB_ISSUE_COMMENT_ACTIONS
+    else:
         return None
 
     action = str(github_payload.get("action") or "").strip().lower()
-    if action not in _GITHUB_ISSUE_ACTIONS:
+    if action not in allowed_actions:
         return None
 
     issue = github_payload.get("issue")
@@ -289,6 +334,13 @@ def normalize_github_issue_event(payload: Mapping[str, Any]) -> GithubIssueEvent
     issue_title = str(issue_payload.get("title") or "").strip()
     issue_body = str(issue_payload.get("body") or "")
     issue_url = str(issue_payload.get("html_url") or issue_payload.get("url") or "").strip()
+    comment_body: str | None = None
+    if event_name == "issue_comment":
+        comment = github_payload.get("comment")
+        if not isinstance(comment, Mapping):
+            return None
+        comment_body = str(cast(dict[str, Any], comment).get("body") or "")
+
     actor = _extract_sender_login(github_payload.get("sender"))
 
     return GithubIssueEvent(
@@ -301,6 +353,8 @@ def normalize_github_issue_event(payload: Mapping[str, Any]) -> GithubIssueEvent
         issue_url=issue_url,
         actor=actor,
         delivery_id=delivery_id,
+        comment_body=comment_body,
+        requeue_requested=bool(comment_body and comment_requests_requeue(comment_body)),
         raw_payload=coerce_json_payload(github_payload),
     )
 
@@ -493,18 +547,35 @@ class WhitepaperWorkflowService:
         if marker_rejection is not None or marker is None:
             return marker_rejection or IssueKickoffResult(accepted=False, reason="marker_missing")
 
-        source_identifier = f"{issue_event.repository}#{issue_event.issue_number}"
-        marker_hash = hashlib.sha256(json.dumps(marker, sort_keys=True).encode("utf-8")).hexdigest()
-        run_seed = f"{source_identifier}|{attachment_url}|{marker_hash}"
-        run_id_seed = f"wp-{hashlib.sha256(run_seed.encode('utf-8')).hexdigest()[:24]}"
+        if issue_event.event_name == "issue_comment" and not issue_event.requeue_requested:
+            return IssueKickoffResult(accepted=False, reason="comment_without_requeue_keyword")
 
-        idempotent_result, run_identity = self._resolve_issue_run_identity(
-            session=session,
-            run_id_seed=run_id_seed,
-            marker_hash=marker_hash,
+        source_identifier = f"{issue_event.repository}#{issue_event.issue_number}"
+        run_id_seed = build_whitepaper_run_id(
+            source_identifier=source_identifier,
+            attachment_url=attachment_url,
         )
-        if idempotent_result is not None:
-            return idempotent_result
+        trace_seed = f"{source_identifier}|{attachment_url}"
+        run_identity = _IssueRunIdentity(
+            run_id=run_id_seed,
+            retry_of_run_id=None,
+            marker_hash=hashlib.sha256(trace_seed.encode("utf-8")).hexdigest()[:32],
+        )
+
+        existing_run = session.execute(
+            select(WhitepaperAnalysisRun).where(WhitepaperAnalysisRun.run_id == run_id_seed)
+        ).scalar_one_or_none()
+        if existing_run is not None:
+            if issue_event.requeue_requested:
+                return self._requeue_existing_run(
+                    session,
+                    run=existing_run,
+                    issue_event=issue_event,
+                    attachment_url=attachment_url,
+                    marker=marker,
+                    source=source,
+                )
+            return self._idempotent_kickoff_result(existing_run)
 
         document = self._upsert_issue_document(
             session=session,
@@ -574,59 +645,13 @@ class WhitepaperWorkflowService:
             return IssueKickoffResult(accepted=False, reason="unsupported_workflow_marker"), None, ""
 
         attachments = extract_pdf_urls(issue_body)
-        attachment_url = str(marker.get("attachment_url") or (attachments[0] if attachments else "")).strip()
+        attachment_url = normalize_attachment_url(
+            str(marker.get("attachment_url") or (attachments[0] if attachments else ""))
+        )
         if not attachment_url:
             return IssueKickoffResult(accepted=False, reason="pdf_attachment_missing"), None, ""
 
         return None, marker, attachment_url
-
-    def _resolve_issue_run_identity(
-        self,
-        *,
-        session: Session,
-        run_id_seed: str,
-        marker_hash: str,
-    ) -> tuple[IssueKickoffResult | None, _IssueRunIdentity]:
-        primary_run = session.execute(
-            select(WhitepaperAnalysisRun).where(WhitepaperAnalysisRun.run_id == run_id_seed)
-        ).scalar_one_or_none()
-        if primary_run is None:
-            return None, _IssueRunIdentity(run_id=run_id_seed, retry_of_run_id=None, marker_hash=marker_hash)
-
-        if primary_run.status != "failed":
-            return self._idempotent_kickoff_result(primary_run), _IssueRunIdentity(
-                run_id=run_id_seed,
-                retry_of_run_id=None,
-                marker_hash=marker_hash,
-            )
-
-        retry_runs = session.execute(
-            select(WhitepaperAnalysisRun)
-            .where(WhitepaperAnalysisRun.retry_of_run_id == primary_run.run_id)
-            .order_by(WhitepaperAnalysisRun.created_at.desc())
-        ).scalars().all()
-        successful_retry = next((retry_run for retry_run in retry_runs if retry_run.status != "failed"), None)
-        if successful_retry is not None:
-            return self._idempotent_kickoff_result(successful_retry), _IssueRunIdentity(
-                run_id=run_id_seed,
-                retry_of_run_id=None,
-                marker_hash=marker_hash,
-            )
-
-        retry_index = len(retry_runs) + 1
-        while True:
-            candidate_run_id = f"{run_id_seed}-r{retry_index}"
-            collision = session.execute(
-                select(WhitepaperAnalysisRun).where(WhitepaperAnalysisRun.run_id == candidate_run_id)
-            ).scalar_one_or_none()
-            if collision is None:
-                identity = _IssueRunIdentity(
-                    run_id=candidate_run_id,
-                    retry_of_run_id=primary_run.run_id,
-                    marker_hash=marker_hash,
-                )
-                return None, identity
-            retry_index += 1
 
     @staticmethod
     def _idempotent_kickoff_result(run: WhitepaperAnalysisRun) -> IssueKickoffResult:
@@ -862,7 +887,148 @@ class WhitepaperWorkflowService:
             return None
         return cast(str | None, dispatched.get("agentrun_name"))
 
-    def dispatch_codex_agentrun(self, session: Session, run_id: str) -> dict[str, Any]:
+    def _next_step_attempt(
+        self,
+        session: Session,
+        *,
+        analysis_run_id: Any,
+        step_name: str,
+    ) -> int:
+        max_attempt = session.execute(
+            select(func.max(WhitepaperAnalysisStep.attempt)).where(
+                WhitepaperAnalysisStep.analysis_run_id == analysis_run_id,
+                WhitepaperAnalysisStep.step_name == step_name,
+            )
+        ).scalar_one()
+        return int(max_attempt or 0) + 1
+
+    @staticmethod
+    def _is_retryable_agentrun_status(status: str | None) -> bool:
+        if not status:
+            return False
+        return status.strip().lower() in _RETRYABLE_AGENTRUN_STATUSES
+
+    def _requeue_existing_run(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+        issue_event: GithubIssueEvent,
+        attachment_url: str,
+        marker: Mapping[str, Any],
+        source: str,
+    ) -> IssueKickoffResult:
+        document_key = str(run.document.document_key) if run.document else None
+        if run.status == "completed":
+            return IssueKickoffResult(
+                accepted=False,
+                reason="already_completed",
+                run_id=run.run_id,
+                document_key=document_key,
+            )
+
+        version = run.document_version
+        if version is None or version.parse_status != "stored":
+            return IssueKickoffResult(
+                accepted=False,
+                reason="requeue_not_ready",
+                run_id=run.run_id,
+                document_key=document_key,
+            )
+
+        latest_agentrun = session.execute(
+            select(WhitepaperCodexAgentRun)
+            .where(WhitepaperCodexAgentRun.analysis_run_id == run.id)
+            .order_by(WhitepaperCodexAgentRun.created_at.desc())
+        ).scalars().first()
+        if latest_agentrun and not self._is_retryable_agentrun_status(latest_agentrun.status):
+            return IssueKickoffResult(
+                accepted=True,
+                reason="already_dispatched",
+                run_id=run.run_id,
+                document_key=document_key,
+                agentrun_name=latest_agentrun.agentrun_name,
+            )
+
+        context = cast(dict[str, Any], run.orchestration_context_json or {})
+        context.update(
+            {
+                "repository": issue_event.repository,
+                "issue_number": issue_event.issue_number,
+                "issue_url": issue_event.issue_url,
+                "attachment_url": attachment_url,
+                "marker": coerce_json_payload(cast(dict[str, Any], marker)),
+                "requeue_keyword": whitepaper_requeue_comment_keyword(),
+            }
+        )
+        run.orchestration_context_json = coerce_json_payload(context)
+        run.trigger_source = "github_issue_comment_kafka" if source == "kafka" else "github_issue_comment_api"
+        run.trigger_actor = issue_event.actor
+        run.failure_reason = None
+        run.started_at = datetime.now(timezone.utc)
+        session.add(run)
+
+        requeue_attempt = self._next_step_attempt(
+            session,
+            analysis_run_id=run.id,
+            step_name="requeue_request",
+        )
+        session.add(
+            WhitepaperAnalysisStep(
+                analysis_run_id=run.id,
+                step_name="requeue_request",
+                step_order=1,
+                attempt=requeue_attempt,
+                status="completed",
+                executor="torghut",
+                idempotency_key=issue_event.delivery_id,
+                started_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(timezone.utc),
+                input_json={
+                    "source": source,
+                    "event_name": issue_event.event_name,
+                    "action": issue_event.action,
+                    "comment_keyword": whitepaper_requeue_comment_keyword(),
+                },
+                output_json={
+                    "run_id": run.run_id,
+                    "reason": "requeue_requested",
+                },
+            )
+        )
+
+        if not _bool_env("WHITEPAPER_AGENTRUN_AUTO_DISPATCH", True):
+            run.status = "queued"
+            run.failure_reason = None
+            session.add(run)
+            return IssueKickoffResult(
+                accepted=True,
+                reason="requeued",
+                run_id=run.run_id,
+                document_key=document_key,
+            )
+
+        try:
+            dispatch_result = self.dispatch_codex_agentrun(session, run.run_id, allow_retry=True)
+            return IssueKickoffResult(
+                accepted=True,
+                reason="requeued",
+                run_id=run.run_id,
+                document_key=document_key,
+                agentrun_name=cast(str | None, dispatch_result.get("agentrun_name")),
+            )
+        except Exception as exc:
+            run.status = "failed"
+            run.failure_reason = f"agentrun_dispatch_failed:{type(exc).__name__}:{exc}"
+            session.add(run)
+            return IssueKickoffResult(
+                accepted=True,
+                reason="requeue_failed",
+                run_id=run.run_id,
+                document_key=document_key,
+            )
+
+    def dispatch_codex_agentrun(self, session: Session, run_id: str, *, allow_retry: bool = False) -> dict[str, Any]:
         run = session.execute(
             select(WhitepaperAnalysisRun).where(WhitepaperAnalysisRun.run_id == run_id)
         ).scalar_one_or_none()
@@ -870,14 +1036,24 @@ class WhitepaperWorkflowService:
             raise ValueError("whitepaper_run_not_found")
 
         existing = session.execute(
-            select(WhitepaperCodexAgentRun).where(WhitepaperCodexAgentRun.analysis_run_id == run.id)
-        ).scalar_one_or_none()
+            select(WhitepaperCodexAgentRun)
+            .where(WhitepaperCodexAgentRun.analysis_run_id == run.id)
+            .order_by(WhitepaperCodexAgentRun.created_at.desc())
+        ).scalars().first()
         if existing is not None:
-            return {
-                "idempotent": True,
-                "agentrun_name": existing.agentrun_name,
-                "status": existing.status,
-            }
+            if not allow_retry or not self._is_retryable_agentrun_status(existing.status):
+                return {
+                    "idempotent": True,
+                    "agentrun_name": existing.agentrun_name,
+                    "status": existing.status,
+                }
+
+        dispatch_count = session.execute(
+            select(func.count())
+            .select_from(WhitepaperCodexAgentRun)
+            .where(WhitepaperCodexAgentRun.analysis_run_id == run.id)
+        ).scalar_one()
+        dispatch_attempt = int(dispatch_count or 0) + 1
 
         context = cast(dict[str, Any], run.orchestration_context_json or {})
         repository = str(context.get("repository") or _str_env("WHITEPAPER_DEFAULT_REPOSITORY", "proompteng/lab"))
@@ -888,7 +1064,10 @@ class WhitepaperWorkflowService:
         marker = cast(dict[str, Any], context.get("marker") or {})
 
         base_branch = str(marker.get("base_branch") or _str_env("WHITEPAPER_DEFAULT_BASE_BRANCH", "main"))
-        head_branch = str(marker.get("head_branch") or f"codex/whitepaper-{run.run_id[-16:]}")
+        default_head_branch = f"codex/whitepaper-{run.run_id[-16:]}"
+        if dispatch_attempt > 1 and "head_branch" not in marker:
+            default_head_branch = f"{default_head_branch}-retry-{dispatch_attempt}"
+        head_branch = str(marker.get("head_branch") or default_head_branch)
 
         version = run.document_version
         if version is None:
@@ -909,7 +1088,7 @@ class WhitepaperWorkflowService:
 
         payload: dict[str, Any] = {
             "namespace": _str_env("WHITEPAPER_AGENTRUN_NAMESPACE", "agents"),
-            "idempotencyKey": run.run_id,
+            "idempotencyKey": run.run_id if dispatch_attempt == 1 else f"{run.run_id}-retry-{dispatch_attempt}",
             "agentRef": {"name": _str_env("WHITEPAPER_AGENT_NAME", "codex-whitepaper-agent")},
             "runtime": {"type": "job"},
             "implementation": {
@@ -941,7 +1120,8 @@ class WhitepaperWorkflowService:
             "ttlSecondsAfterFinished": _int_env("WHITEPAPER_AGENTRUN_TTL_SECONDS", 7200),
         }
 
-        response_payload = self._submit_jangar_agentrun(payload, idempotency_key=run.run_id)
+        idempotency_key = cast(str, payload["idempotencyKey"])
+        response_payload = self._submit_jangar_agentrun(payload, idempotency_key=idempotency_key)
         resource = cast(dict[str, Any], response_payload.get("resource") or {})
         metadata = cast(dict[str, Any], resource.get("metadata") or {})
         status = cast(dict[str, Any], resource.get("status") or {})
@@ -956,10 +1136,14 @@ class WhitepaperWorkflowService:
             analysis_run_id=run.id,
             step_name="agentrun_dispatch",
             step_order=2,
-            attempt=1,
+            attempt=self._next_step_attempt(
+                session,
+                analysis_run_id=run.id,
+                step_name="agentrun_dispatch",
+            ),
             status="completed",
             executor="torghut",
-            idempotency_key=run.run_id,
+            idempotency_key=idempotency_key,
             started_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc),
             input_json={"payload": payload},
@@ -997,6 +1181,7 @@ class WhitepaperWorkflowService:
         session.add(agentrun_row)
 
         run.status = "agentrun_dispatched"
+        run.failure_reason = None
         session.add(run)
         return {
             "agentrun_name": agentrun_name,
@@ -1665,6 +1850,8 @@ __all__ = [
     "WhitepaperKafkaIssueIngestor",
     "WhitepaperKafkaWorker",
     "WhitepaperWorkflowService",
+    "build_whitepaper_run_id",
+    "comment_requests_requeue",
     "extract_pdf_urls",
     "normalize_github_issue_event",
     "parse_marker_block",

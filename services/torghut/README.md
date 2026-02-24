@@ -41,15 +41,18 @@ base_branch: main
 <!-- TORGHUT_WHITEPAPER:END -->
 ```
 - Include a `.pdf` attachment URL in the issue body.
+- Requeue keyword (GitHub issue comment): post `research whitepaper` on the same issue to re-dispatch a failed run (override keyword with `WHITEPAPER_REQUEUE_COMMENT_KEYWORD`).
 - Froussard forwards issue webhook events to Kafka (`WHITEPAPER_KAFKA_TOPIC`) and Torghut consumes them whenever `WHITEPAPER_WORKFLOW_ENABLED=true`.
-- Torghut stores source metadata/artifact refs in whitepaper tables, uploads source PDF to Ceph, emits an Inngest event (`torghut/whitepaper.analysis.requested`), and the Torghut Inngest function dispatches a Codex AgentRun via Jangar (`/v1/agent-runs`) in namespace `agents`.
+- Torghut stores source metadata/artifact refs in whitepaper tables, uploads source PDF to Ceph, and dispatches a Codex AgentRun via Jangar (`/v1/agent-runs`) in namespace `agents`.
 - Dispatch endpoint uses `WHITEPAPER_AGENTRUN_SUBMIT_URL`; default fallback is `http://agents.agents.svc.cluster.local/v1/agent-runs`.
+- Idempotency: `run_id` is deterministic for `(repository#issue_number, attachment_url)` so replays do not create duplicate workflow rows for the same paper in the same issue.
+- Optional API auth for manual control endpoints (`/whitepapers/events/github-issue`, `/dispatch-agentrun`, `/finalize`): set `WHITEPAPER_WORKFLOW_API_TOKEN` (or rely on `JANGAR_API_KEY` fallback) and send `Authorization: Bearer <token>`.
 
 Endpoints:
 - `GET /whitepapers/status`
 - `POST /whitepapers/events/github-issue` (manual replay/debug ingest)
 - `POST /whitepapers/runs/{run_id}/dispatch-agentrun`
-- `POST /whitepapers/runs/{run_id}/finalize` (Inngest/AgentRun completion payload)
+- `POST /whitepapers/runs/{run_id}/finalize` (AgentRun completion payload)
 - `GET /whitepapers/runs/{run_id}`
 
 ## Feature flags (Flipt)

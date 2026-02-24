@@ -17,6 +17,7 @@ Start here:
 - Trading service (FastAPI) local dev: `services/torghut/README.md`
 - DB migrations (Alembic): `services/torghut/migrations/README.md`
 - Build/release commands: `docs/torghut/ci-cd.md`
+- Whitepaper research workflow trigger runbook: `docs/torghut/whitepaper-research-workflow.md`
 
 ## Legacy / supporting docs
 The following are older snapshots or focused notes. They may be useful, but should not be treated as the primary design

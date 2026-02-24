@@ -48,6 +48,31 @@ LEAN_LANE_MANAGER = LeanLaneManager()
 WHITEPAPER_WORKFLOW = WhitepaperWorkflowService()
 
 
+def _extract_bearer_token(authorization_header: str | None) -> str | None:
+    if not authorization_header:
+        return None
+    prefix = "bearer "
+    if not authorization_header.lower().startswith(prefix):
+        return None
+    token = authorization_header[len(prefix) :].strip()
+    return token or None
+
+
+def _require_whitepaper_control_token(request: Request) -> None:
+    expected_token = (
+        os.getenv("WHITEPAPER_WORKFLOW_API_TOKEN", "").strip()
+        or os.getenv("JANGAR_API_KEY", "").strip()
+    )
+    if not expected_token:
+        return
+
+    provided_token = _extract_bearer_token(request.headers.get("authorization")) or (
+        request.headers.get("x-whitepaper-token", "").strip() or None
+    )
+    if provided_token != expected_token:
+        raise HTTPException(status_code=401, detail="whitepaper_control_auth_required")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Run startup/shutdown tasks using FastAPI lifespan hooks."""
@@ -145,21 +170,33 @@ def whitepaper_status() -> dict[str, object]:
     worker: WhitepaperKafkaWorker | None = getattr(app.state, "whitepaper_worker", None)
     task = getattr(worker, "_task", None) if worker is not None else None
     worker_running = bool(task is not None and not task.done())
+    control_token = (
+        os.getenv("WHITEPAPER_WORKFLOW_API_TOKEN", "").strip()
+        or os.getenv("JANGAR_API_KEY", "").strip()
+    )
     return {
         "workflow_enabled": whitepaper_workflow_enabled(),
         "kafka_enabled": whitepaper_kafka_enabled(),
         "inngest_enabled": False,
         "inngest_registered": False,
         "worker_running": worker_running,
+        "requeue_comment_keyword": os.getenv(
+            "WHITEPAPER_REQUEUE_COMMENT_KEYWORD",
+            "research whitepaper",
+        ),
+        "control_auth_enabled": bool(control_token),
     }
 
 
 @app.post("/whitepapers/events/github-issue")
 def ingest_whitepaper_github_issue(
+    request: Request,
     payload: dict[str, object] = Body(default={}),
     session: Session = Depends(get_session),
 ) -> JSONResponse:
     """Ingest a GitHub issue webhook payload and create/update whitepaper workflow state."""
+
+    _require_whitepaper_control_token(request)
 
     try:
         result = WHITEPAPER_WORKFLOW.ingest_github_issue_event(
@@ -196,9 +233,12 @@ def ingest_whitepaper_github_issue(
 @app.post("/whitepapers/runs/{run_id}/dispatch-agentrun")
 def dispatch_whitepaper_agentrun(
     run_id: str,
+    request: Request,
     session: Session = Depends(get_session),
 ) -> dict[str, object]:
     """Dispatch Codex AgentRun for an existing whitepaper analysis run."""
+
+    _require_whitepaper_control_token(request)
 
     try:
         result = WHITEPAPER_WORKFLOW.dispatch_codex_agentrun(session, run_id)
@@ -216,10 +256,13 @@ def dispatch_whitepaper_agentrun(
 @app.post("/whitepapers/runs/{run_id}/finalize")
 def finalize_whitepaper_run(
     run_id: str,
+    request: Request,
     payload: dict[str, object] = Body(default={}),
     session: Session = Depends(get_session),
 ) -> dict[str, object]:
     """Finalize run outputs from Inngest/AgentRun synthesis and verdict payloads."""
+
+    _require_whitepaper_control_token(request)
 
     try:
         result = WHITEPAPER_WORKFLOW.finalize_run(
@@ -255,7 +298,7 @@ def get_whitepaper_run(
         select(WhitepaperCodexAgentRun)
         .where(WhitepaperCodexAgentRun.analysis_run_id == row.id)
         .order_by(WhitepaperCodexAgentRun.created_at.desc())
-    ).scalar_one_or_none()
+    ).scalars().first()
 
     pr_rows = session.execute(
         select(WhitepaperDesignPullRequest)
