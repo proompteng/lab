@@ -181,7 +181,7 @@ spec:
             - name: WHITEPAPER_KAFKA_BOOTSTRAP_SERVERS
               value: kafka-kafka-bootstrap.kafka:9092
             - name: WHITEPAPER_KAFKA_TOPIC
-              value: froussard.github.webhooks
+              value: github.webhook.events
             - name: WHITEPAPER_KAFKA_GROUP_ID
               value: torghut-whitepaper-v1
             - name: WHITEPAPER_KAFKA_CLIENT_ID
