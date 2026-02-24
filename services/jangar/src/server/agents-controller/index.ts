@@ -40,12 +40,15 @@ import {
   requestAgentsControllerStart,
   requestAgentsControllerStop,
 } from './lifecycle-machine'
+import { type AgentsControllerMutableState, type CrdCheckState, createMutableState } from './mutable-state'
 import {
-  type AgentsControllerMutableState,
-  type CrdCheckState,
-  createMutableState,
-  type RateBucket,
-} from './mutable-state'
+  type ControllerState,
+  ensureNamespaceState,
+  listItems,
+  resolveMemory,
+  snapshotNamespace,
+  updateStateMap,
+} from './namespace-state'
 import {
   type ImagePolicyCandidate,
   matchesAnyPattern,
@@ -54,7 +57,41 @@ import {
   validateImagePolicy,
   validateLabelPolicy,
 } from './policy'
+import {
+  buildInFlightCounts,
+  buildQueueCounts,
+  normalizeRepositoryKey,
+  type RepoConcurrencyConfig,
+  resolveRepoConcurrencyLimit,
+} from './queue-state'
+import {
+  checkControllerRateLimits as evaluateControllerRateLimits,
+  resetControllerRateState as resetControllerRateStateMaps,
+} from './rate-limits'
+import {
+  appendBranchSuffix,
+  applyVcsMetadataToParameters,
+  hasBranchConflict,
+  normalizeRepository,
+  resolveImplementation,
+  resolveParam,
+  resolveParameters,
+  resolveRunRepository,
+  setMetadataIfMissing,
+} from './run-utils'
+import { buildRuntimeRef, cancelRuntime, parseRuntimeRef, type RuntimeRef } from './runtime-resources'
+import { isNonBlankString, renderTemplate, sha256Hex, stableJsonStringifyForHash } from './template-hash'
 import { normalizeVcsMode, resolveVcsAuthMethod, type VcsMode, validateVcsAuthConfig } from './vcs-auth'
+import {
+  normalizeWorkflowStatus,
+  parseWorkflowSteps,
+  setWorkflowPhase,
+  setWorkflowStepPhase,
+  shouldRetryStep,
+  validateParameters,
+  validateWorkflowSteps,
+  type WorkflowStepSpec,
+} from './workflow'
 
 const DEFAULT_NAMESPACES = ['agents']
 const DEFAULT_CONCURRENCY = {
@@ -82,8 +119,6 @@ const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
-const PARAMETERS_MAX_ENTRIES = 100
-const PARAMETERS_MAX_VALUE_BYTES = 2048
 const SYSTEM_PROMPT_INLINE_MAX_LENGTH = 16_384
 const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
 const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
@@ -94,7 +129,6 @@ const MIN_RUNNER_JOB_TTL_SECONDS = 30
 const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
 const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
 const MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 30
-const QUEUED_PHASES = new Set(['pending', 'queued', 'progressing', 'inprogress'])
 const DEFAULT_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS = 30
 const DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.agents_controller.enabled'
 
@@ -123,12 +157,6 @@ type ControllerHealthState = {
   namespaces: string[] | null
 }
 
-type RepoConcurrencyConfig = {
-  enabled: boolean
-  defaultLimit: number
-  overrides: Map<string, number>
-}
-
 const globalState = globalThis as typeof globalThis & {
   __jangarAgentsControllerState?: ControllerHealthState
 }
@@ -139,8 +167,6 @@ const controllerState = (() => {
   globalState.__jangarAgentsControllerState = initial
   return initial
 })()
-
-type RuntimeRef = Record<string, unknown>
 
 type EnvVar = {
   name: string
@@ -171,50 +197,6 @@ type VcsResolution = {
   runtime?: VcsRuntimeConfig | null
   warnings?: Array<{ reason: string; message: string }>
   requiredSecrets: string[]
-}
-
-type WorkflowStepSpec = {
-  name: string
-  implementationSpecRefName: string | null
-  implementationInline: Record<string, unknown> | null
-  parameters: Record<string, string>
-  workload: Record<string, unknown> | null
-  retries: number
-  retryBackoffSeconds: number
-  timeoutSeconds: number
-}
-
-type WorkflowStepStatus = {
-  name: string
-  phase: string
-  attempt: number
-  startedAt?: string
-  finishedAt?: string
-  lastTransitionTime: string
-  message?: string
-  jobRef?: Record<string, unknown>
-  jobObservedAt?: string
-  nextRetryAt?: string
-}
-
-type WorkflowStatus = {
-  phase: string
-  lastTransitionTime: string
-  steps: WorkflowStepStatus[]
-}
-
-type NamespaceState = {
-  agents: Map<string, Record<string, unknown>>
-  providers: Map<string, Record<string, unknown>>
-  specs: Map<string, Record<string, unknown>>
-  sources: Map<string, Record<string, unknown>>
-  vcsProviders: Map<string, Record<string, unknown>>
-  memories: Map<string, Record<string, unknown>>
-  runs: Map<string, Record<string, unknown>>
-}
-
-type ControllerState = {
-  namespaces: Map<string, NamespaceState>
 }
 
 let runtimeMutableState: AgentsControllerMutableState<ControllerState> = createMutableState<ControllerState>({
@@ -331,8 +313,6 @@ const getPrimitivesStore = async () => {
     return null
   }
 }
-
-const normalizeRepositoryKey = (value: string) => value.trim().toLowerCase()
 
 const parseRepoConcurrencyOverrides = () => {
   const rawOverrides = parseEnvRecord('JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES') ?? {}
@@ -561,152 +541,8 @@ const setStatus = async (
   await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status: nextStatus })
 }
 
-const parseRuntimeRef = (raw: unknown): RuntimeRef | null => asRecord(raw) ?? null
-
 const resolveJobImage = (workload: Record<string, unknown>) =>
   asString(workload.image) ?? process.env.JANGAR_AGENT_RUNNER_IMAGE ?? process.env.JANGAR_AGENT_IMAGE ?? null
-
-const parseWorkflowSteps = (agentRun: Record<string, unknown>): WorkflowStepSpec[] => {
-  const workflow = asRecord(readNested(agentRun, ['spec', 'workflow'])) ?? {}
-  const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
-  return steps
-    .map((step) => {
-      const name = asString(step.name) ?? ''
-      const parameters = asRecord(step.parameters) ?? {}
-      const parsedParameters: Record<string, string> = {}
-      for (const [key, value] of Object.entries(parameters)) {
-        if (typeof value !== 'string') continue
-        parsedParameters[key] = value
-      }
-      const retries = parseOptionalNumber(step.retries)
-      const retryBackoffSeconds = parseOptionalNumber(step.retryBackoffSeconds)
-      const timeoutSeconds = parseOptionalNumber(step.timeoutSeconds)
-      return {
-        name,
-        implementationSpecRefName: asString(readNested(step, ['implementationSpecRef', 'name'])) ?? null,
-        implementationInline: asRecord(readNested(step, ['implementation', 'inline'])) ?? null,
-        parameters: parsedParameters,
-        workload: asRecord(step.workload) ?? null,
-        retries: Number.isFinite(retries) ? Math.max(0, Math.trunc(retries ?? 0)) : 0,
-        retryBackoffSeconds: Number.isFinite(retryBackoffSeconds)
-          ? Math.max(0, Math.trunc(retryBackoffSeconds ?? 0))
-          : 0,
-        timeoutSeconds: Number.isFinite(timeoutSeconds) ? Math.max(0, Math.trunc(timeoutSeconds ?? 0)) : 0,
-      }
-    })
-    .filter((step) => step.name.length > 0)
-}
-
-const validateWorkflowSteps = (steps: WorkflowStepSpec[]) => {
-  if (steps.length === 0) {
-    return {
-      ok: false as const,
-      reason: 'MissingWorkflowSteps',
-      message: 'spec.workflow.steps must include at least one step for workflow runtime',
-    }
-  }
-  const seen = new Set<string>()
-  for (const step of steps) {
-    if (!step.name) {
-      return {
-        ok: false as const,
-        reason: 'WorkflowStepMissingName',
-        message: 'workflow steps must include a name',
-      }
-    }
-    if (seen.has(step.name)) {
-      return {
-        ok: false as const,
-        reason: 'WorkflowStepDuplicate',
-        message: `workflow step name ${step.name} is duplicated`,
-      }
-    }
-    seen.add(step.name)
-    const paramsCheck = validateParameters(step.parameters as Record<string, unknown>)
-    if (!paramsCheck.ok) {
-      return {
-        ok: false as const,
-        reason: paramsCheck.reason,
-        message: `workflow step ${step.name}: ${paramsCheck.message}`,
-      }
-    }
-  }
-  return { ok: true as const }
-}
-
-const normalizeWorkflowStatus = (
-  existing: Record<string, unknown> | null,
-  steps: WorkflowStepSpec[],
-): WorkflowStatus => {
-  const existingSteps = Array.isArray(existing?.steps) ? (existing?.steps as Record<string, unknown>[]) : []
-  const byName = new Map<string, Record<string, unknown>>()
-  for (const item of existingSteps) {
-    const name = asString(item.name)
-    if (name) byName.set(name, item)
-  }
-  return {
-    phase: asString(existing?.phase) ?? 'Pending',
-    lastTransitionTime: asString(existing?.lastTransitionTime) ?? nowIso(),
-    steps: steps.map((step) => {
-      const current = byName.get(step.name) ?? {}
-      return {
-        name: step.name,
-        phase: asString(current.phase) ?? 'Pending',
-        attempt: Number(current.attempt ?? 0) || 0,
-        startedAt: asString(current.startedAt) ?? undefined,
-        finishedAt: asString(current.finishedAt) ?? undefined,
-        lastTransitionTime: asString(current.lastTransitionTime) ?? nowIso(),
-        message: asString(current.message) ?? undefined,
-        jobRef: asRecord(current.jobRef) ?? undefined,
-        jobObservedAt: asString(current.jobObservedAt) ?? undefined,
-        nextRetryAt: asString(current.nextRetryAt) ?? undefined,
-      }
-    }),
-  }
-}
-
-const setWorkflowPhase = (workflow: WorkflowStatus, phase: string) => {
-  if (workflow.phase !== phase) {
-    workflow.phase = phase
-    workflow.lastTransitionTime = nowIso()
-  }
-}
-
-const setWorkflowStepPhase = (step: WorkflowStepStatus, phase: string, message?: string) => {
-  if (step.phase !== phase) {
-    step.phase = phase
-    step.lastTransitionTime = nowIso()
-  }
-  if (message !== undefined) {
-    step.message = message
-  }
-}
-
-const shouldRetryStep = (step: WorkflowStepStatus, now: number) => {
-  if (!step.nextRetryAt) return true
-  const retryAt = Date.parse(step.nextRetryAt)
-  return Number.isNaN(retryAt) ? true : retryAt <= now
-}
-
-const renderTemplate = (template: string, context: Record<string, unknown>) =>
-  template.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_match, path) => {
-    const value = resolvePath(context, String(path))
-    if (value == null) return ''
-    return typeof value === 'string' ? value : JSON.stringify(value)
-  })
-
-const resolvePath = (value: Record<string, unknown>, path: string) => {
-  const parts = path
-    .split('.')
-    .map((part) => part.trim())
-    .filter(Boolean)
-  let cursor: unknown = value
-  for (const part of parts) {
-    if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) return null
-    cursor = (cursor as Record<string, unknown>)[part]
-  }
-  return cursor ?? null
-}
 
 const getTemporalClient = async () => {
   if (!runtimeMutableState.temporalClientPromise) {
@@ -859,63 +695,6 @@ const buildRunSpecContext = (
     vcs: vcs ?? {},
   }
 }
-
-const resolveImplementation = (agentRun: Record<string, unknown>) => {
-  const spec = asRecord(agentRun.spec) ?? {}
-  const inline = asRecord(readNested(spec, ['implementation', 'inline']))
-  if (inline) return inline
-  return null
-}
-
-const resolveParameters = (agentRun: Record<string, unknown>) => {
-  const spec = asRecord(agentRun.spec) ?? {}
-  const params = asRecord(spec.parameters) ?? {}
-  const output: Record<string, string> = {}
-  for (const [key, value] of Object.entries(params)) {
-    if (typeof value !== 'string') continue
-    output[key] = value
-  }
-  return output
-}
-
-const resolveRepositoryFromParameters = (parameters: Record<string, string>) => {
-  const candidates = ['repository', 'repo', 'issueRepository']
-  for (const key of candidates) {
-    const value = parameters[key]
-    if (typeof value === 'string' && value.trim()) return value.trim()
-  }
-  return ''
-}
-
-const resolveRunRepository = (agentRun: Record<string, unknown>) => {
-  const statusRepo = asString(readNested(agentRun, ['status', 'vcs', 'repository'])) ?? ''
-  if (statusRepo.trim()) return statusRepo.trim()
-  const parameters = resolveParameters(agentRun)
-  return resolveRepositoryFromParameters(parameters)
-}
-
-const isNonBlankString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0
-
-const sha256Hex = (value: string) => createHash('sha256').update(value).digest('hex')
-
-const canonicalizeForJsonHash = (value: unknown): unknown => {
-  if (value == null) return null
-  if (Array.isArray(value)) return value.map((entry) => canonicalizeForJsonHash(entry))
-  if (typeof value !== 'object') return value
-
-  const record = asRecord(value)
-  if (!record) return value
-
-  const output: Record<string, unknown> = {}
-  for (const key of Object.keys(record).sort()) {
-    const entry = record[key]
-    if (entry === undefined) continue
-    output[key] = canonicalizeForJsonHash(entry)
-  }
-  return output
-}
-
-const stableJsonStringifyForHash = (value: unknown) => JSON.stringify(canonicalizeForJsonHash(value))
 
 const buildAgentRunImmutableSpecSnapshot = (agentRun: Record<string, unknown>) => {
   const spec = asRecord(agentRun.spec) ?? {}
@@ -1226,162 +1005,8 @@ const resolveVcsPrRateLimits = () => {
   return record
 }
 
-const getRateBucket = (map: Map<string, RateBucket>, key: string) => {
-  const existing = map.get(key)
-  if (existing) return existing
-  const created = { count: 0, resetAt: 0 }
-  map.set(key, created)
-  return created
-}
-
-const checkRateLimit = (bucket: RateBucket, limit: number, windowMs: number, now: number) => {
-  if (limit <= 0) return { ok: true as const }
-  if (now >= bucket.resetAt) {
-    bucket.count = 0
-    bucket.resetAt = now + windowMs
-  }
-  if (bucket.count >= limit) {
-    const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))
-    return { ok: false as const, retryAfterSeconds }
-  }
-  bucket.count += 1
-  return { ok: true as const }
-}
-
 const resetControllerRateState = () => {
-  runtimeMutableState.controllerRateState.cluster.count = 0
-  runtimeMutableState.controllerRateState.cluster.resetAt = 0
-  runtimeMutableState.controllerRateState.perNamespace.clear()
-  runtimeMutableState.controllerRateState.perRepo.clear()
-}
-
-const validateParameters = (params: Record<string, unknown>) => {
-  const entries = Object.entries(params)
-  if (entries.length > PARAMETERS_MAX_ENTRIES) {
-    return {
-      ok: false,
-      reason: 'ParametersTooLarge',
-      message: `spec.parameters exceeds ${PARAMETERS_MAX_ENTRIES} entries`,
-    }
-  }
-  for (const [key, value] of entries) {
-    if (typeof value !== 'string') {
-      return {
-        ok: false,
-        reason: 'ParameterNotString',
-        message: `spec.parameters.${key} must be a string`,
-      }
-    }
-    if (Buffer.byteLength(value, 'utf8') > PARAMETERS_MAX_VALUE_BYTES) {
-      return {
-        ok: false,
-        reason: 'ParameterValueTooLarge',
-        message: `spec.parameters.${key} exceeds ${PARAMETERS_MAX_VALUE_BYTES} bytes`,
-      }
-    }
-  }
-  return { ok: true as const }
-}
-
-const listItems = (resource: Record<string, unknown>) => {
-  const items = Array.isArray(resource.items) ? (resource.items as Record<string, unknown>[]) : []
-  return items
-}
-
-const selectDefaultMemory = (memories: Record<string, unknown>[]) => {
-  return memories.find((memory) => readNested(memory, ['spec', 'default']) === true) ?? null
-}
-
-const resolveMemory = (
-  agentRun: Record<string, unknown>,
-  agent: Record<string, unknown> | null,
-  memories: Record<string, unknown>[],
-) => {
-  const runRef = asString(readNested(agentRun, ['spec', 'memoryRef', 'name']))
-  if (runRef) {
-    return memories.find((memory) => asString(readNested(memory, ['metadata', 'name'])) === runRef) ?? null
-  }
-  const agentRef = asString(readNested(agent, ['spec', 'memoryRef', 'name']))
-  if (agentRef) {
-    return memories.find((memory) => asString(readNested(memory, ['metadata', 'name'])) === agentRef) ?? null
-  }
-  return selectDefaultMemory(memories)
-}
-
-const createNamespaceState = (): NamespaceState => ({
-  agents: new Map(),
-  providers: new Map(),
-  specs: new Map(),
-  sources: new Map(),
-  vcsProviders: new Map(),
-  memories: new Map(),
-  runs: new Map(),
-})
-
-const ensureNamespaceState = (state: ControllerState, namespace: string) => {
-  const existing = state.namespaces.get(namespace)
-  if (existing) return existing
-  const created = createNamespaceState()
-  state.namespaces.set(namespace, created)
-  return created
-}
-
-const updateStateMap = (
-  map: Map<string, Record<string, unknown>>,
-  eventType: string | undefined,
-  resource: Record<string, unknown>,
-) => {
-  const name = asString(readNested(resource, ['metadata', 'name']))
-  if (!name) return
-  if (eventType === 'DELETED') {
-    map.delete(name)
-    return
-  }
-  map.set(name, resource)
-}
-
-const snapshotNamespace = (state: NamespaceState) => ({
-  agents: Array.from(state.agents.values()),
-  providers: Array.from(state.providers.values()),
-  specs: Array.from(state.specs.values()),
-  sources: Array.from(state.sources.values()),
-  vcsProviders: Array.from(state.vcsProviders.values()),
-  memories: Array.from(state.memories.values()),
-  runs: Array.from(state.runs.values()),
-})
-
-const buildInFlightCounts = (state: ControllerState, namespace: string) => {
-  const perAgent = new Map<string, number>()
-  const perRepository = new Map<string, number>()
-  let total = 0
-  let cluster = 0
-  for (const [ns, nsState] of state.namespaces.entries()) {
-    for (const run of nsState.runs.values()) {
-      const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
-      if (phase !== 'Running') continue
-      cluster += 1
-      const repository = resolveRunRepository(run)
-      if (repository) {
-        const key = normalizeRepositoryKey(repository)
-        perRepository.set(key, (perRepository.get(key) ?? 0) + 1)
-      }
-      if (ns !== namespace) continue
-      total += 1
-      const agentName = asString(readNested(run, ['spec', 'agentRef', 'name'])) ?? 'unknown'
-      perAgent.set(agentName, (perAgent.get(agentName) ?? 0) + 1)
-    }
-  }
-  return { total, perAgent, perRepository, cluster }
-}
-
-const resolveRepoConcurrencyLimit = (repository: string, config: RepoConcurrencyConfig) => {
-  if (!config.enabled) return null
-  if (!repository.trim()) return null
-  const key = normalizeRepositoryKey(repository)
-  const override = config.overrides.get(key)
-  const limit = override ?? config.defaultLimit
-  if (!limit || limit <= 0) return null
-  return limit
+  resetControllerRateStateMaps(runtimeMutableState.controllerRateState)
 }
 
 const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
@@ -1393,61 +1018,6 @@ const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
       console.warn('[jangar] agents controller task failed', error)
     })
   runtimeMutableState.namespaceQueues.set(namespace, next)
-}
-
-const buildRuntimeRef = (
-  type: string,
-  name: string,
-  namespace: string,
-  extra?: Record<string, unknown>,
-): RuntimeRef => ({
-  type,
-  name,
-  namespace,
-  ...extra,
-})
-
-const deleteRuntimeResource = async (kind: string, name: string, namespace: string) => {
-  const result = await runKubectl(['delete', kind, name, '-n', namespace])
-  if (result.code !== 0) {
-    throw new Error(result.stderr || result.stdout || `failed to delete ${kind}/${name}`)
-  }
-}
-
-const cancelRuntime = async (runtimeRef: RuntimeRef, namespace: string) => {
-  const type = asString(runtimeRef.type) ?? ''
-  const name = asString(runtimeRef.name) ?? ''
-  const runtimeNamespace = asString(runtimeRef.namespace) ?? namespace
-  if (!name) return
-  if (type === 'job') {
-    await deleteRuntimeResource('job', name, runtimeNamespace)
-    return
-  }
-  if (type === 'workflow') {
-    const runName = asString(runtimeRef.runName) ?? name
-    const result = await runKubectl([
-      'delete',
-      'job',
-      '-n',
-      runtimeNamespace,
-      '-l',
-      `agents.proompteng.ai/agent-run=${runName}`,
-      '--ignore-not-found',
-    ])
-    if (result.code !== 0) {
-      throw new Error(result.stderr || result.stdout || `failed to delete workflow jobs for ${runName}`)
-    }
-    return
-  }
-  if (type === 'temporal') {
-    const client = await getTemporalClient()
-    const handle = {
-      workflowId: asString(runtimeRef.workflowId) ?? name,
-      runId: asString(runtimeRef.runId) ?? undefined,
-      namespace: asString(runtimeRef.namespace) ?? undefined,
-    }
-    await client.workflow.cancel(handle)
-  }
 }
 
 const buildConditions = (resource: Record<string, unknown>) =>
@@ -1949,190 +1519,8 @@ const buildJobResources = (workload: Record<string, unknown>) => {
   }
 }
 
-const resolveParam = (params: Record<string, string>, keys: string[]) => {
-  for (const key of keys) {
-    const value = params[key]
-    if (typeof value === 'string' && value.trim().length > 0) return value.trim()
-  }
-  return ''
-}
-
-const resolveRunParam = (run: Record<string, unknown>, keys: string[]) => {
-  const raw = asRecord(readNested(run, ['spec', 'parameters'])) ?? {}
-  const params: Record<string, string> = {}
-  for (const [key, value] of Object.entries(raw)) {
-    if (typeof value !== 'string') continue
-    params[key] = value
-  }
-  return resolveParam(params, keys)
-}
-
 const { buildEventContext, buildEventPayload, validateImplementationContract, buildContractStatus } =
   createImplementationContractTools(resolveParam)
-
-const normalizeRepository = (value: string) => value.trim().toLowerCase()
-
-const normalizeBranchName = (value: string) => value.trim()
-
-const isActiveRun = (run: Record<string, unknown>) => {
-  const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
-  return phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled'
-}
-
-const isQueuedRun = (run: Record<string, unknown>) => {
-  const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
-  return QUEUED_PHASES.has(phase.trim().toLowerCase())
-}
-const resolveRunHeadBranch = (run: Record<string, unknown>) =>
-  asString(readNested(run, ['status', 'vcs', 'headBranch'])) ??
-  asString(readNested(run, ['status', 'vcs', 'branch'])) ??
-  resolveRunParam(run, ['head', 'headBranch', 'head_ref', 'headRef', 'branch'])
-
-type RateLimitDecision =
-  | { ok: true }
-  | { ok: false; scope: 'cluster' | 'namespace' | 'repo'; retryAfterSeconds: number; message: string }
-
-const checkControllerRateLimits = (namespace: string, repository: string | null) => {
-  const limits = parseRateLimits()
-  const windowMs = limits.windowSeconds * 1000
-  const now = Date.now()
-
-  const clusterResult = checkRateLimit(runtimeMutableState.controllerRateState.cluster, limits.cluster, windowMs, now)
-  if (!clusterResult.ok) {
-    return {
-      ok: false,
-      scope: 'cluster',
-      retryAfterSeconds: clusterResult.retryAfterSeconds,
-      message: 'Cluster rate limit reached',
-    } as RateLimitDecision
-  }
-
-  const namespaceBucket = getRateBucket(runtimeMutableState.controllerRateState.perNamespace, namespace)
-  const namespaceResult = checkRateLimit(namespaceBucket, limits.perNamespace, windowMs, now)
-  if (!namespaceResult.ok) {
-    return {
-      ok: false,
-      scope: 'namespace',
-      retryAfterSeconds: namespaceResult.retryAfterSeconds,
-      message: `Namespace ${namespace} rate limit reached`,
-    } as RateLimitDecision
-  }
-
-  if (repository) {
-    const repoKey = normalizeRepository(repository)
-    const repoBucket = getRateBucket(runtimeMutableState.controllerRateState.perRepo, repoKey)
-    const repoResult = checkRateLimit(repoBucket, limits.perRepo, windowMs, now)
-    if (!repoResult.ok) {
-      return {
-        ok: false,
-        scope: 'repo',
-        retryAfterSeconds: repoResult.retryAfterSeconds,
-        message: `Repository ${repository} rate limit reached`,
-      } as RateLimitDecision
-    }
-  }
-
-  return { ok: true } as RateLimitDecision
-}
-
-const buildQueueCounts = (
-  namespace: string,
-  runName: string,
-  normalizedRepo: string,
-  namespaceRuns: Record<string, unknown>[],
-) => {
-  const state = runtimeMutableState.controllerSnapshot
-  let queuedNamespace = 0
-  let queuedCluster = 0
-  let queuedRepo = 0
-
-  const visitRun = (run: Record<string, unknown>, runNamespace: string) => {
-    const itemName = asString(readNested(run, ['metadata', 'name'])) ?? ''
-    if (!itemName || itemName === runName) return
-    if (!isQueuedRun(run)) return
-    queuedCluster += 1
-    if (runNamespace === namespace) {
-      queuedNamespace += 1
-    }
-    if (normalizedRepo) {
-      const runRepo = resolveRunRepository(run)
-      if (runRepo && normalizeRepository(runRepo) === normalizedRepo) {
-        queuedRepo += 1
-      }
-    }
-  }
-
-  if (state) {
-    for (const [runNamespace, nsState] of state.namespaces.entries()) {
-      for (const run of nsState.runs.values()) {
-        visitRun(run, runNamespace)
-      }
-    }
-  } else {
-    for (const run of namespaceRuns) {
-      visitRun(run, namespace)
-    }
-  }
-
-  return { queuedNamespace, queuedCluster, queuedRepo }
-}
-
-const hasBranchConflict = (
-  runs: Record<string, unknown>[],
-  currentRunName: string,
-  repository: string,
-  headBranch: string,
-) => {
-  if (!repository || !headBranch) return false
-  const normalizedRepo = normalizeRepository(repository)
-  const normalizedBranch = normalizeBranchName(headBranch)
-  return runs.some((run) => {
-    const runName = asString(readNested(run, ['metadata', 'name'])) ?? ''
-    if (!runName || runName === currentRunName) return false
-    if (!isActiveRun(run)) return false
-    const runRepo = resolveRunRepository(run)
-    if (!runRepo || normalizeRepository(runRepo) !== normalizedRepo) return false
-    const runBranch = resolveRunHeadBranch(run)
-    if (!runBranch) return false
-    return normalizeBranchName(runBranch) === normalizedBranch
-  })
-}
-
-const appendBranchSuffix = (branch: string, suffix: string) => {
-  const trimmed = suffix.trim()
-  if (!trimmed) return branch
-  const cleaned = trimmed.replace(/^[-/]+/, '')
-  if (!cleaned) return branch
-  const separator = branch.endsWith('/') || branch.endsWith('-') ? '' : '-'
-  return `${branch}${separator}${cleaned}`
-}
-
-const hasParameterValue = (parameters: Record<string, string>, keys: string[]) => resolveParam(parameters, keys) !== ''
-
-const applyVcsMetadataToParameters = (
-  parameters: Record<string, string>,
-  vcsContext: Record<string, unknown> | null,
-) => {
-  if (!vcsContext) return parameters
-  const baseBranch = asString(readNested(vcsContext, ['baseBranch'])) ?? ''
-  const headBranch = asString(readNested(vcsContext, ['headBranch'])) ?? ''
-  let updated = false
-  const next = { ...parameters }
-  if (baseBranch && !hasParameterValue(parameters, ['base', 'baseBranch', 'base_ref', 'baseRef'])) {
-    next.base = baseBranch
-    updated = true
-  }
-  if (headBranch && !hasParameterValue(parameters, ['head', 'headBranch', 'head_ref', 'headRef', 'branch'])) {
-    next.head = headBranch
-    updated = true
-  }
-  return updated ? next : parameters
-}
-
-const setMetadataIfMissing = (metadata: Record<string, string>, key: string, value: string) => {
-  if (!value || metadata[key]) return
-  metadata[key] = value
-}
 
 const resolveVcsContext = async ({
   kube,
@@ -4309,7 +3697,12 @@ const reconcileAgentRun = async (
         const runtimeRef = parseRuntimeRef(status.runtimeRef)
         if (runtimeRef) {
           try {
-            await cancelRuntime(runtimeRef, namespace)
+            await cancelRuntime({
+              runtimeRef,
+              namespace,
+              runKubectl,
+              getTemporalClient,
+            })
           } catch (error) {
             console.warn('[jangar] failed to cancel runtime after spec immutability violation', error)
           }
@@ -4363,7 +3756,12 @@ const reconcileAgentRun = async (
       const runtimeRef = parseRuntimeRef(status.runtimeRef)
       if (runtimeRef) {
         try {
-          await cancelRuntime(runtimeRef, namespace)
+          await cancelRuntime({
+            runtimeRef,
+            namespace,
+            runKubectl,
+            getTemporalClient,
+          })
         } catch (error) {
           console.warn('[jangar] runtime cleanup failed', error)
         }
@@ -4534,7 +3932,13 @@ const reconcileAgentRun = async (
     const queueLimits = parseQueueLimits()
     const repository = resolveRunRepository(agentRun)
     const normalizedRepo = repository ? normalizeRepository(repository) : ''
-    const queueCounts = buildQueueCounts(namespace, name, normalizedRepo, existingRuns)
+    const queueCounts = buildQueueCounts({
+      namespace,
+      runName: name,
+      normalizedRepo,
+      namespaceRuns: existingRuns,
+      controllerSnapshot: runtimeMutableState.controllerSnapshot,
+    })
 
     recordAgentQueueDepth(queueCounts.queuedNamespace, { scope: 'namespace', namespace })
     recordAgentQueueDepth(queueCounts.queuedCluster, { scope: 'cluster' })
@@ -4575,7 +3979,14 @@ const reconcileAgentRun = async (
       return
     }
 
-    const rateDecision = checkControllerRateLimits(namespace, repository || null)
+    const rateDecision = evaluateControllerRateLimits({
+      namespace,
+      repository: repository || null,
+      state: runtimeMutableState.controllerRateState,
+      limits: parseRateLimits(),
+      now: Date.now(),
+      normalizeRepository,
+    })
     if (!rateDecision.ok) {
       const rateAttributes: Record<string, string> = { namespace }
       if (normalizedRepo) {
