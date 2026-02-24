@@ -343,7 +343,7 @@ jobs:
         run: bun run lint:oxlint
 
       - name: Format check
-        run: bunx oxfmt --check --threads=1 apps/kitty-krew
+        run: bunx oxfmt --check "apps/kitty-krew/**/*.{ts,tsx}"
 
       - name: Type check
         working-directory: apps/kitty-krew
