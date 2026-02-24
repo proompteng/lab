@@ -152,6 +152,12 @@ Output:
 ## Kubernetes (kubectl)
 
 - Use explicit namespaces with kubectl (e.g., `kubectl get pods -n <ns>`).
+- If `kubectl config current-context` is unset in this Coder workspace, bootstrap an `in-cluster` context using
+  `/var/run/secrets/kubernetes.io/serviceaccount/{token,ca.crt,namespace}` with
+  `https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}` before running cluster checks.
+- If `kubectl` auth fails (`Unauthorized` / `You must be logged in to the server`), refresh the `service-user`
+  credential from `/var/run/secrets/kubernetes.io/serviceaccount/token`, set the `in-cluster` CA from
+  `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`, and verify with `kubectl auth whoami` before retrying.
 - Helm charts present: `mise exec helm@3 -- kustomize build --enable-helm <path> | kubectl apply -n <ns> -f -`.
 - CNPG access: `kubectl cnpg psql -n <ns> <cluster> -- <psql args>` (psql flags after `--`).
 
