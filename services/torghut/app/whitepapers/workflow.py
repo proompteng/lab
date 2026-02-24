@@ -1198,7 +1198,7 @@ class WhitepaperKafkaIssueIngestor:
         if not bootstrap:
             raise RuntimeError("whitepaper_kafka_bootstrap_missing")
 
-        topic = _str_env("WHITEPAPER_KAFKA_TOPIC", "froussard.github.webhooks") or "froussard.github.webhooks"
+        topic = _str_env("WHITEPAPER_KAFKA_TOPIC", "github.webhook.events") or "github.webhook.events"
         security_protocol = _str_env("WHITEPAPER_KAFKA_SECURITY_PROTOCOL")
         sasl_mechanism = _str_env("WHITEPAPER_KAFKA_SASL_MECHANISM")
         sasl_username = _str_env("WHITEPAPER_KAFKA_SASL_USERNAME")
