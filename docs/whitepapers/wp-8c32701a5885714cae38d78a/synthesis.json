@@ -1,0 +1,218 @@
+{
+  "run_id": "wp-8c32701a5885714cae38d78a",
+  "paper": {
+    "title": "FinPos: A Position-Aware Trading Agent System for Real Financial Markets",
+    "arxiv_id": "2510.27251",
+    "pdf_url": "https://arxiv.org/pdf/2510.27251.pdf",
+    "version": "v2",
+    "date": "2026-01-07"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 22,
+    "included_sections": [
+      "main_text",
+      "limitations",
+      "references",
+      "appendix_A",
+      "appendix_B",
+      "appendix_C",
+      "appendix_D"
+    ]
+  },
+  "executive_summary": "FinPos proposes a position-aware LLM trading-agent architecture that combines hierarchical market-signal processing, a dual decision policy (direction plus quantity/risk), and a multi-timescale reward mechanism. Reported experiments show strong in-paper gains versus listed baselines, but immediate production viability is constrained by limited statistical robustness reporting, incomplete execution-friction realism, prompt sensitivity, and single-asset scope.",
+  "problem_statement": "Most prior LLM trading agents are framed as discrete daily direction tasks that do not explicitly model persistent holdings, making risk-aware exposure management and long-horizon strategy formation difficult.",
+  "methodology_summary": "The paper formalizes a position-aware task with carry-over position state, then implements FinPos with three modules: market-signal processing (filter plus analyst agents with hierarchical memory), dual trading decisions (direction and quantity/risk), and multi-timescale reward shaping (1, 7, 30 days). Quantity sizing is constrained by rolling CVaR and agents use reflection loops to update memory relevance.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "FinPos is reported to outperform all listed baselines across five stocks in cumulative return and often Sharpe ratio.",
+      "evidence": [
+        "Section 5.2",
+        "Table 1"
+      ],
+      "details": {
+        "sample_points": {
+          "tsla": {
+            "cr_percent": 62.15,
+            "sr": 0.68,
+            "mdd_percent": 42.34
+          },
+          "aapl": {
+            "cr_percent": 36.31,
+            "sr": 0.43,
+            "mdd_percent": 27.53
+          },
+          "coin": {
+            "cr_percent": 54.36,
+            "sr": 0.87,
+            "mdd_percent": 34.05
+          }
+        }
+      }
+    },
+    {
+      "id": "KF-2",
+      "finding": "Multi-timescale reward is the most critical component in ablation experiments.",
+      "evidence": [
+        "Section 5.3.1",
+        "Table 2",
+        "Figure 3"
+      ]
+    },
+    {
+      "id": "KF-3",
+      "finding": "Separating quantity/risk sizing from direction improves drawdown behavior versus fixed-unit decisions.",
+      "evidence": [
+        "Section 5.3.2",
+        "Table 2",
+        "Section 4.2.2"
+      ]
+    },
+    {
+      "id": "KF-4",
+      "finding": "Prompt design quality materially impacts financial reasoning performance and can introduce overload effects.",
+      "evidence": [
+        "Appendix D.3.1",
+        "Figure 5",
+        "Table 6"
+      ]
+    },
+    {
+      "id": "KF-5",
+      "finding": "Authors explicitly limit the work to research and acknowledge single-asset and prompt-dependency limitations.",
+      "evidence": [
+        "Limitations (page 9)"
+      ]
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "Position-aware trading task with persistent holdings is a closer proxy to real trading than forced daily liquidation settings.",
+      "assessment": "supported_in_scope",
+      "notes": "Formally specified in equations and used consistently in experimental setup."
+    },
+    {
+      "claim": "Dual-agent decomposition (direction and quantity/risk) yields superior risk-adjusted outcomes.",
+      "assessment": "partially_supported",
+      "notes": "Ablation evidence is positive, but evidence breadth is constrained by dataset scope and test period."
+    },
+    {
+      "claim": "Multi-timescale rewards induce non-myopic decision quality.",
+      "assessment": "supported_in_scope",
+      "notes": "Backed by ablations and sensitivity in the reported environment, though generalization remains open."
+    },
+    {
+      "claim": "Prompt-engineered market analysis stack can emulate professional financial reasoning.",
+      "assessment": "plausible_but_prompt_fragile",
+      "notes": "Appendix studies show gains and brittleness tied to prompt composition."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "reproducibility_gap",
+      "severity": "high",
+      "detail": "Prompt-heavy system lacks complete reproducibility manifests (prompt hashes, data snapshot lineage, deterministic replay controls)."
+    },
+    {
+      "risk": "statistical_uncertainty",
+      "severity": "high",
+      "detail": "No confidence intervals or broad repeated-window significance analyses are provided for headline claims."
+    },
+    {
+      "risk": "execution_friction_missing",
+      "severity": "high",
+      "detail": "Headline metrics do not integrate production-grade transaction costs, slippage, impact, and latency assumptions."
+    },
+    {
+      "risk": "baseline_comparability",
+      "severity": "medium_high",
+      "detail": "Baseline presentation has internal tensions (for example GPT-4o usage statement versus backbone listing), reducing strict apples-to-apples certainty."
+    },
+    {
+      "risk": "scope_generalization",
+      "severity": "high",
+      "detail": "Experiments focus on single-asset settings and limited stock set; authors explicitly note this limitation."
+    },
+    {
+      "risk": "prompt_brittleness",
+      "severity": "medium_high",
+      "detail": "Performance is materially sensitive to prompt design and information burden effects in Appendix prompt ablations."
+    }
+  ],
+  "assumptions": [
+    "Position-aware simulation transfers to realistic execution once friction and liquidity effects are added.",
+    "CVaR-capped sizing plus multi-timescale feedback remains stable across market regimes.",
+    "Text-rich large-cap assets are representative enough for broader conclusions.",
+    "Prompt templates can be maintained without significant behavior drift over time."
+  ],
+  "implementation_implications": [
+    "Adopt persistent position-state simulation and separate directional from sizing decisions in agent architecture.",
+    "Implement multi-horizon reward components as versioned, testable modules with training-only future-data access controls.",
+    "Require decision traceability via memory-index references and structured JSON contracts for auditability.",
+    "Gate deployment behind deterministic manifests, execution-friction simulation, and regime-diverse statistical validation."
+  ],
+  "unresolved_questions": [
+    "Which exact prompt/data/version manifests are needed to deterministically replay all reported tables?",
+    "How do results change with explicit fees, spread, slippage, partial fills, and turnover constraints?",
+    "Do gains persist across bear/sideways regimes and less text-rich assets?",
+    "What is the variance of CR/SR/MDD under multiple non-overlapping test windows and repeated runs?"
+  ],
+  "citations": [
+    {
+      "section": "3.1-3.2",
+      "pointer": "Equation 1 and Equation 2",
+      "claim": "Defines single-step versus position-aware return formulations."
+    },
+    {
+      "section": "4.1",
+      "pointer": "Figure 2",
+      "claim": "Describes filtering/analysis agents and hierarchical memory flow."
+    },
+    {
+      "section": "4.2",
+      "pointer": "4.2.1 and 4.2.2",
+      "claim": "Specifies direction decision and quantity/risk decision decomposition."
+    },
+    {
+      "section": "4.3",
+      "pointer": "Equation 3-5",
+      "claim": "Defines multi-timescale reward and position update logic."
+    },
+    {
+      "section": "5.2",
+      "pointer": "Table 1",
+      "claim": "Main performance comparison on TSLA/AAPL/AMZN/NFLX/COIN."
+    },
+    {
+      "section": "5.3",
+      "pointer": "Table 2 and Figure 3",
+      "claim": "Ablation evidence for MTR, QRA, and MSP contributions."
+    },
+    {
+      "section": "5.4",
+      "pointer": "Figure 4",
+      "claim": "Risk-adjusted behavior under high-volatility period."
+    },
+    {
+      "section": "Appendix B.2",
+      "pointer": "CVaR description",
+      "claim": "Online 20-day rolling CVaR used for sizing cap."
+    },
+    {
+      "section": "Appendix D.3.1",
+      "pointer": "Figure 5 and Table 6",
+      "claim": "Prompt-dimension ablation and information-burden trade-off."
+    },
+    {
+      "section": "Limitations",
+      "pointer": "page 9",
+      "claim": "Research-only framing, single-asset focus, and prompt dependency."
+    }
+  ],
+  "confidence": 0.81
+}
