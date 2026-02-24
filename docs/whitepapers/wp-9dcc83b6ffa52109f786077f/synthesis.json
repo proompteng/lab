@@ -1,0 +1,200 @@
+{
+  "run_id": "wp-9dcc83b6ffa52109f786077f",
+  "paper": {
+    "title": "Adaptive Alpha Weighting with PPO: Enhancing Prompt-Based LLM-Generated Alphas in Quant Trading",
+    "arxiv_id": "2509.01393",
+    "pdf_url": "https://arxiv.org/pdf/2509.01393.pdf",
+    "version": "v1",
+    "date": "2025-09-01"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 24,
+    "included_sections": [
+      "main_text",
+      "references",
+      "result_tables_3_to_18",
+      "figures_1_to_7"
+    ]
+  },
+  "executive_summary": "The paper combines LLM alpha generation with PPO-based dynamic alpha weighting. Reported results show strong outperformance versus market benchmarks for Apple, HSBC, Pepsi, and Tencent, but clear underperformance for Toyota. The approach is useful as a research prototype for adaptive signal blending, but production viability is constrained by leakage risk, small-universe evaluation, and limited statistical rigor.",
+  "problem_statement": "Recent LLM studies generate useful formulaic alphas but typically use static integration schemes. The paper targets dynamic, market-adaptive integration of multiple LLM-generated alphas through reinforcement learning.",
+  "methodology_summary": "The authors generate 50 formulaic alphas with deepseek-r1-distill-llama-70b from price, technical, and sentiment features, then optimize alpha weights with PPO in a POMDP setup. State includes OHLCV, previous position, regime filter, and rolling volatility. Actions are clipped and L1-normalized alpha weights. Reward is position P&L minus transaction cost. Evaluation compares PPO against equal-weight alpha portfolios and market indices using IC/MI diagnostics plus return, Sharpe, and drawdown.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "PPO-adjusted strategy outperforms market benchmarks on 4 of 5 stocks.",
+      "evidence": [
+        "Section 4.3",
+        "Table 7"
+      ],
+      "details": {
+        "apple": {
+          "cum_return": 1.6817,
+          "market_return": 0.3476
+        },
+        "hsbc": {
+          "cum_return": 0.4657,
+          "market_return": 0.0033
+        },
+        "pepsi": {
+          "cum_return": 0.6272,
+          "market_return": 0.3476
+        },
+        "tencent": {
+          "cum_return": 0.6245,
+          "market_return": 0.0033
+        },
+        "toyota": {
+          "cum_return": 0.0299,
+          "market_return": 0.4081
+        }
+      }
+    },
+    {
+      "id": "KF-2",
+      "finding": "PPO weighting materially improves over equal-weight alpha aggregation for most assets.",
+      "evidence": [
+        "Section 4.4",
+        "Table 8",
+        "Table 7"
+      ]
+    },
+    {
+      "id": "KF-3",
+      "finding": "Alpha-selection variants (low-correlation, high-contribution, random-30) do not change the overall headline that PPO generally beats benchmarks.",
+      "evidence": [
+        "Section 5.1",
+        "Tables 9-12"
+      ]
+    },
+    {
+      "id": "KF-4",
+      "finding": "Sentiment variants and prompt-information variants affect magnitude but preserve broad PPO effectiveness in reported setup.",
+      "evidence": [
+        "Section 5.2",
+        "Section 5.3",
+        "Tables 13-18"
+      ]
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "Integrating prompt-generated formulaic alphas with PPO-based adaptive weighting yields stronger trading performance than static weighting.",
+      "assessment": "partially_supported",
+      "notes": "Empirically supported in reported experiments; novelty is mainly integration-focused and not fully isolated against stronger adaptive baselines."
+    },
+    {
+      "claim": "The framework is robust across alpha-reduction, prompt-information, and sentiment settings.",
+      "assessment": "partially_supported",
+      "notes": "Supported within a narrow experimental scope; broader market/regime robustness remains unvalidated."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "alpha_generation_leakage",
+      "severity": "high",
+      "detail": "Prompt receives feature data in JSON while only one 80/20 split is described; paper does not clearly prove train-only alpha generation."
+    },
+    {
+      "risk": "external_validity",
+      "severity": "high",
+      "detail": "Evaluation universe is limited to five large-cap stocks, reducing confidence in generalization."
+    },
+    {
+      "risk": "statistical_rigor",
+      "severity": "high",
+      "detail": "Results are means/std over 10 stochastic runs without significance tests, confidence intervals, or walk-forward validation."
+    },
+    {
+      "risk": "benchmark_strength",
+      "severity": "medium_high",
+      "detail": "Equal-weight baseline appears weak; stronger non-RL adaptive baselines are absent."
+    },
+    {
+      "risk": "method_consistency",
+      "severity": "medium",
+      "detail": "Equations define normalized weights but composite signal equation references raw weights, creating implementation ambiguity."
+    },
+    {
+      "risk": "execution_realism",
+      "severity": "medium_high",
+      "detail": "Transaction-cost model is simple and does not fully represent spread, slippage, and market impact differences."
+    }
+  ],
+  "assumptions": [
+    "Generated alpha formulas are stable and not overfit to the historical period used for prompt inputs.",
+    "Single historical split adequately represents future deployment behavior.",
+    "Fixed 0.1% transaction cost is a reasonable approximation across the tested markets.",
+    "Comparisons against benchmark and equal-weight strategy are methodologically fair."
+  ],
+  "implementation_implications": [
+    "Adopt PPO-based alpha weighting as a research-layer module with explicit risk controls and deterministic configs.",
+    "Enforce train-only alpha-generation gating and immutable split manifests to eliminate leakage ambiguity.",
+    "Require walk-forward, multi-regime tests and stronger adaptive baselines before any production consideration.",
+    "Treat current approach as decision-support research tooling, not autonomous execution logic."
+  ],
+  "unresolved_questions": [
+    "Did alpha generation include test-window data in prompt context?",
+    "How much performance comes from regime filter and volatility targeting versus alpha weighting itself?",
+    "Do gains persist under realistic execution-friction modeling and broader universes?",
+    "What is the significance level of observed improvements versus strong adaptive baselines?"
+  ],
+  "citations": [
+    {
+      "section": "3.1",
+      "pointer": "Data description and 80/20 split",
+      "claim": "Data sources, period, and split protocol."
+    },
+    {
+      "section": "3.2.1",
+      "pointer": "Prompt-based generation and Table 2",
+      "claim": "LLM-generated formulaic alpha construction process."
+    },
+    {
+      "section": "3.2.2",
+      "pointer": "Equations 2-8 and Table 3-4",
+      "claim": "PPO state/action/reward/objective and risk-control mechanics."
+    },
+    {
+      "section": "3.3",
+      "pointer": "Equations 9-14",
+      "claim": "Evaluation metrics and definitions."
+    },
+    {
+      "section": "4.3",
+      "pointer": "Table 7",
+      "claim": "PPO-adjusted strategy versus market benchmarks."
+    },
+    {
+      "section": "4.4",
+      "pointer": "Table 8",
+      "claim": "PPO-adjusted strategy versus equal-weight strategy."
+    },
+    {
+      "section": "5.1",
+      "pointer": "Tables 9-12",
+      "claim": "Effect of alpha selection settings."
+    },
+    {
+      "section": "5.2",
+      "pointer": "Table 13",
+      "claim": "Impact of prompt information on performance."
+    },
+    {
+      "section": "5.3",
+      "pointer": "Tables 14-18",
+      "claim": "Impact of sentiment settings on performance."
+    },
+    {
+      "section": "6",
+      "pointer": "Conclusion",
+      "claim": "Authors' summary claims and future-work directions."
+    }
+  ],
+  "confidence": 0.84
+}
