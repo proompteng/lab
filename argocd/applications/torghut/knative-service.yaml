@@ -26,7 +26,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:61173a143ce49de1b374feb956dee6bd71e51712796ec168c3dcfd24410c1901
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:10b31bee4d26f140d595e5a90c969978c21d33dc5531d3b2c8f369d2e5c5c10f
           ports:
             - name: http1
               containerPort: 8181
