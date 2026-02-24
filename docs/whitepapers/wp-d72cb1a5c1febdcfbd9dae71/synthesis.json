@@ -1,0 +1,204 @@
+{
+  "run_id": "wp-d72cb1a5c1febdcfbd9dae71",
+  "paper": {
+    "title": "Janus-Q: End-to-End Event-Driven Trading via Hierarchical-Gated Reward Modeling",
+    "arxiv_id": "2602.19919",
+    "pdf_url": "https://arxiv.org/pdf/2602.19919.pdf",
+    "version": "v1",
+    "date": "2026-02-23"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 16,
+    "included_sections": [
+      "main_text",
+      "appendix"
+    ]
+  },
+  "executive_summary": "Janus-Q presents a two-stage event-driven trading pipeline: event-centric CAR-labeled data construction, then SFT plus GRPO with a hierarchical gated reward (HGRM). The strongest technical contribution is structured reward gating that ties semantic correctness to executable trading objectives. Reported results are strong in the provided setup, but production viability is constrained by external-validity and reproducibility risks.",
+  "problem_statement": "Current trading systems underuse event-level semantics and often misalign language reasoning with market-grounded decisions. Janus-Q attempts to align event understanding and trading actions through structured supervision and reward design.",
+  "methodology_summary": "Stage I builds event records with event type, stock, sentiment semantics, and CAR from market-model and risk-neutralized abnormal returns (Eq. 1-5). Stage II applies SFT then GRPO with HGRM combining hard direction gating, soft event-type gating, cost-aware PnL reward, magnitude shaping, and process reward (Eq. 6-10; Algorithm 1).",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "Janus-Q reports best Sharpe Ratio and decision metrics among listed baselines in the evaluation window.",
+      "evidence": [
+        "Section 4.5.1",
+        "Table 2",
+        "Figure 3"
+      ],
+      "details": {
+        "janus_q": {
+          "mae": 0.0349,
+          "rmse": 0.0541,
+          "da": 0.5869,
+          "eta": 0.8009,
+          "sr": 1.3088,
+          "mdd": 0.1196
+        },
+        "runner_up_sr": {
+          "model": "QwQ-32B",
+          "sr": 0.6481
+        }
+      }
+    },
+    {
+      "id": "KF-2",
+      "finding": "SFT is foundational; removing it causes severe performance collapse, while GRPO contributes additional gains.",
+      "evidence": [
+        "Section 4.6.1",
+        "Table 3"
+      ],
+      "details": {
+        "without_sft": {
+          "da": 0.4429,
+          "sr": -5.2848
+        },
+        "without_grpo": {
+          "da": 0.5459,
+          "sr": 1.133
+        },
+        "full_model": {
+          "da": 0.5869,
+          "sr": 1.3088
+        }
+      }
+    },
+    {
+      "id": "KF-3",
+      "finding": "Diversified reward objectives are complementary; removing any HGRM component reduces full-model SR.",
+      "evidence": [
+        "Section 4.6.2",
+        "Table 4",
+        "Section 3.2"
+      ]
+    },
+    {
+      "id": "KF-4",
+      "finding": "Holding-period and position-limit sensitivity indicate event alpha decays quickly and requires exposure controls.",
+      "evidence": [
+        "Appendix A.4",
+        "Figure 9",
+        "Figure 10"
+      ]
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "First end-to-end event-driven trading pipeline centered on event semantics and CAR-grounded supervision.",
+      "assessment": "moderately_novel",
+      "notes": "Novel as a systems combination of dataset design plus gated RL objective, though components individually build on known event-study and RL ideas."
+    },
+    {
+      "claim": "Hierarchical-Gated Reward Modeling improves semantic-market alignment.",
+      "assessment": "supported_in_scope",
+      "notes": "Ablation evidence supports in-paper gains, but validation is mostly within one market and horizon regime."
+    },
+    {
+      "claim": "Broad, consistent superiority over LLM and index baselines.",
+      "assessment": "partially_supported",
+      "notes": "Supported within reported setup; broader portability is unproven."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "external_validity",
+      "severity": "high",
+      "detail": "Primary evaluation is CN A-share only with limited out-of-market evidence."
+    },
+    {
+      "risk": "horizon_sensitivity",
+      "severity": "high",
+      "detail": "Appendix sensitivity shows degradation at longer holding horizons, indicating short-lived event alpha and exposure fragility."
+    },
+    {
+      "risk": "statistical_rigor",
+      "severity": "high",
+      "detail": "Main results omit confidence intervals and statistical significance tests for key deltas."
+    },
+    {
+      "risk": "reproducibility_gap",
+      "severity": "medium_high",
+      "detail": "Paper lacks full deterministic reproduction bundle (exact code snapshot, seeds, data checksums, complete config package)."
+    },
+    {
+      "risk": "execution_realism",
+      "severity": "medium",
+      "detail": "Cost-aware reward exists but complete microstructure assumptions are not fully documented in the main experiment narrative."
+    }
+  ],
+  "assumptions": [
+    "Event-type and CAR labels are sufficiently accurate and stable for supervised/RL alignment.",
+    "Historical event-type weighting remains predictive in future regimes.",
+    "Backtest execution assumptions are adequate proxies for deployable trading behavior."
+  ],
+  "implementation_implications": [
+    "Reuse HGRM reward decomposition pattern for event-driven policy learning.",
+    "Adopt a strict event-centric record schema with provenance and deterministic replay metadata.",
+    "Retain SFT-before-RL staging to prevent unstable policy search.",
+    "Require walk-forward, regime-aware, and significance-tested gates before any promotion.",
+    "Keep deployment at shadow/paper-trading stage until reproducibility and robustness criteria are met."
+  ],
+  "unresolved_questions": [
+    "Where is the claimed open-source dataset release and what versioning/checksums are available?",
+    "How sensitive are reported gains to transaction-cost/slippage assumptions and turnover constraints?",
+    "Do gains remain under multi-year, cross-market, and stress-regime evaluations with statistical significance?"
+  ],
+  "citations": [
+    {
+      "section": "1",
+      "pointer": "Challenges Ch1/Ch2 and contributions",
+      "claim": "Motivation for event-market granularity and semantic-market alignment."
+    },
+    {
+      "section": "3.1.1",
+      "pointer": "Eq. 1-5",
+      "claim": "Event-to-CAR labeling pipeline with market/risk neutralization."
+    },
+    {
+      "section": "3.1.2",
+      "pointer": "Label tuple y={c,d,s,e}",
+      "claim": "Direction and strength derived from CAR; event semantics retained."
+    },
+    {
+      "section": "3.2.1-3.2.6",
+      "pointer": "Eq. 6-10",
+      "claim": "Hierarchical reward design and gating logic."
+    },
+    {
+      "section": "4.1",
+      "pointer": "Signal generation/aggregation/entry/exit rules",
+      "claim": "Backtest execution mechanics."
+    },
+    {
+      "section": "4.3",
+      "pointer": "Data ranges and split policy",
+      "claim": "Chronological split and data providers."
+    },
+    {
+      "section": "4.5.1",
+      "pointer": "Table 2, Figure 3",
+      "claim": "Main benchmark outcomes with Janus-Q leading SR."
+    },
+    {
+      "section": "4.6",
+      "pointer": "Table 3-4",
+      "claim": "Ablations support role of SFT and reward components."
+    },
+    {
+      "section": "4.7",
+      "pointer": "Figure 4",
+      "claim": "Human alignment case-study outcomes."
+    },
+    {
+      "section": "Appendix A.4",
+      "pointer": "Figure 9-10",
+      "claim": "Holding-period and position-limit sensitivity."
+    }
+  ],
+  "confidence": 0.76
+}
