@@ -348,7 +348,7 @@ describe('whitepaper finalize callback', () => {
     const previousFinalizeBaseUrl = process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL
     const previousFinalizeToken = process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN
     const previousFinalizeEnabled = process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED
-    globalThis.fetch = fetchMock as typeof globalThis.fetch
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
     process.env.GITHUB_TOKEN = 'github-token'
     process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
     process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.local'
@@ -403,7 +403,7 @@ describe('whitepaper finalize callback', () => {
       String(call[0]).includes('/whitepapers/runs/wp-abc123/finalize'),
     )
     expect(finalizeCall).toBeDefined()
-    const [, init] = finalizeCall as [RequestInfo | URL, RequestInit]
+    const [, init] = finalizeCall as unknown as [RequestInfo | URL, RequestInit]
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer whitepaper-token')
     const finalizePayload = JSON.parse(String(init.body)) as Record<string, unknown>
     expect(finalizePayload.status).toBe('completed')
@@ -436,7 +436,7 @@ describe('whitepaper finalize callback', () => {
     const previousUseSa = process.env.JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN
     const previousSaPath = process.env.JANGAR_WHITEPAPER_SERVICE_ACCOUNT_TOKEN_PATH
     const previousFinalizeEnabled = process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED
-    globalThis.fetch = fetchMock as typeof globalThis.fetch
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
     process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
     process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.local'
     process.env.JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN = 'true'
@@ -500,7 +500,7 @@ describe('whitepaper finalize callback', () => {
       String(call[0]).includes('/whitepapers/runs/wp-sa/finalize'),
     )
     expect(finalizeCall).toBeDefined()
-    const [, init] = finalizeCall as [RequestInfo | URL, RequestInit]
+    const [, init] = finalizeCall as unknown as [RequestInfo | URL, RequestInit]
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer sa-token')
     const finalizePayload = JSON.parse(String(init.body)) as Record<string, unknown>
     expect(finalizePayload.status).toBe('failed')
