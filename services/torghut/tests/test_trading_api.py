@@ -246,6 +246,9 @@ class TestTradingApi(TestCase):
             control_plane_contract["contract_version"], "torghut.quant-producer.v1"
         )
         self.assertIn("signal_lag_seconds", control_plane_contract)
+        self.assertIn("signal_continuity_state", control_plane_contract)
+        self.assertIn("market_session_open", control_plane_contract)
+        self.assertIn("universe_fail_safe_blocked", control_plane_contract)
 
     def test_trading_metrics_includes_control_plane_contract(self) -> None:
         response = self.client.get("/trading/metrics")
@@ -271,6 +274,12 @@ class TestTradingApi(TestCase):
             scheduler.state.last_ingest_reason = "cursor_ahead_of_stream"
             scheduler.state.last_ingest_signals_total = 0
             scheduler.state.autonomy_no_signal_streak = 4
+            scheduler.state.last_signal_continuity_state = (
+                "expected_market_closed_staleness"
+            )
+            scheduler.state.last_signal_continuity_reason = "no_signals_in_window"
+            scheduler.state.last_signal_continuity_actionable = False
+            scheduler.state.market_session_open = False
             app.state.trading_scheduler = scheduler
 
             response = self.client.get("/trading/status")
@@ -280,6 +289,38 @@ class TestTradingApi(TestCase):
             self.assertEqual(autonomy["last_ingest_signal_count"], 0)
             self.assertEqual(autonomy["last_ingest_reason"], "cursor_ahead_of_stream")
             self.assertEqual(autonomy["no_signal_streak"], 4)
+            continuity = payload["signal_continuity"]
+            self.assertEqual(continuity["last_state"], "expected_market_closed_staleness")
+            self.assertEqual(continuity["last_reason"], "no_signals_in_window")
+            self.assertFalse(continuity["last_actionable"])
+            self.assertFalse(continuity["market_session_open"])
+        finally:
+            if original_scheduler is None:
+                del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_trading_status_surfaces_universe_fail_safe_state(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.universe_source_status = "unavailable"
+            scheduler.state.universe_source_reason = "jangar_symbols_fetch_failed"
+            scheduler.state.universe_fail_safe_blocked = True
+            scheduler.state.universe_fail_safe_block_reason = (
+                "jangar_symbols_fetch_failed"
+            )
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/status")
+            self.assertEqual(response.status_code, 200)
+            continuity = response.json()["signal_continuity"]
+            self.assertTrue(continuity["universe_fail_safe_blocked"])
+            self.assertEqual(
+                continuity["universe_fail_safe_block_reason"],
+                "jangar_symbols_fetch_failed",
+            )
+            self.assertEqual(continuity["universe_status"], "unavailable")
         finally:
             if original_scheduler is None:
                 del app.state.trading_scheduler

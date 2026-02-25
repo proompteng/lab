@@ -115,6 +115,27 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "reason",
         "int",
     ),
+    "signal_expected_staleness_total": (
+        "torghut_trading_signal_expected_staleness_total",
+        "Count of expected no-signal staleness observations while market session is closed.",
+        "counter",
+        "reason",
+        "int",
+    ),
+    "signal_actionable_staleness_total": (
+        "torghut_trading_signal_actionable_staleness_total",
+        "Count of actionable source continuity faults by reason.",
+        "counter",
+        "reason",
+        "int",
+    ),
+    "universe_fail_safe_reason_total": (
+        "torghut_trading_universe_fail_safe_reason_total",
+        "Count of fail-safe universe execution blocks by reason.",
+        "counter",
+        "reason",
+        "int",
+    ),
     "forecast_router_inference_latency_ms": (
         "torghut_forecast_router_inference_latency_ms",
         "Deterministic forecast inference latency by model family.",
@@ -230,6 +251,14 @@ _SERVICE_LABEL_GAUGES: dict[str, tuple[str, str]] = {
     "no_signal_streak": (
         "torghut_trading_no_signal_streak",
         "Consecutive no-signal autonomy cycles.",
+    ),
+    "market_session_open": (
+        "torghut_trading_market_session_open",
+        "Trading market session status (1=open, 0=closed).",
+    ),
+    "signal_continuity_actionable": (
+        "torghut_trading_signal_continuity_actionable",
+        "Whether last observed continuity state is actionable (1=yes, 0=no).",
     ),
 }
 

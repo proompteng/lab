@@ -316,6 +316,14 @@ class Settings(BaseSettings):
         alias="TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS",
         description="Comma-separated no-signal/staleness reasons treated as critical continuity breaches.",
     )
+    trading_signal_market_closed_expected_reasons_raw: Optional[str] = Field(
+        default="no_signals_in_window,cursor_tail_stable,empty_batch_advanced",
+        alias="TRADING_SIGNAL_MARKET_CLOSED_EXPECTED_REASONS",
+        description=(
+            "Comma-separated no-signal reasons treated as expected staleness while the market "
+            "session is closed."
+        ),
+    )
     trading_price_table: str = Field(
         default="torghut.ta_microbars", alias="TRADING_PRICE_TABLE"
     )
@@ -1295,6 +1303,7 @@ class Settings(BaseSettings):
             "trading_execution_adapter_symbols_raw",
             "trading_lean_live_canary_symbols_raw",
             "trading_signal_staleness_alert_critical_reasons_raw",
+            "trading_signal_market_closed_expected_reasons_raw",
             "trading_drift_trigger_retrain_reason_codes_raw",
             "trading_drift_trigger_reselection_reason_codes_raw",
             "trading_drift_rollback_reason_codes_raw",
@@ -1694,6 +1703,18 @@ class Settings(BaseSettings):
         return {
             reason.strip()
             for reason in self.trading_signal_staleness_alert_critical_reasons_raw.split(
+                ","
+            )
+            if reason.strip()
+        }
+
+    @property
+    def trading_signal_market_closed_expected_reasons(self) -> set[str]:
+        if not self.trading_signal_market_closed_expected_reasons_raw:
+            return set()
+        return {
+            reason.strip()
+            for reason in self.trading_signal_market_closed_expected_reasons_raw.split(
                 ","
             )
             if reason.strip()
