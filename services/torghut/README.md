@@ -63,6 +63,25 @@ Endpoints:
 - `POST /whitepapers/runs/{run_id}/finalize` (AgentRun completion payload)
 - `GET /whitepapers/runs/{run_id}`
 
+## DSPy compile/eval/promotion scaffolding (v5)
+
+- Metric policy: `config/trading/llm/dspy-metrics.yaml`
+- Python scaffolding:
+  - `app/trading/llm/dspy_programs/` (typed signatures/modules/adapters)
+  - `app/trading/llm/dspy_compile/` (compile/eval/promotion artifacts + AgentRun payload builder)
+- Runtime gates:
+  - `LLM_DSPY_RUNTIME_MODE=disabled|shadow|active` (default `disabled`)
+  - `LLM_DSPY_ARTIFACT_HASH=<sha256>` required when mode is `shadow` or `active`
+  - `LLM_DSPY_PROGRAM_NAME`, `LLM_DSPY_SIGNATURE_VERSION`, `LLM_DSPY_TIMEOUT_SECONDS`
+
+AgentRun payload builder (`build_dspy_agentrun_payload`) enforces:
+- explicit `idempotencyKey`
+- `implementationSpecRef` from DSPy lane catalog
+- `vcsPolicy.required=true` with `mode=read-write`
+- top-level `ttlSecondsAfterFinished`
+- `policy.secretBindingRef`
+- string-only `parameters`
+
 ## Feature flags (Flipt)
 
 - Torghut runtime gates are resolved via Flipt boolean evaluations when `TRADING_FEATURE_FLAGS_ENABLED=true`.

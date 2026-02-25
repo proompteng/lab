@@ -18,6 +18,7 @@ from ...config import settings
 from ..models import StrategyDecision
 from .client import LLMClient
 from .circuit import LLMCircuitBreaker
+from .dspy_programs import DSPyReviewRuntime, DSPyRuntimeError
 from .policy import allowed_order_types
 from .schema import (
     LLMDecisionContext,
@@ -103,6 +104,7 @@ class LLMReviewEngine:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         circuit_breaker: Optional[LLMCircuitBreaker] = None,
+        dspy_runtime: Optional[DSPyReviewRuntime] = None,
     ) -> None:
         self.model = model or settings.llm_model
         self.prompt_version = prompt_version or settings.llm_prompt_version
@@ -110,6 +112,7 @@ class LLMReviewEngine:
         self.max_tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
         self.client = client or LLMClient(self.model, settings.llm_timeout_seconds)
         self.circuit_breaker = circuit_breaker or LLMCircuitBreaker.from_settings()
+        self.dspy_runtime = dspy_runtime or DSPyReviewRuntime.from_settings()
         self.system_prompt = load_prompt_template(self.prompt_version)
 
     def review(
@@ -138,16 +141,66 @@ class LLMReviewEngine:
                 recent_decisions,
             )
         request_json = request.model_dump(mode="json")
-        if settings.llm_committee_enabled:
-            response, tokens_prompt, tokens_completion = self._review_with_committee(
-                request_json
-            )
-        else:
-            response, tokens_prompt, tokens_completion = self._review_single(
-                request_json
-            )
+        dspy_error: str | None = None
+        dspy_shadow_payload: dict[str, Any] | None = None
+        used_model = self.model
+        used_prompt_version = self.prompt_version
+        response: LLMReviewResponse | None = None
+        response_json: dict[str, Any] | None = None
+        tokens_prompt: Optional[int] = None
+        tokens_completion: Optional[int] = None
 
-        response_json = response.model_dump(mode="json")
+        if self.dspy_runtime.is_enabled():
+            try:
+                dspy_response, dspy_metadata = self.dspy_runtime.review(request)
+                dspy_payload = dspy_response.model_dump(mode="json")
+                dspy_payload["dspy"] = dspy_metadata.to_payload()
+                if self.dspy_runtime.mode == "active":
+                    response = dspy_response
+                    response_json = dspy_payload
+                    used_model = f"dspy:{dspy_metadata.program_name}"
+                    used_prompt_version = f"dspy:{dspy_metadata.signature_version}"
+                else:
+                    dspy_shadow_payload = dspy_payload
+                    raise DSPyRuntimeError("dspy_shadow_mode_fallback_to_legacy_llm")
+            except DSPyRuntimeError as exc:
+                dspy_error = str(exc)
+
+        if (
+            response_json is None
+            and dspy_shadow_payload is None
+            and dspy_error is None
+            and self.dspy_runtime.is_enabled()
+        ):
+            # defensive branch: if DSPy was enabled but produced neither output nor error,
+            # force deterministic fallback to legacy path.
+            dspy_error = "dspy_runtime_missing_result_fallback_to_legacy_llm"
+
+        if response_json is None or response is None:
+            if settings.llm_committee_enabled:
+                response, tokens_prompt, tokens_completion = self._review_with_committee(
+                    request_json
+                )
+            else:
+                response, tokens_prompt, tokens_completion = self._review_single(
+                    request_json
+                )
+            response_json = response.model_dump(mode="json")
+            if dspy_shadow_payload is not None:
+                response_json["dspy_shadow"] = dspy_shadow_payload
+            if dspy_error is not None:
+                response_json["dspy"] = {
+                    "mode": self.dspy_runtime.mode,
+                    "program_name": self.dspy_runtime.program_name,
+                    "signature_version": self.dspy_runtime.signature_version,
+                    "artifact_hash": self.dspy_runtime.artifact_hash,
+                    "fallback_to_legacy": True,
+                    "error": dspy_error,
+                    "advisory_only": True,
+                }
+        assert response is not None
+        assert response_json is not None
+
         request_hash = _hash_payload(request_json)
         response_hash = _hash_payload(response_json)
 
@@ -155,8 +208,8 @@ class LLMReviewEngine:
             request_json=request_json,
             response_json=response_json,
             response=response,
-            model=self.model,
-            prompt_version=self.prompt_version,
+            model=used_model,
+            prompt_version=used_prompt_version,
             tokens_prompt=tokens_prompt,
             tokens_completion=tokens_completion,
             request_hash=request_hash,

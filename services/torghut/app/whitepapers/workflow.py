@@ -1346,6 +1346,7 @@ class WhitepaperWorkflowService:
         ).scalar_one_or_none()
         verdict_text = self._optional_text(verdict_payload.get("verdict")) or "needs_review"
         approved_by = self._optional_text(verdict_payload.get("approved_by"))
+        gating_payload = self._build_verdict_gating_payload(verdict_payload)
 
         if verdict is None:
             verdict = WhitepaperViabilityVerdict(
@@ -1354,7 +1355,7 @@ class WhitepaperWorkflowService:
                 score=self._optional_decimal(verdict_payload.get("score")),
                 confidence=self._optional_decimal(verdict_payload.get("confidence")),
                 decision_policy=self._optional_text(verdict_payload.get("decision_policy")),
-                gating_json=self._optional_json(verdict_payload.get("gating")),
+                gating_json=self._optional_json(gating_payload),
                 rationale=self._optional_text(verdict_payload.get("rationale")),
                 rejection_reasons_json=self._optional_json(verdict_payload.get("rejection_reasons")),
                 recommendations_json=self._optional_json(verdict_payload.get("recommendations")),
@@ -1369,7 +1370,7 @@ class WhitepaperWorkflowService:
         verdict.score = self._optional_decimal(verdict_payload.get("score"))
         verdict.confidence = self._optional_decimal(verdict_payload.get("confidence"))
         verdict.decision_policy = self._optional_text(verdict_payload.get("decision_policy"))
-        verdict.gating_json = self._optional_json(verdict_payload.get("gating"))
+        verdict.gating_json = self._optional_json(gating_payload)
         verdict.rationale = self._optional_text(verdict_payload.get("rationale"))
         verdict.rejection_reasons_json = self._optional_json(verdict_payload.get("rejection_reasons"))
         verdict.recommendations_json = self._optional_json(verdict_payload.get("recommendations"))
@@ -1377,6 +1378,24 @@ class WhitepaperWorkflowService:
         verdict.approved_by = approved_by
         verdict.approved_at = datetime.now(timezone.utc) if approved_by else verdict.approved_at
         session.add(verdict)
+
+    @staticmethod
+    def _build_verdict_gating_payload(verdict_payload: Mapping[str, Any]) -> Any:
+        base_gating = verdict_payload.get("gating")
+        dspy_eval_report = verdict_payload.get("dspy_eval_report")
+        if not isinstance(dspy_eval_report, Mapping):
+            return base_gating
+        dspy_payload = coerce_json_payload(cast(dict[str, Any], dspy_eval_report))
+        if isinstance(base_gating, Mapping):
+            merged = dict(cast(dict[str, Any], base_gating))
+            merged["dspy_eval_report"] = dspy_payload
+            return merged
+        if base_gating is None:
+            return {"dspy_eval_report": dspy_payload}
+        return {
+            "gating": coerce_json_payload(base_gating),
+            "dspy_eval_report": dspy_payload,
+        }
 
     @staticmethod
     def _coerce_pr_payloads(pr_payload_raw: Any) -> list[dict[str, Any]]:

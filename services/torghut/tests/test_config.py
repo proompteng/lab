@@ -152,6 +152,22 @@ class TestConfig(TestCase):
             settings.llm_effective_fail_mode_for_current_rollout(), "pass_through"
         )
 
+    def test_rejects_dspy_active_mode_without_artifact_hash(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                LLM_DSPY_RUNTIME_MODE="active",
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
+    def test_allows_dspy_shadow_mode_with_artifact_hash(self) -> None:
+        settings = Settings(
+            LLM_DSPY_RUNTIME_MODE="shadow",
+            LLM_DSPY_ARTIFACT_HASH="a" * 64,
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(settings.llm_dspy_runtime_mode, "shadow")
+        self.assertEqual(settings.llm_dspy_artifact_hash, "a" * 64)
+
     def test_allocator_regime_maps_are_normalized(self) -> None:
         settings = Settings(
             TRADING_UNIVERSE_SOURCE="static",

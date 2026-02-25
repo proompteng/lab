@@ -1204,6 +1204,38 @@ class Settings(BaseSettings):
         default="veto",
         alias="LLM_COMMITTEE_FAIL_CLOSED_VERDICT",
     )
+    llm_dspy_runtime_mode: Literal["disabled", "shadow", "active"] = Field(
+        default="disabled",
+        alias="LLM_DSPY_RUNTIME_MODE",
+    )
+    llm_dspy_artifact_hash: Optional[str] = Field(
+        default=None,
+        alias="LLM_DSPY_ARTIFACT_HASH",
+    )
+    llm_dspy_program_name: str = Field(
+        default="trade-review-committee-v1",
+        alias="LLM_DSPY_PROGRAM_NAME",
+    )
+    llm_dspy_signature_version: str = Field(
+        default="v1",
+        alias="LLM_DSPY_SIGNATURE_VERSION",
+    )
+    llm_dspy_timeout_seconds: int = Field(
+        default=8,
+        alias="LLM_DSPY_TIMEOUT_SECONDS",
+    )
+    llm_dspy_compile_metrics_policy_ref: str = Field(
+        default="config/trading/llm/dspy-metrics.yaml",
+        alias="LLM_DSPY_COMPILE_METRICS_POLICY_REF",
+    )
+    llm_dspy_secret_binding_ref: str = Field(
+        default="codex-whitepaper-github-token",
+        alias="LLM_DSPY_SECRET_BINDING_REF",
+    )
+    llm_dspy_agentrun_ttl_seconds: int = Field(
+        default=14400,
+        alias="LLM_DSPY_AGENTRUN_TTL_SECONDS",
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -1326,15 +1358,23 @@ class Settings(BaseSettings):
             "llm_evaluation_report",
             "llm_effective_challenge_id",
             "llm_shadow_completed_at",
+            "llm_dspy_artifact_hash",
         ):
             raw_value = cast(str | None, getattr(self, field_name))
             if not raw_value:
                 continue
-            setattr(self, field_name, raw_value.strip())
+            normalized = raw_value.strip()
+            setattr(self, field_name, normalized or None)
         if self.llm_model_version_lock is not None:
             normalized_model_version_lock = self.llm_model_version_lock.strip()
             # Model lock evidence must be explicitly configured; never backfill from llm_model.
             self.llm_model_version_lock = normalized_model_version_lock or None
+        self.llm_dspy_program_name = self.llm_dspy_program_name.strip()
+        self.llm_dspy_signature_version = self.llm_dspy_signature_version.strip()
+        self.llm_dspy_compile_metrics_policy_ref = (
+            self.llm_dspy_compile_metrics_policy_ref.strip()
+        )
+        self.llm_dspy_secret_binding_ref = self.llm_dspy_secret_binding_ref.strip()
         self.llm_committee_roles_raw = self._normalize_csv_setting(
             self.llm_committee_roles_raw
         )
@@ -1563,6 +1603,18 @@ class Settings(BaseSettings):
             raise ValueError(
                 "LLM_FAIL_OPEN_LIVE_APPROVED must be true when live effective fail mode is pass_through"
             )
+        if self.llm_dspy_timeout_seconds <= 0:
+            raise ValueError("LLM_DSPY_TIMEOUT_SECONDS must be > 0")
+        if self.llm_dspy_agentrun_ttl_seconds < 0:
+            raise ValueError("LLM_DSPY_AGENTRUN_TTL_SECONDS must be >= 0")
+        if self.llm_dspy_runtime_mode in {"shadow", "active"} and not self.llm_dspy_artifact_hash:
+            raise ValueError(
+                "LLM_DSPY_ARTIFACT_HASH is required when LLM_DSPY_RUNTIME_MODE is shadow or active"
+            )
+        if not self.llm_dspy_program_name:
+            raise ValueError("LLM_DSPY_PROGRAM_NAME must be set")
+        if not self.llm_dspy_signature_version:
+            raise ValueError("LLM_DSPY_SIGNATURE_VERSION must be set")
 
     def model_post_init(self, __context: Any) -> None:
         self._apply_feature_flag_overrides()
