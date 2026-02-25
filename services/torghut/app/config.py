@@ -76,14 +76,14 @@ def _http_connection_for_url(
 ) -> tuple[HTTPConnection | HTTPSConnection, str]:
     parsed = urlsplit(url)
     scheme = parsed.scheme.lower()
-    if scheme not in {'http', 'https'}:
-        raise ValueError(f'unsupported_url_scheme:{scheme or "missing"}')
+    if scheme not in {"http", "https"}:
+        raise ValueError(f"unsupported_url_scheme:{scheme or 'missing'}")
     if not parsed.hostname:
-        raise ValueError('missing_url_host')
-    path = parsed.path or '/'
+        raise ValueError("missing_url_host")
+    path = parsed.path or "/"
     if parsed.query:
-        path = f'{path}?{parsed.query}'
-    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+        path = f"{path}?{parsed.query}"
+    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
     return connection_class(parsed.hostname, parsed.port, timeout=timeout_seconds), path
 
 
@@ -110,10 +110,12 @@ class _HttpRequest:
 
 
 class _HttpResponseHandle:
-    def __init__(self, connection: HTTPConnection | HTTPSConnection, response: Any) -> None:
+    def __init__(
+        self, connection: HTTPConnection | HTTPSConnection, response: Any
+    ) -> None:
         self._connection = connection
         self._response = response
-        self.status = int(getattr(response, 'status', 200))
+        self.status = int(getattr(response, "status", 200))
 
     def read(self) -> bytes:
         return cast(bytes, self._response.read())
@@ -135,7 +137,9 @@ def urlopen(request: _HttpRequest, timeout: float) -> _HttpResponseHandle:
         timeout_seconds=max(timeout, 0.001),
     )
     try:
-        connection.request(request.method, request_path, body=request.data, headers=request.headers)
+        connection.request(
+            request.method, request_path, body=request.data, headers=request.headers
+        )
         response = connection.getresponse()
     except Exception:
         connection.close()
@@ -164,48 +168,50 @@ def _resolve_boolean_feature_flag(
     timeout_seconds = max(timeout_ms, 1) / 1000.0
     request = _HttpRequest(
         full_url=request_url,
-        method='POST',
+        method="POST",
         data=payload,
         headers={
-            'accept': 'application/json',
-            'content-type': 'application/json',
+            "accept": "application/json",
+            "content-type": "application/json",
         },
     )
     try:
         with urlopen(request, timeout_seconds) as response:
-            status = int(getattr(response, 'status', 200))
+            status = int(getattr(response, "status", 200))
             if status < 200 or status >= 300:
                 logger.warning(
-                    'Feature flag resolve HTTP failure for key=%s status=%s; using default.',
+                    "Feature flag resolve HTTP failure for key=%s status=%s; using default.",
                     flag_key,
                     status,
                 )
                 return default_value, False
-            raw_body = json.loads(response.read().decode('utf-8'))
+            raw_body = json.loads(response.read().decode("utf-8"))
             if not isinstance(raw_body, dict):
                 logger.warning(
-                    'Feature flag resolve invalid response for key=%s; using default.',
+                    "Feature flag resolve invalid response for key=%s; using default.",
                     flag_key,
                 )
                 return default_value, False
             body = cast(dict[str, object], raw_body)
-            enabled = body.get('enabled')
+            enabled = body.get("enabled")
             if not isinstance(enabled, bool):
                 logger.warning(
-                    'Feature flag resolve missing boolean `enabled` for key=%s; using default.',
+                    "Feature flag resolve missing boolean `enabled` for key=%s; using default.",
                     flag_key,
                 )
                 return default_value, False
             return enabled, True
     except ValueError:
         logger.warning(
-            'Feature flag resolve invalid endpoint for key=%s endpoint=%s; using default.',
+            "Feature flag resolve invalid endpoint for key=%s endpoint=%s; using default.",
             flag_key,
             endpoint,
         )
         return default_value, False
     except Exception:
-        logger.warning('Feature flag resolve failed for key=%s; using default.', flag_key)
+        logger.warning(
+            "Feature flag resolve failed for key=%s; using default.", flag_key
+        )
         return default_value, False
     return default_value, False
 
@@ -310,6 +316,14 @@ class Settings(BaseSettings):
         default=300,
         alias="TRADING_SIGNAL_STALE_LAG_ALERT_SECONDS",
         description="Signal lag threshold (seconds) that triggers a source continuity alert.",
+    )
+    trading_signal_continuity_recovery_cycles: int = Field(
+        default=2,
+        alias="TRADING_SIGNAL_CONTINUITY_RECOVERY_CYCLES",
+        description=(
+            "How many healthy signal-bearing cycles are required before clearing a latched "
+            "signal continuity alert."
+        ),
     )
     trading_signal_staleness_alert_critical_reasons_raw: Optional[str] = Field(
         default="cursor_ahead_of_stream,no_signals_in_window,universe_source_unavailable",
@@ -437,18 +451,18 @@ class Settings(BaseSettings):
     )
     trading_forecast_router_enabled: bool = Field(
         default=True,
-        alias='TRADING_FORECAST_ROUTER_ENABLED',
-        description='Enable deterministic forecast routing and uncertainty contract emission.',
+        alias="TRADING_FORECAST_ROUTER_ENABLED",
+        description="Enable deterministic forecast routing and uncertainty contract emission.",
     )
     trading_forecast_router_policy_path: Optional[str] = Field(
         default=None,
-        alias='TRADING_FORECAST_ROUTER_POLICY_PATH',
-        description='Optional path to forecast router policy JSON.',
+        alias="TRADING_FORECAST_ROUTER_POLICY_PATH",
+        description="Optional path to forecast router policy JSON.",
     )
     trading_forecast_router_refinement_enabled: bool = Field(
         default=True,
-        alias='TRADING_FORECAST_ROUTER_REFINEMENT_ENABLED',
-        description='Enable deterministic forecast refinement for eligible routes.',
+        alias="TRADING_FORECAST_ROUTER_REFINEMENT_ENABLED",
+        description="Enable deterministic forecast refinement for eligible routes.",
     )
     trading_feature_quality_enabled: bool = Field(
         default=True,
@@ -497,7 +511,7 @@ class Settings(BaseSettings):
         description="Lookback window for signals passed to autonomous lane runs.",
     )
     trading_autonomy_artifact_dir: str = Field(
-        default=str(Path(tempfile.gettempdir()) / 'torghut-autonomy'),
+        default=str(Path(tempfile.gettempdir()) / "torghut-autonomy"),
         alias="TRADING_AUTONOMY_ARTIFACT_DIR",
         description="Output directory for autonomous lane artifacts.",
     )
@@ -1129,9 +1143,7 @@ class Settings(BaseSettings):
     llm_min_probability_margin: float = Field(
         default=0.05, alias="LLM_MIN_PROBABILITY_MARGIN"
     )
-    llm_max_uncertainty: float = Field(
-        default=0.6, alias="LLM_MAX_UNCERTAINTY"
-    )
+    llm_max_uncertainty: float = Field(default=0.6, alias="LLM_MAX_UNCERTAINTY")
     llm_max_uncertainty_band: Literal["low", "medium", "high"] = Field(
         default="medium", alias="LLM_MAX_UNCERTAINTY_BAND"
     )
@@ -1420,7 +1432,10 @@ class Settings(BaseSettings):
 
     def _normalize_correlation_group_notional_caps(self) -> None:
         normalized_correlation_caps: dict[str, float] = {}
-        for key, value in self.trading_allocator_correlation_group_notional_caps.items():
+        for (
+            key,
+            value,
+        ) in self.trading_allocator_correlation_group_notional_caps.items():
             normalized_key = key.strip().lower()
             if not normalized_key:
                 continue
@@ -1429,7 +1444,9 @@ class Settings(BaseSettings):
                     f"TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS[{key}] must be >= 0"
                 )
             normalized_correlation_caps[normalized_key] = value
-        self.trading_allocator_correlation_group_notional_caps = normalized_correlation_caps
+        self.trading_allocator_correlation_group_notional_caps = (
+            normalized_correlation_caps
+        )
 
     def _normalize_allocator_settings(self) -> None:
         self.trading_allocator_default_regime = (
@@ -1497,13 +1514,20 @@ class Settings(BaseSettings):
                 "TRADING_DRIFT_LIVE_PROMOTION_MAX_EVIDENCE_AGE_SECONDS must be >= 0",
             ),
             (
+                self.trading_signal_continuity_recovery_cycles,
+                "TRADING_SIGNAL_CONTINUITY_RECOVERY_CYCLES must be >= 0",
+            ),
+            (
                 self.trading_allocator_min_multiplier,
                 "TRADING_ALLOCATOR_MIN_MULTIPLIER must be >= 0",
             ),
         ]
         for value, message in checks:
             self._validate_non_negative_value(value, message)
-        if self.trading_allocator_max_multiplier < self.trading_allocator_min_multiplier:
+        if (
+            self.trading_allocator_max_multiplier
+            < self.trading_allocator_min_multiplier
+        ):
             raise ValueError(
                 "TRADING_ALLOCATOR_MAX_MULTIPLIER must be >= TRADING_ALLOCATOR_MIN_MULTIPLIER"
             )
@@ -1835,11 +1859,19 @@ class Settings(BaseSettings):
 
     @property
     def llm_committee_roles(self) -> list[str]:
-        return [item.strip() for item in self.llm_committee_roles_raw.split(",") if item.strip()]
+        return [
+            item.strip()
+            for item in self.llm_committee_roles_raw.split(",")
+            if item.strip()
+        ]
 
     @property
     def llm_committee_mandatory_roles(self) -> list[str]:
-        return [item.strip() for item in self.llm_committee_mandatory_roles_raw.split(",") if item.strip()]
+        return [
+            item.strip()
+            for item in self.llm_committee_mandatory_roles_raw.split(",")
+            if item.strip()
+        ]
 
     @property
     def llm_live_fail_open_requested(self) -> bool:

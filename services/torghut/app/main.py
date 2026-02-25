@@ -111,7 +111,9 @@ def sqlalchemy_exception_handler(
     """Convert unhandled DB exceptions into explicit service-unavailable responses."""
 
     message = str(getattr(exc, "orig", exc)).lower()
-    if "undefinedcolumn" in message or ("column" in message and "does not exist" in message):
+    if "undefinedcolumn" in message or (
+        "column" in message and "does not exist" in message
+    ):
         detail = "database schema mismatch; migrations pending"
     else:
         detail = "database unavailable"
@@ -227,7 +229,9 @@ def ingest_whitepaper_github_issue(
     except Exception as exc:
         session.rollback()
         logger.exception("Whitepaper issue intake failed")
-        raise HTTPException(status_code=500, detail=f"whitepaper_issue_intake_failed:{exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"whitepaper_issue_intake_failed:{exc}"
+        ) from exc
 
 
 @app.post("/whitepapers/runs/{run_id}/dispatch-agentrun")
@@ -248,7 +252,9 @@ def dispatch_whitepaper_agentrun(
     except Exception as exc:
         session.rollback()
         logger.exception("Whitepaper AgentRun dispatch failed for run_id=%s", run_id)
-        raise HTTPException(status_code=502, detail=f"whitepaper_agentrun_dispatch_failed:{exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"whitepaper_agentrun_dispatch_failed:{exc}"
+        ) from exc
     session.commit()
     return cast(dict[str, object], result)
 
@@ -276,7 +282,9 @@ def finalize_whitepaper_run(
     except Exception as exc:
         session.rollback()
         logger.exception("Whitepaper finalize failed for run_id=%s", run_id)
-        raise HTTPException(status_code=500, detail=f"whitepaper_finalize_failed:{exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"whitepaper_finalize_failed:{exc}"
+        ) from exc
     session.commit()
     return cast(dict[str, object], result)
 
@@ -294,17 +302,25 @@ def get_whitepaper_run(
     if row is None:
         raise HTTPException(status_code=404, detail="whitepaper_run_not_found")
 
-    agentrun = session.execute(
-        select(WhitepaperCodexAgentRun)
-        .where(WhitepaperCodexAgentRun.analysis_run_id == row.id)
-        .order_by(WhitepaperCodexAgentRun.created_at.desc())
-    ).scalars().first()
+    agentrun = (
+        session.execute(
+            select(WhitepaperCodexAgentRun)
+            .where(WhitepaperCodexAgentRun.analysis_run_id == row.id)
+            .order_by(WhitepaperCodexAgentRun.created_at.desc())
+        )
+        .scalars()
+        .first()
+    )
 
-    pr_rows = session.execute(
-        select(WhitepaperDesignPullRequest)
-        .where(WhitepaperDesignPullRequest.analysis_run_id == row.id)
-        .order_by(WhitepaperDesignPullRequest.attempt.asc())
-    ).scalars().all()
+    pr_rows = (
+        session.execute(
+            select(WhitepaperDesignPullRequest)
+            .where(WhitepaperDesignPullRequest.analysis_run_id == row.id)
+            .order_by(WhitepaperDesignPullRequest.attempt.asc())
+        )
+        .scalars()
+        .all()
+    )
 
     return jsonable_encoder(
         {
@@ -318,17 +334,31 @@ def get_whitepaper_run(
             "completed_at": row.completed_at,
             "document": {
                 "document_key": row.document.document_key if row.document else None,
-                "source_identifier": row.document.source_identifier if row.document else None,
+                "source_identifier": row.document.source_identifier
+                if row.document
+                else None,
                 "title": row.document.title if row.document else None,
                 "status": row.document.status if row.document else None,
             },
             "document_version": {
-                "version_number": row.document_version.version_number if row.document_version else None,
-                "checksum_sha256": row.document_version.checksum_sha256 if row.document_version else None,
-                "ceph_bucket": row.document_version.ceph_bucket if row.document_version else None,
-                "ceph_object_key": row.document_version.ceph_object_key if row.document_version else None,
-                "parse_status": row.document_version.parse_status if row.document_version else None,
-                "parse_error": row.document_version.parse_error if row.document_version else None,
+                "version_number": row.document_version.version_number
+                if row.document_version
+                else None,
+                "checksum_sha256": row.document_version.checksum_sha256
+                if row.document_version
+                else None,
+                "ceph_bucket": row.document_version.ceph_bucket
+                if row.document_version
+                else None,
+                "ceph_object_key": row.document_version.ceph_object_key
+                if row.document_version
+                else None,
+                "parse_status": row.document_version.parse_status
+                if row.document_version
+                else None,
+                "parse_error": row.document_version.parse_error
+                if row.document_version
+                else None,
             },
             "agentrun": {
                 "name": agentrun.agentrun_name if agentrun else None,
@@ -407,6 +437,19 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "last_state": state.last_signal_continuity_state,
             "last_reason": state.last_signal_continuity_reason,
             "last_actionable": state.last_signal_continuity_actionable,
+            "alert_active": state.signal_continuity_alert_active,
+            "alert_reason": state.signal_continuity_alert_reason,
+            "alert_started_at": state.signal_continuity_alert_started_at,
+            "alert_last_seen_at": state.signal_continuity_alert_last_seen_at,
+            "alert_recovery_streak": state.signal_continuity_recovery_streak,
+            "no_signal_reason_streak": dict(state.metrics.no_signal_reason_streak),
+            "signal_staleness_alert_total": dict(
+                state.metrics.signal_staleness_alert_total
+            ),
+            "signal_continuity_promotion_block_total": state.metrics.signal_continuity_promotion_block_total,
+            "no_signal_streak_alert_threshold": settings.trading_signal_no_signal_streak_alert_threshold,
+            "signal_lag_alert_threshold_seconds": settings.trading_signal_stale_lag_alert_seconds,
+            "signal_continuity_recovery_cycles": settings.trading_signal_continuity_recovery_cycles,
         },
         "rollback": {
             "emergency_stop_active": state.emergency_stop_active,
@@ -483,7 +526,9 @@ def submit_lean_backtest(
 
 
 @app.get("/trading/lean/backtests/{backtest_id}")
-def get_lean_backtest(backtest_id: str, session: Session = Depends(get_session)) -> dict[str, object]:
+def get_lean_backtest(
+    backtest_id: str, session: Session = Depends(get_session)
+) -> dict[str, object]:
     """Refresh and return LEAN backtest lifecycle state and reproducibility evidence."""
 
     try:
@@ -563,6 +608,19 @@ def trading_autonomy() -> dict[str, object]:
             "last_state": state.last_signal_continuity_state,
             "last_reason": state.last_signal_continuity_reason,
             "last_actionable": state.last_signal_continuity_actionable,
+            "alert_active": state.signal_continuity_alert_active,
+            "alert_reason": state.signal_continuity_alert_reason,
+            "alert_started_at": state.signal_continuity_alert_started_at,
+            "alert_last_seen_at": state.signal_continuity_alert_last_seen_at,
+            "alert_recovery_streak": state.signal_continuity_recovery_streak,
+            "no_signal_reason_streak": dict(state.metrics.no_signal_reason_streak),
+            "signal_staleness_alert_total": dict(
+                state.metrics.signal_staleness_alert_total
+            ),
+            "signal_continuity_promotion_block_total": state.metrics.signal_continuity_promotion_block_total,
+            "no_signal_streak_alert_threshold": settings.trading_signal_no_signal_streak_alert_threshold,
+            "signal_lag_alert_threshold_seconds": settings.trading_signal_stale_lag_alert_seconds,
+            "signal_continuity_recovery_cycles": settings.trading_signal_continuity_recovery_cycles,
         },
         "rollback": {
             "emergency_stop_active": state.emergency_stop_active,
@@ -835,8 +893,12 @@ def _build_control_plane_contract(state: object) -> dict[str, object]:
     metrics = getattr(state, "metrics", None)
     signal_lag_seconds = getattr(metrics, "signal_lag_seconds", None)
     no_signal_reason_streak = getattr(metrics, "no_signal_reason_streak", None)
-    signal_staleness_alert_total = getattr(metrics, "signal_staleness_alert_total", None)
-    signal_continuity_actionable = getattr(metrics, "signal_continuity_actionable", None)
+    signal_staleness_alert_total = getattr(
+        metrics, "signal_staleness_alert_total", None
+    )
+    signal_continuity_actionable = getattr(
+        metrics, "signal_continuity_actionable", None
+    )
     market_session_open = getattr(state, "market_session_open", None)
     last_run_at = getattr(state, "last_run_at", None)
     last_reconcile_at = getattr(state, "last_reconcile_at", None)
@@ -844,15 +906,49 @@ def _build_control_plane_contract(state: object) -> dict[str, object]:
         "contract_version": "torghut.quant-producer.v1",
         "signal_lag_seconds": signal_lag_seconds,
         "signal_continuity_state": getattr(state, "last_signal_continuity_state", None),
-        "signal_continuity_reason": getattr(state, "last_signal_continuity_reason", None),
+        "signal_continuity_reason": getattr(
+            state, "last_signal_continuity_reason", None
+        ),
         "signal_continuity_actionable": signal_continuity_actionable,
+        "signal_continuity_alert_active": getattr(
+            state, "signal_continuity_alert_active", None
+        ),
+        "signal_continuity_alert_reason": getattr(
+            state, "signal_continuity_alert_reason", None
+        ),
+        "signal_continuity_alert_started_at": getattr(
+            state, "signal_continuity_alert_started_at", None
+        ),
+        "signal_continuity_recovery_streak": getattr(
+            state, "signal_continuity_recovery_streak", None
+        ),
+        "signal_continuity_promotion_block_total": getattr(
+            metrics, "signal_continuity_promotion_block_total", None
+        ),
         "market_session_open": market_session_open,
         "no_signal_reason_streak": no_signal_reason_streak,
         "signal_staleness_alert_total": signal_staleness_alert_total,
+        "signal_expected_staleness_total": getattr(
+            metrics, "signal_expected_staleness_total", None
+        ),
+        "signal_actionable_staleness_total": getattr(
+            metrics, "signal_actionable_staleness_total", None
+        ),
         "universe_status": getattr(state, "universe_source_status", None),
         "universe_reason": getattr(state, "universe_source_reason", None),
-        "universe_fail_safe_blocked": getattr(state, "universe_fail_safe_blocked", None),
-        "universe_fail_safe_block_reason": getattr(state, "universe_fail_safe_block_reason", None),
+        "universe_symbols_count": getattr(state, "universe_symbols_count", None),
+        "universe_cache_age_seconds": getattr(
+            state, "universe_cache_age_seconds", None
+        ),
+        "universe_resolution_total": getattr(
+            metrics, "universe_resolution_total", None
+        ),
+        "universe_fail_safe_blocked": getattr(
+            state, "universe_fail_safe_blocked", None
+        ),
+        "universe_fail_safe_block_reason": getattr(
+            state, "universe_fail_safe_block_reason", None
+        ),
         "running": bool(getattr(state, "running", False)),
         "last_run_at": last_run_at,
         "last_reconcile_at": last_reconcile_at,
@@ -869,10 +965,13 @@ def _check_clickhouse() -> dict[str, object]:
     url = f"{settings.trading_clickhouse_url.rstrip('/')}/?{urlencode(params)}"
     parsed = urlsplit(url)
     scheme = parsed.scheme.lower()
-    if scheme not in {'http', 'https'}:
-        return {'ok': False, 'detail': f'clickhouse invalid url scheme: {scheme or "missing"}'}
+    if scheme not in {"http", "https"}:
+        return {
+            "ok": False,
+            "detail": f"clickhouse invalid url scheme: {scheme or 'missing'}",
+        }
     if not parsed.hostname:
-        return {'ok': False, 'detail': 'clickhouse invalid url host'}
+        return {"ok": False, "detail": "clickhouse invalid url host"}
 
     headers: dict[str, str] = {"Content-Type": "text/plain"}
     if settings.trading_clickhouse_username:
@@ -880,10 +979,10 @@ def _check_clickhouse() -> dict[str, object]:
     if settings.trading_clickhouse_password:
         headers["X-ClickHouse-Key"] = settings.trading_clickhouse_password
 
-    path = parsed.path or '/'
+    path = parsed.path or "/"
     if parsed.query:
-        path = f'{path}?{parsed.query}'
-    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+        path = f"{path}?{parsed.query}"
+    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
     connection = connection_class(
         parsed.hostname,
         parsed.port,
@@ -891,11 +990,11 @@ def _check_clickhouse() -> dict[str, object]:
     )
 
     try:
-        connection.request('GET', path, headers=headers)
+        connection.request("GET", path, headers=headers)
         response = connection.getresponse()
         if response.status < 200 or response.status >= 300:
-            return {'ok': False, 'detail': f'clickhouse http status {response.status}'}
-        payload = response.read().decode('utf-8')
+            return {"ok": False, "detail": f"clickhouse http status {response.status}"}
+        payload = response.read().decode("utf-8")
     except Exception as exc:  # pragma: no cover - depends on network
         return {"ok": False, "detail": f"clickhouse error: {exc}"}
     finally:
@@ -1077,9 +1176,9 @@ def _update_tca_aggregate(
     for prefix, metric_value in metric_updates:
         if metric_value is None:
             continue
-        aggregate[f"_{prefix}_sum"] = _tca_as_float(aggregate[f"_{prefix}_sum"]) + float(
-            metric_value
-        )
+        aggregate[f"_{prefix}_sum"] = _tca_as_float(
+            aggregate[f"_{prefix}_sum"]
+        ) + float(metric_value)
         aggregate[f"_{prefix}_count"] = _tca_as_int(aggregate[f"_{prefix}_count"]) + 1
 
 
@@ -1100,7 +1199,9 @@ def _finalize_tca_aggregates(
         aggregate["avg_shortfall_notional"] = (
             (shortfall_sum / shortfall_count) if shortfall_count else None
         )
-        aggregate["avg_churn_ratio"] = (churn_sum / churn_count) if churn_count else None
+        aggregate["avg_churn_ratio"] = (
+            (churn_sum / churn_count) if churn_count else None
+        )
         payload.append(aggregate)
     return payload
 

@@ -105,14 +105,14 @@ Use canonical exported metric names from `torghut-ws` and verify they match runb
 
 ```bash
 kubectl -n torghut port-forward svc/torghut-ws 19090:9090
-curl -fsS http://127.0.0.1:19090/metrics | rg 'torghut_ws_readyz_status|torghut_ws_ws_connect_success_total|torghut_ws_ws_connect_errors_total|torghut_ws_kafka_produce_success_total|torghut_ws_kafka_produce_errors_total|torghut_ws_desired_symbols_fetch_degraded'
+curl -fsS http://127.0.0.1:19090/metrics | rg 'torghut_ws_readyz_status|torghut_ws_desired_symbols_fetch_(degraded|failures_total|success_total|last_success_ts_seconds|last_failure_ts_seconds)|torghut_ws_kafka_send_errors_total|torghut_ws_kafka_send_latency_seconds_count'
 ```
 
 Pass criteria:
 
 - `torghut_ws_readyz_status` is `1` during normal operation.
 - `torghut_ws_desired_symbols_fetch_degraded` remains `0` (or quickly recovers to `0` after transient fetch errors).
-- `torghut_ws_kafka_produce_errors_total` and `torghut_ws_ws_connect_errors_total` are not rising continuously.
+- `torghut_ws_kafka_send_errors_total` is not rising continuously and `torghut_ws_kafka_send_latency_seconds_count` keeps increasing during market hours.
 
 ## Step 5: Postgres Decision/Execution Health (4 minutes)
 

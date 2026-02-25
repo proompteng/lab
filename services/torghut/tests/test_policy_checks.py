@@ -389,6 +389,54 @@ class TestPolicyChecks(TestCase):
         )
         self.assertIn("trade_count_below_minimum_for_progression", promotion.reasons)
 
+    def test_promotion_prerequisites_fail_when_gate_report_run_id_mismatch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "gates" / "gate-evaluation.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap",
+                encoding="utf-8",
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={"gate6_require_profitability_evidence": False},
+                gate_report_payload={**_gate_report(), "run_id": "run-gate-2"},
+                candidate_state_payload={**_candidate_state(), "runId": "run-state-1"},
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn(
+            "run_id_mismatch_between_state_and_gate_report",
+            promotion.reasons,
+        )
+        self.assertTrue(
+            any(
+                detail.get("reason") == "run_id_mismatch_between_state_and_gate_report"
+                and detail.get("candidate_run_id") == "run-state-1"
+                and detail.get("gate_report_run_id") == "run-gate-2"
+                for detail in promotion.reason_details
+            )
+        )
+
     def test_promotion_prerequisites_fail_when_uncertainty_slo_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -408,7 +456,13 @@ class TestPolicyChecks(TestCase):
                 encoding="utf-8",
             )
             (root / "gates" / "profitability-benchmark-v4.json").write_text(
-                json.dumps({"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]}),
+                json.dumps(
+                    {
+                        "slices": [
+                            {"slice_type": "regime", "slice_key": "regime:neutral"}
+                        ]
+                    }
+                ),
                 encoding="utf-8",
             )
             (root / "gates" / "profitability-evidence-validation.json").write_text(

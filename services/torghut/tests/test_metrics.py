@@ -56,6 +56,13 @@ class TestTradingMetrics(TestCase):
         metrics.record_signal_expected_staleness("no_signals_in_window")
         metrics.record_signal_actionable_staleness("cursor_ahead_of_stream")
         metrics.record_universe_fail_safe_block("jangar_symbols_fetch_failed")
+        metrics.record_universe_resolution(
+            status="degraded",
+            reason="jangar_fetch_failed_using_stale_cache",
+            symbols_count=12,
+            cache_age_seconds=45,
+        )
+        metrics.record_signal_continuity_alert_state(active=True, recovery_streak=1)
         metrics.market_session_open = 0
         metrics.signal_continuity_actionable = 1
 
@@ -74,11 +81,31 @@ class TestTradingMetrics(TestCase):
             payload,
         )
         self.assertIn(
-            "torghut_trading_market_session_open{service=\"torghut\"} 0",
+            'torghut_trading_market_session_open{service="torghut"} 0',
             payload,
         )
         self.assertIn(
-            "torghut_trading_signal_continuity_actionable{service=\"torghut\"} 1",
+            'torghut_trading_signal_continuity_actionable{service="torghut"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_signal_continuity_alert_active{service="torghut"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_signal_continuity_alert_recovery_streak{service="torghut"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_universe_symbols_count{service="torghut"} 12',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_universe_cache_age_seconds{service="torghut"} 45',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_universe_resolution_total{status="degraded",reason="jangar_fetch_failed_using_stale_cache"} 1',
             payload,
         )
 
@@ -199,7 +226,9 @@ class TestTradingMetrics(TestCase):
                 "latency_ms_avg": {"submit_order": 21.5},
             }
         )
-        metrics.record_lean_shadow(parity_status="drift", failure_taxonomy="execution_quality_drift")
+        metrics.record_lean_shadow(
+            parity_status="drift", failure_taxonomy="execution_quality_drift"
+        )
         metrics.record_lean_strategy_shadow("pass")
         metrics.record_lean_canary_breach("fallback_ratio_exceeded")
 
@@ -234,7 +263,9 @@ class TestTradingMetrics(TestCase):
             payload,
         )
 
-    def test_allocator_multiplier_metrics_preserve_pipe_delimited_regime_labels(self) -> None:
+    def test_allocator_multiplier_metrics_preserve_pipe_delimited_regime_labels(
+        self,
+    ) -> None:
         metrics = TradingMetrics()
         payload = render_trading_metrics(
             {
@@ -303,10 +334,10 @@ class TestTradingMetrics(TestCase):
 
     def test_forecast_router_metrics_are_exported(self) -> None:
         metrics = TradingMetrics()
-        metrics.forecast_router_inference_latency_ms['chronos'] = 98
-        metrics.forecast_router_fallback_total['calibration_below_threshold'] = 3
-        metrics.forecast_calibration_error['chronos|AAPL|1m'] = '0.07'
-        metrics.forecast_route_selection_total['chronos|AAPL|1m|trend'] = 5
+        metrics.forecast_router_inference_latency_ms["chronos"] = 98
+        metrics.forecast_router_fallback_total["calibration_below_threshold"] = 3
+        metrics.forecast_calibration_error["chronos|AAPL|1m"] = "0.07"
+        metrics.forecast_route_selection_total["chronos|AAPL|1m|trend"] = 5
 
         payload = render_trading_metrics(metrics.__dict__)
 
