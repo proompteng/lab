@@ -1,22 +1,22 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: "700e2436"
-  digest: sha256:cead7a3f6e27d667bc167b2c4640a7eb01e7e10e488a13ca05e94ce5c9e7d40c
+  tag: "8fe286aa"
+  digest: sha256:ea933e8c55c46b4de59d286b9206762e8a1f46d5af177ce748e9d87ace9e6602
   pullPolicy: IfNotPresent
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: "700e2436"
-    digest: sha256:d859aab09267b9b289b86dec80200452231d684ae66df0039cbb38accb91b3b2
+    tag: "8fe286aa"
+    digest: sha256:0bfa67715120e1ef300598f059f60bf6ca892553f12d53ef0ee28da25969786d
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: "700e2436"
-    digest: sha256:cead7a3f6e27d667bc167b2c4640a7eb01e7e10e488a13ca05e94ce5c9e7d40c
+    tag: "8fe286aa"
+    digest: sha256:ea933e8c55c46b4de59d286b9206762e8a1f46d5af177ce748e9d87ace9e6602
 controllers:
   enabled: true
   replicaCount: 2
