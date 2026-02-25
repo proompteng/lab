@@ -1,0 +1,111 @@
+{
+  "run_id": "wp-ce26ef52f9b4b64e79785227",
+  "paper": {
+    "title": "Dummy PDF file",
+    "source": "w3c_test_resource",
+    "pdf_url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 1,
+    "total_pages": 1,
+    "included_sections": [
+      "full_document"
+    ]
+  },
+  "executive_summary": "The source is a one-page placeholder PDF containing only 'Dummy PDF file' and no technical content. It is non-viable as research input but suitable as a deterministic E2E finalize-callback validation fixture.",
+  "problem_statement": "No problem statement is present in the source document.",
+  "methodology_summary": "No methodology is present. Document inspection confirms a single-page file with one rendered text phrase and matching metadata title.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "No technical thesis, method, experiment, or benchmark exists in the source.",
+      "evidence": [
+        "Page 1 content stream"
+      ]
+    },
+    {
+      "id": "KF-2",
+      "finding": "The entire human-readable content is the literal phrase 'Dummy PDF file'.",
+      "evidence": [
+        "Object 2 content stream",
+        "Object 8 ToUnicode map",
+        "Object 13 bookmark title"
+      ]
+    },
+    {
+      "id": "KF-3",
+      "finding": "This run is appropriate as a negative-control fixture for finalize callback validation.",
+      "evidence": [
+        "Issue 999991 objective",
+        "Deterministic minimal source content"
+      ]
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "No novelty claims present in source document.",
+      "assessment": "not_applicable",
+      "notes": "No sectioned argumentation or technical assertions are provided."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "content_quality_risk",
+      "severity": "high",
+      "detail": "Workflow can complete on placeholder documents unless explicit quality gates are enforced."
+    },
+    {
+      "risk": "false_signal_risk",
+      "severity": "high",
+      "detail": "Completion status may be misread as evidence quality without separate quality state."
+    },
+    {
+      "risk": "traceability_risk",
+      "severity": "medium",
+      "detail": "Finalize payload needs immutable source/extraction checksums for auditability."
+    }
+  ],
+  "assumptions": [
+    "Primary PDF URL and Ceph object represent the same source payload for this run.",
+    "Issue scope prioritizes E2E finalize callback validation over content-derived product planning."
+  ],
+  "implementation_implications": [
+    "Add pre-finalize content-quality gate with minimum semantic thresholds.",
+    "Require source and extraction checksums in finalize payload and persisted artifacts.",
+    "Keep dummy-PDF negative-control regression in E2E callback validation suite.",
+    "Separate workflow completion status from analysis quality classification."
+  ],
+  "unresolved_questions": [
+    "What minimum content thresholds should block a 'completed' research-quality designation?",
+    "Should finalize endpoint enforce strict schema + enum validation for synthesis/verdict payloads?",
+    "Should callback contract include checksum evidence as mandatory fields?"
+  ],
+  "citations": [
+    {
+      "section": "page_tree",
+      "pointer": "4 0 obj /Count 1",
+      "claim": "Document has exactly one page."
+    },
+    {
+      "section": "page_content",
+      "pointer": "2 0 obj decoded stream",
+      "claim": "Rendered text equals 'Dummy PDF file'."
+    },
+    {
+      "section": "encoding_map",
+      "pointer": "8 0 obj ToUnicode",
+      "claim": "Glyph codes map to D,u,m,m,y,space,P,F,f,i,l,e."
+    },
+    {
+      "section": "bookmark_metadata",
+      "pointer": "13 0 obj /Title",
+      "claim": "Bookmark title equals 'Dummy PDF file'."
+    }
+  ],
+  "confidence": 0.98
+}

@@ -1,0 +1,38 @@
+{
+  "run_id": "wp-ce26ef52f9b4b64e79785227",
+  "verdict": "reject",
+  "score": 0.03,
+  "confidence": 0.98,
+  "decision_policy": "whitepaper_v1",
+  "gating": {
+    "full_paper_review_completed": true,
+    "implementation_ready_design_doc_present": true,
+    "machine_readable_artifacts_present": true,
+    "methodology_clarity": "none",
+    "theory_assumption_risk": "high",
+    "empirical_rigor": "none",
+    "external_validity": "none",
+    "reproducibility": "not_applicable_for_research_claims",
+    "recommended_mode": "e2e_finalize_callback_test_fixture_only"
+  },
+  "rationale": "The source document is a placeholder with no technical substance. It cannot support implementation decisions, but it is useful as a deterministic negative-control run for validating finalize callback schema, persistence, and audit behavior.",
+  "rejection_reasons": [
+    "No technical problem statement, method, or evaluative evidence exists in the source.",
+    "No novelty claims are presented and therefore cannot be validated.",
+    "Any product implementation inferred from this document would be speculative and non-auditable."
+  ],
+  "recommendations": [
+    "Use this run for E2E finalize callback regression tests and contract hardening.",
+    "Add semantic content-quality gates before assigning research-quality completion.",
+    "Enforce source/extraction checksum requirements in finalization payloads.",
+    "Acquire a substantive whitepaper for actual implementation planning."
+  ],
+  "requires_followup": true,
+  "follow_up_actions": [
+    "Define minimum-content policy and quality status taxonomy for whitepaper runs.",
+    "Implement JSON-schema validation for finalize synthesis/verdict payloads.",
+    "Add dummy-PDF negative-control test in the workflow CI path."
+  ],
+  "approved_by": null,
+  "approved_at": null
+}
