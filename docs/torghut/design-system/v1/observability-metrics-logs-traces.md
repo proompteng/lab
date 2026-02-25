@@ -46,12 +46,12 @@ flowchart LR
 
 ### WS forwarder
 
-- `ws_connect_success_total`, `ws_connect_error_total` (by error_class)
-- `kafka_produce_success_total`, `kafka_produce_error_total` (by topic)
+- `torghut_ws_ws_connect_success_total`, `torghut_ws_ws_connect_errors_total` (by error_class)
+- `torghut_ws_kafka_produce_success_total`, `torghut_ws_kafka_produce_errors_total` (by topic)
 - `torghut_ws_readyz_error_class` (gauge by error_class; 1 for the current readiness failure class, else 0)
 - `torghut_ws_readyz_gate_status` (gauge by gate; 1 when gate is healthy, else 0)
-- `subscriptions_active` (gauge)
-- `readyz_status` (0/1), `healthz_status` (0/1)
+- `torghut_ws_desired_symbols_fetch_degraded` (gauge; 1 when symbols fetch falls back to cache)
+- `torghut_ws_readyz_status` (0/1)
 
 ### Flink TA
 
@@ -91,7 +91,7 @@ Use bounded attributes; do not add order ids as span attributes unless sampled.
 
 | Failure                  | Symptoms        | Observability action                           | Recovery               |
 | ------------------------ | --------------- | ---------------------------------------------- | ---------------------- |
-| WS readiness 503         | ingestion stops | alert on `readyz_status==0` + no Kafka produce | run `v1/22` runbook    |
+| WS readiness 503         | ingestion stops | alert on `torghut_ws_readyz_status==0` + no Kafka produce | run `v1/22` runbook    |
 | Flink job FAILED         | signals stale   | alert on job state + clickhouse freshness      | run `v1/21` runbook    |
 | ClickHouse disk pressure | inserts fail    | alert on disk free bytes                       | run `v1/08` guardrails |
 

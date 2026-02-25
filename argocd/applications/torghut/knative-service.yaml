@@ -104,6 +104,14 @@ spec:
               value: torghut.ta_signals
             - name: TRADING_SIGNAL_LOOKBACK_MINUTES
               value: "15"
+            - name: TRADING_SIGNAL_NO_SIGNAL_STREAK_ALERT_THRESHOLD
+              value: "2"
+            - name: TRADING_SIGNAL_STALE_LAG_ALERT_SECONDS
+              value: "300"
+            - name: TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS
+              value: cursor_ahead_of_stream,no_signals_in_window,universe_source_unavailable
+            - name: TRADING_SIGNAL_MARKET_CLOSED_EXPECTED_REASONS
+              value: no_signals_in_window,cursor_tail_stable,empty_batch_advanced
             - name: TRADING_POLL_MS
               value: "5000"
             - name: TRADING_RECONCILE_MS

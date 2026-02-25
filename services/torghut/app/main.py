@@ -401,6 +401,12 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "universe_reason": state.universe_source_reason,
             "universe_symbols_count": state.universe_symbols_count,
             "universe_cache_age_seconds": state.universe_cache_age_seconds,
+            "universe_fail_safe_blocked": state.universe_fail_safe_blocked,
+            "universe_fail_safe_block_reason": state.universe_fail_safe_block_reason,
+            "market_session_open": state.market_session_open,
+            "last_state": state.last_signal_continuity_state,
+            "last_reason": state.last_signal_continuity_reason,
+            "last_actionable": state.last_signal_continuity_actionable,
         },
         "rollback": {
             "emergency_stop_active": state.emergency_stop_active,
@@ -551,6 +557,12 @@ def trading_autonomy() -> dict[str, object]:
             "universe_reason": state.universe_source_reason,
             "universe_symbols_count": state.universe_symbols_count,
             "universe_cache_age_seconds": state.universe_cache_age_seconds,
+            "universe_fail_safe_blocked": state.universe_fail_safe_blocked,
+            "universe_fail_safe_block_reason": state.universe_fail_safe_block_reason,
+            "market_session_open": state.market_session_open,
+            "last_state": state.last_signal_continuity_state,
+            "last_reason": state.last_signal_continuity_reason,
+            "last_actionable": state.last_signal_continuity_actionable,
         },
         "rollback": {
             "emergency_stop_active": state.emergency_stop_active,
@@ -820,14 +832,27 @@ def _check_postgres(session: Session) -> dict[str, object]:
 
 
 def _build_control_plane_contract(state: object) -> dict[str, object]:
-    signal_lag_seconds = getattr(
-        getattr(state, "metrics", None), "signal_lag_seconds", None
-    )
+    metrics = getattr(state, "metrics", None)
+    signal_lag_seconds = getattr(metrics, "signal_lag_seconds", None)
+    no_signal_reason_streak = getattr(metrics, "no_signal_reason_streak", None)
+    signal_staleness_alert_total = getattr(metrics, "signal_staleness_alert_total", None)
+    signal_continuity_actionable = getattr(metrics, "signal_continuity_actionable", None)
+    market_session_open = getattr(state, "market_session_open", None)
     last_run_at = getattr(state, "last_run_at", None)
     last_reconcile_at = getattr(state, "last_reconcile_at", None)
     return {
         "contract_version": "torghut.quant-producer.v1",
         "signal_lag_seconds": signal_lag_seconds,
+        "signal_continuity_state": getattr(state, "last_signal_continuity_state", None),
+        "signal_continuity_reason": getattr(state, "last_signal_continuity_reason", None),
+        "signal_continuity_actionable": signal_continuity_actionable,
+        "market_session_open": market_session_open,
+        "no_signal_reason_streak": no_signal_reason_streak,
+        "signal_staleness_alert_total": signal_staleness_alert_total,
+        "universe_status": getattr(state, "universe_source_status", None),
+        "universe_reason": getattr(state, "universe_source_reason", None),
+        "universe_fail_safe_blocked": getattr(state, "universe_fail_safe_blocked", None),
+        "universe_fail_safe_block_reason": getattr(state, "universe_fail_safe_block_reason", None),
         "running": bool(getattr(state, "running", False)),
         "last_run_at": last_run_at,
         "last_reconcile_at": last_reconcile_at,

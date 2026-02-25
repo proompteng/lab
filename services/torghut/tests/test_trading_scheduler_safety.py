@@ -41,6 +41,15 @@ class TestTradingSchedulerSafety(TestCase):
             'trading_rollback_fallback_ratio_limit': config.settings.trading_rollback_fallback_ratio_limit,
             'trading_rollback_autonomy_failure_streak_limit': config.settings.trading_rollback_autonomy_failure_streak_limit,
             'trading_rollback_max_drawdown_limit': config.settings.trading_rollback_max_drawdown_limit,
+            'trading_signal_staleness_alert_critical_reasons_raw': (
+                config.settings.trading_signal_staleness_alert_critical_reasons_raw
+            ),
+            'trading_rollback_signal_staleness_alert_streak_limit': (
+                config.settings.trading_rollback_signal_staleness_alert_streak_limit
+            ),
+            'trading_signal_market_closed_expected_reasons_raw': (
+                config.settings.trading_signal_market_closed_expected_reasons_raw
+            ),
         }
 
     def tearDown(self) -> None:
@@ -57,6 +66,15 @@ class TestTradingSchedulerSafety(TestCase):
             'trading_rollback_autonomy_failure_streak_limit'
         ]
         config.settings.trading_rollback_max_drawdown_limit = self._snapshot['trading_rollback_max_drawdown_limit']
+        config.settings.trading_signal_staleness_alert_critical_reasons_raw = self._snapshot[
+            'trading_signal_staleness_alert_critical_reasons_raw'
+        ]
+        config.settings.trading_rollback_signal_staleness_alert_streak_limit = self._snapshot[
+            'trading_rollback_signal_staleness_alert_streak_limit'
+        ]
+        config.settings.trading_signal_market_closed_expected_reasons_raw = self._snapshot[
+            'trading_signal_market_closed_expected_reasons_raw'
+        ]
 
     def test_emergency_stop_triggers_on_signal_lag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -94,6 +112,29 @@ class TestTradingSchedulerSafety(TestCase):
             self.assertFalse(scheduler.state.emergency_stop_active)
             self.assertEqual(scheduler.state.rollback_incidents_total, 0)
             self.assertEqual(scheduler._pipeline.order_firewall.cancel_all_calls, 0)  # type: ignore[union-attr]
+
+    def test_critical_no_signal_streak_is_suppressed_when_market_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config.settings.trading_autonomy_artifact_dir = tmpdir
+            config.settings.trading_emergency_stop_enabled = True
+            config.settings.trading_rollback_signal_staleness_alert_streak_limit = 2
+            config.settings.trading_signal_staleness_alert_critical_reasons_raw = (
+                "no_signals_in_window"
+            )
+            config.settings.trading_signal_market_closed_expected_reasons_raw = (
+                "no_signals_in_window,cursor_tail_stable,empty_batch_advanced"
+            )
+            scheduler = TradingScheduler()
+            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler._is_market_session_open = lambda _now=None: False  # type: ignore[method-assign]
+            scheduler.state.metrics.no_signal_reason_streak = {
+                "no_signals_in_window": 3
+            }
+
+            scheduler._evaluate_safety_controls()
+
+            self.assertFalse(scheduler.state.emergency_stop_active)
+            self.assertEqual(scheduler.state.rollback_incidents_total, 0)
 
     def test_freshness_emergency_stop_auto_clears_after_recovery_hysteresis(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

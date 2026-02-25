@@ -23,6 +23,7 @@ class _PipelineStub:
     session_factory: object
     no_signal_reason: str | None = None
     no_signal_lag_seconds: float | None = None
+    market_session_open: bool = True
     state: TradingState | None = None
 
     def __post_init__(self) -> None:
@@ -61,14 +62,17 @@ class _PipelineStub:
         self.state.last_ingest_window_end = batch.query_end
         self.state.last_ingest_reason = batch.no_signal_reason
         reason = batch.no_signal_reason
+        normalized_reason = (reason or "unknown").strip() or "unknown"
+        self.state.market_session_open = self.market_session_open
+        self.state.metrics.market_session_open = 1 if self.market_session_open else 0
         if batch.signal_lag_seconds is not None:
             self.state.metrics.signal_lag_seconds = int(batch.signal_lag_seconds)
         else:
             self.state.metrics.signal_lag_seconds = None
         self.state.metrics.record_no_signal(reason)
-        streak = self.state.metrics.no_signal_reason_streak.get(reason or "unknown", 0)
-        if (
-            reason
+        streak = self.state.metrics.no_signal_reason_streak.get(normalized_reason, 0)
+        streak_threshold_met = (
+            normalized_reason
             in {
                 "no_signals_in_window",
                 "cursor_tail_stable",
@@ -76,13 +80,32 @@ class _PipelineStub:
                 "empty_batch_advanced",
             }
             and streak >= settings.trading_signal_no_signal_streak_alert_threshold
-        ):
-            self.state.metrics.record_signal_staleness_alert(reason)
-        elif (
+        )
+        lag_threshold_met = (
             batch.signal_lag_seconds is not None
             and batch.signal_lag_seconds
             >= settings.trading_signal_stale_lag_alert_seconds
-        ):
+        )
+        actionable = (
+            normalized_reason == "cursor_ahead_of_stream"
+            or self.market_session_open
+            or normalized_reason
+            not in settings.trading_signal_market_closed_expected_reasons
+        )
+        self.state.metrics.signal_continuity_actionable = 1 if actionable else 0
+        self.state.last_signal_continuity_reason = normalized_reason
+        self.state.last_signal_continuity_actionable = actionable
+        self.state.last_signal_continuity_state = (
+            "actionable_source_fault"
+            if actionable
+            else "expected_market_closed_staleness"
+        )
+        if actionable:
+            self.state.metrics.record_signal_actionable_staleness(normalized_reason)
+        else:
+            self.state.metrics.record_signal_expected_staleness(normalized_reason)
+
+        if actionable and (streak_threshold_met or lag_threshold_met):
             self.state.metrics.record_signal_staleness_alert(reason)
 
 
@@ -128,6 +151,9 @@ class TestTradingSchedulerAutonomy(TestCase):
             "trading_signal_staleness_alert_critical_reasons_raw": (
                 settings.trading_signal_staleness_alert_critical_reasons_raw
             ),
+            "trading_signal_market_closed_expected_reasons_raw": (
+                settings.trading_signal_market_closed_expected_reasons_raw
+            ),
             "trading_evidence_continuity_run_limit": settings.trading_evidence_continuity_run_limit,
             "trading_rollback_signal_staleness_alert_streak_limit": (
                 settings.trading_rollback_signal_staleness_alert_streak_limit
@@ -170,6 +196,11 @@ class TestTradingSchedulerAutonomy(TestCase):
         settings.trading_signal_staleness_alert_critical_reasons_raw = (
             self._settings_snapshot[
                 "trading_signal_staleness_alert_critical_reasons_raw"
+            ]
+        )
+        settings.trading_signal_market_closed_expected_reasons_raw = (
+            self._settings_snapshot[
+                "trading_signal_market_closed_expected_reasons_raw"
             ]
         )
         settings.trading_evidence_continuity_run_limit = self._settings_snapshot[
@@ -546,6 +577,47 @@ class TestTradingSchedulerAutonomy(TestCase):
                 1,
             )
 
+    def test_run_autonomous_cycle_treats_market_closed_no_signal_as_expected(
+        self,
+    ) -> None:
+        settings.trading_signal_no_signal_streak_alert_threshold = 1
+        settings.trading_signal_stale_lag_alert_seconds = 30
+        settings.trading_signal_market_closed_expected_reasons_raw = (
+            "no_signals_in_window,cursor_tail_stable,empty_batch_advanced"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+                no_signals=True,
+                no_signal_reason="empty_batch_advanced",
+                no_signal_lag_seconds=120.0,
+                market_session_open=False,
+            )
+            with patch(
+                "app.trading.scheduler.upsert_autonomy_no_signal_run",
+                return_value="no-signal-run-id",
+            ):
+                scheduler._run_autonomous_cycle()
+
+            self.assertEqual(
+                scheduler.state.last_signal_continuity_state,
+                "expected_market_closed_staleness",
+            )
+            self.assertFalse(bool(scheduler.state.last_signal_continuity_actionable))
+            self.assertEqual(
+                scheduler.state.metrics.signal_expected_staleness_total.get(
+                    "empty_batch_advanced"
+                ),
+                1,
+            )
+            self.assertIsNone(
+                scheduler.state.metrics.signal_staleness_alert_total.get(
+                    "empty_batch_advanced"
+                )
+            )
+
     def test_run_autonomous_cycle_records_error_on_lane_exception(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, _deps = self._build_scheduler_with_fixtures(
@@ -738,6 +810,7 @@ class TestTradingSchedulerAutonomy(TestCase):
         no_signals: bool = False,
         no_signal_reason: str | None = None,
         no_signal_lag_seconds: float | None = None,
+        market_session_open: bool = True,
     ) -> tuple[TradingScheduler, _SchedulerDependencies]:
         strategy_config_path = Path(tmpdir) / "strategies.yaml"
         strategy_config_path.write_text(
@@ -803,6 +876,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             session_factory=_session_factory,
             no_signal_reason=no_signal_reason,
             no_signal_lag_seconds=no_signal_lag_seconds,
+            market_session_open=market_session_open,
             state=scheduler.state,
         )
 

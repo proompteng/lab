@@ -51,6 +51,37 @@ class TestTradingMetrics(TestCase):
         )
         self.assertIn("# TYPE torghut_trading_signal_lag_seconds gauge", payload)
 
+    def test_actionable_vs_expected_continuity_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.record_signal_expected_staleness("no_signals_in_window")
+        metrics.record_signal_actionable_staleness("cursor_ahead_of_stream")
+        metrics.record_universe_fail_safe_block("jangar_symbols_fetch_failed")
+        metrics.market_session_open = 0
+        metrics.signal_continuity_actionable = 1
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_signal_expected_staleness_total{reason="no_signals_in_window"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_signal_actionable_staleness_total{reason="cursor_ahead_of_stream"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_universe_fail_safe_reason_total{reason="jangar_symbols_fetch_failed"} 1',
+            payload,
+        )
+        self.assertIn(
+            "torghut_trading_market_session_open{service=\"torghut\"} 0",
+            payload,
+        )
+        self.assertIn(
+            "torghut_trading_signal_continuity_actionable{service=\"torghut\"} 1",
+            payload,
+        )
+
     def test_market_context_reason_metrics_are_exported(self) -> None:
         metrics = TradingMetrics()
         metrics.record_market_context_result(

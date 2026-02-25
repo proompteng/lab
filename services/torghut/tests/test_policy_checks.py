@@ -299,6 +299,50 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(promotion.allowed)
         self.assertIn("no_signal_window_detected", promotion.reasons)
 
+    def test_promotion_prerequisites_fail_when_no_signal_window_from_throughput(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={"gate6_require_profitability_evidence": False},
+                gate_report_payload={
+                    **_gate_report(),
+                    "throughput": {
+                        "signal_count": 0,
+                        "decision_count": 0,
+                        "trade_count": 0,
+                        "no_signal_window": True,
+                        "no_signal_reason": "cursor_ahead_of_stream",
+                    },
+                },
+                candidate_state_payload={
+                    **_candidate_state(),
+                    "datasetSnapshotRef": "signals_window",
+                    "noSignalReason": None,
+                },
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("no_signal_window_detected", promotion.reasons)
+
     def test_promotion_prerequisites_fail_when_throughput_below_minimums(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

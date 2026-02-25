@@ -72,6 +72,7 @@ Pass criteria:
 TORGHUT_POD=$(kubectl -n torghut get pods -l serving.knative.dev/service=torghut -o jsonpath='{.items[0].metadata.name}')
 kubectl -n torghut exec "$TORGHUT_POD" -c user-container -- python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:8181/trading/status',timeout=10).read().decode())"
 kubectl -n torghut exec "$TORGHUT_POD" -c user-container -- python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:8181/trading/metrics',timeout=10).read().decode())"
+kubectl -n torghut exec "$TORGHUT_POD" -c user-container -- python -c "import json,urllib.request;payload=json.loads(urllib.request.urlopen('http://localhost:8181/trading/status',timeout=10).read().decode());print(json.dumps({'signal_continuity':payload.get('signal_continuity',{}),'control_plane_contract':payload.get('control_plane_contract',{})},indent=2))"
 ```
 
 Pass criteria:
@@ -80,6 +81,8 @@ Pass criteria:
 - `last_error=null`
 - `kill_switch_enabled=false` (unless intentionally enabled)
 - Metrics counters moving over time (decisions/reconcile at minimum)
+- `signal_continuity.last_actionable=false` when market is closed and no-signal reason is expected (`no_signals_in_window`, `cursor_tail_stable`, `empty_batch_advanced`)
+- `signal_continuity.universe_fail_safe_blocked=false` unless Jangar universe resolution is currently unavailable
 
 ## Step 4: Universe Consistency Check (2 minutes)
 
@@ -94,6 +97,22 @@ Pass criteria:
 - Jangar symbols endpoint returns non-empty list.
 - Enabled strategy does not unintentionally restrict symbols.
 - If recent `symbol_not_allowed` spikes occur, classify `YELLOW` and inspect strategy `universe_symbols` immediately.
+- If `signal_continuity.universe_fail_safe_blocked=true`, treat as `RED` and resolve Jangar universe fetch failure before allowing trading progression.
+
+## Step 4.5: WS Continuity Metrics Contract Check (2 minutes)
+
+Use canonical exported metric names from `torghut-ws` and verify they match runbook expectations.
+
+```bash
+kubectl -n torghut port-forward svc/torghut-ws 19090:9090
+curl -fsS http://127.0.0.1:19090/metrics | rg 'torghut_ws_readyz_status|torghut_ws_ws_connect_success_total|torghut_ws_ws_connect_errors_total|torghut_ws_kafka_produce_success_total|torghut_ws_kafka_produce_errors_total|torghut_ws_desired_symbols_fetch_degraded'
+```
+
+Pass criteria:
+
+- `torghut_ws_readyz_status` is `1` during normal operation.
+- `torghut_ws_desired_symbols_fetch_degraded` remains `0` (or quickly recovers to `0` after transient fetch errors).
+- `torghut_ws_kafka_produce_errors_total` and `torghut_ws_ws_connect_errors_total` are not rising continuously.
 
 ## Step 5: Postgres Decision/Execution Health (4 minutes)
 

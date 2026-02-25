@@ -212,6 +212,18 @@ class TestConfig(TestCase):
             {"cursor_ahead_of_stream", "universe_source_unavailable"},
         )
 
+    def test_parses_market_closed_expected_no_signal_reasons(self) -> None:
+        settings = Settings(
+            TRADING_SIGNAL_MARKET_CLOSED_EXPECTED_REASONS=(
+                "no_signals_in_window, cursor_tail_stable, empty_batch_advanced"
+            ),
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(
+            settings.trading_signal_market_closed_expected_reasons,
+            {"no_signals_in_window", "cursor_tail_stable", "empty_batch_advanced"},
+        )
+
     def test_allocator_symbol_correlation_groups_are_normalized(self) -> None:
         settings = Settings(
             TRADING_UNIVERSE_SOURCE="static",
