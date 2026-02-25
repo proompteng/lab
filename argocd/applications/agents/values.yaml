@@ -1,22 +1,22 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: a9721f83
-  digest: sha256:9e85441420fac8e81957889c08faa202bc4382b406b7997ada1da04f4288a610
+  tag: 1da4adc0
+  digest: sha256:056b2ec2a8e6b09786d4f9a29592542acd003f1db303d1f0e4c000bb00d9812c
   pullPolicy: IfNotPresent
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: a9721f83
-    digest: sha256:fb78ca725b160578363dce9a16e8f25236114dcd0bf33f8615f97b9bda393358
+    tag: 1da4adc0
+    digest: sha256:186358d1073546b50ba7746aec39250473d2d0387f20d2ad864fc6b9be2256a0
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: a9721f83
-    digest: sha256:9e85441420fac8e81957889c08faa202bc4382b406b7997ada1da04f4288a610
+    tag: 1da4adc0
+    digest: sha256:056b2ec2a8e6b09786d4f9a29592542acd003f1db303d1f0e4c000bb00d9812c
 controllers:
   enabled: true
   replicaCount: 2
@@ -27,6 +27,9 @@ controllers:
       JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME: nats-agents-credentials
       JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY: username
       JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY: password
+      JANGAR_WHITEPAPER_FINALIZE_ENABLED: "true"
+      JANGAR_WHITEPAPER_FINALIZE_BASE_URL: http://torghut.torghut.svc.cluster.local
+      JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN: "true"
 resources:
   requests:
     cpu: 200m

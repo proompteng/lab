@@ -167,6 +167,7 @@ Output:
 - Prompt precedence: avoid `AgentRun.spec.parameters.prompt` when referencing an ImplementationSpec (it overrides `ImplementationSpec.spec.text`).
 - TTL: use top-level `AgentRun.spec.ttlSecondsAfterFinished` (do not rely on `spec.runtime.config` for TTL).
 - PR/VCS runs: set `spec.vcsRef.name`, `spec.vcsPolicy` (read-write), and a unique `spec.parameters.head` branch (repo convention: `codex/...`).
+- In-cluster callbacks/auth: default to service-account tokens from `/var/run/secrets/kubernetes.io/serviceaccount/token` when no explicit token is provided; for whitepaper finalize callbacks use `JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN=true` (optional override path: `JANGAR_WHITEPAPER_SERVICE_ACCOUNT_TOKEN_PATH`).
 - Verify after apply: inspect controller-generated ConfigMap labeled `agents.proompteng.ai/agent-run=<run-name>` and check `run.json.prompt`; if failing early, compare `agentrun.status.contract.requiredKeys` vs `spec.parameters`.
 - Monitor: `kubectl -n agents get agentrun <name>`; `kubectl -n agents get job -l agents.proompteng.ai/agent-run=<name> -o name`; `kubectl -n agents logs -f job/<job-name>`.
 
