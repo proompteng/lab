@@ -362,13 +362,22 @@ export const approveWhitepaperImplementation = async (
   runId: string,
   payload: WhitepaperApprovalPayload,
 ): Promise<WhitepaperApprovalResult> => {
-  const response = await fetch(`/api/whitepapers/${encodeURIComponent(runId)}/`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  })
+  let response: Response
+  try {
+    response = await fetch(`/api/whitepapers/${encodeURIComponent(runId)}/`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message
+        ? `Whitepaper approval request failed (${error.message})`
+        : 'Whitepaper approval request failed'
+    return { ok: false, message }
+  }
 
   let body: unknown = null
   try {

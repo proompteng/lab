@@ -463,6 +463,82 @@ https://example.com/paper.pdf
             rollout_rows = session.execute(select(WhitepaperRolloutTransition)).scalars().all()
             self.assertTrue(any(row.to_stage == "scaled_live" and row.status == "passed" for row in rollout_rows))
 
+    def test_finalize_retry_preserves_existing_engineering_dispatch(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+        os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
+        os.environ["WHITEPAPER_ENGINEERING_ROLLOUT_PROFILE"] = "automatic"
+
+        submit_calls = {"count": 0}
+
+        def _fake_submit(_payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+            submit_calls["count"] += 1
+            return {
+                "resource": {
+                    "metadata": {"name": f"engineering-{idempotency_key}", "uid": "uid-eng"},
+                    "status": {"phase": "Pending"},
+                }
+            }
+
+        service._submit_jangar_agentrun = _fake_submit  # type: ignore[method-assign]
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(session, self._issue_payload(), source="api")
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            finalize_payload = {
+                "status": "completed",
+                "synthesis": {
+                    "executive_summary": "Candidate appears robust and reproducible.",
+                    "implementation_plan_md": "Implement candidate and validate deterministically.",
+                    "confidence": "0.95",
+                },
+                "verdict": {
+                    "verdict": "implement",
+                    "score": "0.96",
+                    "confidence": "0.97",
+                    "requires_followup": False,
+                    "gating_json": {
+                        "gates": {
+                            "G1": {"status": "pass"},
+                            "G2": {"status": "pass"},
+                            "G3": {"status": "pass"},
+                            "G4": {"status": "pass"},
+                            "G5": {"status": "pass"},
+                            "G6": {"status": "pass"},
+                            "G7": {"status": "pass"},
+                        }
+                    },
+                },
+            }
+
+            first_finalize = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            session.commit()
+            second_finalize = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            session.commit()
+
+            self.assertEqual(submit_calls["count"], 1)
+
+            first_trigger = cast(dict[str, Any], first_finalize["engineering_trigger"])
+            second_trigger = cast(dict[str, Any], second_finalize["engineering_trigger"])
+            self.assertEqual(first_trigger["decision"], "dispatched")
+            self.assertEqual(second_trigger["decision"], "dispatched")
+            self.assertEqual(
+                second_trigger["dispatched_agentrun_name"],
+                first_trigger["dispatched_agentrun_name"],
+            )
+
+            trigger_row = session.execute(select(WhitepaperEngineeringTrigger)).scalar_one()
+            self.assertEqual(trigger_row.decision, "dispatched")
+            self.assertIsNotNone(trigger_row.dispatched_agentrun_name)
+
+            agentruns = session.execute(select(WhitepaperCodexAgentRun)).scalars().all()
+            self.assertEqual(len(agentruns), 1)
+
     def test_manual_approval_dispatches_non_eligible_run_with_audit_fields(self) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()

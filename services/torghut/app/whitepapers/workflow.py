@@ -1375,6 +1375,14 @@ class WhitepaperWorkflowService:
     ) -> dict[str, Any]:
         verdict = run.viability_verdict
         decision = self._compute_engineering_grade_decision(run, verdict, manual_approval=manual_approval)
+        existing_trigger = session.execute(
+            select(WhitepaperEngineeringTrigger).where(
+                WhitepaperEngineeringTrigger.analysis_run_id == run.id
+            )
+        ).scalar_one_or_none()
+        already_dispatched = bool(
+            existing_trigger is not None and self._optional_text(existing_trigger.dispatched_agentrun_name)
+        )
         trigger = self._upsert_engineering_trigger(
             session,
             run=run,
@@ -1384,8 +1392,9 @@ class WhitepaperWorkflowService:
         )
 
         should_dispatch = decision.decision == "queued"
-        if manual_approval is not None and trigger.decision == "dispatched" and trigger.dispatched_agentrun_name:
+        if already_dispatched:
             should_dispatch = False
+            trigger.decision = "dispatched"
 
         if should_dispatch:
             try:
