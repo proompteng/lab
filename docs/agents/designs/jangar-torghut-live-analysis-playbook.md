@@ -71,6 +71,7 @@ curl -fsS http://127.0.0.1:18081/trading/health | jq .
 curl -fsS http://127.0.0.1:18081/trading/status | jq '{
   rollback,
   control_plane_contract: .control_plane_contract,
+  signal_continuity: .signal_continuity,
   autonomy: {
     last_ingest_reason,
     last_ingest_window_start,
@@ -87,6 +88,8 @@ curl -fsS http://127.0.0.1:18081/trading/status | jq '{
 Interpretation shortcut:
 
 - If `signal_lag_seconds` is high while US market is closed, treat as expected unless freshness alerts fire during open session.
+- If `signal_continuity.last_actionable=true`, treat as actionable continuity fault even if no signals are present.
+- If `signal_continuity.universe_fail_safe_blocked=true`, stop progression and resolve Jangar universe availability before retries.
 - If `rollback.emergency_stop_active=true`, always inspect `rollback.emergency_stop_reason` before attributing rejects to current feed state.
 
 ### 5. CNPG data checks (Torghut)
@@ -163,6 +166,9 @@ curl -fsS http://127.0.0.1:19110/metrics | rg '^torghut_llm_'
 
 kubectl -n torghut port-forward svc/torghut-clickhouse-guardrails-exporter 19108:9108
 curl -fsS http://127.0.0.1:19108/metrics | rg '^torghut_clickhouse_guardrails_'
+
+kubectl -n torghut port-forward svc/torghut-ws 19091:9090
+curl -fsS http://127.0.0.1:19091/metrics | rg 'torghut_ws_readyz_status|torghut_ws_ws_connect_success_total|torghut_ws_ws_connect_errors_total|torghut_ws_kafka_produce_success_total|torghut_ws_kafka_produce_errors_total|torghut_ws_desired_symbols_fetch_degraded'
 
 kubectl -n agents port-forward svc/agents-metrics 19090:9090
 curl -i http://127.0.0.1:19090/metrics
