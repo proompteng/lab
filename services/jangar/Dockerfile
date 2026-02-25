@@ -581,10 +581,11 @@ WORKDIR /app/services/jangar
 RUN mkdir -p /root/.codex
 COPY --from=jangar-build /app/services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
 COPY --from=jangar-build /app/services/jangar/scripts/agent-runner.ts /usr/local/bin/agent-runner
-COPY --from=jangar-build /app/services/jangar/scripts/codex-implement.ts /usr/local/bin/codex-implement
+COPY --from=jangar-build /app/services/jangar/scripts/codex ./scripts/codex
 COPY --from=jangar-build /app/services/jangar/scripts/agent-providers /etc/agent-providers
 COPY skills/ /root/.codex/skills/
-RUN chmod +x /usr/local/bin/agent-runner /usr/local/bin/codex-implement
+RUN ln -sf /app/services/jangar/scripts/codex/codex-implement.ts /usr/local/bin/codex-implement \
+  && chmod +x /usr/local/bin/agent-runner /app/services/jangar/scripts/codex/codex-implement.ts
 
 # Start the compiled Nitro server produced by `bun --bun vite build`
 CMD ["bun", "run", ".output/server/index.mjs"]

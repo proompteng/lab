@@ -811,6 +811,17 @@ const parseOptionalInt = (value: string | number | null | undefined) => {
   return null
 }
 
+const parsePositiveIntEnv = (value: string | undefined, fallback: number) => {
+  if (!value || value.trim().length === 0) {
+    return fallback
+  }
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback
+  }
+  return parsed
+}
+
 const readResumeContext = async (path: string, logger: CodexLogger): Promise<ResumeContext | undefined> => {
   if (!(await pathExists(path))) {
     return undefined
@@ -1595,7 +1606,8 @@ export const runCodexImplementation = async (eventPath: string) => {
       logger.info(`Running Codex ${stage} for ${repository}#${issueNumber}`)
     }
 
-    let sessionResult: RunCodexSessionResult = { agentMessages: [], sessionId: undefined }
+    const maxSessionAttempts = parsePositiveIntEnv(process.env.CODEX_MAX_SESSION_ATTEMPTS, 3)
+    let sessionResult: RunCodexSessionResult = { agentMessages: [], sessionId: undefined, exitCode: 0 }
     let lastAssistantMessage: string | null = null
     const runSession = async (sessionPrompt: string) => {
       return await runCodexSession({
@@ -1616,16 +1628,56 @@ export const runCodexImplementation = async (eventPath: string) => {
       })
     }
 
-    sessionResult = await runSession(prompt)
-    lastAssistantMessage =
-      sessionResult.agentMessages.length > 0
-        ? sessionResult.agentMessages[sessionResult.agentMessages.length - 1]
-        : null
+    let sessionPrompt = prompt
+    for (let attempt = 1; attempt <= maxSessionAttempts; attempt += 1) {
+      sessionResult = await runSession(sessionPrompt)
+      const fallbackAssistantMessage = await readOptionalTextFile(outputPath, logger)
+      lastAssistantMessage =
+        sessionResult.agentMessages.length > 0
+          ? sessionResult.agentMessages[sessionResult.agentMessages.length - 1]
+          : fallbackAssistantMessage
 
-    capturedSessionId =
-      sessionResult.sessionId ?? resumeContext?.metadata.sessionId ?? capturedSessionId ?? resumeSessionId
-    if (capturedSessionId) {
-      logger.info(`Codex session id: ${capturedSessionId}`)
+      capturedSessionId =
+        sessionResult.sessionId ?? resumeContext?.metadata.sessionId ?? capturedSessionId ?? resumeSessionId
+      if (capturedSessionId) {
+        logger.info(`Codex session id: ${capturedSessionId}`)
+      }
+
+      const forcedTermination = sessionResult.forcedTermination === true
+      const exitCode = sessionResult.exitCode ?? 0
+      const missingAssistantMessage = !lastAssistantMessage
+      if (!forcedTermination && exitCode === 0 && !missingAssistantMessage) {
+        break
+      }
+
+      const failureReasons: string[] = []
+      if (forcedTermination) {
+        failureReasons.push('forced termination')
+      }
+      if (exitCode !== 0) {
+        failureReasons.push(`exit code ${exitCode}`)
+      }
+      if (missingAssistantMessage) {
+        failureReasons.push('missing assistant final message')
+      }
+      const failureReasonText = failureReasons.length > 0 ? failureReasons.join(', ') : 'incomplete session'
+
+      if (attempt >= maxSessionAttempts) {
+        throw new Error(
+          `Codex session ended without a complete final response after ${maxSessionAttempts} attempt(s): ${failureReasonText}`,
+        )
+      }
+
+      const resumeCandidate = sessionResult.sessionId ?? capturedSessionId ?? resumeSessionId
+      resumeSessionId = resumeCandidate && resumeCandidate.trim().length > 0 ? resumeCandidate : '--last'
+      logger.warn(
+        `Codex session attempt ${attempt}/${maxSessionAttempts} ended incompletely (${failureReasonText}); resuming`,
+      )
+      sessionPrompt = [
+        'Continue the previous Codex session for this same task.',
+        'Do not restart from scratch.',
+        'Use the current workspace state to finish the remaining required work end-to-end and provide the final response.',
+      ].join('\n')
     }
 
     await copyAgentLogIfNeeded(outputPath, agentOutputPath)

@@ -35,8 +35,10 @@ vi.mock('bun', () => bunUtils)
 
 const runnerMocks = vi.hoisted(() => ({
   runCodexSession: vi.fn<(options: RunCodexSessionOptions) => Promise<RunCodexSessionResult>>(async () => ({
-    agentMessages: [],
+    agentMessages: ['done'],
     sessionId: 'session-xyz',
+    exitCode: 0,
+    forcedTermination: false,
   })),
   pushCodexEventsToLoki: vi.fn<(options: PushCodexEventsToLokiOptions) => Promise<void>>(async () => {}),
 }))
@@ -139,7 +141,12 @@ describe('runCodexImplementation', () => {
     await runGit(['checkout', 'main'])
 
     runCodexSessionMock.mockReset()
-    runCodexSessionMock.mockImplementation(async () => ({ agentMessages: [], sessionId: 'session-xyz' }))
+    runCodexSessionMock.mockImplementation(async () => ({
+      agentMessages: ['done'],
+      sessionId: 'session-xyz',
+      exitCode: 0,
+      forcedTermination: false,
+    }))
     pushCodexEventsToLokiMock.mockReset()
     pushCodexEventsToLokiMock.mockImplementation(async () => {})
     buildDiscordChannelCommandMock.mockClear()
@@ -507,7 +514,7 @@ describe('runCodexImplementation', () => {
 
     runCodexSessionMock.mockImplementationOnce(async (options) => {
       expect(options.resumeSessionId).toBe('resume-session-1')
-      return { agentMessages: [], sessionId: 'resumed-session' }
+      return { agentMessages: ['resumed'], sessionId: 'resumed-session', exitCode: 0, forcedTermination: false }
     })
 
     try {
@@ -582,5 +589,29 @@ describe('runCodexImplementation', () => {
     } finally {
       await rm(extractionDir, { recursive: true, force: true })
     }
+  }, 40_000)
+
+  it('resumes the Codex session when the first attempt ends incompletely', async () => {
+    process.env.CODEX_MAX_SESSION_ATTEMPTS = '2'
+    runCodexSessionMock
+      .mockImplementationOnce(async () => ({
+        agentMessages: [],
+        sessionId: 'resume-session-xyz',
+        exitCode: 0,
+        forcedTermination: true,
+      }))
+      .mockImplementationOnce(async (options) => {
+        expect(options.resumeSessionId).toBe('resume-session-xyz')
+        return {
+          agentMessages: ['final response'],
+          sessionId: 'resume-session-xyz',
+          exitCode: 0,
+          forcedTermination: false,
+        }
+      })
+
+    const result = await runCodexImplementation(eventPath)
+    expect(result.sessionId).toBe('resume-session-xyz')
+    expect(runCodexSessionMock).toHaveBeenCalledTimes(2)
   }, 40_000)
 })
