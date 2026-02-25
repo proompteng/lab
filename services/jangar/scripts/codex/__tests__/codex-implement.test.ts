@@ -78,6 +78,8 @@ describe('runCodexImplementation', () => {
     delete process.env.IMPLEMENTATION_NOTIFY_PATH
     delete process.env.IMPLEMENTATION_CHANGES_MANIFEST_PATH
     delete process.env.CODEX_SYSTEM_PROMPT_PATH
+    delete process.env.CODEX_SYSTEM_PROMPT_EXPECTED_HASH
+    delete process.env.CODEX_SYSTEM_PROMPT_REQUIRED
     delete process.env.PR_NUMBER_PATH
     delete process.env.PR_URL_PATH
     delete process.env.CODEX_RUNTIME_LOG_PATH
@@ -240,6 +242,40 @@ describe('runCodexImplementation', () => {
     const runtimeLogPath = join(workdir, '.codex-implementation-runtime.log')
     const runtimeLog = await readFile(runtimeLogPath, 'utf8')
     expect(runtimeLog).not.toContain(systemPromptFromFile)
+  }, 40_000)
+
+  it('fails when system prompt is required but unavailable', async () => {
+    process.env.CODEX_SYSTEM_PROMPT_REQUIRED = 'true'
+    const missingSystemPromptPath = join(workdir, 'missing-system-prompt.txt')
+    process.env.CODEX_SYSTEM_PROMPT_PATH = missingSystemPromptPath
+    utilMocks.pathExists.mockImplementation(async (path: string) => path !== missingSystemPromptPath)
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow('System prompt is required but was not loaded')
+  }, 40_000)
+
+  it('fails when loaded system prompt hash does not match expected hash', async () => {
+    const systemPromptPath = join(workdir, 'system-prompt.txt')
+    await writeFile(systemPromptPath, 'FROM FILE', 'utf8')
+    process.env.CODEX_SYSTEM_PROMPT_PATH = systemPromptPath
+    process.env.CODEX_SYSTEM_PROMPT_EXPECTED_HASH = createHash('sha256').update('DIFFERENT', 'utf8').digest('hex')
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow('System prompt hash mismatch')
+  }, 40_000)
+
+  it('accepts loaded system prompt when expected hash matches', async () => {
+    const systemPromptFromFile = 'FROM FILE'
+    const systemPromptPath = join(workdir, 'system-prompt.txt')
+    await writeFile(systemPromptPath, systemPromptFromFile, 'utf8')
+    process.env.CODEX_SYSTEM_PROMPT_PATH = systemPromptPath
+    process.env.CODEX_SYSTEM_PROMPT_EXPECTED_HASH = createHash('sha256')
+      .update(systemPromptFromFile, 'utf8')
+      .digest('hex')
+      .toUpperCase()
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.systemPrompt).toBe(systemPromptFromFile)
   }, 40_000)
 
   it('includes systemPromptHash in NATS run-started attrs when available', async () => {

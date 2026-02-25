@@ -326,6 +326,7 @@ export type SubmitJobRunOptions = {
   runtimeConfig?: Record<string, unknown>
   vcs?: VcsResolution
   systemPrompt?: string | null
+  systemPromptHash?: string | null
   systemPromptRef?: SystemPromptRef | null
 }
 
@@ -647,6 +648,12 @@ export const submitJobRun = async (
           ...env,
           ...(systemPromptRef
             ? [{ name: 'CODEX_SYSTEM_PROMPT_PATH', value: '/workspace/.codex/system-prompt.txt' }]
+            : []),
+          ...(options.systemPromptHash
+            ? [
+                { name: 'CODEX_SYSTEM_PROMPT_EXPECTED_HASH', value: options.systemPromptHash },
+                { name: 'CODEX_SYSTEM_PROMPT_REQUIRED', value: 'true' },
+              ]
             : []),
         ],
         envFrom: envFrom.length > 0 ? envFrom : undefined,

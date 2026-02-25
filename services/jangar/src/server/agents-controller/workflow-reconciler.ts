@@ -465,6 +465,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
             runtimeConfig,
             vcs: stepVcs,
             systemPrompt: systemPromptResolution.systemPrompt,
+            systemPromptHash: systemPromptResolution.systemPromptHash,
             systemPromptRef: systemPromptResolution.systemPromptRef,
           },
         )
