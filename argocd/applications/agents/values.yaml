@@ -27,6 +27,9 @@ controllers:
       JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME: nats-agents-credentials
       JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY: username
       JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY: password
+      JANGAR_WHITEPAPER_FINALIZE_ENABLED: "true"
+      JANGAR_WHITEPAPER_FINALIZE_BASE_URL: http://torghut.torghut.svc.cluster.local
+      JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN: "true"
 resources:
   requests:
     cpu: 200m

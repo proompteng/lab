@@ -1,6 +1,9 @@
+import { readFile } from 'node:fs/promises'
+
 import { createTemporalClient, loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 import { Context, Effect, Layer, ManagedRuntime } from 'effect'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
+import { createGitHubClient } from '~/server/github-client'
 import { startResourceWatch } from '~/server/kube-watch'
 import { recordAgentConcurrency, recordAgentRunOutcome, recordReconcileDurationMs } from '~/server/metrics'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
@@ -64,6 +67,11 @@ const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PO
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const DEFAULT_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS = 30
 const DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.agents_controller.enabled'
+const WHITEPAPER_RUN_ID_PREFIX = 'wp-'
+const DEFAULT_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.torghut.svc.cluster.local'
+const DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
+const DEFAULT_GITHUB_API_BASE_URL = 'https://api.github.com'
+const WHITEPAPER_FINALIZE_TIMEOUT_MS = 15_000
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -125,6 +133,266 @@ const initializeRuntimeMutableStateForLayer = () => {
 }
 
 const nowIso = () => new Date().toISOString()
+
+const safeParseJsonRecord = (value: string) => {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
+const normalizeGitBranch = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (trimmed.startsWith('refs/heads/')) return trimmed.slice('refs/heads/'.length)
+  if (trimmed.startsWith('heads/')) return trimmed.slice('heads/'.length)
+  if (trimmed.startsWith('refs/')) return trimmed.slice('refs/'.length)
+  return trimmed
+}
+
+const parseRepositoryParts = (repository: string) => {
+  const trimmed = repository.trim()
+  const parts = trimmed.split('/')
+  if (parts.length !== 2) return null
+  const [owner, repo] = parts
+  if (!owner || !repo) return null
+  return { owner, repo }
+}
+
+const whitepaperFinalizeEnabled = () => parseBooleanEnv(process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED, true)
+
+const resolveWhitepaperFinalizeBaseUrl = () => {
+  const fromEnv = asString(process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL)?.trim()
+  if (fromEnv) return fromEnv
+  const fallback = asString(process.env.TORGHUT_BASE_URL)?.trim()
+  if (fallback) return fallback
+  return DEFAULT_WHITEPAPER_FINALIZE_BASE_URL
+}
+
+const resolveWhitepaperFinalizeToken = async () => {
+  const explicitToken =
+    asString(process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN)?.trim() ||
+    asString(process.env.WHITEPAPER_WORKFLOW_API_TOKEN)?.trim() ||
+    asString(process.env.JANGAR_API_KEY)?.trim()
+  if (explicitToken) return explicitToken
+
+  const useServiceAccountToken = parseBooleanEnv(process.env.JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN, true)
+  if (!useServiceAccountToken) return null
+  const tokenPath = asString(process.env.JANGAR_WHITEPAPER_SERVICE_ACCOUNT_TOKEN_PATH)?.trim()
+  const resolvedPath = tokenPath || DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH
+
+  try {
+    const token = (await readFile(resolvedPath, 'utf8')).trim()
+    return token || null
+  } catch {
+    return null
+  }
+}
+
+const buildWhitepaperArtifactPayloads = (rawArtifacts: unknown) => {
+  if (!Array.isArray(rawArtifacts)) return []
+  const payloads: Array<Record<string, unknown>> = []
+  for (const entry of rawArtifacts) {
+    const artifact = asRecord(entry)
+    if (!artifact) continue
+    const name = asString(artifact.name)?.trim()
+    if (!name) continue
+    const payload: Record<string, unknown> = {
+      artifact_scope: 'run',
+      artifact_type: 'agentrun_output',
+      artifact_role: name,
+    }
+    const key = asString(artifact.key)?.trim()
+    if (key) payload.ceph_object_key = key
+    const uri = asString(artifact.url)?.trim() || asString(artifact.path)?.trim()
+    if (uri) payload.artifact_uri = uri
+    payload.metadata = artifact
+    payloads.push(payload)
+  }
+  return payloads
+}
+
+const fetchWhitepaperOutputFromBranch = async (input: {
+  owner: string
+  repo: string
+  branch: string
+  runId: string
+}) => {
+  const githubToken = asString(process.env.GITHUB_TOKEN)?.trim() || asString(process.env.GH_TOKEN)?.trim() || null
+  if (!githubToken) return null
+  const githubApiBaseUrl = asString(process.env.GITHUB_API_BASE_URL)?.trim() || DEFAULT_GITHUB_API_BASE_URL
+  const github = createGitHubClient({
+    token: githubToken,
+    apiBaseUrl: githubApiBaseUrl,
+  })
+  const root = `docs/whitepapers/${input.runId}`
+  try {
+    const [synthesisFile, verdictFile] = await Promise.all([
+      github.getFile(input.owner, input.repo, `${root}/synthesis.json`, input.branch),
+      github.getFile(input.owner, input.repo, `${root}/verdict.json`, input.branch),
+    ])
+    const synthesis = safeParseJsonRecord(synthesisFile.content)
+    const verdict = safeParseJsonRecord(verdictFile.content)
+    if (!synthesis || !verdict) return null
+    return { synthesis, verdict, github }
+  } catch {
+    return null
+  }
+}
+
+const fetchWhitepaperOutputs = async (input: {
+  repository: string
+  runId: string
+  headBranch: string
+  baseBranch: string
+}) => {
+  const parts = parseRepositoryParts(input.repository)
+  if (!parts) return null
+  const branchCandidates = [input.headBranch, input.baseBranch, 'main']
+    .map((branch) => normalizeGitBranch(branch))
+    .filter((branch, index, list) => branch.length > 0 && list.indexOf(branch) === index)
+
+  for (const branch of branchCandidates) {
+    const outputs = await fetchWhitepaperOutputFromBranch({
+      owner: parts.owner,
+      repo: parts.repo,
+      branch,
+      runId: input.runId,
+    })
+    if (!outputs) continue
+
+    let designPullRequest: Record<string, unknown> | null = null
+    try {
+      const pullRequest = await outputs.github.getPullRequestByHead(parts.owner, parts.repo, `${parts.owner}:${branch}`)
+      if (pullRequest) {
+        designPullRequest = {
+          status: pullRequest.state === 'open' ? 'opened' : pullRequest.state,
+          repository: input.repository,
+          base_branch: pullRequest.baseRef,
+          head_branch: pullRequest.headRef,
+          pr_number: pullRequest.number,
+          pr_url: pullRequest.htmlUrl,
+          title: pullRequest.title,
+          body: pullRequest.body,
+          commit_sha: pullRequest.headSha,
+        }
+      }
+    } catch {
+      designPullRequest = null
+    }
+
+    return {
+      branch,
+      synthesis: outputs.synthesis,
+      verdict: outputs.verdict,
+      designPullRequest,
+    }
+  }
+
+  return null
+}
+
+const postWhitepaperFinalize = async (runId: string, payload: Record<string, unknown>) => {
+  const baseUrl = resolveWhitepaperFinalizeBaseUrl().replace(/\/+$/, '')
+  const token = await resolveWhitepaperFinalizeToken()
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  }
+  if (token) {
+    headers.authorization = `Bearer ${token}`
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), WHITEPAPER_FINALIZE_TIMEOUT_MS)
+  try {
+    const response = await fetch(`${baseUrl}/whitepapers/runs/${encodeURIComponent(runId)}/finalize`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    })
+    const raw = await response.text()
+    if (!response.ok) {
+      throw new Error(`whitepaper finalize failed: ${response.status} ${response.statusText} ${raw}`.trim())
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+const maybeFinalizeWhitepaperRun = async (resource: Record<string, unknown>, nextStatus: Record<string, unknown>) => {
+  if (!whitepaperFinalizeEnabled()) return
+  const params = resolveParameters(resource)
+  const runId = resolveParam(params, ['runId', 'run_id']).trim()
+  if (!runId || !runId.startsWith(WHITEPAPER_RUN_ID_PREFIX)) return
+
+  const phase = asString(nextStatus.phase) ?? asString(readNested(resource, ['status', 'phase'])) ?? ''
+  if (!['Succeeded', 'Failed', 'Cancelled'].includes(phase)) return
+
+  const repository =
+    resolveParam(params, ['repository', 'repo']) ||
+    asString(readNested(nextStatus, ['vcs', 'repository'])) ||
+    asString(readNested(resource, ['status', 'vcs', 'repository'])) ||
+    ''
+  const headBranch =
+    resolveParam(params, ['head', 'headBranch', 'branch']) ||
+    asString(readNested(nextStatus, ['vcs', 'headBranch'])) ||
+    asString(readNested(resource, ['status', 'vcs', 'headBranch'])) ||
+    ''
+  const baseBranch =
+    resolveParam(params, ['base', 'baseBranch']) ||
+    asString(readNested(nextStatus, ['vcs', 'baseBranch'])) ||
+    asString(readNested(resource, ['status', 'vcs', 'baseBranch'])) ||
+    'main'
+
+  const payload: Record<string, unknown> = {
+    status: phase === 'Succeeded' ? 'completed' : 'failed',
+    source: 'jangar-agents-controller',
+    agentrun_name: asString(readNested(resource, ['metadata', 'name'])) ?? null,
+    artifacts: buildWhitepaperArtifactPayloads(readNested(nextStatus, ['artifacts'])),
+  }
+
+  if (phase !== 'Succeeded') {
+    payload.failure_reason = phase === 'Cancelled' ? 'agentrun_cancelled' : 'agentrun_failed'
+    await postWhitepaperFinalize(runId, payload)
+    return
+  }
+
+  if (!repository) {
+    payload.status = 'failed'
+    payload.failure_reason = 'whitepaper_repository_missing'
+    await postWhitepaperFinalize(runId, payload)
+    return
+  }
+
+  const outputs = await fetchWhitepaperOutputs({
+    repository,
+    runId,
+    headBranch,
+    baseBranch,
+  })
+  if (!outputs) {
+    payload.status = 'failed'
+    payload.failure_reason = 'whitepaper_outputs_missing'
+    payload.repository = repository
+    payload.head_branch = normalizeGitBranch(headBranch)
+    payload.base_branch = normalizeGitBranch(baseBranch) || 'main'
+    await postWhitepaperFinalize(runId, payload)
+    return
+  }
+
+  payload.repository = repository
+  payload.head_branch = outputs.branch
+  payload.base_branch = normalizeGitBranch(baseBranch) || 'main'
+  payload.synthesis = outputs.synthesis
+  payload.verdict = outputs.verdict
+  if (outputs.designPullRequest) {
+    payload.design_pull_request = outputs.designPullRequest
+  }
+  await postWhitepaperFinalize(runId, payload)
+}
 
 const isKubeNotFoundError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error)
@@ -320,6 +588,15 @@ const setStatus = async (
       const runtimeType =
         asString(runtimeRef.type) ?? asString(readNested(resource, ['spec', 'runtime', 'type'])) ?? 'unknown'
       recordAgentRunOutcome(nextPhase, { runtime: runtimeType })
+      try {
+        await maybeFinalizeWhitepaperRun(resource, nextStatus)
+      } catch (error) {
+        console.warn('[jangar] whitepaper finalize callback failed', {
+          runId: resolveParam(resolveParameters(resource), ['runId', 'run_id']) || null,
+          phase: nextPhase,
+          error,
+        })
+      }
     }
   }
   await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status: nextStatus })
