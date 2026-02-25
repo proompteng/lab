@@ -335,7 +335,10 @@ describe('whitepaper finalize callback', () => {
         )
       }
       if (url === 'http://torghut.local/whitepapers/runs/wp-abc123/finalize') {
-        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
       }
       return new Response('not found', { status: 404 })
     })
@@ -419,7 +422,10 @@ describe('whitepaper finalize callback', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === 'http://torghut.local/whitepapers/runs/wp-sa/finalize') {
-        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
       }
       return new Response('not found', { status: 404 })
     })
@@ -490,7 +496,9 @@ describe('whitepaper finalize callback', () => {
       }
     }
 
-    const finalizeCall = fetchMock.mock.calls.find((call) => String(call[0]).includes('/whitepapers/runs/wp-sa/finalize'))
+    const finalizeCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes('/whitepapers/runs/wp-sa/finalize'),
+    )
     expect(finalizeCall).toBeDefined()
     const [, init] = finalizeCall as [RequestInfo | URL, RequestInit]
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer sa-token')
