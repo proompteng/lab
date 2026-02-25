@@ -1,0 +1,218 @@
+{
+  "run_id": "wp-170f349204ec83d16deb28cf",
+  "paper": {
+    "title": "ATLAS: Adaptive Trading with LLM AgentS Through Dynamic Prompt Optimization and Multi-Agent Coordination",
+    "arxiv_id": "2510.15949",
+    "pdf_url": "https://arxiv.org/pdf/2510.15949.pdf",
+    "version": "v2",
+    "date": "2026-01-08"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 43,
+    "included_sections": [
+      "main_text",
+      "references",
+      "appendices_A_to_K"
+    ]
+  },
+  "executive_summary": "ATLAS combines a multi-agent market-analysis stack with a central trading agent and introduces Adaptive-OPRO, a sequential prompt-optimization method using rolling-window performance feedback. The strongest evidence is in bearish/volatile conditions where Adaptive-OPRO often converts negative baseline returns into positive outcomes, but external validity is constrained by narrow scope (three assets, one two-month period), deterministic simulator execution, and low run count.",
+  "problem_statement": "LLM trading agents need to integrate heterogeneous signals and adapt policy under delayed, noisy feedback without breaking execution interfaces or drifting into unstable behavior.",
+  "methodology_summary": "The framework separates market intelligence from execution, using market/news/fundamental analyst agents that feed a central trading agent producing order-level actions. Adaptive-OPRO optimizes only the static instruction block of the central agent over rolling K=5-day windows, with score mapping s=clip[0,100](50+250*ROI), while preserving placeholders and output schema. Evaluation spans three regimes (LLY, XOM, NVDA), seven model backbones, three runs per setting, and compares baseline, reflection, and Adaptive-OPRO strategies.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "Adaptive-OPRO shows strong gains in bearish/volatile conditions for most models, often reversing negative baseline ROI.",
+      "evidence": [
+        "Table 1",
+        "Section 6.1"
+      ],
+      "details": {
+        "sample_points": {
+          "gpt_o4_mini": {
+            "baseline_roi_percent": -1.3,
+            "adaptive_opro_roi_percent": 9.06
+          },
+          "gpt_o3": {
+            "baseline_roi_percent": -6.11,
+            "adaptive_opro_roi_percent": 9.02
+          },
+          "qwen3_235b": {
+            "baseline_roi_percent": -1.78,
+            "adaptive_opro_roi_percent": 1.33
+          }
+        }
+      }
+    },
+    {
+      "id": "KF-2",
+      "finding": "Reflection frequently degrades or destabilizes performance in delayed/noisy regimes.",
+      "evidence": [
+        "Section 6.1",
+        "Appendix H",
+        "Tables 1-2",
+        "Tables 9-11"
+      ],
+      "details": {
+        "reported_signal": "reflection ROI gain vs baseline has negative correlation with baseline quality in volatile regime (r=-0.78, p<0.05)"
+      }
+    },
+    {
+      "id": "KF-3",
+      "finding": "Ablation evidence suggests market and news inputs are complementary and regime-dependent.",
+      "evidence": [
+        "Table 3",
+        "Section 6.4"
+      ],
+      "details": {
+        "volatile_regime_roi": {
+          "atlas": 9.06,
+          "no_market_data": -5.75,
+          "no_news": 4.07
+        },
+        "bullish_regime_roi": {
+          "atlas": 10.47,
+          "no_market_data": 11.78
+        }
+      }
+    },
+    {
+      "id": "KF-4",
+      "finding": "Order-level action space surfaces execution-quality differences beyond narrative analysis quality.",
+      "evidence": [
+        "Section 6.2",
+        "Section 6.3"
+      ]
+    },
+    {
+      "id": "KF-5",
+      "finding": "Headline claim of consistent outperformance is directionally supported but not universal in every model/regime cell.",
+      "evidence": [
+        "Table 2",
+        "Section 6"
+      ],
+      "details": {
+        "counterexample": "Qwen3-235B bullish ROI baseline 43.91 exceeds Adaptive-OPRO 41.25"
+      }
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "Adaptive-OPRO extends prompt optimization to sequential, delayed-feedback settings via windowed scoring and template separation.",
+      "assessment": "moderately_novel",
+      "notes": "The adaptation pattern is clearly specified and operationally useful, though conceptually adjacent to prior OPRO-style optimization and agent feedback methods."
+    },
+    {
+      "claim": "ATLAS provides an auditable multi-agent, order-level LLM trading framework.",
+      "assessment": "incremental_but_useful",
+      "notes": "The integration and interface discipline are practical contributions; individual components are largely known techniques combined in a cohesive stack."
+    },
+    {
+      "claim": "Adaptive-OPRO consistently outperforms alternatives.",
+      "assessment": "partially_supported",
+      "notes": "Strongly supported in many settings, especially bearish/volatile regimes, but not uniformly superior across all reported table cells."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "external_validity_scope",
+      "severity": "high",
+      "detail": "Evaluation uses only three assets and one two-month period, limiting generalization across assets, sectors, and horizons."
+    },
+    {
+      "risk": "execution_realism",
+      "severity": "high",
+      "detail": "Simulator abstracts away slippage, partial fills, latency, and intraday microstructure, creating unknown live-trading transfer gaps."
+    },
+    {
+      "risk": "statistical_power",
+      "severity": "high",
+      "detail": "Only three runs per configuration are reported, with limited significance testing on most comparative deltas."
+    },
+    {
+      "risk": "claim_overreach",
+      "severity": "medium_high",
+      "detail": "Narrative emphasis on consistency can overstate universality relative to table-level exceptions."
+    },
+    {
+      "risk": "reproducibility_availability",
+      "severity": "medium",
+      "detail": "Paper states code release upon publication, so immediate independent replication from manuscript alone may be constrained."
+    }
+  ],
+  "assumptions": [
+    "Five-day rolling ROI is a sufficiently informative scalar objective for prompt adaptation.",
+    "Prompt-template preservation is enough to avoid interface breakage while enabling meaningful policy improvement.",
+    "Deterministic execution simulations preserve ranking signal for adaptation mechanisms.",
+    "Three-run averages are adequate to compare prompting strategies under stochastic LLM outputs."
+  ],
+  "implementation_implications": [
+    "Adopt static-vs-dynamic prompt separation and strict placeholder/schema preservation in any adaptive prompt pipeline.",
+    "Use rolling-window scalar optimization loops for delayed-feedback tasks where per-step rewards are noisy.",
+    "Keep order-level structured outputs for auditable attribution of reasoning versus execution quality.",
+    "Treat free-form reflection as optional and gated; objective-linked optimization signals should remain primary."
+  ],
+  "unresolved_questions": [
+    "Do Adaptive-OPRO gains hold on longer multi-year walk-forward tests and larger asset universes?",
+    "How sensitive are results to execution frictions such as spread, slippage, and partial fills?",
+    "Which component drives gains most: scoring function, window size, optimizer model, or template-separation guardrail?",
+    "How stable are outcomes under alternative regime partitioning and asset selection policies?"
+  ],
+  "citations": [
+    {
+      "section": "3",
+      "pointer": "ATLAS architecture description",
+      "claim": "Three-layer architecture with analyst pipeline, CTA execution layer, and feedback mechanism."
+    },
+    {
+      "section": "4",
+      "pointer": "Adaptive-OPRO core procedure",
+      "claim": "Sequential prompt optimization under delayed/noisy feedback with template separation."
+    },
+    {
+      "section": "4",
+      "pointer": "Equation 1",
+      "claim": "Bounded score mapping from rolling ROI to optimization score."
+    },
+    {
+      "section": "5.1",
+      "pointer": "Experimental setup",
+      "claim": "Three regimes, daily decisions, seven model backbones, and three-run reporting protocol."
+    },
+    {
+      "section": "6",
+      "pointer": "Tables 1-2",
+      "claim": "Comparative performance patterns for baseline, reflection, and Adaptive-OPRO."
+    },
+    {
+      "section": "6.4",
+      "pointer": "Table 3",
+      "claim": "Ablation evidence for regime-dependent value of market and news analyst components."
+    },
+    {
+      "section": "6.1",
+      "pointer": "Reflection paradox discussion",
+      "claim": "Negative correlation between baseline quality and reflection gains in volatile regime."
+    },
+    {
+      "section": "Appendix H",
+      "pointer": "Case study and Table 12",
+      "claim": "Example causal pathway where reflection-induced re-entry worsened outcomes."
+    },
+    {
+      "section": "Appendix E",
+      "pointer": "Tables 4-6",
+      "claim": "Extended risk-adjusted and capital-efficiency metric trends."
+    },
+    {
+      "section": "Limitations",
+      "pointer": "Main text limitations section",
+      "claim": "Explicit boundaries on asset scope, simulator realism, and statistical power."
+    }
+  ],
+  "confidence": 0.83
+}
