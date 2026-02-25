@@ -63,7 +63,10 @@ describe('legacy codex-implement system prompt loading', () => {
     const systemPromptPath = join(workdir, 'system-prompt.txt')
     await writeFile(systemPromptPath, systemPrompt, 'utf8')
     process.env.CODEX_SYSTEM_PROMPT_PATH = systemPromptPath
-    process.env.CODEX_SYSTEM_PROMPT_EXPECTED_HASH = createHash('sha256').update(systemPrompt, 'utf8').digest('hex').toUpperCase()
+    process.env.CODEX_SYSTEM_PROMPT_EXPECTED_HASH = createHash('sha256')
+      .update(systemPrompt, 'utf8')
+      .digest('hex')
+      .toUpperCase()
 
     const loaded = loadSystemPrompt({})
     expect(loaded.systemPrompt).toBe(systemPrompt)
