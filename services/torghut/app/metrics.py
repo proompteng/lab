@@ -260,6 +260,22 @@ _SERVICE_LABEL_GAUGES: dict[str, tuple[str, str]] = {
         "torghut_trading_signal_continuity_actionable",
         "Whether last observed continuity state is actionable (1=yes, 0=no).",
     ),
+    "signal_continuity_alert_active": (
+        "torghut_trading_signal_continuity_alert_active",
+        "Whether a signal continuity alert is currently latched (1=yes, 0=no).",
+    ),
+    "signal_continuity_alert_recovery_streak": (
+        "torghut_trading_signal_continuity_alert_recovery_streak",
+        "Healthy-cycle streak towards clearing a latched continuity alert.",
+    ),
+    "universe_symbols_count": (
+        "torghut_trading_universe_symbols_count",
+        "Resolved authoritative universe symbol count.",
+    ),
+    "universe_cache_age_seconds": (
+        "torghut_trading_universe_cache_age_seconds",
+        "Age of cached authoritative universe symbols in seconds.",
+    ),
 }
 
 _DIRECT_GAUGES: dict[str, tuple[str, str]] = {
@@ -324,7 +340,9 @@ def _sorted_metric_items(
 
 
 def _render_simple_map_metric(key: str, values: Mapping[str, object]) -> list[str]:
-    metric_name, help_text, metric_type, label_name, numeric_kind = _SIMPLE_MAP_METRICS[key]
+    metric_name, help_text, metric_type, label_name, numeric_kind = _SIMPLE_MAP_METRICS[
+        key
+    ]
     lines = _metric_headers(metric_name, help_text, metric_type)
     for label, numeric_value in _sorted_metric_items(
         values,
@@ -446,6 +464,28 @@ def _render_route_provenance_map(values: Mapping[str, object]) -> list[str]:
     return lines
 
 
+def _render_universe_resolution_total_map(values: Mapping[str, object]) -> list[str]:
+    metric_name = "torghut_trading_universe_resolution_total"
+    lines = _metric_headers(
+        metric_name,
+        "Count of universe resolution outcomes by status and reason.",
+        "counter",
+    )
+    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+        status = "unknown"
+        reason = "unknown"
+        if "|" in key:
+            status, reason = key.split("|", 1)
+        lines.extend(
+            _render_labeled_metric(
+                metric_name=metric_name,
+                labels={"status": status, "reason": reason},
+                value=count,
+            )
+        )
+    return lines
+
+
 def _render_forecast_calibration_error_map(values: Mapping[str, object]) -> list[str]:
     metric_name = "torghut_forecast_calibration_error"
     lines = _metric_headers(
@@ -453,7 +493,12 @@ def _render_forecast_calibration_error_map(values: Mapping[str, object]) -> list
         "Forecast calibration error by model family, symbol, and horizon.",
         "gauge",
     )
-    sorted_items = sorted([(str(route_key), str(error_value)) for route_key, error_value in values.items()])
+    sorted_items = sorted(
+        [
+            (str(route_key), str(error_value))
+            for route_key, error_value in values.items()
+        ]
+    )
     for route_key, error_value in sorted_items:
         parts = route_key.split("|", 2)
         if len(parts) != 3:
@@ -477,7 +522,9 @@ def _render_forecast_calibration_error_map(values: Mapping[str, object]) -> list
     return lines
 
 
-def _render_forecast_route_selection_total_map(values: Mapping[str, object]) -> list[str]:
+def _render_forecast_route_selection_total_map(
+    values: Mapping[str, object],
+) -> list[str]:
     metric_name = "torghut_forecast_route_selection_total"
     lines = _metric_headers(
         metric_name,
@@ -597,6 +644,7 @@ _SPECIAL_MAP_RENDERERS = {
     "forecast_route_selection_total": _render_forecast_route_selection_total_map,
     "llm_committee_verdict_total": _render_llm_committee_verdict_total_map,
     "allocator_multiplier_total": _render_allocator_multiplier_total_map,
+    "universe_resolution_total": _render_universe_resolution_total_map,
     "tca_summary": _render_tca_summary_map,
 }
 

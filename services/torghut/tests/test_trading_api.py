@@ -247,6 +247,9 @@ class TestTradingApi(TestCase):
         )
         self.assertIn("signal_lag_seconds", control_plane_contract)
         self.assertIn("signal_continuity_state", control_plane_contract)
+        self.assertIn("signal_continuity_alert_active", control_plane_contract)
+        self.assertIn("signal_continuity_promotion_block_total", control_plane_contract)
+        self.assertIn("signal_expected_staleness_total", control_plane_contract)
         self.assertIn("market_session_open", control_plane_contract)
         self.assertIn("universe_fail_safe_blocked", control_plane_contract)
 
@@ -261,7 +264,9 @@ class TestTradingApi(TestCase):
         )
 
     @patch("app.main._load_tca_summary", side_effect=SQLAlchemyError("boom"))
-    def test_trading_status_maps_unhandled_db_errors_to_503(self, _mock_tca: object) -> None:
+    def test_trading_status_maps_unhandled_db_errors_to_503(
+        self, _mock_tca: object
+    ) -> None:
         response = self.client.get("/trading/status")
         self.assertEqual(response.status_code, 503)
         payload = response.json()
@@ -280,6 +285,9 @@ class TestTradingApi(TestCase):
             scheduler.state.last_signal_continuity_reason = "no_signals_in_window"
             scheduler.state.last_signal_continuity_actionable = False
             scheduler.state.market_session_open = False
+            scheduler.state.signal_continuity_alert_active = True
+            scheduler.state.signal_continuity_alert_reason = "cursor_ahead_of_stream"
+            scheduler.state.signal_continuity_recovery_streak = 1
             app.state.trading_scheduler = scheduler
 
             response = self.client.get("/trading/status")
@@ -290,10 +298,15 @@ class TestTradingApi(TestCase):
             self.assertEqual(autonomy["last_ingest_reason"], "cursor_ahead_of_stream")
             self.assertEqual(autonomy["no_signal_streak"], 4)
             continuity = payload["signal_continuity"]
-            self.assertEqual(continuity["last_state"], "expected_market_closed_staleness")
+            self.assertEqual(
+                continuity["last_state"], "expected_market_closed_staleness"
+            )
             self.assertEqual(continuity["last_reason"], "no_signals_in_window")
             self.assertFalse(continuity["last_actionable"])
             self.assertFalse(continuity["market_session_open"])
+            self.assertTrue(continuity["alert_active"])
+            self.assertEqual(continuity["alert_reason"], "cursor_ahead_of_stream")
+            self.assertEqual(continuity["alert_recovery_streak"], 1)
         finally:
             if original_scheduler is None:
                 del app.state.trading_scheduler

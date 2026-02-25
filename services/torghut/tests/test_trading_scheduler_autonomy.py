@@ -29,6 +29,16 @@ class _PipelineStub:
     def __post_init__(self) -> None:
         self.ingestor = self
         self.order_firewall = _OrderFirewallStub()
+        self.universe_resolver = SimpleNamespace(
+            get_resolution=lambda: SimpleNamespace(
+                symbols={"AAPL"},
+                source="jangar",
+                status="ok",
+                reason="jangar_fetch_ok",
+                fetched_at=None,
+                cache_age_seconds=0,
+            )
+        )
 
     def fetch_signals_between(
         self, start: datetime, end: datetime
@@ -107,6 +117,26 @@ class _PipelineStub:
 
         if actionable and (streak_threshold_met or lag_threshold_met):
             self.state.metrics.record_signal_staleness_alert(reason)
+            if not self.state.signal_continuity_alert_active:
+                self.state.signal_continuity_alert_started_at = datetime.now(
+                    timezone.utc
+                )
+            self.state.signal_continuity_alert_active = True
+            self.state.signal_continuity_alert_reason = normalized_reason
+            self.state.signal_continuity_alert_last_seen_at = datetime.now(timezone.utc)
+            self.state.signal_continuity_recovery_streak = 0
+            self.state.metrics.record_signal_continuity_alert_state(
+                active=True,
+                recovery_streak=0,
+            )
+        elif actionable and self.state.signal_continuity_alert_active:
+            self.state.signal_continuity_alert_reason = normalized_reason
+            self.state.signal_continuity_alert_last_seen_at = datetime.now(timezone.utc)
+            self.state.signal_continuity_recovery_streak = 0
+            self.state.metrics.record_signal_continuity_alert_state(
+                active=True,
+                recovery_streak=0,
+            )
 
 
 class _SchedulerDependencies:
@@ -148,6 +178,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             "trading_autonomy_artifact_dir": settings.trading_autonomy_artifact_dir,
             "trading_signal_no_signal_streak_alert_threshold": settings.trading_signal_no_signal_streak_alert_threshold,
             "trading_signal_stale_lag_alert_seconds": settings.trading_signal_stale_lag_alert_seconds,
+            "trading_signal_continuity_recovery_cycles": settings.trading_signal_continuity_recovery_cycles,
             "trading_signal_staleness_alert_critical_reasons_raw": (
                 settings.trading_signal_staleness_alert_critical_reasons_raw
             ),
@@ -193,15 +224,16 @@ class TestTradingSchedulerAutonomy(TestCase):
         settings.trading_signal_stale_lag_alert_seconds = self._settings_snapshot[
             "trading_signal_stale_lag_alert_seconds"
         ]
+        settings.trading_signal_continuity_recovery_cycles = self._settings_snapshot[
+            "trading_signal_continuity_recovery_cycles"
+        ]
         settings.trading_signal_staleness_alert_critical_reasons_raw = (
             self._settings_snapshot[
                 "trading_signal_staleness_alert_critical_reasons_raw"
             ]
         )
         settings.trading_signal_market_closed_expected_reasons_raw = (
-            self._settings_snapshot[
-                "trading_signal_market_closed_expected_reasons_raw"
-            ]
+            self._settings_snapshot["trading_signal_market_closed_expected_reasons_raw"]
         )
         settings.trading_evidence_continuity_run_limit = self._settings_snapshot[
             "trading_evidence_continuity_run_limit"
@@ -302,6 +334,7 @@ class TestTradingSchedulerAutonomy(TestCase):
 
             self.assertEqual(deps.call_kwargs["promotion_target"], "paper")
             self.assertIsNone(deps.call_kwargs["approval_token"])
+
     def test_run_autonomous_cycle_falls_back_to_paper_when_live_token_missing(
         self,
     ) -> None:
@@ -430,11 +463,19 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertEqual(
                 scheduler.state.metrics.autonomy_last_stress_metrics_count, 4
             )
-            self.assertEqual(scheduler.state.metrics.autonomy_signal_throughput_total, 9)
-            self.assertEqual(scheduler.state.metrics.autonomy_decision_throughput_total, 7)
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_signal_throughput_total, 9
+            )
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_decision_throughput_total, 7
+            )
             self.assertEqual(scheduler.state.metrics.autonomy_trade_throughput_total, 3)
-            self.assertEqual(scheduler.state.metrics.autonomy_promotion_allowed_total, 1)
-            self.assertEqual(scheduler.state.metrics.autonomy_promotion_blocked_total, 0)
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_promotion_allowed_total, 1
+            )
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_promotion_blocked_total, 0
+            )
             self.assertEqual(
                 scheduler.state.metrics.autonomy_recommendation_total.get("paper"), 1
             )
@@ -475,6 +516,18 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertEqual(scheduler.state.last_autonomy_run_id, "no-signal-run-id")
             self.assertIn("no-signals.json", scheduler.state.last_autonomy_gates or "")
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_promotion_blocked_total,
+                1,
+            )
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_recommendation_total.get("shadow"),
+                1,
+            )
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_outcome_total.get("skipped_no_signal"),
+                1,
+            )
 
     def test_run_autonomous_cycle_updates_ingest_metadata_on_signal_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -860,6 +913,7 @@ class TestTradingSchedulerAutonomy(TestCase):
         settings.trading_autonomy_artifact_dir = str(
             Path(tmpdir) / "autonomy-artifacts"
         )
+        settings.trading_universe_source = "jangar"
         settings.trading_drift_governance_enabled = True
         settings.trading_drift_live_promotion_requires_evidence = True
         settings.trading_drift_live_promotion_max_evidence_age_seconds = 1800
