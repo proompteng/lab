@@ -1450,6 +1450,77 @@ class TradeCursor(Base, TimestampMixin):
     )
 
 
+class LLMDSPyWorkflowArtifact(Base, TimestampMixin):
+    """DSPy compile/eval/promotion artifact + AgentRun audit record."""
+
+    __tablename__ = "llm_dspy_workflow_artifacts"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_key: Mapped[str] = mapped_column(String(length=128), nullable=False, unique=True)
+    lane: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="queued",
+        server_default=text("'queued'"),
+    )
+    implementation_spec_ref: Mapped[str] = mapped_column(
+        String(length=128), nullable=False
+    )
+    program_name: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    signature_version: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    optimizer: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    artifact_uri: Mapped[Optional[str]] = mapped_column(String(length=1024), nullable=True)
+    artifact_hash: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    dataset_hash: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    compiled_prompt_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    reproducibility_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    metric_bundle: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    gate_compatibility: Mapped[Optional[str]] = mapped_column(
+        String(length=16), nullable=True
+    )
+    promotion_recommendation: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
+    promotion_target: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
+    idempotency_key: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    agentrun_name: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    agentrun_namespace: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    agentrun_uid: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    request_payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    response_payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_llm_dspy_workflow_artifacts_lane", "lane"),
+        Index("ix_llm_dspy_workflow_artifacts_status", "status"),
+        Index(
+            "ix_llm_dspy_workflow_artifacts_program_name",
+            "program_name",
+        ),
+        Index(
+            "ix_llm_dspy_workflow_artifacts_artifact_hash",
+            "artifact_hash",
+        ),
+        Index(
+            "ix_llm_dspy_workflow_artifacts_created_at",
+            "created_at",
+        ),
+    )
+
+
 class LLMDecisionReview(Base, CreatedAtMixin):
     """Audit record for LLM review of a trade decision."""
 
@@ -1512,6 +1583,7 @@ __all__ = [
     "LeanExecutionShadowEvent",
     "LeanCanaryIncident",
     "LeanStrategyShadowEvaluation",
+    "LLMDSPyWorkflowArtifact",
     "LLMDecisionReview",
     "TimestampMixin",
     "CreatedAtMixin",

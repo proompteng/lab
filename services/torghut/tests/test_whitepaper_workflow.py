@@ -343,6 +343,57 @@ https://example.com/paper.pdf
                 "### Delivery Plan\n- Keep explicit plan",
             )
 
+    def test_finalize_merges_dspy_eval_report_into_verdict_gating(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+            lambda _payload, *, idempotency_key: {
+                "ok": True,
+                "resource": {
+                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
+                    "status": {"phase": "Pending"},
+                },
+            }
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            finalize_payload = {
+                "status": "completed",
+                "synthesis": {
+                    "executive_summary": "summary",
+                    "confidence": "0.87",
+                },
+                "verdict": {
+                    "verdict": "implement",
+                    "score": "0.81",
+                    "confidence": "0.84",
+                    "requires_followup": False,
+                    "gating": {"policy_passed": True},
+                    "dspy_eval_report": {
+                        "artifact_hash": "a" * 64,
+                        "gate_compatibility": "pass",
+                        "promotion_recommendation": "paper",
+                    },
+                },
+            }
+            service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            session.commit()
+
+            verdict_row = session.execute(select(WhitepaperViabilityVerdict)).scalar_one()
+            self.assertIsInstance(verdict_row.gating_json, dict)
+            assert isinstance(verdict_row.gating_json, dict)
+            self.assertIn("dspy_eval_report", verdict_row.gating_json)
+
     def test_build_whitepaper_prompt_requires_implementation_plan_md(self) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()

@@ -489,6 +489,79 @@ describe('primitives endpoints', () => {
     expect(body.error).toContain('workflow.steps is required')
   })
 
+  it('accepts DSPy-style AgentRun contracts with explicit idempotency, policy, and ttl', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock({
+      'agents.agents.proompteng.ai:agents:codex-agent': { spec: {} },
+      'versioncontrolproviders.agents.proompteng.ai:agents:github': { spec: { auth: {} } },
+      'secretbindings.security.proompteng.ai:agents:codex-whitepaper-github-token': {
+        spec: {
+          subjects: [{ kind: 'Agent', name: 'codex-agent', namespace: 'agents' }],
+          allowedSecrets: [],
+        },
+      },
+    })
+
+    const request = buildRequest(
+      'http://localhost/v1/agent-runs',
+      {
+        namespace: 'agents',
+        idempotencyKey: 'torghut-dspy-compile-abc123',
+        agentRef: { name: 'codex-agent' },
+        implementationSpecRef: { name: 'torghut-dspy-compile-mipro-v1' },
+        runtime: { type: 'job' },
+        vcsRef: { name: 'github' },
+        vcsPolicy: { required: true, mode: 'read-write' },
+        parameters: {
+          repository: 'proompteng/lab',
+          base: 'main',
+          head: 'codex/torghut-dspy-compile-2026-02-25',
+          datasetRef: 's3://bucket/dataset.json',
+          metricPolicyRef: 'config/trading/llm/dspy-metrics.yaml',
+          artifactPath: 'artifacts/dspy/run-1',
+        },
+        policy: { secretBindingRef: 'codex-whitepaper-github-token' },
+        ttlSecondsAfterFinished: 14400,
+      },
+      { 'Idempotency-Key': 'delivery-dspy-1' },
+    )
+
+    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+
+    expect(response.status).toBe(201)
+    expect(kube.apply).toHaveBeenCalledTimes(1)
+    const resource = (kube.apply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as Record<string, unknown>
+    const spec = resource.spec as Record<string, unknown>
+    expect((spec.idempotencyKey as string) ?? '').toBe('torghut-dspy-compile-abc123')
+    expect((spec.ttlSecondsAfterFinished as number) ?? 0).toBe(14400)
+    expect((spec.implementationSpecRef as Record<string, unknown>)?.name).toBe('torghut-dspy-compile-mipro-v1')
+  })
+
+  it('rejects non-string idempotencyKey in payload', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock({
+      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+    })
+
+    const request = buildRequest(
+      'http://localhost/v1/agent-runs',
+      {
+        agentRef: { name: 'demo-agent' },
+        namespace: 'jangar',
+        idempotencyKey: 42,
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+      },
+      { 'Idempotency-Key': 'demo-agent-run-idem-type-1' },
+    )
+
+    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toContain('idempotencyKey must be a string')
+  })
+
   it('rejects agent runs that request secrets without a secret binding', async () => {
     const store = createStoreMock()
     const kube = createKubeMock({

@@ -8,6 +8,7 @@ from app.trading.llm.client import LLMClientResponse
 from app.trading.llm.review_engine import LLMReviewEngine
 from app.trading.llm.schema import MarketContextBundle, PortfolioSnapshot
 from app.trading.models import StrategyDecision
+from app.trading.llm.dspy_programs.runtime import DSPyRuntimeError
 
 
 class FakeLLMClient:
@@ -22,6 +23,44 @@ class FakeLLMClient:
             payload = self.contents[self._idx]
         self._idx += 1
         return LLMClientResponse(content=payload, usage=None)
+
+
+class FakeDSPyRuntime:
+    def __init__(self, *, mode: str, response_payload: dict[str, object] | None = None, error: str | None = None) -> None:
+        self.mode = mode
+        self.program_name = "trade-review-committee-v1"
+        self.signature_version = "v1"
+        self.artifact_hash = "a" * 64
+        self._response_payload = response_payload
+        self._error = error
+
+    def is_enabled(self) -> bool:
+        return True
+
+    def review(self, _request):  # noqa: ANN001
+        if self._error is not None:
+            raise DSPyRuntimeError(self._error)
+        assert self._response_payload is not None
+        from app.trading.llm.schema import LLMReviewResponse
+
+        response = LLMReviewResponse.model_validate(self._response_payload)
+        metadata = type(
+            "_Meta",
+            (),
+            {
+                "program_name": self.program_name,
+                "signature_version": self.signature_version,
+                "to_payload": lambda self: {  # noqa: ANN001
+                    "mode": "active",
+                    "program_name": "trade-review-committee-v1",
+                    "signature_version": "v1",
+                    "artifact_hash": "a" * 64,
+                    "latency_ms": 3,
+                    "advisory_only": True,
+                },
+            },
+        )()
+        return response, metadata
 
 
 class TestLLMReviewEngine(TestCase):
@@ -342,3 +381,113 @@ class TestLLMReviewEngine(TestCase):
         )
         self.assertEqual(outcome.response.confidence_band, "medium")
         self.assertEqual(outcome.response.uncertainty.band, "medium")
+
+    def test_review_prefers_dspy_active_mode_when_enabled(self) -> None:
+        from app import config
+
+        config.settings.llm_committee_enabled = False
+        engine = LLMReviewEngine(
+            client=FakeLLMClient('{"verdict":"veto","confidence":0.1,"rationale":"legacy"}'),
+            dspy_runtime=FakeDSPyRuntime(
+                mode="active",
+                response_payload={
+                    "verdict": "approve",
+                    "confidence": 0.88,
+                    "confidence_band": "high",
+                    "calibrated_probabilities": {
+                        "approve": 0.88,
+                        "veto": 0.03,
+                        "adjust": 0.03,
+                        "abstain": 0.03,
+                        "escalate": 0.03,
+                    },
+                    "uncertainty": {"score": 0.12, "band": "low"},
+                    "calibration_metadata": {},
+                    "rationale": "dspy_approve",
+                    "required_checks": ["risk_engine"],
+                    "risk_flags": [],
+                },
+            ),
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, object]] = []
+        portfolio = PortfolioSnapshot(
+            equity=Decimal("10000"),
+            cash=Decimal("10000"),
+            buying_power=Decimal("10000"),
+            total_exposure=Decimal("0"),
+            exposure_by_symbol={},
+            positions=positions,
+        )
+        decision = StrategyDecision(
+            strategy_id="demo",
+            symbol="AAPL",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            rationale="demo",
+            params={},
+        )
+        outcome = engine.review(
+            decision=decision,
+            account=account,
+            positions=positions,
+            request=engine.build_request(decision, account, positions, portfolio, None, None, []),
+            portfolio=portfolio,
+            market=None,
+            recent_decisions=[],
+        )
+        self.assertEqual(outcome.response.verdict, "approve")
+        self.assertTrue(outcome.model.startswith("dspy:"))
+        self.assertIn("dspy", outcome.response_json)
+        self.assertEqual(outcome.tokens_prompt, None)
+        self.assertEqual(outcome.tokens_completion, None)
+
+    def test_review_falls_back_to_legacy_when_dspy_fails(self) -> None:
+        from app import config
+
+        config.settings.llm_committee_enabled = False
+        engine = LLMReviewEngine(
+            client=FakeLLMClient('{"verdict":"approve","confidence":0.7,"rationale":"legacy"}'),
+            dspy_runtime=FakeDSPyRuntime(mode="active", error="dspy_program_failed"),
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, object]] = []
+        portfolio = PortfolioSnapshot(
+            equity=Decimal("10000"),
+            cash=Decimal("10000"),
+            buying_power=Decimal("10000"),
+            total_exposure=Decimal("0"),
+            exposure_by_symbol={},
+            positions=positions,
+        )
+        decision = StrategyDecision(
+            strategy_id="demo",
+            symbol="AAPL",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            rationale="demo",
+            params={},
+        )
+        outcome = engine.review(
+            decision=decision,
+            account=account,
+            positions=positions,
+            request=engine.build_request(decision, account, positions, portfolio, None, None, []),
+            portfolio=portfolio,
+            market=None,
+            recent_decisions=[],
+        )
+        self.assertEqual(outcome.response.verdict, "approve")
+        self.assertEqual(outcome.model, config.settings.llm_model)
+        dspy_payload = outcome.response_json.get("dspy")
+        self.assertIsInstance(dspy_payload, dict)
+        assert isinstance(dspy_payload, dict)
+        self.assertTrue(bool(dspy_payload.get("fallback_to_legacy")))

@@ -314,7 +314,11 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   const name = asString(agentRef?.name)
   if (!name) throw new Error('agentRef.name is required')
   const namespace = normalizeNamespace(asString(payload.namespace))
-  const idempotencyKey = asString(payload.idempotencyKey) ?? undefined
+  const idempotencyKeyRaw = payload.idempotencyKey
+  const idempotencyKey = asString(idempotencyKeyRaw) ?? undefined
+  if (idempotencyKeyRaw != null && !idempotencyKey) {
+    throw new Error('idempotencyKey must be a string')
+  }
 
   const implementationSpecRef = asRecord(payload.implementationSpecRef)
   const implementationSpecName = asString(implementationSpecRef?.name)

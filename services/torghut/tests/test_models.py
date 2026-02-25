@@ -8,7 +8,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from unittest import TestCase
 
-from app.models import Base, Execution, ExecutionOrderEvent, PositionSnapshot, Strategy, TradeDecision
+from app.models import (
+    Base,
+    Execution,
+    ExecutionOrderEvent,
+    LLMDSPyWorkflowArtifact,
+    PositionSnapshot,
+    Strategy,
+    TradeDecision,
+)
 
 
 class TestModels(TestCase):
@@ -92,17 +100,44 @@ class TestModels(TestCase):
             session.add(snapshot)
             session.commit()
 
+            dspy_artifact = LLMDSPyWorkflowArtifact(
+                run_key="torghut-dspy-compile-1",
+                lane="compile",
+                status="completed",
+                implementation_spec_ref="torghut-dspy-compile-mipro-v1",
+                program_name="trade-review-committee-v1",
+                signature_version="v1",
+                optimizer="miprov2",
+                artifact_uri="s3://bucket/dspy-compile-result.json",
+                artifact_hash="a" * 64,
+                dataset_hash="b" * 64,
+                compiled_prompt_hash="c" * 64,
+                reproducibility_hash="d" * 64,
+                metric_bundle={"schema_valid_rate": 1.0},
+                gate_compatibility="pass",
+                promotion_recommendation="paper",
+                idempotency_key="torghut-dspy-compile-1",
+                agentrun_name="agentrun-torghut-dspy-compile-1",
+                agentrun_namespace="agents",
+                request_payload_json={"runtime": {"type": "job"}},
+                response_payload_json={"resource": {"status": {"phase": "Succeeded"}}},
+            )
+            session.add(dspy_artifact)
+            session.commit()
+
             found_strategy = session.execute(select(Strategy)).scalar_one()
             found_decision = session.execute(select(TradeDecision)).scalar_one()
             found_execution = session.execute(select(Execution)).scalar_one()
             found_order_event = session.execute(select(ExecutionOrderEvent)).scalar_one()
             found_snapshot = session.execute(select(PositionSnapshot)).scalar_one()
+            found_dspy = session.execute(select(LLMDSPyWorkflowArtifact)).scalar_one()
 
             self.assertTrue(found_strategy.enabled)
             self.assertEqual(found_decision.status, "planned")
             self.assertEqual(found_execution.filled_qty, Decimal("0"))
             self.assertEqual(found_order_event.event_type, "fill")
             self.assertEqual(found_snapshot.equity, Decimal("10000"))
+            self.assertEqual(found_dspy.lane, "compile")
 
     def test_account_scoped_uniques_allow_same_ids_across_accounts(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
