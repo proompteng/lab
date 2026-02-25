@@ -3,7 +3,7 @@
 ## Status
 
 - Version: `v5`
-- Date: `2026-02-22`
+- Date: `2026-02-25`
 - Maturity: `production-quality design pack`
 - Scope: 5 prioritized new-feature strategy builds plus whitepaper synthesis plus crypto pipeline migration design plus multi-account execution migration design
 
@@ -37,6 +37,7 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 9. `09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
 10. `10-crypto-market-data-pipeline-production-design-2026-02-22.md`
 11. `11-multi-account-trading-architecture-and-rollout-2026-02-22.md`
+12. `12-dspy-framework-adoption-for-quant-llm-autonomous-trading-2026-02-25.md`
 
 ## Source-Verified Implementation Snapshot (2026-02-23)
 
@@ -53,7 +54,8 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 4. `05-fragility-aware-regime-allocation.md`
 5. `04-llm-multi-agent-committee-with-deterministic-veto.md`
 6. `07-autonomous-research-to-engineering-pipeline.md`
-7. `09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
+7. `12-dspy-framework-adoption-for-quant-llm-autonomous-trading-2026-02-25.md`
+8. `09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
 
 ## Why This Sequence
 
@@ -63,4 +65,5 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 - fragility-aware allocation protects tails before wider autonomy.
 - committee-style LLM orchestration is highest complexity and should sit on hardened controls.
 - two-speed pipeline operationalizes continuous intake while keeping production promotion strictly gated.
+- DSPy adoption should come after committee/gate hardening so optimizer-driven LLM programs inherit deterministic governance and Jangar-native run control.
 - full-autonomy design should be evaluated as an advanced track after two-speed controls are proven.
