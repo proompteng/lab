@@ -1,8 +1,10 @@
 import { stat } from 'node:fs/promises'
 import process from 'node:process'
 import { CodexRunner } from '@proompteng/codex'
-import { DISCORD_MESSAGE_SEPARATOR } from '@proompteng/discord'
 import { type CodexLogger, consoleLogger } from './logger'
+
+// Keep the codex runtime self-contained: Discord channel frames are NUL-delimited.
+const DISCORD_MESSAGE_SEPARATOR = '\u0000'
 
 export interface DiscordChannelOptions {
   command: string[]
