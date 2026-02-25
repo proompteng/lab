@@ -1263,7 +1263,8 @@ class WhitepaperWorkflowService:
     ) -> None:
         if not isinstance(synthesis_payload_raw, Mapping):
             return
-        synthesis_payload = cast(dict[str, Any], synthesis_payload_raw)
+        synthesis_payload = dict(cast(Mapping[str, Any], synthesis_payload_raw))
+        self._populate_missing_implementation_plan_md(run.run_id, synthesis_payload)
         synthesis = session.execute(
             select(WhitepaperSynthesis).where(WhitepaperSynthesis.analysis_run_id == run.id)
         ).scalar_one_or_none()
@@ -1303,6 +1304,33 @@ class WhitepaperWorkflowService:
         synthesis.confidence = self._optional_decimal(synthesis_payload.get("confidence"))
         synthesis.synthesis_json = coerce_json_payload(synthesis_payload)
         session.add(synthesis)
+
+    def _populate_missing_implementation_plan_md(self, run_id: str, synthesis_payload: dict[str, Any]) -> None:
+        if self._optional_text(synthesis_payload.get("implementation_plan_md")):
+            return
+        derived_value = self._derive_implementation_plan_md(synthesis_payload.get("implementation_implications"))
+        if not derived_value:
+            return
+        synthesis_payload["implementation_plan_md"] = derived_value
+        logger.warning(
+            "Whitepaper synthesis missing implementation_plan_md; auto-filled from implementation_implications "
+            "(run_id=%s)",
+            run_id,
+        )
+
+    @staticmethod
+    def _derive_implementation_plan_md(value: Any) -> str | None:
+        if isinstance(value, str):
+            text = value.strip()
+            return text or None
+        if isinstance(value, list):
+            bullet_points: list[str] = []
+            for item in value:
+                text = str(item).strip() if item is not None else ""
+                if text:
+                    bullet_points.append(f"- {text}")
+            return "\n".join(bullet_points) if bullet_points else None
+        return None
 
     def _upsert_verdict(
         self,
@@ -1647,11 +1675,11 @@ class WhitepaperWorkflowService:
                 "",
                 "Requirements:",
                 "1) Read the full whitepaper end-to-end (no abstract-only shortcuts).",
-                "2) Produce a structured synthesis: executive summary, methodology, key findings, novelty claims, risks, implementation implications.",
+                "2) Produce synthesis.json with required keys: executive_summary, problem_statement, methodology_summary, key_findings, novelty_claims, risk_assessment, citations, implementation_plan_md, confidence.",
                 "3) Produce a viability verdict with score, confidence, rejection reasons (if any), and follow-up recommendations.",
                 "4) Create/update a design document in this repository under docs/whitepapers/<run-id>/design.md.",
                 "5) Open a PR from a codex/* branch into main with a production-ready design document.",
-                "6) Emit machine-readable outputs in JSON for synthesis and verdict in your run artifacts.",
+                "6) Emit machine-readable outputs exactly as synthesis.json and verdict.json in your run artifacts.",
                 "",
                 "Quality bar:",
                 "- Be explicit about assumptions and unresolved risks.",

@@ -250,6 +250,7 @@ https://example.com/paper.pdf
                 "synthesis": {
                     "executive_summary": "Strong approach with reproducible results.",
                     "key_findings": ["f1", "f2"],
+                    "implementation_implications": ["Capture deterministic manifests.", "Add walk-forward gates."],
                     "confidence": "0.87",
                 },
                 "verdict": {
@@ -274,12 +275,99 @@ https://example.com/paper.pdf
 
             synthesis_row = session.execute(select(WhitepaperSynthesis)).scalar_one()
             self.assertIn("Strong approach", synthesis_row.executive_summary)
+            self.assertEqual(
+                synthesis_row.implementation_plan_md,
+                "- Capture deterministic manifests.\n- Add walk-forward gates.",
+            )
+            self.assertIsInstance(synthesis_row.synthesis_json, dict)
+            assert isinstance(synthesis_row.synthesis_json, dict)
+            self.assertEqual(
+                synthesis_row.synthesis_json.get("implementation_plan_md"),
+                "- Capture deterministic manifests.\n- Add walk-forward gates.",
+            )
 
             verdict_row = session.execute(select(WhitepaperViabilityVerdict)).scalar_one()
             self.assertEqual(verdict_row.verdict, "implement")
 
             pr_row = session.execute(select(WhitepaperDesignPullRequest)).scalar_one()
             self.assertEqual(pr_row.pr_number, 1234)
+
+    def test_finalize_preserves_explicit_implementation_plan_md(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+            lambda _payload, *, idempotency_key: {
+                "ok": True,
+                "resource": {
+                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
+                    "status": {"phase": "Pending"},
+                },
+            }
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            finalize_payload = {
+                "status": "completed",
+                "synthesis": {
+                    "executive_summary": "Strong approach with reproducible results.",
+                    "implementation_plan_md": "### Delivery Plan\n- Keep explicit plan",
+                    "implementation_implications": ["Should not overwrite explicit value."],
+                    "confidence": "0.87",
+                },
+                "verdict": {
+                    "verdict": "implement",
+                    "score": "0.81",
+                    "confidence": "0.84",
+                    "requires_followup": False,
+                },
+            }
+            service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            session.commit()
+
+            synthesis_row = session.execute(select(WhitepaperSynthesis)).scalar_one()
+            self.assertEqual(synthesis_row.implementation_plan_md, "### Delivery Plan\n- Keep explicit plan")
+            self.assertIsInstance(synthesis_row.synthesis_json, dict)
+            assert isinstance(synthesis_row.synthesis_json, dict)
+            self.assertEqual(
+                synthesis_row.synthesis_json.get("implementation_plan_md"),
+                "### Delivery Plan\n- Keep explicit plan",
+            )
+
+    def test_build_whitepaper_prompt_requires_implementation_plan_md(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+            lambda _payload, *, idempotency_key: {
+                "ok": True,
+                "resource": {
+                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
+                    "status": {"phase": "Pending"},
+                },
+            }
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            agentrun_row = session.execute(select(WhitepaperCodexAgentRun)).scalar_one()
+            self.assertIn("implementation_plan_md", agentrun_row.prompt_text or "")
 
     def test_failed_run_replay_is_idempotent_without_duplicate_rows(self) -> None:
         service = WhitepaperWorkflowService()
