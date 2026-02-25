@@ -15,6 +15,8 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 - **TorghutQuantDecisionsStalledDuringMarketHours**: No trading decisions for 15 minutes during market hours.
 - **TorghutAutonomyNoSignalStreakDuringMarketHours**: Autonomy has consecutive no-signal windows in market hours.
 - **TorghutAutonomyCursorAheadOfStreamDuringMarketHours**: Autonomy repeatedly reports cursor_ahead_of_stream in market hours.
+- **TorghutSignalContinuityActionableDuringMarketHours**: Continuity classifier is actionable for sustained windows in market hours.
+- **TorghutUniverseFailSafeBlocksDuringMarketHours**: Authoritative Jangar universe fail-safe blocks trading/autonomy.
 - **TorghutWSDesiredSymbolsFetchFailing**: WS forwarder is stuck on cached symbols (desired-symbol polling degraded) for 15 minutes in market hours.
 - **TorghutQuantOrderRejectionRateHigh**: Rejected orders >20% of submitted orders for 10 minutes.
 - **TorghutQuantLLMErrorRateHigh**: Trading LLM errors >10% of requests for 10 minutes.
@@ -34,6 +36,7 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - `kubectl -n torghut port-forward svc/torghut 8081:80`
    - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq .`
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg '^torghut_trading_'`
+   - `curl -fsS "http://127.0.0.1:8081/metrics" | rg 'torghut_trading_(signal_continuity_actionable|signal_continuity_alert_active|signal_actionable_staleness_total|signal_expected_staleness_total|universe_fail_safe_reason_total|universe_symbols_count|universe_cache_age_seconds)'`
 3. Validate signal freshness and TA pipeline health.
    - `kubectl -n torghut get deploy torghut-clickhouse-guardrails-exporter torghut-ws torghut-ta`
    - `kubectl -n torghut port-forward svc/torghut-ws 19090:9090`
@@ -46,6 +49,9 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
      - `increase(torghut_clickhouse_guardrails_freshness_fallback_total[15m]) == 0` under normal steady state.
      - `time() - max(torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds) < 900` and
        `time() - max(torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds) < 300` in market hours.
+     - `max_over_time(torghut_trading_signal_continuity_actionable{service="torghut"}[5m]) == 0` unless there is an acknowledged incident.
+     - `max_over_time(torghut_trading_signal_continuity_alert_active{service="torghut"}[5m]) == 0` once continuity has recovered.
+     - `increase(torghut_trading_universe_fail_safe_reason_total{service="torghut"}[15m]) == 0` in steady state.
    - Fail criteria:
      - `TorghutSignalsStaleDuringMarketHours`, `TorghutMicrobarsStaleDuringMarketHours`, `TorghutWSDesiredSymbolsFetchFailing`,
        or `TorghutClickHouseFreshnessQueryFallbacks` is firing.

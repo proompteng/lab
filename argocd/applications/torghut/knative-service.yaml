@@ -108,6 +108,8 @@ spec:
               value: "2"
             - name: TRADING_SIGNAL_STALE_LAG_ALERT_SECONDS
               value: "300"
+            - name: TRADING_SIGNAL_CONTINUITY_RECOVERY_CYCLES
+              value: "2"
             - name: TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS
               value: cursor_ahead_of_stream,no_signals_in_window,universe_source_unavailable
             - name: TRADING_SIGNAL_MARKET_CLOSED_EXPECTED_REASONS

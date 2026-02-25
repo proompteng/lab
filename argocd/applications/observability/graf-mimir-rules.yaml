@@ -925,6 +925,60 @@ data:
                 Autonomy ingest reports repeated cursor_ahead_of_stream for 10 minutes during market hours.
                 This indicates the TA pipeline is not advancing or ingestion is behind.
               runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutSignalContinuityActionableDuringMarketHours
+            expr: |
+              (
+                max_over_time(
+                  torghut_trading_signal_continuity_actionable{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut"
+                  }[10m]
+                ) >= bool 1
+              )
+              * on() group_left()
+              (
+                (day_of_week(vector(time())) >= bool 1)
+                * (day_of_week(vector(time())) <= bool 5)
+                * (hour(vector(time())) >= bool 14)
+                * (hour(vector(time())) < bool 21)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut signal continuity is actionable (market hours)
+              description: |
+                Torghut continuity classifier has remained actionable for 10 minutes during market hours.
+                Treat this as a source-chain reliability regression until continuity returns to expected state.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutUniverseFailSafeBlocksDuringMarketHours
+            expr: |
+              (
+                increase(
+                  torghut_trading_universe_fail_safe_reason_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut"
+                  }[10m]
+                ) > bool 0
+              )
+              * on() group_left()
+              (
+                (day_of_week(vector(time())) >= bool 1)
+                * (day_of_week(vector(time())) <= bool 5)
+                * (hour(vector(time())) >= bool 14)
+                * (hour(vector(time())) < bool 21)
+              )
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut authoritative universe fail-safe blocking (market hours)
+              description: |
+                Torghut has entered universe fail-safe blocking due to unresolved or empty authoritative Jangar symbols.
+                Keep autonomy/trading blocked until Jangar universe continuity is restored.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
           - alert: TorghutSignalStalenessAlertsSustainedDuringMarketHours
             expr: |
               (
