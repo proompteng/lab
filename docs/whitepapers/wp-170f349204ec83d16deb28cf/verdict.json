@@ -1,0 +1,41 @@
+{
+  "run_id": "wp-170f349204ec83d16deb28cf",
+  "verdict": "conditional_implement",
+  "score": 0.67,
+  "confidence": 0.83,
+  "decision_policy": "whitepaper_v1",
+  "gating": {
+    "full_paper_review_completed": true,
+    "implementation_ready_design_doc_present": true,
+    "machine_readable_artifacts_present": true,
+    "methodology_clarity": "high",
+    "theory_assumption_risk": "medium",
+    "empirical_rigor": "medium_low",
+    "external_validity": "low",
+    "reproducibility": "medium",
+    "recommended_mode": "research_and_analyst_assist_only"
+  },
+  "rationale": "ATLAS presents a clear and implementable architecture for sequential prompt adaptation in agentic trading workflows, and results are directionally strong in difficult bearish/volatile conditions. However, narrow evaluation scope, deterministic execution assumptions, low run count, and non-universal superiority across all model/regime cells make immediate autonomous production deployment unjustified.",
+  "rejection_reasons": [
+    "Reject immediate autonomous live-trading deployment due to simulator realism gaps (slippage, latency, partial fills, intraday microstructure not modeled).",
+    "Reject broad production claims until robustness is shown beyond three assets and one two-month window.",
+    "Reject confidence in universal superiority because some model/regime cells do not outperform static baselines.",
+    "Reject high-confidence rollout without higher-powered repeated-run statistics and significance analysis."
+  ],
+  "recommendations": [
+    "Implement Adaptive-OPRO as a controlled R&D capability with strict template-preservation checks.",
+    "Use order-level auditable outputs and keep reflection guidance optional plus gated.",
+    "Expand experiments to multi-year walk-forward evaluation over broader universes.",
+    "Add realistic transaction-cost and execution-friction models before promotion decisions.",
+    "Increase repeats and publish uncertainty/significance bands for key metrics."
+  ],
+  "requires_followup": true,
+  "follow_up_actions": [
+    "Run ablations over Adaptive-OPRO internals (window length, score mapping, optimizer backbone, template constraints) to identify causal gain drivers.",
+    "Validate regime-generalization on additional sectors and lower-liquidity assets.",
+    "Benchmark against stronger modern non-LLM baselines under identical execution assumptions.",
+    "Define promotion gates: minimum risk-adjusted uplift thresholds, max drawdown limits, and statistical confidence requirements."
+  ],
+  "approved_by": null,
+  "approved_at": null
+}
