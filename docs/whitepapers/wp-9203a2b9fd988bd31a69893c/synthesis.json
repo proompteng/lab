@@ -1,0 +1,205 @@
+{
+  "run_id": "wp-9203a2b9fd988bd31a69893c",
+  "paper": {
+    "title": "QuantaAlpha: An Evolutionary Framework for LLM-Driven Alpha Mining",
+    "arxiv_id": "2602.07085",
+    "pdf_url": "https://arxiv.org/pdf/2602.07085.pdf",
+    "version": "v1",
+    "date": "2026-02-06",
+    "sha256": "46de485ac041c6965c3464470a3bd1c25e9d144835ac50869021fbbabf85aab8"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 23,
+    "included_sections": [
+      "main_text",
+      "references",
+      "appendix_a_experiment_settings",
+      "appendix_b_algorithm_configuration",
+      "appendix_c_case_study"
+    ],
+    "review_date_utc": "2026-02-25"
+  },
+  "executive_summary": "QuantaAlpha reframes LLM-based factor mining as trajectory evolution with controllable factor construction and explicit mutation/crossover operators. The reported CSI 300 results are strong versus baselines, and transfer curves on CSI 500/S&P 500 are promising. Practical adoption is viable for research infrastructure, but production readiness is limited by uncertainty reporting and reproducibility gaps.",
+  "problem_statement": "Existing LLM agent pipelines for alpha mining suffer from fragile controllability, limited trust lineage across iterations, and constrained exploration under noisy non-stationary markets. The paper addresses this with trajectory-level evolutionary optimization and generation-time controls.",
+  "methodology_summary": "The system generates hypotheses, realizes factors through symbolic operator expressions and AST-backed code generation, applies consistency/complexity/redundancy gates, and evaluates factors via backtesting. It then evolves mining trajectories through diversified initialization, localized mutation, and reward-driven crossover to improve terminal reward over iterations.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "QuantaAlpha achieves best-reported headline performance on CSI 300 against all listed baselines.",
+      "evidence": [
+        "Section 5.2",
+        "Table 1"
+      ],
+      "details": {
+        "quantaalpha_gpt_5_2": {
+          "ic": 0.1501,
+          "arr_percent": 27.75,
+          "mdd_percent": 7.98
+        }
+      }
+    },
+    {
+      "id": "KF-2",
+      "finding": "Mutation is the highest-impact evolutionary operator in ablations.",
+      "evidence": [
+        "Section 5.3",
+        "Table 2"
+      ],
+      "details": {
+        "remove_mutation": {
+          "ic_delta": -0.0292,
+          "rank_ic_delta": -0.0284,
+          "arr_delta_percent": -9.81
+        }
+      }
+    },
+    {
+      "id": "KF-3",
+      "finding": "Consistency, complexity, and redundancy controls each contribute to stability and returns.",
+      "evidence": [
+        "Section 5.3",
+        "Figure 4"
+      ]
+    },
+    {
+      "id": "KF-4",
+      "finding": "Zero-shot transfer claims indicate sizable cumulative excess returns under distribution shift.",
+      "evidence": [
+        "Section 5.4",
+        "Figure 1"
+      ],
+      "details": {
+        "csi500_cumulative_excess_return": "about_160_percent",
+        "sp500_cumulative_excess_return": "about_137_percent"
+      }
+    },
+    {
+      "id": "KF-5",
+      "finding": "Iterative evolution shows early sample-efficient gains with later diminishing returns.",
+      "evidence": [
+        "Section 5.4",
+        "Figure 6",
+        "Figure 8"
+      ],
+      "details": {
+        "suggested_optimal_iteration_window": "iteration_11_to_12",
+        "approx_factor_pool_size": 350
+      }
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "Trajectory-level mutation and crossover improve controllable alpha mining versus stochastic regeneration.",
+      "assessment": "supported_in_scope",
+      "notes": "Method is explicit and ablation-backed, but scope remains limited to the paper's benchmark setting."
+    },
+    {
+      "claim": "Symbolic/AST realization with consistency and structural constraints reduces drift and crowding.",
+      "assessment": "partially_supported",
+      "notes": "Mechanism and ablations are coherent; external reproducibility still requires fuller artifact disclosure."
+    },
+    {
+      "claim": "Framework is robust to market distribution shifts.",
+      "assessment": "partially_supported",
+      "notes": "Transfer evidence is positive, but uncertainty bounds and broader out-of-period validation are limited."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "statistical_uncertainty",
+      "severity": "high",
+      "detail": "Headline comparisons are point estimates without confidence intervals or significance testing."
+    },
+    {
+      "risk": "reproducibility_artifacts",
+      "severity": "high",
+      "detail": "Paper text lacks a complete deterministic artifact bundle (prompt manifests, seeds, code/data hashes) for exact replication."
+    },
+    {
+      "risk": "benchmark_fairness",
+      "severity": "medium_high",
+      "detail": "Tuning parity and implementation details across many baselines are not fully auditable from the manuscript."
+    },
+    {
+      "risk": "execution_realism",
+      "severity": "medium_high",
+      "detail": "Backtest assumptions include costs, but do not fully model market impact, latency, and broader execution frictions."
+    },
+    {
+      "risk": "external_validity",
+      "severity": "medium",
+      "detail": "Primary evidence is concentrated in one benchmark regime with transfer shown mainly as cumulative curves."
+    }
+  ],
+  "assumptions": [
+    "Train/validation/test boundaries and preprocessing are consistently applied across all methods.",
+    "LLM backbone comparisons are not materially biased by unequal prompt engineering or infrastructure differences.",
+    "TopkDropout with stated transaction costs is representative enough to compare strategy behavior.",
+    "Reported transfer gains are not dominated by a specific market window artifact."
+  ],
+  "implementation_implications": [
+    "Adopt trajectory-level archival as a first-class object for factor research lineage.",
+    "Implement symbolic-expression and AST-based factor realization with explicit semantic verification.",
+    "Add deterministic experiment manifests (hashes, seeds, prompts, configs) for auditability.",
+    "Use evolutionary operators in research mode first, then promote only after robustness gates pass."
+  ],
+  "unresolved_questions": [
+    "What is the variance of main metrics across repeated seeds and stochastic LLM sampling?",
+    "How sensitive are gains to portfolio execution rules and parameter choices beyond TopkDropout defaults?",
+    "How much improvement comes from evolution operators versus stronger one-shot constrained generation?",
+    "Do transfer gains persist in future out-of-period windows and additional markets/assets?"
+  ],
+  "citations": [
+    {
+      "section": "3",
+      "pointer": "Eq. 1-3",
+      "claim": "Problem setup and trajectory objective formulation."
+    },
+    {
+      "section": "4.1.2",
+      "pointer": "Eq. 4-6",
+      "claim": "Complexity/redundancy constraints and AST-based control design."
+    },
+    {
+      "section": "4.2.2",
+      "pointer": "Eq. 7-8",
+      "claim": "Mutation and crossover operator definitions."
+    },
+    {
+      "section": "5.2",
+      "pointer": "Table 1",
+      "claim": "Main comparative performance results on CSI 300."
+    },
+    {
+      "section": "5.3",
+      "pointer": "Table 2",
+      "claim": "Ablation of planning/mutation/crossover components."
+    },
+    {
+      "section": "5.3",
+      "pointer": "Figure 4",
+      "claim": "Ablation of consistency/complexity/redundancy controls."
+    },
+    {
+      "section": "5.4",
+      "pointer": "Figure 1",
+      "claim": "Zero-shot transfer cumulative excess return curves on CSI 500 and S&P 500."
+    },
+    {
+      "section": "Appendix A.2",
+      "pointer": "Table 5",
+      "claim": "Market-specific train/validation/test split periods."
+    },
+    {
+      "section": "Appendix B",
+      "pointer": "Table 7",
+      "claim": "TopkDropout and transaction-cost assumptions for strategy execution."
+    }
+  ],
+  "confidence": 0.82
+}
