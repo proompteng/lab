@@ -28,6 +28,8 @@ from .models import (
     WhitepaperAnalysisRun,
     WhitepaperCodexAgentRun,
     WhitepaperDesignPullRequest,
+    WhitepaperEngineeringTrigger,
+    WhitepaperRolloutTransition,
 )
 from .trading import TradingScheduler
 from .trading.autonomy import evaluate_evidence_continuity
@@ -289,6 +291,52 @@ def finalize_whitepaper_run(
     return cast(dict[str, object], result)
 
 
+@app.post("/whitepapers/runs/{run_id}/approve-implementation")
+def approve_whitepaper_for_engineering(
+    run_id: str,
+    request: Request,
+    payload: dict[str, object] = Body(default={}),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Manually approve a completed whitepaper for B1 engineering dispatch."""
+
+    _require_whitepaper_control_token(request)
+
+    approved_by = str(payload.get("approved_by") or payload.get("approvedBy") or "").strip()
+    approval_reason = str(payload.get("approval_reason") or payload.get("approvalReason") or "").strip()
+    approval_source = str(payload.get("approval_source") or payload.get("approvalSource") or "jangar_ui").strip()
+    target_scope = str(payload.get("target_scope") or payload.get("targetScope") or "").strip() or None
+    repository = str(payload.get("repository") or "").strip() or None
+    base = str(payload.get("base") or "").strip() or None
+    head = str(payload.get("head") or "").strip() or None
+    rollout_profile = str(payload.get("rollout_profile") or payload.get("rolloutProfile") or "").strip() or None
+
+    try:
+        result = WHITEPAPER_WORKFLOW.approve_for_engineering(
+            session,
+            run_id=run_id,
+            approved_by=approved_by,
+            approval_reason=approval_reason,
+            approval_source=approval_source or "jangar_ui",
+            target_scope=target_scope,
+            repository=repository,
+            base=base,
+            head=head,
+            rollout_profile=rollout_profile,
+        )
+    except ValueError as exc:
+        session.rollback()
+        detail = str(exc)
+        status = 404 if detail == "whitepaper_run_not_found" else 400
+        raise HTTPException(status_code=status, detail=detail) from exc
+    except Exception as exc:
+        session.rollback()
+        logger.exception("Whitepaper manual approval failed for run_id=%s", run_id)
+        raise HTTPException(status_code=500, detail=f"whitepaper_manual_approval_failed:{exc}") from exc
+    session.commit()
+    return cast(dict[str, object], result)
+
+
 @app.get("/whitepapers/runs/{run_id}")
 def get_whitepaper_run(
     run_id: str,
@@ -312,15 +360,23 @@ def get_whitepaper_run(
         .first()
     )
 
-    pr_rows = (
-        session.execute(
-            select(WhitepaperDesignPullRequest)
-            .where(WhitepaperDesignPullRequest.analysis_run_id == row.id)
-            .order_by(WhitepaperDesignPullRequest.attempt.asc())
+    pr_rows = session.execute(
+        select(WhitepaperDesignPullRequest)
+        .where(WhitepaperDesignPullRequest.analysis_run_id == row.id)
+        .order_by(WhitepaperDesignPullRequest.attempt.asc())
+    ).scalars().all()
+    trigger_row = session.execute(
+        select(WhitepaperEngineeringTrigger).where(
+            WhitepaperEngineeringTrigger.analysis_run_id == row.id
         )
-        .scalars()
-        .all()
-    )
+    ).scalar_one_or_none()
+    rollout_rows: Sequence[WhitepaperRolloutTransition] = []
+    if trigger_row is not None:
+        rollout_rows = session.execute(
+            select(WhitepaperRolloutTransition)
+            .where(WhitepaperRolloutTransition.trigger_id == trigger_row.id)
+            .order_by(WhitepaperRolloutTransition.created_at.asc())
+        ).scalars().all()
 
     return jsonable_encoder(
         {
@@ -381,6 +437,42 @@ def get_whitepaper_run(
                     "ci_status": pr.ci_status,
                 }
                 for pr in pr_rows
+            ],
+            "engineering_trigger": (
+                {
+                    "trigger_id": trigger_row.trigger_id,
+                    "implementation_grade": trigger_row.implementation_grade,
+                    "decision": trigger_row.decision,
+                    "reason_codes": trigger_row.reason_codes_json,
+                    "approval_token": trigger_row.approval_token,
+                    "dispatched_agentrun_name": trigger_row.dispatched_agentrun_name,
+                    "rollout_profile": trigger_row.rollout_profile,
+                    "approval_source": trigger_row.approval_source,
+                    "approved_by": trigger_row.approved_by,
+                    "approved_at": trigger_row.approved_at,
+                    "approval_reason": trigger_row.approval_reason,
+                    "policy_ref": trigger_row.policy_ref,
+                    "gate_snapshot_hash": trigger_row.gate_snapshot_hash,
+                    "created_at": trigger_row.created_at,
+                    "updated_at": trigger_row.updated_at,
+                }
+                if trigger_row is not None
+                else None
+            ),
+            "rollout_transitions": [
+                {
+                    "transition_id": transition.transition_id,
+                    "from_stage": transition.from_stage,
+                    "to_stage": transition.to_stage,
+                    "transition_type": transition.transition_type,
+                    "status": transition.status,
+                    "gate_results": transition.gate_results_json,
+                    "reason_codes": transition.reason_codes_json,
+                    "blocking_gate": transition.blocking_gate,
+                    "evidence_hash": transition.evidence_hash,
+                    "created_at": transition.created_at,
+                }
+                for transition in rollout_rows
             ],
         }
     )

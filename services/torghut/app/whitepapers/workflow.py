@@ -28,6 +28,8 @@ from ..models import (
     WhitepaperDesignPullRequest,
     WhitepaperDocument,
     WhitepaperDocumentVersion,
+    WhitepaperEngineeringTrigger,
+    WhitepaperRolloutTransition,
     WhitepaperSynthesis,
     WhitepaperViabilityVerdict,
     coerce_json_payload,
@@ -115,6 +117,34 @@ def _http_request_bytes(
 _GITHUB_ISSUE_ACTIONS = {"opened", "edited", "reopened", "labeled"}
 _GITHUB_ISSUE_COMMENT_ACTIONS = {"created", "edited"}
 _RETRYABLE_AGENTRUN_STATUSES = {"failed", "error", "cancelled", "canceled", "timeout", "timed_out"}
+_ELIGIBLE_AUTO_VERDICTS = {"implement", "conditional_implement"}
+_REJECT_VERDICTS = {"reject", "not_viable", "not-viable"}
+_PASS_GATE_STATUSES = {"pass", "passed", "ok", "true", "green"}
+
+
+@dataclass(frozen=True)
+class EngineeringGradeDecision:
+    implementation_grade: str
+    decision: str
+    reason_codes: list[str]
+    policy_ref: str
+    rollout_profile: str
+    gate_snapshot_hash: str | None
+    gate_snapshot: dict[str, Any] | None
+    hypothesis_id: str | None
+    approval_token: str
+
+
+@dataclass(frozen=True)
+class ManualApprovalPayload:
+    approved_by: str
+    approval_reason: str
+    approval_source: str
+    target_scope: str | None
+    repository: str | None
+    base: str | None
+    head: str | None
+    rollout_profile: str | None
 
 
 @dataclass(frozen=True)
@@ -156,6 +186,33 @@ def _int_env(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = _str_env(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _normalize_identifier(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+    return normalized or "unknown"
+
+
+def _sorted_unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        item = value.strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        ordered.append(item)
+    return ordered
 
 
 def whitepaper_workflow_enabled() -> bool:
@@ -1239,11 +1296,65 @@ class WhitepaperWorkflowService:
         self._ingest_artifacts(session, run, payload.get("artifacts"))
         self._upsert_steps(session, run, payload.get("steps"))
         self._complete_run(session, run, payload)
+        trigger_result = self._evaluate_and_process_engineering_trigger(
+            session,
+            run,
+            manual_approval=None,
+        )
 
         return {
             "run_id": run.run_id,
             "status": run.status,
             "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "engineering_trigger": trigger_result,
+        }
+
+    def approve_for_engineering(
+        self,
+        session: Session,
+        *,
+        run_id: str,
+        approved_by: str,
+        approval_reason: str,
+        approval_source: str = "jangar_ui",
+        target_scope: str | None = None,
+        repository: str | None = None,
+        base: str | None = None,
+        head: str | None = None,
+        rollout_profile: str | None = None,
+    ) -> dict[str, Any]:
+        run = self._get_run_or_raise(session, run_id)
+        approver = self._optional_text(approved_by)
+        reason = self._optional_text(approval_reason)
+        if run.status != "completed":
+            raise ValueError("whitepaper_run_not_completed")
+        if not approver:
+            raise ValueError("approved_by_required")
+        if not reason:
+            raise ValueError("approval_reason_required")
+        if run.synthesis is None:
+            raise ValueError("whitepaper_synthesis_missing")
+        if run.viability_verdict is None:
+            raise ValueError("whitepaper_verdict_missing")
+
+        trigger_result = self._evaluate_and_process_engineering_trigger(
+            session,
+            run,
+            manual_approval=ManualApprovalPayload(
+                approved_by=approver,
+                approval_reason=reason,
+                approval_source=self._optional_text(approval_source) or "jangar_ui",
+                target_scope=target_scope,
+                repository=repository,
+                base=base,
+                head=head,
+                rollout_profile=rollout_profile,
+            ),
+        )
+        return {
+            "run_id": run.run_id,
+            "status": run.status,
+            "engineering_trigger": trigger_result,
         }
 
     @staticmethod
@@ -1254,6 +1365,769 @@ class WhitepaperWorkflowService:
         if run is None:
             raise ValueError("whitepaper_run_not_found")
         return run
+
+    def _evaluate_and_process_engineering_trigger(
+        self,
+        session: Session,
+        run: WhitepaperAnalysisRun,
+        *,
+        manual_approval: ManualApprovalPayload | None,
+    ) -> dict[str, Any]:
+        verdict = run.viability_verdict
+        decision = self._compute_engineering_grade_decision(run, verdict, manual_approval=manual_approval)
+        trigger = self._upsert_engineering_trigger(
+            session,
+            run=run,
+            verdict=verdict,
+            decision=decision,
+            manual_approval=manual_approval,
+        )
+
+        should_dispatch = decision.decision == "queued"
+        if manual_approval is not None and trigger.decision == "dispatched" and trigger.dispatched_agentrun_name:
+            should_dispatch = False
+
+        if should_dispatch:
+            try:
+                dispatch_result = self._dispatch_engineering_agentrun(
+                    session,
+                    run=run,
+                    trigger=trigger,
+                    manual_approval=manual_approval,
+                )
+                trigger.decision = "dispatched"
+                trigger.dispatched_agentrun_name = self._optional_text(
+                    dispatch_result.get("agentrun_name")
+                )
+            except Exception as exc:
+                reason_codes = list(cast(list[str], trigger.reason_codes_json or []))
+                reason_codes.append(
+                    f"engineering_dispatch_failed_{_normalize_identifier(type(exc).__name__)}"
+                )
+                trigger.decision = "failed"
+                trigger.reason_codes_json = _sorted_unique(reason_codes)
+            session.add(trigger)
+
+        rollout_transitions: list[WhitepaperRolloutTransition] = []
+        if trigger.decision == "dispatched" and trigger.rollout_profile == "automatic":
+            rollout_transitions = self._run_auto_rollout_controller(
+                session,
+                trigger=trigger,
+            )
+
+        return self._build_engineering_trigger_payload(trigger, rollout_transitions)
+
+    def _compute_engineering_grade_decision(
+        self,
+        run: WhitepaperAnalysisRun,
+        verdict: WhitepaperViabilityVerdict | None,
+        *,
+        manual_approval: ManualApprovalPayload | None,
+    ) -> EngineeringGradeDecision:
+        policy_ref = (
+            _str_env("WHITEPAPER_ENGINEERING_TRIGGER_POLICY_REF", "torghut-v5-high-confidence-trigger-v1")
+            or "torghut-v5-high-confidence-trigger-v1"
+        )
+        rollout_profile = self._normalize_rollout_profile(
+            manual_approval.rollout_profile if manual_approval is not None else None
+        )
+        if manual_approval is None:
+            rollout_profile = self._normalize_rollout_profile(
+                _str_env("WHITEPAPER_ENGINEERING_ROLLOUT_PROFILE", rollout_profile)
+            )
+
+        reason_codes: list[str] = []
+        min_confidence = _float_env("WHITEPAPER_ENGINEERING_MIN_CONFIDENCE", 0.80)
+        min_score = _float_env("WHITEPAPER_ENGINEERING_MIN_SCORE", 0.75)
+        priority_confidence = _float_env(
+            "WHITEPAPER_ENGINEERING_PRIORITY_MIN_CONFIDENCE",
+            max(min_confidence, 0.90),
+        )
+        priority_score = _float_env("WHITEPAPER_ENGINEERING_PRIORITY_MIN_SCORE", max(min_score, 0.90))
+        auto_dispatch_enabled = _bool_env("WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED", default=True)
+
+        gate_snapshot = self._as_json_record(verdict.gating_json if verdict is not None else None)
+        gate_snapshot_hash = self._compute_json_hash(gate_snapshot) if gate_snapshot is not None else None
+        gate_statuses = self._extract_gate_statuses(gate_snapshot)
+        gate_missing_codes = self._missing_gate_reason_codes(
+            gate_statuses,
+            required=("g1", "g2", "g3", "g4", "g5"),
+        )
+        blocking_reason_codes = self._gating_blocking_reason_codes(gate_snapshot, gate_statuses)
+        reason_codes.extend(gate_missing_codes)
+        reason_codes.extend(blocking_reason_codes)
+
+        verdict_text = (
+            self._optional_text(verdict.verdict).lower() if verdict is not None and verdict.verdict else "missing"
+        )
+        score_value = float(verdict.score) if verdict is not None and verdict.score is not None else None
+        confidence_value = float(verdict.confidence) if verdict is not None and verdict.confidence is not None else None
+        requires_followup = bool(verdict.requires_followup) if verdict is not None else True
+        hypothesis_id = self._derive_hypothesis_id(run)
+
+        if run.status != "completed":
+            reason_codes.append("run_status_not_completed")
+            implementation_grade = "research_only"
+            dispatch_decision = "suppressed"
+        elif verdict is None:
+            reason_codes.append("verdict_missing")
+            implementation_grade = "reject"
+            dispatch_decision = "suppressed"
+        else:
+            if verdict_text not in _ELIGIBLE_AUTO_VERDICTS:
+                reason_codes.append(f"verdict_not_auto_eligible_{_normalize_identifier(verdict_text)}")
+            if confidence_value is None:
+                reason_codes.append("confidence_missing")
+            elif confidence_value < min_confidence:
+                reason_codes.append("confidence_below_min")
+            if score_value is None:
+                reason_codes.append("score_missing")
+            elif score_value < min_score:
+                reason_codes.append("score_below_min")
+            if requires_followup:
+                reason_codes.append("requires_followup_true")
+
+            if verdict_text in _REJECT_VERDICTS or (
+                confidence_value is not None and confidence_value < min_confidence
+            ):
+                implementation_grade = "reject"
+                dispatch_decision = "suppressed"
+            elif requires_followup or gate_snapshot is None or bool(gate_missing_codes) or bool(blocking_reason_codes):
+                if gate_snapshot is None:
+                    reason_codes.append("gating_json_missing")
+                implementation_grade = "research_only"
+                dispatch_decision = "suppressed"
+            elif (
+                verdict_text in _ELIGIBLE_AUTO_VERDICTS
+                and confidence_value is not None
+                and confidence_value >= min_confidence
+                and score_value is not None
+                and score_value >= min_score
+            ):
+                if confidence_value >= priority_confidence and score_value >= priority_score:
+                    implementation_grade = "engineering_priority"
+                else:
+                    implementation_grade = "engineering_candidate"
+                dispatch_decision = "queued" if auto_dispatch_enabled else "suppressed"
+            else:
+                implementation_grade = "research_only"
+                dispatch_decision = "suppressed"
+
+        if manual_approval is not None:
+            if self._manual_approval_allowed(rollout_profile):
+                reason_codes.append("manual_override_applied")
+                reason_codes.append(
+                    f"manual_override_source_{_normalize_identifier(manual_approval.approval_source)}"
+                )
+                dispatch_decision = "queued"
+            else:
+                reason_codes.append("manual_override_not_allowed_for_profile")
+                dispatch_decision = "suppressed"
+
+        if dispatch_decision == "queued":
+            reason_codes.append("engineering_dispatch_queued")
+        elif not auto_dispatch_enabled and manual_approval is None:
+            reason_codes.append("auto_dispatch_disabled")
+
+        approval_seed = {
+            "run_id": run.run_id,
+            "grade": implementation_grade,
+            "decision": dispatch_decision,
+            "policy_ref": policy_ref,
+            "gate_snapshot_hash": gate_snapshot_hash,
+            "manual_override": bool(manual_approval is not None),
+        }
+        approval_token = "wpat-" + hashlib.sha256(
+            json.dumps(approval_seed, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:24]
+
+        return EngineeringGradeDecision(
+            implementation_grade=implementation_grade,
+            decision=dispatch_decision,
+            reason_codes=_sorted_unique(reason_codes),
+            policy_ref=policy_ref,
+            rollout_profile=rollout_profile,
+            gate_snapshot_hash=gate_snapshot_hash,
+            gate_snapshot=gate_snapshot,
+            hypothesis_id=hypothesis_id,
+            approval_token=approval_token,
+        )
+
+    def _upsert_engineering_trigger(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+        verdict: WhitepaperViabilityVerdict | None,
+        decision: EngineeringGradeDecision,
+        manual_approval: ManualApprovalPayload | None,
+    ) -> WhitepaperEngineeringTrigger:
+        trigger = session.execute(
+            select(WhitepaperEngineeringTrigger).where(
+                WhitepaperEngineeringTrigger.analysis_run_id == run.id
+            )
+        ).scalar_one_or_none()
+        if trigger is None:
+            trigger = WhitepaperEngineeringTrigger(
+                trigger_id=f"wptrig-{hashlib.sha256(run.run_id.encode('utf-8')).hexdigest()[:24]}",
+                whitepaper_run_id=run.run_id,
+                analysis_run_id=run.id,
+                verdict_id=verdict.id if verdict is not None else None,
+                hypothesis_id=decision.hypothesis_id,
+                implementation_grade=decision.implementation_grade,
+                decision=decision.decision,
+                reason_codes_json=decision.reason_codes,
+                approval_token=decision.approval_token,
+                rollout_profile=decision.rollout_profile,
+                policy_ref=decision.policy_ref,
+                gate_snapshot_hash=decision.gate_snapshot_hash,
+                gate_snapshot_json=decision.gate_snapshot,
+            )
+            if manual_approval is not None:
+                trigger.approval_source = manual_approval.approval_source
+                trigger.approved_by = manual_approval.approved_by
+                trigger.approval_reason = manual_approval.approval_reason
+                trigger.approved_at = datetime.now(timezone.utc)
+            session.add(trigger)
+            session.flush()
+            return trigger
+
+        trigger.verdict_id = verdict.id if verdict is not None else None
+        trigger.hypothesis_id = decision.hypothesis_id
+        trigger.implementation_grade = decision.implementation_grade
+        trigger.decision = decision.decision
+        trigger.reason_codes_json = decision.reason_codes
+        trigger.approval_token = decision.approval_token
+        trigger.rollout_profile = decision.rollout_profile
+        trigger.policy_ref = decision.policy_ref
+        trigger.gate_snapshot_hash = decision.gate_snapshot_hash
+        trigger.gate_snapshot_json = decision.gate_snapshot
+        if manual_approval is not None:
+            trigger.approval_source = manual_approval.approval_source
+            trigger.approved_by = manual_approval.approved_by
+            trigger.approved_at = datetime.now(timezone.utc)
+            trigger.approval_reason = manual_approval.approval_reason
+        session.add(trigger)
+        session.flush()
+        return trigger
+
+    def _run_auto_rollout_controller(
+        self,
+        session: Session,
+        *,
+        trigger: WhitepaperEngineeringTrigger,
+    ) -> list[WhitepaperRolloutTransition]:
+        existing_with_hash = session.execute(
+            select(WhitepaperRolloutTransition)
+            .where(
+                WhitepaperRolloutTransition.trigger_id == trigger.id,
+                WhitepaperRolloutTransition.evidence_hash == trigger.gate_snapshot_hash,
+            )
+            .order_by(WhitepaperRolloutTransition.created_at.asc())
+        ).scalars().all()
+        if existing_with_hash:
+            return existing_with_hash
+
+        gate_snapshot = self._as_json_record(trigger.gate_snapshot_json)
+        gate_statuses = self._extract_gate_statuses(gate_snapshot)
+        transitions: list[WhitepaperRolloutTransition] = []
+        current_stage: str | None = None
+        stage_requirements: tuple[tuple[str, tuple[str, ...]], ...] = (
+            ("paper", ("g1", "g2", "g3", "g4", "g5")),
+            ("shadow", ("g1", "g2", "g3", "g4", "g5", "g6")),
+            ("constrained_live", ("g1", "g2", "g3", "g4", "g5", "g6")),
+            ("scaled_live", ("g1", "g2", "g3", "g4", "g5", "g6", "g7")),
+        )
+
+        for target_stage, required_gates in stage_requirements:
+            gate_failures = self._required_gate_failures(gate_statuses, required=required_gates)
+            if not gate_failures:
+                transitions.append(
+                    self._append_rollout_transition(
+                        session,
+                        trigger=trigger,
+                        from_stage=current_stage,
+                        to_stage=target_stage,
+                        transition_type="advance",
+                        status="passed",
+                        reason_codes=["all_required_gates_pass"],
+                        gate_results={"required_gates": list(required_gates), "gate_statuses": gate_statuses},
+                        blocking_gate=None,
+                    )
+                )
+                current_stage = target_stage
+                continue
+
+            blocking_gate = self._first_blocking_gate_id(gate_failures)
+            if current_stage in {"shadow", "constrained_live", "scaled_live"}:
+                rollback_target = self._rollback_target_stage(current_stage)
+                transitions.append(
+                    self._append_rollout_transition(
+                        session,
+                        trigger=trigger,
+                        from_stage=current_stage,
+                        to_stage=rollback_target,
+                        transition_type="rollback",
+                        status="rolled_back",
+                        reason_codes=gate_failures,
+                        gate_results={"required_gates": list(required_gates), "gate_statuses": gate_statuses},
+                        blocking_gate=blocking_gate,
+                    )
+                )
+                current_stage = rollback_target
+
+            transitions.append(
+                self._append_rollout_transition(
+                    session,
+                    trigger=trigger,
+                    from_stage=current_stage,
+                    to_stage=current_stage,
+                    transition_type="halt",
+                    status="halted",
+                    reason_codes=gate_failures,
+                    gate_results={"required_gates": list(required_gates), "gate_statuses": gate_statuses},
+                    blocking_gate=blocking_gate,
+                )
+            )
+            return transitions
+
+        return transitions
+
+    def _append_rollout_transition(
+        self,
+        session: Session,
+        *,
+        trigger: WhitepaperEngineeringTrigger,
+        from_stage: str | None,
+        to_stage: str | None,
+        transition_type: str,
+        status: str,
+        reason_codes: list[str],
+        gate_results: dict[str, Any],
+        blocking_gate: str | None,
+    ) -> WhitepaperRolloutTransition:
+        sequence = self._next_rollout_sequence(session, trigger.id)
+        transition_seed = (
+            f"{trigger.trigger_id}:{trigger.gate_snapshot_hash}:{transition_type}:{from_stage or ''}:"
+            f"{to_stage or ''}:{sequence}"
+        )
+        transition = WhitepaperRolloutTransition(
+            transition_id=f"wprt-{hashlib.sha256(transition_seed.encode('utf-8')).hexdigest()[:24]}",
+            trigger_id=trigger.id,
+            whitepaper_run_id=trigger.whitepaper_run_id,
+            from_stage=from_stage,
+            to_stage=to_stage,
+            transition_type=transition_type,
+            status=status,
+            gate_results_json=coerce_json_payload(gate_results),
+            reason_codes_json=_sorted_unique(reason_codes),
+            blocking_gate=blocking_gate,
+            evidence_hash=trigger.gate_snapshot_hash,
+        )
+        session.add(transition)
+        session.flush()
+        return transition
+
+    def _next_rollout_sequence(self, session: Session, trigger_id: Any) -> int:
+        existing_count = session.execute(
+            select(func.count())
+            .select_from(WhitepaperRolloutTransition)
+            .where(WhitepaperRolloutTransition.trigger_id == trigger_id)
+        ).scalar_one()
+        return int(existing_count or 0) + 1
+
+    def _dispatch_engineering_agentrun(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+        trigger: WhitepaperEngineeringTrigger,
+        manual_approval: ManualApprovalPayload | None,
+    ) -> dict[str, Any]:
+        context = cast(dict[str, Any], run.orchestration_context_json or {})
+        marker = cast(dict[str, Any], context.get("marker") or {})
+        repository = (
+            self._optional_text(
+                manual_approval.repository if manual_approval is not None else None
+            )
+            or self._optional_text(cast(dict[str, Any], context).get("repository"))
+            or _str_env("WHITEPAPER_DEFAULT_REPOSITORY", "proompteng/lab")
+            or "proompteng/lab"
+        )
+        base_branch = (
+            self._optional_text(
+                manual_approval.base if manual_approval is not None else None
+            )
+            or self._optional_text(marker.get("base_branch"))
+            or _str_env("WHITEPAPER_DEFAULT_BASE_BRANCH", "main")
+            or "main"
+        )
+        head_branch = (
+            self._optional_text(
+                manual_approval.head if manual_approval is not None else None
+            )
+            or self._default_engineering_head_branch(
+                run.run_id,
+                suffix="manual" if manual_approval is not None else "auto",
+            )
+        )
+        artifact_path = f"docs/whitepapers/{run.run_id}"
+        issue_url = self._optional_text(context.get("issue_url")) or ""
+        issue_title = self._optional_text((run.document.title if run.document else None)) or "Whitepaper analysis"
+        prompt = self._build_engineering_trigger_prompt(
+            run_id=run.run_id,
+            repository=repository,
+            issue_url=issue_url,
+            issue_title=issue_title,
+            implementation_grade=trigger.implementation_grade,
+            rollout_profile=trigger.rollout_profile,
+            artifact_path=artifact_path,
+            approval_reason=manual_approval.approval_reason if manual_approval is not None else None,
+        )
+        idempotency_key = (
+            f"{run.run_id}-engineering-"
+            f"{'manual' if manual_approval is not None else 'auto'}"
+        )
+        policy_ref = trigger.policy_ref or "torghut-v5-high-confidence-trigger-v1"
+        payload: dict[str, Any] = {
+            "namespace": _str_env("WHITEPAPER_ENGINEERING_AGENTRUN_NAMESPACE", "agents"),
+            "idempotencyKey": idempotency_key,
+            "agentRef": {"name": _str_env("WHITEPAPER_ENGINEERING_AGENT_NAME", "codex-whitepaper-agent")},
+            "runtime": {"type": "job"},
+            "implementation": {
+                "summary": f"Whitepaper engineering candidate {run.run_id}",
+                "text": prompt,
+                "source": {
+                    "provider": "github",
+                    "url": issue_url or f"https://github.com/{repository}",
+                },
+                "vcsRef": {"name": _str_env("WHITEPAPER_ENGINEERING_AGENTRUN_VCS_REF", "github")},
+                "labels": ["whitepaper", "engineering-candidate", "torghut", "b1"],
+            },
+            "vcsRef": {"name": _str_env("WHITEPAPER_ENGINEERING_AGENTRUN_VCS_REF", "github")},
+            "vcsPolicy": {"required": True, "mode": "read-write"},
+            "parameters": {
+                "runId": run.run_id,
+                "hypothesisRef": trigger.hypothesis_id or run.run_id,
+                "policyRef": policy_ref,
+                "repository": repository,
+                "base": base_branch,
+                "head": head_branch,
+                "artifactPath": artifact_path,
+                "rolloutProfile": trigger.rollout_profile,
+                "approvalToken": trigger.approval_token,
+                "approvalSource": trigger.approval_source or "policy_auto",
+                "implementationGrade": trigger.implementation_grade,
+            },
+            "policy": {
+                "secretBindingRef": _str_env(
+                    "WHITEPAPER_ENGINEERING_AGENTRUN_SECRET_BINDING",
+                    "codex-whitepaper-github-token",
+                )
+            },
+            "ttlSecondsAfterFinished": _int_env("WHITEPAPER_ENGINEERING_AGENTRUN_TTL_SECONDS", 7200),
+        }
+        if manual_approval is not None:
+            payload["parameters"]["approvedBy"] = manual_approval.approved_by
+            payload["parameters"]["approvalReason"] = manual_approval.approval_reason
+            payload["parameters"]["targetScope"] = manual_approval.target_scope or ""
+
+        response_payload = self._submit_jangar_agentrun(payload, idempotency_key=idempotency_key)
+        resource = cast(dict[str, Any], response_payload.get("resource") or {})
+        metadata = cast(dict[str, Any], resource.get("metadata") or {})
+        status = cast(dict[str, Any], resource.get("status") or {})
+        agentrun_name = str(metadata.get("name") or "").strip()
+        agentrun_uid = str(metadata.get("uid") or "").strip() or None
+        phase = str(status.get("phase") or "queued").strip().lower() or "queued"
+        if not agentrun_name:
+            raise RuntimeError("engineering_dispatch_missing_agentrun_name")
+
+        step = WhitepaperAnalysisStep(
+            analysis_run_id=run.id,
+            step_name="engineering_dispatch",
+            step_order=50,
+            attempt=self._next_step_attempt(
+                session,
+                analysis_run_id=run.id,
+                step_name="engineering_dispatch",
+            ),
+            status="completed",
+            executor="torghut",
+            idempotency_key=idempotency_key,
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+            input_json={"payload": payload},
+            output_json=response_payload,
+        )
+        session.add(step)
+        session.flush()
+
+        agentrun_row = WhitepaperCodexAgentRun(
+            analysis_run_id=run.id,
+            analysis_step_id=step.id,
+            agentrun_name=agentrun_name,
+            agentrun_namespace=_str_env("WHITEPAPER_ENGINEERING_AGENTRUN_NAMESPACE", "agents"),
+            agentrun_uid=agentrun_uid,
+            status=phase,
+            execution_mode="engineering_candidate",
+            requested_by=manual_approval.approved_by if manual_approval is not None else "policy_auto",
+            vcs_provider="github",
+            vcs_repository=repository,
+            vcs_base_branch=base_branch,
+            vcs_head_branch=head_branch,
+            workspace_context_json={
+                "issue_url": issue_url,
+                "artifact_path": artifact_path,
+                "trigger_id": trigger.trigger_id,
+                "approval_source": trigger.approval_source or "policy_auto",
+            },
+            prompt_text=prompt,
+            prompt_hash=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            input_context_json={"request": payload},
+            output_context_json=response_payload,
+            started_at=datetime.now(timezone.utc),
+        )
+        session.add(agentrun_row)
+        session.flush()
+        return {
+            "agentrun_name": agentrun_name,
+            "agentrun_uid": agentrun_uid,
+            "status": phase,
+        }
+
+    def _default_engineering_head_branch(self, run_id: str, *, suffix: str) -> str:
+        return f"codex/whitepaper-b1-{run_id[-16:]}-{suffix}"
+
+    def _build_engineering_trigger_payload(
+        self,
+        trigger: WhitepaperEngineeringTrigger,
+        rollout_transitions: list[WhitepaperRolloutTransition],
+    ) -> dict[str, Any]:
+        transitions_payload = [
+            {
+                "transition_id": item.transition_id,
+                "from_stage": item.from_stage,
+                "to_stage": item.to_stage,
+                "transition_type": item.transition_type,
+                "status": item.status,
+                "reason_codes": item.reason_codes_json or [],
+                "blocking_gate": item.blocking_gate,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+            }
+            for item in rollout_transitions
+        ]
+        return {
+            "trigger_id": trigger.trigger_id,
+            "run_id": trigger.whitepaper_run_id,
+            "implementation_grade": trigger.implementation_grade,
+            "decision": trigger.decision,
+            "reason_codes": trigger.reason_codes_json or [],
+            "approval_token": trigger.approval_token,
+            "dispatched_agentrun_name": trigger.dispatched_agentrun_name,
+            "rollout_profile": trigger.rollout_profile,
+            "approval_source": trigger.approval_source,
+            "approved_by": trigger.approved_by,
+            "approved_at": trigger.approved_at.isoformat() if trigger.approved_at else None,
+            "approval_reason": trigger.approval_reason,
+            "policy_ref": trigger.policy_ref,
+            "gate_snapshot_hash": trigger.gate_snapshot_hash,
+            "rollout_transitions": transitions_payload,
+        }
+
+    def _build_engineering_trigger_prompt(
+        self,
+        *,
+        run_id: str,
+        repository: str,
+        issue_url: str,
+        issue_title: str,
+        implementation_grade: str,
+        rollout_profile: str,
+        artifact_path: str,
+        approval_reason: str | None,
+    ) -> str:
+        manual_line = (
+            f"Manual approval rationale: {approval_reason}"
+            if approval_reason
+            else "Dispatch source: policy_auto"
+        )
+        return "\n".join(
+            [
+                f"Objective: Execute B1 engineering candidate implementation for whitepaper run {run_id}.",
+                f"Repository: {repository}",
+                f"Issue: {issue_url}",
+                f"Issue title: {issue_title}",
+                f"Implementation grade: {implementation_grade}",
+                f"Rollout profile: {rollout_profile}",
+                f"Artifact path: {artifact_path}",
+                manual_line,
+                "",
+                "Constraints:",
+                "1) Implement only B1 engineering candidate work (RFC/code/tests).",
+                "2) Do not perform any production rollout or bypass deterministic promotion gates.",
+                "3) Keep outputs reproducible with explicit evidence pointers and deterministic reason codes.",
+                "4) Preserve fail-closed behavior when required artifacts are missing.",
+            ]
+        )
+
+    @staticmethod
+    def _compute_json_hash(payload: dict[str, Any] | None) -> str | None:
+        if payload is None:
+            return None
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _as_json_record(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, Mapping):
+            return None
+        return cast(dict[str, Any], coerce_json_payload(dict(cast(Mapping[str, Any], value))))
+
+    def _extract_gate_statuses(self, gate_snapshot: dict[str, Any] | None) -> dict[str, str]:
+        if gate_snapshot is None:
+            return {}
+        statuses: dict[str, str] = {}
+
+        gates_raw = gate_snapshot.get("gates")
+        if isinstance(gates_raw, Mapping):
+            for gate_id_raw, gate_payload in cast(Mapping[Any, Any], gates_raw).items():
+                gate_id = _normalize_identifier(str(gate_id_raw))
+                if gate_id.startswith("gate"):
+                    gate_id = gate_id.replace("gate", "g", 1)
+                status_value = None
+                if isinstance(gate_payload, Mapping):
+                    status_value = self._optional_text(cast(Mapping[str, Any], gate_payload).get("status"))
+                else:
+                    status_value = self._optional_text(gate_payload)
+                if status_value:
+                    statuses[gate_id] = _normalize_identifier(status_value)
+        elif isinstance(gates_raw, list):
+            for entry in gates_raw:
+                if not isinstance(entry, Mapping):
+                    continue
+                gate_id_raw = (
+                    self._optional_text(cast(Mapping[str, Any], entry).get("gate_id"))
+                    or self._optional_text(cast(Mapping[str, Any], entry).get("id"))
+                    or self._optional_text(cast(Mapping[str, Any], entry).get("name"))
+                )
+                status_value = self._optional_text(cast(Mapping[str, Any], entry).get("status"))
+                if not gate_id_raw or not status_value:
+                    continue
+                gate_id = _normalize_identifier(gate_id_raw)
+                if gate_id.startswith("gate"):
+                    gate_id = gate_id.replace("gate", "g", 1)
+                statuses[gate_id] = _normalize_identifier(status_value)
+
+        for key, value in gate_snapshot.items():
+            normalized_key = _normalize_identifier(str(key))
+            if normalized_key in {"g1", "g2", "g3", "g4", "g5", "g6", "g7"}:
+                normalized_status = self._optional_text(value)
+                if normalized_status:
+                    statuses[normalized_key] = _normalize_identifier(normalized_status)
+        return statuses
+
+    def _missing_gate_reason_codes(
+        self,
+        gate_statuses: dict[str, str],
+        *,
+        required: tuple[str, ...],
+    ) -> list[str]:
+        reasons: list[str] = []
+        for gate_id in required:
+            if gate_id not in gate_statuses:
+                reasons.append(f"{gate_id}_status_missing")
+        return reasons
+
+    def _gating_blocking_reason_codes(
+        self,
+        gate_snapshot: dict[str, Any] | None,
+        gate_statuses: dict[str, str],
+    ) -> list[str]:
+        if gate_snapshot is None:
+            return []
+        reasons: list[str] = []
+
+        blocked_flag = bool(gate_snapshot.get("blocked") or gate_snapshot.get("blocking"))
+        if blocked_flag:
+            reasons.append("gating_blocked_flag_true")
+
+        blocking_lists = (
+            gate_snapshot.get("blocking_reasons"),
+            gate_snapshot.get("blockingReasons"),
+            gate_snapshot.get("blockers"),
+            gate_snapshot.get("blocking_reason_codes"),
+        )
+        for raw_list in blocking_lists:
+            if isinstance(raw_list, list):
+                for item in raw_list:
+                    text = self._optional_text(item)
+                    if text:
+                        reasons.append(f"gating_blocker_{_normalize_identifier(text)}")
+
+        for gate_id, status in gate_statuses.items():
+            if status not in _PASS_GATE_STATUSES:
+                reasons.append(f"{gate_id}_status_{status}")
+        return _sorted_unique(reasons)
+
+    def _required_gate_failures(
+        self,
+        gate_statuses: dict[str, str],
+        *,
+        required: tuple[str, ...],
+    ) -> list[str]:
+        failures: list[str] = []
+        for gate_id in required:
+            status = gate_statuses.get(gate_id)
+            if status is None:
+                failures.append(f"{gate_id}_status_missing")
+                continue
+            if status not in _PASS_GATE_STATUSES:
+                failures.append(f"{gate_id}_status_{status}")
+        return _sorted_unique(failures)
+
+    @staticmethod
+    def _first_blocking_gate_id(reason_codes: list[str]) -> str | None:
+        for reason in reason_codes:
+            if reason.startswith("g") and "_status_" in reason:
+                return reason.split("_status_", 1)[0]
+        return None
+
+    @staticmethod
+    def _rollback_target_stage(stage: str) -> str:
+        if stage == "scaled_live":
+            return "constrained_live"
+        if stage == "constrained_live":
+            return "shadow"
+        return "paper"
+
+    def _manual_approval_allowed(self, rollout_profile: str) -> bool:
+        if not _bool_env("WHITEPAPER_ENGINEERING_MANUAL_OVERRIDE_ENABLED", default=True):
+            return False
+        allowed_profiles_raw = (
+            _str_env("WHITEPAPER_ENGINEERING_MANUAL_ALLOWED_PROFILES", "manual,assisted,automatic")
+            or "manual,assisted,automatic"
+        )
+        allowed_profiles = {
+            self._normalize_rollout_profile(item)
+            for item in allowed_profiles_raw.split(",")
+            if item.strip()
+        }
+        return rollout_profile in allowed_profiles
+
+    def _normalize_rollout_profile(self, value: str | None) -> str:
+        profile = self._optional_text(value) or "manual"
+        normalized = _normalize_identifier(profile)
+        if normalized not in {"manual", "assisted", "automatic"}:
+            return "manual"
+        return normalized
+
+    def _derive_hypothesis_id(self, run: WhitepaperAnalysisRun) -> str | None:
+        synthesis_payload = run.synthesis.synthesis_json if run.synthesis is not None else None
+        if isinstance(synthesis_payload, Mapping):
+            explicit = self._optional_text(cast(Mapping[str, Any], synthesis_payload).get("hypothesis_id"))
+            if explicit:
+                return explicit
+        return f"hyp-{run.run_id}"
 
     def _upsert_synthesis(
         self,
@@ -1381,7 +2255,11 @@ class WhitepaperWorkflowService:
 
     @staticmethod
     def _build_verdict_gating_payload(verdict_payload: Mapping[str, Any]) -> Any:
-        base_gating = verdict_payload.get("gating")
+        base_gating = (
+            verdict_payload.get("gating_json")
+            if "gating_json" in verdict_payload
+            else verdict_payload.get("gating")
+        )
         dspy_eval_report = verdict_payload.get("dspy_eval_report")
         if not isinstance(dspy_eval_report, Mapping):
             return base_gating

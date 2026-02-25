@@ -782,6 +782,11 @@ class WhitepaperAnalysisRun(Base, TimestampMixin):
     design_pull_requests: Mapped[List["WhitepaperDesignPullRequest"]] = relationship(
         back_populates="analysis_run", cascade="all, delete-orphan"
     )
+    engineering_trigger: Mapped[Optional["WhitepaperEngineeringTrigger"]] = relationship(
+        back_populates="analysis_run",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
     artifacts: Mapped[List["WhitepaperArtifact"]] = relationship(
         back_populates="analysis_run"
     )
@@ -1034,6 +1039,9 @@ class WhitepaperViabilityVerdict(Base, TimestampMixin):
     artifacts: Mapped[List["WhitepaperArtifact"]] = relationship(
         back_populates="viability_verdict"
     )
+    engineering_triggers: Mapped[List["WhitepaperEngineeringTrigger"]] = relationship(
+        back_populates="viability_verdict"
+    )
 
     __table_args__ = (
         Index("ix_whitepaper_viability_verdicts_verdict", "verdict"),
@@ -1196,6 +1204,107 @@ class WhitepaperArtifact(Base, CreatedAtMixin):
             "ceph_object_key",
             unique=True,
         ),
+    )
+
+
+class WhitepaperEngineeringTrigger(Base, TimestampMixin):
+    """Deterministic implementation trigger decision for a completed whitepaper run."""
+
+    __tablename__ = "whitepaper_engineering_triggers"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    trigger_id: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    whitepaper_run_id: Mapped[str] = mapped_column(
+        String(length=64), nullable=False, unique=True
+    )
+    analysis_run_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("whitepaper_analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    verdict_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        ForeignKey("whitepaper_viability_verdicts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    hypothesis_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    implementation_grade: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    decision: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    reason_codes_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    approval_token: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    dispatched_agentrun_name: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    rollout_profile: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="manual",
+        server_default=text("'manual'"),
+    )
+    approval_source: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    approval_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    policy_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    gate_snapshot_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    gate_snapshot_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(
+        back_populates="engineering_trigger"
+    )
+    viability_verdict: Mapped[Optional[WhitepaperViabilityVerdict]] = relationship(
+        back_populates="engineering_triggers"
+    )
+    rollout_transitions: Mapped[List["WhitepaperRolloutTransition"]] = relationship(
+        back_populates="engineering_trigger",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_whitepaper_engineering_triggers_run_id", "whitepaper_run_id"),
+        Index("ix_whitepaper_engineering_triggers_grade", "implementation_grade"),
+        Index("ix_whitepaper_engineering_triggers_decision", "decision"),
+        Index("ix_whitepaper_engineering_triggers_rollout_profile", "rollout_profile"),
+        Index("ix_whitepaper_engineering_triggers_approval_source", "approval_source"),
+    )
+
+
+class WhitepaperRolloutTransition(Base, CreatedAtMixin):
+    """Audit log of deterministic automatic rollout transitions for whitepaper candidates."""
+
+    __tablename__ = "whitepaper_rollout_transitions"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    transition_id: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    trigger_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("whitepaper_engineering_triggers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    whitepaper_run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    from_stage: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    to_stage: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    transition_type: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    gate_results_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    reason_codes_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    blocking_gate: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    evidence_hash: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+
+    engineering_trigger: Mapped[WhitepaperEngineeringTrigger] = relationship(
+        back_populates="rollout_transitions"
+    )
+
+    __table_args__ = (
+        Index("ix_whitepaper_rollout_transitions_trigger_id", "trigger_id"),
+        Index("ix_whitepaper_rollout_transitions_run_id", "whitepaper_run_id"),
+        Index("ix_whitepaper_rollout_transitions_status", "status"),
+        Index("ix_whitepaper_rollout_transitions_created_at", "created_at"),
     )
 
 

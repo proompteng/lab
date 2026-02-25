@@ -44,6 +44,13 @@ export type WhitepaperListItem = {
     prUrl: string | null
     isMerged: boolean
   } | null
+  engineeringTrigger: {
+    implementationGrade: string | null
+    decision: string | null
+    rolloutProfile: string | null
+    approvalSource: string | null
+    dispatchedAgentrunName: string | null
+  } | null
 }
 
 export type WhitepaperDetail = {
@@ -118,6 +125,24 @@ export type WhitepaperDetail = {
     recommendations: string[]
     gating: unknown
   } | null
+  engineeringTrigger: {
+    triggerId: string
+    implementationGrade: string
+    decision: string
+    reasonCodes: string[]
+    approvalToken: string | null
+    dispatchedAgentrunName: string | null
+    rolloutProfile: string
+    approvalSource: string | null
+    approvedBy: string | null
+    approvedAt: string | null
+    approvalReason: string | null
+    policyRef: string | null
+    gateSnapshotHash: string | null
+    gateSnapshot: unknown
+    createdAt: string | null
+    updatedAt: string | null
+  } | null
   latestAgentrun: {
     id: string
     name: string
@@ -190,6 +215,18 @@ export type WhitepaperDetail = {
     sizeBytes: number | null
     createdAt: string | null
   }[]
+  rolloutTransitions: {
+    id: string
+    transitionId: string
+    fromStage: string | null
+    toStage: string | null
+    transitionType: string
+    status: string
+    reasonCodes: string[]
+    blockingGate: string | null
+    evidenceHash: string | null
+    createdAt: string | null
+  }[]
 }
 
 export type WhitepaperListResult = {
@@ -209,6 +246,26 @@ export type WhitepaperDetailResult =
   | {
       ok: true
       item: WhitepaperDetail
+    }
+  | {
+      ok: false
+      message: string
+    }
+
+export type WhitepaperApprovalPayload = {
+  approvedBy: string
+  approvalReason: string
+  targetScope?: string
+  repository?: string
+  base?: string
+  head?: string
+  rolloutProfile?: 'manual' | 'assisted' | 'automatic'
+}
+
+export type WhitepaperApprovalResult =
+  | {
+      ok: true
+      result: Record<string, unknown>
     }
   | {
       ok: false
@@ -300,3 +357,42 @@ export const getWhitepaperDetail = async (
 }
 
 export const whitepaperPdfPath = (runId: string) => `/api/whitepapers/${encodeURIComponent(runId)}/pdf`
+
+export const approveWhitepaperImplementation = async (
+  runId: string,
+  payload: WhitepaperApprovalPayload,
+): Promise<WhitepaperApprovalResult> => {
+  const response = await fetch(`/api/whitepapers/${encodeURIComponent(runId)}/`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  let body: unknown = null
+  try {
+    body = await response.json()
+  } catch {
+    body = null
+  }
+
+  if (!response.ok || !body || typeof body !== 'object') {
+    return {
+      ok: false,
+      message: `Whitepaper approval request failed (${response.status})`,
+    }
+  }
+
+  if ((body as Record<string, unknown>).ok !== true) {
+    return {
+      ok: false,
+      message:
+        typeof (body as Record<string, unknown>).message === 'string'
+          ? String((body as Record<string, unknown>).message)
+          : 'Whitepaper approval request failed',
+    }
+  }
+
+  return body as WhitepaperApprovalResult
+}

@@ -1,5 +1,6 @@
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { readFile } from 'node:fs/promises'
 import type { Pool } from 'pg'
 
 type NullableString = string | null
@@ -64,6 +65,13 @@ export type TorghutWhitepaperListItem = {
     prNumber: number | null
     prUrl: NullableString
     isMerged: boolean
+  } | null
+  engineeringTrigger: {
+    implementationGrade: NullableString
+    decision: NullableString
+    rolloutProfile: NullableString
+    approvalSource: NullableString
+    dispatchedAgentrunName: NullableString
   } | null
 }
 
@@ -131,6 +139,19 @@ export type TorghutWhitepaperArtifact = {
   artifactUri: NullableString
   contentType: NullableString
   sizeBytes: number | null
+  createdAt: NullableString
+}
+
+export type TorghutWhitepaperRolloutTransition = {
+  id: string
+  transitionId: string
+  fromStage: NullableString
+  toStage: NullableString
+  transitionType: string
+  status: string
+  reasonCodes: string[]
+  blockingGate: NullableString
+  evidenceHash: NullableString
   createdAt: NullableString
 }
 
@@ -206,11 +227,30 @@ export type TorghutWhitepaperDetail = {
     recommendations: string[]
     gating: unknown
   } | null
+  engineeringTrigger: {
+    triggerId: string
+    implementationGrade: string
+    decision: string
+    reasonCodes: string[]
+    approvalToken: NullableString
+    dispatchedAgentrunName: NullableString
+    rolloutProfile: string
+    approvalSource: NullableString
+    approvedBy: NullableString
+    approvedAt: NullableString
+    approvalReason: NullableString
+    policyRef: NullableString
+    gateSnapshotHash: NullableString
+    gateSnapshot: unknown
+    createdAt: NullableString
+    updatedAt: NullableString
+  } | null
   latestAgentrun: TorghutWhitepaperAgentRun | null
   agentruns: TorghutWhitepaperAgentRun[]
   designPullRequests: TorghutWhitepaperDesignPullRequest[]
   steps: TorghutWhitepaperAnalysisStep[]
   artifacts: TorghutWhitepaperArtifact[]
+  rolloutTransitions: TorghutWhitepaperRolloutTransition[]
 }
 
 export type TorghutWhitepaperPdfLocator = {
@@ -221,8 +261,21 @@ export type TorghutWhitepaperPdfLocator = {
   sourceAttachmentUrl: NullableString
 }
 
+export type TorghutWhitepaperManualApprovalInput = {
+  runId: string
+  approvedBy: string
+  approvalReason: string
+  targetScope?: string | null
+  repository?: string | null
+  base?: string | null
+  head?: string | null
+  rolloutProfile?: 'manual' | 'assisted' | 'automatic' | null
+}
+
 const DEFAULT_LIMIT = 30
 const MAX_LIMIT = 100
+const DEFAULT_WHITEPAPER_CONTROL_BASE_URL = 'http://torghut.torghut.svc.cluster.local'
+const WHITEPAPER_CONTROL_TIMEOUT_MS = 15_000
 
 const asString = (value: unknown): string | null => {
   if (typeof value !== 'string') return null
@@ -294,6 +347,35 @@ const clampLimit = (value: number | undefined) => {
 const clampOffset = (value: number | undefined) => {
   if (!value || !Number.isFinite(value)) return 0
   return Math.max(0, Math.trunc(value))
+}
+
+const resolveWhitepaperControlBaseUrl = () => {
+  const explicit =
+    asString(process.env.JANGAR_WHITEPAPER_CONTROL_BASE_URL) ??
+    asString(process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL) ??
+    asString(process.env.TORGHUT_BASE_URL)
+  return (explicit ?? DEFAULT_WHITEPAPER_CONTROL_BASE_URL).replace(/\/+$/, '')
+}
+
+const resolveWhitepaperControlToken = async () => {
+  const explicit =
+    asString(process.env.JANGAR_WHITEPAPER_CONTROL_TOKEN) ??
+    asString(process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN) ??
+    asString(process.env.WHITEPAPER_WORKFLOW_API_TOKEN) ??
+    asString(process.env.JANGAR_API_KEY)
+  if (explicit) return explicit
+
+  const useServiceAccountToken = asBoolean(process.env.JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN ?? 'true')
+  if (!useServiceAccountToken) return null
+  const tokenPath =
+    asString(process.env.JANGAR_WHITEPAPER_SERVICE_ACCOUNT_TOKEN_PATH) ??
+    '/var/run/secrets/kubernetes.io/serviceaccount/token'
+  try {
+    const token = (await readFile(tokenPath, 'utf8')).trim()
+    return token || null
+  } catch {
+    return null
+  }
 }
 
 const normalizeEndpoint = (endpoint: string, secure: boolean) => {
@@ -469,7 +551,12 @@ export const listTorghutWhitepapers = async (
         pr.status as pr_status,
         pr.pr_number,
         pr.pr_url,
-        pr.is_merged
+        pr.is_merged,
+        wt.implementation_grade,
+        wt.decision as trigger_decision,
+        wt.rollout_profile,
+        wt.approval_source,
+        wt.dispatched_agentrun_name
       from whitepaper_analysis_runs r
       join whitepaper_documents d on d.id = r.document_id
       join whitepaper_document_versions v on v.id = r.document_version_id
@@ -486,6 +573,7 @@ export const listTorghutWhitepapers = async (
         limit 1
       ) ag on true
       left join whitepaper_viability_verdicts vv on vv.analysis_run_id = r.id
+      left join whitepaper_engineering_triggers wt on wt.analysis_run_id = r.id
       left join lateral (
         select
           p.status,
@@ -543,6 +631,15 @@ export const listTorghutWhitepapers = async (
             isMerged: asBoolean(row.is_merged),
           }
         : null
+    const engineeringTrigger = asString(row.implementation_grade)
+      ? {
+          implementationGrade: asString(row.implementation_grade),
+          decision: asString(row.trigger_decision),
+          rolloutProfile: asString(row.rollout_profile),
+          approvalSource: asString(row.approval_source),
+          dispatchedAgentrunName: asString(row.dispatched_agentrun_name),
+        }
+      : null
 
     return {
       runId: String(row.run_id),
@@ -574,6 +671,7 @@ export const listTorghutWhitepapers = async (
       latestAgentrun,
       verdict: verdictPayload,
       designPullRequest,
+      engineeringTrigger,
     } satisfies TorghutWhitepaperListItem
   })
 
@@ -665,12 +763,30 @@ export const getTorghutWhitepaperDetail = async (params: {
         vv.requires_followup,
         vv.rejection_reasons_json,
         vv.recommendations_json,
-        vv.gating_json
+        vv.gating_json,
+        wt.id::text as trigger_row_id,
+        wt.trigger_id,
+        wt.implementation_grade,
+        wt.decision as trigger_decision,
+        wt.reason_codes_json as trigger_reason_codes_json,
+        wt.approval_token,
+        wt.dispatched_agentrun_name,
+        wt.rollout_profile,
+        wt.approval_source,
+        wt.approved_by,
+        wt.approved_at,
+        wt.approval_reason,
+        wt.policy_ref,
+        wt.gate_snapshot_hash,
+        wt.gate_snapshot_json,
+        wt.created_at as trigger_created_at,
+        wt.updated_at as trigger_updated_at
       from whitepaper_analysis_runs r
       join whitepaper_documents d on d.id = r.document_id
       join whitepaper_document_versions v on v.id = r.document_version_id
       left join whitepaper_syntheses s on s.analysis_run_id = r.id
       left join whitepaper_viability_verdicts vv on vv.analysis_run_id = r.id
+      left join whitepaper_engineering_triggers wt on wt.analysis_run_id = r.id
       where r.run_id = $1
       limit 1
     `,
@@ -681,8 +797,9 @@ export const getTorghutWhitepaperDetail = async (params: {
   if (!runRow) return null
 
   const analysisRunId = String(runRow.analysis_run_id)
+  const triggerRowId = asString(runRow.trigger_row_id)
 
-  const [agentrunsResult, stepsResult, prsResult, artifactsResult] = await Promise.all([
+  const [agentrunsResult, stepsResult, prsResult, artifactsResult, rolloutTransitionsResult] = await Promise.all([
     params.pool.query(
       `
         select
@@ -768,6 +885,27 @@ export const getTorghutWhitepaperDetail = async (params: {
       `,
       [analysisRunId],
     ),
+    triggerRowId
+      ? params.pool.query(
+          `
+            select
+              id::text,
+              transition_id,
+              from_stage,
+              to_stage,
+              transition_type,
+              status,
+              reason_codes_json,
+              blocking_gate,
+              evidence_hash,
+              created_at
+            from whitepaper_rollout_transitions
+            where trigger_id = $1::uuid
+            order by created_at asc
+          `,
+          [triggerRowId],
+        )
+      : Promise.resolve({ rows: [] as Record<string, unknown>[] }),
   ])
 
   const uploadMetadata = asRecord(runRow.upload_metadata_json)
@@ -798,6 +936,26 @@ export const getTorghutWhitepaperDetail = async (params: {
         rejectionReasons: asStringArray(runRow.rejection_reasons_json),
         recommendations: asStringArray(runRow.recommendations_json),
         gating: runRow.gating_json ?? null,
+      }
+    : null
+  const engineeringTrigger = asString(runRow.trigger_id)
+    ? {
+        triggerId: String(runRow.trigger_id),
+        implementationGrade: String(runRow.implementation_grade ?? 'research_only'),
+        decision: String(runRow.trigger_decision ?? 'suppressed'),
+        reasonCodes: asStringArray(runRow.trigger_reason_codes_json),
+        approvalToken: asString(runRow.approval_token),
+        dispatchedAgentrunName: asString(runRow.dispatched_agentrun_name),
+        rolloutProfile: String(runRow.rollout_profile ?? 'manual'),
+        approvalSource: asString(runRow.approval_source),
+        approvedBy: asString(runRow.approved_by),
+        approvedAt: asIso(runRow.approved_at),
+        approvalReason: asString(runRow.approval_reason),
+        policyRef: asString(runRow.policy_ref),
+        gateSnapshotHash: asString(runRow.gate_snapshot_hash),
+        gateSnapshot: runRow.gate_snapshot_json ?? null,
+        createdAt: asIso(runRow.trigger_created_at),
+        updatedAt: asIso(runRow.trigger_updated_at),
       }
     : null
 
@@ -855,6 +1013,21 @@ export const getTorghutWhitepaperDetail = async (params: {
       createdAt: asIso(record.created_at),
     } satisfies TorghutWhitepaperArtifact
   })
+  const rolloutTransitions = rolloutTransitionsResult.rows.map((row) => {
+    const record = row as Record<string, unknown>
+    return {
+      id: String(record.id),
+      transitionId: String(record.transition_id),
+      fromStage: asString(record.from_stage),
+      toStage: asString(record.to_stage),
+      transitionType: String(record.transition_type),
+      status: String(record.status),
+      reasonCodes: asStringArray(record.reason_codes_json),
+      blockingGate: asString(record.blocking_gate),
+      evidenceHash: asString(record.evidence_hash),
+      createdAt: asIso(record.created_at),
+    } satisfies TorghutWhitepaperRolloutTransition
+  })
 
   return {
     run: {
@@ -907,11 +1080,71 @@ export const getTorghutWhitepaperDetail = async (params: {
     },
     synthesis,
     verdict,
+    engineeringTrigger,
     latestAgentrun,
     agentruns,
     designPullRequests,
     steps,
     artifacts,
+    rolloutTransitions,
+  }
+}
+
+export const approveTorghutWhitepaperForImplementation = async (
+  input: TorghutWhitepaperManualApprovalInput,
+): Promise<Record<string, unknown>> => {
+  const runId = input.runId.trim()
+  if (!runId) throw new Error('run_id_required')
+  const approvedBy = input.approvedBy.trim()
+  if (!approvedBy) throw new Error('approved_by_required')
+  const approvalReason = input.approvalReason.trim()
+  if (!approvalReason) throw new Error('approval_reason_required')
+
+  const baseUrl = resolveWhitepaperControlBaseUrl()
+  const token = await resolveWhitepaperControlToken()
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  }
+  if (token) headers.authorization = `Bearer ${token}`
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), WHITEPAPER_CONTROL_TIMEOUT_MS)
+  try {
+    const response = await fetch(`${baseUrl}/whitepapers/runs/${encodeURIComponent(runId)}/approve-implementation`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        approved_by: approvedBy,
+        approval_reason: approvalReason,
+        approval_source: 'jangar_ui',
+        target_scope: asString(input.targetScope),
+        repository: asString(input.repository),
+        base: asString(input.base),
+        head: asString(input.head),
+        rollout_profile: asString(input.rolloutProfile),
+      }),
+      signal: controller.signal,
+    })
+    const raw = await response.text()
+    let payload: unknown = null
+    try {
+      payload = raw ? (JSON.parse(raw) as unknown) : null
+    } catch {
+      payload = null
+    }
+    if (!response.ok) {
+      const detail =
+        payload && typeof payload === 'object' && typeof (payload as Record<string, unknown>).detail === 'string'
+          ? String((payload as Record<string, unknown>).detail)
+          : raw || response.statusText
+      throw new Error(`whitepaper_approval_failed:${response.status}:${detail}`.slice(0, 400))
+    }
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('whitepaper_approval_invalid_response')
+    }
+    return payload as Record<string, unknown>
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
