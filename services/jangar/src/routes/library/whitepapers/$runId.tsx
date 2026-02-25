@@ -6,14 +6,21 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Input,
   Skeleton,
+  Textarea,
 } from '@proompteng/design/ui'
 import { IconExternalLink } from '@tabler/icons-react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 import ReactMarkdown from 'react-markdown'
 
-import { getWhitepaperDetail, type WhitepaperDetail, whitepaperPdfPath } from '@/data/whitepapers'
+import {
+  approveWhitepaperImplementation,
+  getWhitepaperDetail,
+  type WhitepaperDetail,
+  whitepaperPdfPath,
+} from '@/data/whitepapers'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/library/whitepapers/$runId')({
@@ -153,7 +160,7 @@ function LibraryWhitepaperDetailRoute() {
               <div className="min-h-0 border-r">
                 <PdfPane runId={runId} detail={detail} />
               </div>
-              <AnalysisPane detail={detail} scrollable />
+              <AnalysisPane detail={detail} runId={runId} onRefresh={loadDetail} scrollable />
             </div>
           </div>
 
@@ -173,7 +180,7 @@ function LibraryWhitepaperDetailRoute() {
                 </div>
               </CardContent>
             </Card>
-            <AnalysisPane detail={detail} />
+            <AnalysisPane detail={detail} runId={runId} onRefresh={loadDetail} />
           </div>
         </>
       ) : null}
@@ -207,9 +214,53 @@ function PdfPane({ runId, detail }: { runId: string; detail: WhitepaperDetail })
   )
 }
 
-function AnalysisPane({ detail, scrollable = false }: { detail: WhitepaperDetail; scrollable?: boolean }) {
+function AnalysisPane({
+  detail,
+  runId,
+  onRefresh,
+  scrollable = false,
+}: {
+  detail: WhitepaperDetail
+  runId: string
+  onRefresh: () => Promise<void>
+  scrollable?: boolean
+}) {
   const keyFindings = detail.synthesis?.keyFindings ?? []
   const recommendations = detail.verdict?.recommendations ?? []
+  const [approvedBy, setApprovedBy] = React.useState(detail.engineeringTrigger?.approvedBy ?? '')
+  const [approvalReason, setApprovalReason] = React.useState('')
+  const [approvalPending, setApprovalPending] = React.useState(false)
+  const [approvalError, setApprovalError] = React.useState<string | null>(null)
+  const [approvalMessage, setApprovalMessage] = React.useState<string | null>(null)
+  const trigger = detail.engineeringTrigger
+  const belowThreshold = trigger
+    ? !['engineering_candidate', 'engineering_priority'].includes(trigger.implementationGrade)
+    : true
+  const allowManualApproval = detail.run.status === 'completed' && belowThreshold && trigger?.decision !== 'dispatched'
+
+  const submitManualApproval = async () => {
+    const approver = approvedBy.trim()
+    const reason = approvalReason.trim()
+    if (!approver || !reason) {
+      setApprovalError('Approver identity and rationale are required.')
+      return
+    }
+    setApprovalPending(true)
+    setApprovalError(null)
+    setApprovalMessage(null)
+    const result = await approveWhitepaperImplementation(runId, {
+      approvedBy: approver,
+      approvalReason: reason,
+    })
+    setApprovalPending(false)
+    if (!result.ok) {
+      setApprovalError(result.message)
+      return
+    }
+    setApprovalReason('')
+    setApprovalMessage('Manual approval recorded. Engineering dispatch was requested.')
+    await onRefresh()
+  }
 
   return (
     <div className={cn(scrollable && 'h-full min-h-0 overflow-y-auto')}>
@@ -304,6 +355,104 @@ function AnalysisPane({ detail, scrollable = false }: { detail: WhitepaperDetail
             ) : null}
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Engineering trigger</CardTitle>
+            <CardDescription>Persisted two-speed feeder decision and approval audit contract.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <Row label="Implementation grade" value={trigger?.implementationGrade ?? 'n/a'} />
+            <Row label="Decision" value={trigger?.decision ?? 'n/a'} />
+            <Row label="Rollout profile" value={trigger?.rolloutProfile ?? 'n/a'} />
+            <Row label="Approval source" value={trigger?.approvalSource ?? 'n/a'} />
+            <Row label="Approved by" value={trigger?.approvedBy ?? 'n/a'} />
+            <Row label="Approved at" value={formatDate(trigger?.approvedAt ?? null)} />
+            <Row
+              label="Dispatch AgentRun"
+              value={trigger?.dispatchedAgentrunName ?? detail.latestAgentrun?.name ?? 'n/a'}
+            />
+            <Row label="Approval reason" value={trigger?.approvalReason ?? 'n/a'} />
+            <Row label="Reason codes" value={(trigger?.reasonCodes ?? []).join(', ') || 'n/a'} className="pt-1" />
+          </CardContent>
+        </Card>
+
+        {allowManualApproval ? (
+          <Card className="border-amber-500/40 bg-amber-500/10">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-amber-200">Manual implementation override</CardTitle>
+              <CardDescription className="[overflow-wrap:anywhere] text-amber-100/90">
+                This run is below auto-dispatch thresholds. Approving here writes an auditable
+                <code className="mx-1">approval_source=jangar_ui</code>
+                override and dispatches B1 engineering work.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium uppercase tracking-wide text-amber-100/90" htmlFor="approved-by">
+                  Approver
+                </label>
+                <Input
+                  id="approved-by"
+                  value={approvedBy}
+                  onChange={(event) => setApprovedBy(event.target.value)}
+                  placeholder="name@company.com"
+                />
+              </div>
+              <div className="space-y-1">
+                <label
+                  className="text-xs font-medium uppercase tracking-wide text-amber-100/90"
+                  htmlFor="approval-reason"
+                >
+                  Rationale
+                </label>
+                <Textarea
+                  id="approval-reason"
+                  value={approvalReason}
+                  onChange={(event) => setApprovalReason(event.target.value)}
+                  placeholder="Why this run should still enter B1 engineering despite thresholds."
+                  rows={4}
+                />
+              </div>
+              {approvalError ? <p className="text-xs text-rose-200">{approvalError}</p> : null}
+              {approvalMessage ? <p className="text-xs text-emerald-200">{approvalMessage}</p> : null}
+              <Button onClick={() => void submitManualApproval()} disabled={approvalPending}>
+                {approvalPending ? 'Submitting approval...' : 'Approve for implementation'}
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {detail.rolloutTransitions.length ? (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Automatic rollout transitions</CardTitle>
+              <CardDescription>Deterministic stage progression and rollback/halt audit trail.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {detail.rolloutTransitions.map((transition) => (
+                <div key={transition.id} className="rounded-md border p-2 text-xs">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <div className="font-medium">
+                      {(transition.fromStage ?? 'start') + ' -> ' + (transition.toStage ?? 'hold')}
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className={cn('font-mono text-[0.65rem] px-2 py-0.5', statusTone(transition.status))}
+                    >
+                      {transition.transitionType}:{transition.status}
+                    </Badge>
+                  </div>
+                  <div className="space-y-1 text-muted-foreground">
+                    <div>Blocking gate: {transition.blockingGate ?? 'n/a'}</div>
+                    <div>Reason codes: {transition.reasonCodes.join(', ') || 'n/a'}</div>
+                    <div>Created: {formatDate(transition.createdAt)}</div>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader className="pb-2">

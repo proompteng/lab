@@ -1,5 +1,14 @@
 # Autonomous Quant + LLM Full-Autonomy Completion Roadmap (2026-02-13)
 
+## Status
+
+- Completed: `implemented` (2026-02-25)
+- Related PR: `https://github.com/proompteng/lab/pull/3641`
+- Implementation scope delivered in this completion pass:
+  - deterministic whitepaper engineering trigger grading + dispatch contract,
+  - manual approval override path with audit fields,
+  - fail-closed automatic rollout transitions with rollback/halt evidence logging.
+
 ## Current evidence snapshot
 
 - Live service is running a revised autonomy/scheduler/build and has LEAN adapter plumbing, with fallback and route metadata hooks present.

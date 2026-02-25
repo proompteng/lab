@@ -122,3 +122,20 @@ class TestWhitepaperApi(TestCase):
                 headers={"Authorization": "Bearer secret-token"},
             )
             self.assertEqual(response.status_code, 200)
+
+    @patch(
+        "app.main.WHITEPAPER_WORKFLOW.approve_for_engineering",
+        return_value={"run_id": "wp-1", "status": "completed", "engineering_trigger": {"decision": "dispatched"}},
+    )
+    def test_manual_approve_endpoint(self, _mock_approve: object) -> None:
+        response = self.client.post(
+            "/whitepapers/runs/wp-1/approve-implementation",
+            json={
+                "approved_by": "ops@example.com",
+                "approval_reason": "Manual override for B1 engineering dispatch.",
+                "approval_source": "jangar_ui",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["engineering_trigger"]["decision"], "dispatched")

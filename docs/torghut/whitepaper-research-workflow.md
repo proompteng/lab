@@ -12,6 +12,9 @@ Source implementation:
 2. Downloads the PDF and uploads it to Ceph (`s3://<bucket>/<key>`).
 3. Creates a whitepaper analysis run in Torghut DB.
 4. Dispatches a Codex AgentRun directly via Jangar (`/v1/agent-runs`) when auto-dispatch is enabled.
+5. Finalization computes deterministic engineering trigger grades from persisted verdict fields (`verdict`, `score`, `confidence`, `requires_followup`, `gating_json`).
+6. Eligible runs can auto-dispatch B1 engineering candidates; below-threshold runs can be manually approved through Jangar UI.
+7. `rollout_profile=automatic` drives deterministic `paper -> shadow -> constrained_live -> scaled_live` transitions only when gates pass, and fail-closed rollback/halt on blocking failures.
 
 ## Data flow diagram (trigger to completion)
 
@@ -67,6 +70,16 @@ For Kafka ingestion path:
 For AgentRun submission:
 - `WHITEPAPER_AGENTRUN_SUBMIT_URL` or `JANGAR_BASE_URL` (default fallback: `http://agents.agents.svc.cluster.local`)
 - optional `JANGAR_API_KEY`
+
+For deterministic engineering trigger + rollout policy:
+- optional `WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED` (default: `true`)
+- optional `WHITEPAPER_ENGINEERING_MIN_CONFIDENCE` (default: `0.80`)
+- optional `WHITEPAPER_ENGINEERING_MIN_SCORE` (default: `0.75`)
+- optional `WHITEPAPER_ENGINEERING_PRIORITY_MIN_CONFIDENCE` (default: `0.90`)
+- optional `WHITEPAPER_ENGINEERING_PRIORITY_MIN_SCORE` (default: `0.90`)
+- optional `WHITEPAPER_ENGINEERING_ROLLOUT_PROFILE` (`manual|assisted|automatic`, default: `manual`)
+- optional `WHITEPAPER_ENGINEERING_MANUAL_OVERRIDE_ENABLED` (default: `true`)
+- optional `WHITEPAPER_ENGINEERING_MANUAL_ALLOWED_PROFILES` (default: `manual,assisted,automatic`)
 
 For comment-based requeue:
 - optional `WHITEPAPER_REQUEUE_COMMENT_KEYWORD` (default: `research whitepaper`)
@@ -134,6 +147,8 @@ This includes:
 - document/document_version metadata
 - latest dispatched AgentRun metadata
 - design PR metadata (if finalized)
+- engineering trigger contract (`implementation_grade`, `decision`, `reason_codes`, `approval_source`, `approval_reason`, `rollout_profile`)
+- rollout transition audit log entries (`advance`, `rollback`, `halt`) when automatic rollout is enabled
 
 ## Manual AgentRun dispatch (if auto dispatch is off or failed)
 
@@ -177,6 +192,29 @@ curl -sS -X POST "http://localhost:8181/whitepapers/runs/<run_id>/finalize" \
   }' | jq
 ```
 
+## Manual Jangar UI approval override
+
+For below-threshold runs, Jangar whitepaper library dispatches:
+
+```bash
+curl -sS -X POST "http://localhost:8181/whitepapers/runs/<run_id>/approve-implementation" \
+  -H "Authorization: Bearer <WHITEPAPER_WORKFLOW_API_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "approved_by": "operator@example.com",
+    "approval_reason": "Manual override after reviewing synthesis, verdict, and risk notes.",
+    "approval_source": "jangar_ui",
+    "target_scope": "B1 candidate only",
+    "rollout_profile": "automatic"
+  }' | jq
+```
+
+Manual override writes auditable fields:
+- `approval_source=jangar_ui`
+- `approved_by`
+- `approved_at`
+- `approval_reason`
+
 ## Data stored in DB after workflow completion
 
 When run finalization is called (`POST /whitepapers/runs/{run_id}/finalize`) and status is `completed`, Torghut persists:
@@ -199,6 +237,14 @@ When run finalization is called (`POST /whitepapers/runs/{run_id}/finalize`) and
   - repo, base/head branch, PR number/URL/title/body, CI status, merge status/timestamps, metadata JSON
 - `whitepaper_artifacts` (when `artifacts` payload is provided)
   - artifact type/scope, Ceph object refs, URI/checksum/size/content type, metadata, and links back to run/synthesis/verdict/PR
+- `whitepaper_engineering_triggers`
+  - deterministic trigger ledger (`implementation_grade`, `decision`, `reason_codes_json`, `approval_token`)
+  - dispatch + policy fields (`dispatched_agentrun_name`, `rollout_profile`, `policy_ref`)
+  - manual override audit fields (`approval_source`, `approved_by`, `approved_at`, `approval_reason`)
+  - gate reproducibility evidence (`gate_snapshot_hash`, `gate_snapshot_json`)
+- `whitepaper_rollout_transitions`
+  - append-only automatic rollout controller transitions (`from_stage`, `to_stage`, `transition_type`, `status`)
+  - fail-closed blocker evidence (`reason_codes_json`, `blocking_gate`, `evidence_hash`)
 
 `whitepaper_contents` is optional and only exists when a text extraction stage writes normalized paper text; finalization itself does not create this row.
 
@@ -215,6 +261,8 @@ erDiagram
   WHITEPAPER_ANALYSIS_RUNS ||--o| WHITEPAPER_SYNTHESES : writes
   WHITEPAPER_ANALYSIS_RUNS ||--o| WHITEPAPER_VIABILITY_VERDICTS : writes
   WHITEPAPER_ANALYSIS_RUNS ||--o{ WHITEPAPER_DESIGN_PULL_REQUESTS : tracks
+  WHITEPAPER_ANALYSIS_RUNS ||--o| WHITEPAPER_ENGINEERING_TRIGGERS : trigger_decisions
+  WHITEPAPER_ENGINEERING_TRIGGERS ||--o{ WHITEPAPER_ROLLOUT_TRANSITIONS : rollout_transitions
   WHITEPAPER_ANALYSIS_RUNS ||--o{ WHITEPAPER_ARTIFACTS : references
   WHITEPAPER_SYNTHESES ||--o{ WHITEPAPER_ARTIFACTS : derived_artifacts
   WHITEPAPER_VIABILITY_VERDICTS ||--o{ WHITEPAPER_ARTIFACTS : derived_artifacts

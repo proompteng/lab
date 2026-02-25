@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -17,6 +17,8 @@ from app.models import (
     WhitepaperDesignPullRequest,
     WhitepaperDocument,
     WhitepaperDocumentVersion,
+    WhitepaperEngineeringTrigger,
+    WhitepaperRolloutTransition,
     WhitepaperSynthesis,
     WhitepaperViabilityVerdict,
 )
@@ -393,6 +395,300 @@ https://example.com/paper.pdf
             self.assertIsInstance(verdict_row.gating_json, dict)
             assert isinstance(verdict_row.gating_json, dict)
             self.assertIn("dspy_eval_report", verdict_row.gating_json)
+
+    def test_finalize_auto_dispatches_engineering_candidate_and_scales_live(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+        os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
+        os.environ["WHITEPAPER_ENGINEERING_ROLLOUT_PROFILE"] = "automatic"
+        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+            lambda _payload, *, idempotency_key: {
+                "resource": {
+                    "metadata": {"name": f"engineering-{idempotency_key}", "uid": "uid-eng"},
+                    "status": {"phase": "Pending"},
+                }
+            }
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(session, self._issue_payload(), source="api")
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            finalize_payload = {
+                "status": "completed",
+                "synthesis": {
+                    "executive_summary": "Candidate appears robust and reproducible.",
+                    "implementation_plan_md": "Implement candidate and validate deterministically.",
+                    "confidence": "0.95",
+                },
+                "verdict": {
+                    "verdict": "implement",
+                    "score": "0.96",
+                    "confidence": "0.97",
+                    "requires_followup": False,
+                    "gating_json": {
+                        "gates": {
+                            "G1": {"status": "pass"},
+                            "G2": {"status": "pass"},
+                            "G3": {"status": "pass"},
+                            "G4": {"status": "pass"},
+                            "G5": {"status": "pass"},
+                            "G6": {"status": "pass"},
+                            "G7": {"status": "pass"},
+                        }
+                    },
+                },
+            }
+            result = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            session.commit()
+
+            trigger_payload = result.get("engineering_trigger", {})
+            self.assertEqual(trigger_payload.get("implementation_grade"), "engineering_priority")
+            self.assertEqual(trigger_payload.get("decision"), "dispatched")
+            self.assertEqual(trigger_payload.get("rollout_profile"), "automatic")
+            rollout = cast(list[dict[str, Any]], trigger_payload.get("rollout_transitions") or [])
+            self.assertGreaterEqual(len(rollout), 4)
+            self.assertEqual(rollout[-1].get("to_stage"), "scaled_live")
+            self.assertEqual(rollout[-1].get("status"), "passed")
+
+            trigger_row = session.execute(select(WhitepaperEngineeringTrigger)).scalar_one()
+            self.assertEqual(trigger_row.implementation_grade, "engineering_priority")
+            self.assertEqual(trigger_row.decision, "dispatched")
+            self.assertEqual(trigger_row.rollout_profile, "automatic")
+
+            rollout_rows = session.execute(select(WhitepaperRolloutTransition)).scalars().all()
+            self.assertTrue(any(row.to_stage == "scaled_live" and row.status == "passed" for row in rollout_rows))
+
+    def test_finalize_retry_preserves_existing_engineering_dispatch(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+        os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
+        os.environ["WHITEPAPER_ENGINEERING_ROLLOUT_PROFILE"] = "automatic"
+
+        submit_calls = {"count": 0}
+
+        def _fake_submit(_payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+            submit_calls["count"] += 1
+            return {
+                "resource": {
+                    "metadata": {"name": f"engineering-{idempotency_key}", "uid": "uid-eng"},
+                    "status": {"phase": "Pending"},
+                }
+            }
+
+        service._submit_jangar_agentrun = _fake_submit  # type: ignore[method-assign]
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(session, self._issue_payload(), source="api")
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            finalize_payload = {
+                "status": "completed",
+                "synthesis": {
+                    "executive_summary": "Candidate appears robust and reproducible.",
+                    "implementation_plan_md": "Implement candidate and validate deterministically.",
+                    "confidence": "0.95",
+                },
+                "verdict": {
+                    "verdict": "implement",
+                    "score": "0.96",
+                    "confidence": "0.97",
+                    "requires_followup": False,
+                    "gating_json": {
+                        "gates": {
+                            "G1": {"status": "pass"},
+                            "G2": {"status": "pass"},
+                            "G3": {"status": "pass"},
+                            "G4": {"status": "pass"},
+                            "G5": {"status": "pass"},
+                            "G6": {"status": "pass"},
+                            "G7": {"status": "pass"},
+                        }
+                    },
+                },
+            }
+
+            first_finalize = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            session.commit()
+            second_finalize = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            session.commit()
+
+            self.assertEqual(submit_calls["count"], 1)
+
+            first_trigger = cast(dict[str, Any], first_finalize["engineering_trigger"])
+            second_trigger = cast(dict[str, Any], second_finalize["engineering_trigger"])
+            self.assertEqual(first_trigger["decision"], "dispatched")
+            self.assertEqual(second_trigger["decision"], "dispatched")
+            self.assertEqual(
+                second_trigger["dispatched_agentrun_name"],
+                first_trigger["dispatched_agentrun_name"],
+            )
+
+            trigger_row = session.execute(select(WhitepaperEngineeringTrigger)).scalar_one()
+            self.assertEqual(trigger_row.decision, "dispatched")
+            self.assertIsNotNone(trigger_row.dispatched_agentrun_name)
+
+            agentruns = session.execute(select(WhitepaperCodexAgentRun)).scalars().all()
+            self.assertEqual(len(agentruns), 1)
+
+    def test_manual_approval_dispatches_non_eligible_run_with_audit_fields(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+        os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
+        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+            lambda _payload, *, idempotency_key: {
+                "resource": {
+                    "metadata": {"name": f"manual-{idempotency_key}", "uid": "uid-manual"},
+                    "status": {"phase": "Pending"},
+                }
+            }
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(session, self._issue_payload(), source="api")
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            service.finalize_run(
+                session,
+                run_id=run_row.run_id,
+                payload={
+                    "status": "completed",
+                    "synthesis": {
+                        "executive_summary": "Needs human judgement due weak confidence.",
+                        "implementation_plan_md": "Hold for manual decision.",
+                    },
+                    "verdict": {
+                        "verdict": "conditional_implement",
+                        "score": "0.52",
+                        "confidence": "0.45",
+                        "requires_followup": True,
+                        "gating_json": {
+                            "gates": {
+                                "G1": {"status": "pass"},
+                                "G2": {"status": "pass"},
+                                "G3": {"status": "pass"},
+                                "G4": {"status": "pass"},
+                                "G5": {"status": "pass"},
+                            }
+                        },
+                    },
+                },
+            )
+            session.commit()
+
+            trigger_before = session.execute(select(WhitepaperEngineeringTrigger)).scalar_one()
+            self.assertEqual(trigger_before.decision, "suppressed")
+            self.assertEqual(trigger_before.implementation_grade, "reject")
+
+            approval_result = service.approve_for_engineering(
+                session,
+                run_id=run_row.run_id,
+                approved_by="ops@example.com",
+                approval_reason="Manual override after reviewing citations and constraints.",
+                approval_source="jangar_ui",
+                target_scope="B1 candidate only",
+            )
+            session.commit()
+
+            trigger_payload = cast(dict[str, Any], approval_result["engineering_trigger"])
+            self.assertEqual(trigger_payload["decision"], "dispatched")
+            self.assertEqual(trigger_payload["approval_source"], "jangar_ui")
+            self.assertEqual(trigger_payload["approved_by"], "ops@example.com")
+            self.assertIn("manual_override_applied", cast(list[str], trigger_payload["reason_codes"]))
+
+            trigger_after = session.execute(select(WhitepaperEngineeringTrigger)).scalar_one()
+            self.assertEqual(trigger_after.approval_source, "jangar_ui")
+            self.assertEqual(trigger_after.approved_by, "ops@example.com")
+            self.assertIsNotNone(trigger_after.approved_at)
+            self.assertEqual(
+                trigger_after.approval_reason,
+                "Manual override after reviewing citations and constraints.",
+            )
+            self.assertEqual(trigger_after.decision, "dispatched")
+
+    def test_manual_approval_automatic_rollout_blocks_and_rolls_back_on_gate_failure(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+        os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
+        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+            lambda _payload, *, idempotency_key: {
+                "resource": {
+                    "metadata": {"name": f"manual-{idempotency_key}", "uid": "uid-manual"},
+                    "status": {"phase": "Pending"},
+                }
+            }
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(session, self._issue_payload(), source="api")
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            service.finalize_run(
+                session,
+                run_id=run_row.run_id,
+                payload={
+                    "status": "completed",
+                    "synthesis": {
+                        "executive_summary": "Candidate needs manual approval due live ramp gate concern.",
+                        "implementation_plan_md": "Allow B1 with strict rollout checks.",
+                    },
+                    "verdict": {
+                        "verdict": "implement",
+                        "score": "0.95",
+                        "confidence": "0.96",
+                        "requires_followup": False,
+                        "gating_json": {
+                            "gates": {
+                                "G1": {"status": "pass"},
+                                "G2": {"status": "pass"},
+                                "G3": {"status": "pass"},
+                                "G4": {"status": "pass"},
+                                "G5": {"status": "pass"},
+                                "G6": {"status": "pass"},
+                                "G7": {"status": "fail"},
+                            }
+                        },
+                    },
+                },
+            )
+            session.commit()
+
+            approval_result = service.approve_for_engineering(
+                session,
+                run_id=run_row.run_id,
+                approved_by="ops@example.com",
+                approval_reason="Proceed with automatic rollout profile to validate fail-closed rollback.",
+                approval_source="jangar_ui",
+                rollout_profile="automatic",
+            )
+            session.commit()
+
+            trigger_payload = cast(dict[str, Any], approval_result["engineering_trigger"])
+            self.assertEqual(trigger_payload["decision"], "dispatched")
+            rollout = cast(list[dict[str, Any]], trigger_payload["rollout_transitions"])
+            self.assertTrue(any(item.get("transition_type") == "rollback" for item in rollout))
+            self.assertTrue(any(item.get("transition_type") == "halt" for item in rollout))
+            self.assertTrue(any(item.get("status") == "halted" for item in rollout))
+
+            rollout_rows = session.execute(select(WhitepaperRolloutTransition)).scalars().all()
+            self.assertTrue(any(row.transition_type == "rollback" for row in rollout_rows))
+            self.assertTrue(any(row.status == "halted" for row in rollout_rows))
 
     def test_build_whitepaper_prompt_requires_implementation_plan_md(self) -> None:
         service = WhitepaperWorkflowService()
