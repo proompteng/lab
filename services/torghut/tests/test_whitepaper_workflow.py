@@ -115,26 +115,33 @@ class TestWhitepaperWorkflow(TestCase):
         os.environ.update(self._saved_env)
         self.engine.dispose()
 
-    def _issue_payload(self) -> dict[str, object]:
-        return {
+    def _issue_payload(
+        self,
+        *,
+        issue_number: int = 42,
+        attachment_url: str = "https://github.com/user-attachments/files/12345/sample-paper.pdf",
+        issue_title: str = "Analyze new whitepaper",
+    ) -> dict[str, object]:
+        payload = {
             "event": "issues",
             "action": "opened",
             "repository": {"full_name": "proompteng/lab"},
             "issue": {
-                "number": 42,
-                "title": "Analyze new whitepaper",
+                "number": issue_number,
+                "title": issue_title,
                 "body": """
 <!-- TORGHUT_WHITEPAPER:START -->
 workflow: whitepaper-analysis-v1
 base_branch: main
 <!-- TORGHUT_WHITEPAPER:END -->
 
-Attachment: https://github.com/user-attachments/files/12345/sample-paper.pdf
-                """,
-                "html_url": "https://github.com/proompteng/lab/issues/42",
+Attachment: {attachment_url}
+                """.format(attachment_url=attachment_url),
+                "html_url": f"https://github.com/proompteng/lab/issues/{issue_number}",
             },
             "sender": {"login": "alice"},
         }
+        return payload
 
     def _issue_comment_payload(self, *, comment_body: str) -> dict[str, object]:
         payload = self._issue_payload()
@@ -308,6 +315,71 @@ https://example.com/paper.pdf
             self.assertEqual(len(runs), 1)
             self.assertEqual(runs[0].run_id, first.run_id)
             self.assertEqual(runs[0].status, "failed")
+
+    def test_same_pdf_across_issues_reuses_existing_run_without_duplication(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 identical-content"  # type: ignore[method-assign]
+
+        submit_attempts = {"count": 0}
+
+        def _fake_submit(_payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+            submit_attempts["count"] += 1
+            return {
+                "ok": True,
+                "resource": {
+                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": f"uid-{submit_attempts['count']}"},
+                    "status": {"phase": "Pending"},
+                },
+            }
+
+        service._submit_jangar_agentrun = _fake_submit  # type: ignore[method-assign]
+
+        with Session(self.engine) as session:
+            first = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(
+                    issue_number=42,
+                    attachment_url="https://example.com/papers/a.pdf",
+                    issue_title="Analyze paper A",
+                ),
+                source="api",
+            )
+            self.assertTrue(first.accepted)
+            self.assertEqual(first.reason, "queued")
+            self.assertIsNotNone(first.run_id)
+            session.commit()
+
+            replay = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(
+                    issue_number=84,
+                    attachment_url="https://mirror.example.net/files/same-content.pdf",
+                    issue_title="Analyze paper A duplicate",
+                ),
+                source="api",
+            )
+            self.assertTrue(replay.accepted)
+            self.assertEqual(replay.reason, "idempotent_file_replay")
+            self.assertEqual(replay.run_id, first.run_id)
+            session.commit()
+
+            runs = session.execute(select(WhitepaperAnalysisRun)).scalars().all()
+            self.assertEqual(len(runs), 1)
+
+            docs = session.execute(select(WhitepaperDocument)).scalars().all()
+            self.assertEqual(len(docs), 1)
+
+            versions = session.execute(select(WhitepaperDocumentVersion)).scalars().all()
+            self.assertEqual(len(versions), 1)
+            self.assertEqual(
+                versions[0].ceph_object_key,
+                f"raw/checksum/{versions[0].checksum_sha256[:2]}/{versions[0].checksum_sha256}/source.pdf",
+            )
+
+            agentruns = session.execute(select(WhitepaperCodexAgentRun)).scalars().all()
+            self.assertEqual(len(agentruns), 1)
+            self.assertEqual(submit_attempts["count"], 1)
 
     def test_kafka_ingestor_skips_offset_commit_when_any_record_fails(self) -> None:
         os.environ["WHITEPAPER_KAFKA_ENABLED"] = "true"

@@ -17,7 +17,7 @@ from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Mapping, cast
 from urllib.parse import quote, urljoin, urlparse
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -577,15 +577,24 @@ class WhitepaperWorkflowService:
                 )
             return self._idempotent_kickoff_result(existing_run)
 
+        storage = self._store_issue_pdf(
+            attachment_url=attachment_url,
+        )
+        if storage.parse_status == "stored":
+            existing_file_run = self._find_existing_run_by_checksum(
+                session,
+                checksum=storage.checksum,
+            )
+            if existing_file_run is not None:
+                return self._idempotent_kickoff_result(
+                    existing_file_run,
+                    reason="idempotent_file_replay",
+                )
+
         document = self._upsert_issue_document(
             session=session,
             source_identifier=source_identifier,
             issue_event=issue_event,
-        )
-        storage = self._store_issue_pdf(
-            issue_event=issue_event,
-            run_id=run_identity.run_id,
-            attachment_url=attachment_url,
         )
         version_row = self._create_issue_document_version(
             session=session,
@@ -612,7 +621,7 @@ class WhitepaperWorkflowService:
             issue_event=issue_event,
             source=source,
             marker_hash=run_identity.marker_hash,
-            run_id=run_identity.run_id,
+            run_id=run_row.run_id,
             document_key=document.document_key,
             parse_error=storage.parse_error,
         )
@@ -654,12 +663,42 @@ class WhitepaperWorkflowService:
         return None, marker, attachment_url
 
     @staticmethod
-    def _idempotent_kickoff_result(run: WhitepaperAnalysisRun) -> IssueKickoffResult:
+    def _idempotent_kickoff_result(
+        run: WhitepaperAnalysisRun,
+        *,
+        reason: str = "idempotent_replay",
+    ) -> IssueKickoffResult:
         return IssueKickoffResult(
             accepted=True,
-            reason="idempotent_replay",
+            reason=reason,
             run_id=run.run_id,
             document_key=str(run.document.document_key) if run.document else None,
+        )
+
+    @staticmethod
+    def _find_existing_run_by_checksum(
+        session: Session,
+        *,
+        checksum: str,
+    ) -> WhitepaperAnalysisRun | None:
+        status_rank = case(
+            (WhitepaperAnalysisRun.status == "completed", 0),
+            (WhitepaperAnalysisRun.status == "agentrun_dispatched", 1),
+            (WhitepaperAnalysisRun.status == "queued", 2),
+            else_=3,
+        )
+        return (
+            session.execute(
+                select(WhitepaperAnalysisRun)
+                .join(
+                    WhitepaperDocumentVersion,
+                    WhitepaperDocumentVersion.id == WhitepaperAnalysisRun.document_version_id,
+                )
+                .where(WhitepaperDocumentVersion.checksum_sha256 == checksum)
+                .order_by(status_rank.asc(), WhitepaperAnalysisRun.created_at.desc())
+            )
+            .scalars()
+            .first()
         )
 
     def _upsert_issue_document(
@@ -706,8 +745,6 @@ class WhitepaperWorkflowService:
     def _store_issue_pdf(
         self,
         *,
-        issue_event: Any,
-        run_id: str,
         attachment_url: str,
     ) -> _PdfStorageOutcome:
         download_error: str | None = None
@@ -717,14 +754,13 @@ class WhitepaperWorkflowService:
         except Exception as exc:
             download_error = f"download_failed:{type(exc).__name__}:{exc}"
 
-        ceph_bucket = _str_env("WHITEPAPER_CEPH_BUCKET") or _str_env("BUCKET_NAME") or "torghut-whitepapers"
-        key_repository = issue_event.repository.replace("/", "-")
-        ceph_key = f"raw/github/{key_repository}/issue-{issue_event.issue_number}/{run_id}/source.pdf"
         checksum = (
             hashlib.sha256(pdf_bytes).hexdigest()
             if pdf_bytes is not None
             else hashlib.sha256(attachment_url.encode("utf-8")).hexdigest()
         )
+        ceph_bucket = _str_env("WHITEPAPER_CEPH_BUCKET") or _str_env("BUCKET_NAME") or "torghut-whitepapers"
+        ceph_key = f"raw/checksum/{checksum[:2]}/{checksum}/source.pdf"
         file_size = len(pdf_bytes) if pdf_bytes is not None else None
 
         parse_status = "pending"
