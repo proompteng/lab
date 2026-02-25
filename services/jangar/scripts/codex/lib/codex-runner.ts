@@ -24,6 +24,8 @@ export interface RunCodexSessionOptions {
 export interface RunCodexSessionResult {
   agentMessages: string[]
   sessionId?: string
+  exitCode?: number
+  forcedTermination?: boolean
 }
 
 export interface PushCodexEventsToLokiOptions {
@@ -650,7 +652,12 @@ export const runCodexSession = async ({
     }
   }
 
-  return { agentMessages, sessionId }
+  return {
+    agentMessages,
+    sessionId,
+    exitCode: runResult.exitCode,
+    forcedTermination: runResult.forcedTermination,
+  }
 }
 
 export const pushCodexEventsToLoki = async ({
