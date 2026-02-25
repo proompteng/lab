@@ -1269,6 +1269,14 @@ describe('agents controller reconcileAgentRun', () => {
     const container = containers[0] ?? {}
     const env = (container.env as Record<string, unknown>[] | undefined) ?? []
     expect(env.some((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_PATH')).toBe(false)
+    const expectedHashVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_EXPECTED_HASH') as
+      | Record<string, unknown>
+      | undefined
+    expect(expectedHashVar?.value).toBe(createHash('sha256').update('from-run').digest('hex'))
+    const requiredVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_REQUIRED') as
+      | Record<string, unknown>
+      | undefined
+    expect(requiredVar?.value).toBe('true')
   })
 
   it('mounts ConfigMap systemPromptRef and stores hash without inline prompt leakage', async () => {
@@ -1357,6 +1365,15 @@ describe('agents controller reconcileAgentRun', () => {
       | Record<string, unknown>
       | undefined
     expect(mount?.readOnly).toBe(true)
+
+    const expectedHashVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_EXPECTED_HASH') as
+      | Record<string, unknown>
+      | undefined
+    expect(expectedHashVar?.value).toBe(createHash('sha256').update('prompt-from-configmap').digest('hex'))
+    const requiredVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_REQUIRED') as
+      | Record<string, unknown>
+      | undefined
+    expect(requiredVar?.value).toBe('true')
   })
 
   it('mounts Secret systemPromptRef when allowlisted and included in spec.secrets', async () => {
@@ -1445,6 +1462,15 @@ describe('agents controller reconcileAgentRun', () => {
     const items = (secret.items as Record<string, unknown>[] | undefined) ?? []
     expect(items[0]?.key).toBe('prompt')
     expect(items[0]?.path).toBe('system-prompt.txt')
+
+    const expectedHashVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_EXPECTED_HASH') as
+      | Record<string, unknown>
+      | undefined
+    expect(expectedHashVar?.value).toBe(createHash('sha256').update('prompt-from-secret').digest('hex'))
+    const requiredVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_REQUIRED') as
+      | Record<string, unknown>
+      | undefined
+    expect(requiredVar?.value).toBe('true')
   })
 
   it('rejects Secret systemPromptRef when not included in spec.secrets', async () => {
@@ -2008,6 +2034,15 @@ describe('agents controller reconcileAgentRun', () => {
       | Record<string, unknown>
       | undefined
     expect(mount?.readOnly).toBe(true)
+
+    const expectedHashVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_EXPECTED_HASH') as
+      | Record<string, unknown>
+      | undefined
+    expect(expectedHashVar?.value).toBe(createHash('sha256').update('workflow-prompt').digest('hex'))
+    const requiredVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_REQUIRED') as
+      | Record<string, unknown>
+      | undefined
+    expect(requiredVar?.value).toBe('true')
   })
 
   it('advances workflow steps and completes', async () => {

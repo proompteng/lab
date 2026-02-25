@@ -883,6 +883,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
               vcs: vcsResolution,
               parameters: resolvedParameters,
               systemPrompt: systemPromptResolution.systemPrompt,
+              systemPromptHash: systemPromptResolution.systemPromptHash,
               systemPromptRef: systemPromptResolution.systemPromptRef,
             },
           )

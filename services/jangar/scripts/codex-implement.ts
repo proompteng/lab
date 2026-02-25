@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -177,6 +178,80 @@ const getString = (payload: EventPayload, keys: string[]) => {
   return ''
 }
 
+const normalizeOptionalString = (value: string | null | undefined) => {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+export const parseBoolean = (value: string | undefined, fallback: boolean) => {
+  if (value === undefined) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false
+  return fallback
+}
+
+const sha256Hex = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
+
+export const loadSystemPrompt = (payload: EventPayload) => {
+  const systemPromptPath = normalizeOptionalString(process.env.CODEX_SYSTEM_PROMPT_PATH)
+  const payloadSystemPrompt = getString(payload, ['systemPrompt', 'system_prompt'])
+  const expectedSystemPromptHash = normalizeOptionalString(process.env.CODEX_SYSTEM_PROMPT_EXPECTED_HASH)?.toLowerCase()
+  const systemPromptRequired = parseBoolean(process.env.CODEX_SYSTEM_PROMPT_REQUIRED, Boolean(expectedSystemPromptHash))
+
+  let systemPromptSource: 'path' | 'payload' | undefined
+  let systemPrompt: string | undefined
+
+  if (systemPromptPath && existsSync(systemPromptPath)) {
+    try {
+      const content = readFileSync(systemPromptPath, 'utf8')
+      if (content.trim().length > 0) {
+        systemPrompt = content
+        systemPromptSource = 'path'
+      } else {
+        console.warn(`[codex-implement] System prompt file was empty: ${systemPromptPath}`)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn(`[codex-implement] Failed to read system prompt file ${systemPromptPath}: ${message}`)
+    }
+  }
+
+  if (!systemPrompt && payloadSystemPrompt) {
+    systemPrompt = payloadSystemPrompt
+    systemPromptSource = 'payload'
+  }
+
+  const systemPromptHash = systemPrompt ? sha256Hex(systemPrompt) : undefined
+
+  if (systemPromptRequired && !systemPrompt) {
+    throw new Error(
+      `System prompt is required but was not loaded (path=${systemPromptPath ?? 'unset'}, source=${payloadSystemPrompt ? 'payload-available' : 'none'})`,
+    )
+  }
+  if (expectedSystemPromptHash) {
+    if (!systemPromptHash) {
+      throw new Error(
+        `System prompt hash verification failed: expected ${expectedSystemPromptHash}, but no system prompt was loaded`,
+      )
+    }
+    if (systemPromptHash.toLowerCase() !== expectedSystemPromptHash) {
+      throw new Error(
+        `System prompt hash mismatch: expected ${expectedSystemPromptHash}, got ${systemPromptHash.toLowerCase()}`,
+      )
+    }
+  }
+
+  if (systemPrompt && systemPromptHash) {
+    console.log(
+      `[codex-implement] Loaded system prompt (source=${systemPromptSource ?? 'unknown'}, length=${systemPrompt.length}, hash=${systemPromptHash})`,
+    )
+  }
+
+  return { systemPrompt }
+}
+
 const main = async () => {
   const eventPath = process.argv[2]
   if (!eventPath) {
@@ -193,6 +268,7 @@ const main = async () => {
   if (!repository) throw new Error('Event payload is missing repository')
 
   const issueNumber = getString(payload, ['issueNumber', 'issue_number', 'issue', 'issueId'])
+  const { systemPrompt } = loadSystemPrompt(payload)
 
   const workdir = process.env.CODEX_WORKDIR?.trim() || DEFAULT_WORKDIR
   mkdirSync(workdir, { recursive: true })
@@ -255,6 +331,9 @@ const main = async () => {
     '--cd',
     workdir,
   ]
+  if (systemPrompt) {
+    codexArgs.push('--config', `developer_instructions=${JSON.stringify(systemPrompt)}`)
+  }
 
   const codexResult = spawnSync('codex', codexArgs, {
     env,
@@ -272,7 +351,9 @@ const main = async () => {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error))
-  process.exit(1)
-})
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exit(1)
+  })
+}

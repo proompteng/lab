@@ -11,6 +11,7 @@ import { pushCodexEventsToLoki, type RunCodexSessionResult, runCodexSession } fr
 import {
   buildDiscordChannelCommand,
   copyAgentLogIfNeeded,
+  parseBoolean,
   pathExists,
   randomRunId,
   timestampUtc,
@@ -1430,6 +1431,10 @@ export const runCodexImplementation = async (eventPath: string) => {
 
   const systemPromptPath = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_PATH))
   const payloadSystemPrompt = normalizeOptionalString(sanitizeNullableString(event.systemPrompt))
+  const expectedSystemPromptHash = normalizeOptionalString(
+    sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_EXPECTED_HASH),
+  )?.toLowerCase()
+  const systemPromptRequired = parseBoolean(process.env.CODEX_SYSTEM_PROMPT_REQUIRED, Boolean(expectedSystemPromptHash))
   let systemPromptSource: 'path' | 'payload' | undefined
   let systemPrompt: string | undefined
   if (systemPromptPath && (await pathExists(systemPromptPath))) {
@@ -1450,6 +1455,23 @@ export const runCodexImplementation = async (eventPath: string) => {
     systemPrompt = payloadSystemPrompt
   }
   const systemPromptHash = systemPrompt ? sha256Hex(systemPrompt) : undefined
+  if (systemPromptRequired && !systemPrompt) {
+    throw new Error(
+      `System prompt is required but was not loaded (path=${systemPromptPath ?? 'unset'}, source=${payloadSystemPrompt ? 'payload-available' : 'none'})`,
+    )
+  }
+  if (expectedSystemPromptHash) {
+    if (!systemPromptHash) {
+      throw new Error(
+        `System prompt hash verification failed: expected ${expectedSystemPromptHash}, but no system prompt was loaded`,
+      )
+    }
+    if (systemPromptHash.toLowerCase() !== expectedSystemPromptHash) {
+      throw new Error(
+        `System prompt hash mismatch: expected ${expectedSystemPromptHash}, got ${systemPromptHash.toLowerCase()}`,
+      )
+    }
+  }
   if (systemPrompt && systemPromptHash) {
     logger.info('System prompt configured', {
       source: systemPromptSource,
