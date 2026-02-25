@@ -1,0 +1,232 @@
+{
+  "run_id": "wp-3c2d18eab548a4b3cdc83a85",
+  "workflow": "whitepaper-analysis-v1",
+  "issue": {
+    "repo": "proompteng/lab",
+    "number": 3637,
+    "url": "https://github.com/proompteng/lab/issues/3637"
+  },
+  "paper": {
+    "title": "AlphaAgentEvo: Evolution-Oriented Alpha Mining via Self-Evolving Agentic Reinforcement Learning",
+    "openreview_id": "lNmZrawUMu",
+    "pdf_url": "https://openreview.net/pdf/a12abbf64e8a33b261b14e066ef58c9dd5411bc8.pdf",
+    "ceph_object_uri": "s3://torghut-whitepapers/raw/checksum/19/1978955a9e6fcc0d700e9ccfce9e9f1cdc0a9928a9c7adaab9a96e5f78018978/source.pdf",
+    "pdf_sha256": "1978955a9e6fcc0d700e9ccfce9e9f1cdc0a9928a9c7adaab9a96e5f78018978"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 18,
+    "included_sections": [
+      "main_text",
+      "reproducibility_statement",
+      "references",
+      "appendix_A",
+      "appendix_B",
+      "appendix_C",
+      "appendix_D",
+      "appendix_E",
+      "appendix_F",
+      "appendix_G"
+    ]
+  },
+  "executive_summary": "AlphaAgentEvo reframes alpha mining as multi-turn trajectory evolution with an agentic RL loop and a hierarchical reward that balances tool validity, seed consistency, diversity, and performance progress. Reported benchmark pass rates are strong across AlphaEvo500 and Alpha158, including high pass@5 values for the 4B model. The architecture is implementation-relevant for Torghut research infrastructure, but direct production promotion is not justified due to reproducibility and statistical-rigor gaps.",
+  "problem_statement": "Existing alpha-mining workflows are brittle and myopic (search-backtest-restart), while GP-style methods and prompt-only multi-agent methods often fail to capture reflective, long-horizon self-evolution under noisy financial feedback.",
+  "methodology_summary": "The paper defines evolution policy optimization around seed alphas with in-distribution and out-of-distribution objectives plus AST-similarity constraints. It extends GRPO into a multi-turn tool-in-the-loop ARL setting, masking tool outputs from gradients while training on policy-generated tokens. A hierarchical reward combines tool-call success, structural consistency to seed, exploration diversity, performance uplift, and sustained improvement streaks. Experiments use AlphaEvo500 and Alpha158 with HS300/CSI500 backtests and evaluate VR, pass@3/pass@5, IR, and AER.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "AlphaAgentEvo-4B achieves the best reported pass-rate profile across the primary tables.",
+      "evidence": [
+        "Section 3.2",
+        "Table 1",
+        "Table 2"
+      ],
+      "details": {
+        "hs300": {
+          "vr": 0.979,
+          "pass_at_3": 0.97,
+          "pass_at_5": 0.97
+        },
+        "csi500": {
+          "vr": 0.977,
+          "pass_at_3": 0.93,
+          "pass_at_5": 0.95
+        },
+        "alpha158_bullish_period": {
+          "vr": 0.982,
+          "pass_at_3": 0.963,
+          "pass_at_5": 0.994
+        }
+      }
+    },
+    {
+      "id": "KF-2",
+      "finding": "Reward ablations show both exploration and consistency terms are required for efficient evolution.",
+      "evidence": [
+        "Section 3.4",
+        "Figure 4"
+      ],
+      "details": {
+        "alphaevo500_pass_at_3": {
+          "full": 0.65,
+          "without_exploration": 0.54,
+          "without_consistency": 0.51
+        },
+        "alpha158_pass_at_3": {
+          "full": 0.581,
+          "without_exploration": 0.513,
+          "without_consistency": 0.510
+        }
+      }
+    },
+    {
+      "id": "KF-3",
+      "finding": "Diversity analysis indicates lower concentration on repeated patterns than major baselines.",
+      "evidence": [
+        "Section 3.5",
+        "Figure 5"
+      ],
+      "details": {
+        "average_similarity": 0.039,
+        "max_similarity": 0.263
+      }
+    },
+    {
+      "id": "KF-4",
+      "finding": "Appendix multi-factor portfolio comparison reports highest AER/IR and best drawdown among listed methods.",
+      "evidence": [
+        "Appendix B",
+        "Table 3"
+      ],
+      "details": {
+        "aer": 0.129,
+        "ir": 2.442,
+        "mdd": -0.176
+      }
+    },
+    {
+      "id": "KF-5",
+      "finding": "Training analysis claims stable reward improvement with later exploration rebound.",
+      "evidence": [
+        "Appendix C",
+        "Figure 7"
+      ]
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "First self-evolving ARL framework for alpha mining.",
+      "assessment": "partially_supported",
+      "notes": "Method novelty is clearly described, but firstness is not independently validated in-paper."
+    },
+    {
+      "claim": "Hierarchical rewards induce reflective long-horizon alpha evolution.",
+      "assessment": "supported_in_scope",
+      "notes": "Reward design is explicit and ablations/trajectory analyses are directionally consistent."
+    },
+    {
+      "claim": "Generated alphas are more diverse and transferable.",
+      "assessment": "supported_in_scope",
+      "notes": "Supported by similarity and out-of-sample analyses, though no confidence intervals are provided."
+    },
+    {
+      "claim": "A 4B model can beat stronger closed-model baselines in this task.",
+      "assessment": "partially_supported",
+      "notes": "Supported by reported tables under paper setup; fairness and variance transparency are limited."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "reproducibility_specificity",
+      "severity": "high",
+      "detail": "Reproducibility statement references supplementary artifacts, but paper text does not enumerate a deterministic replay manifest (prompt hashes, seeds, exact decode settings, immutable data hashes per run)."
+    },
+    {
+      "risk": "statistical_uncertainty",
+      "severity": "high",
+      "detail": "Headline tables provide point estimates without confidence intervals or repeated-seed significance tests."
+    },
+    {
+      "risk": "benchmark_fairness",
+      "severity": "medium_high",
+      "detail": "Some baseline comparability remains uncertain (for example GP incompatibility with AlphaEvo500 and potential prompt/config parity ambiguity across closed/open models)."
+    },
+    {
+      "risk": "external_validity",
+      "severity": "medium_high",
+      "detail": "Evidence is strong in provided windows/markets but still limited for autonomous promotion across broader universes and regimes."
+    },
+    {
+      "risk": "repo_gap",
+      "severity": "medium",
+      "detail": "Current Torghut codebase has deterministic backtest/gate infrastructure but lacks a native AST-expression evolution engine and GRPO-based multi-turn training stack needed for parity implementation."
+    }
+  ],
+  "citations": [
+    {
+      "section": "Section 2.1",
+      "pointer": "Equation 1",
+      "claim": "Defines evolution-policy objective with in-distribution/out-of-distribution terms and seed-similarity constraint."
+    },
+    {
+      "section": "Section 2.2",
+      "pointer": "Figure 2 and Equation 2",
+      "claim": "Defines multi-turn ARL adaptation of GRPO with token masking for tool outputs."
+    },
+    {
+      "section": "Section 2.3",
+      "pointer": "Equation 3-5",
+      "claim": "Defines exploration similarity, AST similarity metric, and hierarchical capped reward composition."
+    },
+    {
+      "section": "Section 3.1",
+      "pointer": "Equation 6",
+      "claim": "Defines pass@T used for evolution success evaluation."
+    },
+    {
+      "section": "Section 3.2",
+      "pointer": "Table 1 and Table 2",
+      "claim": "Reports VR/pass-rate outcomes across AlphaEvo500 and Alpha158."
+    },
+    {
+      "section": "Section 3.3",
+      "pointer": "Figure 3",
+      "claim": "Shows trajectory-level evolution behavior against ToolRL baseline."
+    },
+    {
+      "section": "Section 3.4",
+      "pointer": "Figure 4",
+      "claim": "Ablates exploration and consistency reward components."
+    },
+    {
+      "section": "Section 3.5",
+      "pointer": "Figure 5 and Figure 6",
+      "claim": "Evaluates alpha diversity and out-of-sample performance distributions."
+    },
+    {
+      "section": "Appendix B",
+      "pointer": "Table 3",
+      "claim": "Provides multi-factor portfolio comparison."
+    },
+    {
+      "section": "Appendix D",
+      "pointer": "Training Configurations",
+      "claim": "Lists training steps, GPUs, reward caps, and coefficient settings."
+    },
+    {
+      "section": "Reproducibility Statement",
+      "pointer": "Page 10",
+      "claim": "States dataset splits, tool schema references, and source-code release intent."
+    },
+    {
+      "section": "Repository state",
+      "pointer": "services/torghut/app/trading/evaluation.py, services/torghut/app/trading/alpha/search.py, services/torghut/app/trading/autonomy/policy_checks.py",
+      "claim": "Existing deterministic research and gating foundations support phased adoption but not direct paper-parity reproduction."
+    }
+  ],
+  "implementation_plan_md": "Phase 1 (1-2 weeks): Add deterministic trajectory and factor-expression scaffolding in Torghut research lane.\\n\\n1. Introduce alpha-evolution trajectory schema with seed, turns, tool call logs, and lineage hashes.\\n2. Build a minimal AST parser/similarity module for expression constraints equivalent to Eq. 4 usage.\\n3. Add evaluate-factor adapter over existing backtest/evaluation harness.\\n\\nPhase 2 (2-4 weeks): Implement reward decomposition and replay.\\n\\n1. Implement hierarchical reward calculator (`Rtool`, `Rcons`, `Rexpl`, `Rperf`, `Rstreak`) with caps from Eq. 5.\\n2. Add deterministic replay format for trajectory reward recomputation and unit tests for reward terms.\\n3. Wire outputs into promotion artifacts so policy checks can gate progression on reproducibility metadata.\\n\\nPhase 3 (2-3 weeks): Robustness hardening before any mode escalation.\\n\\n1. Add repeated-run uncertainty reporting and regime-slice evaluation artifacts.\\n2. Add hard gates requiring reproducibility manifests and uncertainty thresholds in autonomy policy checks.\\n3. Keep operating mode in research/paper-trading until gates pass; block autonomous live promotion by default.",
+  "confidence": 0.83
+}
