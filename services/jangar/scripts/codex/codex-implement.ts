@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 import { spawn as spawnChild } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFile, lstat, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import process from 'node:process'
 
 import { runCli } from './lib/cli'
@@ -478,10 +478,15 @@ const extractKnownGaps = (message?: string | null) => {
   return altLines.map((line) => line.replace(/^[-*]\s*/, '')).filter(Boolean)
 }
 
-const runCommand = async (command: string, args: string[], options: { cwd?: string } = {}): Promise<CommandResult> => {
+const runCommand = async (
+  command: string,
+  args: string[],
+  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+): Promise<CommandResult> => {
   return await new Promise<CommandResult>((resolve, reject) => {
     const child = spawnChild(command, args, {
       cwd: options.cwd,
+      env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
@@ -508,6 +513,74 @@ const runCommand = async (command: string, args: string[], options: { cwd?: stri
       })
     })
   })
+}
+
+const normalizeCloneBaseUrl = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  const withScheme = trimmed.includes('://') ? trimmed : `https://${trimmed}`
+  try {
+    const parsed = new URL(withScheme)
+    const pathname = parsed.pathname.replace(/\/+$/, '')
+    return `${parsed.protocol}//${parsed.host}${pathname}`
+  } catch {
+    return null
+  }
+}
+
+const resolveRepositoryCloneUrl = (repository: string) => {
+  const explicitRepositoryUrl = normalizeOptionalString(
+    sanitizeNullableString(process.env.VCS_REPOSITORY_URL ?? process.env.REPO_URL),
+  )
+  if (explicitRepositoryUrl) {
+    return explicitRepositoryUrl
+  }
+
+  const cloneBaseUrl = normalizeOptionalString(
+    sanitizeNullableString(process.env.VCS_CLONE_BASE_URL ?? process.env.VCS_WEB_BASE_URL),
+  )
+  const normalizedBase = cloneBaseUrl ? normalizeCloneBaseUrl(cloneBaseUrl) : null
+  if (normalizedBase) {
+    return `${normalizedBase}/${repository}.git`
+  }
+
+  return `https://github.com/${repository}.git`
+}
+
+const ensureWorktreeCheckout = async ({
+  worktree,
+  repository,
+  logger,
+}: {
+  worktree: string
+  repository: string
+  logger: CodexLogger
+}) => {
+  const gitDir = join(worktree, '.git')
+  if (await pathExists(gitDir)) {
+    return
+  }
+
+  await mkdir(dirname(worktree), { recursive: true })
+
+  if (await pathExists(worktree)) {
+    const existingEntries = await readdir(worktree)
+    if (existingEntries.length > 0) {
+      logger.warn(`Worktree ${worktree} exists without .git; recreating checkout before implementation run`)
+      await rm(worktree, { recursive: true, force: true })
+    }
+  }
+
+  const cloneUrl = resolveRepositoryCloneUrl(repository)
+  logger.info(`Bootstrapping repository checkout into ${worktree} from ${cloneUrl}`)
+  const cloneResult = await runCommand('git', ['clone', cloneUrl, worktree])
+  if (cloneResult.exitCode !== 0) {
+    const output = [cloneResult.stderr, cloneResult.stdout].filter(Boolean).join('\n').trim()
+    throw new Error(`git clone failed (exit ${cloneResult.exitCode})${output ? `: ${output}` : ''}`)
+  }
 }
 
 const resolveBaseRef = async (worktree: string, baseBranch: string, logger: CodexLogger) => {
@@ -1317,6 +1390,8 @@ export const runCodexImplementation = async (eventPath: string) => {
       throw new Error(`${description} failed (exit ${result.exitCode})${output ? `: ${output}` : ''}`)
     }
   }
+
+  await ensureWorktreeCheckout({ worktree, repository, logger: consoleLogger })
 
   // Ensure worktree tracks the requested head branch (not just base).
   assertCommandSuccess(await runCommand('git', ['fetch', '--all', '--prune'], { cwd: worktree }), 'git fetch')

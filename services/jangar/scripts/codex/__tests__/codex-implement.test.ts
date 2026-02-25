@@ -127,6 +127,7 @@ describe('runCodexImplementation', () => {
     await runGit(['init'])
     await runGit(['config', 'user.email', 'codex@example.com'])
     await runGit(['config', 'user.name', 'Codex Tester'])
+    await runGit(['config', 'commit.gpgsign', 'false'])
     await writeFile(join(workdir, '.gitkeep'), '', 'utf8')
     await runGit(['add', '.gitkeep'])
     await runGit(['commit', '-m', 'chore: initial'])
@@ -190,6 +191,31 @@ describe('runCodexImplementation', () => {
     const resumeMetadataRaw = await readFile(resumeMetadataPath, 'utf8')
     const resumeMetadata = JSON.parse(resumeMetadataRaw) as Record<string, unknown>
     expect(resumeMetadata.state).toBe('cleared')
+  }, 40_000)
+
+  it('bootstraps the worktree checkout when the repository is missing', async () => {
+    const bootstrappedWorktree = join(workdir, 'fresh-worktree')
+    process.env.WORKTREE = bootstrappedWorktree
+    process.env.VCS_REPOSITORY_URL = remoteDir
+    utilMocks.pathExists.mockImplementation(async (path: string) => {
+      try {
+        await stat(path)
+        return true
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return false
+        }
+        throw error
+      }
+    })
+
+    const result = await runCodexImplementation(eventPath)
+
+    const gitDirStats = await stat(join(bootstrappedWorktree, '.git'))
+    expect(gitDirStats.isDirectory()).toBe(true)
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.outputPath).toBe(join(bootstrappedWorktree, '.codex-implementation.log'))
+    expect(result.patchPath).toBe(join(bootstrappedWorktree, '.codex-implementation.patch'))
   }, 40_000)
 
   it('does not inject runner git/PR workflow contracts into the prompt', async () => {
