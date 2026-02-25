@@ -1,7 +1,19 @@
 #!/usr/bin/env bun
 import { spawn as spawnChild } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
