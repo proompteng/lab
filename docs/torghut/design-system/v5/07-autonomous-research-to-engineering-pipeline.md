@@ -79,6 +79,7 @@ Feeder mapping into Speed A artifacts:
 - `whitepaper_syntheses` -> `HypothesisCard.thesis`, citations, implementation notes.
 - `whitepaper_viability_verdicts` -> grade inputs (`verdict`, `score`, `confidence`, `requires_followup`, `gating_json`).
 - `whitepaper_design_pull_requests` -> provenance links; advisory only for downstream implementation context.
+- Jangar whitepaper library UI -> operator decision events for manual implementation approval.
 
 ### Whitepaper Grading Policy (Auto-Trigger Eligibility)
 
@@ -105,6 +106,27 @@ Default auto-dispatch eligibility (configurable by policy):
 - `score >= minScore`
 - `requires_followup == false`
 - no blocking reason in `gating_json`
+
+### Manual Approval Path (Jangar Whitepaper Library UI)
+
+When a processed whitepaper does not meet auto-dispatch thresholds, operators can still trigger implementation manually:
+
+- UI action: `Approve for implementation` from the whitepaper detail view.
+- Effect: write `manual_approved` decision event with operator identity and rationale.
+- Action: create engineering AgentRun for `B1 engineer` using the same candidate contract as auto-dispatch.
+
+Manual approval preconditions:
+
+- `run.status == completed`
+- whitepaper synthesis and verdict artifacts exist
+- operator provides rationale and target scope
+- approval policy allows manual override for current environment/profile
+
+Manual approval guarantees:
+
+- generated AgentRun and branch naming follow standard engineering lane conventions,
+- approval metadata is persisted for audit (`approved_by`, `approval_source=jangar_ui`, timestamp, reason),
+- downstream B2-B6 gates remain mandatory and unchanged.
 
 ### Speed B: Engineering + Production Lane (Gated)
 
@@ -158,6 +180,7 @@ Auto-minted tokens are limited to:
 - `hypothesis-backlog.json`
 - `whitepaper-feeder-map.json`
 - `engineering-trigger-decision.json`
+- `manual-approval-decision.json`
 
 ### Engineering Artifacts
 
@@ -245,6 +268,10 @@ Use Postgres + `pgvector`.
 - `approval_token`
 - `dispatched_agentrun_name`
 - `rollout_profile` (`manual|assisted|automatic`)
+- `approval_source` (`policy_auto|jangar_ui`)
+- `approved_by`
+- `approved_at`
+- `approval_reason`
 - `created_at`
 
 ## ImplementationSpec Catalog (Two-Speed)
@@ -319,6 +346,23 @@ Required keys:
 - `head`
 - `artifactPath`
 
+### `torghut-v5-manual-approval-trigger-v1`
+
+Purpose:
+
+- accept human approval events from Jangar whitepaper library UI and dispatch B1 engineering AgentRuns for non-auto-eligible candidates.
+
+Required keys:
+
+- `runId`
+- `hypothesisRef`
+- `approvedBy`
+- `approvalReason`
+- `repository`
+- `base`
+- `head`
+- `artifactPath`
+
 ### `torghut-v5-auto-rollout-controller-v1`
 
 Purpose:
@@ -350,6 +394,7 @@ Required keys:
 
 - research lane: daily or intraday cadence.
 - whitepaper feeder: event-driven on whitepaper run finalization.
+- whitepaper manual approvals: event-driven on Jangar UI approval actions.
 - engineering lane: batch by approved backlog and team capacity.
 - production promotion: event-driven only after gate evidence completion.
 - auto-rollout controller: event-driven on gate completion and window close.
@@ -381,11 +426,13 @@ Required keys:
 - no LLM-only approval path for live risk increases.
 - no promotion when artifacts are missing or non-reproducible.
 - no automatic stage transition when any required gate is non-`pass`.
+- no manual approval action without persisted approver identity and rationale.
 
 ## Acceptance Criteria
 
 - At least one hypothesis completes full path `A0 -> B3` with complete evidence pack.
 - At least one completed whitepaper run with eligible grade auto-dispatches a B1 engineering AgentRun and records trigger evidence.
+- At least one below-threshold whitepaper run is manually approved in Jangar UI and dispatches a B1 engineering AgentRun with audit fields populated.
 - At least one candidate completes automatic full progression `B3 -> B6` under policy profile `automatic` with full transition log.
 - Production gate evaluator blocks intentionally malformed or incomplete candidates.
 - Replay of a promotion decision produces identical gate outcomes from stored hashes.
