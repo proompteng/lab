@@ -1626,7 +1626,7 @@ class WhitepaperWorkflowService:
             .order_by(WhitepaperRolloutTransition.created_at.asc())
         ).scalars().all()
         if existing_with_hash:
-            return existing_with_hash
+            return list(existing_with_hash)
 
         gate_snapshot = self._as_json_record(trigger.gate_snapshot_json)
         gate_statuses = self._extract_gate_statuses(gate_snapshot)
@@ -1750,7 +1750,7 @@ class WhitepaperWorkflowService:
             self._optional_text(
                 manual_approval.repository if manual_approval is not None else None
             )
-            or self._optional_text(cast(dict[str, Any], context).get("repository"))
+            or self._optional_text(context.get("repository"))
             or _str_env("WHITEPAPER_DEFAULT_REPOSITORY", "proompteng/lab")
             or "proompteng/lab"
         )
