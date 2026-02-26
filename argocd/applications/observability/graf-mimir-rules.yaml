@@ -218,13 +218,48 @@ data:
                 namespace="torghut",
                 service="torghut-ws"
               } == 0
-            for: 5m
+            for: 2m
             labels:
               severity: critical
             annotations:
               summary: Torghut WS forwarder not ready
               description: |
-                torghut-ws /readyz is failing for 5 minutes (Alpaca/Kafka gates not healthy).
+                torghut-ws /readyz is failing for 2 minutes (Alpaca/Kafka gates not healthy).
+              runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
+          - alert: TorghutWSRestartsOrOOM
+            expr: |
+              (
+                sum(
+                  increase(
+                    kube_pod_container_status_restarts_total{
+                      namespace="torghut",
+                      pod=~"torghut-ws-.*",
+                      container="torghut-ws"
+                    }[10m]
+                  )
+                ) > 0
+              )
+              or
+              (
+                max(
+                  max_over_time(
+                    kube_pod_container_status_last_terminated_reason{
+                      namespace="torghut",
+                      pod=~"torghut-ws-.*",
+                      container="torghut-ws",
+                      reason="OOMKilled"
+                    }[10m]
+                  )
+                ) >= 1
+              )
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut WS container restarted or OOMKilled
+              description: |
+                torghut-ws restarted in the last 10 minutes or terminated with OOMKilled.
+                Inspect /readyz gates, recent ws logs, and JVM heap settings before market-hour impact grows.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
           - alert: TorghutWSDesiredSymbolsFetchFailing
             expr: |
@@ -283,13 +318,13 @@ data:
                 * (hour(vector(time())) >= bool 14)
                 * (hour(vector(time())) < bool 21)
               )
-            for: 15m
+            for: 8m
             labels:
               severity: critical
             annotations:
               summary: Torghut WS is not publishing Kafka records (market hours)
               description: |
-                torghut-ws has published 0 records/sec for 15 minutes during market hours (UTC schedule).
+                torghut-ws has published 0 records/sec for 8 minutes during market hours (UTC schedule).
 
                 This usually means the Alpaca WS isn't receiving events or subscriptions are broken.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
@@ -793,7 +828,7 @@ data:
                     service="torghut-clickhouse-guardrails-exporter"
                   }
                 )
-              ) > bool 900
+              ) > bool 600
               * on() group_left()
               (
                 (day_of_week(vector(time())) >= bool 1)
@@ -801,13 +836,13 @@ data:
                 * (hour(vector(time())) >= bool 14)
                 * (hour(vector(time())) < bool 21)
               )
-            for: 15m
+            for: 5m
             labels:
               severity: critical
             annotations:
               summary: Torghut signals are stale (market hours)
               description: |
-                ClickHouse ta_signals max(event_ts) is older than 15 minutes during market hours (UTC schedule).
+                ClickHouse ta_signals max(event_ts) is older than 10 minutes during market hours (UTC schedule).
 
                 First checks:
                 - torghut-ws readiness and Kafka publishing
@@ -823,7 +858,7 @@ data:
                     service="torghut-clickhouse-guardrails-exporter"
                   }
                 )
-              ) > bool 300
+              ) > bool 240
               * on() group_left()
               (
                 (day_of_week(vector(time())) >= bool 1)
@@ -831,13 +866,13 @@ data:
                 * (hour(vector(time())) >= bool 14)
                 * (hour(vector(time())) < bool 21)
               )
-            for: 10m
+            for: 5m
             labels:
               severity: warning
             annotations:
               summary: Torghut microbars are stale (market hours)
               description: |
-                ClickHouse ta_microbars max(window_end) is older than 5 minutes during market hours (UTC schedule).
+                ClickHouse ta_microbars max(window_end) is older than 4 minutes during market hours (UTC schedule).
               runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
       - name: torghut-quant-control-plane.rules
         rules:

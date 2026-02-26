@@ -25,9 +25,11 @@ spec:
         runAsUser: 65532
         runAsGroup: 65532
         fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: torghut-ws
-          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:7acf8e793002f92beb75d9c923c5b5230e79528ff34702b1826e192358ee774c
+          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:9bfda8d020d326f6771537b396557bbaf66a752b93b16a037ebc94adf2df511f
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -51,9 +53,11 @@ spec:
                   name: torghut-ws
                   key: password
             - name: TORGHUT_WS_VERSION
-              value: v0.560.0-17-g59b92491
+              value: codex-20260226175458
             - name: TORGHUT_WS_COMMIT
-              value: 59b924911cd1310655e3c036ad6d0805cf2a6ebb
+              value: 41526241a4d5a04b3ace18c5ab3e8fa24dd51486
+            - name: JAVA_TOOL_OPTIONS
+              value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=40.0 -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError
           ports:
             - containerPort: 8080
               name: http
@@ -73,11 +77,11 @@ spec:
             periodSeconds: 10
           resources:
             requests:
-              cpu: 200m
-              memory: 256Mi
-            limits:
-              cpu: 500m
+              cpu: 300m
               memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

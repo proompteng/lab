@@ -47,6 +47,7 @@ data class ForwarderConfig(
   val topics: TopicConfig,
   val healthPort: Int = 8080,
   val metricsPort: Int = 9090,
+  val healthNotReadyKillAfterMs: Long = 180_000,
 ) {
   companion object {
     fun fromEnv(env: Map<String, String>? = null): ForwarderConfig {
@@ -105,6 +106,11 @@ data class ForwarderConfig(
           clientId = mergedEnv["KAFKA_CLIENT_ID"] ?: "dorvud-ws",
           lingerMs = mergedEnv["KAFKA_LINGER_MS"]?.toIntOrNull() ?: 30,
           batchSize = mergedEnv["KAFKA_BATCH_SIZE"]?.toIntOrNull() ?: 32768,
+          bufferMemoryBytes = mergedEnv["KAFKA_BUFFER_MEMORY_BYTES"]?.toLongOrNull() ?: (16L * 1024 * 1024),
+          maxRequestSizeBytes = mergedEnv["KAFKA_MAX_REQUEST_SIZE_BYTES"]?.toIntOrNull() ?: (512 * 1024),
+          deliveryTimeoutMs = mergedEnv["KAFKA_DELIVERY_TIMEOUT_MS"]?.toIntOrNull() ?: 60_000,
+          requestTimeoutMs = mergedEnv["KAFKA_REQUEST_TIMEOUT_MS"]?.toIntOrNull() ?: 15_000,
+          maxBlockMs = mergedEnv["KAFKA_MAX_BLOCK_MS"]?.toLongOrNull() ?: 10_000,
           acks = mergedEnv["KAFKA_ACKS"] ?: "all",
           compressionType = mergedEnv["KAFKA_COMPRESSION"] ?: "lz4",
           securityProtocol = mergedEnv["KAFKA_SECURITY_PROTOCOL"] ?: "SASL_SSL",
@@ -121,6 +127,14 @@ data class ForwarderConfig(
               endpointIdentification = mergedEnv["KAFKA_SSL_ENDPOINT_IDENTIFICATION"] ?: "HTTPS",
             ),
         )
+      if (kafka.bufferMemoryBytes <= 0) error("KAFKA_BUFFER_MEMORY_BYTES must be > 0")
+      if (kafka.maxRequestSizeBytes <= 0) error("KAFKA_MAX_REQUEST_SIZE_BYTES must be > 0")
+      if (kafka.deliveryTimeoutMs <= 0) error("KAFKA_DELIVERY_TIMEOUT_MS must be > 0")
+      if (kafka.requestTimeoutMs <= 0) error("KAFKA_REQUEST_TIMEOUT_MS must be > 0")
+      if (kafka.maxBlockMs <= 0) error("KAFKA_MAX_BLOCK_MS must be > 0")
+
+      val healthNotReadyKillAfterMs = mergedEnv["HEALTH_NOT_READY_KILL_AFTER_MS"]?.toLongOrNull() ?: 180_000
+      if (healthNotReadyKillAfterMs <= 0) error("HEALTH_NOT_READY_KILL_AFTER_MS must be > 0")
 
       return ForwarderConfig(
         alpacaKeyId = mergedEnv.getValue("ALPACA_KEY_ID"),
@@ -148,6 +162,7 @@ data class ForwarderConfig(
         topics = topics,
         healthPort = mergedEnv["HEALTH_PORT"]?.toIntOrNull() ?: 8080,
         metricsPort = mergedEnv["METRICS_PORT"]?.toIntOrNull() ?: 9090,
+        healthNotReadyKillAfterMs = healthNotReadyKillAfterMs,
       )
     }
 
