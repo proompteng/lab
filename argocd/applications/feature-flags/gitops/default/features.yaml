@@ -115,51 +115,6 @@ flags:
     description: Prefers limit order execution when supported.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
-  - key: torghut_trading_lean_runner_healthcheck_enabled
-    name: Torghut Trading LEAN Runner Healthcheck Enabled
-    description: Enables LEAN runner preflight health checks.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
-  - key: torghut_trading_lean_runner_require_healthy
-    name: Torghut Trading LEAN Runner Require Healthy
-    description: Requires healthy LEAN runner before using LEAN adapter.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
-  - key: torghut_trading_lean_backtest_enabled
-    name: Torghut Trading LEAN Backtest Enabled
-    description: Enables LEAN backtest lane orchestration APIs.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: false
-  - key: torghut_trading_lean_shadow_execution_enabled
-    name: Torghut Trading LEAN Shadow Execution Enabled
-    description: Enables LEAN shadow simulation telemetry on live intents.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: false
-  - key: torghut_trading_lean_strategy_shadow_enabled
-    name: Torghut Trading LEAN Strategy Shadow Enabled
-    description: Enables LEAN strategy-runtime shadow evaluations.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: false
-  - key: torghut_trading_lean_live_canary_enabled
-    name: Torghut Trading LEAN Live Canary Enabled
-    description: Enables strict LEAN live canary routing controls.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: false
-  - key: torghut_trading_lean_live_canary_crypto_only
-    name: Torghut Trading LEAN Live Canary Crypto Only
-    description: Restricts LEAN live canary activation to crypto symbols.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
-  - key: torghut_trading_lean_lane_disable_switch
-    name: Torghut Trading LEAN Lane Disable Switch
-    description: Emergency hard disable for LEAN multi-lane behavior.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: false
-  - key: torghut_trading_lean_live_canary_hard_rollback_enabled
-    name: Torghut Trading LEAN Live Canary Hard Rollback Enabled
-    description: Triggers hard rollback controls when canary thresholds breach.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
   - key: torghut_trading_allocator_enabled
     name: Torghut Trading Allocator Enabled
     description: Enables deterministic portfolio allocator stage.

@@ -302,67 +302,44 @@ class TestExecutionAdapters(TestCase):
         self.assertEqual(payload.get('symbol'), 'AAPL')
         self.assertEqual(payload.get('_execution_fallback_reason'), 'lean_submit_order_contract_violation')
 
-    def test_symbol_allowlist_policy(self) -> None:
-        original_adapter = config.settings.trading_execution_adapter
-        original_policy = config.settings.trading_execution_adapter_policy
-        original_symbols = config.settings.trading_execution_adapter_symbols_raw
-        try:
-            config.settings.trading_execution_adapter = 'lean'
-            config.settings.trading_execution_adapter_policy = 'allowlist'
-            config.settings.trading_execution_adapter_symbols_raw = 'NVDA,MU'
-            self.assertTrue(adapter_enabled_for_symbol('NVDA'))
-            self.assertFalse(adapter_enabled_for_symbol('AAPL'))
-
-            config.settings.trading_execution_adapter_policy = 'all'
-            self.assertTrue(adapter_enabled_for_symbol('AAPL'))
-
-            config.settings.trading_execution_adapter_policy = 'allowlist'
-            config.settings.trading_execution_adapter_symbols_raw = ''
-            self.assertTrue(adapter_enabled_for_symbol('AAPL'))
-        finally:
-            config.settings.trading_execution_adapter = original_adapter
-            config.settings.trading_execution_adapter_policy = original_policy
-            config.settings.trading_execution_adapter_symbols_raw = original_symbols
-
-    def test_live_canary_crypto_only_blocks_non_crypto_symbols(self) -> None:
+    def test_symbol_allowlists_and_canaries_do_not_gate_lean_routing(self) -> None:
         original_adapter = config.settings.trading_execution_adapter
         original_mode = config.settings.trading_mode
+        original_policy = config.settings.trading_execution_adapter_policy
+        original_symbols = config.settings.trading_execution_adapter_symbols_raw
         original_canary = config.settings.trading_lean_live_canary_enabled
         original_crypto_only = config.settings.trading_lean_live_canary_crypto_only
-        original_symbols = config.settings.trading_lean_live_canary_symbols_raw
+        original_canary_symbols = config.settings.trading_lean_live_canary_symbols_raw
         try:
             config.settings.trading_execution_adapter = 'lean'
             config.settings.trading_mode = 'live'
+            config.settings.trading_execution_adapter_policy = 'allowlist'
+            config.settings.trading_execution_adapter_symbols_raw = 'NVDA'
             config.settings.trading_lean_live_canary_enabled = True
             config.settings.trading_lean_live_canary_crypto_only = True
-            config.settings.trading_lean_live_canary_symbols_raw = 'BTC/USD,ETH/USD'
-
+            config.settings.trading_lean_live_canary_symbols_raw = 'BTC/USD'
+            self.assertTrue(adapter_enabled_for_symbol('AAPL'))
             self.assertTrue(adapter_enabled_for_symbol('BTC/USD'))
-            self.assertFalse(adapter_enabled_for_symbol('AAPL'))
-            self.assertFalse(adapter_enabled_for_symbol('SOL/USD'))
+            self.assertTrue(adapter_enabled_for_symbol('MSFT', allowlist=set()))
         finally:
             config.settings.trading_execution_adapter = original_adapter
             config.settings.trading_mode = original_mode
-            config.settings.trading_lean_live_canary_enabled = original_canary
-            config.settings.trading_lean_live_canary_crypto_only = original_crypto_only
-            config.settings.trading_lean_live_canary_symbols_raw = original_symbols
-
-    def test_symbol_allowlist_policy_prefers_runtime_allowlist(self) -> None:
-        original_adapter = config.settings.trading_execution_adapter
-        original_policy = config.settings.trading_execution_adapter_policy
-        original_symbols = config.settings.trading_execution_adapter_symbols_raw
-        try:
-            config.settings.trading_execution_adapter = 'lean'
-            config.settings.trading_execution_adapter_policy = 'allowlist'
-            config.settings.trading_execution_adapter_symbols_raw = 'NVDA'
-
-            self.assertTrue(adapter_enabled_for_symbol('MSFT', allowlist={'MSFT'}))
-            self.assertFalse(adapter_enabled_for_symbol('NVDA', allowlist={'MSFT'}))
-            self.assertFalse(adapter_enabled_for_symbol('MSFT', allowlist=set()))
-        finally:
-            config.settings.trading_execution_adapter = original_adapter
             config.settings.trading_execution_adapter_policy = original_policy
             config.settings.trading_execution_adapter_symbols_raw = original_symbols
+            config.settings.trading_lean_live_canary_enabled = original_canary
+            config.settings.trading_lean_live_canary_crypto_only = original_crypto_only
+            config.settings.trading_lean_live_canary_symbols_raw = original_canary_symbols
+
+    def test_disable_switch_blocks_lean_routing(self) -> None:
+        original_adapter = config.settings.trading_execution_adapter
+        original_disable = config.settings.trading_lean_lane_disable_switch
+        try:
+            config.settings.trading_execution_adapter = 'lean'
+            config.settings.trading_lean_lane_disable_switch = True
+            self.assertFalse(adapter_enabled_for_symbol('AAPL'))
+        finally:
+            config.settings.trading_execution_adapter = original_adapter
+            config.settings.trading_lean_lane_disable_switch = original_disable
 
     def test_build_execution_adapter_falls_back_when_healthcheck_required_and_unhealthy(self) -> None:
         original_adapter = config.settings.trading_execution_adapter

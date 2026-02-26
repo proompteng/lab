@@ -439,7 +439,18 @@ class TestConfig(TestCase):
             for name, field in Settings.model_fields.items()
             if field.annotation is bool
         }
-        control_fields = {"trading_feature_flags_enabled"}
+        control_fields = {
+            "trading_feature_flags_enabled",
+            "trading_lean_runner_healthcheck_enabled",
+            "trading_lean_runner_require_healthy",
+            "trading_lean_backtest_enabled",
+            "trading_lean_shadow_execution_enabled",
+            "trading_lean_strategy_shadow_enabled",
+            "trading_lean_live_canary_enabled",
+            "trading_lean_live_canary_crypto_only",
+            "trading_lean_lane_disable_switch",
+            "trading_lean_live_canary_hard_rollback_enabled",
+        }
         self.assertEqual(
             set(FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD),
             boolean_fields - control_fields,

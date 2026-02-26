@@ -637,41 +637,15 @@ def build_execution_adapter(
 
 
 def adapter_enabled_for_symbol(symbol: str, *, allowlist: set[str] | None = None) -> bool:
-    """Apply adapter routing policy constraints for symbol-level canaries.
+    """Return whether LEAN should be used for execution routing."""
 
-    When ``allowlist`` is provided, it is treated as the authoritative runtime
-    symbol set (for example, resolved universe symbols) and env fallback is bypassed.
-    """
+    _ = (symbol, allowlist)
 
     if settings.trading_execution_adapter != 'lean':
         return False
     if settings.trading_lean_lane_disable_switch:
         return False
-    if settings.trading_mode == 'live' and settings.trading_lean_live_canary_enabled:
-        if settings.trading_lean_live_canary_crypto_only and not _is_crypto_symbol(symbol):
-            return False
-        canary_symbols = settings.trading_lean_live_canary_symbols
-        if canary_symbols and symbol not in canary_symbols:
-            return False
-    if settings.trading_execution_adapter_policy == 'all':
-        return True
-
-    if allowlist is not None:
-        if not allowlist:
-            return False
-        return symbol in allowlist
-
-    configured_allowlist = settings.trading_execution_adapter_symbols
-    # Backward-compatible fallback for deployments still relying on env-driven
-    # execution canary routing.
-    if not configured_allowlist:
-        return True
-    return symbol in configured_allowlist
-
-
-def _is_crypto_symbol(symbol: str) -> bool:
-    normalized = symbol.strip().upper()
-    return '/' in normalized and len(normalized) >= 5
+    return True
 
 
 def _error_summary(exc: Exception) -> str:
