@@ -412,7 +412,6 @@ class TestOrderIdempotency(TestCase):
                     'execution_advisor': {
                         'applied': False,
                         'fallback_reason': 'advisor_missing_inputs',
-                        'fallback_reason': 'advisor_missing_inputs',
                     },
                 },
             )
