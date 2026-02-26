@@ -84,16 +84,31 @@ def _evaluate_acceptance_window(
     full_chain_runs: int,
     route_total: int,
     missing_route_rows: int,
+    route_fallback_rows: int,
+    advisor_eligible_rows: int,
+    advisor_payload_rows: int,
     min_non_skipped_runs: int,
     min_trade_decisions: int,
     min_executions: int,
     min_full_chain_runs: int,
     min_route_coverage_ratio: float,
+    min_execution_advisor_coverage_ratio: float,
+    max_route_fallback_ratio: float,
 ) -> dict[str, Any]:
     route_coverage_ratio = (
         max(0.0, (route_total - missing_route_rows) / route_total)
         if route_total > 0
         else 0.0
+    )
+    route_fallback_ratio = (
+        max(0.0, route_fallback_rows / route_total)
+        if route_total > 0
+        else 0.0
+    )
+    execution_advisor_coverage_ratio = (
+        max(0.0, advisor_payload_rows / advisor_eligible_rows)
+        if advisor_eligible_rows > 0
+        else 1.0
     )
     passed = (
         non_skipped_runs >= min_non_skipped_runs
@@ -101,6 +116,8 @@ def _evaluate_acceptance_window(
         and executions >= min_executions
         and full_chain_runs >= min_full_chain_runs
         and route_coverage_ratio >= min_route_coverage_ratio
+        and route_fallback_ratio <= max_route_fallback_ratio
+        and execution_advisor_coverage_ratio >= min_execution_advisor_coverage_ratio
     )
     return {
         'passed': passed,
@@ -112,6 +129,11 @@ def _evaluate_acceptance_window(
             'route_total': route_total,
             'missing_route_rows': missing_route_rows,
             'route_coverage_ratio': round(route_coverage_ratio, 6),
+            'route_fallback_rows': route_fallback_rows,
+            'route_fallback_ratio': round(route_fallback_ratio, 6),
+            'execution_advisor_eligible_rows': advisor_eligible_rows,
+            'execution_advisor_payload_rows': advisor_payload_rows,
+            'execution_advisor_coverage_ratio': round(execution_advisor_coverage_ratio, 6),
         },
         'thresholds': {
             'min_non_skipped_runs': min_non_skipped_runs,
@@ -119,6 +141,8 @@ def _evaluate_acceptance_window(
             'min_executions': min_executions,
             'min_full_chain_runs': min_full_chain_runs,
             'min_route_coverage_ratio': min_route_coverage_ratio,
+            'max_route_fallback_ratio': max_route_fallback_ratio,
+            'min_execution_advisor_coverage_ratio': min_execution_advisor_coverage_ratio,
         },
     }
 
@@ -189,6 +213,18 @@ def main() -> None:
         default=0.99,
         help='Minimum route provenance coverage ratio in lookback window.',
     )
+    parser.add_argument(
+        '--max-route-fallback-ratio',
+        type=float,
+        default=0.05,
+        help='Maximum allowed route fallback ratio in lookback window.',
+    )
+    parser.add_argument(
+        '--min-execution-advisor-coverage-ratio',
+        type=float,
+        default=0.99,
+        help='Minimum execution_advisor payload coverage ratio on rows that include microstructure_state.',
+    )
     args = parser.parse_args()
 
     now = datetime.now(timezone.utc)
@@ -217,6 +253,14 @@ def main() -> None:
 
         total_route_count = session.execute(
             select(func.count(Execution.id)).where(Execution.created_at >= lookback_start)
+        ).scalar_one()
+        fallback_route_count = session.execute(
+            select(func.count(Execution.id)).where(
+                and_(
+                    Execution.created_at >= lookback_start,
+                    Execution.execution_fallback_count > 0,
+                )
+            )
         ).scalar_one()
 
         invalid_fallback_reason_count = session.execute(
@@ -270,6 +314,27 @@ def main() -> None:
                 TradeDecision.created_at >= lookback_start
             )
         ).scalar_one()
+        advisor_coverage = session.execute(
+            select(
+                func.count(TradeDecision.id).filter(
+                    func.jsonb_typeof(
+                        TradeDecision.decision_json['params']['microstructure_state']
+                    ) == 'object'
+                ),
+                func.count(TradeDecision.id).filter(
+                    and_(
+                        func.jsonb_typeof(
+                            TradeDecision.decision_json['params']['microstructure_state']
+                        ) == 'object',
+                        func.jsonb_typeof(
+                            TradeDecision.decision_json['params']['execution_advisor']
+                        ) == 'object',
+                    )
+                ),
+            ).where(TradeDecision.created_at >= lookback_start)
+        ).one()
+        advisor_eligible_rows = int(advisor_coverage[0] or 0)
+        advisor_payload_rows = int(advisor_coverage[1] or 0)
 
         executions = session.execute(
             select(func.count(Execution.id)).where(Execution.created_at >= lookback_start)
@@ -307,16 +372,56 @@ def main() -> None:
             full_chain_runs=int(full_chain_runs),
             route_total=int(total_route_count),
             missing_route_rows=int(missing_route_count),
+            route_fallback_rows=int(fallback_route_count),
+            advisor_eligible_rows=advisor_eligible_rows,
+            advisor_payload_rows=advisor_payload_rows,
             min_non_skipped_runs=max(1, int(args.min_non_skipped_runs)),
             min_trade_decisions=max(1, int(args.min_trade_decisions)),
             min_executions=max(1, int(args.min_executions)),
             min_full_chain_runs=max(1, int(args.min_full_chain_runs)),
             min_route_coverage_ratio=max(0.0, float(args.min_route_coverage_ratio)),
+            max_route_fallback_ratio=max(0.0, float(args.max_route_fallback_ratio)),
+            min_execution_advisor_coverage_ratio=max(
+                0.0,
+                float(args.min_execution_advisor_coverage_ratio),
+            ),
         ),
         'execution_route_provenance': {
             'missing_rows': int(missing_route_count),
             'threshold': args.max_missing_provenance,
             'passed': int(missing_route_count) <= args.max_missing_provenance,
+        },
+        'execution_route_fallback_ratio': {
+            'fallback_rows': int(fallback_route_count),
+            'route_total': int(total_route_count),
+            'ratio': (
+                round(int(fallback_route_count) / int(total_route_count), 6)
+                if int(total_route_count) > 0
+                else 0.0
+            ),
+            'threshold': max(0.0, float(args.max_route_fallback_ratio)),
+            'passed': (
+                (int(fallback_route_count) / int(total_route_count))
+                <= max(0.0, float(args.max_route_fallback_ratio))
+                if int(total_route_count) > 0
+                else True
+            ),
+        },
+        'execution_advisor_provenance': {
+            'microstructure_rows': advisor_eligible_rows,
+            'execution_advisor_rows': advisor_payload_rows,
+            'coverage_ratio': (
+                round(advisor_payload_rows / advisor_eligible_rows, 6)
+                if advisor_eligible_rows > 0
+                else 1.0
+            ),
+            'threshold': max(0.0, float(args.min_execution_advisor_coverage_ratio)),
+            'passed': (
+                (advisor_payload_rows / advisor_eligible_rows)
+                >= max(0.0, float(args.min_execution_advisor_coverage_ratio))
+                if advisor_eligible_rows > 0
+                else True
+            ),
         },
         'execution_fallback_reason': {
             'missing_rows': int(invalid_fallback_reason_count),
