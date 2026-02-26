@@ -426,3 +426,32 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(fragility.get('symbol'), 'AAPL')
         self.assertEqual(fragility.get('fragility_state'), 'elevated')
         self.assertEqual(fragility.get('spread_acceleration'), Decimal('0.30'))
+
+    def test_decision_params_include_signal_seq(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='seq-wiring',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            seq=17,
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+            },
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].params.get('signal_seq'), 17)

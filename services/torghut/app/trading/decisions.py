@@ -409,6 +409,7 @@ def _build_params(
         "macd_signal": macd_signal,
         "rsi": rsi,
         "price": price,
+        "signal_seq": int(signal.seq or 0),
         "strategy_runtime": runtime_metadata,
     }
     if volatility is not None:

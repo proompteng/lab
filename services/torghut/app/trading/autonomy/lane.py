@@ -192,6 +192,34 @@ def _ensure_utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_object_dict(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): item for key, item in value.items()}
+
+
+def _extract_janus_q_metrics(summary: dict[str, object]) -> tuple[int, int, bool, list[str]]:
+    event_car = _as_object_dict(summary.get("event_car"))
+    hgrm_reward = _as_object_dict(summary.get("hgrm_reward"))
+    reasons_raw = summary.get("reasons")
+    reasons: list[str] = []
+    if isinstance(reasons_raw, list):
+        reasons = [str(reason).strip() for reason in reasons_raw if str(reason).strip()]
+    return (
+        _safe_int(event_car.get("event_count", 0)),
+        _safe_int(hgrm_reward.get("reward_count", 0)),
+        bool(summary.get("evidence_complete", False)),
+        reasons,
+    )
+
+
 def run_autonomous_lane(
     *,
     signals_path: Path,
@@ -365,6 +393,12 @@ def run_autonomous_lane(
             event_car_artifact_ref=str(janus_event_car_path),
             hgrm_reward_artifact_ref=str(janus_hgrm_reward_path),
         )
+        (
+            janus_event_count,
+            janus_reward_count,
+            janus_evidence_complete,
+            janus_reasons,
+        ) = _extract_janus_q_metrics(janus_q_summary)
 
         benchmark = execute_profitability_benchmark_v4(
             candidate_id=candidate_id,
@@ -540,25 +574,15 @@ def run_autonomous_lane(
             },
             "janus_q": {
                 "event_car": {
-                    "count": int(
-                        janus_q_summary.get("event_car", {}).get("event_count", 0)
-                    ),
+                    "count": janus_event_count,
                     "artifact_ref": str(janus_event_car_path),
                 },
                 "hgrm_reward": {
-                    "count": int(
-                        janus_q_summary.get("hgrm_reward", {}).get("reward_count", 0)
-                    ),
+                    "count": janus_reward_count,
                     "artifact_ref": str(janus_hgrm_reward_path),
                 },
-                "evidence_complete": bool(
-                    janus_q_summary.get("evidence_complete", False)
-                ),
-                "reasons": [
-                    str(reason)
-                    for reason in janus_q_summary.get("reasons", [])
-                    if str(reason).strip()
-                ],
+                "evidence_complete": janus_evidence_complete,
+                "reasons": janus_reasons,
             },
             "promotion_rationale": {
                 "requested_target": promotion_target,
@@ -783,25 +807,15 @@ def run_autonomous_lane(
             },
             "janus_q": {
                 "event_car": {
-                    "count": int(
-                        janus_q_summary.get("event_car", {}).get("event_count", 0)
-                    ),
+                    "count": janus_event_count,
                     "artifact_ref": str(janus_event_car_path),
                 },
                 "hgrm_reward": {
-                    "count": int(
-                        janus_q_summary.get("hgrm_reward", {}).get("reward_count", 0)
-                    ),
+                    "count": janus_reward_count,
                     "artifact_ref": str(janus_hgrm_reward_path),
                 },
-                "evidence_complete": bool(
-                    janus_q_summary.get("evidence_complete", False)
-                ),
-                "reasons": [
-                    str(reason)
-                    for reason in janus_q_summary.get("reasons", [])
-                    if str(reason).strip()
-                ],
+                "evidence_complete": janus_evidence_complete,
+                "reasons": janus_reasons,
             },
             "promotion_rationale": {
                 "requested_target": promotion_target,
