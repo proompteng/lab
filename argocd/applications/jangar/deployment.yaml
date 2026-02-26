@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-02-26T19:53:36Z"
+    deploy.knative.dev/rollout: "2026-02-26T21:16:24.147Z"
 spec:
   replicas: 1
   strategy:
@@ -285,16 +285,36 @@ spec:
             - name: JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS
               value: "120"
             - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL
-              valueFrom:
-                secretKeyRef:
-                  name: jangar-market-context-providers
-                  key: fundamentals_url
-                  optional: true
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/providers/fundamentals
+              valueFrom: null
             - name: JANGAR_MARKET_CONTEXT_NEWS_URL
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/providers/news
+              valueFrom: null
+            - name: JANGAR_MARKET_CONTEXT_AGENT_DISPATCH_ENABLED
+              value: "true"
+            - name: JANGAR_MARKET_CONTEXT_AGENT_NAMESPACE
+              value: agents
+            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_AGENT_NAME
+              value: torghut-fundamentals-agent
+            - name: JANGAR_MARKET_CONTEXT_NEWS_AGENT_NAME
+              value: torghut-news-agent
+            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_IMPLEMENTATION_SPEC
+              value: torghut-market-context-fundamentals-v1
+            - name: JANGAR_MARKET_CONTEXT_NEWS_IMPLEMENTATION_SPEC
+              value: torghut-market-context-news-v1
+            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_DISPATCH_COOLDOWN_SECONDS
+              value: "1800"
+            - name: JANGAR_MARKET_CONTEXT_NEWS_DISPATCH_COOLDOWN_SECONDS
+              value: "120"
+            - name: JANGAR_MARKET_CONTEXT_AGENT_CALLBACK_BASE_URL
+              value: http://jangar.jangar.svc.cluster.local
+            - name: JANGAR_MARKET_CONTEXT_AGENT_TTL_SECONDS
+              value: "1800"
+            - name: JANGAR_MARKET_CONTEXT_INGEST_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: jangar-market-context-providers
-                  key: news_url
+                  key: ingest_token
                   optional: true
             - name: JANGAR_TORGHUT_DECISION_ENGINE_ENABLED
               value: "true"

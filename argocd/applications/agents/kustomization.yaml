@@ -7,6 +7,9 @@ resources:
   - codex-whitepaper-secretbinding.yaml
   - codex-whitepaper-agent.yaml
   - codex-agentprovider.yaml
+  - codex-spark-agentprovider.yaml
+  - torghut-fundamentals-agent.yaml
+  - torghut-news-agent.yaml
   - codex-agent-system-prompt-configmap.yaml
   - codex-whitepaper-agent-system-prompt-configmap.yaml
   - codex-research-secretbinding.yaml

@@ -172,3 +172,131 @@ spec:
        - resume-ta: set spec.job.state: running and bump spec.restartNonce if needed.
     4) Open a PR against ${repository} with base ${base} and head ${head}.
     5) Output PR URL and clear rollback instructions.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-market-context-fundamentals-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - symbol
+      - domain
+      - asOfUtc
+      - reason
+      - callbackUrl
+      - requestId
+  text: |
+    Objective: Build a fundamentals market-context snapshot for `${symbol}` and publish it to `${callbackUrl}`.
+
+    Guardrails:
+    - Read-only research task; do not mutate cluster state.
+    - Use at least 2 independent citations.
+    - All timestamps must be UTC ISO-8601 strings.
+    - Keep qualityScore in [0, 1].
+
+    Inputs:
+    - symbol, domain, asOfUtc, reason
+    - callbackUrl, requestId
+    - callbackToken (optional bearer token)
+
+    Required output payload shape:
+    {
+      "symbol": "<symbol>",
+      "domain": "fundamentals",
+      "asOfUtc": "<ISO timestamp>",
+      "sourceCount": <integer>,
+      "qualityScore": <number 0..1>,
+      "payload": {
+        "thesis": "<short summary>",
+        "valuation": { ... },
+        "growth": { ... },
+        "profitability": { ... },
+        "balanceSheet": { ... },
+        "upcomingCatalysts": [ ... ]
+      },
+      "citations": [
+        { "source": "<publisher>", "publishedAt": "<ISO timestamp>", "url": "<https url or null>" }
+      ],
+      "riskFlags": [ ... ],
+      "provider": "codex-spark",
+      "runStatus": "succeeded",
+      "requestId": "<requestId>"
+    }
+
+    Steps:
+    1) Research current fundamentals for `${symbol}` (valuation, growth, profitability, balance-sheet/capital structure, near-term catalysts).
+    2) Write the JSON payload to `/tmp/market-context-fundamentals.json`.
+    3) Submit the payload:
+       - AUTH=()
+       - if [ -n "${callbackToken}" ]; then AUTH=(-H "authorization: Bearer ${callbackToken}"); fi
+       - curl -fsS -X POST "${callbackUrl}" -H "content-type: application/json" "${AUTH[@]}" --data-binary @/tmp/market-context-fundamentals.json
+    4) Ensure callback response contains `"ok": true`. If it fails, retry once; if still failing, exit non-zero.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-market-context-news-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - symbol
+      - domain
+      - asOfUtc
+      - reason
+      - callbackUrl
+      - requestId
+  text: |
+    Objective: Build a news market-context snapshot for `${symbol}` and publish it to `${callbackUrl}`.
+
+    Guardrails:
+    - Read-only research task; do not mutate cluster state.
+    - Prioritize the most recent high-signal news (last 24h, then 7d if sparse).
+    - Use at least 3 citations.
+    - All timestamps must be UTC ISO-8601 strings.
+    - Keep qualityScore in [0, 1].
+
+    Inputs:
+    - symbol, domain, asOfUtc, reason
+    - callbackUrl, requestId
+    - callbackToken (optional bearer token)
+
+    Required output payload shape:
+    {
+      "symbol": "<symbol>",
+      "domain": "news",
+      "asOfUtc": "<ISO timestamp>",
+      "sourceCount": <integer>,
+      "qualityScore": <number 0..1>,
+      "payload": {
+        "summary": "<short summary>",
+        "headlines": [
+          {
+            "headline": "<title>",
+            "publisher": "<publisher>",
+            "publishedAt": "<ISO timestamp>",
+            "url": "<https url or null>",
+            "marketImpact": "positive|negative|mixed|neutral"
+          }
+        ],
+        "eventRisk": "low|medium|high"
+      },
+      "citations": [
+        { "source": "<publisher>", "publishedAt": "<ISO timestamp>", "url": "<https url or null>" }
+      ],
+      "riskFlags": [ ... ],
+      "provider": "codex-spark",
+      "runStatus": "succeeded",
+      "requestId": "<requestId>"
+    }
+
+    Steps:
+    1) Gather recent high-signal company/sector/macro news relevant to `${symbol}`.
+    2) Write the JSON payload to `/tmp/market-context-news.json`.
+    3) Submit the payload:
+       - AUTH=()
+       - if [ -n "${callbackToken}" ]; then AUTH=(-H "authorization: Bearer ${callbackToken}"); fi
+       - curl -fsS -X POST "${callbackUrl}" -H "content-type: application/json" "${AUTH[@]}" --data-binary @/tmp/market-context-news.json
+    4) Ensure callback response contains `"ok": true`. If it fails, retry once; if still failing, exit non-zero.

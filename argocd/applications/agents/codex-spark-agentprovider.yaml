@@ -1,0 +1,58 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: codex-spark
+spec:
+  binary: /usr/local/bin/agent-runner
+  argsTemplate: []
+  envTemplate:
+    CODEX_LOG_LEVEL: info
+    NATS_URL: nats://nats.nats.svc.cluster.local:4222
+    AGENT_PROVIDER_PATH: /root/.codex/provider-codex-spark.json
+  inputFiles:
+    - path: /root/.codex/config.toml
+      content: |-
+        model = "gpt-5.3-codex-spark"
+        model_reasoning_summary = "detailed"
+        model_reasoning_effort = "high"
+        model_verbosity = "medium"
+        preferred_auth_method = "apikey"
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
+        web_search = "live"
+
+        [features]
+        undo = true
+        enable_request_compression = true
+        apply_patch_freeform = true
+        unified_exec = true
+        shell_snapshot = true
+        steer = true
+        multi_agent = true
+        child_agents_md = true
+        collaboration_modes = true
+        responses_websockets = false
+
+        [shell_environment_policy]
+        ignore_default_excludes = true
+
+        [projects."/workspace/lab"]
+        trust_level = "trusted"
+
+        [projects."/root"]
+        trust_level = "trusted"
+    - path: /root/.codex/provider-codex-spark.json
+      content: |-
+        {
+          "name": "codex-spark",
+          "binary": "/bin/bash",
+          "argsTemplate": [
+            "-lc",
+            "PROMPT_PATH='{{payloads.promptPath}}'; cat \"$PROMPT_PATH\" | /usr/local/bin/codex exec --skip-git-repo-check --cd /tmp -"
+          ]
+        }
+  outputArtifacts:
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json

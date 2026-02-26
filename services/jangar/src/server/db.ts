@@ -614,6 +614,32 @@ type TorghutQuantPipelineHealth = {
   created_at: Generated<Timestamp>
 }
 
+type TorghutMarketContextSnapshots = {
+  id: Generated<string>
+  symbol: string
+  domain: string
+  as_of: Timestamp
+  source_count: number
+  quality_score: number
+  payload: JsonValue
+  citations: unknown
+  risk_flags: string[]
+  provider: string
+  run_name: string | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type TorghutMarketContextDispatchState = {
+  symbol: string
+  domain: string
+  last_dispatched_at: Timestamp | null
+  last_run_name: string | null
+  last_status: string
+  last_error: string | null
+  updated_at: Generated<Timestamp>
+}
+
 export type Database = {
   'atlas.repositories': AtlasRepositories
   'atlas.file_keys': AtlasFileKeys
@@ -653,6 +679,8 @@ export type Database = {
   'torghut_control_plane.quant_metrics_series': TorghutQuantMetricsSeries
   'torghut_control_plane.quant_alerts': TorghutQuantAlerts
   'torghut_control_plane.quant_pipeline_health': TorghutQuantPipelineHealth
+  torghut_market_context_snapshots: TorghutMarketContextSnapshots
+  torghut_market_context_dispatch_state: TorghutMarketContextDispatchState
   'codex_judge.runs': CodexJudgeRuns
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations
