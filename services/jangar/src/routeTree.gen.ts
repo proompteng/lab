@@ -76,6 +76,7 @@ import { Route as V1AgentsIdRouteImport } from './routes/v1/agents/$id'
 import { Route as V1AgentRunsIdRouteImport } from './routes/v1/agent-runs/$id'
 import { Route as TerminalsSessionIdFullscreenRouteImport } from './routes/terminals/$sessionId/fullscreen'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
+import { Route as LibraryWhitepapersSearchRouteImport } from './routes/library/whitepapers/search'
 import { Route as LibraryWhitepapersRunIdRouteImport } from './routes/library/whitepapers/$runId'
 import { Route as ControlPlaneWorkspacesNameRouteImport } from './routes/control-plane/workspaces/$name'
 import { Route as ControlPlaneToolsNameRouteImport } from './routes/control-plane/tools/$name'
@@ -96,6 +97,7 @@ import { Route as ControlPlaneApprovalsNameRouteImport } from './routes/control-
 import { Route as ControlPlaneAgentsNameRouteImport } from './routes/control-plane/agents/$name'
 import { Route as ControlPlaneAgentRunsNameRouteImport } from './routes/control-plane/agent-runs/$name'
 import { Route as ControlPlaneAgentProvidersNameRouteImport } from './routes/control-plane/agent-providers/$name'
+import { Route as ApiWhitepapersSearchRouteImport } from './routes/api/whitepapers/search'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as ApiTerminalsSessionIdRouteImport } from './routes/api/terminals/$sessionId'
 import { Route as ApiMemoriesStatsRouteImport } from './routes/api/memories/stats'
@@ -515,6 +517,12 @@ const OpenaiV1ModelsRoute = OpenaiV1ModelsRouteImport.update({
   path: '/openai/v1/models',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LibraryWhitepapersSearchRoute =
+  LibraryWhitepapersSearchRouteImport.update({
+    id: '/library/whitepapers/search',
+    path: '/library/whitepapers/search',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const LibraryWhitepapersRunIdRoute = LibraryWhitepapersRunIdRouteImport.update({
   id: '/library/whitepapers/$runId',
   path: '/library/whitepapers/$runId',
@@ -630,6 +638,11 @@ const ControlPlaneAgentProvidersNameRoute =
     path: '/control-plane/agent-providers/$name',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiWhitepapersSearchRoute = ApiWhitepapersSearchRouteImport.update({
+  id: '/api/whitepapers/search',
+  path: '/api/whitepapers/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiTorghutSymbolsRoute = ApiTorghutSymbolsRouteImport.update({
   id: '/api/torghut/symbols',
   path: '/api/torghut/symbols',
@@ -1055,6 +1068,7 @@ export interface FileRoutesByFullPath {
   '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
+  '/api/whitepapers/search': typeof ApiWhitepapersSearchRoute
   '/control-plane/agent-providers/$name': typeof ControlPlaneAgentProvidersNameRoute
   '/control-plane/agent-runs/$name': typeof ControlPlaneAgentRunsNameRoute
   '/control-plane/agents/$name': typeof ControlPlaneAgentsNameRoute
@@ -1075,6 +1089,7 @@ export interface FileRoutesByFullPath {
   '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
   '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
   '/library/whitepapers/$runId': typeof LibraryWhitepapersRunIdRoute
+  '/library/whitepapers/search': typeof LibraryWhitepapersSearchRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
@@ -1208,6 +1223,7 @@ export interface FileRoutesByTo {
   '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
+  '/api/whitepapers/search': typeof ApiWhitepapersSearchRoute
   '/control-plane/agent-providers/$name': typeof ControlPlaneAgentProvidersNameRoute
   '/control-plane/agent-runs/$name': typeof ControlPlaneAgentRunsNameRoute
   '/control-plane/agents/$name': typeof ControlPlaneAgentsNameRoute
@@ -1228,6 +1244,7 @@ export interface FileRoutesByTo {
   '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
   '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
   '/library/whitepapers/$runId': typeof LibraryWhitepapersRunIdRoute
+  '/library/whitepapers/search': typeof LibraryWhitepapersSearchRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
@@ -1364,6 +1381,7 @@ export interface FileRoutesById {
   '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
+  '/api/whitepapers/search': typeof ApiWhitepapersSearchRoute
   '/control-plane/agent-providers/$name': typeof ControlPlaneAgentProvidersNameRoute
   '/control-plane/agent-runs/$name': typeof ControlPlaneAgentRunsNameRoute
   '/control-plane/agents/$name': typeof ControlPlaneAgentsNameRoute
@@ -1384,6 +1402,7 @@ export interface FileRoutesById {
   '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
   '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
   '/library/whitepapers/$runId': typeof LibraryWhitepapersRunIdRoute
+  '/library/whitepapers/search': typeof LibraryWhitepapersSearchRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
@@ -1521,6 +1540,7 @@ export interface FileRouteTypes {
     | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
+    | '/api/whitepapers/search'
     | '/control-plane/agent-providers/$name'
     | '/control-plane/agent-runs/$name'
     | '/control-plane/agents/$name'
@@ -1541,6 +1561,7 @@ export interface FileRouteTypes {
     | '/control-plane/tools/$name'
     | '/control-plane/workspaces/$name'
     | '/library/whitepapers/$runId'
+    | '/library/whitepapers/search'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/v1/agent-runs/$id'
@@ -1674,6 +1695,7 @@ export interface FileRouteTypes {
     | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
+    | '/api/whitepapers/search'
     | '/control-plane/agent-providers/$name'
     | '/control-plane/agent-runs/$name'
     | '/control-plane/agents/$name'
@@ -1694,6 +1716,7 @@ export interface FileRouteTypes {
     | '/control-plane/tools/$name'
     | '/control-plane/workspaces/$name'
     | '/library/whitepapers/$runId'
+    | '/library/whitepapers/search'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/v1/agent-runs/$id'
@@ -1829,6 +1852,7 @@ export interface FileRouteTypes {
     | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
+    | '/api/whitepapers/search'
     | '/control-plane/agent-providers/$name'
     | '/control-plane/agent-runs/$name'
     | '/control-plane/agents/$name'
@@ -1849,6 +1873,7 @@ export interface FileRouteTypes {
     | '/control-plane/tools/$name'
     | '/control-plane/workspaces/$name'
     | '/library/whitepapers/$runId'
+    | '/library/whitepapers/search'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/v1/agent-runs/$id'
@@ -1982,6 +2007,7 @@ export interface RootRouteChildren {
   ApiGithubIssuesRoute: typeof ApiGithubIssuesRoute
   ApiGithubPullsRoute: typeof ApiGithubPullsRouteWithChildren
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
+  ApiWhitepapersSearchRoute: typeof ApiWhitepapersSearchRoute
   ControlPlaneAgentProvidersNameRoute: typeof ControlPlaneAgentProvidersNameRoute
   ControlPlaneAgentRunsNameRoute: typeof ControlPlaneAgentRunsNameRoute
   ControlPlaneAgentsNameRoute: typeof ControlPlaneAgentsNameRoute
@@ -2002,6 +2028,7 @@ export interface RootRouteChildren {
   ControlPlaneToolsNameRoute: typeof ControlPlaneToolsNameRoute
   ControlPlaneWorkspacesNameRoute: typeof ControlPlaneWorkspacesNameRoute
   LibraryWhitepapersRunIdRoute: typeof LibraryWhitepapersRunIdRoute
+  LibraryWhitepapersSearchRoute: typeof LibraryWhitepapersSearchRoute
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
   V1RunsIdRoute: typeof V1RunsIdRoute
   ApiWhitepapersIndexRoute: typeof ApiWhitepapersIndexRoute
@@ -2527,6 +2554,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OpenaiV1ModelsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/library/whitepapers/search': {
+      id: '/library/whitepapers/search'
+      path: '/library/whitepapers/search'
+      fullPath: '/library/whitepapers/search'
+      preLoaderRoute: typeof LibraryWhitepapersSearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/library/whitepapers/$runId': {
       id: '/library/whitepapers/$runId'
       path: '/library/whitepapers/$runId'
@@ -2665,6 +2699,13 @@ declare module '@tanstack/react-router' {
       path: '/control-plane/agent-providers/$name'
       fullPath: '/control-plane/agent-providers/$name'
       preLoaderRoute: typeof ControlPlaneAgentProvidersNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/whitepapers/search': {
+      id: '/api/whitepapers/search'
+      path: '/api/whitepapers/search'
+      fullPath: '/api/whitepapers/search'
+      preLoaderRoute: typeof ApiWhitepapersSearchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/torghut/symbols': {
@@ -3417,6 +3458,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiGithubIssuesRoute: ApiGithubIssuesRoute,
   ApiGithubPullsRoute: ApiGithubPullsRouteWithChildren,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
+  ApiWhitepapersSearchRoute: ApiWhitepapersSearchRoute,
   ControlPlaneAgentProvidersNameRoute: ControlPlaneAgentProvidersNameRoute,
   ControlPlaneAgentRunsNameRoute: ControlPlaneAgentRunsNameRoute,
   ControlPlaneAgentsNameRoute: ControlPlaneAgentsNameRoute,
@@ -3441,6 +3483,7 @@ const rootRouteChildren: RootRouteChildren = {
   ControlPlaneToolsNameRoute: ControlPlaneToolsNameRoute,
   ControlPlaneWorkspacesNameRoute: ControlPlaneWorkspacesNameRoute,
   LibraryWhitepapersRunIdRoute: LibraryWhitepapersRunIdRoute,
+  LibraryWhitepapersSearchRoute: LibraryWhitepapersSearchRoute,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
   V1RunsIdRoute: V1RunsIdRoute,
   ApiWhitepapersIndexRoute: ApiWhitepapersIndexRoute,
@@ -3509,12 +3552,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

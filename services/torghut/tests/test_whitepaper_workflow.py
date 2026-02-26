@@ -123,7 +123,15 @@ class TestWhitepaperWorkflow(TestCase):
         issue_number: int = 42,
         attachment_url: str = "https://github.com/user-attachments/files/12345/sample-paper.pdf",
         issue_title: str = "Analyze new whitepaper",
+        marker_overrides: dict[str, str] | None = None,
     ) -> dict[str, object]:
+        marker_lines = [
+            "workflow: whitepaper-analysis-v1",
+            "base_branch: main",
+        ]
+        for key, value in (marker_overrides or {}).items():
+            marker_lines.append(f"{key}: {value}")
+        marker_block = "\n".join(marker_lines)
         payload = {
             "event": "issues",
             "action": "opened",
@@ -133,12 +141,11 @@ class TestWhitepaperWorkflow(TestCase):
                 "title": issue_title,
                 "body": """
 <!-- TORGHUT_WHITEPAPER:START -->
-workflow: whitepaper-analysis-v1
-base_branch: main
+{marker_block}
 <!-- TORGHUT_WHITEPAPER:END -->
 
 Attachment: {attachment_url}
-                """.format(attachment_url=attachment_url),
+                """.format(marker_block=marker_block, attachment_url=attachment_url),
                 "html_url": f"https://github.com/proompteng/lab/issues/{issue_number}",
             },
             "sender": {"login": "alice"},
@@ -715,6 +722,75 @@ https://example.com/paper.pdf
 
             agentrun_row = session.execute(select(WhitepaperCodexAgentRun)).scalar_one()
             self.assertIn("implementation_plan_md", agentrun_row.prompt_text or "")
+
+    def test_marker_subject_tags_and_analysis_mode_are_persisted(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(
+                    marker_overrides={
+                        "subject": "healthcare",
+                        "tags": "biostats, causality , paper-review",
+                        "analysis_mode": "analysis_only",
+                    }
+                ),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            document = session.execute(select(WhitepaperDocument)).scalar_one()
+            self.assertEqual(document.tags_json, ["biostats", "causality", "paper_review"])
+            self.assertIsInstance(document.metadata_json, dict)
+            assert isinstance(document.metadata_json, dict)
+            self.assertEqual(document.metadata_json.get("subject"), "healthcare")
+            self.assertEqual(document.metadata_json.get("analysis_mode"), "analysis_only")
+
+            run = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            self.assertIsInstance(run.analysis_profile_json, dict)
+            assert isinstance(run.analysis_profile_json, dict)
+            self.assertEqual(run.analysis_profile_json.get("subject"), "healthcare")
+            self.assertEqual(run.analysis_profile_json.get("tags"), ["biostats", "causality", "paper_review"])
+            self.assertEqual(run.analysis_profile_json.get("analysis_mode"), "analysis_only")
+
+    def test_analysis_only_prompt_omits_pr_requirement(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+            lambda _payload, *, idempotency_key: {
+                "ok": True,
+                "resource": {
+                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
+                    "status": {"phase": "Pending"},
+                },
+            }
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(
+                    marker_overrides={
+                        "analysis_mode": "analysis_only",
+                        "subject": "economics",
+                    }
+                ),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            agentrun_row = session.execute(select(WhitepaperCodexAgentRun)).scalar_one()
+            prompt_text = agentrun_row.prompt_text or ""
+            self.assertIn("Analysis mode: analysis_only", prompt_text)
+            self.assertIn("Do not open a PR in analysis-only mode.", prompt_text)
+            self.assertNotIn("Open a PR from a codex/* branch", prompt_text)
 
     def test_failed_run_replay_is_idempotent_without_duplicate_rows(self) -> None:
         service = WhitepaperWorkflowService()

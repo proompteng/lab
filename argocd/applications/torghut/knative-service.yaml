@@ -264,6 +264,30 @@ spec:
               value: torghut/whitepaper.analysis.requested
             - name: WHITEPAPER_INNGEST_FUNCTION_ID
               value: torghut-whitepaper-analysis-v1
+            - name: WHITEPAPER_INNGEST_ENABLED
+              value: "false"
+            - name: WHITEPAPER_INNGEST_FINALIZED_EVENT_NAME
+              value: torghut/whitepaper.analysis.finalized
+            - name: WHITEPAPER_INNGEST_FINALIZE_FUNCTION_ID
+              value: torghut-whitepaper-synthesis-index-v1
+            - name: WHITEPAPER_SEMANTIC_INDEXING_ENABLED
+              value: "false"
+            - name: WHITEPAPER_SEMANTIC_REQUIRED
+              value: "false"
+            - name: WHITEPAPER_EMBEDDING_API_BASE_URL
+              value: http://saigak.saigak.svc.cluster.local:11434/api
+            - name: WHITEPAPER_EMBEDDING_MODEL
+              value: qwen3-embedding-saigak:0.6b
+            - name: WHITEPAPER_EMBEDDING_DIMENSION
+              value: "1024"
+            - name: WHITEPAPER_EMBEDDING_TIMEOUT_MS
+              value: "120000"
+            - name: WHITEPAPER_CHUNK_SIZE_CHARS
+              value: "2400"
+            - name: WHITEPAPER_CHUNK_OVERLAP_CHARS
+              value: "300"
+            - name: WHITEPAPER_EMBEDDING_BATCH_SIZE
+              value: "32"
             - name: TRADING_MARKET_CONTEXT_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/
             - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS

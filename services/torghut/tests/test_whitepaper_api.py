@@ -139,3 +139,44 @@ class TestWhitepaperApi(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["engineering_trigger"]["decision"], "dispatched")
+
+    @patch("app.main.whitepaper_semantic_indexing_enabled", return_value=False)
+    def test_semantic_search_rejected_when_disabled(self, _mock_semantic_enabled: object) -> None:
+        response = self.client.get("/whitepapers/search?q=quant+signal")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "whitepaper_semantic_search_disabled")
+
+    @patch("app.main.whitepaper_semantic_indexing_enabled", return_value=True)
+    @patch(
+        "app.main.WHITEPAPER_WORKFLOW.search_semantic",
+        return_value={
+            "items": [
+                {
+                    "run_id": "wp-1",
+                    "chunk": {"source_scope": "synthesis", "chunk_index": 0, "snippet": "alpha discovery"},
+                    "semantic_distance": 0.18,
+                    "lexical_score": 0.31,
+                    "hybrid_score": 0.029,
+                }
+            ],
+            "total": 1,
+            "limit": 15,
+            "offset": 0,
+            "query": "alpha discovery",
+            "scope": "all",
+            "status": "completed",
+            "subject": None,
+        },
+    )
+    def test_semantic_search_returns_ranked_payload(
+        self,
+        _mock_search_semantic: object,
+        _mock_semantic_enabled: object,
+    ) -> None:
+        response = self.client.get(
+            "/whitepapers/search?q=alpha+discovery&limit=15&offset=0&status=completed&scope=all"
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["run_id"], "wp-1")
