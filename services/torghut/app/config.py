@@ -673,7 +673,7 @@ class Settings(BaseSettings):
         default=2.0, alias="TRADING_EXECUTION_BACKOFF_MAX_SECONDS"
     )
     trading_execution_advisor_enabled: bool = Field(
-        default=False,
+        default=True,
         alias="TRADING_EXECUTION_ADVISOR_ENABLED",
         description="Enable bounded microstructure execution advisor integration.",
     )
