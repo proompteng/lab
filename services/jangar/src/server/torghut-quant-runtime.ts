@@ -57,6 +57,17 @@ export type TorghutQuantRuntimeStatus = {
   streamHeartbeatMs: number
 }
 
+class TorghutQuantMaterializationNotFoundError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'TorghutQuantMaterializationNotFoundError'
+  }
+}
+
+export const isTorghutQuantMaterializationNotFoundError = (
+  error: unknown,
+): error is TorghutQuantMaterializationNotFoundError => error instanceof TorghutQuantMaterializationNotFoundError
+
 type RuntimeConfig = {
   enabled: boolean
   computeIntervalMs: number
@@ -529,13 +540,17 @@ export const materializeTorghutQuantFrameOnDemand = async (params: {
   const strategies = await listTorghutTradingStrategies({ pool: torghut.pool, limit: 500 })
   const strategy = strategies.find((item) => item.id === params.strategyId)
   if (!strategy) {
-    throw new Error(`Strategy ${params.strategyId} was not found in Torghut trading DB`)
+    throw new TorghutQuantMaterializationNotFoundError(
+      `Strategy ${params.strategyId} was not found in Torghut trading DB`,
+    )
   }
   const account = params.account.trim()
   if (account) {
     const accounts = await listTorghutStrategyAccounts({ pool: torghut.pool, strategyId: strategy.id, limit: 500 })
     if (!isKnownStrategyAccount(account, accounts)) {
-      throw new Error(`Account ${account} was not found for strategy ${params.strategyId}`)
+      throw new TorghutQuantMaterializationNotFoundError(
+        `Account ${account} was not found for strategy ${params.strategyId}`,
+      )
     }
   }
 
@@ -583,6 +598,7 @@ export const materializeTorghutQuantFrameOnDemand = async (params: {
     window: frame.window,
     metrics: frame.metrics,
   })
+  state.lastSeriesAppendAtMs.set(frameKey(frame.strategyId, frame.account, frame.window), Date.now())
 
   const metricsPipelineLag = frame.metrics.find((metric) => metric.metricName === 'metrics_pipeline_lag_seconds')
   const pipelineLag = metricsPipelineLag?.valueNumeric ?? null

@@ -3,6 +3,7 @@ import { parseQuantAccount, parseQuantStrategyId, parseQuantWindow } from '~/ser
 import { listQuantAlerts, listQuantLatestMetrics } from '~/server/torghut-quant-metrics-store'
 import {
   getTorghutQuantRuntimeStatus,
+  isTorghutQuantMaterializationNotFoundError,
   materializeTorghutQuantFrameOnDemand,
   startTorghutQuantRuntime,
 } from '~/server/torghut-quant-runtime'
@@ -45,11 +46,15 @@ export const getQuantSnapshotHandler = async (request: Request) => {
     })
     const runtimeStatus = getTorghutQuantRuntimeStatus()
     if (metrics.length === 0 && runtimeStatus.enabled) {
-      await materializeTorghutQuantFrameOnDemand({
-        strategyId: strategyIdResult.value,
-        account: accountResult.value,
-        window: windowResult.value,
-      })
+      try {
+        await materializeTorghutQuantFrameOnDemand({
+          strategyId: strategyIdResult.value,
+          account: accountResult.value,
+          window: windowResult.value,
+        })
+      } catch (error) {
+        if (!isTorghutQuantMaterializationNotFoundError(error)) throw error
+      }
       metrics = await listQuantLatestMetrics({
         strategyId: strategyIdResult.value,
         account: accountResult.value,

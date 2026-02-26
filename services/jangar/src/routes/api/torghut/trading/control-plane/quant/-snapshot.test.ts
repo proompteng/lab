@@ -5,6 +5,7 @@ const listQuantAlerts = vi.fn()
 const startTorghutQuantRuntime = vi.fn()
 const getTorghutQuantRuntimeStatus = vi.fn()
 const materializeTorghutQuantFrameOnDemand = vi.fn()
+const isTorghutQuantMaterializationNotFoundError = vi.fn()
 
 vi.mock('~/server/torghut-quant-metrics-store', () => ({
   listQuantLatestMetrics,
@@ -15,6 +16,7 @@ vi.mock('~/server/torghut-quant-runtime', () => ({
   startTorghutQuantRuntime,
   getTorghutQuantRuntimeStatus,
   materializeTorghutQuantFrameOnDemand,
+  isTorghutQuantMaterializationNotFoundError,
 }))
 
 describe('getQuantSnapshotHandler', () => {
@@ -24,7 +26,9 @@ describe('getQuantSnapshotHandler', () => {
     startTorghutQuantRuntime.mockReset()
     getTorghutQuantRuntimeStatus.mockReset()
     materializeTorghutQuantFrameOnDemand.mockReset()
+    isTorghutQuantMaterializationNotFoundError.mockReset()
     getTorghutQuantRuntimeStatus.mockReturnValue({ enabled: true })
+    isTorghutQuantMaterializationNotFoundError.mockReturnValue(false)
   })
 
   it('returns 400 when strategy_id is invalid', async () => {
@@ -147,5 +151,50 @@ describe('getQuantSnapshotHandler', () => {
     const body = await response.json()
     expect(body.ok).toBe(true)
     expect(body.frame.metrics).toEqual([])
+  })
+
+  it('keeps snapshot response successful when fallback misses strategy/account materialization', async () => {
+    const { getQuantSnapshotHandler } = await import('./snapshot')
+
+    const missingFrameError = new Error(
+      'Account paper-live was not found for strategy aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    )
+    listQuantLatestMetrics.mockResolvedValueOnce([]).mockResolvedValueOnce([])
+    materializeTorghutQuantFrameOnDemand.mockRejectedValueOnce(missingFrameError)
+    isTorghutQuantMaterializationNotFoundError.mockReturnValueOnce(true)
+    listQuantAlerts.mockResolvedValueOnce([])
+
+    const url =
+      'http://localhost/api/torghut/trading/control-plane/quant/snapshot?strategy_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&account=paper-live&window=1d'
+    const response = await getQuantSnapshotHandler(new Request(url))
+
+    expect(response.status).toBe(200)
+    expect(listQuantLatestMetrics).toHaveBeenCalledTimes(2)
+    expect(isTorghutQuantMaterializationNotFoundError).toHaveBeenCalledWith(missingFrameError)
+
+    const body = await response.json()
+    expect(body.ok).toBe(true)
+    expect(body.frame.metrics).toEqual([])
+    expect(body.frame.account).toBe('paper-live')
+  })
+
+  it('returns 503 when fallback materialization fails for non-not-found errors', async () => {
+    const { getQuantSnapshotHandler } = await import('./snapshot')
+
+    const materializationError = new Error('Torghut DB offline')
+    listQuantLatestMetrics.mockResolvedValueOnce([])
+    materializeTorghutQuantFrameOnDemand.mockRejectedValueOnce(materializationError)
+    isTorghutQuantMaterializationNotFoundError.mockReturnValueOnce(false)
+
+    const url =
+      'http://localhost/api/torghut/trading/control-plane/quant/snapshot?strategy_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&account=&window=1d'
+    const response = await getQuantSnapshotHandler(new Request(url))
+
+    expect(response.status).toBe(503)
+    expect(listQuantLatestMetrics).toHaveBeenCalledTimes(1)
+
+    const body = await response.json()
+    expect(body.ok).toBe(false)
+    expect(body.message).toContain('Torghut DB offline')
   })
 })
