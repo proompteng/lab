@@ -281,6 +281,12 @@ class TradingMetrics:
     execution_fallback_reason_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
+    execution_advisor_usage_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    execution_advisor_fallback_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     lean_request_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
@@ -487,6 +493,38 @@ class TradingMetrics:
                 fallback_reason, 0
             )
             self.execution_fallback_reason_total[fallback_reason] = current_reason + 1
+
+    def record_execution_advisor_result(
+        self,
+        metadata: Mapping[str, Any] | None,
+    ) -> None:
+        if not isinstance(metadata, Mapping):
+            return
+        enabled = bool(metadata.get("enabled", False))
+        applied = bool(metadata.get("applied", False))
+        fallback_reason_raw = metadata.get("fallback_reason")
+        fallback_reason = (
+            str(fallback_reason_raw).strip()
+            if isinstance(fallback_reason_raw, str)
+            else ""
+        )
+        if applied:
+            usage_status = "applied"
+        elif fallback_reason == "advisor_live_apply_disabled":
+            usage_status = "advisory_only"
+        elif not enabled:
+            usage_status = "disabled"
+        elif fallback_reason:
+            usage_status = "fallback"
+        else:
+            usage_status = "not_applied"
+        self.execution_advisor_usage_total[usage_status] = (
+            self.execution_advisor_usage_total.get(usage_status, 0) + 1
+        )
+        if fallback_reason:
+            self.execution_advisor_fallback_total[fallback_reason] = (
+                self.execution_advisor_fallback_total.get(fallback_reason, 0) + 1
+            )
 
     def record_no_signal(self, reason: str | None) -> None:
         normalized = _normalize_reason_metric(reason)
@@ -1641,6 +1679,9 @@ class TradingPipeline:
         decision = policy_outcome.decision
         self.executor.update_decision_params(
             session, decision_row, policy_outcome.params_update()
+        )
+        self.state.metrics.record_execution_advisor_result(
+            policy_outcome.advisor_metadata
         )
         self.state.metrics.record_adaptive_policy_result(
             adaptive_policy,

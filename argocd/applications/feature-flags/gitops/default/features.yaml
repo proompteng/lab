@@ -150,6 +150,11 @@ flags:
     description: Enables execution advisor recommendations in order routing.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
+  - key: torghut_trading_execution_advisor_live_apply_enabled
+    name: Torghut Trading Execution Advisor Live Apply Enabled
+    description: Allows advisor outputs to alter live broker order execution parameters.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
   - key: torghut_trading_allow_shorts
     name: Torghut Trading Allow Shorts
     description: Allows short-side trading intents.

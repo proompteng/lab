@@ -586,17 +586,27 @@ def _resolve_simulator_expectations(
     if not isinstance(params_raw, Mapping):
         return None, None, None
     params = cast(Mapping[object, object], params_raw)
-    advice_raw = params.get("execution_advice")
-    if not isinstance(advice_raw, Mapping):
+    advice_payloads: list[Mapping[object, object]] = []
+    for key in ("execution_advice", "execution_advisor"):
+        raw_payload = params.get(key)
+        if isinstance(raw_payload, Mapping):
+            advice_payloads.append(cast(Mapping[object, object], raw_payload))
+    if not advice_payloads:
         return None, None, None
-    advice = cast(Mapping[object, object], advice_raw)
-    expected_p50 = _decimal_or_none(advice.get("expected_shortfall_bps_p50"))
-    expected_p95 = _decimal_or_none(advice.get("expected_shortfall_bps_p95"))
-    simulator_version_raw = advice.get("simulator_version")
-    simulator_version = None
-    if simulator_version_raw is not None:
-        text = str(simulator_version_raw).strip()
-        simulator_version = text or None
+
+    expected_p50: Decimal | None = None
+    expected_p95: Decimal | None = None
+    simulator_version: str | None = None
+    for advice in advice_payloads:
+        if expected_p50 is None:
+            expected_p50 = _decimal_or_none(advice.get("expected_shortfall_bps_p50"))
+        if expected_p95 is None:
+            expected_p95 = _decimal_or_none(advice.get("expected_shortfall_bps_p95"))
+        if simulator_version is None:
+            simulator_version_raw = advice.get("simulator_version")
+            if simulator_version_raw is not None:
+                text = str(simulator_version_raw).strip()
+                simulator_version = text or None
     return expected_p50, expected_p95, simulator_version
 
 

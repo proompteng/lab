@@ -266,6 +266,47 @@ class TestTradingApi(TestCase):
             "torghut.quant-producer.v1",
         )
 
+    def test_trading_status_and_metrics_expose_execution_advisor_counters(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.metrics.execution_advisor_usage_total = {
+                "advisory_only": 2,
+                "fallback": 3,
+            }
+            scheduler.state.metrics.execution_advisor_fallback_total = {
+                "advisor_disabled": 1,
+                "advisor_timeout": 2,
+            }
+            app.state.trading_scheduler = scheduler
+
+            status_response = self.client.get("/trading/status")
+            self.assertEqual(status_response.status_code, 200)
+            status_payload = status_response.json()
+            advisor = status_payload["execution_advisor"]
+            self.assertIn("enabled", advisor)
+            self.assertIn("live_apply_enabled", advisor)
+            self.assertEqual(advisor["usage_total"]["advisory_only"], 2)
+            self.assertEqual(advisor["fallback_total"]["advisor_timeout"], 2)
+
+            with patch("app.main._load_route_provenance_summary", return_value={}):
+                metrics_response = self.client.get("/metrics")
+            self.assertEqual(metrics_response.status_code, 200)
+            metrics_payload = metrics_response.text
+            self.assertIn(
+                'torghut_trading_execution_advisor_usage_total{status="advisory_only"} 2',
+                metrics_payload,
+            )
+            self.assertIn(
+                'torghut_trading_execution_advisor_fallback_total{reason="advisor_disabled"} 1',
+                metrics_payload,
+            )
+        finally:
+            if original_scheduler is None:
+                del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     @patch("app.main._load_tca_summary", side_effect=SQLAlchemyError("boom"))
     def test_trading_status_maps_unhandled_db_errors_to_503(
         self, _mock_tca: object

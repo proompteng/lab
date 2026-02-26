@@ -412,6 +412,7 @@ class TestOrderIdempotency(TestCase):
                     'execution_advisor': {
                         'applied': False,
                         'fallback_reason': 'advisor_missing_inputs',
+                        'fallback_reason': 'advisor_missing_inputs',
                     },
                 },
             )
@@ -445,6 +446,63 @@ class TestOrderIdempotency(TestCase):
             assert isinstance(provenance, dict)
             self.assertEqual(provenance.get('applied'), True)
             self.assertEqual(provenance.get('max_participation_rate'), '0.03')
+
+    def test_submit_order_uses_execution_advisor_expectations_when_raw_advice_absent(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol='AAPL',
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe='1Min',
+                action='buy',
+                qty=Decimal('2.0'),
+                params={
+                    'price': Decimal('100'),
+                    'execution_advisor': {
+                        'applied': False,
+                        'fallback_reason': 'advisor_live_apply_disabled',
+                        'expected_shortfall_bps_p50': '11.0',
+                        'expected_shortfall_bps_p95': '23.0',
+                        'simulator_version': 'hawkes-lob-v2',
+                    },
+                },
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, 'paper')
+
+            class FilledClient(FakeAlpacaClient):
+                def submit_order(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                    order = super().submit_order(*args, **kwargs)
+                    order['filled_qty'] = '2'
+                    order['filled_avg_price'] = '101'
+                    order['status'] = 'filled'
+                    return order
+
+            execution = executor.submit_order(session, FilledClient(), decision, decision_row, 'paper')
+            assert execution is not None
+            raw_order = execution.raw_order
+            assert isinstance(raw_order, dict)
+            self.assertIn('_execution_advice_provenance', raw_order)
+
+            tca = session.execute(
+                select(ExecutionTCAMetric).where(ExecutionTCAMetric.execution_id == execution.id)
+            ).scalar_one()
+            self.assertEqual(tca.expected_shortfall_bps_p50, Decimal('11.0'))
+            self.assertEqual(tca.expected_shortfall_bps_p95, Decimal('23.0'))
+            self.assertEqual(tca.simulator_version, 'hawkes-lob-v2')
+            self.assertEqual(tca.divergence_bps, Decimal('89.0'))
 
     def test_submit_order_prefers_persisted_execution_policy_context(self) -> None:
         with self.session_local() as session:

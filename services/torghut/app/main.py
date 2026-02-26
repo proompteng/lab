@@ -500,6 +500,12 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "autonomy_enabled": settings.trading_autonomy_enabled,
         "mode": settings.trading_mode,
         "kill_switch_enabled": settings.trading_kill_switch_enabled,
+        "execution_advisor": {
+            "enabled": settings.trading_execution_advisor_enabled,
+            "live_apply_enabled": settings.trading_execution_advisor_live_apply_enabled,
+            "usage_total": dict(state.metrics.execution_advisor_usage_total),
+            "fallback_total": dict(state.metrics.execution_advisor_fallback_total),
+        },
         "running": state.running,
         "last_run_at": state.last_run_at,
         "last_reconcile_at": state.last_reconcile_at,
