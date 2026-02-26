@@ -111,7 +111,15 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
         }
       }
 
-      return { rows: (options.selectRows ?? []) as R[] }
+      if (normalized.includes('kysely_migration')) {
+        return { rows: [] as R[] }
+      }
+
+      if (normalized.includes('from "atlas"."file_chunks"')) {
+        return { rows: (options.selectRows ?? []) as R[] }
+      }
+
+      return { rows: [] as R[] }
     }
 
     async *streamQuery<R>(): AsyncIterableIterator<QueryResult<R>> {
@@ -290,5 +298,77 @@ describe('atlas store', () => {
     expect(normalized).toContain(
       'on conflict ("file_key_id", "repository_ref", "repository_commit", "content_hash") do update',
     )
+  })
+
+  it('applies latest file version filter in code search queries', async () => {
+    const now = new Date('2020-01-01T00:00:00.000Z')
+    const lexicalRow = {
+      chunk_id: 'chunk-1',
+      chunk_file_version_id: 'file-version-1',
+      chunk_index: 0,
+      chunk_start_line: 10,
+      chunk_end_line: 16,
+      chunk_content: 'const flag = process.env.BUMBA_ATLAS_CHUNK_INDEXING',
+      chunk_token_count: 12,
+      chunk_metadata: {},
+      chunk_created_at: now,
+      file_version_id: 'file-version-1',
+      file_version_file_key_id: 'file-key-1',
+      file_version_repository_ref: 'main',
+      file_version_repository_commit: 'deadbeef',
+      file_version_content_hash: 'hash-1',
+      file_version_language: 'typescript',
+      file_version_byte_size: 128,
+      file_version_line_count: 20,
+      file_version_metadata: {},
+      file_version_source_timestamp: now,
+      file_version_created_at: now,
+      file_version_updated_at: now,
+      file_key_id: 'file-key-1',
+      file_key_repository_id: 'repo-1',
+      file_key_path: 'services/bumba/src/workflows/index.ts',
+      file_key_created_at: now,
+      repository_id: 'repo-1',
+      repository_name: 'proompteng/lab',
+      repository_default_ref: 'main',
+      repository_metadata: {},
+      repository_created_at: now,
+      repository_updated_at: now,
+      lexical_rank: 0.42,
+    }
+
+    const { db, calls } = makeFakeDb({ selectRows: [lexicalRow] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    const matches = await store.codeSearch({
+      query: 'BUMBA_ATLAS_CHUNK_INDEXING',
+      repository: 'proompteng/lab',
+      ref: 'main',
+      pathPrefix: 'services/bumba',
+      language: 'typescript',
+      limit: 5,
+    })
+
+    expect(matches).toHaveLength(1)
+    const lexicalSql = calls.find((call) => call.sql.toLowerCase().includes('from "atlas"."file_chunks"'))?.sql
+    expect(lexicalSql).toBeTruthy()
+
+    const normalized = String(lexicalSql).toLowerCase().replace(/\s+/g, ' ')
+    expect(normalized).toContain('file_versions.id in ( select ranked.id from ( select fv.id')
+    expect(normalized).toContain('row_number() over ( partition by fv.file_key_id, fv.repository_ref')
+    expect(normalized).toContain('order by fv.updated_at desc, fv.created_at desc, fv.id desc')
+    expect(normalized).toContain('from atlas.file_versions as fv')
+    expect(normalized).toContain('inner join atlas.file_keys as file_keys_scope on file_keys_scope.id = fv.file_key_id')
+    expect(normalized).toContain(
+      'inner join atlas.repositories as repositories_scope on repositories_scope.id = file_keys_scope.repository_id',
+    )
+    expect(normalized).toContain('where repositories_scope.name =')
+    expect(normalized).toContain('fv.repository_ref =')
+    expect(normalized).toContain('file_keys_scope.path like')
+    expect(normalized).toContain('fv.language =')
+    expect(normalized).toContain('where ranked.latest_rank = 1 )')
   })
 })

@@ -38,6 +38,12 @@
 - JS tests: `bun run --filter <workspace> test -- path/to/test.ts -t "name"` (Vitest) or `bun test -t "name" tests/foo.test.ts` (Bun).
 - Other: `go test ./services/prt -run TestName`; `./gradlew test --tests "pkg.ClassTest"`; `bundle exec rails test test/models/user_test.rb:42`; `pytest alchimie_tests/test_file.py -k "pattern"`.
 
+## Code Search Helpers
+
+- Query code search: `bun run atlas:code-search --query ... [--repository ...] [--path-prefix ...] [--limit ...]`.
+- Endpoint: `POST /api/code-search`.
+- Base URL resolution (same model as memories scripts): explicit `--base-url` / `ATLAS_BASE_URL` / `JANGAR_BASE_URL` override, then in-cluster service (`http://jangar` in namespace `jangar`, otherwise `http://jangar.jangar.svc.cluster.local`), otherwise `http://jangar.ide-newton.ts.net`.
+
 ## Memories Service Helpers
 
 - Save: `bun run --filter memories save-memory --task-name … --content … --summary … --tags …`.
@@ -135,6 +141,7 @@ Output:
 
 ## CI/CD
 
+- Do not deploy services directly from local worktrees for normal changes; push commits and let CI/CD build, publish, and roll out.
 - Wait until all checks are green before reporting that a PR is ready (example: `gh pr checks 2298 --watch -R proompteng/lab`).
 - Before opening or updating a PR, ensure all mandatory checks are green and fix CI breakages (especially strict type-checks like Pyright) before requesting review or merge.
 - Require linting in CI for each language path touched by the change (for example `oxfmt --check`/Oxlint for TS, `ruff` for Python, and service-specific Go linters as applicable).

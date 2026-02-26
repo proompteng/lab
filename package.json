@@ -72,6 +72,7 @@
     "flink:build": "bun run packages/scripts/src/dorvud/build-and-push.ts",
     "smoke:torghut-ws": "bun run packages/scripts/src/torghut/ws-smoke.ts",
     "atlas:search": "bun run packages/scripts/src/atlas/search.ts",
+    "atlas:code-search": "bun run packages/scripts/src/atlas/code-search.ts",
     "format:check": "bunx oxfmt --check ."
   },
   "dependencies": {
