@@ -727,6 +727,7 @@ def _evaluate_promotion_evidence(
 
     janus_reasons, janus_details, janus_refs = _evaluate_janus_evidence(
         policy_payload=policy_payload,
+        promotion_target=promotion_target,
         evidence=evidence,
     )
     reasons.extend(janus_reasons)
@@ -748,8 +749,14 @@ def _evaluate_promotion_evidence(
 def _evaluate_janus_evidence(
     *,
     policy_payload: dict[str, Any],
+    promotion_target: str,
     evidence: dict[str, Any],
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    if not _requires_janus_evidence(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return [], [], []
     if not bool(policy_payload.get("promotion_require_janus_evidence", True)):
         return [], [], []
     reasons: list[str] = []

@@ -4,6 +4,10 @@
 - Milestone: `M1` (event schema/CAR + HGRM scaffold + fail-closed promotion gating)
 - Last updated (UTC): `2026-02-26`
 
+## Production Planning
+
+- Production plan (phased M0-M5): `docs/whitepapers/wp-d72cb1a5c1febdcfbd9dae71/production-engineering-plan.md`
+
 ## M1 Scope Status
 
 | Item | Status | Evidence |
@@ -29,4 +33,3 @@
   - Result: pass
 
 - Targeted runtime tests added but full execution is currently blocked in this environment by missing Python dependencies/tooling (`sqlalchemy`, `pytest`, `uv`, and `python` alias in subprocess harnesses).
-
