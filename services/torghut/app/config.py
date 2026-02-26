@@ -992,6 +992,14 @@ class Settings(BaseSettings):
         description="Fragility-state abstain bias for autonomy/execution participation controls.",
     )
     trading_cooldown_seconds: int = Field(default=0, alias="TRADING_COOLDOWN_SECONDS")
+    trading_planned_decision_timeout_seconds: int = Field(
+        default=600,
+        alias="TRADING_PLANNED_DECISION_TIMEOUT_SECONDS",
+        description=(
+            "Maximum age (seconds) for a trade_decisions row to remain in planned state "
+            "without an execution before it is force-rejected."
+        ),
+    )
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
     trading_accounts_json: Optional[str] = Field(
@@ -1520,6 +1528,10 @@ class Settings(BaseSettings):
             (
                 self.trading_allocator_min_multiplier,
                 "TRADING_ALLOCATOR_MIN_MULTIPLIER must be >= 0",
+            ),
+            (
+                self.trading_planned_decision_timeout_seconds,
+                "TRADING_PLANNED_DECISION_TIMEOUT_SECONDS must be >= 0",
             ),
         ]
         for value, message in checks:

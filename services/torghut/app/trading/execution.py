@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional, cast
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -90,20 +90,30 @@ class OrderExecutor:
     def _fetch_execution(
         self, session: Session, decision_row: TradeDecision
     ) -> Optional[Execution]:
-        conditions = [
-            Execution.trade_decision_id == decision_row.id,
-            Execution.alpaca_account_label == decision_row.alpaca_account_label,
-        ]
-        if decision_row.decision_hash:
-            conditions.append(
-                (Execution.client_order_id == decision_row.decision_hash)
-                & (
-                    Execution.alpaca_account_label
-                    == decision_row.alpaca_account_label
-                )
+        # Resolve by exact decision linkage first, then fall back to account-scoped
+        # client_order_id idempotency. Never match by account label alone.
+        linked_stmt = (
+            select(Execution)
+            .where(Execution.trade_decision_id == decision_row.id)
+            .order_by(Execution.created_at.desc())
+            .limit(1)
+        )
+        linked = session.execute(linked_stmt).scalars().first()
+        if linked is not None:
+            return linked
+
+        if not decision_row.decision_hash:
+            return None
+        hash_stmt = (
+            select(Execution)
+            .where(
+                Execution.client_order_id == decision_row.decision_hash,
+                Execution.alpaca_account_label == decision_row.alpaca_account_label,
             )
-        stmt = select(Execution).where(or_(*conditions))
-        return session.execute(stmt).scalar_one_or_none()
+            .order_by(Execution.created_at.desc())
+            .limit(1)
+        )
+        return session.execute(hash_stmt).scalars().first()
 
     def submit_order(
         self,

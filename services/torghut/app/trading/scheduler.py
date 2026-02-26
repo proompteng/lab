@@ -226,6 +226,9 @@ class TradingMetrics:
     decisions_total: int = 0
     orders_submitted_total: int = 0
     orders_rejected_total: int = 0
+    planned_decisions_with_execution_total: int = 0
+    planned_decisions_stale_total: int = 0
+    planned_decisions_timeout_rejected_total: int = 0
     reconcile_updates_total: int = 0
     llm_requests_total: int = 0
     llm_approve_total: int = 0
@@ -1446,8 +1449,50 @@ class TradingPipeline:
         if decision_row.status != "planned":
             return None
         if self.executor.execution_exists(session, decision_row):
+            self.state.metrics.planned_decisions_with_execution_total += 1
+            logger.warning(
+                "Decision remained planned while execution already exists decision_id=%s strategy_id=%s symbol=%s",
+                decision_row.id,
+                decision.strategy_id,
+                decision.symbol,
+            )
+            return None
+        if self._expire_stale_planned_decision(
+            session=session, decision=decision, decision_row=decision_row
+        ):
             return None
         return decision_row
+
+    def _expire_stale_planned_decision(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+    ) -> bool:
+        timeout_seconds = settings.trading_planned_decision_timeout_seconds
+        if timeout_seconds <= 0:
+            return False
+        created_at = decision_row.created_at
+        if created_at is None:
+            return False
+        age_seconds = int((datetime.now(timezone.utc) - created_at).total_seconds())
+        if age_seconds < timeout_seconds:
+            return False
+        self.state.metrics.planned_decisions_stale_total += 1
+        self.state.metrics.planned_decisions_timeout_rejected_total += 1
+        self.state.metrics.orders_rejected_total += 1
+        reason = f"decision_timeout_unsubmitted:{age_seconds}s"
+        self.executor.mark_rejected(session, decision_row, reason)
+        logger.error(
+            "Rejected stale planned decision decision_id=%s strategy_id=%s symbol=%s age_seconds=%s timeout_seconds=%s",
+            decision_row.id,
+            decision.strategy_id,
+            decision.symbol,
+            age_seconds,
+            timeout_seconds,
+        )
+        return True
 
     def _prepare_decision_for_submission(
         self,
