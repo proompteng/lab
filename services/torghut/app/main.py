@@ -118,7 +118,7 @@ def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
 
     @client.create_function(
         fn_id=requested_fn_id,
-        idempotency="event.data.run_id",
+        idempotency="event.data.enqueue_key",
         trigger=inngest.TriggerEvent(event=requested_event_name),
     )
     def _whitepaper_requested_fn(ctx: inngest.ContextSync) -> dict[str, Any]:

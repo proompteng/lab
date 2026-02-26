@@ -1081,12 +1081,17 @@ class WhitepaperWorkflowService:
             _str_env("WHITEPAPER_INNGEST_EVENT_NAME", "torghut/whitepaper.analysis.requested")
             or "torghut/whitepaper.analysis.requested"
         )
+        context = cast(dict[str, Any], run_row.orchestration_context_json or {})
+        enqueue_attempt = (self._optional_int(context.get("inngest_enqueue_attempt")) or 0) + 1
+        enqueue_key = f"{run_row.run_id}:{enqueue_attempt}"
         try:
             event_ids = self.inngest_client.send_sync(
                 inngest.Event(
                     name=event_name,
                     data={
                         "run_id": run_row.run_id,
+                        "enqueue_key": enqueue_key,
+                        "enqueue_attempt": enqueue_attempt,
                     },
                 )
             )
@@ -1097,6 +1102,9 @@ class WhitepaperWorkflowService:
             return False
 
         run_row.inngest_event_id = event_ids[0] if event_ids else run_row.inngest_event_id
+        context["inngest_enqueue_attempt"] = enqueue_attempt
+        context["inngest_enqueue_key"] = enqueue_key
+        run_row.orchestration_context_json = coerce_json_payload(context)
         run_row.status = "queued"
         run_row.failure_reason = None
         session.add(run_row)
@@ -1493,9 +1501,11 @@ class WhitepaperWorkflowService:
             manual_approval=None,
         )
         if run.status == "completed" and whitepaper_semantic_indexing_enabled():
+            queued_for_async_indexing = False
             if whitepaper_inngest_enabled():
-                self._enqueue_finalized_inngest_event(session, run=run)
-            else:
+                queued_for_async_indexing = self._enqueue_finalized_inngest_event(session, run=run)
+
+            if not queued_for_async_indexing:
                 try:
                     self.index_synthesis_semantic_content(
                         session,

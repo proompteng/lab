@@ -43,7 +43,7 @@ const SCOPE_OPTIONS: { value: WhitepaperSemanticSearchScope; label: string }[] =
 
 const formatNumber = (value: number | null) => (value === null || Number.isNaN(value) ? 'n/a' : value.toFixed(4))
 
-function WhitepaperSemanticSearchRoute() {
+export function WhitepaperSemanticSearchRoute() {
   const [queryInput, setQueryInput] = React.useState('')
   const [query, setQuery] = React.useState('')
   const [scope, setScope] = React.useState<WhitepaperSemanticSearchScope>('all')

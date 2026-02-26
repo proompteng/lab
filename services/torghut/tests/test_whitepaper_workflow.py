@@ -80,6 +80,17 @@ class _FakeKafkaSession:
         self.rollback_calls += 1
 
 
+class _FakeInngestClient:
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+
+    def send_sync(self, event: Any) -> list[str]:
+        data = getattr(event, "data", None)
+        payload = dict(data) if isinstance(data, dict) else {}
+        self.events.append(payload)
+        return [f"evt-{len(self.events)}"]
+
+
 class _FakeKafkaWorkflowService:
     def ingest_github_issue_event(
         self,
@@ -351,6 +362,50 @@ https://example.com/paper.pdf
                 synthesis_row.synthesis_json.get("implementation_plan_md"),
                 "### Delivery Plan\n- Keep explicit plan",
             )
+
+    def test_finalize_falls_back_to_local_indexing_when_finalize_enqueue_fails(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+        os.environ["WHITEPAPER_SEMANTIC_INDEXING_ENABLED"] = "true"
+        os.environ["WHITEPAPER_INNGEST_ENABLED"] = "true"
+        service.set_inngest_client(cast(Any, _FakeInngestClient()))
+
+        indexed_run_ids: list[str] = []
+        service._enqueue_finalized_inngest_event = lambda _session, *, run: False  # type: ignore[method-assign]
+        service.index_synthesis_semantic_content = (  # type: ignore[method-assign]
+            lambda _session, *, run_id: indexed_run_ids.append(run_id) or {"run_id": run_id, "indexed_chunks": 0}
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            finalize_payload = {
+                "status": "completed",
+                "synthesis": {
+                    "executive_summary": "Strong approach with reproducible results.",
+                    "confidence": "0.87",
+                },
+                "verdict": {
+                    "verdict": "implement",
+                    "score": "0.81",
+                    "confidence": "0.84",
+                    "requires_followup": False,
+                },
+            }
+            result = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            self.assertEqual(result["status"], "completed")
+            session.commit()
+
+            self.assertEqual(indexed_run_ids, [run_row.run_id])
 
     def test_finalize_merges_dspy_eval_report_into_verdict_gating(self) -> None:
         service = WhitepaperWorkflowService()
@@ -994,3 +1049,40 @@ https://example.com/paper.pdf
                 select(WhitepaperCodexAgentRun).where(WhitepaperCodexAgentRun.analysis_run_id == runs[0].id)
             ).scalars().all()
             self.assertEqual(len(agentruns), 2)
+
+    def test_inngest_requeue_uses_new_enqueue_key_per_attempt(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_INNGEST_ENABLED"] = "true"
+        fake_inngest = _FakeInngestClient()
+        service.set_inngest_client(cast(Any, fake_inngest))
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            self.assertEqual(kickoff.reason, "queued")
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+
+            requeue = service.ingest_github_issue_event(
+                session,
+                self._issue_comment_payload(comment_body="research whitepaper"),
+                source="api",
+            )
+            self.assertTrue(requeue.accepted)
+            self.assertEqual(requeue.reason, "requeued")
+            session.commit()
+
+            self.assertEqual(len(fake_inngest.events), 2)
+            self.assertEqual(fake_inngest.events[0]["run_id"], run_row.run_id)
+            self.assertEqual(fake_inngest.events[0]["enqueue_attempt"], 1)
+            self.assertEqual(fake_inngest.events[0]["enqueue_key"], f"{run_row.run_id}:1")
+            self.assertEqual(fake_inngest.events[1]["run_id"], run_row.run_id)
+            self.assertEqual(fake_inngest.events[1]["enqueue_attempt"], 2)
+            self.assertEqual(fake_inngest.events[1]["enqueue_key"], f"{run_row.run_id}:2")
