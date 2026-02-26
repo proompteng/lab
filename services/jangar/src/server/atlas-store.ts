@@ -1897,6 +1897,25 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     return next
   }
 
+  const latestFileVersionIdsExpr = sql<string>`
+    SELECT ranked.id
+    FROM (
+      SELECT
+        fv.id,
+        ROW_NUMBER() OVER (
+          PARTITION BY fv.file_key_id, fv.repository_ref
+          ORDER BY fv.updated_at DESC, fv.created_at DESC, fv.id DESC
+        ) AS latest_rank
+      FROM atlas.file_versions AS fv
+    ) AS ranked
+    WHERE ranked.latest_rank = 1
+  `
+
+  // Keep only the most recent indexed file version per (file, ref)
+  // so code-search doesn't surface stale duplicates from prior versions.
+  const applyLatestFileVersionFilter = <T extends { where: (...args: unknown[]) => T }>(query: T) =>
+    query.where(sql<boolean>`file_versions.id IN (${latestFileVersionIdsExpr})`)
+
   const codeSearch: AtlasStore['codeSearch'] = async ({ query, limit, repository, ref, pathPrefix, language }) => {
     await ensureSchema()
 
@@ -1959,6 +1978,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
           .where('chunk_embeddings.dimension', '=', embeddingConfig.dimension)
 
         semanticQuery = applyCodeSearchFilters(semanticQuery, filters)
+        semanticQuery = applyLatestFileVersionFilter(semanticQuery)
 
         return await semanticQuery.orderBy(semanticDistanceExpr).limit(semanticLimit).execute()
       } catch (error) {
@@ -2014,6 +2034,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
       .where(sql<boolean>`file_chunks.text_tsvector @@ ${lexicalQueryExpr}`)
 
     lexicalQuery = applyCodeSearchFilters(lexicalQuery, filters)
+    lexicalQuery = applyLatestFileVersionFilter(lexicalQuery)
 
     const lexicalRows = await lexicalQuery.orderBy(lexicalRankExpr, 'desc').limit(lexicalLimit).execute()
 

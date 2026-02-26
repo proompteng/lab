@@ -135,6 +135,7 @@ Output:
 
 ## CI/CD
 
+- Do not deploy services directly from local worktrees for normal changes; push commits and let CI/CD build, publish, and roll out.
 - Wait until all checks are green before reporting that a PR is ready (example: `gh pr checks 2298 --watch -R proompteng/lab`).
 - Before opening or updating a PR, ensure all mandatory checks are green and fix CI breakages (especially strict type-checks like Pyright) before requesting review or merge.
 - Require linting in CI for each language path touched by the change (for example `oxfmt --check`/Oxlint for TS, `ruff` for Python, and service-specific Go linters as applicable).
