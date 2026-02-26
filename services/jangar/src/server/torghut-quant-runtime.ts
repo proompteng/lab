@@ -502,6 +502,13 @@ const resolveStrategyAccountsForCompute = (accounts: string[]) => {
   return ['', ...normalized]
 }
 
+const isKnownStrategyAccount = (account: string, strategyAccounts: string[]) => {
+  const requested = account.trim()
+  if (!requested) return true
+  const known = new Set(strategyAccounts.map((item) => item.trim()).filter(Boolean))
+  return known.has(requested)
+}
+
 export const materializeTorghutQuantFrameOnDemand = async (params: {
   strategyId: string
   account: string
@@ -510,6 +517,9 @@ export const materializeTorghutQuantFrameOnDemand = async (params: {
 }) => {
   const state = ensureGlobal()
   const config = state.config
+  if (!config.enabled) {
+    throw new Error('Torghut quant control plane runtime is disabled')
+  }
 
   const torghut = resolveTorghutDb()
   if (!torghut.ok) {
@@ -521,13 +531,20 @@ export const materializeTorghutQuantFrameOnDemand = async (params: {
   if (!strategy) {
     throw new Error(`Strategy ${params.strategyId} was not found in Torghut trading DB`)
   }
+  const account = params.account.trim()
+  if (account) {
+    const accounts = await listTorghutStrategyAccounts({ pool: torghut.pool, strategyId: strategy.id, limit: 500 })
+    if (!isKnownStrategyAccount(account, accounts)) {
+      throw new Error(`Account ${account} was not found for strategy ${params.strategyId}`)
+    }
+  }
 
   const now = params.now ?? new Date()
   const startedAt = Date.now()
   const computed = await computeTorghutQuantMetrics({
     pool: torghut.pool,
     strategy: { id: strategy.id, name: strategy.name },
-    account: params.account.trim(),
+    account,
     window: params.window,
     now,
     maxStalenessSeconds: config.maxStalenessSeconds,
@@ -853,6 +870,7 @@ export const startTorghutQuantRuntime = () => {
 
 export const __private = {
   resolveStrategyAccountsForCompute,
+  isKnownStrategyAccount,
   evaluateAlerts,
   buildDelta,
 }

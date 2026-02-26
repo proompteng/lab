@@ -1,7 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { parseQuantAccount, parseQuantStrategyId, parseQuantWindow } from '~/server/torghut-quant-http'
 import { listQuantAlerts, listQuantLatestMetrics } from '~/server/torghut-quant-metrics-store'
-import { materializeTorghutQuantFrameOnDemand, startTorghutQuantRuntime } from '~/server/torghut-quant-runtime'
+import {
+  getTorghutQuantRuntimeStatus,
+  materializeTorghutQuantFrameOnDemand,
+  startTorghutQuantRuntime,
+} from '~/server/torghut-quant-runtime'
 
 export const Route = createFileRoute('/api/torghut/trading/control-plane/quant/snapshot')({
   server: {
@@ -39,7 +43,8 @@ export const getQuantSnapshotHandler = async (request: Request) => {
       account: accountResult.value,
       window: windowResult.value,
     })
-    if (metrics.length === 0) {
+    const runtimeStatus = getTorghutQuantRuntimeStatus()
+    if (metrics.length === 0 && runtimeStatus.enabled) {
       await materializeTorghutQuantFrameOnDemand({
         strategyId: strategyIdResult.value,
         account: accountResult.value,

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const listQuantLatestMetrics = vi.fn()
 const listQuantAlerts = vi.fn()
 const startTorghutQuantRuntime = vi.fn()
+const getTorghutQuantRuntimeStatus = vi.fn()
 const materializeTorghutQuantFrameOnDemand = vi.fn()
 
 vi.mock('~/server/torghut-quant-metrics-store', () => ({
@@ -12,6 +13,7 @@ vi.mock('~/server/torghut-quant-metrics-store', () => ({
 
 vi.mock('~/server/torghut-quant-runtime', () => ({
   startTorghutQuantRuntime,
+  getTorghutQuantRuntimeStatus,
   materializeTorghutQuantFrameOnDemand,
 }))
 
@@ -20,7 +22,9 @@ describe('getQuantSnapshotHandler', () => {
     listQuantLatestMetrics.mockReset()
     listQuantAlerts.mockReset()
     startTorghutQuantRuntime.mockReset()
+    getTorghutQuantRuntimeStatus.mockReset()
     materializeTorghutQuantFrameOnDemand.mockReset()
+    getTorghutQuantRuntimeStatus.mockReturnValue({ enabled: true })
   })
 
   it('returns 400 when strategy_id is invalid', async () => {
@@ -123,5 +127,25 @@ describe('getQuantSnapshotHandler', () => {
     expect(body.ok).toBe(true)
     expect(body.frame.metrics).toHaveLength(1)
     expect(body.frame.metrics[0]?.metricName).toBe('trade_count')
+  })
+
+  it('skips on-demand materialization when runtime is disabled', async () => {
+    const { getQuantSnapshotHandler } = await import('./snapshot')
+
+    getTorghutQuantRuntimeStatus.mockReturnValueOnce({ enabled: false })
+    listQuantLatestMetrics.mockResolvedValueOnce([])
+    listQuantAlerts.mockResolvedValueOnce([])
+
+    const url =
+      'http://localhost/api/torghut/trading/control-plane/quant/snapshot?strategy_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&account=&window=1d'
+    const response = await getQuantSnapshotHandler(new Request(url))
+
+    expect(response.status).toBe(200)
+    expect(materializeTorghutQuantFrameOnDemand).not.toHaveBeenCalled()
+    expect(listQuantLatestMetrics).toHaveBeenCalledTimes(1)
+
+    const body = await response.json()
+    expect(body.ok).toBe(true)
+    expect(body.frame.metrics).toEqual([])
   })
 })
