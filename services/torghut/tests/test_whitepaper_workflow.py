@@ -433,6 +433,7 @@ https://example.com/paper.pdf
             session.commit()
 
             run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            prior_status = run_row.status
             finalize_payload = {
                 "status": "completed",
                 "synthesis": {
@@ -451,7 +452,7 @@ https://example.com/paper.pdf
             session.rollback()
 
             persisted_run = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
-            self.assertEqual(persisted_run.status, "agentrun_dispatched")
+            self.assertEqual(persisted_run.status, prior_status)
 
     def test_persist_semantic_chunks_does_not_delete_until_embeddings_ready(self) -> None:
         service = WhitepaperWorkflowService()

@@ -1081,7 +1081,7 @@ class WhitepaperWorkflowService:
             _str_env("WHITEPAPER_INNGEST_EVENT_NAME", "torghut/whitepaper.analysis.requested")
             or "torghut/whitepaper.analysis.requested"
         )
-        context = cast(dict[str, Any], run_row.orchestration_context_json or {})
+        context = dict(cast(Mapping[str, Any], run_row.orchestration_context_json or {}))
         enqueue_attempt = (self._optional_int(context.get("inngest_enqueue_attempt")) or 0) + 1
         enqueue_key = f"{run_row.run_id}:{enqueue_attempt}"
         try:
