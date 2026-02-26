@@ -27,10 +27,41 @@ class ForwarderConfigTest {
     assertEquals(0, cfg.shardIndex)
     assertEquals("wss://stream.data.alpaca.markets", cfg.alpacaStreamUrl)
     assertEquals("localhost:9093", cfg.kafka.bootstrapServers)
+    assertEquals(16L * 1024 * 1024, cfg.kafka.bufferMemoryBytes)
+    assertEquals(512 * 1024, cfg.kafka.maxRequestSizeBytes)
+    assertEquals(60_000, cfg.kafka.deliveryTimeoutMs)
+    assertEquals(15_000, cfg.kafka.requestTimeoutMs)
+    assertEquals(10_000, cfg.kafka.maxBlockMs)
+    assertEquals(180_000, cfg.healthNotReadyKillAfterMs)
     assertFalse(cfg.enableTradeUpdates)
     assertEquals(AlpacaMarketType.EQUITY, cfg.alpacaMarketType)
     assertEquals("us", cfg.alpacaCryptoLocation)
     assertEquals("torghut.trades.v1", cfg.topics.trades)
+  }
+
+  @Test
+  fun `supports kafka and liveness override knobs`() {
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+          "KAFKA_BUFFER_MEMORY_BYTES" to "8388608",
+          "KAFKA_MAX_REQUEST_SIZE_BYTES" to "262144",
+          "KAFKA_DELIVERY_TIMEOUT_MS" to "45000",
+          "KAFKA_REQUEST_TIMEOUT_MS" to "12000",
+          "KAFKA_MAX_BLOCK_MS" to "5000",
+          "HEALTH_NOT_READY_KILL_AFTER_MS" to "120000",
+        ),
+      )
+
+    assertEquals(8L * 1024 * 1024, cfg.kafka.bufferMemoryBytes)
+    assertEquals(256 * 1024, cfg.kafka.maxRequestSizeBytes)
+    assertEquals(45_000, cfg.kafka.deliveryTimeoutMs)
+    assertEquals(12_000, cfg.kafka.requestTimeoutMs)
+    assertEquals(5_000, cfg.kafka.maxBlockMs)
+    assertEquals(120_000, cfg.healthNotReadyKillAfterMs)
   }
 
   @Test
@@ -90,6 +121,30 @@ class ForwarderConfigTest {
           "ALPACA_SECRET_KEY" to "secret",
           "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
           "ALPACA_MARKET_TYPE" to "futures",
+        ),
+      )
+    }
+  }
+
+  @Test
+  fun `rejects non-positive liveness and kafka guardrail values`() {
+    assertFailsWith<IllegalStateException> {
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+          "KAFKA_BUFFER_MEMORY_BYTES" to "0",
+        ),
+      )
+    }
+    assertFailsWith<IllegalStateException> {
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+          "HEALTH_NOT_READY_KILL_AFTER_MS" to "0",
         ),
       )
     }

@@ -3,7 +3,7 @@
 ## Status
 
 - Version: `v1`
-- Last updated: **2026-02-08**
+- Last updated: **2026-02-26**
 - Source of truth (config): `argocd/applications/torghut/**`
 
 ## Purpose
@@ -12,7 +12,8 @@ Provide oncall procedures for the `torghut-ws` forwarder when:
 
 - Alpaca WS connection limit errors (406) occur,
 - auth fails (401/403),
-- readiness sticks at 503 while liveness remains OK.
+- readiness sticks at 503,
+- JVM/Kafka pressure causes restarts or OOM kills.
 
 ## Non-goals
 
@@ -21,7 +22,7 @@ Provide oncall procedures for the `torghut-ws` forwarder when:
 ## Terminology
 
 - **Readiness:** `/readyz` indicates “can make progress” (upstream+downstream OK).
-- **Liveness:** `/healthz` indicates “process alive”.
+- **Liveness:** `/healthz` indicates “process alive”; it fails after prolonged not-ready to force a clean reconnect cycle.
 
 ## As deployed (production)
 
@@ -32,6 +33,11 @@ Provide oncall procedures for the `torghut-ws` forwarder when:
 - Config:
   - `argocd/applications/torghut/ws/configmap.yaml`
   - `argocd/applications/torghut/ws/deployment.yaml`
+  - Key knobs:
+    - `HEALTH_NOT_READY_KILL_AFTER_MS`
+    - `KAFKA_BUFFER_MEMORY_BYTES`, `KAFKA_MAX_REQUEST_SIZE_BYTES`
+    - `KAFKA_DELIVERY_TIMEOUT_MS`, `KAFKA_REQUEST_TIMEOUT_MS`, `KAFKA_MAX_BLOCK_MS`
+    - `JAVA_TOOL_OPTIONS` (container-aware heap + OOM exit)
 
 ## Readiness model (what `/readyz` actually means)
 
@@ -118,11 +124,34 @@ Documented in `docs/torghut/ops-2026-01-01-ta-recovery.md`:
    - `KAFKA_BOOTSTRAP=kafka-kafka-bootstrap.kafka:9092` in `argocd/applications/torghut/ws/configmap.yaml`
 3. After fixing auth/ACL, restart `torghut-ws` (GitOps-first; emergency restart allowed with drift warning).
 
+## Procedure D: Restart loop / OOMKilled
+
+### Symptoms
+
+- Alert: `TorghutWSRestartsOrOOM`.
+- Pod events/logs show `OOMKilled` or repeated restarts.
+- `/readyz` remains 503 and eventually `/healthz` fails.
+
+### Steps
+
+1. Confirm restart/OOM evidence:
+   - `kubectl -n torghut get pods -l app=torghut-ws`
+   - `kubectl -n torghut describe pod <torghut-ws-pod>`
+   - `kubectl -n torghut logs deployment/torghut-ws --previous --tail=200`
+2. Confirm runtime limits/flags are at expected hardened values:
+   - `resources.requests.memory=512Mi`, `resources.limits.memory=1Gi`
+   - `JAVA_TOOL_OPTIONS` includes `-XX:+ExitOnOutOfMemoryError`
+   - Kafka guardrail env vars are set from `torghut-ws-config`.
+3. If values drifted, restore GitOps manifests and sync Argo; do not hand-edit live Deployment except emergency containment.
+4. If OOM persists with correct config, reduce ingestion pressure (temporarily narrow symbol set) and escalate to JVM heap profiling.
+5. After remediation, restart once and verify readiness plus signal freshness recovery.
+
 ## Verification checklist
 
 - `kubectl get pods -n torghut -l app=torghut-ws` shows `READY 1/1`
 - `GET /healthz` returns 200
 - `GET /readyz` returns 200
+- `TorghutWSRestartsOrOOM` alert is clear
 
 ## Automation (AgentRuns)
 

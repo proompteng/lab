@@ -64,7 +64,13 @@ class HealthServer(
 
   private fun Application.healthRoutes() {
     routing {
-      get("/healthz") { call.respondText("ok") }
+      get("/healthz") {
+        if (app.isAlive()) {
+          call.respondText("ok")
+        } else {
+          call.respondText("not_alive", status = HttpStatusCode.ServiceUnavailable)
+        }
+      }
       get("/readyz") {
         val info = app.readinessInfo()
         if (info.ready) {

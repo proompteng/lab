@@ -86,6 +86,7 @@ internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> =
 class ForwarderApp(
   private val config: ForwarderConfig,
   private val producerFactory: (ForwarderConfig) -> KafkaProducer<String, String> = { cfg -> buildProducer(cfg.kafka) },
+  private val nowMs: () -> Long = { System.currentTimeMillis() },
   private val json: Json =
     Json {
       encodeDefaults = true
@@ -104,6 +105,8 @@ class ForwarderApp(
   private val reportedNotReadyClass = AtomicReference<ReadinessErrorClass?>(null)
   private val kafkaFailureCount = AtomicInteger(0)
   private val backfillDone = AtomicBoolean(false)
+  private val notReadyLivenessGate = NotReadyLivenessGate(config.healthNotReadyKillAfterMs, nowMs)
+  private val notReadyLivenessLogged = AtomicBoolean(false)
   private val tradeUpdatesEnabled =
     config.enableTradeUpdates && !config.alpacaTradeStreamUrl.isNullOrBlank() && config.topics.tradeUpdates != null
   private val httpClient =
@@ -221,7 +224,20 @@ class ForwarderApp(
     )
   }
 
-  fun isAlive(): Boolean = scope.coroutineContext.isActive
+  fun isAlive(): Boolean {
+    if (!scope.coroutineContext.isActive) return false
+    val staleNotReady = notReadyLivenessGate.shouldFailLiveness()
+    if (staleNotReady && notReadyLivenessLogged.compareAndSet(false, true)) {
+      val gates = currentReadinessGates()
+      val errorClass = currentReadinessErrorClass(ready.get(), gates)?.id ?: ReadinessErrorClass.Unknown.id
+      logger.error {
+        "liveness failing after readiness remained false for >=${config.healthNotReadyKillAfterMs}ms " +
+          "error_class=$errorClass gates=alpaca_ws:${gates.alpacaWs} kafka:${gates.kafka} " +
+          "trade_updates:${gates.tradeUpdates}"
+      }
+    }
+    return !staleNotReady
+  }
 
   private suspend fun streamMarketDataLoop(
     producer: KafkaProducer<String, String>,
@@ -993,10 +1009,12 @@ class ForwarderApp(
 
   private fun markReady(value: Boolean) {
     val previous = ready.getAndSet(value)
+    notReadyLivenessGate.recordReadiness(value)
     metrics.setReady(value)
     val gates = currentReadinessGates()
     metrics.setReadinessGates(gates)
     if (value) {
+      notReadyLivenessLogged.set(false)
       readinessErrorClass.set(null)
       reportedNotReadyClass.set(null)
       metrics.setReadinessErrorClass(null)

@@ -10,8 +10,9 @@ data:
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_TRADE_STREAM_URL: "wss://paper-api.alpaca.markets/stream"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
-  JANGAR_SYMBOLS_URL: "http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity"
-  # Fallback so the ws forwarder can become ready if Jangar has no ready endpoints.
+  # Dynamic desired-symbol feed is temporarily disabled to stay within Alpaca symbol limits.
+  JANGAR_SYMBOLS_URL: ""
+  # Static fallback universe used while dynamic feed is disabled.
   SYMBOLS: "ARM,CRWD,GOOG,LRCX,MSFT,MU,NVDA,SNDK,TSM"
   SYMBOLS_POLL_INTERVAL_MS: "30000"
   SUBSCRIBE_BATCH_SIZE: "200"
@@ -27,7 +28,13 @@ data:
   KAFKA_SASL_MECH: "SCRAM-SHA-512"
   KAFKA_LINGER_MS: "30"
   KAFKA_BATCH_SIZE: "32768"
+  KAFKA_BUFFER_MEMORY_BYTES: "16777216"
+  KAFKA_MAX_REQUEST_SIZE_BYTES: "524288"
+  KAFKA_DELIVERY_TIMEOUT_MS: "60000"
+  KAFKA_REQUEST_TIMEOUT_MS: "15000"
+  KAFKA_MAX_BLOCK_MS: "10000"
   KAFKA_ACKS: "all"
+  HEALTH_NOT_READY_KILL_AFTER_MS: "120000"
   TOPIC_TRADES: "torghut.trades.v1"
   TOPIC_QUOTES: "torghut.quotes.v1"
   TOPIC_BARS_1M: "torghut.bars.1m.v1"
