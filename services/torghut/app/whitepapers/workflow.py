@@ -1506,17 +1506,10 @@ class WhitepaperWorkflowService:
                 queued_for_async_indexing = self._enqueue_finalized_inngest_event(session, run=run)
 
             if not queued_for_async_indexing:
-                try:
-                    self.index_synthesis_semantic_content(
-                        session,
-                        run_id=run.run_id,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Whitepaper synthesis semantic indexing failed for run_id=%s: %s",
-                        run.run_id,
-                        exc,
-                    )
+                self.index_synthesis_semantic_content(
+                    session,
+                    run_id=run.run_id,
+                )
 
         return {
             "run_id": run.run_id,
@@ -2166,23 +2159,20 @@ class WhitepaperWorkflowService:
         if run.document_version is None:
             raise RuntimeError("whitepaper_version_missing")
 
-        session.execute(
-            text(
-                """
-                DELETE FROM whitepaper_semantic_chunks
-                WHERE analysis_run_id = :analysis_run_id
-                  AND source_scope = :source_scope
-                  AND chunk_index >= :chunk_count
-                """
-            ),
-            {
-                "analysis_run_id": run.id,
-                "source_scope": normalized_scope,
-                "chunk_count": len(chunks),
-            },
-        )
-
         if not chunks:
+            session.execute(
+                text(
+                    """
+                    DELETE FROM whitepaper_semantic_chunks
+                    WHERE analysis_run_id = :analysis_run_id
+                      AND source_scope = :source_scope
+                    """
+                ),
+                {
+                    "analysis_run_id": run.id,
+                    "source_scope": normalized_scope,
+                },
+            )
             return {
                 "run_id": run.run_id,
                 "source_scope": normalized_scope,
@@ -2306,6 +2296,22 @@ class WhitepaperWorkflowService:
                 },
             )
             indexed_chunks += 1
+
+        session.execute(
+            text(
+                """
+                DELETE FROM whitepaper_semantic_chunks
+                WHERE analysis_run_id = :analysis_run_id
+                  AND source_scope = :source_scope
+                  AND chunk_index >= :chunk_count
+                """
+            ),
+            {
+                "analysis_run_id": run.id,
+                "source_scope": normalized_scope,
+                "chunk_count": len(chunks),
+            },
+        )
 
         index_step = WhitepaperAnalysisStep(
             analysis_run_id=run.id,

@@ -407,6 +407,96 @@ https://example.com/paper.pdf
 
             self.assertEqual(indexed_run_ids, [run_row.run_id])
 
+    def test_finalize_run_propagates_synthesis_indexing_failures(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+        os.environ["WHITEPAPER_SEMANTIC_INDEXING_ENABLED"] = "true"
+        os.environ["WHITEPAPER_INNGEST_ENABLED"] = "true"
+        service.set_inngest_client(cast(Any, _FakeInngestClient()))
+
+        service._enqueue_finalized_inngest_event = lambda _session, *, run: False  # type: ignore[method-assign]
+        service.index_synthesis_semantic_content = (  # type: ignore[method-assign]
+            lambda _session, *, run_id: (_ for _ in ()).throw(
+                RuntimeError(f"index failure for run {run_id}")
+            )
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            finalize_payload = {
+                "status": "completed",
+                "synthesis": {
+                    "executive_summary": "Strong approach with reproducible results.",
+                    "confidence": "0.87",
+                },
+                "verdict": {
+                    "verdict": "implement",
+                    "score": "0.81",
+                    "confidence": "0.84",
+                    "requires_followup": False,
+                },
+            }
+            with self.assertRaises(RuntimeError):
+                service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            session.rollback()
+
+            persisted_run = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            self.assertEqual(persisted_run.status, "agentrun_dispatched")
+
+    def test_persist_semantic_chunks_does_not_delete_until_embeddings_ready(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            self.assertIsNotNone(run_row.document_version)
+
+            statement_log: list[str] = []
+
+            def _fake_execute(statement: Any, *args: Any, **kwargs: Any):
+                statement_log.append(str(statement))
+                class _DummyResult:
+                    def mappings(self) -> "_DummyResult":
+                        return self
+
+                    def first(self) -> None:
+                        return None
+
+                return _DummyResult()
+
+            with patch.object(session, "execute", side_effect=_fake_execute):
+                service._embed_texts = (  # type: ignore[method-assign]
+                    lambda _texts: (_ for _ in ()).throw(RuntimeError("embedding service unavailable"))
+                )
+                with self.assertRaises(RuntimeError):
+                    service._persist_semantic_chunks_and_embeddings(
+                        session,
+                        run=run_row,
+                        source_scope="synthesis",
+                        chunks=[{"content": "synthetic finding"}],
+                    )
+
+            self.assertEqual(statement_log, [])
+
     def test_finalize_merges_dspy_eval_report_into_verdict_gating(self) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
