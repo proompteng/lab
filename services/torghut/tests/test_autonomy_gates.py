@@ -161,6 +161,47 @@ class TestAutonomyGates(TestCase):
         self.assertFalse(report.promotion_allowed)
         self.assertIn("profitability_evidence_missing", report.reasons)
 
+    def test_gate_matrix_fails_when_janus_evidence_incomplete(self) -> None:
+        policy = GatePolicyMatrix(gate6_require_janus_evidence=True)
+        payload = _profitability_evidence_payload()
+        payload["janus_q"] = {
+            "schema_version": "janus-q-evidence-v1",
+            "evidence_complete": False,
+            "reasons": ["janus_reward_event_mapping_incomplete"],
+            "event_car": {
+                "schema_version": "janus-event-car-v1",
+                "event_count": 0,
+            },
+            "hgrm_reward": {
+                "schema_version": "janus-hgrm-reward-v1",
+                "reward_count": 0,
+            },
+        }
+        inputs = GateInputs(
+            feature_schema_version="3.0.0",
+            required_feature_null_rate=Decimal("0.00"),
+            staleness_ms_p95=0,
+            symbol_coverage=2,
+            metrics={
+                "decision_count": 20,
+                "trade_count": 10,
+                "net_pnl": "50",
+                "max_drawdown": "100",
+                "turnover_ratio": "1.5",
+                "cost_bps": "5",
+            },
+            robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            forecast_metrics=_healthy_forecast_metrics_payload(),
+            profitability_evidence=payload,
+        )
+        report = evaluate_gate_matrix(
+            inputs, policy=policy, promotion_target="paper", code_version="test"
+        )
+        self.assertFalse(report.promotion_allowed)
+        self.assertIn("janus_q_evidence_incomplete", report.reasons)
+        self.assertIn("janus_event_car_count_below_threshold", report.reasons)
+        self.assertIn("janus_hgrm_reward_count_below_threshold", report.reasons)
+
     def test_gate_matrix_fails_when_fragility_stress_without_stability_mode(self) -> None:
         policy = GatePolicyMatrix(
             gate2_max_fragility_score=Decimal("0.9"),
@@ -362,6 +403,21 @@ def _profitability_evidence_payload(
         },
         "benchmark": {"schema_version": "profitability-benchmark-v4"},
         "validation": {"passed": True},
+        "janus_q": {
+            "schema_version": "janus-q-evidence-v1",
+            "evidence_complete": True,
+            "reasons": [],
+            "event_car": {
+                "schema_version": "janus-event-car-v1",
+                "event_count": 3,
+                "artifact_ref": "/tmp/janus-event-car-v1.json",
+            },
+            "hgrm_reward": {
+                "schema_version": "janus-hgrm-reward-v1",
+                "reward_count": 3,
+                "artifact_ref": "/tmp/janus-hgrm-reward-v1.json",
+            },
+        },
     }
 
 

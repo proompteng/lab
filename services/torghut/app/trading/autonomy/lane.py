@@ -62,6 +62,11 @@ from .gates import (
     PromotionTarget,
     evaluate_gate_matrix,
 )
+from .janus_q import (
+    build_janus_event_car_artifact_v1,
+    build_janus_hgrm_reward_artifact_v1,
+    build_janus_q_evidence_summary_v1,
+)
 from .policy_checks import evaluate_promotion_prerequisites, evaluate_rollback_readiness
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 
@@ -238,6 +243,8 @@ def run_autonomous_lane(
     profitability_benchmark_path = gates_dir / "profitability-benchmark-v4.json"
     profitability_evidence_path = gates_dir / "profitability-evidence-v4.json"
     profitability_validation_path = gates_dir / "profitability-evidence-validation.json"
+    janus_event_car_path = gates_dir / "janus-event-car-v1.json"
+    janus_hgrm_reward_path = gates_dir / "janus-hgrm-reward-v1.json"
     recalibration_report_path = gates_dir / "recalibration-report.json"
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     run_row = None
@@ -334,6 +341,30 @@ def run_autonomous_lane(
             promotion_target="shadow",
         )
         write_evaluation_report(baseline_report, baseline_report_path)
+        janus_event_car = build_janus_event_car_artifact_v1(
+            run_id=run_id,
+            signals=ordered_signals,
+            generated_at=now,
+        )
+        janus_event_car_path.write_text(
+            json.dumps(janus_event_car.to_payload(), indent=2), encoding="utf-8"
+        )
+        janus_hgrm_reward = build_janus_hgrm_reward_artifact_v1(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            event_car=janus_event_car,
+            walk_decisions=walk_decisions,
+            generated_at=now,
+        )
+        janus_hgrm_reward_path.write_text(
+            json.dumps(janus_hgrm_reward.to_payload(), indent=2), encoding="utf-8"
+        )
+        janus_q_summary = build_janus_q_evidence_summary_v1(
+            event_car=janus_event_car,
+            hgrm_reward=janus_hgrm_reward,
+            event_car_artifact_ref=str(janus_event_car_path),
+            hgrm_reward_artifact_ref=str(janus_hgrm_reward_path),
+        )
 
         benchmark = execute_profitability_benchmark_v4(
             candidate_id=candidate_id,
@@ -358,6 +389,8 @@ def run_autonomous_lane(
             "walkforward_results": _sha256_path(walk_results_path),
             "candidate_report": _sha256_path(evaluation_report_path),
             "baseline_report": _sha256_path(baseline_report_path),
+            "janus_event_car": _sha256_path(janus_event_car_path),
+            "janus_hgrm_reward": _sha256_path(janus_hgrm_reward_path),
         }
         profitability_evidence = build_profitability_evidence_v4(
             run_id=run_id,
@@ -377,8 +410,10 @@ def run_autonomous_lane(
             ],
             generated_at=now,
         )
+        profitability_evidence_payload = profitability_evidence.to_payload()
+        profitability_evidence_payload["janus_q"] = janus_q_summary
         profitability_evidence_path.write_text(
-            json.dumps(profitability_evidence.to_payload(), indent=2), encoding="utf-8"
+            json.dumps(profitability_evidence_payload, indent=2), encoding="utf-8"
         )
 
         gate_policy_payload = json.loads(gate_policy_path.read_text(encoding="utf-8"))
@@ -396,7 +431,6 @@ def run_autonomous_lane(
         )
 
         gate_policy = GatePolicyMatrix.from_path(gate_policy_path)
-        profitability_evidence_payload = profitability_evidence.to_payload()
         profitability_evidence_payload["validation"] = (
             profitability_validation.to_payload()
         )
@@ -504,6 +538,28 @@ def run_autonomous_lane(
                 "items": stress_evidence,
                 "artifact_ref": "db:research_stress_metrics",
             },
+            "janus_q": {
+                "event_car": {
+                    "count": int(
+                        janus_q_summary.get("event_car", {}).get("event_count", 0)
+                    ),
+                    "artifact_ref": str(janus_event_car_path),
+                },
+                "hgrm_reward": {
+                    "count": int(
+                        janus_q_summary.get("hgrm_reward", {}).get("reward_count", 0)
+                    ),
+                    "artifact_ref": str(janus_hgrm_reward_path),
+                },
+                "evidence_complete": bool(
+                    janus_q_summary.get("evidence_complete", False)
+                ),
+                "reasons": [
+                    str(reason)
+                    for reason in janus_q_summary.get("reasons", [])
+                    if str(reason).strip()
+                ],
+            },
             "promotion_rationale": {
                 "requested_target": promotion_target,
                 "gate_recommended_mode": gate_report.recommended_mode,
@@ -547,6 +603,8 @@ def run_autonomous_lane(
                 "profitability_benchmark": str(profitability_benchmark_path),
                 "profitability_evidence": str(profitability_evidence_path),
                 "profitability_validation": str(profitability_validation_path),
+                "janus_event_car": str(janus_event_car_path),
+                "janus_hgrm_reward": str(janus_hgrm_reward_path),
                 "recalibration_report": str(recalibration_report_path),
             },
             "candidate_spec": {
@@ -672,12 +730,15 @@ def run_autonomous_lane(
                         str(gate_report_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(janus_event_car_path),
+                        str(janus_hgrm_reward_path),
                         str(recalibration_report_path),
                     ],
                 },
                 "promotion_prerequisites": promotion_check.to_payload(),
                 "rollback_readiness": rollback_check.to_payload(),
                 "profitability_validation": profitability_validation.to_payload(),
+                "janus_q": janus_q_summary,
                 "drift_governance": drift_gate_check,
                 "evidence_requirements": promotion_recommendation.evidence.to_payload(),
             },
@@ -691,6 +752,8 @@ def run_autonomous_lane(
                         str(profitability_benchmark_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(janus_event_car_path),
+                        str(janus_hgrm_reward_path),
                         *[
                             str(item)
                             for item in drift_gate_check.get("artifact_refs", [])
@@ -718,6 +781,28 @@ def run_autonomous_lane(
                 "items": stress_evidence,
                 "artifact_ref": "db:research_stress_metrics",
             },
+            "janus_q": {
+                "event_car": {
+                    "count": int(
+                        janus_q_summary.get("event_car", {}).get("event_count", 0)
+                    ),
+                    "artifact_ref": str(janus_event_car_path),
+                },
+                "hgrm_reward": {
+                    "count": int(
+                        janus_q_summary.get("hgrm_reward", {}).get("reward_count", 0)
+                    ),
+                    "artifact_ref": str(janus_hgrm_reward_path),
+                },
+                "evidence_complete": bool(
+                    janus_q_summary.get("evidence_complete", False)
+                ),
+                "reasons": [
+                    str(reason)
+                    for reason in janus_q_summary.get("reasons", [])
+                    if str(reason).strip()
+                ],
+            },
             "promotion_rationale": {
                 "requested_target": promotion_target,
                 "gate_recommended_mode": gate_report.recommended_mode,
@@ -742,6 +827,8 @@ def run_autonomous_lane(
             "profitability_benchmark_artifact": str(profitability_benchmark_path),
             "profitability_evidence_artifact": str(profitability_evidence_path),
             "profitability_validation_artifact": str(profitability_validation_path),
+            "janus_event_car_artifact": str(janus_event_car_path),
+            "janus_hgrm_reward_artifact": str(janus_hgrm_reward_path),
             "recalibration_artifact": str(recalibration_report_path),
             "promotion_gate_artifact": str(promotion_gate_path),
         }

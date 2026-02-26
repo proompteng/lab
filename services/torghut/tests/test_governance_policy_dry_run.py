@@ -63,6 +63,18 @@ class TestGovernancePolicyDryRun(TestCase):
                     ],
                     'artifact_ref': 'db:research_stress_metrics',
                 },
+                'janus_q': {
+                    'event_car': {
+                        'count': 2,
+                        'artifact_ref': 'gates/janus-event-car-v1.json',
+                    },
+                    'hgrm_reward': {
+                        'count': 2,
+                        'artifact_ref': 'gates/janus-hgrm-reward-v1.json',
+                    },
+                    'evidence_complete': True,
+                    'reasons': [],
+                },
                 'promotion_rationale': {
                     'requested_target': 'paper',
                     'gate_recommended_mode': 'paper',
@@ -80,7 +92,7 @@ class TestGovernancePolicyDryRun(TestCase):
             gate_report_path.write_text(json.dumps(gate_report, indent=2), encoding='utf-8')
 
             cmd = [
-                'python',
+                'python3',
                 str(script),
                 '--policy',
                 str(policy),

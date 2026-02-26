@@ -100,6 +100,9 @@ class GatePolicyMatrix:
     gate6_max_cost_bps: Decimal = Decimal("35")
     gate6_max_calibration_error: Decimal = Decimal("0.45")
     gate6_min_reproducibility_hashes: int = 5
+    gate6_require_janus_evidence: bool = True
+    gate6_min_janus_event_count: int = 1
+    gate6_min_janus_reward_count: int = 1
     gate7_target_coverage: Decimal = Decimal("0.90")
     gate7_max_coverage_error_pass: Decimal = Decimal("0.03")
     gate7_max_coverage_error_degrade: Decimal = Decimal("0.05")
@@ -203,6 +206,15 @@ class GatePolicyMatrix:
             gate6_min_reproducibility_hashes=int(
                 payload.get("gate6_min_reproducibility_hashes", 5)
             ),
+            gate6_require_janus_evidence=bool(
+                payload.get("gate6_require_janus_evidence", True)
+            ),
+            gate6_min_janus_event_count=int(
+                payload.get("gate6_min_janus_event_count", 1)
+            ),
+            gate6_min_janus_reward_count=int(
+                payload.get("gate6_min_janus_reward_count", 1)
+            ),
             gate7_target_coverage=_decimal_or_default(
                 payload.get("gate7_target_coverage"),
                 Decimal("0.90"),
@@ -285,6 +297,9 @@ class GatePolicyMatrix:
             "gate6_max_cost_bps": str(self.gate6_max_cost_bps),
             "gate6_max_calibration_error": str(self.gate6_max_calibration_error),
             "gate6_min_reproducibility_hashes": self.gate6_min_reproducibility_hashes,
+            "gate6_require_janus_evidence": self.gate6_require_janus_evidence,
+            "gate6_min_janus_event_count": self.gate6_min_janus_event_count,
+            "gate6_min_janus_reward_count": self.gate6_min_janus_reward_count,
             "gate7_target_coverage": str(self.gate7_target_coverage),
             "gate7_max_coverage_error_pass": str(self.gate7_max_coverage_error_pass),
             "gate7_max_coverage_error_degrade": str(
@@ -595,6 +610,7 @@ def _gate6_profitability_evidence(
     reasons.extend(_gate6_schema_reasons(evidence))
     reasons.extend(_gate6_threshold_reasons(evidence, policy))
     reasons.extend(_gate6_reproducibility_reasons(evidence, policy))
+    reasons.extend(_gate6_janus_q_reasons(evidence, policy))
 
     return GateResult(
         gate_id="gate6_profitability_evidence",
@@ -792,6 +808,35 @@ def _gate6_reproducibility_reasons(
     return []
 
 
+def _gate6_janus_q_reasons(
+    evidence: dict[str, Any], policy: GatePolicyMatrix
+) -> list[str]:
+    if not policy.gate6_require_janus_evidence:
+        return []
+    reasons: list[str] = []
+    janus_q = _dict_from_any(evidence.get("janus_q"))
+    if str(janus_q.get("schema_version", "")).strip() != "janus-q-evidence-v1":
+        reasons.append("janus_q_evidence_schema_invalid")
+        return reasons
+    if not bool(janus_q.get("evidence_complete", False)):
+        reasons.append("janus_q_evidence_incomplete")
+
+    event_car = _dict_from_any(janus_q.get("event_car"))
+    if str(event_car.get("schema_version", "")).strip() != "janus-event-car-v1":
+        reasons.append("janus_event_car_schema_invalid")
+    event_count = _int_or_default(event_car.get("event_count"), 0)
+    if event_count < policy.gate6_min_janus_event_count:
+        reasons.append("janus_event_car_count_below_threshold")
+
+    hgrm_reward = _dict_from_any(janus_q.get("hgrm_reward"))
+    if str(hgrm_reward.get("schema_version", "")).strip() != "janus-hgrm-reward-v1":
+        reasons.append("janus_hgrm_reward_schema_invalid")
+    reward_count = _int_or_default(hgrm_reward.get("reward_count"), 0)
+    if reward_count < policy.gate6_min_janus_reward_count:
+        reasons.append("janus_hgrm_reward_count_below_threshold")
+    return reasons
+
+
 def _gate7_skipped_result(
     policy: GatePolicyMatrix,
     promotion_target: PromotionTarget,
@@ -902,6 +947,17 @@ def _dict_from_any(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
     return cast(dict[str, Any], value)
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return default
 
 
 def _fragility_state_rank(state: str) -> int:

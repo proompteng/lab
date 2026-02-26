@@ -7,6 +7,10 @@
 - Plan status: `ready_for_execution`
 - Date (UTC): `2026-02-26`
 
+## Production Planning
+
+- Production plan (phased M0-M5): `docs/whitepapers/wp-d72cb1a5c1febdcfbd9dae71/production-engineering-plan.md`
+
 ## 1) Objective
 
 Implement Janus-Q-style event-driven research capabilities on top of the **current** Torghut autonomy/LLM pipeline, without bypassing existing safety and promotion controls.

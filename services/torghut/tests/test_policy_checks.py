@@ -70,6 +70,99 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(result.ready)
         self.assertIn("rollback_dry_run_stale", result.reasons)
 
+    def test_promotion_prerequisites_fail_when_janus_artifacts_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "profitability-evidence-v4.json").write_text(
+                json.dumps({"schema_version": "profitability-evidence-v4"}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "profitability-benchmark-v4.json").write_text(
+                json.dumps(
+                    {
+                        "slices": [
+                            {"slice_type": "regime", "slice_key": "regime:neutral"}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "gates" / "profitability-evidence-validation.json").write_text(
+                json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "recalibration-report.json").write_text(
+                json.dumps({"status": "not_required"}),
+                encoding="utf-8",
+            )
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={},
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("janus_event_car_artifact_missing", promotion.reasons)
+        self.assertIn("janus_hgrm_reward_artifact_missing", promotion.reasons)
+
+    def test_promotion_prerequisites_skip_janus_when_profitability_gate_disabled(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            gate_report = _gate_report()
+            promotion_evidence = gate_report.get("promotion_evidence", {})
+            if isinstance(promotion_evidence, dict):
+                promotion_evidence.pop("janus_q", None)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": True,
+                    "promotion_require_janus_evidence": True,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertTrue(promotion.allowed)
+        self.assertFalse(any("janus" in reason for reason in promotion.reasons))
+
     def test_allows_progression_when_artifacts_and_rollback_are_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -106,6 +199,7 @@ class TestPolicyChecks(TestCase):
                 json.dumps({"status": "not_required"}),
                 encoding="utf-8",
             )
+            _write_janus_artifacts(root)
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
                 "kind: ConfigMap", encoding="utf-8"
             )
@@ -171,6 +265,7 @@ class TestPolicyChecks(TestCase):
                 json.dumps({"status": "queued", "recalibration_run_id": "recal-1"}),
                 encoding="utf-8",
             )
+            _write_janus_artifacts(root)
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
                 "kind: ConfigMap", encoding="utf-8"
             )
@@ -473,6 +568,7 @@ class TestPolicyChecks(TestCase):
                 json.dumps({"status": "queued", "recalibration_run_id": "recal-1"}),
                 encoding="utf-8",
             )
+            _write_janus_artifacts(root)
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
                 "kind: ConfigMap", encoding="utf-8"
             )
@@ -529,6 +625,7 @@ class TestPolicyChecks(TestCase):
                 json.dumps({"status": "not_required"}),
                 encoding="utf-8",
             )
+            _write_janus_artifacts(root)
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
                 "kind: ConfigMap", encoding="utf-8"
             )
@@ -583,6 +680,7 @@ class TestPolicyChecks(TestCase):
                 json.dumps({"status": "not_required"}),
                 encoding="utf-8",
             )
+            _write_janus_artifacts(root)
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
                 "kind: ConfigMap", encoding="utf-8"
             )
@@ -622,6 +720,29 @@ def _candidate_state() -> dict[str, object]:
     }
 
 
+def _write_janus_artifacts(root: Path) -> None:
+    (root / "gates" / "janus-event-car-v1.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "janus-event-car-v1",
+                "summary": {"event_count": 2},
+                "records": [{"event_id": "evt-1"}, {"event_id": "evt-2"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "gates" / "janus-hgrm-reward-v1.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "janus-hgrm-reward-v1",
+                "summary": {"reward_count": 2},
+                "rewards": [{"reward_id": "rwd-1"}, {"reward_id": "rwd-2"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def _gate_report() -> dict[str, object]:
     return {
         "run_id": "run-test",
@@ -655,6 +776,18 @@ def _gate_report() -> dict[str, object]:
                     {"case": "halt"},
                 ],
                 "artifact_ref": "db:research_stress_metrics",
+            },
+            "janus_q": {
+                "event_car": {
+                    "count": 2,
+                    "artifact_ref": "gates/janus-event-car-v1.json",
+                },
+                "hgrm_reward": {
+                    "count": 2,
+                    "artifact_ref": "gates/janus-hgrm-reward-v1.json",
+                },
+                "evidence_complete": True,
+                "reasons": [],
             },
             "promotion_rationale": {
                 "requested_target": "paper",
