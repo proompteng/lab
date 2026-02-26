@@ -8,6 +8,7 @@ const agentctlPlugin = resolve(rootDir, 'server/plugins/agentctl-grpc')
 const controlPlaneCachePlugin = resolve(rootDir, 'server/plugins/control-plane-cache')
 const h3AppAliasPlugin = resolve(rootDir, 'server/plugins/h3-app-alias')
 const websocketResolverPlugin = resolve(rootDir, 'server/plugins/websocket-resolver')
+const torghutQuantRuntimePlugin = resolve(rootDir, 'server/plugins/torghut-quant-runtime')
 const buildSourceMap = (() => {
   const value = process.env.JANGAR_BUILD_SOURCEMAP?.trim().toLowerCase()
   if (value === '0' || value === 'false') return false
@@ -30,5 +31,12 @@ export default defineNitroConfig({
   experimental: {
     websocket: true,
   },
-  plugins: [agentsRuntimePlugin, agentctlPlugin, controlPlaneCachePlugin, h3AppAliasPlugin, websocketResolverPlugin],
+  plugins: [
+    agentsRuntimePlugin,
+    agentctlPlugin,
+    controlPlaneCachePlugin,
+    h3AppAliasPlugin,
+    websocketResolverPlugin,
+    torghutQuantRuntimePlugin,
+  ],
 })

@@ -9,6 +9,7 @@ vi.mock('~/server/torghut-market-context', () => ({
 describe('getMarketContextHealthHandler', () => {
   beforeEach(() => {
     getTorghutMarketContextHealth.mockReset()
+    delete process.env.JANGAR_MARKET_CONTEXT_HEALTH_DEFAULT_SYMBOL
   })
 
   it('returns health payload for requested symbol', async () => {
@@ -57,5 +58,68 @@ describe('getMarketContextHealthHandler', () => {
     const body = await response.json()
     expect(body.ok).toBe(false)
     expect(body.message).toBe('upstream_health_failed')
+  })
+
+  it('uses configured default symbol when query param is absent', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_HEALTH_DEFAULT_SYMBOL = 'nvda'
+    getTorghutMarketContextHealth.mockResolvedValueOnce({
+      enabled: true,
+      cacheSeconds: 60,
+      maxStalenessSeconds: 300,
+      bundleFreshnessSeconds: 12,
+      bundleQualityScore: 0.7,
+      providerHealth: [],
+      ingestionHealth: {
+        clickhouse: {
+          configured: true,
+          lastAttemptAt: '2026-02-19T12:00:00.000Z',
+          lastSuccessAt: '2026-02-19T12:00:00.000Z',
+          lastError: null,
+          consecutiveFailures: 0,
+          latencyMs: 24,
+        },
+      },
+      domainHealth: [],
+      overallState: 'ok',
+    })
+
+    const { getMarketContextHealthHandler } = await import('./health')
+    const response = await getMarketContextHealthHandler(
+      new Request('http://localhost/api/torghut/market-context/health'),
+    )
+
+    expect(response.status).toBe(200)
+    expect(getTorghutMarketContextHealth).toHaveBeenCalledWith('NVDA')
+  })
+
+  it('falls back to AAPL when default symbol is not configured', async () => {
+    getTorghutMarketContextHealth.mockResolvedValueOnce({
+      enabled: true,
+      cacheSeconds: 60,
+      maxStalenessSeconds: 300,
+      bundleFreshnessSeconds: 12,
+      bundleQualityScore: 0.7,
+      providerHealth: [],
+      ingestionHealth: {
+        clickhouse: {
+          configured: true,
+          lastAttemptAt: '2026-02-19T12:00:00.000Z',
+          lastSuccessAt: '2026-02-19T12:00:00.000Z',
+          lastError: null,
+          consecutiveFailures: 0,
+          latencyMs: 24,
+        },
+      },
+      domainHealth: [],
+      overallState: 'ok',
+    })
+
+    const { getMarketContextHealthHandler } = await import('./health')
+    const response = await getMarketContextHealthHandler(
+      new Request('http://localhost/api/torghut/market-context/health'),
+    )
+
+    expect(response.status).toBe(200)
+    expect(getTorghutMarketContextHealth).toHaveBeenCalledWith('AAPL')
   })
 })
