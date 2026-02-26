@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 
 import { parseQuantAccount, parseQuantStrategyId, parseQuantWindow } from '~/server/torghut-quant-http'
 import { getQuantLatestStoreStatus, listLatestQuantPipelineHealth } from '~/server/torghut-quant-metrics-store'
+import { getTorghutQuantRuntimeStatus, startTorghutQuantRuntime } from '~/server/torghut-quant-runtime'
 
 export const Route = createFileRoute('/api/torghut/trading/control-plane/quant/health')({
   server: {
@@ -24,6 +25,7 @@ const jsonResponse = (payload: unknown, status = 200) => {
 
 export const getQuantHealthHandler = async (request: Request) => {
   try {
+    startTorghutQuantRuntime()
     const requestUrl = new URL(request.url)
     const strategyIdParam = requestUrl.searchParams.get('strategy_id') ?? requestUrl.searchParams.get('strategyId')
     const strategyIdResult = strategyIdParam
@@ -57,6 +59,7 @@ export const getQuantHealthHandler = async (request: Request) => {
     })
     const maxStageLagSeconds = stages.reduce((max, stage) => Math.max(max, stage.lagSeconds), 0)
     const overallState = stages.some((stage) => !stage.ok) || missingUpdateAlarm ? 'degraded' : 'ok'
+    const runtime = getTorghutQuantRuntimeStatus()
 
     return jsonResponse({
       ok: true,
@@ -69,6 +72,12 @@ export const getQuantHealthHandler = async (request: Request) => {
       missingUpdateThresholdSeconds: Number.isFinite(missingUpdateThresholdSeconds)
         ? missingUpdateThresholdSeconds
         : 15,
+      runtimeStarted: runtime.started,
+      runtimeEnabled: runtime.enabled,
+      runtimeAlertsEnabled: runtime.alertsEnabled,
+      runtimeComputeIntervalMs: runtime.computeIntervalMs,
+      runtimeHeavyComputeIntervalMs: runtime.heavyComputeIntervalMs,
+      runtimeStreamHeartbeatMs: runtime.streamHeartbeatMs,
       stages,
       maxStageLagSeconds,
     })

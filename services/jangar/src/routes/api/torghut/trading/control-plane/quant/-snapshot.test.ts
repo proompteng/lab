@@ -2,16 +2,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listQuantLatestMetrics = vi.fn()
 const listQuantAlerts = vi.fn()
+const startTorghutQuantRuntime = vi.fn()
+const materializeTorghutQuantFrameOnDemand = vi.fn()
 
 vi.mock('~/server/torghut-quant-metrics-store', () => ({
   listQuantLatestMetrics,
   listQuantAlerts,
 }))
 
+vi.mock('~/server/torghut-quant-runtime', () => ({
+  startTorghutQuantRuntime,
+  materializeTorghutQuantFrameOnDemand,
+}))
+
 describe('getQuantSnapshotHandler', () => {
   beforeEach(() => {
     listQuantLatestMetrics.mockReset()
     listQuantAlerts.mockReset()
+    startTorghutQuantRuntime.mockReset()
+    materializeTorghutQuantFrameOnDemand.mockReset()
   })
 
   it('returns 400 when strategy_id is invalid', async () => {
@@ -63,6 +72,7 @@ describe('getQuantSnapshotHandler', () => {
     const response = await getQuantSnapshotHandler(new Request(url))
 
     expect(response.status).toBe(200)
+    expect(startTorghutQuantRuntime).toHaveBeenCalledTimes(1)
     expect(listQuantLatestMetrics).toHaveBeenCalledWith({
       strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       account: 'paper',
@@ -77,5 +87,41 @@ describe('getQuantSnapshotHandler', () => {
     expect(body.frame.frameAsOf).toBe('2026-02-19T12:00:05.000Z')
     expect(body.frame.metrics).toHaveLength(2)
     expect(body.frame.alerts).toEqual([{ alertId: 'a-open', account: 'paper', window: '1d', state: 'open' }])
+  })
+
+  it('materializes and reloads metrics when latest store is empty', async () => {
+    const { getQuantSnapshotHandler } = await import('./snapshot')
+
+    listQuantLatestMetrics.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        metricName: 'trade_count',
+        window: '1d',
+        status: 'ok',
+        quality: 'good',
+        unit: 'count',
+        valueNumeric: 0,
+        formulaVersion: 'v1',
+        asOf: '2026-02-19T12:00:00.000Z',
+        freshnessSeconds: 1,
+      },
+    ])
+    listQuantAlerts.mockResolvedValueOnce([])
+
+    const url =
+      'http://localhost/api/torghut/trading/control-plane/quant/snapshot?strategy_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&account=&window=1d'
+    const response = await getQuantSnapshotHandler(new Request(url))
+
+    expect(response.status).toBe(200)
+    expect(materializeTorghutQuantFrameOnDemand).toHaveBeenCalledWith({
+      strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      account: '',
+      window: '1d',
+    })
+    expect(listQuantLatestMetrics).toHaveBeenCalledTimes(2)
+
+    const body = await response.json()
+    expect(body.ok).toBe(true)
+    expect(body.frame.metrics).toHaveLength(1)
+    expect(body.frame.metrics[0]?.metricName).toBe('trade_count')
   })
 })
