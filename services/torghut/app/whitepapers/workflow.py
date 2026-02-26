@@ -1884,9 +1884,9 @@ class WhitepaperWorkflowService:
 
         ranked.sort(
             key=lambda item: (
-                -float(item.get("hybrid_score") or 0),
-                float(item.get("semantic_distance")) if item.get("semantic_distance") is not None else 999.0,
-                -float(item.get("lexical_score") or 0),
+                -self._coerce_float(item.get("hybrid_score"), default=0.0),
+                self._coerce_float(item.get("semantic_distance"), default=999.0),
+                -self._coerce_float(item.get("lexical_score"), default=0.0),
             )
         )
         total = len(ranked)
@@ -1939,6 +1939,24 @@ class WhitepaperWorkflowService:
             text = value.strip()
             return [text] if text else []
         return []
+
+    @staticmethod
+    def _coerce_float(value: Any, *, default: float) -> float:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return default
+            try:
+                return float(text)
+            except ValueError:
+                return default
+        return default
 
     def _coerce_tag_list(self, value: Any) -> list[str]:
         if isinstance(value, list):

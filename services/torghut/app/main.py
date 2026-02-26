@@ -52,7 +52,6 @@ BUILD_VERSION = os.getenv("TORGHUT_VERSION", "dev")
 BUILD_COMMIT = os.getenv("TORGHUT_COMMIT", "unknown")
 LEAN_LANE_MANAGER = LeanLaneManager()
 WHITEPAPER_WORKFLOW = WhitepaperWorkflowService()
-WHITEPAPER_INNGEST_CLIENT: inngest.Inngest | None = None
 
 
 def _extract_bearer_token(authorization_header: str | None) -> str | None:
@@ -135,7 +134,7 @@ def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
                     inngest_run_id=ctx.run_id,
                 )
                 session.commit()
-                return cast(dict[str, Any], result)
+                return result
             except Exception:
                 session.rollback()
                 logger.exception("Inngest requested whitepaper run failed for run_id=%s", run_id)
@@ -159,7 +158,7 @@ def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
                     run_id=run_id,
                 )
                 session.commit()
-                return cast(dict[str, Any], result)
+                return result
             except Exception:
                 session.rollback()
                 logger.exception("Inngest finalized whitepaper indexing failed for run_id=%s", run_id)
@@ -211,7 +210,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="torghut", lifespan=lifespan)
 app.state.settings = settings
 app.state.whitepaper_inngest_registered = False
-WHITEPAPER_INNGEST_CLIENT = _register_whitepaper_inngest_routes(app)
+_register_whitepaper_inngest_routes(app)
 
 
 @app.exception_handler(SQLAlchemyError)
