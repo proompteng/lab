@@ -343,6 +343,7 @@ class ExecutionPolicy:
     ) -> tuple[dict[str, Any], Decimal | None]:
         metadata: dict[str, Any] = {
             "enabled": settings.trading_execution_advisor_enabled,
+            "live_apply_enabled": settings.trading_execution_advisor_live_apply_enabled,
             "applied": False,
             "fallback_reason": None,
             "tightening_reasons": [],
@@ -402,6 +403,14 @@ class ExecutionPolicy:
         metadata["expected_shortfall_bps_p95"] = _stringify_decimal(
             advice.expected_shortfall_bps_p95
         )
+
+        if not settings.trading_execution_advisor_live_apply_enabled:
+            metadata["fallback_reason"] = "advisor_live_apply_disabled"
+            metadata["tightening_reasons"] = ["live_apply_disabled"]
+            metadata["preferred_order_type"] = None
+            metadata["adverse_selection_risk"] = None
+            metadata["max_participation_rate"] = None
+            return metadata, None
 
         tightened_max: Decimal | None = None
         if (

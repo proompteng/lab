@@ -52,12 +52,19 @@ class TestExecutionPolicy(TestCase):
             config.settings.trading_execution_advisor_max_staleness_seconds
         )
         self._advisor_timeout_ms = config.settings.trading_execution_advisor_timeout_ms
+        self._advisor_live_apply = (
+            config.settings.trading_execution_advisor_live_apply_enabled
+        )
         config.settings.trading_execution_advisor_enabled = False
+        config.settings.trading_execution_advisor_live_apply_enabled = True
         config.settings.trading_execution_advisor_max_staleness_seconds = 15
         config.settings.trading_execution_advisor_timeout_ms = 250
 
     def tearDown(self) -> None:
         config.settings.trading_execution_advisor_enabled = self._advisor_enabled
+        config.settings.trading_execution_advisor_live_apply_enabled = (
+            self._advisor_live_apply
+        )
         config.settings.trading_execution_advisor_max_staleness_seconds = (
             self._advisor_staleness
         )
@@ -375,6 +382,81 @@ class TestExecutionPolicy(TestCase):
         )
         self.assertEqual(outcome.advisor_metadata["applied"], False)
         self.assertEqual(outcome.advisor_metadata["fallback_reason"], "advisor_timeout")
+
+    def test_advisor_missing_inputs_falls_back_to_baseline(self) -> None:
+        config.settings.trading_execution_advisor_enabled = True
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "3.2",
+                        "depth_top5_usd": "1500000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 20,
+                        "fill_hazard": "0.8",
+                        "liquidity_regime": "normal",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertEqual(outcome.advisor_metadata["applied"], False)
+        self.assertEqual(
+            outcome.advisor_metadata["fallback_reason"], "advisor_missing_inputs"
+        )
+
+    def test_advisor_live_apply_flag_disables_broker_facing_application(self) -> None:
+        config.settings.trading_execution_advisor_enabled = True
+        config.settings.trading_execution_advisor_live_apply_enabled = False
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "adv": Decimal("100000"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "3.2",
+                        "depth_top5_usd": "1500000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 20,
+                        "fill_hazard": "0.8",
+                        "liquidity_regime": "normal",
+                    },
+                    "execution_advice": {
+                        "urgency_tier": "normal",
+                        "max_participation_rate": "0.05",
+                        "preferred_order_type": "limit",
+                        "adverse_selection_risk": "0.95",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertTrue(outcome.approved)
+        self.assertEqual(outcome.decision.order_type, "market")
+        self.assertEqual(outcome.advisor_metadata["applied"], False)
+        self.assertEqual(
+            outcome.advisor_metadata["fallback_reason"], "advisor_live_apply_disabled"
+        )
+        self.assertEqual(outcome.advisor_metadata["adverse_selection_risk"], None)
 
     def test_advisor_state_staleness_falls_back_deterministically(self) -> None:
         config.settings.trading_execution_advisor_enabled = True

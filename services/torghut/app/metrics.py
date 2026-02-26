@@ -52,6 +52,20 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "reason",
         "int",
     ),
+    "execution_advisor_usage_total": (
+        "torghut_trading_execution_advisor_usage_total",
+        "Count of execution advisor usage outcomes by status.",
+        "counter",
+        "status",
+        "int",
+    ),
+    "execution_advisor_fallback_total": (
+        "torghut_trading_execution_advisor_fallback_total",
+        "Count of execution advisor fallback outcomes by reason.",
+        "counter",
+        "reason",
+        "int",
+    ),
     "lean_request_total": (
         "torghut_trading_lean_request_total",
         "Count of LEAN runner requests by operation.",

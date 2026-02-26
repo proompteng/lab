@@ -197,6 +197,32 @@ class TestTradingMetrics(TestCase):
         self.assertIn("torghut_trading_order_feed_events_persisted_total 2", payload)
         self.assertIn("torghut_trading_order_feed_duplicates_total 1", payload)
 
+    def test_execution_advisor_usage_and_fallback_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.execution_advisor_usage_total["applied"] = 2
+        metrics.execution_advisor_usage_total["fallback"] = 3
+        metrics.execution_advisor_fallback_total["advisor_timeout"] = 1
+        metrics.execution_advisor_fallback_total["advisor_state_stale"] = 4
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_execution_advisor_usage_total{status="applied"} 2',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_execution_advisor_usage_total{status="fallback"} 3',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_execution_advisor_fallback_total{reason="advisor_timeout"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_execution_advisor_fallback_total{reason="advisor_state_stale"} 4',
+            payload,
+        )
+
     def test_tca_summary_metrics_are_exported(self) -> None:
         metrics = TradingMetrics()
         payload = render_trading_metrics(

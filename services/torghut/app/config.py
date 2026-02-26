@@ -38,6 +38,7 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_drift_live_promotion_requires_evidence": "torghut_trading_drift_live_promotion_requires_evidence",
     "trading_drift_rollback_on_performance": "torghut_trading_drift_rollback_on_performance",
     "trading_execution_advisor_enabled": "torghut_trading_execution_advisor_enabled",
+    "trading_execution_advisor_live_apply_enabled": "torghut_trading_execution_advisor_live_apply_enabled",
     "trading_allow_shorts": "torghut_trading_allow_shorts",
     "trading_kill_switch_enabled": "torghut_trading_kill_switch_enabled",
     "trading_emergency_stop_enabled": "torghut_trading_emergency_stop_enabled",
@@ -676,6 +677,11 @@ class Settings(BaseSettings):
         default=True,
         alias="TRADING_EXECUTION_ADVISOR_ENABLED",
         description="Enable bounded microstructure execution advisor integration.",
+    )
+    trading_execution_advisor_live_apply_enabled: bool = Field(
+        default=False,
+        alias="TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED",
+        description="Allow advisor outputs to alter broker-facing execution behavior.",
     )
     trading_execution_advisor_max_staleness_seconds: int = Field(
         default=15,

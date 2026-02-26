@@ -528,26 +528,24 @@ def _extract_execution_advice_provenance(
     *,
     decision_row: Optional[TradeDecision] = None,
 ) -> dict[str, Any] | None:
+    persisted_params: Mapping[str, Any] = {}
     if decision_row is not None:
         decision_json = _coerce_json(decision_row.decision_json)
-        params_value = decision_json.get('params')
+        params_value = decision_json.get("params")
         if isinstance(params_value, Mapping):
-            params_map = cast(Mapping[str, Any], params_value)
-            persisted_payload = params_map.get('execution_advisor')
-            if isinstance(persisted_payload, Mapping):
-                return {
-                    str(key): value
-                    for key, value in cast(
-                        Mapping[object, object],
-                        persisted_payload,
-                    ).items()
-                }
-    payload = decision.params.get("execution_advisor")
-    if isinstance(payload, Mapping):
-        return {
-            str(key): value
-            for key, value in cast(Mapping[object, object], payload).items()
-        }
+            persisted_params = cast(Mapping[str, Any], params_value)
+
+    for key in ("execution_advisor", "execution_advice"):
+        payload = persisted_params.get(key)
+        if not isinstance(payload, Mapping):
+            payload = decision.params.get(key)
+        if isinstance(payload, Mapping):
+            return {
+                str(item_key): item_value
+                for item_key, item_value in cast(
+                    Mapping[object, object], payload
+                ).items()
+            }
     return None
 
 
