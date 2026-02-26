@@ -137,6 +137,104 @@ class TestOrderIdempotency(TestCase):
         hash_b = decision_hash(decision, account_label='paper-b')
         self.assertNotEqual(hash_a, hash_b)
 
+    def test_execution_exists_ignores_unrelated_same_account_execution(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            first_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol='AAPL',
+                event_ts=datetime(2026, 2, 10, 13, 0, tzinfo=timezone.utc),
+                timeframe='1Min',
+                action='buy',
+                qty=Decimal('1.0'),
+                params={'price': Decimal('100')},
+            )
+            second_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol='AAPL',
+                event_ts=datetime(2026, 2, 10, 13, 1, tzinfo=timezone.utc),
+                timeframe='1Min',
+                action='buy',
+                qty=Decimal('1.0'),
+                params={'price': Decimal('101')},
+            )
+
+            executor = OrderExecutor()
+            first_row = executor.ensure_decision(session, first_decision, strategy, 'paper')
+            second_row = executor.ensure_decision(session, second_decision, strategy, 'paper')
+
+            client = FakeAlpacaClient()
+            first_execution = executor.submit_order(
+                session, client, first_decision, first_row, 'paper'
+            )
+            assert first_execution is not None
+
+            self.assertFalse(executor.execution_exists(session, second_row))
+
+            second_execution = executor.submit_order(
+                session, client, second_decision, second_row, 'paper'
+            )
+            assert second_execution is not None
+            executions = session.execute(select(Execution)).scalars().all()
+            self.assertEqual(len(executions), 2)
+
+    def test_execution_exists_matches_by_client_order_id_hash(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol='AAPL',
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe='1Min',
+                action='buy',
+                qty=Decimal('1.0'),
+                params={'price': Decimal('100')},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, 'paper')
+            assert decision_row.decision_hash is not None
+
+            orphan_execution = Execution(
+                trade_decision_id=None,
+                alpaca_account_label='paper',
+                alpaca_order_id='order-orphan-1',
+                client_order_id=decision_row.decision_hash,
+                symbol='AAPL',
+                side='buy',
+                order_type='market',
+                time_in_force='day',
+                submitted_qty=Decimal('1'),
+                filled_qty=Decimal('0'),
+                status='accepted',
+                raw_order={'id': 'order-orphan-1'},
+            )
+            session.add(orphan_execution)
+            session.commit()
+
+            self.assertTrue(executor.execution_exists(session, decision_row))
+
     def test_retry_after_db_failure_does_not_duplicate_submit(self) -> None:
         with self.session_local() as session:
             strategy = Strategy(

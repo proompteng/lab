@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-02-25T17:17:11Z"
+        client.knative.dev/updateTimestamp: "2026-02-26T03:14:27Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -26,7 +26,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:13c0c62f6f738d05e2b15dbd54c29c887152c95d0cff2afbfce3062b6c42d11a
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:cecfd47eb009d488936533e75f03844449569e919f43da4c05494588dbfdce01
           ports:
             - name: http1
               containerPort: 8181
@@ -104,6 +104,8 @@ spec:
               value: torghut.ta_signals
             - name: TRADING_SIGNAL_LOOKBACK_MINUTES
               value: "15"
+            - name: TRADING_PLANNED_DECISION_TIMEOUT_SECONDS
+              value: "600"
             - name: TRADING_SIGNAL_NO_SIGNAL_STREAK_ALERT_THRESHOLD
               value: "2"
             - name: TRADING_SIGNAL_STALE_LAG_ALERT_SECONDS
@@ -340,9 +342,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.561.0-53-gae9b774e
+              value: v0.561.0-58-g123a4c35
             - name: TORGHUT_COMMIT
-              value: ae9b774e96a6f0547cf4eb70b841f1398234f3d0
+              value: 123a4c358f8cc0ec168b722b72deb1fac50bf5c9
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config

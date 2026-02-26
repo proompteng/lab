@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 import tempfile
@@ -574,6 +574,82 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_feature_max_staleness_ms = original[
                 "trading_feature_max_staleness_ms"
             ]
+
+    def test_stale_planned_decision_is_force_rejected(self) -> None:
+        from app import config
+
+        original_timeout = config.settings.trading_planned_decision_timeout_seconds
+        config.settings.trading_planned_decision_timeout_seconds = 60
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="stale-planned",
+                    description="stale planned decision rejection",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                )
+                session.add(strategy)
+                session.commit()
+                session.refresh(strategy)
+
+                decision = StrategyDecision(
+                    strategy_id=str(strategy.id),
+                    symbol="AAPL",
+                    event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                    timeframe="1Min",
+                    action="buy",
+                    qty=Decimal("1"),
+                    params={"price": Decimal("100")},
+                )
+                executor = OrderExecutor()
+                decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+                decision_row.created_at = datetime.now(timezone.utc) - timedelta(seconds=300)
+                session.add(decision_row)
+                session.commit()
+
+                pipeline = TradingPipeline(
+                    alpaca_client=FakeAlpacaClient(),
+                    order_firewall=OrderFirewall(FakeAlpacaClient()),
+                    ingestor=FakeIngestor([]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=executor,
+                    execution_adapter=FakeAlpacaClient(),
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=TradingState(),
+                    account_label="paper",
+                    session_factory=self.session_local,
+                )
+
+                pending = pipeline._ensure_pending_decision_row(
+                    session=session,
+                    decision=decision,
+                    strategy=strategy,
+                )
+
+                self.assertIsNone(pending)
+                refreshed = session.get(TradeDecision, decision_row.id)
+                assert refreshed is not None
+                self.assertEqual(refreshed.status, "rejected")
+                decision_json = refreshed.decision_json
+                assert isinstance(decision_json, dict)
+                risk_reasons = decision_json.get("risk_reasons")
+                assert isinstance(risk_reasons, list)
+                self.assertTrue(
+                    any(
+                        str(reason).startswith("decision_timeout_unsubmitted:")
+                        for reason in risk_reasons
+                    )
+                )
+                self.assertEqual(
+                    pipeline.state.metrics.planned_decisions_timeout_rejected_total, 1
+                )
+                self.assertEqual(pipeline.state.metrics.planned_decisions_stale_total, 1)
+        finally:
+            config.settings.trading_planned_decision_timeout_seconds = original_timeout
 
     def test_decision_engine_macd_rsi(self) -> None:
         engine = DecisionEngine()
