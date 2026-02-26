@@ -5,6 +5,7 @@
 - Version: `v1`
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
+- Maturity: advisory roadmap (proposal; not a shipped feature set)
 
 ## Purpose
 

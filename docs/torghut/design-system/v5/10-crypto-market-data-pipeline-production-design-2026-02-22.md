@@ -7,6 +7,14 @@
 - Scope: migrate Torghut market-data ingest from equity-only websocket assumptions to crypto pairs `BTC/USD`, `ETH/USD`, `SOL/USD`
 - Environments: Kubernetes (`torghut`, `kafka`) with Argo CD GitOps
 
+## Audit Update (2026-02-26)
+
+- The `2026-02-22` runtime snapshot in section 3 is historical and should not be treated as current-state telemetry.
+- Code and manifests now include market-type controls, but live GitOps defaults are still equity-oriented in ws/torghut
+  runtime manifests (no full crypto cutover yet).
+- Prior "0 decisions in 24h" and stale ClickHouse timestamp examples are superseded by newer runtime activity.
+- Keep this document as rollout design/reference; use current status matrix and live runbooks for present operational state.
+
 ## 1. Goal
 
 Design and execute a production-grade migration so Torghut websocket ingest, Kafka transport, TA/Flink processing, and trading inputs support crypto pairs:

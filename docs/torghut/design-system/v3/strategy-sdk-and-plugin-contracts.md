@@ -2,7 +2,7 @@
 
 ## Status
 
-- Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
+- Implementation status: `Partial` (2026-02-26 audit: SDK/runtime exists; built-in family coverage is narrower than planned)
 
 ## Objective
 
@@ -62,9 +62,8 @@ class StrategyPlugin(Protocol):
 ## Built-In Plugin Families (v1)
 
 - `legacy_macd_rsi@1.0.0` for migration parity.
-- `trend_multifactor@1.0.0`.
-- `mean_reversion@1.0.0`.
-- `volatility_overlay@1.0.0`.
+- `intraday_tsmom_v1@1.0.0`.
+- planned next families: `trend_multifactor@1.0.0`, `mean_reversion@1.0.0`, `volatility_overlay@1.0.0`.
 
 ## Strategy Catalog Contract Extension
 

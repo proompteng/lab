@@ -6,11 +6,20 @@
 - Owner: `torghut`
 - Priority: `high`
 
+## Update (2026-02-26)
+
+- This document is a historical readiness baseline from 2026-02-12 and is not a real-time runtime snapshot.
+- Code-audit updates now verified in production code paths:
+  - signal continuity/freshness controls are implemented (reason classification, alerting, recovery, and promotion block),
+  - route provenance fields are persisted on executions and exposed via API/metrics,
+  - evidence continuity checks are implemented and exposed via `/trading/autonomy/evidence-continuity`.
+- Remaining top gap from current code perspective is production-facing profitability observability surface (dedicated runtime profitability endpoint/dashboard slice), while profitability gate artifacts are implemented.
+
 ## Objective
 
 Deliver a fully autonomous quant stack where research, backtest, validation, deployment, and live execution are machine-runnable end-to-end with reproducible evidence and safe rollback.
 
-## Current State (Observed 2026-02-12)
+## Current State (Observed 2026-02-12, historical)
 
 - Strategy runtime mode is `plugin_v3`.
 - `TRADING_EXECUTION_ADAPTER=lean`, fallback adapter is `alpaca`.

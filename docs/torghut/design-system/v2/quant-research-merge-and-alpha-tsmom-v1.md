@@ -4,6 +4,7 @@
 
 - Version: `v2`
 - Last updated: **2026-02-11**
+- Audit update: **2026-02-26**
 - Scope: research/proposal (not production-facing)
 
 ## Purpose
@@ -31,12 +32,11 @@ Torghut already has the main primitives you need for a safe, iterative alpha pro
   - Walk-forward harness (signals -> decisions): `services/torghut/app/trading/evaluation.py`
   - Cost model building blocks: `services/torghut/app/trading/costs.py`
 
-What Torghut does not (yet) have in a unified, end-to-end way:
+What Torghut does not (yet) have in a fully unified, end-to-end way:
 
-- A standard offline research harness that goes from market data -> alpha -> positions -> costs -> equity curve
-  in a single “research lane” with tight controls against overfitting.
-- A research ledger that records every search/variant (parameters, datasets, costs) and makes “backtest hygiene”
-  auditable.
+- A single standardized research lane that spans every strategy family with one promotion-ready evidence contract.
+- Full promotion governance for all research lanes; baseline research-ledger and evidence persistence now exist but are
+  not yet complete for all planned v2/v3 lanes.
 
 ## Recent Research Themes That Transfer To Torghut
 

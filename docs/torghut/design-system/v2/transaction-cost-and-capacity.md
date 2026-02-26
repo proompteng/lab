@@ -4,6 +4,7 @@
 
 - Version: `v2`
 - Last updated: **2026-02-10**
+- Audit update: **2026-02-26**
 
 ## Purpose
 
@@ -29,7 +30,7 @@ Practical proxy metrics:
 
 ## Torghut Extensions
 
-- Add a cost model module:
+- Extend the existing cost model module:
   - inputs: spread estimates from quotes, volatility, ADV.
   - outputs: expected cost bands used by risk engine and backtester.
 - Record realized slippage and compare to model predictions.

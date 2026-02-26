@@ -9,7 +9,7 @@ risk constraints.
 
 - portfolio sizing and risk controls exist in trading loop but are strategy-local.
 - one dominant strategy creates concentration and high rejection rates.
-- no explicit regime-aware risk budget reallocation.
+- regime-aware budget/capacity multipliers are implemented in allocator controls; broader multi-strategy adoption remains partial.
 
 ## Target Allocation Stack
 

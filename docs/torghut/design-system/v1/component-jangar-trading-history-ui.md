@@ -4,7 +4,8 @@
 
 - Version: `v1`
 - Last updated: **2026-02-10**
-- Implemented: PR #2958 (merged **2026-02-10**) - `feat(jangar): add torghut trading history UI`
+- Implemented (partial): PR #2958 (merged **2026-02-10**) delivered `/torghut/trading` with
+  `strategies/summary/executions/decisions` APIs; additional endpoint expansions remain planned.
 - Source of truth (Torghut config): `argocd/applications/torghut/**`
 - Source of truth (Torghut audit data): Torghut Postgres (`strategies`, `trade_decisions`, `executions`, `position_snapshots`, `llm_decision_reviews`)
 
@@ -107,7 +108,7 @@ Panels:
 - Rejection reasons histogram (risk vs broker).
 - LLM advisory health (reviews by verdict; circuit-open frequency inferred if needed).
 
-## Jangar API surface (proposed)
+## Jangar API surface (implemented + proposed extension)
 
 Pattern alignment (existing in repo):
 
@@ -119,8 +120,8 @@ Add endpoints:
 
 - `GET /api/torghut/trading/strategies`
   - list `{ id, name, enabled, base_timeframe, universe_symbols }`
-- `GET /api/torghut/trading/days?start=YYYY-MM-DD&end=YYYY-MM-DD&tz=America%2FNew_York&strategyId=<uuid?>`
-  - day buckets with counts + PnL summary
+- `GET /api/torghut/trading/days?start=YYYY-MM-DD&end=YYYY-MM-DD&tz=America%2FNew_York&strategyId=<uuid?>` (planned extension)
+  - day buckets with counts + PnL summary (not yet in current route set)
 - `GET /api/torghut/trading/summary?day=YYYY-MM-DD&tz=...&strategyId=<uuid?>`
   - summary cards + chart series
 - `GET /api/torghut/trading/executions?day=YYYY-MM-DD&tz=...&strategyId=<uuid?>&status=filled`
