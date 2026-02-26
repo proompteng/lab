@@ -263,6 +263,7 @@ class ProfitabilityEvidenceV4:
     risk_adjusted_metrics: dict[str, str]
     cost_fill_realism: dict[str, object]
     confidence_calibration: dict[str, object]
+    significance: dict[str, object]
     reproducibility: dict[str, object]
     benchmark: ProfitabilityBenchmarkV4
     artifact_refs: list[str]
@@ -277,6 +278,7 @@ class ProfitabilityEvidenceV4:
             "risk_adjusted_metrics": dict(self.risk_adjusted_metrics),
             "cost_fill_realism": dict(self.cost_fill_realism),
             "confidence_calibration": dict(self.confidence_calibration),
+            "significance": dict(self.significance),
             "reproducibility": dict(self.reproducibility),
             "benchmark": self.benchmark.to_payload(),
             "artifact_refs": list(self.artifact_refs),
@@ -290,6 +292,7 @@ class ProfitabilityEvidenceThresholdsV4:
     min_regime_slice_pass_ratio: Decimal = Decimal("0.5")
     max_cost_bps: Decimal = Decimal("35")
     min_confidence_samples: int = 1
+    min_significance_samples: int = 1
     max_calibration_error: Decimal = Decimal("0.45")
     min_reproducibility_hashes: int = 5
     required_hash_keys: tuple[str, ...] = (
@@ -317,6 +320,7 @@ class ProfitabilityEvidenceThresholdsV4:
             or Decimal("0.5"),
             max_cost_bps=_decimal(payload.get("max_cost_bps")) or Decimal("35"),
             min_confidence_samples=int(payload.get("min_confidence_samples", 1)),
+            min_significance_samples=int(payload.get("min_significance_samples", 1)),
             max_calibration_error=_decimal(payload.get("max_calibration_error"))
             or Decimal("0.45"),
             min_reproducibility_hashes=int(
@@ -347,6 +351,7 @@ class ProfitabilityEvidenceThresholdsV4:
             "min_regime_slice_pass_ratio": str(self.min_regime_slice_pass_ratio),
             "max_cost_bps": str(self.max_cost_bps),
             "min_confidence_samples": self.min_confidence_samples,
+            "min_significance_samples": self.min_significance_samples,
             "max_calibration_error": str(self.max_calibration_error),
             "min_reproducibility_hashes": self.min_reproducibility_hashes,
             "required_hash_keys": list(self.required_hash_keys),
@@ -452,6 +457,7 @@ def build_profitability_evidence_v4(
 
     benchmark_summary = _benchmark_summary(benchmark)
     confidence_summary = _confidence_summary(confidence_values, net_pnl)
+    significance_summary = _significance_summary(benchmark)
     reproducibility_payload = _reproducibility_payload(reproducibility_hashes)
 
     return ProfitabilityEvidenceV4(
@@ -492,6 +498,7 @@ def build_profitability_evidence_v4(
             "decisions_with_adv": _as_int(impact.get("decisions_with_adv")) or 0,
         },
         confidence_calibration=confidence_summary,
+        significance=significance_summary,
         reproducibility=reproducibility_payload,
         benchmark=benchmark,
         artifact_refs=sorted(set(artifact_refs)),
@@ -526,6 +533,12 @@ def validate_profitability_evidence_v4(
         details=details,
     )
     _validate_profitability_confidence_metrics(
+        evidence=evidence,
+        policy=policy,
+        reasons=reasons,
+        details=details,
+    )
+    _validate_profitability_significance_metrics(
         evidence=evidence,
         policy=policy,
         reasons=reasons,
@@ -687,6 +700,35 @@ def _validate_profitability_confidence_metrics(
             "maximum": str(policy.max_calibration_error),
         },
     )
+
+
+def _validate_profitability_significance_metrics(
+    *,
+    evidence: ProfitabilityEvidenceV4,
+    policy: ProfitabilityEvidenceThresholdsV4,
+    reasons: list[str],
+    details: list[dict[str, object]],
+) -> None:
+    significance = _as_dict(evidence.significance)
+    schema_version = str(significance.get("schema_version", "")).strip()
+    if schema_version != "significance_snapshot_v1":
+        _append_profitability_reason(
+            reasons=reasons,
+            details=details,
+            reason="significance_schema_invalid",
+            payload={"expected": "significance_snapshot_v1"},
+        )
+    sample_count = _as_int(significance.get("sample_count")) or 0
+    if sample_count < policy.min_significance_samples:
+        _append_profitability_reason(
+            reasons=reasons,
+            details=details,
+            reason="significance_samples_below_minimum",
+            payload={
+                "actual": sample_count,
+                "minimum": policy.min_significance_samples,
+            },
+        )
 
 
 def _validate_profitability_reproducibility(
@@ -911,6 +953,89 @@ def _confidence_summary(
         "recalibration_run_id": None,
         "recalibration_artifact_ref": None,
     }
+
+
+def _significance_summary(benchmark: ProfitabilityBenchmarkV4) -> dict[str, object]:
+    deltas = [
+        _decimal(item.deltas.get("net_pnl_delta")) or Decimal("0")
+        for item in benchmark.slices
+        if item.slice_type in {"market", "regime"}
+    ]
+    if not deltas:
+        return {
+            "schema_version": "significance_snapshot_v1",
+            "sample_count": 0,
+            "net_pnl_delta_mean": "0",
+            "net_pnl_delta_std": "0",
+            "ci_95_low": "0",
+            "ci_95_high": "0",
+            "p_value_two_sided": "1",
+            "statistically_positive": False,
+            "statistically_negative": False,
+            "bootstrap_samples": 0,
+        }
+
+    mean_delta = _decimal_mean(deltas)
+    std_delta = _decimal_std(deltas, mean_delta)
+    bootstrap_samples = _bootstrap_mean_samples(deltas, sample_count=512)
+    sorted_samples = sorted(bootstrap_samples)
+    ci_low = _quantile_decimal(sorted_samples, Decimal("0.025"))
+    ci_high = _quantile_decimal(sorted_samples, Decimal("0.975"))
+    non_positive_count = sum(1 for value in sorted_samples if value <= 0)
+    non_negative_count = sum(1 for value in sorted_samples if value >= 0)
+    sample_size = max(len(sorted_samples), 1)
+    p_two_sided = min(
+        Decimal("1"),
+        Decimal("2")
+        * min(
+            Decimal(non_positive_count) / Decimal(sample_size),
+            Decimal(non_negative_count) / Decimal(sample_size),
+        ),
+    )
+    return {
+        "schema_version": "significance_snapshot_v1",
+        "sample_count": len(deltas),
+        "net_pnl_delta_mean": str(mean_delta),
+        "net_pnl_delta_std": str(std_delta),
+        "ci_95_low": str(ci_low),
+        "ci_95_high": str(ci_high),
+        "p_value_two_sided": str(p_two_sided),
+        "statistically_positive": bool(ci_low > 0),
+        "statistically_negative": bool(ci_high < 0),
+        "bootstrap_samples": len(sorted_samples),
+    }
+
+
+def _bootstrap_mean_samples(
+    values: list[Decimal], *, sample_count: int
+) -> list[Decimal]:
+    if not values:
+        return []
+    payload = [str(value) for value in values]
+    seed = int(hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16], 16)
+    samples: list[Decimal] = []
+    values_count = len(values)
+    for _ in range(sample_count):
+        sample_sum: Decimal = Decimal("0")
+        for _ in range(values_count):
+            seed = (1664525 * seed + 1013904223) % (2**32)
+            index: int = seed % values_count
+            sample_sum = sample_sum + values[index]
+        sample_mean: Decimal = sample_sum / Decimal(values_count)
+        samples.append(sample_mean)
+    return samples
+
+
+def _quantile_decimal(values: list[Decimal], quantile: Decimal) -> Decimal:
+    if not values:
+        return Decimal("0")
+    if quantile <= 0:
+        return values[0]
+    if quantile >= 1:
+        return values[-1]
+    index = int((Decimal(len(values) - 1) * quantile).to_integral_value())
+    index = max(0, min(index, len(values) - 1))
+    return values[index]
 
 
 def _reproducibility_payload(hashes: dict[str, str]) -> dict[str, object]:

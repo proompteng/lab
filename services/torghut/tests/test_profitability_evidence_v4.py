@@ -69,6 +69,11 @@ class TestProfitabilityEvidenceV4(TestCase):
         self.assertIn("coverage_error", confidence)
         self.assertIn("shift_score", confidence)
         self.assertIn("gate_action", confidence)
+        significance = evidence.to_payload()["significance"]
+        self.assertEqual(significance["schema_version"], "significance_snapshot_v1")
+        self.assertIn("ci_95_low", significance)
+        self.assertIn("ci_95_high", significance)
+        self.assertIn("p_value_two_sided", significance)
         self.assertTrue(validation.passed)
         self.assertEqual(validation.reasons, [])
 

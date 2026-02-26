@@ -10,6 +10,14 @@
 
 Implement Janus-Q in Torghut as a production-safe, reproducible, and auditable capability that can be promoted from research to paper trading and then to controlled live canary only after statistically defensible performance and operational reliability gates are met.
 
+## 1.1) Execution Status (UTC 2026-02-26)
+
+1. `M0` code scope: completed (policy/gating consistency + fail-closed alignment + CI type-check guardrails).
+2. `M1` code scope: in progress, with deterministic lineage and stronger event/CAR semantics implemented in `autonomy/janus_q.py`.
+3. `M2` code scope: in progress, with configurable reward composition and clipping/audit traces implemented in `autonomy/janus_q.py`.
+4. `M3` code scope: in progress, with deterministic bootstrap significance snapshots added to profitability evidence (`app/trading/evaluation.py`).
+5. `M4` and `M5`: operationally time-bound. `M5` cannot be marked complete until the minimum live-canary observation window elapses; with start date `2026-02-26`, earliest completion is `2026-03-12`.
+
 ## 2) Current Baseline (What Exists Today)
 
 M1 scaffolding already exists in code:

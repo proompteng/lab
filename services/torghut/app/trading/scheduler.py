@@ -1474,8 +1474,6 @@ class TradingPipeline:
         if timeout_seconds <= 0:
             return False
         created_at = decision_row.created_at
-        if created_at is None:
-            return False
         age_seconds = int((datetime.now(timezone.utc) - created_at).total_seconds())
         if age_seconds < timeout_seconds:
             return False
