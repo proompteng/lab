@@ -80,6 +80,17 @@ class _FakeKafkaSession:
         self.rollback_calls += 1
 
 
+class _FakeInngestClient:
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+
+    def send_sync(self, event: Any) -> list[str]:
+        data = getattr(event, "data", None)
+        payload = dict(data) if isinstance(data, dict) else {}
+        self.events.append(payload)
+        return [f"evt-{len(self.events)}"]
+
+
 class _FakeKafkaWorkflowService:
     def ingest_github_issue_event(
         self,
@@ -123,7 +134,15 @@ class TestWhitepaperWorkflow(TestCase):
         issue_number: int = 42,
         attachment_url: str = "https://github.com/user-attachments/files/12345/sample-paper.pdf",
         issue_title: str = "Analyze new whitepaper",
+        marker_overrides: dict[str, str] | None = None,
     ) -> dict[str, object]:
+        marker_lines = [
+            "workflow: whitepaper-analysis-v1",
+            "base_branch: main",
+        ]
+        for key, value in (marker_overrides or {}).items():
+            marker_lines.append(f"{key}: {value}")
+        marker_block = "\n".join(marker_lines)
         payload = {
             "event": "issues",
             "action": "opened",
@@ -133,12 +152,11 @@ class TestWhitepaperWorkflow(TestCase):
                 "title": issue_title,
                 "body": """
 <!-- TORGHUT_WHITEPAPER:START -->
-workflow: whitepaper-analysis-v1
-base_branch: main
+{marker_block}
 <!-- TORGHUT_WHITEPAPER:END -->
 
 Attachment: {attachment_url}
-                """.format(attachment_url=attachment_url),
+                """.format(marker_block=marker_block, attachment_url=attachment_url),
                 "html_url": f"https://github.com/proompteng/lab/issues/{issue_number}",
             },
             "sender": {"login": "alice"},
@@ -344,6 +362,141 @@ https://example.com/paper.pdf
                 synthesis_row.synthesis_json.get("implementation_plan_md"),
                 "### Delivery Plan\n- Keep explicit plan",
             )
+
+    def test_finalize_falls_back_to_local_indexing_when_finalize_enqueue_fails(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+        os.environ["WHITEPAPER_SEMANTIC_INDEXING_ENABLED"] = "true"
+        os.environ["WHITEPAPER_INNGEST_ENABLED"] = "true"
+        service.set_inngest_client(cast(Any, _FakeInngestClient()))
+
+        indexed_run_ids: list[str] = []
+        service._enqueue_finalized_inngest_event = lambda _session, *, run: False  # type: ignore[method-assign]
+        service.index_synthesis_semantic_content = (  # type: ignore[method-assign]
+            lambda _session, *, run_id: indexed_run_ids.append(run_id) or {"run_id": run_id, "indexed_chunks": 0}
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            finalize_payload = {
+                "status": "completed",
+                "synthesis": {
+                    "executive_summary": "Strong approach with reproducible results.",
+                    "confidence": "0.87",
+                },
+                "verdict": {
+                    "verdict": "implement",
+                    "score": "0.81",
+                    "confidence": "0.84",
+                    "requires_followup": False,
+                },
+            }
+            result = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            self.assertEqual(result["status"], "completed")
+            session.commit()
+
+            self.assertEqual(indexed_run_ids, [run_row.run_id])
+
+    def test_finalize_run_propagates_synthesis_indexing_failures(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+        os.environ["WHITEPAPER_SEMANTIC_INDEXING_ENABLED"] = "true"
+        os.environ["WHITEPAPER_INNGEST_ENABLED"] = "true"
+        service.set_inngest_client(cast(Any, _FakeInngestClient()))
+
+        service._enqueue_finalized_inngest_event = lambda _session, *, run: False  # type: ignore[method-assign]
+        service.index_synthesis_semantic_content = (  # type: ignore[method-assign]
+            lambda _session, *, run_id: (_ for _ in ()).throw(
+                RuntimeError(f"index failure for run {run_id}")
+            )
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            prior_status = run_row.status
+            finalize_payload = {
+                "status": "completed",
+                "synthesis": {
+                    "executive_summary": "Strong approach with reproducible results.",
+                    "confidence": "0.87",
+                },
+                "verdict": {
+                    "verdict": "implement",
+                    "score": "0.81",
+                    "confidence": "0.84",
+                    "requires_followup": False,
+                },
+            }
+            with self.assertRaises(RuntimeError):
+                service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            session.rollback()
+
+            persisted_run = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            self.assertEqual(persisted_run.status, prior_status)
+
+    def test_persist_semantic_chunks_does_not_delete_until_embeddings_ready(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            self.assertIsNotNone(run_row.document_version)
+
+            statement_log: list[str] = []
+
+            def _fake_execute(statement: Any, *args: Any, **kwargs: Any):
+                statement_log.append(str(statement))
+                class _DummyResult:
+                    def mappings(self) -> "_DummyResult":
+                        return self
+
+                    def first(self) -> None:
+                        return None
+
+                return _DummyResult()
+
+            with patch.object(session, "execute", side_effect=_fake_execute):
+                service._embed_texts = (  # type: ignore[method-assign]
+                    lambda _texts: (_ for _ in ()).throw(RuntimeError("embedding service unavailable"))
+                )
+                with self.assertRaises(RuntimeError):
+                    service._persist_semantic_chunks_and_embeddings(
+                        session,
+                        run=run_row,
+                        source_scope="synthesis",
+                        chunks=[{"content": "synthetic finding"}],
+                    )
+
+            self.assertEqual(statement_log, [])
 
     def test_finalize_merges_dspy_eval_report_into_verdict_gating(self) -> None:
         service = WhitepaperWorkflowService()
@@ -787,6 +940,75 @@ https://example.com/paper.pdf
             agentrun_row = session.execute(select(WhitepaperCodexAgentRun)).scalar_one()
             self.assertIn("implementation_plan_md", agentrun_row.prompt_text or "")
 
+    def test_marker_subject_tags_and_analysis_mode_are_persisted(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(
+                    marker_overrides={
+                        "subject": "healthcare",
+                        "tags": "biostats, causality , paper-review",
+                        "analysis_mode": "analysis_only",
+                    }
+                ),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            document = session.execute(select(WhitepaperDocument)).scalar_one()
+            self.assertEqual(document.tags_json, ["biostats", "causality", "paper_review"])
+            self.assertIsInstance(document.metadata_json, dict)
+            assert isinstance(document.metadata_json, dict)
+            self.assertEqual(document.metadata_json.get("subject"), "healthcare")
+            self.assertEqual(document.metadata_json.get("analysis_mode"), "analysis_only")
+
+            run = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            self.assertIsInstance(run.analysis_profile_json, dict)
+            assert isinstance(run.analysis_profile_json, dict)
+            self.assertEqual(run.analysis_profile_json.get("subject"), "healthcare")
+            self.assertEqual(run.analysis_profile_json.get("tags"), ["biostats", "causality", "paper_review"])
+            self.assertEqual(run.analysis_profile_json.get("analysis_mode"), "analysis_only")
+
+    def test_analysis_only_prompt_omits_pr_requirement(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+            lambda _payload, *, idempotency_key: {
+                "ok": True,
+                "resource": {
+                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
+                    "status": {"phase": "Pending"},
+                },
+            }
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(
+                    marker_overrides={
+                        "analysis_mode": "analysis_only",
+                        "subject": "economics",
+                    }
+                ),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            agentrun_row = session.execute(select(WhitepaperCodexAgentRun)).scalar_one()
+            prompt_text = agentrun_row.prompt_text or ""
+            self.assertIn("Analysis mode: analysis_only", prompt_text)
+            self.assertIn("Do not open a PR in analysis-only mode.", prompt_text)
+            self.assertNotIn("Open a PR from a codex/* branch", prompt_text)
+
     def test_failed_run_replay_is_idempotent_without_duplicate_rows(self) -> None:
         service = WhitepaperWorkflowService()
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
@@ -989,3 +1211,40 @@ https://example.com/paper.pdf
                 select(WhitepaperCodexAgentRun).where(WhitepaperCodexAgentRun.analysis_run_id == runs[0].id)
             ).scalars().all()
             self.assertEqual(len(agentruns), 2)
+
+    def test_inngest_requeue_uses_new_enqueue_key_per_attempt(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_INNGEST_ENABLED"] = "true"
+        fake_inngest = _FakeInngestClient()
+        service.set_inngest_client(cast(Any, fake_inngest))
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            self.assertEqual(kickoff.reason, "queued")
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+
+            requeue = service.ingest_github_issue_event(
+                session,
+                self._issue_comment_payload(comment_body="research whitepaper"),
+                source="api",
+            )
+            self.assertTrue(requeue.accepted)
+            self.assertEqual(requeue.reason, "requeued")
+            session.commit()
+
+            self.assertEqual(len(fake_inngest.events), 2)
+            self.assertEqual(fake_inngest.events[0]["run_id"], run_row.run_id)
+            self.assertEqual(fake_inngest.events[0]["enqueue_attempt"], 1)
+            self.assertEqual(fake_inngest.events[0]["enqueue_key"], f"{run_row.run_id}:1")
+            self.assertEqual(fake_inngest.events[1]["run_id"], run_row.run_id)
+            self.assertEqual(fake_inngest.events[1]["enqueue_attempt"], 2)
+            self.assertEqual(fake_inngest.events[1]["enqueue_key"], f"{run_row.run_id}:2")

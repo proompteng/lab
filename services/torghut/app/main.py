@@ -14,6 +14,8 @@ from typing import Any, cast
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
+import inngest
+from inngest.fast_api import serve as inngest_fastapi_serve
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -41,7 +43,9 @@ from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .whitepapers import (
     WhitepaperKafkaWorker,
     WhitepaperWorkflowService,
+    whitepaper_inngest_enabled,
     whitepaper_kafka_enabled,
+    whitepaper_semantic_indexing_enabled,
     whitepaper_workflow_enabled,
 )
 
@@ -80,6 +84,109 @@ def _require_whitepaper_control_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="whitepaper_control_auth_required")
 
 
+def _env_or_none(name: str) -> str | None:
+    value = os.getenv(name, "").strip()
+    return value or None
+
+
+def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
+    if not whitepaper_workflow_enabled() or not whitepaper_inngest_enabled():
+        app.state.whitepaper_inngest_registered = False
+        WHITEPAPER_WORKFLOW.set_inngest_client(None)
+        return None
+
+    app_id = _env_or_none("INNGEST_APP_ID") or "torghut"
+    try:
+        client = inngest.Inngest(
+            app_id=app_id,
+            api_base_url=_env_or_none("INNGEST_BASE_URL"),
+            event_api_base_url=_env_or_none("INNGEST_EVENT_API_BASE_URL"),
+            event_key=_env_or_none("INNGEST_EVENT_KEY"),
+            signing_key=_env_or_none("INNGEST_SIGNING_KEY"),
+        )
+    except Exception as exc:  # pragma: no cover - configuration/runtime dependent
+        logger.warning("Failed to initialize Inngest client for whitepaper workflow: %s", exc)
+        app.state.whitepaper_inngest_registered = False
+        WHITEPAPER_WORKFLOW.set_inngest_client(None)
+        return None
+
+    requested_event_name = (
+        _env_or_none("WHITEPAPER_INNGEST_EVENT_NAME") or "torghut/whitepaper.analysis.requested"
+    )
+    requested_fn_id = _env_or_none("WHITEPAPER_INNGEST_FUNCTION_ID") or "torghut-whitepaper-analysis-v1"
+    finalized_event_name = (
+        _env_or_none("WHITEPAPER_INNGEST_FINALIZED_EVENT_NAME") or "torghut/whitepaper.analysis.finalized"
+    )
+    finalized_fn_id = (
+        _env_or_none("WHITEPAPER_INNGEST_FINALIZE_FUNCTION_ID") or "torghut-whitepaper-synthesis-index-v1"
+    )
+
+    @client.create_function(
+        fn_id=requested_fn_id,
+        idempotency="event.data.enqueue_key",
+        trigger=inngest.TriggerEvent(event=requested_event_name),
+    )
+    def _whitepaper_requested_fn(ctx: inngest.ContextSync) -> dict[str, Any]:
+        run_id = str(ctx.event.data.get("run_id") or "").strip()
+        if not run_id:
+            raise ValueError("run_id_required")
+        with SessionLocal() as session:
+            try:
+                result = WHITEPAPER_WORKFLOW.process_requested_run(
+                    session,
+                    run_id=run_id,
+                    inngest_function_id=requested_fn_id,
+                    inngest_run_id=ctx.run_id,
+                )
+                session.commit()
+                return result
+            except Exception:
+                session.rollback()
+                logger.exception("Inngest requested whitepaper run failed for run_id=%s", run_id)
+                raise
+
+    @client.create_function(
+        fn_id=finalized_fn_id,
+        idempotency="event.data.run_id",
+        trigger=inngest.TriggerEvent(event=finalized_event_name),
+    )
+    def _whitepaper_finalized_fn(ctx: inngest.ContextSync) -> dict[str, Any]:
+        run_id = str(ctx.event.data.get("run_id") or "").strip()
+        if not run_id:
+            raise ValueError("run_id_required")
+        if not whitepaper_semantic_indexing_enabled():
+            return {"run_id": run_id, "skipped": True, "reason": "semantic_indexing_disabled"}
+        with SessionLocal() as session:
+            try:
+                result = WHITEPAPER_WORKFLOW.index_synthesis_semantic_content(
+                    session,
+                    run_id=run_id,
+                )
+                session.commit()
+                return result
+            except Exception:
+                session.rollback()
+                logger.exception("Inngest finalized whitepaper indexing failed for run_id=%s", run_id)
+                raise
+
+    try:
+        inngest_fastapi_serve(
+            app,
+            client,
+            [_whitepaper_requested_fn, _whitepaper_finalized_fn],
+            serve_path="/api/inngest",
+        )
+    except Exception as exc:  # pragma: no cover - registration/runtime dependent
+        logger.warning("Failed to register whitepaper Inngest FastAPI routes: %s", exc)
+        app.state.whitepaper_inngest_registered = False
+        WHITEPAPER_WORKFLOW.set_inngest_client(None)
+        return None
+
+    app.state.whitepaper_inngest_registered = True
+    WHITEPAPER_WORKFLOW.set_inngest_client(client)
+    return client
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Run startup/shutdown tasks using FastAPI lifespan hooks."""
@@ -108,6 +215,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="torghut", lifespan=lifespan)
 app.state.settings = settings
 app.state.whitepaper_inngest_registered = False
+_register_whitepaper_inngest_routes(app)
 
 
 @app.exception_handler(SQLAlchemyError)
@@ -186,8 +294,25 @@ def whitepaper_status() -> dict[str, object]:
     return {
         "workflow_enabled": whitepaper_workflow_enabled(),
         "kafka_enabled": whitepaper_kafka_enabled(),
-        "inngest_enabled": False,
-        "inngest_registered": False,
+        "inngest_enabled": whitepaper_inngest_enabled(),
+        "inngest_registered": bool(getattr(app.state, "whitepaper_inngest_registered", False)),
+        "inngest_event_name": os.getenv(
+            "WHITEPAPER_INNGEST_EVENT_NAME",
+            "torghut/whitepaper.analysis.requested",
+        ),
+        "inngest_function_id": os.getenv(
+            "WHITEPAPER_INNGEST_FUNCTION_ID",
+            "torghut-whitepaper-analysis-v1",
+        ),
+        "inngest_finalized_event_name": os.getenv(
+            "WHITEPAPER_INNGEST_FINALIZED_EVENT_NAME",
+            "torghut/whitepaper.analysis.finalized",
+        ),
+        "inngest_finalize_function_id": os.getenv(
+            "WHITEPAPER_INNGEST_FINALIZE_FUNCTION_ID",
+            "torghut-whitepaper-synthesis-index-v1",
+        ),
+        "semantic_indexing_enabled": whitepaper_semantic_indexing_enabled(),
         "worker_running": worker_running,
         "requeue_comment_keyword": os.getenv(
             "WHITEPAPER_REQUEUE_COMMENT_KEYWORD",
@@ -481,6 +606,44 @@ def get_whitepaper_run(
             ],
         }
     )
+
+
+@app.get("/whitepapers/search")
+def search_whitepapers(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(default=15, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    status: str = Query(default="completed"),
+    scope: str = Query(default="all"),
+    subject: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Hybrid semantic + lexical whitepaper search over indexed chunks."""
+
+    if not whitepaper_semantic_indexing_enabled():
+        raise HTTPException(status_code=409, detail="whitepaper_semantic_search_disabled")
+
+    normalized_scope = scope.strip().lower()
+    if normalized_scope not in {"all", "full_text", "synthesis"}:
+        raise HTTPException(status_code=400, detail="whitepaper_search_invalid_scope")
+
+    try:
+        result = WHITEPAPER_WORKFLOW.search_semantic(
+            session,
+            query=q,
+            limit=limit,
+            offset=offset,
+            status=status,
+            scope=normalized_scope,
+            subject=subject,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Whitepaper search failed")
+        raise HTTPException(status_code=500, detail=f"whitepaper_search_failed:{exc}") from exc
+
+    return cast(dict[str, object], jsonable_encoder(result))
 
 
 @app.get("/trading/status")

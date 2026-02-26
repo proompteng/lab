@@ -6,18 +6,23 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import io
 import json
 import logging
 import os
 import re
+import tempfile
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
+from subprocess import CalledProcessError, run
 from typing import Any, Mapping, cast
 from urllib.parse import quote, urljoin, urlparse
 
-from sqlalchemy import case, func, select
+import inngest
+from sqlalchemy import case, func, select, text
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -25,6 +30,7 @@ from ..models import (
     WhitepaperAnalysisStep,
     WhitepaperArtifact,
     WhitepaperCodexAgentRun,
+    WhitepaperContent,
     WhitepaperDesignPullRequest,
     WhitepaperDocument,
     WhitepaperDocumentVersion,
@@ -120,6 +126,8 @@ _RETRYABLE_AGENTRUN_STATUSES = {"failed", "error", "cancelled", "canceled", "tim
 _ELIGIBLE_AUTO_VERDICTS = {"implement", "conditional_implement"}
 _REJECT_VERDICTS = {"reject", "not_viable", "not-viable"}
 _PASS_GATE_STATUSES = {"pass", "passed", "ok", "true", "green"}
+_MAX_SEMANTIC_RELEVANT_DISTANCE = 0.62
+_SEMANTIC_RELATIVE_DISTANCE_WINDOW = 0.18
 
 
 @dataclass(frozen=True)
@@ -219,8 +227,20 @@ def whitepaper_workflow_enabled() -> bool:
     return _bool_env("WHITEPAPER_WORKFLOW_ENABLED", default=False)
 
 
+def whitepaper_inngest_enabled() -> bool:
+    return _bool_env("WHITEPAPER_INNGEST_ENABLED", default=False)
+
+
 def whitepaper_kafka_enabled() -> bool:
     return _bool_env("WHITEPAPER_KAFKA_ENABLED", default=False)
+
+
+def whitepaper_semantic_indexing_enabled() -> bool:
+    return _bool_env("WHITEPAPER_SEMANTIC_INDEXING_ENABLED", default=False)
+
+
+def whitepaper_semantic_required() -> bool:
+    return _bool_env("WHITEPAPER_SEMANTIC_REQUIRED", default=False)
 
 
 def whitepaper_requeue_comment_keyword() -> str:
@@ -256,6 +276,26 @@ def parse_marker_block(issue_body: str) -> dict[str, str] | None:
         key, raw_value = line.split(":", 1)
         parsed[key.strip().lower()] = raw_value.strip()
     return parsed if parsed else None
+
+
+def normalize_analysis_mode(value: str | None) -> str:
+    normalized = _normalize_identifier(value or "")
+    if normalized in {"implementation", "analysis_only"}:
+        return normalized
+    return "implementation"
+
+
+def parse_marker_tags(value: str | None) -> list[str]:
+    raw = value or ""
+    if not raw.strip():
+        return []
+    return _sorted_unique(
+        [
+            _normalize_identifier(item)
+            for item in re.split(r"[,\n]", raw)
+            if item and item.strip()
+        ]
+    )
 
 
 def normalize_attachment_url(url: str) -> str:
@@ -585,6 +625,10 @@ class WhitepaperWorkflowService:
 
     def __init__(self) -> None:
         self.ceph_client = CephS3Client.from_env()
+        self.inngest_client: inngest.Inngest | None = None
+
+    def set_inngest_client(self, client: inngest.Inngest | None) -> None:
+        self.inngest_client = client
 
     def ingest_github_issue_event(
         self,
@@ -652,6 +696,7 @@ class WhitepaperWorkflowService:
             session=session,
             source_identifier=source_identifier,
             issue_event=issue_event,
+            marker=marker,
         )
         version_row = self._create_issue_document_version(
             session=session,
@@ -687,7 +732,18 @@ class WhitepaperWorkflowService:
         document.last_processed_at = datetime.now(timezone.utc)
         session.add(document)
 
-        agentrun_name = self._dispatch_agentrun_if_enabled(session, run_row)
+        agentrun_name = None
+        if run_row.status == "queued" and whitepaper_inngest_enabled():
+            enqueue_result = self._enqueue_requested_inngest_event(
+                session,
+                run_row=run_row,
+            )
+            if not enqueue_result:
+                run_row.status = "failed"
+                run_row.failure_reason = "inngest_enqueue_failed"
+                session.add(run_row)
+        else:
+            agentrun_name = self._dispatch_agentrun_if_enabled(session, run_row)
 
         session.flush()
         return IssueKickoffResult(
@@ -764,11 +820,16 @@ class WhitepaperWorkflowService:
         session: Session,
         source_identifier: str,
         issue_event: Any,
+        marker: Mapping[str, Any],
     ) -> WhitepaperDocument:
+        subject = self._optional_text(marker.get("subject"))
+        marker_tags = parse_marker_tags(self._optional_text(marker.get("tags")))
         metadata = {
             "repository": issue_event.repository,
             "issue_number": issue_event.issue_number,
             "issue_url": issue_event.issue_url,
+            "subject": subject,
+            "analysis_mode": normalize_analysis_mode(self._optional_text(marker.get("analysis_mode"))),
         }
         document = session.execute(
             select(WhitepaperDocument).where(
@@ -783,6 +844,7 @@ class WhitepaperWorkflowService:
                 title=issue_event.issue_title,
                 status="uploaded",
                 metadata_json=metadata,
+                tags_json=marker_tags or None,
                 ingested_by=issue_event.actor,
             )
             session.add(document)
@@ -790,6 +852,16 @@ class WhitepaperWorkflowService:
             return document
 
         document.title = issue_event.issue_title or document.title
+        merged_tags: list[str] = []
+        if isinstance(document.tags_json, list):
+            merged_tags.extend(
+                [self._optional_text(item) or "" for item in cast(list[Any], document.tags_json)]
+            )
+        merged_tags.extend(marker_tags)
+        normalized_tags = _sorted_unique(
+            [_normalize_identifier(tag) for tag in merged_tags if tag and tag.strip()]
+        )
+        document.tags_json = normalized_tags or None
         document.metadata_json = coerce_json_payload(
             {
                 **cast(dict[str, Any], document.metadata_json or {}),
@@ -909,6 +981,9 @@ class WhitepaperWorkflowService:
         storage: _PdfStorageOutcome,
     ) -> WhitepaperAnalysisRun:
         run_status = "queued" if storage.parse_status == "stored" else "failed"
+        subject = self._optional_text(marker.get("subject"))
+        tags = parse_marker_tags(self._optional_text(marker.get("tags")))
+        analysis_mode = normalize_analysis_mode(self._optional_text(marker.get("analysis_mode")))
         run_row = WhitepaperAnalysisRun(
             run_id=run_identity.run_id,
             document_id=document.id,
@@ -924,6 +999,14 @@ class WhitepaperWorkflowService:
                 "issue_url": issue_event.issue_url,
                 "marker": marker,
                 "attachment_url": attachment_url,
+                "subject": subject,
+                "tags": tags,
+                "analysis_mode": analysis_mode,
+            },
+            analysis_profile_json={
+                "subject": subject,
+                "tags": tags,
+                "analysis_mode": analysis_mode,
             },
             request_payload_json=issue_event.raw_payload,
             failure_reason=storage.parse_error,
@@ -979,6 +1062,88 @@ class WhitepaperWorkflowService:
             session.add(run_row)
             return None
         return cast(str | None, dispatched.get("agentrun_name"))
+
+    def _enqueue_requested_inngest_event(
+        self,
+        session: Session,
+        *,
+        run_row: WhitepaperAnalysisRun,
+    ) -> bool:
+        if not whitepaper_inngest_enabled():
+            return False
+        if self.inngest_client is None:
+            run_row.failure_reason = "inngest_client_not_configured"
+            run_row.status = "failed"
+            session.add(run_row)
+            return False
+
+        event_name = (
+            _str_env("WHITEPAPER_INNGEST_EVENT_NAME", "torghut/whitepaper.analysis.requested")
+            or "torghut/whitepaper.analysis.requested"
+        )
+        context = dict(cast(Mapping[str, Any], run_row.orchestration_context_json or {}))
+        enqueue_attempt = (self._optional_int(context.get("inngest_enqueue_attempt")) or 0) + 1
+        enqueue_key = f"{run_row.run_id}:{enqueue_attempt}"
+        try:
+            event_ids = self.inngest_client.send_sync(
+                inngest.Event(
+                    name=event_name,
+                    data={
+                        "run_id": run_row.run_id,
+                        "enqueue_key": enqueue_key,
+                        "enqueue_attempt": enqueue_attempt,
+                    },
+                )
+            )
+        except Exception as exc:
+            run_row.failure_reason = f"inngest_enqueue_failed:{type(exc).__name__}:{exc}"
+            run_row.status = "failed"
+            session.add(run_row)
+            return False
+
+        run_row.inngest_event_id = event_ids[0] if event_ids else run_row.inngest_event_id
+        context["inngest_enqueue_attempt"] = enqueue_attempt
+        context["inngest_enqueue_key"] = enqueue_key
+        run_row.orchestration_context_json = coerce_json_payload(context)
+        run_row.status = "queued"
+        run_row.failure_reason = None
+        session.add(run_row)
+        return True
+
+    def _enqueue_finalized_inngest_event(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+    ) -> bool:
+        if not whitepaper_inngest_enabled() or not whitepaper_semantic_indexing_enabled():
+            return False
+        if self.inngest_client is None:
+            return False
+        event_name = (
+            _str_env("WHITEPAPER_INNGEST_FINALIZED_EVENT_NAME", "torghut/whitepaper.analysis.finalized")
+            or "torghut/whitepaper.analysis.finalized"
+        )
+        try:
+            event_ids = self.inngest_client.send_sync(
+                inngest.Event(
+                    name=event_name,
+                    data={
+                        "run_id": run.run_id,
+                    },
+                )
+            )
+            if event_ids:
+                run.inngest_event_id = event_ids[0]
+                session.add(run)
+        except Exception as exc:
+            logger.warning(
+                "Failed to enqueue finalized whitepaper semantic event for run_id=%s: %s",
+                run.run_id,
+                exc,
+            )
+            return False
+        return True
 
     def _next_step_attempt(
         self,
@@ -1101,6 +1266,18 @@ class WhitepaperWorkflowService:
                 document_key=document_key,
             )
 
+        if whitepaper_inngest_enabled():
+            run.status = "queued"
+            run.failure_reason = None
+            session.add(run)
+            queued = self._enqueue_requested_inngest_event(session, run_row=run)
+            return IssueKickoffResult(
+                accepted=True,
+                reason="requeued" if queued else "requeue_failed",
+                run_id=run.run_id,
+                document_key=document_key,
+            )
+
         try:
             dispatch_result = self.dispatch_codex_agentrun(session, run.run_id, allow_retry=True)
             return IssueKickoffResult(
@@ -1155,6 +1332,12 @@ class WhitepaperWorkflowService:
         issue_title = str((run.document.title if run.document else "") or "Whitepaper analysis")
         attachment_url = str(context.get("attachment_url") or "")
         marker = cast(dict[str, Any], context.get("marker") or {})
+        analysis_profile = cast(dict[str, Any], run.analysis_profile_json or {})
+        subject = self._optional_text(analysis_profile.get("subject")) or self._optional_text(context.get("subject"))
+        tags = self._coerce_tag_list(analysis_profile.get("tags") or context.get("tags"))
+        analysis_mode = normalize_analysis_mode(
+            self._optional_text(analysis_profile.get("analysis_mode") or context.get("analysis_mode"))
+        )
 
         base_branch = str(marker.get("base_branch") or _str_env("WHITEPAPER_DEFAULT_BASE_BRANCH", "main"))
         default_head_branch = f"codex/whitepaper-{run.run_id[-16:]}"
@@ -1177,7 +1360,20 @@ class WhitepaperWorkflowService:
             issue_title=issue_title,
             attachment_url=attachment_url,
             ceph_uri=ceph_uri,
+            subject=subject,
+            tags=tags,
+            analysis_mode=analysis_mode,
         )
+        labels = ["whitepaper", "torghut"]
+        if analysis_mode == "implementation":
+            labels.append("design-doc")
+        else:
+            labels.append("analysis-only")
+        if subject:
+            labels.append(f"subject-{_normalize_identifier(subject)}")
+        for tag in tags[:5]:
+            labels.append(f"tag-{_normalize_identifier(tag)}")
+        labels = _sorted_unique(labels)
 
         payload: dict[str, Any] = {
             "namespace": _str_env("WHITEPAPER_AGENTRUN_NAMESPACE", "agents"),
@@ -1189,7 +1385,7 @@ class WhitepaperWorkflowService:
                 "text": prompt,
                 "source": {"provider": "github", "url": issue_url or f"https://github.com/{repository}/issues/{issue_number}"},
                 "vcsRef": {"name": _str_env("WHITEPAPER_AGENTRUN_VCS_REF", "github")},
-                "labels": ["whitepaper", "torghut", "design-doc"],
+                "labels": labels,
             },
             "vcsRef": {"name": _str_env("WHITEPAPER_AGENTRUN_VCS_REF", "github")},
             "vcsPolicy": {"required": True, "mode": "read-write"},
@@ -1204,6 +1400,9 @@ class WhitepaperWorkflowService:
                 "documentKey": run.document.document_key if run.document else "",
                 "cephUri": ceph_uri,
                 "attachmentUrl": attachment_url,
+                "subject": subject or "",
+                "tags": ",".join(tags),
+                "analysisMode": analysis_mode,
             },
             "policy": {
                 "secretBindingRef": _str_env(
@@ -1301,6 +1500,16 @@ class WhitepaperWorkflowService:
             run,
             manual_approval=None,
         )
+        if run.status == "completed" and whitepaper_semantic_indexing_enabled():
+            queued_for_async_indexing = False
+            if whitepaper_inngest_enabled():
+                queued_for_async_indexing = self._enqueue_finalized_inngest_event(session, run=run)
+
+            if not queued_for_async_indexing:
+                self.index_synthesis_semantic_content(
+                    session,
+                    run_id=run.run_id,
+                )
 
         return {
             "run_id": run.run_id,
@@ -1365,6 +1574,932 @@ class WhitepaperWorkflowService:
         if run is None:
             raise ValueError("whitepaper_run_not_found")
         return run
+
+    def process_requested_run(
+        self,
+        session: Session,
+        *,
+        run_id: str,
+        inngest_function_id: str | None,
+        inngest_run_id: str | None,
+    ) -> dict[str, Any]:
+        run = self._get_run_or_raise(session, run_id)
+        if run.status == "completed":
+            return {"run_id": run.run_id, "status": run.status, "idempotent": True}
+
+        if inngest_function_id:
+            run.inngest_function_id = inngest_function_id
+        if inngest_run_id:
+            run.inngest_run_id = inngest_run_id[:128]
+        run.status = "queued"
+        run.failure_reason = None
+        run.started_at = datetime.now(timezone.utc)
+        session.add(run)
+
+        context = cast(dict[str, Any], run.orchestration_context_json or {})
+        attachment_url = self._optional_text(context.get("attachment_url"))
+        if not attachment_url:
+            run.status = "failed"
+            run.failure_reason = "attachment_url_missing"
+            session.add(run)
+            raise RuntimeError("attachment_url_missing")
+
+        extraction_step_attempt = self._next_step_attempt(
+            session,
+            analysis_run_id=run.id,
+            step_name="semantic_extract_full_text",
+        )
+        extraction_step = WhitepaperAnalysisStep(
+            analysis_run_id=run.id,
+            step_name="semantic_extract_full_text",
+            step_order=2,
+            attempt=extraction_step_attempt,
+            status="queued",
+            executor="torghut",
+            started_at=datetime.now(timezone.utc),
+            input_json={"attachment_url": attachment_url},
+        )
+        session.add(extraction_step)
+        session.flush()
+
+        full_text: str = ""
+        extraction_meta: dict[str, Any] = {}
+        try:
+            pdf_bytes = self._download_pdf(attachment_url)
+            extracted = self._extract_pdf_text(pdf_bytes)
+            full_text = extracted["full_text"]
+            extraction_meta = cast(dict[str, Any], extracted.get("metadata") or {})
+            if not full_text.strip() and whitepaper_semantic_required():
+                raise RuntimeError("full_text_empty")
+            self._upsert_whitepaper_content(
+                session,
+                run=run,
+                full_text=full_text,
+                extraction_meta=extraction_meta,
+            )
+            extraction_step.status = "completed"
+            extraction_step.completed_at = datetime.now(timezone.utc)
+            extraction_step.output_json = {
+                "char_count": len(full_text),
+                "token_count": len(full_text.split()),
+                "page_count": extraction_meta.get("page_count"),
+                "method": extraction_meta.get("extract_method"),
+            }
+            session.add(extraction_step)
+        except Exception as exc:
+            extraction_step.status = "failed"
+            extraction_step.completed_at = datetime.now(timezone.utc)
+            extraction_step.error_json = {"error": str(exc)}
+            session.add(extraction_step)
+            if whitepaper_semantic_required():
+                run.status = "failed"
+                run.failure_reason = f"semantic_extract_failed:{type(exc).__name__}:{exc}"
+                session.add(run)
+                raise
+
+        if whitepaper_semantic_indexing_enabled() and full_text.strip():
+            self.index_full_text_semantic_content(session, run_id=run.run_id, full_text=full_text)
+
+        if _bool_env("WHITEPAPER_AGENTRUN_AUTO_DISPATCH", True):
+            self.dispatch_codex_agentrun(session, run.run_id)
+
+        return {"run_id": run.run_id, "status": run.status}
+
+    def index_full_text_semantic_content(
+        self,
+        session: Session,
+        *,
+        run_id: str,
+        full_text: str,
+    ) -> dict[str, Any]:
+        run = self._get_run_or_raise(session, run_id)
+        chunks = self._build_chunks(full_text, source_scope="full_text")
+        return self._persist_semantic_chunks_and_embeddings(
+            session,
+            run=run,
+            source_scope="full_text",
+            chunks=chunks,
+        )
+
+    def index_synthesis_semantic_content(
+        self,
+        session: Session,
+        *,
+        run_id: str,
+    ) -> dict[str, Any]:
+        run = self._get_run_or_raise(session, run_id)
+        synthesis = run.synthesis
+        if synthesis is None:
+            return {"run_id": run.run_id, "indexed_chunks": 0, "source_scope": "synthesis"}
+
+        sections: list[tuple[str, str]] = []
+        section_candidates = [
+            ("executive_summary", synthesis.executive_summary),
+            ("problem_statement", synthesis.problem_statement),
+            ("methodology_summary", synthesis.methodology_summary),
+            ("implementation_plan", synthesis.implementation_plan_md),
+        ]
+        for section_key, section_text in section_candidates:
+            if not section_text:
+                continue
+            stripped = section_text.strip()
+            if stripped:
+                sections.append((section_key, stripped))
+
+        for finding in self._coerce_string_list(synthesis.key_findings_json):
+            sections.append(("key_findings", finding))
+        for novelty in self._coerce_string_list(synthesis.novelty_claims_json):
+            sections.append(("novelty_claims", novelty))
+
+        combined_chunks: list[dict[str, Any]] = []
+        for section_key, section_text in sections:
+            for chunk in self._build_chunks(section_text, source_scope="synthesis"):
+                chunk["section_key"] = section_key
+                combined_chunks.append(chunk)
+
+        return self._persist_semantic_chunks_and_embeddings(
+            session,
+            run=run,
+            source_scope="synthesis",
+            chunks=combined_chunks,
+        )
+
+    def search_semantic(
+        self,
+        session: Session,
+        *,
+        query: str,
+        limit: int,
+        offset: int,
+        status: str,
+        scope: str,
+        subject: str | None,
+    ) -> dict[str, Any]:
+        clean_query = query.strip()
+        if not clean_query:
+            raise ValueError("query_required")
+
+        semantic_limit = min(max(limit * 4, limit), 250)
+        lexical_limit = min(max(limit * 4, limit), 250)
+        embedding_model, embedding_dimension, query_embedding = self._embed_texts([clean_query])
+        vector_text = self._vector_to_text(query_embedding[0])
+
+        scope_filter = None if scope == "all" else scope
+        status_filter = status.strip() if status.strip() else "completed"
+        subject_filter = subject.strip() if subject else None
+        lexical_query = clean_query
+
+        semantic_rows = session.execute(
+            text(
+                """
+                SELECT
+                  sc.id::text AS chunk_id,
+                  r.run_id AS run_id,
+                  r.status AS run_status,
+                  r.created_at AS run_created_at,
+                  r.completed_at AS run_completed_at,
+                  d.document_key AS document_key,
+                  d.title AS document_title,
+                  d.source_identifier AS source_identifier,
+                  sc.source_scope AS source_scope,
+                  sc.section_key AS section_key,
+                  sc.chunk_index AS chunk_index,
+                  sc.content AS content,
+                  (se.embedding <=> CAST(:query_vector AS vector)) AS semantic_distance
+                FROM whitepaper_semantic_embeddings se
+                JOIN whitepaper_semantic_chunks sc ON sc.id = se.semantic_chunk_id
+                JOIN whitepaper_analysis_runs r ON r.id = sc.analysis_run_id
+                JOIN whitepaper_documents d ON d.id = r.document_id
+                WHERE se.model = :embedding_model
+                  AND se.dimension = :embedding_dimension
+                  AND (:status_filter IS NULL OR r.status = :status_filter)
+                  AND (:scope_filter IS NULL OR sc.source_scope = :scope_filter)
+                  AND (:subject_filter IS NULL OR (d.metadata_json ->> 'subject') = :subject_filter)
+                ORDER BY se.embedding <=> CAST(:query_vector AS vector) ASC
+                LIMIT :semantic_limit
+                """
+            ),
+            {
+                "query_vector": vector_text,
+                "embedding_model": embedding_model,
+                "embedding_dimension": embedding_dimension,
+                "status_filter": status_filter,
+                "scope_filter": scope_filter,
+                "subject_filter": subject_filter,
+                "semantic_limit": semantic_limit,
+            },
+        ).mappings().all()
+
+        lexical_rows = session.execute(
+            text(
+                """
+                SELECT
+                  sc.id::text AS chunk_id,
+                  r.run_id AS run_id,
+                  r.status AS run_status,
+                  r.created_at AS run_created_at,
+                  r.completed_at AS run_completed_at,
+                  d.document_key AS document_key,
+                  d.title AS document_title,
+                  d.source_identifier AS source_identifier,
+                  sc.source_scope AS source_scope,
+                  sc.section_key AS section_key,
+                  sc.chunk_index AS chunk_index,
+                  sc.content AS content,
+                  ts_rank_cd(
+                    sc.text_tsvector,
+                    websearch_to_tsquery('simple', :lexical_query)
+                  ) AS lexical_score
+                FROM whitepaper_semantic_chunks sc
+                JOIN whitepaper_analysis_runs r ON r.id = sc.analysis_run_id
+                JOIN whitepaper_documents d ON d.id = r.document_id
+                WHERE (:status_filter IS NULL OR r.status = :status_filter)
+                  AND (:scope_filter IS NULL OR sc.source_scope = :scope_filter)
+                  AND (:subject_filter IS NULL OR (d.metadata_json ->> 'subject') = :subject_filter)
+                  AND sc.text_tsvector @@ websearch_to_tsquery('simple', :lexical_query)
+                ORDER BY lexical_score DESC
+                LIMIT :lexical_limit
+                """
+            ),
+            {
+                "lexical_query": lexical_query,
+                "status_filter": status_filter,
+                "scope_filter": scope_filter,
+                "subject_filter": subject_filter,
+                "lexical_limit": lexical_limit,
+            },
+        ).mappings().all()
+
+        semantic_rank: dict[str, int] = {}
+        lexical_rank: dict[str, int] = {}
+        merged: dict[str, dict[str, Any]] = {}
+
+        for idx, row in enumerate(semantic_rows, start=1):
+            chunk_id = str(row["chunk_id"])
+            semantic_rank[chunk_id] = idx
+            merged[chunk_id] = {
+                **dict(row),
+                "semantic_distance": float(row["semantic_distance"]) if row["semantic_distance"] is not None else None,
+                "lexical_score": None,
+            }
+
+        for idx, row in enumerate(lexical_rows, start=1):
+            chunk_id = str(row["chunk_id"])
+            lexical_rank[chunk_id] = idx
+            entry = merged.get(chunk_id)
+            lexical_score = float(row["lexical_score"]) if row["lexical_score"] is not None else None
+            if entry is None:
+                merged[chunk_id] = {
+                    **dict(row),
+                    "semantic_distance": None,
+                    "lexical_score": lexical_score,
+                }
+            else:
+                entry["lexical_score"] = lexical_score
+
+        best_semantic_distance = min(
+            [d for d in [cast(float | None, row.get("semantic_distance")) for row in merged.values()] if d is not None],
+            default=None,
+        )
+        semantic_ceiling = None
+        if best_semantic_distance is not None:
+            semantic_ceiling = min(
+                _MAX_SEMANTIC_RELEVANT_DISTANCE,
+                best_semantic_distance + _SEMANTIC_RELATIVE_DISTANCE_WINDOW,
+            )
+
+        ranked: list[dict[str, Any]] = []
+        for chunk_id, row in merged.items():
+            sem_rank = semantic_rank.get(chunk_id)
+            lex_rank = lexical_rank.get(chunk_id)
+            hybrid_score = 0.0
+            if sem_rank is not None:
+                hybrid_score += 1.0 / (60.0 + sem_rank)
+            if lex_rank is not None:
+                hybrid_score += 1.0 / (60.0 + lex_rank)
+            semantic_distance = cast(float | None, row.get("semantic_distance"))
+            lexical_score = cast(float | None, row.get("lexical_score"))
+            if semantic_distance is not None and semantic_ceiling is not None:
+                if semantic_distance > semantic_ceiling and lexical_score is None:
+                    continue
+            row["hybrid_score"] = hybrid_score
+            ranked.append(row)
+
+        ranked.sort(
+            key=lambda item: (
+                -self._coerce_float(item.get("hybrid_score"), default=0.0),
+                self._coerce_float(item.get("semantic_distance"), default=999.0),
+                -self._coerce_float(item.get("lexical_score"), default=0.0),
+            )
+        )
+        total = len(ranked)
+        paged = ranked[offset : offset + limit]
+        items = [
+            {
+                "run_id": str(item["run_id"]),
+                "run_status": str(item["run_status"]),
+                "run_created_at": item["run_created_at"],
+                "run_completed_at": item["run_completed_at"],
+                "document": {
+                    "document_key": item["document_key"],
+                    "title": item["document_title"],
+                    "source_identifier": item["source_identifier"],
+                },
+                "chunk": {
+                    "source_scope": item["source_scope"],
+                    "section_key": item["section_key"],
+                    "chunk_index": int(item["chunk_index"]),
+                    "snippet": self._build_search_snippet(str(item["content"]), clean_query),
+                },
+                "semantic_distance": item.get("semantic_distance"),
+                "lexical_score": item.get("lexical_score"),
+                "hybrid_score": item.get("hybrid_score"),
+            }
+            for item in paged
+        ]
+
+        return {
+            "items": items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "query": clean_query,
+            "scope": scope,
+            "status": status_filter,
+            "subject": subject_filter,
+        }
+
+    @staticmethod
+    def _coerce_string_list(value: Any) -> list[str]:
+        if isinstance(value, list):
+            result: list[str] = []
+            for item in value:
+                text = str(item).strip() if item is not None else ""
+                if text:
+                    result.append(text)
+            return result
+        if isinstance(value, str):
+            text = value.strip()
+            return [text] if text else []
+        return []
+
+    @staticmethod
+    def _coerce_float(value: Any, *, default: float) -> float:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return default
+            try:
+                return float(text)
+            except ValueError:
+                return default
+        return default
+
+    def _coerce_tag_list(self, value: Any) -> list[str]:
+        if isinstance(value, list):
+            return _sorted_unique(
+                [
+                    _normalize_identifier(str(item))
+                    for item in value
+                    if item is not None and str(item).strip()
+                ]
+            )
+        if isinstance(value, str):
+            return parse_marker_tags(value)
+        return []
+
+    def _extract_pdf_text(self, pdf_bytes: bytes) -> dict[str, Any]:
+        pdftotext_result = self._extract_pdf_text_with_pdftotext(pdf_bytes)
+        if pdftotext_result is not None:
+            return pdftotext_result
+
+        pypdf_result = self._extract_pdf_text_with_pypdf(pdf_bytes)
+        if pypdf_result is not None:
+            return pypdf_result
+
+        raise RuntimeError("pdf_text_extract_unavailable")
+
+    def _extract_pdf_text_with_pdftotext(self, pdf_bytes: bytes) -> dict[str, Any] | None:
+        with tempfile.TemporaryDirectory(prefix="torghut-wp-") as temp_dir:
+            pdf_path = os.path.join(temp_dir, "input.pdf")
+            txt_path = os.path.join(temp_dir, "output.txt")
+            with open(pdf_path, "wb") as handle:
+                handle.write(pdf_bytes)
+
+            try:
+                run(
+                    ["pdftotext", "-layout", "-enc", "UTF-8", pdf_path, txt_path],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+            except FileNotFoundError:
+                return None
+            except CalledProcessError as exc:
+                raise RuntimeError(f"pdftotext_failed:{exc.stderr.strip()[:200]}") from exc
+
+            full_text = ""
+            if os.path.exists(txt_path):
+                with open(txt_path, "r", encoding="utf-8", errors="replace") as handle:
+                    full_text = handle.read()
+
+            page_count: int | None = None
+            try:
+                pdfinfo = run(
+                    ["pdfinfo", pdf_path],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                for raw_line in pdfinfo.stdout.splitlines():
+                    line = raw_line.strip()
+                    if not line.lower().startswith("pages:"):
+                        continue
+                    _, raw_value = line.split(":", 1)
+                    page_count = int(raw_value.strip())
+                    break
+            except (FileNotFoundError, CalledProcessError, ValueError):
+                page_count = None
+
+            return {
+                "full_text": full_text,
+                "metadata": {
+                    "extract_method": "pdftotext",
+                    "page_count": page_count,
+                },
+            }
+
+    @staticmethod
+    def _extract_pdf_text_with_pypdf(pdf_bytes: bytes) -> dict[str, Any] | None:
+        try:
+            from pypdf import PdfReader  # type: ignore[import-not-found]
+        except Exception:
+            return None
+
+        try:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            pages: list[str] = []
+            for page in reader.pages:
+                page_text = page.extract_text() or ""
+                pages.append(page_text)
+        except Exception as exc:  # pragma: no cover - parser internals vary by input
+            raise RuntimeError(f"pypdf_extract_failed:{type(exc).__name__}:{exc}") from exc
+
+        return {
+            "full_text": "\n\n".join(pages),
+            "metadata": {
+                "extract_method": "pypdf",
+                "page_count": len(pages),
+            },
+        }
+
+    def _upsert_whitepaper_content(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+        full_text: str,
+        extraction_meta: Mapping[str, Any] | None,
+    ) -> None:
+        version = run.document_version
+        if version is None:
+            raise RuntimeError("whitepaper_version_missing")
+
+        normalized_text = full_text.strip()
+        full_text_sha256 = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
+        token_count = len(normalized_text.split()) if normalized_text else 0
+        page_count = self._optional_int((extraction_meta or {}).get("page_count"))
+
+        content = session.execute(
+            select(WhitepaperContent).where(WhitepaperContent.document_version_id == version.id)
+        ).scalar_one_or_none()
+        if content is None:
+            content = WhitepaperContent(
+                document_version_id=version.id,
+                text_source="pdf_extract",
+                full_text=normalized_text,
+                full_text_sha256=full_text_sha256,
+                section_index_json=None,
+                chunk_manifest_json=None,
+                extraction_warnings_json=None,
+            )
+            session.add(content)
+        else:
+            content.text_source = "pdf_extract"
+            content.full_text = normalized_text
+            content.full_text_sha256 = full_text_sha256
+            session.add(content)
+
+        version.parse_status = "parsed" if normalized_text else "stored"
+        version.parse_error = None
+        version.page_count = page_count
+        version.char_count = len(normalized_text)
+        version.token_count = token_count
+        version.processed_at = datetime.now(timezone.utc)
+        version.extraction_metadata_json = coerce_json_payload(cast(dict[str, Any], extraction_meta or {}))
+        session.add(version)
+
+    def _build_chunks(self, text_content: str, *, source_scope: str) -> list[dict[str, Any]]:
+        normalized = text_content.strip()
+        if not normalized:
+            return []
+
+        chunk_size = max(_int_env("WHITEPAPER_CHUNK_SIZE_CHARS", 2400), 400)
+        overlap = max(_int_env("WHITEPAPER_CHUNK_OVERLAP_CHARS", 300), 0)
+        if overlap >= chunk_size:
+            overlap = max(0, chunk_size // 5)
+        stride = max(chunk_size - overlap, 1)
+
+        chunks: list[dict[str, Any]] = []
+        chunk_index = 0
+        cursor = 0
+        total_length = len(normalized)
+        while cursor < total_length:
+            end = min(total_length, cursor + chunk_size)
+            chunk_text = normalized[cursor:end].strip()
+            if chunk_text:
+                chunks.append(
+                    {
+                        "source_scope": source_scope,
+                        "section_key": None,
+                        "chunk_index": chunk_index,
+                        "content": chunk_text,
+                        "token_count": len(chunk_text.split()),
+                        "metadata_json": {
+                            "start_char": cursor,
+                            "end_char": end,
+                            "chunk_size_chars": len(chunk_text),
+                        },
+                    }
+                )
+                chunk_index += 1
+            if end >= total_length:
+                break
+            cursor += stride
+
+        return chunks
+
+    def _persist_semantic_chunks_and_embeddings(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+        source_scope: str,
+        chunks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        normalized_scope = source_scope.strip().lower()
+        if normalized_scope not in {"full_text", "synthesis"}:
+            raise ValueError("invalid_source_scope")
+        if run.document_version is None:
+            raise RuntimeError("whitepaper_version_missing")
+
+        if not chunks:
+            session.execute(
+                text(
+                    """
+                    DELETE FROM whitepaper_semantic_chunks
+                    WHERE analysis_run_id = :analysis_run_id
+                      AND source_scope = :source_scope
+                    """
+                ),
+                {
+                    "analysis_run_id": run.id,
+                    "source_scope": normalized_scope,
+                },
+            )
+            return {
+                "run_id": run.run_id,
+                "source_scope": normalized_scope,
+                "indexed_chunks": 0,
+                "model": None,
+                "dimension": None,
+            }
+
+        for index, chunk in enumerate(chunks):
+            chunk["chunk_index"] = index
+
+        embeddings_model, embedding_dimension, embeddings = self._embed_texts(
+            [str(chunk.get("content") or "") for chunk in chunks]
+        )
+
+        indexed_chunks = 0
+        for chunk, embedding in zip(chunks, embeddings, strict=True):
+            content = str(chunk.get("content") or "").strip()
+            if not content:
+                continue
+            section_key = self._optional_text(chunk.get("section_key"))
+            token_count = self._optional_int(chunk.get("token_count"))
+            metadata_json = self._optional_json(chunk.get("metadata_json"))
+            chunk_index = int(chunk.get("chunk_index") or 0)
+            content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            vector_text = self._vector_to_text(embedding)
+
+            chunk_row = session.execute(
+                text(
+                    """
+                    INSERT INTO whitepaper_semantic_chunks (
+                      id,
+                      analysis_run_id,
+                      document_version_id,
+                      source_scope,
+                      section_key,
+                      chunk_index,
+                      content,
+                      content_sha256,
+                      token_count,
+                      metadata_json,
+                      text_tsvector,
+                      created_at,
+                      updated_at
+                    )
+                    VALUES (
+                      :id,
+                      :analysis_run_id,
+                      :document_version_id,
+                      :source_scope,
+                      :section_key,
+                      :chunk_index,
+                      :content,
+                      :content_sha256,
+                      :token_count,
+                      CAST(:metadata_json AS JSONB),
+                      to_tsvector('simple', :content),
+                      now(),
+                      now()
+                    )
+                    ON CONFLICT (analysis_run_id, source_scope, chunk_index)
+                    DO UPDATE SET
+                      section_key = EXCLUDED.section_key,
+                      content = EXCLUDED.content,
+                      content_sha256 = EXCLUDED.content_sha256,
+                      token_count = EXCLUDED.token_count,
+                      metadata_json = EXCLUDED.metadata_json,
+                      text_tsvector = EXCLUDED.text_tsvector,
+                      updated_at = now()
+                    RETURNING id::text
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "analysis_run_id": run.id,
+                    "document_version_id": run.document_version_id,
+                    "source_scope": normalized_scope,
+                    "section_key": section_key,
+                    "chunk_index": chunk_index,
+                    "content": content,
+                    "content_sha256": content_sha256,
+                    "token_count": token_count,
+                    "metadata_json": json.dumps(metadata_json or {}),
+                },
+            ).mappings().first()
+            if chunk_row is None:
+                continue
+
+            semantic_chunk_id = str(chunk_row["id"])
+            session.execute(
+                text(
+                    """
+                    INSERT INTO whitepaper_semantic_embeddings (
+                      id,
+                      semantic_chunk_id,
+                      model,
+                      dimension,
+                      embedding,
+                      created_at
+                    )
+                    VALUES (
+                      :id,
+                      CAST(:semantic_chunk_id AS uuid),
+                      :model,
+                      :dimension,
+                      CAST(:embedding AS vector),
+                      now()
+                    )
+                    ON CONFLICT (semantic_chunk_id, model, dimension)
+                    DO UPDATE SET
+                      embedding = EXCLUDED.embedding,
+                      created_at = now()
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "semantic_chunk_id": semantic_chunk_id,
+                    "model": embeddings_model,
+                    "dimension": embedding_dimension,
+                    "embedding": vector_text,
+                },
+            )
+            indexed_chunks += 1
+
+        session.execute(
+            text(
+                """
+                DELETE FROM whitepaper_semantic_chunks
+                WHERE analysis_run_id = :analysis_run_id
+                  AND source_scope = :source_scope
+                  AND chunk_index >= :chunk_count
+                """
+            ),
+            {
+                "analysis_run_id": run.id,
+                "source_scope": normalized_scope,
+                "chunk_count": len(chunks),
+            },
+        )
+
+        index_step = WhitepaperAnalysisStep(
+            analysis_run_id=run.id,
+            step_name=f"semantic_index_{normalized_scope}",
+            step_order=30 if normalized_scope == "full_text" else 60,
+            attempt=self._next_step_attempt(
+                session,
+                analysis_run_id=run.id,
+                step_name=f"semantic_index_{normalized_scope}",
+            ),
+            status="completed",
+            executor="torghut",
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+            output_json={
+                "source_scope": normalized_scope,
+                "indexed_chunks": indexed_chunks,
+                "model": embeddings_model,
+                "dimension": embedding_dimension,
+            },
+        )
+        session.add(index_step)
+
+        return {
+            "run_id": run.run_id,
+            "source_scope": normalized_scope,
+            "indexed_chunks": indexed_chunks,
+            "model": embeddings_model,
+            "dimension": embedding_dimension,
+        }
+
+    def _embed_texts(self, texts: list[str]) -> tuple[str, int, list[list[float]]]:
+        if not texts:
+            raise ValueError("embedding_texts_required")
+
+        base_url = (
+            _str_env("WHITEPAPER_EMBEDDING_API_BASE_URL")
+            or _str_env("OPENAI_BASE_URL")
+            or "https://api.openai.com/v1"
+        ).rstrip("/")
+        if not base_url:
+            raise RuntimeError("embedding_api_base_url_missing")
+
+        api_key = _str_env("WHITEPAPER_EMBEDDING_API_KEY") or _str_env("OPENAI_API_KEY")
+        embedding_model = (
+            _str_env("WHITEPAPER_EMBEDDING_MODEL")
+            or _str_env("OPENAI_EMBEDDING_MODEL")
+            or "text-embedding-3-large"
+        )
+        configured_dimension = _int_env("WHITEPAPER_EMBEDDING_DIMENSION", 1024)
+        timeout_seconds = max(1, _int_env("WHITEPAPER_EMBEDDING_TIMEOUT_MS", 20_000) // 1000)
+        batch_size = max(1, _int_env("WHITEPAPER_EMBEDDING_BATCH_SIZE", 32))
+        is_ollama_embed = base_url.endswith("/api")
+        endpoint = f"{base_url}/{'embed' if is_ollama_embed else 'embeddings'}"
+        embedding_truncate = _str_env("WHITEPAPER_EMBEDDING_TRUNCATE")
+        embedding_keep_alive = _str_env("WHITEPAPER_EMBEDDING_KEEP_ALIVE")
+
+        headers = {
+            "Content-Type": "application/json",
+            **({"Authorization": f"Bearer {api_key}"} if api_key else {}),
+        }
+
+        ordered_embeddings: list[list[float]] = []
+        observed_dimension: int | None = None
+        for batch_start in range(0, len(texts), batch_size):
+            batch = texts[batch_start : batch_start + batch_size]
+            payload: dict[str, Any]
+            if is_ollama_embed:
+                payload = {
+                    "model": embedding_model,
+                    "input": batch,
+                }
+                if embedding_truncate is not None:
+                    payload["truncate"] = embedding_truncate.lower() in {"1", "true", "yes", "on"}
+                if embedding_keep_alive is not None:
+                    payload["keep_alive"] = embedding_keep_alive
+            else:
+                payload = {
+                    "model": embedding_model,
+                    "input": batch,
+                    "encoding_format": "float",
+                }
+                if configured_dimension > 0:
+                    payload["dimensions"] = configured_dimension
+
+            status, _, raw = _http_request_bytes(
+                endpoint,
+                method="POST",
+                headers=headers,
+                body=json.dumps(payload).encode("utf-8"),
+                timeout_seconds=timeout_seconds,
+                max_response_bytes=15 * 1024 * 1024,
+            )
+            body = raw.decode("utf-8", errors="replace")
+            if status < 200 or status >= 300:
+                raise RuntimeError(f"embedding_http_{status}:{body[:220]}")
+
+            parsed = json.loads(body)
+            if not isinstance(parsed, dict):
+                raise RuntimeError("embedding_invalid_response")
+            if is_ollama_embed:
+                raw_embeddings = parsed.get("embeddings")
+                if raw_embeddings is None:
+                    raw_embeddings = parsed.get("embedding")
+                if not isinstance(raw_embeddings, list):
+                    raise RuntimeError("embedding_invalid_data")
+                if raw_embeddings and isinstance(raw_embeddings[0], list):
+                    matrix = raw_embeddings
+                else:
+                    matrix = [raw_embeddings]
+                if len(matrix) != len(batch):
+                    raise RuntimeError("embedding_missing_row")
+                for row in matrix:
+                    if not isinstance(row, list):
+                        raise RuntimeError("embedding_invalid_data")
+                    embedding_values = [float(value) for value in row]
+                    if observed_dimension is None:
+                        observed_dimension = len(embedding_values)
+                    elif observed_dimension != len(embedding_values):
+                        raise RuntimeError("embedding_dimension_mismatch")
+                    ordered_embeddings.append(embedding_values)
+            else:
+                data = parsed.get("data")
+                if not isinstance(data, list):
+                    raise RuntimeError("embedding_invalid_data")
+
+                indexed_batch_embeddings: dict[int, list[float]] = {}
+                for row in data:
+                    if not isinstance(row, Mapping):
+                        continue
+                    index_raw = row.get("index")
+                    embedding_raw = row.get("embedding")
+                    if not isinstance(index_raw, int) or not isinstance(embedding_raw, list):
+                        continue
+                    embedding_values = [float(value) for value in embedding_raw]
+                    if observed_dimension is None:
+                        observed_dimension = len(embedding_values)
+                    elif observed_dimension != len(embedding_values):
+                        raise RuntimeError("embedding_dimension_mismatch")
+                    indexed_batch_embeddings[index_raw] = embedding_values
+
+                for local_index in range(len(batch)):
+                    embedding_values = indexed_batch_embeddings.get(local_index)
+                    if embedding_values is None:
+                        raise RuntimeError("embedding_missing_row")
+                    ordered_embeddings.append(embedding_values)
+
+        dimension = observed_dimension or configured_dimension
+        if dimension <= 0:
+            raise RuntimeError("embedding_dimension_unresolved")
+        if configured_dimension > 0 and configured_dimension != dimension:
+            raise RuntimeError(
+                f"embedding_dimension_config_mismatch:expected_{configured_dimension}:actual_{dimension}"
+            )
+
+        return embedding_model, dimension, ordered_embeddings
+
+    @staticmethod
+    def _vector_to_text(values: list[float]) -> str:
+        serialized = ",".join(format(float(value), ".12g") for value in values)
+        return f"[{serialized}]"
+
+    @staticmethod
+    def _build_search_snippet(content: str, query: str) -> str:
+        normalized_content = content.strip()
+        if not normalized_content:
+            return ""
+
+        terms = [part.strip() for part in re.split(r"\s+", query) if part.strip()]
+        focus_term = None
+        for term in terms:
+            if len(term) >= 3:
+                focus_term = re.escape(term)
+                break
+
+        if focus_term is None:
+            return normalized_content[:220] + ("…" if len(normalized_content) > 220 else "")
+
+        match = re.search(focus_term, normalized_content, re.IGNORECASE)
+        if match is None:
+            return normalized_content[:220] + ("…" if len(normalized_content) > 220 else "")
+
+        start = max(0, match.start() - 120)
+        end = min(len(normalized_content), match.end() + 120)
+        snippet = normalized_content[start:end].strip()
+        prefix = "…" if start > 0 else ""
+        suffix = "…" if end < len(normalized_content) else ""
+        return f"{prefix}{snippet}{suffix}"
 
     def _evaluate_and_process_engineering_trigger(
         self,
@@ -2569,23 +3704,43 @@ class WhitepaperWorkflowService:
         issue_title: str,
         attachment_url: str,
         ceph_uri: str,
+        subject: str | None,
+        tags: list[str],
+        analysis_mode: str,
     ) -> str:
+        normalized_mode = normalize_analysis_mode(analysis_mode)
+        subject_line = f"Subject: {subject}" if subject else "Subject: not specified"
+        tags_line = f"Tags: {', '.join(tags)}" if tags else "Tags: none"
+
+        mode_specific_requirements = [
+            "4) Create/update a design document in this repository under docs/whitepapers/<run-id>/design.md.",
+            "5) Open a PR from a codex/* branch into main with a production-ready design document.",
+            "6) Emit machine-readable outputs exactly as synthesis.json and verdict.json in your run artifacts.",
+        ]
+        if normalized_mode == "analysis_only":
+            mode_specific_requirements = [
+                "4) Do not open a PR in analysis-only mode.",
+                "5) Keep outputs machine-readable exactly as synthesis.json and verdict.json in your run artifacts.",
+                "6) Include explicit 'implementation candidates' and 'blocked_by' sections inside synthesis output.",
+            ]
+
         return "\n".join(
             [
-                f"Objective: Analyze whitepaper run {run_id} and deliver implementation-ready outcomes.",
+                f"Objective: Analyze whitepaper run {run_id} and deliver high-signal conclusions.",
                 f"Repository: {repository}",
                 f"Issue: {issue_url}",
                 f"Issue title: {issue_title}",
                 f"Primary PDF URL: {attachment_url}",
                 f"Ceph object URI: {ceph_uri}",
+                f"Analysis mode: {normalized_mode}",
+                subject_line,
+                tags_line,
                 "",
                 "Requirements:",
                 "1) Read the full whitepaper end-to-end (no abstract-only shortcuts).",
                 "2) Produce synthesis.json with required keys: executive_summary, problem_statement, methodology_summary, key_findings, novelty_claims, risk_assessment, citations, implementation_plan_md, confidence.",
                 "3) Produce a viability verdict with score, confidence, rejection reasons (if any), and follow-up recommendations.",
-                "4) Create/update a design document in this repository under docs/whitepapers/<run-id>/design.md.",
-                "5) Open a PR from a codex/* branch into main with a production-ready design document.",
-                "6) Emit machine-readable outputs exactly as synthesis.json and verdict.json in your run artifacts.",
+                *mode_specific_requirements,
                 "",
                 "Quality bar:",
                 "- Be explicit about assumptions and unresolved risks.",
@@ -2825,6 +3980,8 @@ __all__ = [
     "extract_pdf_urls",
     "normalize_github_issue_event",
     "parse_marker_block",
+    "whitepaper_inngest_enabled",
     "whitepaper_kafka_enabled",
+    "whitepaper_semantic_indexing_enabled",
     "whitepaper_workflow_enabled",
 ]

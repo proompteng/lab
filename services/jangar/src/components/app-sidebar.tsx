@@ -81,7 +81,10 @@ const appNav: AppNavItem[] = [
     to: '/library',
     label: 'Library',
     icon: IconFileText,
-    children: [{ to: '/library/whitepapers', label: 'Whitepapers' }],
+    children: [
+      { to: '/library/whitepapers', label: 'Whitepapers' },
+      { to: '/library/whitepapers/search', label: 'Semantic search' },
+    ],
   },
 ]
 

@@ -82,6 +82,47 @@ export type TorghutWhitepaperListResult = {
   offset: number
 }
 
+export type TorghutWhitepaperSemanticSearchFilters = {
+  query: string
+  limit?: number
+  offset?: number
+  status?: string
+  scope?: 'all' | 'full_text' | 'synthesis'
+  subject?: string
+}
+
+export type TorghutWhitepaperSemanticSearchItem = {
+  runId: string
+  runStatus: string
+  runCreatedAt: NullableString
+  runCompletedAt: NullableString
+  document: {
+    documentKey: NullableString
+    title: NullableString
+    sourceIdentifier: NullableString
+  }
+  chunk: {
+    sourceScope: string
+    sectionKey: NullableString
+    chunkIndex: number
+    snippet: string
+  }
+  semanticDistance: number | null
+  lexicalScore: number | null
+  hybridScore: number | null
+}
+
+export type TorghutWhitepaperSemanticSearchResult = {
+  items: TorghutWhitepaperSemanticSearchItem[]
+  total: number
+  limit: number
+  offset: number
+  query: string
+  scope: 'all' | 'full_text' | 'synthesis'
+  status: string
+  subject: NullableString
+}
+
 export type TorghutWhitepaperAgentRun = {
   id: string
   name: string
@@ -274,6 +315,8 @@ export type TorghutWhitepaperManualApprovalInput = {
 
 const DEFAULT_LIMIT = 30
 const MAX_LIMIT = 100
+const DEFAULT_SEARCH_LIMIT = 15
+const MAX_SEARCH_LIMIT = 50
 const DEFAULT_WHITEPAPER_CONTROL_BASE_URL = 'http://torghut.torghut.svc.cluster.local'
 const WHITEPAPER_CONTROL_TIMEOUT_MS = 15_000
 
@@ -347,6 +390,11 @@ const clampLimit = (value: number | undefined) => {
 const clampOffset = (value: number | undefined) => {
   if (!value || !Number.isFinite(value)) return 0
   return Math.max(0, Math.trunc(value))
+}
+
+const clampSearchLimit = (value: number | undefined) => {
+  if (!value || !Number.isFinite(value)) return DEFAULT_SEARCH_LIMIT
+  return Math.max(1, Math.min(Math.trunc(value), MAX_SEARCH_LIMIT))
 }
 
 const resolveWhitepaperControlBaseUrl = () => {
@@ -682,6 +730,116 @@ export const listTorghutWhitepapers = async (
     total,
     limit,
     offset,
+  }
+}
+
+export const searchTorghutWhitepapersSemantic = async (
+  filters: TorghutWhitepaperSemanticSearchFilters,
+): Promise<TorghutWhitepaperSemanticSearchResult> => {
+  const query = asString(filters.query)
+  if (!query) throw new Error('query_required')
+
+  const limit = clampSearchLimit(filters.limit)
+  const offset = clampOffset(filters.offset)
+  const status = asString(filters.status) ?? 'completed'
+  const subject = asString(filters.subject)
+  const scopeRaw = asString(filters.scope)
+  const scope: 'all' | 'full_text' | 'synthesis' =
+    scopeRaw === 'full_text' || scopeRaw === 'synthesis' || scopeRaw === 'all' ? scopeRaw : 'all'
+
+  const baseUrl = resolveWhitepaperControlBaseUrl()
+  const token = await resolveWhitepaperControlToken()
+  const headers: Record<string, string> = {
+    accept: 'application/json',
+  }
+  if (token) headers.authorization = `Bearer ${token}`
+
+  const url = new URL(`${baseUrl}/whitepapers/search`)
+  url.searchParams.set('q', query)
+  url.searchParams.set('limit', String(limit))
+  url.searchParams.set('offset', String(offset))
+  url.searchParams.set('status', status)
+  url.searchParams.set('scope', scope)
+  if (subject) url.searchParams.set('subject', subject)
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), WHITEPAPER_CONTROL_TIMEOUT_MS)
+  try {
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    })
+
+    const raw = await response.text()
+    let payload: unknown = null
+    try {
+      payload = raw ? (JSON.parse(raw) as unknown) : null
+    } catch {
+      payload = null
+    }
+
+    if (!response.ok) {
+      const detail =
+        payload && typeof payload === 'object' && typeof (payload as Record<string, unknown>).detail === 'string'
+          ? String((payload as Record<string, unknown>).detail)
+          : raw || response.statusText
+      throw new Error(`whitepaper_semantic_search_failed:${response.status}:${detail}`.slice(0, 400))
+    }
+
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('whitepaper_semantic_search_invalid_response')
+    }
+
+    const record = payload as Record<string, unknown>
+    const itemsRaw = Array.isArray(record.items) ? record.items : []
+    const items = itemsRaw
+      .map((item): TorghutWhitepaperSemanticSearchItem | null => {
+        if (!item || typeof item !== 'object') return null
+        const row = item as Record<string, unknown>
+        const chunk = asRecord(row.chunk)
+        const document = asRecord(row.document)
+        if (!chunk || !document) return null
+
+        return {
+          runId: String(row.run_id ?? ''),
+          runStatus: String(row.run_status ?? ''),
+          runCreatedAt: asIso(row.run_created_at),
+          runCompletedAt: asIso(row.run_completed_at),
+          document: {
+            documentKey: asString(document.document_key),
+            title: asString(document.title),
+            sourceIdentifier: asString(document.source_identifier),
+          },
+          chunk: {
+            sourceScope: String(chunk.source_scope ?? 'all'),
+            sectionKey: asString(chunk.section_key),
+            chunkIndex: asInteger(chunk.chunk_index) ?? 0,
+            snippet: String(chunk.snippet ?? ''),
+          },
+          semanticDistance: asNumber(row.semantic_distance),
+          lexicalScore: asNumber(row.lexical_score),
+          hybridScore: asNumber(row.hybrid_score),
+        }
+      })
+      .filter((item): item is TorghutWhitepaperSemanticSearchItem => item !== null && item.runId.length > 0)
+
+    const payloadScope = asString(record.scope)
+    const normalizedScope: 'all' | 'full_text' | 'synthesis' =
+      payloadScope === 'full_text' || payloadScope === 'synthesis' ? payloadScope : 'all'
+
+    return {
+      items,
+      total: asInteger(record.total) ?? 0,
+      limit: asInteger(record.limit) ?? limit,
+      offset: asInteger(record.offset) ?? offset,
+      query: asString(record.query) ?? query,
+      scope: normalizedScope,
+      status: asString(record.status) ?? status,
+      subject: asString(record.subject),
+    }
+  } finally {
+    clearTimeout(timeout)
   }
 }
 

@@ -242,6 +242,46 @@ export type WhitepaperListError = {
   message: string
 }
 
+export type WhitepaperSemanticSearchScope = 'all' | 'full_text' | 'synthesis'
+
+export type WhitepaperSemanticSearchItem = {
+  runId: string
+  runStatus: string
+  runCreatedAt: string | null
+  runCompletedAt: string | null
+  document: {
+    documentKey: string | null
+    title: string | null
+    sourceIdentifier: string | null
+  }
+  chunk: {
+    sourceScope: WhitepaperSemanticSearchScope | string
+    sectionKey: string | null
+    chunkIndex: number
+    snippet: string
+  }
+  semanticDistance: number | null
+  lexicalScore: number | null
+  hybridScore: number | null
+}
+
+export type WhitepaperSemanticSearchResult =
+  | {
+      ok: true
+      items: WhitepaperSemanticSearchItem[]
+      total: number
+      limit: number
+      offset: number
+      query: string
+      scope: WhitepaperSemanticSearchScope
+      status: string
+      subject: string | null
+    }
+  | {
+      ok: false
+      message: string
+    }
+
 export type WhitepaperDetailResult =
   | {
       ok: true
@@ -281,11 +321,32 @@ export type WhitepaperListParams = {
   signal?: AbortSignal
 }
 
+export type WhitepaperSemanticSearchParams = {
+  query: string
+  scope?: WhitepaperSemanticSearchScope
+  status?: string
+  subject?: string
+  limit?: number
+  offset?: number
+  signal?: AbortSignal
+}
+
 const toQueryString = (params: WhitepaperListParams) => {
   const query = new URLSearchParams()
   if (params.query) query.set('q', params.query)
   if (params.status) query.set('status', params.status)
   if (params.verdict) query.set('verdict', params.verdict)
+  if (typeof params.limit === 'number' && Number.isFinite(params.limit)) query.set('limit', String(params.limit))
+  if (typeof params.offset === 'number' && Number.isFinite(params.offset)) query.set('offset', String(params.offset))
+  return query.toString()
+}
+
+const toSemanticQueryString = (params: WhitepaperSemanticSearchParams) => {
+  const query = new URLSearchParams()
+  query.set('q', params.query)
+  if (params.scope) query.set('scope', params.scope)
+  if (params.status) query.set('status', params.status)
+  if (params.subject) query.set('subject', params.subject)
   if (typeof params.limit === 'number' && Number.isFinite(params.limit)) query.set('limit', String(params.limit))
   if (typeof params.offset === 'number' && Number.isFinite(params.offset)) query.set('offset', String(params.offset))
   return query.toString()
@@ -317,6 +378,50 @@ export const listWhitepapers = async (
   }
 
   return payload as WhitepaperListResult
+}
+
+export const searchWhitepapersSemantic = async (
+  params: WhitepaperSemanticSearchParams,
+): Promise<WhitepaperSemanticSearchResult> => {
+  const query = toSemanticQueryString(params)
+  const url = `/api/whitepapers/search${query ? `?${query}` : ''}`
+  const response = await fetch(url, {
+    method: 'GET',
+    signal: params.signal,
+  })
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok || !payload || typeof payload !== 'object' || (payload as Record<string, unknown>).ok !== true) {
+    const message =
+      payload && typeof payload === 'object' && typeof (payload as Record<string, unknown>).message === 'string'
+        ? String((payload as Record<string, unknown>).message)
+        : `Semantic search request failed (${response.status})`
+    return { ok: false, message }
+  }
+
+  const record = payload as Record<string, unknown>
+  const items = Array.isArray(record.items) ? (record.items as WhitepaperSemanticSearchItem[]) : []
+  const rawScope = typeof record.scope === 'string' ? record.scope : 'all'
+  const scope: WhitepaperSemanticSearchScope =
+    rawScope === 'full_text' || rawScope === 'synthesis' || rawScope === 'all' ? rawScope : 'all'
+
+  return {
+    ok: true,
+    items,
+    total: typeof record.total === 'number' ? record.total : 0,
+    limit: typeof record.limit === 'number' ? record.limit : (params.limit ?? 15),
+    offset: typeof record.offset === 'number' ? record.offset : (params.offset ?? 0),
+    query: typeof record.query === 'string' ? record.query : params.query,
+    scope,
+    status: typeof record.status === 'string' ? record.status : (params.status ?? 'completed'),
+    subject: typeof record.subject === 'string' ? record.subject : null,
+  }
 }
 
 export const getWhitepaperDetail = async (
