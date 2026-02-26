@@ -434,7 +434,7 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
 
-    def test_execution_routing_uses_runtime_symbol_allowlist(self) -> None:
+    def test_execution_routing_uses_lean_for_all_symbols(self) -> None:
         from app import config
 
         original = {
@@ -470,12 +470,11 @@ class TestTradingPipeline(TestCase):
             )
             self.assertIs(
                 pipeline._execution_client_for_symbol("AAPL", symbol_allowlist={"MSFT"}),
-                pipeline.order_firewall,
+                lean_adapter,
             )
-            # Legacy fallback remains env-driven only when runtime allowlist is omitted.
             self.assertIs(
                 pipeline._execution_client_for_symbol("MSFT"),
-                pipeline.order_firewall,
+                lean_adapter,
             )
         finally:
             config.settings.trading_execution_adapter = original["trading_execution_adapter"]
