@@ -103,6 +103,88 @@ def _is_recoverable_emergency_stop_reason(reason: str) -> bool:
     return reason.startswith(_RECOVERABLE_EMERGENCY_STOP_PREFIXES)
 
 
+def _normalize_reason_metric(reason: str | None) -> str:
+    normalized = reason.strip() if isinstance(reason, str) else ""
+    return normalized or "unknown"
+
+
+def _is_market_session_open(
+    trading_client: Any | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    get_clock = cast(
+        Callable[[], Any] | None, getattr(trading_client, "get_clock", None)
+    )
+    if callable(get_clock):
+        try:
+            clock = get_clock()
+            is_open = getattr(clock, "is_open", None)
+            if isinstance(is_open, bool):
+                return is_open
+            if is_open is not None:
+                return bool(is_open)
+        except Exception:
+            logger.exception("Failed to resolve Alpaca market clock state")
+
+    current = (now or datetime.now(timezone.utc)).astimezone(
+        ZoneInfo("America/New_York")
+    )
+    if current.weekday() >= 5:
+        return False
+    session_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
+    session_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
+    return session_open <= current < session_close
+
+
+def _latch_signal_continuity_alert_state(state: Any, reason: str) -> None:
+    now = datetime.now(timezone.utc)
+    if not state.signal_continuity_alert_active:
+        state.signal_continuity_alert_started_at = now
+    state.signal_continuity_alert_active = True
+    state.signal_continuity_alert_reason = reason
+    state.signal_continuity_alert_last_seen_at = now
+    state.signal_continuity_recovery_streak = 0
+    state.metrics.record_signal_continuity_alert_state(
+        active=True,
+        recovery_streak=0,
+    )
+
+
+def _record_signal_continuity_recovery_cycle(
+    state: Any, *, required_recovery_cycles: int
+) -> None:
+    if not state.signal_continuity_alert_active:
+        state.metrics.record_signal_continuity_alert_state(
+            active=False,
+            recovery_streak=0,
+        )
+        return
+
+    state.signal_continuity_recovery_streak += 1
+    state.metrics.record_signal_continuity_alert_state(
+        active=True,
+        recovery_streak=state.signal_continuity_recovery_streak,
+    )
+    if state.signal_continuity_recovery_streak < required_recovery_cycles:
+        return
+
+    logger.info(
+        "Signal continuity alert cleared after healthy cycles=%s reason=%s",
+        state.signal_continuity_recovery_streak,
+        state.signal_continuity_alert_reason,
+    )
+    state.signal_continuity_alert_active = False
+    state.signal_continuity_alert_reason = None
+    state.signal_continuity_alert_started_at = None
+    state.signal_continuity_alert_last_seen_at = None
+    state.signal_continuity_recovery_streak = 0
+    state.metrics.record_signal_continuity_alert_state(
+        active=False,
+        recovery_streak=0,
+    )
+
+
 def _extract_json_error_payload(error: Exception) -> Optional[dict[str, Any]]:
     raw = str(error).strip()
     if not raw.startswith("{"):
@@ -228,10 +310,29 @@ class TradingMetrics:
         default_factory=lambda: cast(dict[str, int], {})
     )
     no_signal_streak: int = 0
+    market_session_open: int = 0
+    signal_continuity_actionable: int = 0
+    signal_continuity_alert_active: int = 0
+    signal_continuity_alert_recovery_streak: int = 0
+    signal_continuity_promotion_block_total: int = 0
     signal_lag_seconds: int | None = None
     signal_staleness_alert_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
+    signal_expected_staleness_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    signal_actionable_staleness_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    universe_fail_safe_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    universe_resolution_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    universe_symbols_count: int = 0
+    universe_cache_age_seconds: int = 0
     signal_continuity_breach_total: int = 0
     order_feed_messages_total: int = 0
     order_feed_events_persisted_total: int = 0
@@ -388,9 +489,7 @@ class TradingMetrics:
             self.execution_fallback_reason_total[fallback_reason] = current_reason + 1
 
     def record_no_signal(self, reason: str | None) -> None:
-        normalized = reason.strip() if isinstance(reason, str) else ""
-        if not normalized:
-            normalized = "unknown"
+        normalized = _normalize_reason_metric(reason)
         self.no_signal_windows_total += 1
         current = self.no_signal_reason_total.get(normalized, 0)
         self.no_signal_reason_total[normalized] = current + 1
@@ -402,47 +501,91 @@ class TradingMetrics:
         )
 
     def record_lean_observability(self, snapshot: Mapping[str, Any]) -> None:
-        requests = snapshot.get('requests_total')
+        requests = snapshot.get("requests_total")
         if isinstance(requests, Mapping):
             for key, value in cast(Mapping[object, Any], requests).items():
                 if isinstance(value, int):
                     self.lean_request_total[str(key)] = value
-        failures = snapshot.get('failures_total')
+        failures = snapshot.get("failures_total")
         if isinstance(failures, Mapping):
             for key, value in cast(Mapping[object, Any], failures).items():
                 if isinstance(value, int):
                     self.lean_failure_taxonomy_total[str(key)] = value
-        latency = snapshot.get('latency_ms_avg')
+        latency = snapshot.get("latency_ms_avg")
         if isinstance(latency, Mapping):
             for key, value in cast(Mapping[object, Any], latency).items():
                 if isinstance(value, (int, float)):
                     self.lean_latency_ms[str(key)] = float(value)
 
-    def record_lean_shadow(self, *, parity_status: str | None, failure_taxonomy: str | None) -> None:
-        status = parity_status.strip() if isinstance(parity_status, str) else ''
+    def record_lean_shadow(
+        self, *, parity_status: str | None, failure_taxonomy: str | None
+    ) -> None:
+        status = parity_status.strip() if isinstance(parity_status, str) else ""
         if not status:
-            status = 'unknown'
-        self.lean_shadow_parity_total[status] = self.lean_shadow_parity_total.get(status, 0) + 1
+            status = "unknown"
+        self.lean_shadow_parity_total[status] = (
+            self.lean_shadow_parity_total.get(status, 0) + 1
+        )
         if failure_taxonomy:
             self.lean_shadow_failure_total[failure_taxonomy] = (
                 self.lean_shadow_failure_total.get(failure_taxonomy, 0) + 1
             )
 
     def record_lean_strategy_shadow(self, parity_status: str | None) -> None:
-        status = parity_status.strip() if isinstance(parity_status, str) else ''
+        status = parity_status.strip() if isinstance(parity_status, str) else ""
         if not status:
-            status = 'unknown'
-        self.lean_strategy_shadow_total[status] = self.lean_strategy_shadow_total.get(status, 0) + 1
+            status = "unknown"
+        self.lean_strategy_shadow_total[status] = (
+            self.lean_strategy_shadow_total.get(status, 0) + 1
+        )
 
     def record_lean_canary_breach(self, breach_type: str) -> None:
-        self.lean_canary_breach_total[breach_type] = self.lean_canary_breach_total.get(breach_type, 0) + 1
+        self.lean_canary_breach_total[breach_type] = (
+            self.lean_canary_breach_total.get(breach_type, 0) + 1
+        )
 
     def record_signal_staleness_alert(self, reason: str | None) -> None:
-        normalized = reason.strip() if isinstance(reason, str) else ""
-        if not normalized:
-            normalized = "unknown"
+        normalized = _normalize_reason_metric(reason)
         current = self.signal_staleness_alert_total.get(normalized, 0)
         self.signal_staleness_alert_total[normalized] = current + 1
+
+    def record_signal_expected_staleness(self, reason: str | None) -> None:
+        normalized = _normalize_reason_metric(reason)
+        current = self.signal_expected_staleness_total.get(normalized, 0)
+        self.signal_expected_staleness_total[normalized] = current + 1
+
+    def record_signal_actionable_staleness(self, reason: str | None) -> None:
+        normalized = _normalize_reason_metric(reason)
+        current = self.signal_actionable_staleness_total.get(normalized, 0)
+        self.signal_actionable_staleness_total[normalized] = current + 1
+
+    def record_universe_fail_safe_block(self, reason: str | None) -> None:
+        normalized = _normalize_reason_metric(reason)
+        current = self.universe_fail_safe_reason_total.get(normalized, 0)
+        self.universe_fail_safe_reason_total[normalized] = current + 1
+
+    def record_signal_continuity_alert_state(
+        self, *, active: bool, recovery_streak: int
+    ) -> None:
+        self.signal_continuity_alert_active = 1 if active else 0
+        self.signal_continuity_alert_recovery_streak = max(0, int(recovery_streak))
+
+    def record_universe_resolution(
+        self,
+        *,
+        status: str | None,
+        reason: str | None,
+        symbols_count: int,
+        cache_age_seconds: int | None,
+    ) -> None:
+        normalized_status = (status or "unknown").strip() or "unknown"
+        normalized_reason = _normalize_reason_metric(reason)
+        metric_key = f"{normalized_status}|{normalized_reason}"
+        self.universe_resolution_total[metric_key] = (
+            self.universe_resolution_total.get(metric_key, 0) + 1
+        )
+        self.universe_symbols_count = max(0, int(symbols_count))
+        self.universe_cache_age_seconds = max(0, int(cache_age_seconds or 0))
 
     def record_market_context_result(
         self, reason: str | None, *, shadow_mode: bool
@@ -655,7 +798,10 @@ class TradingMetrics:
                 if not isinstance(raw_gate, Mapping):
                     continue
                 gate = cast(Mapping[str, Any], raw_gate)
-                if str(gate.get("gate_id", "")).strip() != "gate7_uncertainty_calibration":
+                if (
+                    str(gate.get("gate_id", "")).strip()
+                    != "gate7_uncertainty_calibration"
+                ):
                     continue
                 status = str(gate.get("status", "")).strip()
                 recalibration_status = "not_required" if status == "pass" else "queued"
@@ -674,6 +820,7 @@ class TradingMetrics:
             self.runtime_uncertainty_gate_blocked_total[action] = (
                 self.runtime_uncertainty_gate_blocked_total.get(action, 0) + 1
             )
+
 
 @dataclass
 class TradingState:
@@ -700,6 +847,15 @@ class TradingState:
     last_ingest_window_start: Optional[datetime] = None
     last_ingest_window_end: Optional[datetime] = None
     last_ingest_reason: Optional[str] = None
+    market_session_open: Optional[bool] = None
+    last_signal_continuity_state: Optional[str] = None
+    last_signal_continuity_reason: Optional[str] = None
+    last_signal_continuity_actionable: Optional[bool] = None
+    signal_continuity_alert_active: bool = False
+    signal_continuity_alert_reason: Optional[str] = None
+    signal_continuity_alert_started_at: Optional[datetime] = None
+    signal_continuity_alert_last_seen_at: Optional[datetime] = None
+    signal_continuity_recovery_streak: int = 0
     autonomy_no_signal_streak: int = 0
     last_evidence_continuity_report: Optional[dict[str, Any]] = None
     autonomy_failure_streak: int = 0
@@ -707,6 +863,8 @@ class TradingState:
     universe_source_reason: Optional[str] = None
     universe_symbols_count: int = 0
     universe_cache_age_seconds: Optional[int] = None
+    universe_fail_safe_blocked: bool = False
+    universe_fail_safe_block_reason: Optional[str] = None
     emergency_stop_active: bool = False
     emergency_stop_reason: Optional[str] = None
     emergency_stop_triggered_at: Optional[datetime] = None
@@ -828,7 +986,12 @@ class TradingPipeline:
         self.state.last_ingest_window_end = batch.query_end
         self.state.last_ingest_reason = batch.no_signal_reason
 
-    def _prepare_batch_for_decisions(self, session: Session, batch: SignalBatch) -> bool:
+    def _prepare_batch_for_decisions(
+        self, session: Session, batch: SignalBatch
+    ) -> bool:
+        market_session_open = self._is_market_session_open()
+        self.state.market_session_open = market_session_open
+        self.state.metrics.market_session_open = 1 if market_session_open else 0
         if not batch.signals:
             self.record_no_signal_batch(batch)
             self.ingestor.commit_cursor(session, batch)
@@ -867,6 +1030,16 @@ class TradingPipeline:
         self.state.metrics.no_signal_reason_streak = {}
         self.state.metrics.no_signal_streak = 0
         self.state.metrics.signal_lag_seconds = None
+        self.state.metrics.signal_continuity_actionable = 0
+        self.state.last_signal_continuity_state = "signals_present"
+        self.state.last_signal_continuity_reason = None
+        self.state.last_signal_continuity_actionable = False
+        _record_signal_continuity_recovery_cycle(
+            self.state,
+            required_recovery_cycles=max(
+                1, int(settings.trading_signal_continuity_recovery_cycles)
+            ),
+        )
         return True
 
     def _build_run_context(
@@ -885,6 +1058,14 @@ class TradingPipeline:
         self.state.universe_source_reason = universe_resolution.reason
         self.state.universe_symbols_count = len(universe_resolution.symbols)
         self.state.universe_cache_age_seconds = universe_resolution.cache_age_seconds
+        self.state.metrics.record_universe_resolution(
+            status=universe_resolution.status,
+            reason=universe_resolution.reason,
+            symbols_count=len(universe_resolution.symbols),
+            cache_age_seconds=universe_resolution.cache_age_seconds,
+        )
+        self.state.universe_fail_safe_blocked = False
+        self.state.universe_fail_safe_block_reason = None
         allowed_symbols = universe_resolution.symbols
         if universe_resolution.status == "degraded":
             self.state.metrics.record_signal_staleness_alert(
@@ -895,8 +1076,22 @@ class TradingPipeline:
             and settings.trading_universe_require_non_empty_jangar
             and not allowed_symbols
         ):
+            universe_reason = universe_resolution.reason or "unknown"
+            self.state.universe_fail_safe_blocked = True
+            self.state.universe_fail_safe_block_reason = universe_reason
+            self.state.last_signal_continuity_state = "universe_fail_safe_block"
+            self.state.last_signal_continuity_reason = "universe_source_unavailable"
+            self.state.last_signal_continuity_actionable = True
+            self.state.metrics.signal_continuity_actionable = 1
+            self.state.metrics.record_signal_actionable_staleness(
+                "universe_source_unavailable"
+            )
             self.state.metrics.record_signal_staleness_alert(
                 "universe_source_unavailable"
+            )
+            self.state.metrics.record_universe_fail_safe_block(universe_reason)
+            _latch_signal_continuity_alert_state(
+                self.state, "universe_source_unavailable"
             )
             self.state.last_error = (
                 f"universe_source_unavailable reason={universe_resolution.reason}"
@@ -1030,40 +1225,96 @@ class TradingPipeline:
         self.state.last_ingest_window_end = batch.query_end
         self.state.last_ingest_reason = batch.no_signal_reason
         reason = batch.no_signal_reason
+        normalized_reason = _normalize_reason_metric(reason)
+        market_session_open = self._is_market_session_open()
+        self.state.market_session_open = market_session_open
+        self.state.metrics.market_session_open = 1 if market_session_open else 0
         if batch.signal_lag_seconds is not None:
             self.state.metrics.signal_lag_seconds = int(batch.signal_lag_seconds)
         else:
             self.state.metrics.signal_lag_seconds = None
         self.state.metrics.record_no_signal(reason)
-        streak = self.state.metrics.no_signal_reason_streak.get(reason or "unknown", 0)
-        if (
-            reason
-            in {
-                "no_signals_in_window",
-                "cursor_tail_stable",
-                "cursor_ahead_of_stream",
-                "empty_batch_advanced",
-            }
+        streak = self.state.metrics.no_signal_reason_streak.get(normalized_reason, 0)
+        continuity_streak_reasons = {
+            "no_signals_in_window",
+            "cursor_tail_stable",
+            "cursor_ahead_of_stream",
+            "empty_batch_advanced",
+        }
+        streak_threshold_met = (
+            normalized_reason in continuity_streak_reasons
             and streak >= settings.trading_signal_no_signal_streak_alert_threshold
-        ):
-            self.state.metrics.record_signal_staleness_alert(reason)
-            logger.warning(
-                "Signal continuity alert: reason=%s consecutive_no_signal=%s lag_seconds=%s",
-                reason,
-                streak,
-                batch.signal_lag_seconds,
-            )
-        elif (
+        )
+        lag_threshold_met = (
             batch.signal_lag_seconds is not None
             and batch.signal_lag_seconds
             >= settings.trading_signal_stale_lag_alert_seconds
-        ):
+        )
+        actionable = self._is_actionable_no_signal_reason(
+            reason=normalized_reason,
+            market_session_open=market_session_open,
+        )
+        continuity_state = (
+            "actionable_source_fault"
+            if actionable
+            else "expected_market_closed_staleness"
+        )
+        self.state.last_signal_continuity_state = continuity_state
+        self.state.last_signal_continuity_reason = normalized_reason
+        self.state.last_signal_continuity_actionable = actionable
+        self.state.metrics.signal_continuity_actionable = 1 if actionable else 0
+        if actionable:
+            self.state.metrics.record_signal_actionable_staleness(normalized_reason)
+        else:
+            self.state.metrics.record_signal_expected_staleness(normalized_reason)
+
+        if actionable and streak_threshold_met:
+            _latch_signal_continuity_alert_state(self.state, normalized_reason)
             self.state.metrics.record_signal_staleness_alert(reason)
             logger.warning(
-                "Signal freshness alert: reason=%s lag_seconds=%s",
+                "Signal continuity alert: reason=%s consecutive_no_signal=%s lag_seconds=%s market_session_open=%s",
+                reason,
+                streak,
+                batch.signal_lag_seconds,
+                market_session_open,
+            )
+        elif actionable and lag_threshold_met:
+            _latch_signal_continuity_alert_state(self.state, normalized_reason)
+            self.state.metrics.record_signal_staleness_alert(reason)
+            logger.warning(
+                "Signal freshness alert: reason=%s lag_seconds=%s market_session_open=%s",
                 reason,
                 batch.signal_lag_seconds,
+                market_session_open,
             )
+        elif actionable and self.state.signal_continuity_alert_active:
+            _latch_signal_continuity_alert_state(self.state, normalized_reason)
+        elif not actionable and (streak_threshold_met or lag_threshold_met):
+            logger.info(
+                "Signal continuity observed as expected staleness reason=%s lag_seconds=%s market_session_open=%s",
+                reason,
+                batch.signal_lag_seconds,
+                market_session_open,
+            )
+
+    def _is_actionable_no_signal_reason(
+        self,
+        *,
+        reason: str,
+        market_session_open: bool,
+    ) -> bool:
+        if reason == "cursor_ahead_of_stream":
+            return True
+        if market_session_open:
+            return True
+        expected_market_closed_reasons = (
+            settings.trading_signal_market_closed_expected_reasons
+        )
+        return reason not in expected_market_closed_reasons
+
+    def _is_market_session_open(self, now: datetime | None = None) -> bool:
+        trading_client = getattr(self.alpaca_client, "trading", None)
+        return _is_market_session_open(trading_client, now=now)
 
     def reconcile(self) -> int:
         with self.session_factory() as session:
@@ -1172,7 +1423,9 @@ class TradingPipeline:
         strategies: list[Strategy],
         allowed_symbols: set[str],
     ) -> tuple[Strategy, set[str]] | None:
-        strategy = next((s for s in strategies if str(s.id) == decision.strategy_id), None)
+        strategy = next(
+            (s for s in strategies if str(s.id) == decision.strategy_id), None
+        )
         if strategy is None:
             return None
 
@@ -1272,9 +1525,13 @@ class TradingPipeline:
                 Mapping[str, Any],
                 decision.model_dump(mode="json").get("params", {}),
             )
-            self.executor.update_decision_params(session, decision_row, price_params_update)
+            self.executor.update_decision_params(
+                session, decision_row, price_params_update
+            )
 
-        sizing_result = self._apply_portfolio_sizing(decision, strategy, account, positions)
+        sizing_result = self._apply_portfolio_sizing(
+            decision, strategy, account, positions
+        )
         decision = sizing_result.decision
         sizing_params = decision.model_dump(mode="json").get("params", {})
         if isinstance(sizing_params, Mapping) and "portfolio_sizing" in sizing_params:
@@ -1713,7 +1970,9 @@ class TradingPipeline:
             params.get("uncertainty_gate_action")
         )
         if direct_action is not None:
-            return RuntimeUncertaintyGate(action=direct_action, source="decision_params")
+            return RuntimeUncertaintyGate(
+                action=direct_action, source="decision_params"
+            )
 
         runtime_payload = params.get("runtime_uncertainty_gate")
         if isinstance(runtime_payload, Mapping):
@@ -1754,7 +2013,9 @@ class TradingPipeline:
                     return RuntimeUncertaintyGate(
                         action=gate_action,
                         source="autonomy_gate_report",
-                        coverage_error=_optional_decimal(gate_map.get("coverage_error")),
+                        coverage_error=_optional_decimal(
+                            gate_map.get("coverage_error")
+                        ),
                         shift_score=_optional_decimal(gate_map.get("shift_score")),
                         conformal_interval_width=_optional_decimal(
                             gate_map.get("conformal_interval_width")
@@ -1824,20 +2085,26 @@ class TradingPipeline:
             execution_seconds is None
             or execution_seconds < _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
         ):
-            params["execution_seconds"] = _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
+            params["execution_seconds"] = (
+                _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
+            )
 
         qty = _optional_decimal(decision.qty)
         adjusted_qty = decision.qty
         if qty is not None and qty > 0:
-            scaled = (
-                qty * _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER
-            ).quantize(Decimal("1"))
+            scaled = (qty * _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER).quantize(
+                Decimal("1")
+            )
             adjusted_qty = max(Decimal("1"), scaled)
-        payload["degrade_qty_multiplier"] = str(_RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER)
+        payload["degrade_qty_multiplier"] = str(
+            _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER
+        )
         payload["max_participation_rate_override"] = str(
             _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE
         )
-        payload["min_execution_seconds"] = _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
+        payload["min_execution_seconds"] = (
+            _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
+        )
         payload["adjusted_qty"] = str(adjusted_qty)
         return (
             decision.model_copy(update={"qty": adjusted_qty, "params": params}),
@@ -1865,64 +2132,68 @@ class TradingPipeline:
         return type(client).__name__
 
     def _sync_lean_observability(self, execution_client: Any) -> None:
-        snapshot_getter = getattr(execution_client, 'get_observability_snapshot', None)
+        snapshot_getter = getattr(execution_client, "get_observability_snapshot", None)
         if not callable(snapshot_getter):
             return
         try:
             snapshot = snapshot_getter()
         except Exception as exc:
-            logger.warning('Failed to read LEAN observability snapshot: %s', exc)
+            logger.warning("Failed to read LEAN observability snapshot: %s", exc)
             return
         if isinstance(snapshot, Mapping):
-            self.state.metrics.record_lean_observability(cast(Mapping[str, Any], snapshot))
+            self.state.metrics.record_lean_observability(
+                cast(Mapping[str, Any], snapshot)
+            )
 
     def _evaluate_lean_canary_guard(self, session: Session, *, symbol: str) -> None:
-        if settings.trading_mode != 'live':
+        if settings.trading_mode != "live":
             return
         if not settings.trading_lean_live_canary_enabled:
             return
         if settings.trading_lean_lane_disable_switch:
             return
 
-        lean_total = self.state.metrics.execution_requests_total.get('lean', 0)
-        fallback_total = self.state.metrics.execution_fallback_total.get('lean->alpaca', 0)
+        lean_total = self.state.metrics.execution_requests_total.get("lean", 0)
+        fallback_total = self.state.metrics.execution_fallback_total.get(
+            "lean->alpaca", 0
+        )
         if lean_total <= 0:
             return
         ratio = fallback_total / lean_total
         if ratio <= settings.trading_lean_live_canary_fallback_ratio_limit:
             return
 
-        self.state.metrics.record_lean_canary_breach('fallback_ratio_exceeded')
+        self.state.metrics.record_lean_canary_breach("fallback_ratio_exceeded")
         evidence = {
-            'symbol': symbol,
-            'fallback_ratio': ratio,
-            'fallback_total': fallback_total,
-            'lean_total': lean_total,
-            'threshold': settings.trading_lean_live_canary_fallback_ratio_limit,
-            'recorded_at': datetime.now(timezone.utc).isoformat(),
+            "symbol": symbol,
+            "fallback_ratio": ratio,
+            "fallback_total": fallback_total,
+            "lean_total": lean_total,
+            "threshold": settings.trading_lean_live_canary_fallback_ratio_limit,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
         }
         incident_key = hashlib.sha256(
-            json.dumps(evidence, sort_keys=True, separators=(',', ':')).encode('utf-8')
+            json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()[:24]
         incident = self.lean_lane_manager.record_canary_incident(
             session,
             incident_key=incident_key,
-            breach_type='fallback_ratio_exceeded',
-            severity='critical',
+            breach_type="fallback_ratio_exceeded",
+            severity="critical",
             symbols=[symbol],
             evidence=evidence,
             rollback_triggered=settings.trading_lean_live_canary_hard_rollback_enabled,
         )
         self.state.rollback_incidents_total += 1
         self.state.rollback_incident_evidence_path = (
-            f'postgres://lean_canary_incidents/{incident.incident_key}'
+            f"postgres://lean_canary_incidents/{incident.incident_key}"
         )
 
         if not settings.trading_lean_live_canary_hard_rollback_enabled:
             return
         self.state.emergency_stop_active = True
         self.state.emergency_stop_reason = (
-            f'lean_canary_breach:fallback_ratio_exceeded:{ratio:.4f}'
+            f"lean_canary_breach:fallback_ratio_exceeded:{ratio:.4f}"
         )
         self.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
 
@@ -2096,7 +2367,9 @@ class TradingPipeline:
         request_json: dict[str, Any],
     ) -> tuple[StrategyDecision, Optional[str]]:
         self.state.metrics.llm_requests_total += 1
-        market_context, market_context_error = self._fetch_market_context(decision.symbol)
+        market_context, market_context_error = self._fetch_market_context(
+            decision.symbol
+        )
         if market_context_error is not None:
             self.state.metrics.llm_market_context_error_total += 1
 
@@ -2900,9 +3173,7 @@ def _is_runtime_risk_increasing_entry(
 
 
 def _hash_payload(payload: dict[str, Any]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -3370,12 +3641,15 @@ class TradingScheduler:
 
     def _collect_emergency_stop_reasons(self) -> tuple[list[str], float, float | None]:
         reasons: list[str] = []
+        market_session_open = self._is_market_session_open()
+        self.state.market_session_open = market_session_open
+        self.state.metrics.market_session_open = 1 if market_session_open else 0
         lag_seconds = self.state.metrics.signal_lag_seconds
         if (
             isinstance(lag_seconds, int)
             and lag_seconds >= settings.trading_rollback_signal_lag_seconds_limit
         ):
-            if self._is_market_session_open():
+            if market_session_open:
                 reasons.append(f"signal_lag_exceeded:{lag_seconds}")
             else:
                 logger.info(
@@ -3386,9 +3660,21 @@ class TradingScheduler:
         critical_staleness_limit = max(
             1, settings.trading_rollback_signal_staleness_alert_streak_limit
         )
+        market_closed_expected_reasons = (
+            settings.trading_signal_market_closed_expected_reasons
+        )
         for reason in sorted(critical_reasons):
             streak = self.state.metrics.no_signal_reason_streak.get(reason, 0)
             if streak >= critical_staleness_limit:
+                if (
+                    not market_session_open
+                ) and reason in market_closed_expected_reasons:
+                    logger.info(
+                        "Suppressing emergency-stop staleness streak outside market session reason=%s streak=%s",
+                        reason,
+                        streak,
+                    )
+                    continue
                 reasons.append(f"signal_staleness_streak_exceeded:{reason}:{streak}")
         if (
             settings.trading_universe_source == "jangar"
@@ -3503,30 +3789,9 @@ class TradingScheduler:
     def _is_market_session_open(self, now: datetime | None = None) -> bool:
         trading_client: Any | None = None
         if self._pipeline is not None:
-            alpaca_client = cast(Any, self._pipeline.alpaca_client)
+            alpaca_client = getattr(self._pipeline, "alpaca_client", None)
             trading_client = getattr(alpaca_client, "trading", None)
-        get_clock = cast(
-            Callable[[], Any] | None, getattr(trading_client, "get_clock", None)
-        )
-        if callable(get_clock):
-            try:
-                clock = get_clock()
-                is_open = getattr(clock, "is_open", None)
-                if isinstance(is_open, bool):
-                    return is_open
-                if is_open is not None:
-                    return bool(is_open)
-            except Exception:
-                logger.exception("Failed to resolve Alpaca market clock state")
-
-        current = (now or datetime.now(timezone.utc)).astimezone(
-            ZoneInfo("America/New_York")
-        )
-        if current.weekday() >= 5:
-            return False
-        session_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
-        session_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
-        return session_open <= current < session_close
+        return _is_market_session_open(trading_client, now=now)
 
     def _load_latest_drawdown_from_gate(self) -> float | None:
         gate_path_raw = self.state.last_autonomy_gates
@@ -3679,7 +3944,9 @@ class TradingScheduler:
             pass
         self._task = None
         self.state.running = False
-        active_pipelines = self._pipelines or ([self._pipeline] if self._pipeline is not None else [])
+        active_pipelines = self._pipelines or (
+            [self._pipeline] if self._pipeline is not None else []
+        )
         for pipeline in active_pipelines:
             pipeline.order_feed_ingestor.close()
         self._pipelines = []
@@ -3709,9 +3976,8 @@ class TradingScheduler:
                 await self._run_autonomy_iteration()
                 last_autonomy = now
 
-            if (
-                settings.trading_evidence_continuity_enabled
-                and self._interval_elapsed(last_evidence_check, evidence_interval, now=now)
+            if settings.trading_evidence_continuity_enabled and self._interval_elapsed(
+                last_evidence_check, evidence_interval, now=now
             ):
                 await self._run_evidence_iteration()
                 last_evidence_check = now
@@ -3843,7 +4109,34 @@ class TradingScheduler:
             start=start, end=now
         )
         signals = autonomy_batch.signals
-        self._record_autonomy_batch_state(now=now, batch=autonomy_batch, signals=signals)
+        self._record_autonomy_batch_state(
+            now=now, batch=autonomy_batch, signals=signals
+        )
+        if not self._refresh_autonomy_universe_state():
+            blocked_batch = SignalBatch(
+                signals=[],
+                cursor_at=None,
+                cursor_seq=None,
+                cursor_symbol=None,
+                query_start=autonomy_batch.query_start or start,
+                query_end=autonomy_batch.query_end or now,
+                signal_lag_seconds=autonomy_batch.signal_lag_seconds,
+                no_signal_reason="universe_source_unavailable",
+            )
+            self._record_autonomy_batch_state(
+                now=now,
+                batch=blocked_batch,
+                signals=[],
+            )
+            self._handle_autonomy_no_signal_cycle(
+                batch=blocked_batch,
+                now=now,
+                start=start,
+                artifact_root=artifact_root,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+            )
+            return
         if not signals:
             self._handle_autonomy_no_signal_cycle(
                 batch=autonomy_batch,
@@ -3908,6 +4201,59 @@ class TradingScheduler:
         self.state.last_autonomy_run_at = now
         self.state.autonomy_signals_total = len(signals)
 
+    def _refresh_autonomy_universe_state(self) -> bool:
+        if self._pipeline is None:
+            raise RuntimeError("trading_pipeline_not_initialized")
+        resolution = self._pipeline.universe_resolver.get_resolution()
+        self.state.universe_source_status = resolution.status
+        self.state.universe_source_reason = resolution.reason
+        self.state.universe_symbols_count = len(resolution.symbols)
+        self.state.universe_cache_age_seconds = resolution.cache_age_seconds
+        self.state.universe_fail_safe_blocked = False
+        self.state.universe_fail_safe_block_reason = None
+        self.state.metrics.record_universe_resolution(
+            status=resolution.status,
+            reason=resolution.reason,
+            symbols_count=len(resolution.symbols),
+            cache_age_seconds=resolution.cache_age_seconds,
+        )
+        if resolution.status == "degraded":
+            self.state.metrics.record_signal_staleness_alert(
+                "universe_source_stale_cache"
+            )
+        if (
+            settings.trading_universe_source == "jangar"
+            and settings.trading_universe_require_non_empty_jangar
+            and not resolution.symbols
+        ):
+            universe_reason = resolution.reason or "unknown"
+            self.state.universe_fail_safe_blocked = True
+            self.state.universe_fail_safe_block_reason = universe_reason
+            self.state.last_signal_continuity_state = "universe_fail_safe_block"
+            self.state.last_signal_continuity_reason = "universe_source_unavailable"
+            self.state.last_signal_continuity_actionable = True
+            self.state.metrics.signal_continuity_actionable = 1
+            self.state.metrics.record_signal_actionable_staleness(
+                "universe_source_unavailable"
+            )
+            self.state.metrics.record_signal_staleness_alert(
+                "universe_source_unavailable"
+            )
+            self.state.metrics.record_universe_fail_safe_block(universe_reason)
+            _latch_signal_continuity_alert_state(
+                self.state, "universe_source_unavailable"
+            )
+            self.state.last_error = (
+                f"universe_source_unavailable reason={resolution.reason}"
+            )
+            logger.error(
+                "Blocking autonomy cycle: authoritative Jangar universe unavailable reason=%s status=%s",
+                resolution.reason,
+                resolution.status,
+            )
+            return False
+        return True
+
     def _handle_autonomy_no_signal_cycle(
         self,
         *,
@@ -3927,19 +4273,30 @@ class TradingScheduler:
         run_output_dir.mkdir(parents=True, exist_ok=True)
         no_signal_path = run_output_dir / "no-signals.json"
         reason = batch.no_signal_reason or "no_signal"
+        no_signal_payload: dict[str, Any] = {
+            "status": "skipped",
+            "dataset_snapshot_ref": "no_signal_window",
+            "no_signal_reason": reason,
+            "query_start": batch.query_start.isoformat() if batch.query_start else None,
+            "query_end": batch.query_end.isoformat() if batch.query_end else None,
+            "signal_lag_seconds": batch.signal_lag_seconds,
+            "signal_continuity": {
+                "state": self.state.last_signal_continuity_state,
+                "reason": self.state.last_signal_continuity_reason,
+                "actionable": self.state.last_signal_continuity_actionable,
+                "alert_active": self.state.signal_continuity_alert_active,
+                "alert_reason": self.state.signal_continuity_alert_reason,
+            },
+            "market_session_open": self.state.market_session_open,
+            "promotion": {
+                "requested_target": "shadow",
+                "promotion_allowed": False,
+                "outcome": "skipped_no_signal",
+            },
+            "research_run_id": None,
+        }
         no_signal_path.write_text(
-            json.dumps(
-                {
-                    "status": "skipped",
-                    "no_signal_reason": reason,
-                    "query_start": batch.query_start.isoformat()
-                    if batch.query_start
-                    else None,
-                    "query_end": batch.query_end.isoformat() if batch.query_end else None,
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
+            json.dumps(no_signal_payload, indent=2), encoding="utf-8"
         )
         self.state.last_autonomy_run_id = None
         self.state.last_autonomy_candidate_id = None
@@ -3986,6 +4343,10 @@ class TradingScheduler:
                 now=now,
                 code_version="live",
             )
+            no_signal_payload["research_run_id"] = self.state.last_autonomy_run_id
+            no_signal_path.write_text(
+                json.dumps(no_signal_payload, indent=2), encoding="utf-8"
+            )
         except Exception as exc:
             self.state.autonomy_failure_streak += 1
             self.state.last_autonomy_reason = "autonomy_no_signal_persistence_failed"
@@ -4020,15 +4381,38 @@ class TradingScheduler:
         return run_output_dir, signals_path
 
     def _reset_autonomy_signal_state(self, *, signal_count: int) -> None:
+        market_session_open = self._is_market_session_open()
+        self.state.market_session_open = market_session_open
+        self.state.metrics.market_session_open = 1 if market_session_open else 0
         self.state.autonomy_no_signal_streak = 0
         self.state.metrics.no_signal_streak = 0
         self.state.metrics.no_signal_reason_streak = {}
         self.state.metrics.signal_lag_seconds = None
+        self.state.metrics.signal_continuity_actionable = 0
+        self.state.last_signal_continuity_state = "signals_present"
+        self.state.last_signal_continuity_reason = None
+        self.state.last_signal_continuity_actionable = False
+        _record_signal_continuity_recovery_cycle(
+            self.state,
+            required_recovery_cycles=max(
+                1, int(settings.trading_signal_continuity_recovery_cycles)
+            ),
+        )
         self.state.autonomy_signals_total = signal_count
 
     def _resolve_autonomy_promotion_target(
         self, drift_gate_evidence: Mapping[str, Any]
     ) -> tuple[Literal["paper", "live"], str | None]:
+        if (
+            settings.trading_autonomy_allow_live_promotion
+            and self.state.signal_continuity_alert_active
+        ):
+            self.state.metrics.signal_continuity_promotion_block_total += 1
+            logger.warning(
+                "Autonomy live promotion denied while continuity alert is active reason=%s; forcing paper target.",
+                self.state.signal_continuity_alert_reason,
+            )
+            return "paper", None
         if (
             settings.trading_autonomy_allow_live_promotion
             and settings.trading_autonomy_approval_token
@@ -4103,14 +4487,18 @@ class TradingScheduler:
         self.state.last_autonomy_gates = str(result.gate_report_path)
         self.state.last_autonomy_reason = None
 
-        gate_report_raw = json.loads(result.gate_report_path.read_text(encoding="utf-8"))
+        gate_report_raw = json.loads(
+            result.gate_report_path.read_text(encoding="utf-8")
+        )
         gate_report: dict[str, Any] = (
             cast(dict[str, Any], gate_report_raw)
             if isinstance(gate_report_raw, dict)
             else {}
         )
         if gate_report:
-            self.state.metrics.record_uncertainty_gate(cast(Mapping[str, Any], gate_report))
+            self.state.metrics.record_uncertainty_gate(
+                cast(Mapping[str, Any], gate_report)
+            )
 
         recommended_mode = str(gate_report.get("recommended_mode") or "shadow")
         self.state.last_autonomy_recommendation = recommended_mode
@@ -4149,7 +4537,9 @@ class TradingScheduler:
             previous_candidate_id=previous_candidate_id,
             promotion_decision_candidate_id=promotion_decision_candidate_id,
         )
-        self._update_autonomy_throughput_state(throughput_payload=gate_report.get("throughput"))
+        self._update_autonomy_throughput_state(
+            throughput_payload=gate_report.get("throughput")
+        )
         self.state.last_autonomy_error = None
 
         if settings.trading_drift_governance_enabled:
