@@ -1,0 +1,188 @@
+{
+  "run_id": "wp-ce8f27f0c0c24c666a770813",
+  "paper": {
+    "title": "QuantEval: A Benchmark for Financial Quantitative Tasks in Large Language Models",
+    "arxiv_id": "2601.08689",
+    "pdf_url": "https://arxiv.org/pdf/2601.08689.pdf",
+    "version": "v2",
+    "date": "2026-01-16"
+  },
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 16,
+    "included_sections": [
+      "main_text",
+      "references",
+      "appendix_A",
+      "appendix_B",
+      "appendix_C",
+      "appendix_D",
+      "appendix_E",
+      "appendix_F"
+    ]
+  },
+  "executive_summary": "QuantEval introduces a three-axis benchmark (finance QA, quantitative reasoning, and execution-validated strategy coding) with a deterministic CTA-style backtesting setup. The paper reports that current LLMs trail human experts most on multi-step reasoning and strategy coding executability, while domain-aligned SFT+GRPO yields directional improvements. For this repository, the paper is most viable as an offline evaluation and regression-gating framework rather than a direct production trading policy source.",
+  "problem_statement": "Financial LLM evaluation is currently over-indexed on QA-style knowledge tasks and under-measures the execution-grounded quantitative workflows needed for real quant practice, especially strategy code generation under realistic constraints.",
+  "methodology_summary": "The benchmark combines expert and multi-agent data construction for 1,575 samples across three task families, evaluates 13 LLMs with deterministic decoding settings, and scores strategy coding using an execution harness with fixed data/universe/cost/risk assumptions. It supplements benchmarking with exploratory post-training (SFT then GRPO) and cross-benchmark comparisons to test transfer from existing finance datasets.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "A sizable human-vs-model gap remains, most pronounced on quantitative reasoning and coding.",
+      "evidence": [
+        "Section 3.2",
+        "Table 2",
+        "Appendix D.1"
+      ]
+    },
+    {
+      "id": "KF-2",
+      "finding": "Strategy coding is the hardest task; many open-source models produce 0% executable strategies under CTA constraints.",
+      "evidence": [
+        "Section 3.2",
+        "Table 2",
+        "Appendix B.2"
+      ]
+    },
+    {
+      "id": "KF-3",
+      "finding": "CoT prompting materially improves strategy-code executability versus direct prompting.",
+      "evidence": [
+        "Appendix E.3",
+        "Table 11"
+      ]
+    },
+    {
+      "id": "KF-4",
+      "finding": "Domain-aligned SFT+GRPO improves QuantEval scores in reported exploratory training, but does not close the human gap.",
+      "evidence": [
+        "Section 4.1",
+        "Table 3"
+      ]
+    },
+    {
+      "id": "KF-5",
+      "finding": "High scores on existing finance QA benchmarks do not directly transfer to QuantEval difficulty.",
+      "evidence": [
+        "Section 4.2",
+        "Table 4"
+      ]
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "Execution-based strategy coding evaluation using deterministic CTA backtesting is a key benchmark innovation.",
+      "assessment": "supported_in_scope",
+      "notes": "The paper provides explicit execution, cost, risk, and failure criteria in Appendix B."
+    },
+    {
+      "claim": "The benchmark construction pipeline scales quality through expert + multi-agent workflows.",
+      "assessment": "moderately_novel",
+      "notes": "The pattern is established in LLM data construction generally, but useful in this financial quant setting."
+    },
+    {
+      "claim": "Domain-aligned SFT+GRPO is an effective recipe for quant-task gains.",
+      "assessment": "partially_supported",
+      "notes": "Directional gains are shown in Table 3/4, but the paper does not present confidence intervals or broader robustness statistics."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "external_validity_coding_subset",
+      "severity": "high",
+      "detail": "Only 60 coding samples are included, limiting representativeness for strategy diversity.",
+      "evidence": [
+        "Limitations"
+      ]
+    },
+    {
+      "risk": "config_lock_in",
+      "severity": "high",
+      "detail": "Results depend on fixed CTA assumptions (asset universe, cost/slippage model, constraints).",
+      "evidence": [
+        "Limitations",
+        "Appendix B.1"
+      ]
+    },
+    {
+      "risk": "residual_training_leakage",
+      "severity": "medium_high",
+      "detail": "The paper states zero overlap with proprietary model training corpora cannot be strictly guaranteed.",
+      "evidence": [
+        "Appendix C.1"
+      ]
+    },
+    {
+      "risk": "evaluation_prompt_dependence",
+      "severity": "medium",
+      "detail": "Automated grading relies on prompt-based extraction and semantic matching; agreement sample is limited in size.",
+      "evidence": [
+        "Appendix E.1",
+        "Appendix E.2"
+      ]
+    },
+    {
+      "risk": "repo_integration_gap",
+      "severity": "medium_high",
+      "detail": "Repository has trading/backtest primitives but no native QuantEval schema, runner, or CTA-compat executability validator.",
+      "evidence": [
+        "services/torghut/app/trading/backtest.py",
+        "services/torghut/app/lean_runner.py",
+        "services/torghut/app/main.py"
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "section": "Section 1",
+      "pointer": "Introduction + Figure 1",
+      "claim": "Defines three benchmark dimensions and motivates execution-based evaluation for quant workflows."
+    },
+    {
+      "section": "Section 2.1-2.7",
+      "pointer": "Figure 2 and dataset statistics",
+      "claim": "Reports benchmark composition (1,575 samples) and construction methodology."
+    },
+    {
+      "section": "Section 3.1",
+      "pointer": "Table 1 and Table 2",
+      "claim": "Specifies model set, prompting settings, and scoring metrics."
+    },
+    {
+      "section": "Section 3.2",
+      "pointer": "Main results discussion",
+      "claim": "Identifies persistent human-vs-LLM gaps and coding difficulty."
+    },
+    {
+      "section": "Section 4.1",
+      "pointer": "Table 3",
+      "claim": "Shows exploratory SFT and GRPO progression on QuantEval tasks."
+    },
+    {
+      "section": "Section 4.2",
+      "pointer": "Table 4",
+      "claim": "Shows limited transfer from existing finance benchmarks to QuantEval."
+    },
+    {
+      "section": "Limitations",
+      "pointer": "Page 9",
+      "claim": "Notes English-only scope, fixed backtest assumptions, and small coding subset."
+    },
+    {
+      "section": "Appendix B",
+      "pointer": "B.1-B.2",
+      "claim": "Provides deterministic backtesting config and explicit non-executable failure criteria."
+    },
+    {
+      "section": "Appendix C",
+      "pointer": "C.1",
+      "claim": "Defines de-dup and leakage-prevention pipeline and caveat on proprietary corpus overlap."
+    },
+    {
+      "section": "Appendix E",
+      "pointer": "E.1-E.3 and Table 11",
+      "claim": "Covers grading reliability and CoT-vs-direct coding executability ablation."
+    }
+  ],
+  "implementation_plan_md": "### QuantEval Integration Plan (Repository-Scoped)\n1. Define a stable QuantEval task/result contract and deterministic benchmark configuration object aligned to Appendix B.\n2. Implement an offline benchmark runner in `services/torghut` that scores QA/reasoning accuracy and coding executability + MAE metrics.\n3. Add failure-taxonomy checks that map directly to Appendix B.2 categories (compile/runtime/interface/lookahead/risk-constraint).\n4. Add reproducibility manifests (dataset hash, prompt version, model version, config hash) and store run artifacts for auditability.\n5. Add CI fixture tests on a small immutable subset to detect metric or parser regressions.\n6. Keep this lane research-only until robustness criteria are met; do not auto-promote benchmark gains to live execution decisions.",
+  "confidence": 0.83
+}
