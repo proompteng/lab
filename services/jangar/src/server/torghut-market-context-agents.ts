@@ -183,7 +183,7 @@ const buildMissingContext = (params: {
   if (params.dispatchError) riskFlags.push(`${params.domain}_dispatch_error`)
 
   return {
-    asOfUtc: toIso(params.now),
+    asOfUtc: '',
     sourceCount: 0,
     qualityScore: 0,
     payload: {
