@@ -377,6 +377,75 @@ class TestOrderIdempotency(TestCase):
             self.assertEqual(tca.divergence_bps, Decimal('87.5'))
             self.assertEqual(tca.simulator_version, 'hawkes-lob-v1')
 
+    def test_submit_order_prefers_persisted_advice_provenance(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            persisted_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol='AAPL',
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe='1Min',
+                action='buy',
+                qty=Decimal('1.0'),
+                params={'price': Decimal('100')},
+            )
+            transient_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol='AAPL',
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe='1Min',
+                action='buy',
+                qty=Decimal('1.0'),
+                params={
+                    'price': Decimal('100'),
+                    'execution_advisor': {
+                        'applied': False,
+                        'fallback_reason': 'advisor_missing_inputs',
+                    },
+                },
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(
+                session, persisted_decision, strategy, 'paper'
+            )
+            executor.update_decision_params(
+                session,
+                decision_row,
+                {
+                    'execution_advisor': {
+                        'applied': True,
+                        'fallback_reason': None,
+                        'max_participation_rate': '0.03',
+                    }
+                },
+            )
+
+            execution = executor.submit_order(
+                session,
+                FakeAlpacaClient(),
+                transient_decision,
+                decision_row,
+                'paper',
+            )
+            assert execution is not None
+            raw_order = execution.raw_order
+            assert isinstance(raw_order, dict)
+            provenance = raw_order.get('_execution_advice_provenance')
+            assert isinstance(provenance, dict)
+            self.assertEqual(provenance.get('applied'), True)
+            self.assertEqual(provenance.get('max_participation_rate'), '0.03')
+
     def test_submit_order_prefers_persisted_execution_policy_context(self) -> None:
         with self.session_local() as session:
             strategy = Strategy(

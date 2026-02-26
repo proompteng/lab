@@ -177,7 +177,10 @@ class OrderExecutor:
             )
         )
         order_payload = dict(order_response)
-        advice_provenance = _extract_execution_advice_provenance(decision)
+        advice_provenance = _extract_execution_advice_provenance(
+            decision,
+            decision_row=decision_row,
+        )
         if advice_provenance is not None:
             order_payload["_execution_advice_provenance"] = advice_provenance
         execution = sync_order_to_db(
@@ -226,7 +229,10 @@ class OrderExecutor:
         if existing_order is None:
             return False
         existing_payload = dict(existing_order)
-        advice_provenance = _extract_execution_advice_provenance(decision)
+        advice_provenance = _extract_execution_advice_provenance(
+            decision,
+            decision_row=decision_row,
+        )
         if advice_provenance is not None:
             existing_payload["_execution_advice_provenance"] = advice_provenance
         route_expected, route_actual, fallback_reason, fallback_count = (
@@ -519,7 +525,23 @@ def _attach_execution_policy_context(execution: Execution, context: dict[str, An
 
 def _extract_execution_advice_provenance(
     decision: StrategyDecision,
+    *,
+    decision_row: Optional[TradeDecision] = None,
 ) -> dict[str, Any] | None:
+    if decision_row is not None:
+        decision_json = _coerce_json(decision_row.decision_json)
+        params_value = decision_json.get('params')
+        if isinstance(params_value, Mapping):
+            params_map = cast(Mapping[str, Any], params_value)
+            persisted_payload = params_map.get('execution_advisor')
+            if isinstance(persisted_payload, Mapping):
+                return {
+                    str(key): value
+                    for key, value in cast(
+                        Mapping[object, object],
+                        persisted_payload,
+                    ).items()
+                }
     payload = decision.params.get("execution_advisor")
     if isinstance(payload, Mapping):
         return {
