@@ -6,6 +6,14 @@
 - Date: `2026-02-12`
 - Maturity: `proposed implementation plan`
 
+## Audit Update (2026-02-26)
+
+- This document's runtime baseline section is historical (`2026-02-12`) and no longer reflects current production state.
+- Jangar market-context endpoints are now implemented under `services/jangar/src/routes/api/torghut/market-context/**`.
+- LEAN is integrated as a Torghut runtime execution adapter path (`services/torghut/app/trading/execution_adapters.py`,
+  `/trading/lean/*` endpoints in `services/torghut/app/main.py`).
+- Treat earlier TLS-blocker and "no unified endpoint / no LEAN runtime integration" statements as superseded snapshot notes.
+
 ## Objective
 
 Define a production-safe plan to:

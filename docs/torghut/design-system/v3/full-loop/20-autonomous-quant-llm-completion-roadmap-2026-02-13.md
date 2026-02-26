@@ -9,6 +9,15 @@
   - manual approval override path with audit fields,
   - fail-closed automatic rollout transitions with rollback/halt evidence logging.
 
+## Update (2026-02-26)
+
+- Signal continuity/freshness controls referenced in this roadmap are now completed and should not be treated as open priority work.
+- Implemented coverage includes:
+  - no-signal reason classification + lag handling in `services/torghut/app/trading/ingest.py`,
+  - continuity alert latching/recovery, emergency stop integration, and live-promotion block while continuity alert is active in `services/torghut/app/trading/scheduler.py`,
+  - status/autonomy and metrics exposure in `services/torghut/app/main.py` and `services/torghut/app/metrics.py`,
+  - alert rules in `argocd/applications/observability/graf-mimir-rules.yaml`.
+
 ## Current evidence snapshot
 
 - Live service is running a revised autonomy/scheduler/build and has LEAN adapter plumbing, with fallback and route metadata hooks present.
@@ -26,13 +35,10 @@
 
 ## Missing production control gaps
 
-1. Signal continuity and freshness
-   - Guard `no_signal_reason` and enforce source SLOs for `ta_signals` lag.
-   - Add explicit alerting for:
-     - consecutive `no_signals_in_window`,
-     - repeated `cursor_ahead_of_stream`,
-     - sustained stream silence after restart.
-   - Do not scale LEAN until source and windows are stable.
+1. Signal continuity and freshness (**Completed 2026-02-26**)
+   - `no_signal_reason` guards and `ta_signals` lag continuity handling are implemented.
+   - Alerting for `no_signals_in_window`, `cursor_ahead_of_stream`, and sustained silence states is implemented.
+   - Live promotion is blocked while continuity alert is active.
 
 2. Autonomous evidence ledger continuity
    - Ensure every lane window writes:
@@ -69,9 +75,9 @@
 
 ## Completion sequence (recommended)
 
-1. **Restore signal continuity**
-   - Implement/enable ta signal freshness checks and restart recovery jobs in ClickHouse/TA stack.
-   - Verify at least 95% window hit rate for 4 consecutive hours.
+1. **Signal continuity controls** (**Completed 2026-02-26**)
+   - Freshness checks/alerts and continuity promotion block are implemented.
+   - Continue runtime monitoring only; do not treat this as missing implementation work.
 
 2. **Re-run LEAN execution telemetry burn-in**
    - 24h paper-only cycle with route provenance metrics and fallback counts.
@@ -105,7 +111,7 @@
 
 ## Open PR hooks this roadmap maps to
 
-- Signal freshness alerts + lane evidence validation tests.
+- Signal freshness alerts + lane evidence validation tests (completed).
 - Profitability evidence endpoint and promotion gate checks.
 - LEAN route telemetry, backfill validation, and reconciliation tests.
 - LLM advisory policy hardening for advisory-only mode.

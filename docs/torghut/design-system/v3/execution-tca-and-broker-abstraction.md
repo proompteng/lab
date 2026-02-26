@@ -11,8 +11,8 @@ feed promotion and policy decisions.
 
 ## Current Baseline
 
-- execution path is primarily Alpaca-centered in Torghut trading modules.
-- execution policy exists but TCA feedback is not yet first-class for promotion gates.
+- execution path supports LEAN as primary adapter for configured lanes with deterministic Alpaca fallback.
+- execution policy and TCA feedback are wired into autonomy gate checks and promotion controls.
 
 ## Target Execution Architecture
 
@@ -44,9 +44,9 @@ feed promotion and policy decisions.
 
 ## Broker Abstraction Roadmap
 
-- adapter 1: Alpaca (current production adapter).
-- adapter 2: simulation adapter for replay/backtests.
-- adapter 3: optional secondary venue after contract maturity.
+- adapter 1: LEAN route (active for configured lanes).
+- adapter 2: Alpaca route (deterministic fallback/secondary).
+- adapter 3: simulation adapter for replay/backtests.
 
 All adapters must support:
 

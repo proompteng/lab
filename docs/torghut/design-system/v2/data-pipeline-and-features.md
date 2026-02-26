@@ -4,6 +4,7 @@
 
 - Version: `v2`
 - Last updated: **2026-02-10**
+- Audit update: **2026-02-26**
 
 ## Purpose
 
@@ -13,11 +14,18 @@ Specify data requirements for profitable strategies and an intelligence layer.
 
 - Level 0: trades/quotes/bars (already in Torghut).
 - Level 1: derived microbars and indicators (already in ClickHouse).
-- Level 2: enriched features (needs v2 work):
+- Level 2: enriched features (baseline implemented; advanced factors still pending):
   - realized volatility, intraday seasonality,
   - spread/imbalance proxies,
   - market regime features,
   - cross-asset factor features.
+
+## Audit Update (2026-02-26)
+
+- Feature-contract/schema checks and quality/staleness controls are implemented in the trading path.
+- Online/offline parity guardrails are present for current feature set.
+- Remaining v2 work is expansion depth (especially richer cross-asset and optional L2/L3 feature families), not
+  initial feature-contract enablement.
 
 ## Feature Parity Rule (Non-Negotiable)
 

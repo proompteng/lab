@@ -7,6 +7,17 @@
 - Scope: production migration from single-account execution to multi-account execution in Torghut
 - Environments: Kubernetes namespaces `torghut` and `kafka` with Argo CD GitOps deployment
 
+## Audit Update (2026-02-26)
+
+- The section 3 baseline snapshot (`2026-02-22`) is historical and contains stale runtime assertions.
+- Multi-account isolation changes are implemented in code/migrations:
+  - account-scoped idempotency hash input and lookup paths,
+  - account-scoped cursor/order-feed matching,
+  - v2 trade-update envelope with `account_label`,
+  - account registry/scheduler multi-lane wiring.
+- Treat statements claiming "single-account only" and missing `execution_tca_metrics.divergence_bps` as superseded by
+  current implementation and latest runtime migrations.
+
 ## 1. Goal
 
 Enable Torghut to run multiple trading accounts concurrently and safely, with deterministic account isolation for:

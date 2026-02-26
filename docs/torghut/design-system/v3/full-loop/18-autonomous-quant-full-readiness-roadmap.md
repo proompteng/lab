@@ -6,6 +6,11 @@
 - Owner: `torghut`
 - Scope: production-readiness for fully autonomous quant+LLM trading
 
+## Update (2026-02-26)
+
+- The signal source continuity workstream from this roadmap is completed in code and observability.
+- Implemented controls include no-signal reason classification, continuity alerting/recovery, emergency-stop integration, and live-promotion blocking while a continuity alert is active.
+
 ## Current evidence (2026-02-12)
 
 - LEAN execution path is active and strategy decisions can include `execution_adapter.selected`.
@@ -13,39 +18,35 @@
 - `research_runs` and related tables are available but live writes are sparse/noisy; no evidence of continuous lane evidence yet.
 - `trading/autonomy` and `trading/status` lacked explicit fetch stall reasoning in previous state.
 
-## Remaining work (ordered by control priority)
+## Remaining work (ordered by control priority; signal continuity closed on 2026-02-26)
 
-1. **Signal source continuity**
-   - Guarantee WS-backed symbol universe is authoritative (`TRADING_UNIVERSE_SOURCE=jangar`) and static symbols are removed from hot paths.
-   - Add explicit staleness alerting when the cursor is ahead of ClickHouse tail (implemented partially in ingestion telemetry) and route this to alerts.
-
-2. **Execution + governance provenance**
+1. **Execution + governance provenance**
    - Ensure every execution row has non-null:
      - `execution_expected_adapter`
      - `execution_actual_adapter`
      - `execution_fallback_reason` (when a fallback occurred)
    - Keep route tags for reconciled rows and historical backfills.
 
-3. **Research lane reliability**
+2. **Research lane reliability**
    - Maintain durable `research_runs` writes from every promotion attempt.
    - Capture and persist gate report + recommendation trace IDs on all paths.
    - Add retry + dead-letter behavior for failed research persistence.
 
-4. **Backtest + deployment safety**
+3. **Backtest + deployment safety**
    - Add a pre-live promotion checkpoint:
      - minimum paper simulation run count
      - minimum live shadow exposure duration
      - minimum non-error gate ratio
    - Enforce at least one-stage approval before live promotion.
 
-5. **Performance and cost observability**
+4. **Performance and cost observability**
    - Add Prometheus/Log dashboards for:
      - ingest latency and signal lag
      - decision→fill latency by adapter
      - route fallback ratio and execution error categories
      - rolling daily PnL with gate coverage
 
-6. **Autonomous rollback**
+5. **Autonomous rollback**
    - Automatic emergency stop if:
      - signal lag exceeds policy limit,
      - autonomous lane fails repeatedly,
@@ -55,10 +56,10 @@
 
 ## Implementation sequence
 
-### Phase A (now)
+### Phase A (completed)
 
-- Ship ingestion reason telemetry into `/trading/status` and `/trading/autonomy`.
-- Alert on `cursor_ahead_of_stream` and `no_signals_in_window` with cursor lag threshold.
+- Shipped ingestion reason telemetry into `/trading/status` and `/trading/autonomy`.
+- Shipped alerting on `cursor_ahead_of_stream` and `no_signals_in_window` with cursor lag threshold.
 
 ### Phase B
 

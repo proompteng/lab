@@ -1,10 +1,11 @@
-# Current State and Gap Analysis (2026-02-13)
+# Current State and Gap Analysis (Historical Snapshot: 2026-02-13)
 
 ## Status
 
 - Version: `v1`
 - Last updated: **2026-02-13**
 - Source of truth (config): `argocd/applications/torghut/**`
+- Classification: historical snapshot (superseded by later audit addenda in the implementation status matrix)
 
 ## Purpose
 

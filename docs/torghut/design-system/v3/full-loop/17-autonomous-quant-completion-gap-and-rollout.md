@@ -6,11 +6,20 @@
 - Owner: `torghut`
 - Priority: `critical`
 
+## Update (2026-02-26)
+
+- This document captures a historical gap snapshot from 2026-02-12 and is not the current runtime state.
+- Code-audit updates:
+  - signal continuity controls and alerting are implemented (including continuity-aware promotion block),
+  - execution route provenance persistence and parity telemetry are implemented,
+  - research evidence continuity checks are implemented.
+- Open work should be interpreted from current runtime-facing docs/endpoints, not from this historical snapshot alone.
+
 ## Purpose
 
 Capture every blocking gap for a fully autonomous quant+LLM loop and provide a single implementation-and-rollout checklist to close them.
 
-## Verified Live State (2026-02-12)
+## Verified Live State (2026-02-12, historical)
 
 - LEAN adapter routing is active (`TRADING_EXECUTION_ADAPTER=lean`, policy `all`, fallback `alpaca`).
 - Autonomy loop is running and triggering every interval (`runs_total` increments), but `signals_total` is `0` in the same windows observed.
@@ -50,7 +59,7 @@ Capture every blocking gap for a fully autonomous quant+LLM loop and provide a s
   - signal table visibility,
   - cursor advancement behavior on empty batches,
   - universe symbol allowlist consistency with WS symbols.
-- Add staged alerting on consecutive zero-signal windows and cursor stalls.
+- Add staged alerting on consecutive zero-signal windows and cursor stalls. (**Completed 2026-02-26**)
 
 ## Workstream D: Operational Rollout
 

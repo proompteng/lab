@@ -4,6 +4,7 @@
 
 - Version: `v2`
 - Last updated: **2026-02-10**
+- Audit update: **2026-02-26**
 
 ## Purpose
 
@@ -25,9 +26,9 @@ Reduce drawdowns by recognizing when a strategy's assumptions are failing.
 
 ## Torghut Extensions
 
-- Add a RegimeService that writes a low-frequency regime state to Postgres.
-- Expose regime state in `/trading/status`.
-- Make risk engine aware of regime state (hard clamps).
+- Regime classification and scheduler integration are implemented.
+- Runtime status surfaces regime-informed state and controls.
+- Remaining work is deeper calibration/persistence standardization across all rollout lanes.
 
 ## Failure Modes
 

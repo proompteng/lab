@@ -1,5 +1,10 @@
 # Autonomous Quant Live Readiness Snapshot (2026-02-13)
 
+## Update (2026-02-26)
+
+- The signal continuity/freshness gap called out in this historical snapshot is resolved.
+- Continuity controls are implemented in trading ingest/scheduler plus `/trading/status` and `/trading/autonomy` telemetry, including alerting and promotion-block behavior.
+
 ## What is in place now
 
 - LEAN adapter routing is configured and active:
@@ -23,10 +28,10 @@
 
 ## Gaps blocking “fully autonomous + profitable” operation
 
-1. **Signal continuity is not sustained**
-   - Root cause appears to be source freshness, not execution gating:
-     no new signal rows arriving in the active `Cursor->window` slice.
-   - Immediate control action: enforce explicit source-liveness guardrails (lag SLO + consecutive empty-window alerts).
+1. **Resolved (2026-02-26): signal continuity controls**
+   - Source freshness guardrails and no-signal continuity classification are implemented.
+   - Alerting for lag/empty-window continuity faults is implemented.
+   - Live promotion is blocked while continuity alert is active.
 
 2. **No live autonomous research evidence yet**
    - Lane runs are currently short-circuiting before persistence because signal batches are empty.
@@ -54,7 +59,7 @@
 ## Suggested execution sequence
 
 1. Roll out LEAN-aware execution+status code (this branch) and confirm endpoint telemetry.
-2. Raise source freshness alert when `no_signal_reason` is repeatedly non-null for 2+ cycles.
+2. (Completed 2026-02-26) Source freshness alerting on repeated non-null `no_signal_reason` cycles.
 3. Verify `research_*` writes resume within first non-empty signal window.
 4. Build a profitability evidence packet:
    - rolling decision count,

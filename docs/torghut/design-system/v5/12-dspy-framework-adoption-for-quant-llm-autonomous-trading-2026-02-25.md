@@ -4,8 +4,14 @@
 
 - Version: `v1`
 - Date: `2026-02-25`
-- Maturity: `implementation plan`
+- Maturity: `implementation plan + partial scaffolding landed`
 - Scope: adopt DSPy for LLM-program authoring/optimization while preserving deterministic trading safety and Jangar-native AgentRun control-plane operations
+
+## Audit Update (2026-02-26)
+
+- DSPy program/runtime scaffolding and compile/eval/promotion artifact contracts are implemented in Torghut code.
+- Jangar-compatible AgentRun payload builder/tests and DSPy artifact persistence migration are present.
+- Full production adoption criteria in this document remain partially open (rollout and promotion-governed runtime usage).
 
 ## Objective
 

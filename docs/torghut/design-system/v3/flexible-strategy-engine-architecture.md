@@ -2,7 +2,7 @@
 
 ## Status
 
-- Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
+- Implementation status: `Partial` (2026-02-26 audit: core runtime is implemented; strict acceptance criteria remain open)
 
 ## Objective
 
@@ -44,7 +44,7 @@ flowchart LR
   Risk --> Firewall[OrderFirewall]
   Firewall --> Exec[ExecutionRouter]
   Exec --> Persist[(Postgres: trade_decisions/executions)]
-  Exec --> Broker[Alpaca adapter]
+  Exec --> Broker[Execution adapter (LEAN primary, Alpaca fallback)]
 ```
 
 ## Components and Contracts
