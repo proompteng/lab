@@ -35,11 +35,35 @@ def _list_candidate_run_ids(
             f"""
             SELECT r.run_id
             FROM whitepaper_analysis_runs r
+            LEFT JOIN whitepaper_syntheses ws
+              ON ws.analysis_run_id = r.id
             WHERE r.status IN ({placeholders})
-              AND NOT EXISTS (
-                SELECT 1
-                FROM whitepaper_semantic_chunks sc
-                WHERE sc.analysis_run_id = r.id
+              AND (
+                NOT EXISTS (
+                  SELECT 1
+                  FROM whitepaper_semantic_chunks sc
+                  WHERE sc.analysis_run_id = r.id
+                    AND sc.source_scope = 'full_text'
+                )
+                OR (
+                  ws.id IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM whitepaper_semantic_chunks sc
+                    WHERE sc.analysis_run_id = r.id
+                      AND sc.source_scope = 'synthesis'
+                  )
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM whitepaper_semantic_chunks sc
+                  WHERE sc.analysis_run_id = r.id
+                    AND NOT EXISTS (
+                      SELECT 1
+                      FROM whitepaper_semantic_embeddings se
+                      WHERE se.semantic_chunk_id = sc.id
+                    )
+                )
               )
             ORDER BY r.created_at ASC
             LIMIT :limit

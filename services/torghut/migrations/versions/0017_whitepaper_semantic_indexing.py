@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
@@ -12,8 +14,20 @@ branch_labels = None
 depends_on = None
 
 
+def _embedding_dimension() -> int:
+    raw_value = os.getenv("WHITEPAPER_EMBEDDING_DIMENSION", "1024").strip()
+    try:
+        dimension = int(raw_value)
+    except ValueError as exc:  # pragma: no cover - migration env guard
+        raise ValueError("WHITEPAPER_EMBEDDING_DIMENSION must be an integer") from exc
+    if dimension <= 0:
+        raise ValueError("WHITEPAPER_EMBEDDING_DIMENSION must be greater than zero")
+    return dimension
+
+
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    embedding_dimension = _embedding_dimension()
 
     op.create_table(
         "whitepaper_semantic_chunks",
@@ -69,14 +83,16 @@ def upgrade() -> None:
     )
 
     op.execute(
-        """
+        f"""
         CREATE TABLE whitepaper_semantic_embeddings (
           id UUID PRIMARY KEY,
           semantic_chunk_id UUID NOT NULL
             REFERENCES whitepaper_semantic_chunks(id) ON DELETE CASCADE,
           model VARCHAR(255) NOT NULL,
           dimension BIGINT NOT NULL,
-          embedding vector(1024) NOT NULL,
+          embedding vector({embedding_dimension}) NOT NULL,
+          CONSTRAINT ck_wp_semantic_embeddings_dimension_matches_embedding
+            CHECK (dimension = vector_dims(embedding)),
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
         """

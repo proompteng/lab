@@ -67,25 +67,32 @@ function WhitepaperSemanticSearchRoute() {
 
     setLoading(true)
     setError(null)
-    const result = await searchWhitepapersSemantic({
-      query: normalizedQuery,
-      scope,
-      status,
-      subject: subject || undefined,
-      limit: 30,
-      offset: 0,
-    })
-    setLoading(false)
+    try {
+      const result = await searchWhitepapersSemantic({
+        query: normalizedQuery,
+        scope,
+        status,
+        subject: subject || undefined,
+        limit: 30,
+        offset: 0,
+      })
 
-    if (!result.ok) {
+      if (!result.ok) {
+        setItems([])
+        setTotal(0)
+        setError(result.message)
+        return
+      }
+
+      setItems(result.items)
+      setTotal(result.total)
+    } catch (error) {
       setItems([])
       setTotal(0)
-      setError(result.message)
-      return
+      setError(error instanceof Error ? error.message : 'Semantic search request failed')
+    } finally {
+      setLoading(false)
     }
-
-    setItems(result.items)
-    setTotal(result.total)
   }, [query, scope, status, subject])
 
   React.useEffect(() => {
