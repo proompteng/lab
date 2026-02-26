@@ -40,9 +40,9 @@
 
 ## Code Search Helpers
 
-- Query code search: `bun run atlas:code-search --query ... [--repository ...] [--path-prefix ...] [--limit ...]`.
-- Endpoint: `POST /api/code-search`.
-- Base URL resolution (same model as memories scripts): explicit `--base-url` / `ATLAS_BASE_URL` / `JANGAR_BASE_URL` override, then in-cluster service (`http://jangar` in namespace `jangar`, otherwise `http://jangar.jangar.svc.cluster.local`), otherwise `http://jangar.ide-newton.ts.net`.
+- Default command:
+  `bun run atlas:code-search --query "<what you need>" --repository proompteng/lab --limit 10`
+- Narrow only if needed: add `--path-prefix <path>`, then `--language <name>`, then `--ref <ref>`.
 
 ## Memories Service Helpers
 
