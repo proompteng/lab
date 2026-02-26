@@ -2,16 +2,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getQuantLatestStoreStatus = vi.fn()
 const listLatestQuantPipelineHealth = vi.fn()
+const startTorghutQuantRuntime = vi.fn()
+const getTorghutQuantRuntimeStatus = vi.fn()
 
 vi.mock('~/server/torghut-quant-metrics-store', () => ({
   getQuantLatestStoreStatus,
   listLatestQuantPipelineHealth,
 }))
 
+vi.mock('~/server/torghut-quant-runtime', () => ({
+  startTorghutQuantRuntime,
+  getTorghutQuantRuntimeStatus,
+}))
+
 describe('getQuantHealthHandler', () => {
   beforeEach(() => {
     getQuantLatestStoreStatus.mockReset()
     listLatestQuantPipelineHealth.mockReset()
+    startTorghutQuantRuntime.mockReset()
+    getTorghutQuantRuntimeStatus.mockReset()
+    getTorghutQuantRuntimeStatus.mockReturnValue({
+      started: true,
+      enabled: true,
+      alertsEnabled: true,
+      computeIntervalMs: 1000,
+      heavyComputeIntervalMs: 30000,
+      streamHeartbeatMs: 15000,
+    })
   })
 
   afterEach(() => {
@@ -71,7 +88,10 @@ describe('getQuantHealthHandler', () => {
     expect(body.status).toBe('degraded')
     expect(body.metricsPipelineLagSeconds).toBe(30)
     expect(body.missingUpdateAlarm).toBe(true)
+    expect(body.runtimeStarted).toBe(true)
+    expect(body.runtimeEnabled).toBe(true)
     expect(body.stages).toHaveLength(1)
+    expect(startTorghutQuantRuntime).toHaveBeenCalledTimes(1)
   })
 
   it('suppresses missing-update alarm outside market hours', async () => {

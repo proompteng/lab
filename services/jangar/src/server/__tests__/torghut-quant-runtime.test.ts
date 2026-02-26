@@ -15,6 +15,12 @@ describe('torghut quant runtime account selection', () => {
     ])
   })
 
+  it('allows aggregate account and only known strategy accounts for fallback materialization', () => {
+    expect(__private.isKnownStrategyAccount('', ['paper-a'])).toBe(true)
+    expect(__private.isKnownStrategyAccount('paper-a', ['paper-a', ' paper-b '])).toBe(true)
+    expect(__private.isKnownStrategyAccount('paper-c', ['paper-a', 'paper-b'])).toBe(false)
+  })
+
   it('marks drawdown and sharpe alerts with required consecutive-frame thresholds', () => {
     const alerts = __private.evaluateAlerts({
       nowIso: '2026-02-18T15:00:00.000Z',

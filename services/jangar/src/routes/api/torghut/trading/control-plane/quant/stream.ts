@@ -6,6 +6,7 @@ import { parseQuantAccount, parseQuantStrategyId, parseQuantWindow } from '~/ser
 import {
   getTorghutQuantEmitter,
   getTorghutQuantStreamHeartbeatMs,
+  startTorghutQuantRuntime,
   type QuantStreamEvent,
 } from '~/server/torghut-quant-runtime'
 
@@ -18,6 +19,8 @@ export const Route = createFileRoute('/api/torghut/trading/control-plane/quant/s
 })
 
 export const streamQuantEvents = async (request: Request) => {
+  startTorghutQuantRuntime()
+
   const url = new URL(request.url)
   const strategyIdResult = parseQuantStrategyId(url)
   if (!strategyIdResult.ok) {

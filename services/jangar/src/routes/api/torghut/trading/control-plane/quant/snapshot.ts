@@ -1,6 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { parseQuantAccount, parseQuantStrategyId, parseQuantWindow } from '~/server/torghut-quant-http'
 import { listQuantAlerts, listQuantLatestMetrics } from '~/server/torghut-quant-metrics-store'
+import {
+  getTorghutQuantRuntimeStatus,
+  isTorghutQuantMaterializationNotFoundError,
+  materializeTorghutQuantFrameOnDemand,
+  startTorghutQuantRuntime,
+} from '~/server/torghut-quant-runtime'
 
 export const Route = createFileRoute('/api/torghut/trading/control-plane/quant/snapshot')({
   server: {
@@ -22,6 +28,8 @@ const jsonResponse = (payload: unknown, status = 200) => {
 }
 
 export const getQuantSnapshotHandler = async (request: Request) => {
+  startTorghutQuantRuntime()
+
   const url = new URL(request.url)
   const strategyIdResult = parseQuantStrategyId(url)
   if (!strategyIdResult.ok) return jsonResponse({ ok: false, message: strategyIdResult.message }, 400)
@@ -31,14 +39,29 @@ export const getQuantSnapshotHandler = async (request: Request) => {
   if (!windowResult.ok) return jsonResponse({ ok: false, message: windowResult.message }, 400)
 
   try {
-    const [metrics, alerts] = await Promise.all([
-      listQuantLatestMetrics({
+    let metrics = await listQuantLatestMetrics({
+      strategyId: strategyIdResult.value,
+      account: accountResult.value,
+      window: windowResult.value,
+    })
+    const runtimeStatus = getTorghutQuantRuntimeStatus()
+    if (metrics.length === 0 && runtimeStatus.enabled) {
+      try {
+        await materializeTorghutQuantFrameOnDemand({
+          strategyId: strategyIdResult.value,
+          account: accountResult.value,
+          window: windowResult.value,
+        })
+      } catch (error) {
+        if (!isTorghutQuantMaterializationNotFoundError(error)) throw error
+      }
+      metrics = await listQuantLatestMetrics({
         strategyId: strategyIdResult.value,
         account: accountResult.value,
         window: windowResult.value,
-      }),
-      listQuantAlerts({ strategyId: strategyIdResult.value, state: 'open', limit: 1000 }),
-    ])
+      })
+    }
+    const alerts = await listQuantAlerts({ strategyId: strategyIdResult.value, state: 'open', limit: 1000 })
 
     const frameAsOf =
       metrics.reduce<string | null>((latest, metric) => {

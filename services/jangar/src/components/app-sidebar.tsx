@@ -96,7 +96,6 @@ const agentsStudioNav: AppNavItem = {
 const controlPlaneNav: AppNavItem[] = [
   { to: '/control-plane/implementation-specs', label: 'Specs', icon: IconFileText },
   { to: '/control-plane/runs', label: 'Runs', icon: IconActivity },
-  { to: '/control-plane/torghut/quant', label: 'Torghut Quant', icon: IconChartLine },
 ]
 
 const apiNav = [
@@ -108,6 +107,7 @@ const torghutNav = [
   { to: '/torghut/symbols', label: 'Symbols', icon: IconList },
   { to: '/torghut/charts', label: 'Charts', icon: IconChartCandle },
   { to: '/torghut/trading', label: 'Trading', icon: IconChartLine },
+  { to: '/torghut/control-plane', label: 'Control Plane', icon: IconActivity },
 ] as const
 
 export function AppSidebar() {

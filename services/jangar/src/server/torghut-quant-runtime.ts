@@ -48,6 +48,26 @@ export type QuantStreamEvent =
   | QuantStreamAlertEvent
   | QuantStreamErrorEvent
 
+export type TorghutQuantRuntimeStatus = {
+  started: boolean
+  enabled: boolean
+  alertsEnabled: boolean
+  computeIntervalMs: number
+  heavyComputeIntervalMs: number
+  streamHeartbeatMs: number
+}
+
+class TorghutQuantMaterializationNotFoundError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'TorghutQuantMaterializationNotFoundError'
+  }
+}
+
+export const isTorghutQuantMaterializationNotFoundError = (
+  error: unknown,
+): error is TorghutQuantMaterializationNotFoundError => error instanceof TorghutQuantMaterializationNotFoundError
+
 type RuntimeConfig = {
   enabled: boolean
   computeIntervalMs: number
@@ -475,10 +495,160 @@ export const getTorghutQuantEmitter = () => ensureGlobal().emitter
 
 export const getTorghutQuantStreamHeartbeatMs = () => ensureGlobal().config.streamHeartbeatMs
 
+export const getTorghutQuantRuntimeStatus = (): TorghutQuantRuntimeStatus => {
+  const state = ensureGlobal()
+  return {
+    started: state.started,
+    enabled: state.config.enabled,
+    alertsEnabled: state.config.alertsEnabled,
+    computeIntervalMs: state.config.computeIntervalMs,
+    heavyComputeIntervalMs: state.config.heavyComputeIntervalMs,
+    streamHeartbeatMs: state.config.streamHeartbeatMs,
+  }
+}
+
 const resolveStrategyAccountsForCompute = (accounts: string[]) => {
   const normalized = accounts.map((account) => account.trim()).filter(Boolean)
   if (normalized.length === 0) return ['']
   return ['', ...normalized]
+}
+
+const isKnownStrategyAccount = (account: string, strategyAccounts: string[]) => {
+  const requested = account.trim()
+  if (!requested) return true
+  const known = new Set(strategyAccounts.map((item) => item.trim()).filter(Boolean))
+  return known.has(requested)
+}
+
+export const materializeTorghutQuantFrameOnDemand = async (params: {
+  strategyId: string
+  account: string
+  window: QuantWindow
+  now?: Date
+}) => {
+  const state = ensureGlobal()
+  const config = state.config
+  if (!config.enabled) {
+    throw new Error('Torghut quant control plane runtime is disabled')
+  }
+
+  const torghut = resolveTorghutDb()
+  if (!torghut.ok) {
+    throw new Error(torghut.message)
+  }
+
+  const strategies = await listTorghutTradingStrategies({ pool: torghut.pool, limit: 500 })
+  const strategy = strategies.find((item) => item.id === params.strategyId)
+  if (!strategy) {
+    throw new TorghutQuantMaterializationNotFoundError(
+      `Strategy ${params.strategyId} was not found in Torghut trading DB`,
+    )
+  }
+  const account = params.account.trim()
+  if (account) {
+    const accounts = await listTorghutStrategyAccounts({ pool: torghut.pool, strategyId: strategy.id, limit: 500 })
+    if (!isKnownStrategyAccount(account, accounts)) {
+      throw new TorghutQuantMaterializationNotFoundError(
+        `Account ${account} was not found for strategy ${params.strategyId}`,
+      )
+    }
+  }
+
+  const now = params.now ?? new Date()
+  const startedAt = Date.now()
+  const computed = await computeTorghutQuantMetrics({
+    pool: torghut.pool,
+    strategy: { id: strategy.id, name: strategy.name },
+    account,
+    window: params.window,
+    now,
+    maxStalenessSeconds: config.maxStalenessSeconds,
+  })
+  const computeDurationMs = Date.now() - startedAt
+  recordTorghutQuantComputeDurationMs(computeDurationMs, { window: params.window })
+
+  const frame: QuantSnapshotFrame = {
+    strategyId: computed.strategyId,
+    account: computed.account,
+    window: computed.window,
+    frameAsOf: computed.frameAsOf,
+    metrics: computed.metrics,
+    alerts: [],
+  }
+
+  const newestMetric = frame.metrics.reduce<{ asOf: string; freshnessSeconds: number } | null>((acc, metric) => {
+    if (!metric.asOf) return acc
+    if (!acc) return { asOf: metric.asOf, freshnessSeconds: metric.freshnessSeconds }
+    return Date.parse(metric.asOf) > Date.parse(acc.asOf)
+      ? { asOf: metric.asOf, freshnessSeconds: metric.freshnessSeconds }
+      : acc
+  }, null)
+  recordTorghutQuantFrame(frame.window, newestMetric?.freshnessSeconds ?? 0, config.maxStalenessSeconds)
+
+  await upsertQuantLatestMetrics({
+    strategyId: frame.strategyId,
+    account: frame.account,
+    window: frame.window,
+    metrics: frame.metrics,
+  })
+
+  await appendQuantSeriesMetrics({
+    strategyId: frame.strategyId,
+    account: frame.account,
+    window: frame.window,
+    metrics: frame.metrics,
+  })
+  state.lastSeriesAppendAtMs.set(frameKey(frame.strategyId, frame.account, frame.window), Date.now())
+
+  const metricsPipelineLag = frame.metrics.find((metric) => metric.metricName === 'metrics_pipeline_lag_seconds')
+  const pipelineLag = metricsPipelineLag?.valueNumeric ?? null
+  const healthAsOf = frame.frameAsOf
+  const computeLagSeconds = Math.max(0, Math.ceil(computeDurationMs / 1000))
+  const materializationLagSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(frame.frameAsOf)) / 1000))
+  await appendQuantPipelineHealth({
+    rows: [
+      {
+        strategyId: frame.strategyId,
+        account: frame.account,
+        stage: 'ingestion',
+        ok: pipelineLag === null ? false : pipelineLag <= config.policy.maxPipelineLagSeconds,
+        lagSeconds: pipelineLag === null ? config.policy.maxPipelineLagSeconds + 1 : Math.max(0, pipelineLag),
+        asOf: healthAsOf,
+        details: { window: frame.window, source: 'on-demand-materialization' },
+      },
+      {
+        strategyId: frame.strategyId,
+        account: frame.account,
+        stage: 'compute',
+        ok: computeLagSeconds <= Math.ceil(config.computeIntervalMs / 1000) + 2,
+        lagSeconds: computeLagSeconds,
+        asOf: healthAsOf,
+        details: {
+          window: frame.window,
+          metricsCount: frame.metrics.length,
+          trigger: 'snapshot-fallback',
+        },
+      },
+      {
+        strategyId: frame.strategyId,
+        account: frame.account,
+        stage: 'materialization',
+        ok: materializationLagSeconds <= config.maxStalenessSeconds,
+        lagSeconds: materializationLagSeconds,
+        asOf: healthAsOf,
+        details: { window: frame.window, seriesAppended: true, trigger: 'snapshot-fallback' },
+      },
+    ],
+  })
+
+  const fkey = frameKey(frame.strategyId, frame.account, frame.window)
+  const previous = state.lastFrames.get(fkey) ?? null
+  state.lastFrames.set(fkey, frame)
+  state.emitter.emit('event', { type: 'quant.metrics.snapshot', frame } satisfies QuantStreamSnapshotEvent)
+  const delta = buildDelta(previous, frame)
+  if (delta) state.emitter.emit('event', delta)
+
+  return frame
 }
 
 const runComputeCycle = async (windows: QuantWindow[]) => {
@@ -678,7 +848,7 @@ export const startTorghutQuantRuntime = () => {
     if (!state.config.enabled) return
 
     let lightInFlight = false
-    setInterval(() => {
+    const runLightCycle = () => {
       if (lightInFlight) return
       lightInFlight = true
       void runComputeCycle(state.config.windowsLight)
@@ -690,10 +860,12 @@ export const startTorghutQuantRuntime = () => {
         .finally(() => {
           lightInFlight = false
         })
-    }, state.config.computeIntervalMs)
+    }
+    runLightCycle()
+    setInterval(runLightCycle, state.config.computeIntervalMs)
 
     let heavyInFlight = false
-    setInterval(() => {
+    const runHeavyCycle = () => {
       if (heavyInFlight) return
       heavyInFlight = true
       void runComputeCycle(state.config.windowsHeavy)
@@ -705,7 +877,8 @@ export const startTorghutQuantRuntime = () => {
         .finally(() => {
           heavyInFlight = false
         })
-    }, state.config.heavyComputeIntervalMs)
+    }
+    setInterval(runHeavyCycle, state.config.heavyComputeIntervalMs)
   })().catch((error) => {
     console.warn('[torghut-quant-runtime] failed to initialize', error)
   })
@@ -713,6 +886,7 @@ export const startTorghutQuantRuntime = () => {
 
 export const __private = {
   resolveStrategyAccountsForCompute,
+  isKnownStrategyAccount,
   evaluateAlerts,
   buildDelta,
 }

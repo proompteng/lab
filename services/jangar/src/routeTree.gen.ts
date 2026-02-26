@@ -28,6 +28,7 @@ import { Route as V1AgentRunsRouteImport } from './routes/v1/agent-runs'
 import { Route as TorghutVisualsRouteImport } from './routes/torghut/visuals'
 import { Route as TorghutTradingRouteImport } from './routes/torghut/trading'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
+import { Route as TorghutControlPlaneRouteImport } from './routes/torghut/control-plane'
 import { Route as TorghutChartsRouteImport } from './routes/torghut/charts'
 import { Route as TerminalsSessionIdRouteImport } from './routes/terminals/$sessionId'
 import { Route as GithubPullsRouteImport } from './routes/github/pulls'
@@ -258,6 +259,11 @@ const TorghutTradingRoute = TorghutTradingRouteImport.update({
 const TorghutSymbolsRoute = TorghutSymbolsRouteImport.update({
   id: '/torghut/symbols',
   path: '/torghut/symbols',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TorghutControlPlaneRoute = TorghutControlPlaneRouteImport.update({
+  id: '/torghut/control-plane',
+  path: '/torghut/control-plane',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TorghutChartsRoute = TorghutChartsRouteImport.update({
@@ -1037,6 +1043,7 @@ export interface FileRoutesByFullPath {
   '/github/pulls': typeof GithubPullsRouteWithChildren
   '/terminals/$sessionId': typeof TerminalsSessionIdRouteWithChildren
   '/torghut/charts': typeof TorghutChartsRoute
+  '/torghut/control-plane': typeof TorghutControlPlaneRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -1192,6 +1199,7 @@ export interface FileRoutesByTo {
   '/codex/runs': typeof CodexRunsRoute
   '/codex/search': typeof CodexSearchRoute
   '/torghut/charts': typeof TorghutChartsRoute
+  '/torghut/control-plane': typeof TorghutControlPlaneRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -1350,6 +1358,7 @@ export interface FileRoutesById {
   '/github/pulls': typeof GithubPullsRouteWithChildren
   '/terminals/$sessionId': typeof TerminalsSessionIdRouteWithChildren
   '/torghut/charts': typeof TorghutChartsRoute
+  '/torghut/control-plane': typeof TorghutControlPlaneRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -1509,6 +1518,7 @@ export interface FileRouteTypes {
     | '/github/pulls'
     | '/terminals/$sessionId'
     | '/torghut/charts'
+    | '/torghut/control-plane'
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
@@ -1664,6 +1674,7 @@ export interface FileRouteTypes {
     | '/codex/runs'
     | '/codex/search'
     | '/torghut/charts'
+    | '/torghut/control-plane'
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
@@ -1821,6 +1832,7 @@ export interface FileRouteTypes {
     | '/github/pulls'
     | '/terminals/$sessionId'
     | '/torghut/charts'
+    | '/torghut/control-plane'
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
@@ -1979,6 +1991,7 @@ export interface RootRouteChildren {
   GithubPullsRoute: typeof GithubPullsRouteWithChildren
   TerminalsSessionIdRoute: typeof TerminalsSessionIdRouteWithChildren
   TorghutChartsRoute: typeof TorghutChartsRoute
+  TorghutControlPlaneRoute: typeof TorghutControlPlaneRoute
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   TorghutTradingRoute: typeof TorghutTradingRoute
   TorghutVisualsRoute: typeof TorghutVisualsRoute
@@ -2216,6 +2229,13 @@ declare module '@tanstack/react-router' {
       path: '/torghut/symbols'
       fullPath: '/torghut/symbols'
       preLoaderRoute: typeof TorghutSymbolsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/torghut/control-plane': {
+      id: '/torghut/control-plane'
+      path: '/torghut/control-plane'
+      fullPath: '/torghut/control-plane'
+      preLoaderRoute: typeof TorghutControlPlaneRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/torghut/charts': {
@@ -3430,6 +3450,7 @@ const rootRouteChildren: RootRouteChildren = {
   GithubPullsRoute: GithubPullsRouteWithChildren,
   TerminalsSessionIdRoute: TerminalsSessionIdRouteWithChildren,
   TorghutChartsRoute: TorghutChartsRoute,
+  TorghutControlPlaneRoute: TorghutControlPlaneRoute,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   TorghutTradingRoute: TorghutTradingRoute,
   TorghutVisualsRoute: TorghutVisualsRoute,
@@ -3552,3 +3573,12 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}
