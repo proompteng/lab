@@ -1897,24 +1897,47 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     return next
   }
 
-  const latestFileVersionIdsExpr = sql<string>`
-    SELECT ranked.id
-    FROM (
-      SELECT
-        fv.id,
-        ROW_NUMBER() OVER (
-          PARTITION BY fv.file_key_id, fv.repository_ref
-          ORDER BY fv.updated_at DESC, fv.created_at DESC, fv.id DESC
-        ) AS latest_rank
-      FROM atlas.file_versions AS fv
-    ) AS ranked
-    WHERE ranked.latest_rank = 1
-  `
+  const latestFileVersionIdsExpr = (filters: ReturnType<typeof resolveCodeSearchFilters>) => {
+    const conditions: Array<ReturnType<typeof sql>> = []
+    if (filters.repository) {
+      conditions.push(sql`repositories_scope.name = ${filters.repository}`)
+    }
+    if (filters.ref) {
+      conditions.push(sql`fv.repository_ref = ${filters.ref}`)
+    }
+    if (filters.pathPrefix) {
+      conditions.push(sql`file_keys_scope.path LIKE ${`${filters.pathPrefix}%`}`)
+    }
+    if (filters.language) {
+      conditions.push(sql`fv.language = ${filters.language}`)
+    }
+
+    const whereClause = conditions.length ? sql`WHERE ${sql.join(conditions, sql` AND `)}` : sql``
+
+    return sql<string>`
+      SELECT ranked.id
+      FROM (
+        SELECT
+          fv.id,
+          ROW_NUMBER() OVER (
+            PARTITION BY fv.file_key_id, fv.repository_ref
+            ORDER BY fv.updated_at DESC, fv.created_at DESC, fv.id DESC
+          ) AS latest_rank
+        FROM atlas.file_versions AS fv
+        INNER JOIN atlas.file_keys AS file_keys_scope ON file_keys_scope.id = fv.file_key_id
+        INNER JOIN atlas.repositories AS repositories_scope ON repositories_scope.id = file_keys_scope.repository_id
+        ${whereClause}
+      ) AS ranked
+      WHERE ranked.latest_rank = 1
+    `
+  }
 
   // Keep only the most recent indexed file version per (file, ref)
   // so code-search doesn't surface stale duplicates from prior versions.
-  const applyLatestFileVersionFilter = <T extends { where: (...args: unknown[]) => T }>(query: T) =>
-    query.where(sql<boolean>`file_versions.id IN (${latestFileVersionIdsExpr})`)
+  const applyLatestFileVersionFilter = <T extends { where: (...args: unknown[]) => T }>(
+    query: T,
+    filters: ReturnType<typeof resolveCodeSearchFilters>,
+  ) => query.where(sql<boolean>`file_versions.id IN (${latestFileVersionIdsExpr(filters)})`)
 
   const codeSearch: AtlasStore['codeSearch'] = async ({ query, limit, repository, ref, pathPrefix, language }) => {
     await ensureSchema()
@@ -1978,7 +2001,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
           .where('chunk_embeddings.dimension', '=', embeddingConfig.dimension)
 
         semanticQuery = applyCodeSearchFilters(semanticQuery, filters)
-        semanticQuery = applyLatestFileVersionFilter(semanticQuery)
+        semanticQuery = applyLatestFileVersionFilter(semanticQuery, filters)
 
         return await semanticQuery.orderBy(semanticDistanceExpr).limit(semanticLimit).execute()
       } catch (error) {
@@ -2034,7 +2057,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
       .where(sql<boolean>`file_chunks.text_tsvector @@ ${lexicalQueryExpr}`)
 
     lexicalQuery = applyCodeSearchFilters(lexicalQuery, filters)
-    lexicalQuery = applyLatestFileVersionFilter(lexicalQuery)
+    lexicalQuery = applyLatestFileVersionFilter(lexicalQuery, filters)
 
     const lexicalRows = await lexicalQuery.orderBy(lexicalRankExpr, 'desc').limit(lexicalLimit).execute()
 

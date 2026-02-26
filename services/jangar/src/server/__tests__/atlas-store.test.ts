@@ -360,6 +360,15 @@ describe('atlas store', () => {
     expect(normalized).toContain('file_versions.id in ( select ranked.id from ( select fv.id')
     expect(normalized).toContain('row_number() over ( partition by fv.file_key_id, fv.repository_ref')
     expect(normalized).toContain('order by fv.updated_at desc, fv.created_at desc, fv.id desc')
+    expect(normalized).toContain('from atlas.file_versions as fv')
+    expect(normalized).toContain('inner join atlas.file_keys as file_keys_scope on file_keys_scope.id = fv.file_key_id')
+    expect(normalized).toContain(
+      'inner join atlas.repositories as repositories_scope on repositories_scope.id = file_keys_scope.repository_id',
+    )
+    expect(normalized).toContain('where repositories_scope.name =')
+    expect(normalized).toContain('fv.repository_ref =')
+    expect(normalized).toContain('file_keys_scope.path like')
+    expect(normalized).toContain('fv.language =')
     expect(normalized).toContain('where ranked.latest_rank = 1 )')
   })
 })

@@ -40,7 +40,66 @@ type Options = {
   json: boolean
 }
 
-const DEFAULT_BASE_URL = 'http://127.0.0.1:3000'
+const DEFAULT_JANGAR_BASE_URL = 'http://jangar.ide-newton.ts.net'
+const DEFAULT_K8S_JANGAR_BASE_URL = 'http://jangar.jangar.svc.cluster.local'
+const DEFAULT_K8S_SAME_NAMESPACE_JANGAR_BASE_URL = 'http://jangar'
+const SERVICEACCOUNT_NAMESPACE_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
+
+const trimTrailingSlash = (raw: string) => (raw.endsWith('/') ? raw.slice(0, -1) : raw)
+
+const normalizeNamespace = (raw?: string | null) => {
+  const value = raw?.trim()
+  if (!value) return undefined
+  return value
+}
+
+const readServiceAccountNamespace = () => {
+  try {
+    return normalizeNamespace(readFileSync(SERVICEACCOUNT_NAMESPACE_PATH, 'utf8'))
+  } catch {
+    return undefined
+  }
+}
+
+const resolveKubernetesNamespace = (explicitNamespace?: string | null) => {
+  if (explicitNamespace !== undefined) {
+    return normalizeNamespace(explicitNamespace)
+  }
+
+  return (
+    normalizeNamespace(process.env.ATLAS_K8S_NAMESPACE) ??
+    normalizeNamespace(process.env.MEMORIES_K8S_NAMESPACE) ??
+    normalizeNamespace(process.env.POD_NAMESPACE) ??
+    normalizeNamespace(process.env.KUBERNETES_NAMESPACE) ??
+    readServiceAccountNamespace()
+  )
+}
+
+const resolveDefaultBaseUrl = () => {
+  const configured =
+    process.env.ATLAS_BASE_URL ??
+    process.env.JANGAR_BASE_URL ??
+    process.env.ATLAS_JANGAR_URL ??
+    process.env.MEMORIES_JANGAR_URL ??
+    process.env.MEMORIES_BASE_URL
+
+  if (configured) return trimTrailingSlash(configured)
+
+  const kubernetesNamespace = resolveKubernetesNamespace()
+  if (kubernetesNamespace) {
+    return kubernetesNamespace.toLowerCase() === 'jangar'
+      ? DEFAULT_K8S_SAME_NAMESPACE_JANGAR_BASE_URL
+      : DEFAULT_K8S_JANGAR_BASE_URL
+  }
+
+  if (process.env.KUBERNETES_SERVICE_HOST || process.env.KUBERNETES_SERVICE_PORT) {
+    return DEFAULT_K8S_JANGAR_BASE_URL
+  }
+
+  // Keep localhost as explicit opt-in via --base-url/ATLAS_BASE_URL;
+  // defaulting to the shared Jangar hostname matches memories scripts.
+  return DEFAULT_JANGAR_BASE_URL
+}
 
 const usage = () =>
   `
@@ -55,7 +114,7 @@ Options:
       --ref <ref>            Ref filter (default: main on server)
       --path-prefix <path>   Path prefix filter
       --language <name>      Language filter (e.g. typescript, go)
-      --base-url <url>       Base URL (default: $ATLAS_BASE_URL, $JANGAR_BASE_URL, or ${DEFAULT_BASE_URL})
+      --base-url <url>       Base URL override (default: env, then k8s service discovery, else ${DEFAULT_JANGAR_BASE_URL})
       --json                 Print raw JSON response
   -h, --help                 Show this help message
 
@@ -92,7 +151,7 @@ const parseArgs = (argv: string[]): Options => {
   const options: Partial<Options> = {
     limit: 10,
     json: false,
-    baseUrl: process.env.ATLAS_BASE_URL ?? process.env.JANGAR_BASE_URL ?? DEFAULT_BASE_URL,
+    baseUrl: resolveDefaultBaseUrl(),
   }
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -192,13 +251,13 @@ const parseArgs = (argv: string[]): Options => {
     }
 
     if (arg === '--base-url') {
-      options.baseUrl = readValue(arg, argv, i)
+      options.baseUrl = trimTrailingSlash(readValue(arg, argv, i))
       i += 1
       continue
     }
 
     if (arg.startsWith('--base-url=')) {
-      options.baseUrl = arg.slice('--base-url='.length)
+      options.baseUrl = trimTrailingSlash(arg.slice('--base-url='.length))
       continue
     }
 
