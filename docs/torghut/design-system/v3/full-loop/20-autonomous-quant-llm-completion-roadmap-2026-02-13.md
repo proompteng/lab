@@ -16,6 +16,7 @@
   - no-signal reason classification + lag handling in `services/torghut/app/trading/ingest.py`,
   - continuity alert latching/recovery, emergency stop integration, and live-promotion block while continuity alert is active in `services/torghut/app/trading/scheduler.py`,
   - status/autonomy and metrics exposure in `services/torghut/app/main.py` and `services/torghut/app/metrics.py`,
+  - runtime profitability evidence endpoint at `GET /trading/profitability/runtime` with fixed 72-hour lookback, adapter/fallback attribution, realized-PnL proxy, adverse excursion proxy, and gate/rollback attribution sourced from autonomy artifacts,
   - alert rules in `argocd/applications/observability/graf-mimir-rules.yaml`.
 
 ## Current evidence snapshot
@@ -49,13 +50,14 @@
      - `research_promotions` when promotion gates pass/fail.
    - Add a nightly reconciliation check that verifies the full artifact chain for the latest lane IDs.
 
-3. Strategy profitability signal
-   - Add explicit live paper profitability dashboard slice:
-     - decisions by symbol/strategy,
-     - execution fills by adapter,
-     - realized PnL and adverse excursion for a fixed hold-forward window,
-     - gate and rollback attribution.
-   - Only promote to live when 3+ day paper evidence passes the gate policy envelope for the same symbols.
+3. Strategy profitability signal (**Completed 2026-02-26**)
+   - Runtime profitability slice is now exposed through `GET /trading/profitability/runtime`:
+     - fixed `72h` lookback window metadata (`start`, `end`, counts, `empty`),
+     - decisions grouped by `symbol` + `strategy_id`,
+     - executions grouped by adapter transition with fallback reason attribution,
+     - realized PnL proxy (`-shortfall_notional_total`) and adverse excursion proxy (`p95/max` bps),
+     - gate6/promotion and rollback attribution from existing autonomy artifacts.
+   - Endpoint caveats explicitly state that payload is evidence-only and does not claim profitability certainty.
 
 4. LEAN parity and fallback observability
    - Persist `execution_expected_adapter`, `execution_actual_adapter`, `execution_fallback_count`, `execution_fallback_reason` on every execution write.
@@ -112,6 +114,6 @@
 ## Open PR hooks this roadmap maps to
 
 - Signal freshness alerts + lane evidence validation tests (completed).
-- Profitability evidence endpoint and promotion gate checks.
+- Profitability evidence endpoint and promotion gate checks (completed for runtime API surface).
 - LEAN route telemetry, backfill validation, and reconciliation tests.
 - LLM advisory policy hardening for advisory-only mode.

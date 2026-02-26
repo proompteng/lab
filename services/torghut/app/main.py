@@ -1,13 +1,15 @@
 """torghut FastAPI application entrypoint."""
 
+import json
 import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
+from pathlib import Path
 from typing import Any, cast
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
@@ -24,6 +26,7 @@ from .metrics import render_trading_metrics
 from .models import (
     Execution,
     ExecutionTCAMetric,
+    Strategy,
     TradeDecision,
     WhitepaperAnalysisRun,
     WhitepaperCodexAgentRun,
@@ -46,6 +49,8 @@ logger = logging.getLogger(__name__)
 
 BUILD_VERSION = os.getenv("TORGHUT_VERSION", "dev")
 BUILD_COMMIT = os.getenv("TORGHUT_COMMIT", "unknown")
+RUNTIME_PROFITABILITY_LOOKBACK_HOURS = 72
+RUNTIME_PROFITABILITY_SCHEMA_VERSION = "torghut.runtime-profitability.v1"
 LEAN_LANE_MANAGER = LeanLaneManager()
 WHITEPAPER_WORKFLOW = WhitepaperWorkflowService()
 
@@ -878,6 +883,81 @@ def trading_executions(
     return jsonable_encoder(payload)
 
 
+@app.get("/trading/profitability/runtime")
+def trading_runtime_profitability(
+    session: Session = Depends(get_session),
+) -> JSONResponse:
+    """Return bounded runtime profitability evidence for operator dashboards."""
+
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+
+    window_end = datetime.now(timezone.utc)
+    window_start = window_end - timedelta(hours=RUNTIME_PROFITABILITY_LOOKBACK_HOURS)
+    decisions, decision_total = _load_runtime_profitability_decisions(
+        session, window_start
+    )
+    executions, execution_total, fallback_reason_totals = (
+        _load_runtime_profitability_executions(session, window_start)
+    )
+    realized_pnl_summary = _load_runtime_profitability_realized_pnl_summary(
+        session, window_start
+    )
+    gate_rollback_attribution = _load_runtime_profitability_gate_rollback_attribution(
+        scheduler.state
+    )
+
+    caveats = [
+        {
+            "code": "evidence_only_no_profitability_certainty",
+            "message": (
+                "Runtime profitability is observational evidence only and does not establish future or guaranteed profitability."
+            ),
+        },
+        {
+            "code": "realized_pnl_proxy_from_tca_shortfall",
+            "message": (
+                "realized_pnl_proxy_notional is derived from TCA shortfall notional and excludes full portfolio mark-to-market effects."
+            ),
+        },
+    ]
+    tca_samples = _safe_int(realized_pnl_summary.get("tca_sample_count", 0))
+    if decision_total == 0 and execution_total == 0 and tca_samples == 0:
+        caveats.append(
+            {
+                "code": "empty_window_no_runtime_evidence",
+                "message": (
+                    "No decisions, executions, or TCA samples were recorded in the fixed lookback window."
+                ),
+            }
+        )
+
+    payload = {
+        "schema_version": RUNTIME_PROFITABILITY_SCHEMA_VERSION,
+        "generated_at": window_end,
+        "window": {
+            "lookback_hours": RUNTIME_PROFITABILITY_LOOKBACK_HOURS,
+            "start": window_start,
+            "end": window_end,
+            "decision_count": decision_total,
+            "execution_count": execution_total,
+            "tca_sample_count": tca_samples,
+            "empty": decision_total == 0 and execution_total == 0 and tca_samples == 0,
+        },
+        "decisions_by_symbol_strategy": decisions,
+        "executions": {
+            "by_adapter": executions,
+            "fallback_reason_totals": fallback_reason_totals,
+        },
+        "realized_pnl_summary": realized_pnl_summary,
+        "gate_rollback_attribution": gate_rollback_attribution,
+        "caveats": caveats,
+    }
+    return JSONResponse(status_code=200, content=jsonable_encoder(payload))
+
+
 @app.get("/trading/tca")
 def trading_tca(
     symbol: str | None = None,
@@ -1314,6 +1394,382 @@ def _tca_as_float(value: object) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     return 0.0
+
+
+def _load_runtime_profitability_decisions(
+    session: Session,
+    window_start: datetime,
+) -> tuple[list[dict[str, object]], int]:
+    stmt = (
+        select(TradeDecision, Strategy.name)
+        .join(Strategy, TradeDecision.strategy_id == Strategy.id, isouter=True)
+        .where(TradeDecision.created_at >= window_start)
+    )
+    rows = session.execute(stmt).all()
+    grouped: dict[tuple[str, str], dict[str, object]] = {}
+    for decision, strategy_name in rows:
+        strategy_id = str(decision.strategy_id)
+        symbol = decision.symbol
+        status = str(decision.status or "unknown").strip() or "unknown"
+        bucket = grouped.setdefault(
+            (strategy_id, symbol),
+            {
+                "strategy_id": strategy_id,
+                "strategy_name": strategy_name,
+                "symbol": symbol,
+                "decision_count": 0,
+                "executed_count": 0,
+                "status_counts": {},
+                "last_decision_at": None,
+                "last_executed_at": None,
+            },
+        )
+        bucket["decision_count"] = _safe_int(bucket.get("decision_count")) + 1
+        status_counts = cast(dict[str, int], bucket["status_counts"])
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if decision.executed_at is not None:
+            bucket["executed_count"] = _safe_int(bucket.get("executed_count")) + 1
+            previous_executed_at = cast(datetime | None, bucket.get("last_executed_at"))
+            if (
+                previous_executed_at is None
+                or decision.executed_at > previous_executed_at
+            ):
+                bucket["last_executed_at"] = decision.executed_at
+        previous_created_at = cast(datetime | None, bucket.get("last_decision_at"))
+        if previous_created_at is None or decision.created_at > previous_created_at:
+            bucket["last_decision_at"] = decision.created_at
+
+    payload = sorted(
+        grouped.values(),
+        key=lambda item: (
+            str(item.get("strategy_id") or ""),
+            str(item.get("symbol") or ""),
+        ),
+    )
+    return payload, len(rows)
+
+
+def _load_runtime_profitability_executions(
+    session: Session,
+    window_start: datetime,
+) -> tuple[list[dict[str, object]], int, dict[str, int]]:
+    executions = (
+        session.execute(select(Execution).where(Execution.created_at >= window_start))
+        .scalars()
+        .all()
+    )
+    grouped: dict[tuple[str, str], dict[str, object]] = {}
+    fallback_reason_totals: dict[str, int] = {}
+    for execution in executions:
+        expected_adapter = _normalized_adapter_name(
+            execution.execution_expected_adapter
+        )
+        actual_adapter = _normalized_adapter_name(execution.execution_actual_adapter)
+        fallback_reason = (
+            str(execution.execution_fallback_reason).strip()
+            if execution.execution_fallback_reason is not None
+            else ""
+        )
+        fallback_count = max(0, int(execution.execution_fallback_count or 0))
+        fallback_applied = bool(
+            fallback_reason or fallback_count > 0 or expected_adapter != actual_adapter
+        )
+        status = str(execution.status or "unknown").strip() or "unknown"
+
+        bucket = grouped.setdefault(
+            (expected_adapter, actual_adapter),
+            {
+                "expected_adapter": expected_adapter,
+                "actual_adapter": actual_adapter,
+                "execution_count": 0,
+                "fallback_execution_count": 0,
+                "fallback_count_total": 0,
+                "fallback_reason_counts": {},
+                "status_counts": {},
+                "last_execution_at": None,
+            },
+        )
+        bucket["execution_count"] = _safe_int(bucket.get("execution_count")) + 1
+        if fallback_applied:
+            bucket["fallback_execution_count"] = (
+                _safe_int(bucket.get("fallback_execution_count")) + 1
+            )
+        bucket["fallback_count_total"] = (
+            _safe_int(bucket.get("fallback_count_total")) + fallback_count
+        )
+        status_counts = cast(dict[str, int], bucket["status_counts"])
+        status_counts[status] = status_counts.get(status, 0) + 1
+        previous_created_at = cast(datetime | None, bucket.get("last_execution_at"))
+        if previous_created_at is None or execution.created_at > previous_created_at:
+            bucket["last_execution_at"] = execution.created_at
+
+        if fallback_reason:
+            reason_counts = cast(dict[str, int], bucket["fallback_reason_counts"])
+            reason_counts[fallback_reason] = reason_counts.get(fallback_reason, 0) + 1
+            fallback_reason_totals[fallback_reason] = (
+                fallback_reason_totals.get(fallback_reason, 0) + 1
+            )
+
+    payload = sorted(
+        grouped.values(),
+        key=lambda item: (
+            str(item.get("expected_adapter") or ""),
+            str(item.get("actual_adapter") or ""),
+        ),
+    )
+    return payload, len(executions), dict(sorted(fallback_reason_totals.items()))
+
+
+def _load_runtime_profitability_realized_pnl_summary(
+    session: Session,
+    window_start: datetime,
+) -> dict[str, object]:
+    rows = (
+        session.execute(
+            select(ExecutionTCAMetric).where(
+                ExecutionTCAMetric.computed_at >= window_start
+            )
+        )
+        .scalars()
+        .all()
+    )
+    shortfall_total = Decimal("0")
+    realized_shortfall_values: list[Decimal] = []
+    adverse_proxy_values: list[Decimal] = []
+    by_symbol: dict[str, dict[str, object]] = {}
+    for row in rows:
+        shortfall = row.shortfall_notional
+        if shortfall is not None:
+            shortfall_total += shortfall
+            symbol_bucket = by_symbol.setdefault(
+                row.symbol,
+                {
+                    "symbol": row.symbol,
+                    "samples": 0,
+                    "shortfall_notional_total": Decimal("0"),
+                },
+            )
+            symbol_bucket["samples"] = _safe_int(symbol_bucket.get("samples")) + 1
+            symbol_bucket["shortfall_notional_total"] = (
+                cast(Decimal, symbol_bucket["shortfall_notional_total"]) + shortfall
+            )
+
+        realized_shortfall = row.realized_shortfall_bps
+        if realized_shortfall is not None:
+            realized_shortfall_values.append(realized_shortfall)
+            adverse_proxy_values.append(abs(realized_shortfall))
+        elif row.slippage_bps is not None:
+            adverse_proxy_values.append(abs(row.slippage_bps))
+
+    by_symbol_payload: list[dict[str, object]] = []
+    for symbol_key in sorted(by_symbol):
+        symbol_row = by_symbol[symbol_key]
+        by_symbol_payload.append(
+            {
+                "symbol": symbol_row["symbol"],
+                "samples": symbol_row["samples"],
+                "shortfall_notional_total": _decimal_to_string(
+                    cast(Decimal, symbol_row["shortfall_notional_total"])
+                ),
+            }
+        )
+
+    return {
+        "tca_sample_count": len(rows),
+        "realized_pnl_proxy_notional": _decimal_to_string(-shortfall_total),
+        "shortfall_notional_total": _decimal_to_string(shortfall_total),
+        "avg_realized_shortfall_bps": _decimal_to_string(
+            _decimal_average(realized_shortfall_values)
+        ),
+        "adverse_excursion_proxy_bps_p95": _decimal_to_string(
+            _decimal_percentile(adverse_proxy_values, 95)
+        ),
+        "adverse_excursion_proxy_bps_max": _decimal_to_string(
+            max(adverse_proxy_values) if adverse_proxy_values else None
+        ),
+        "by_symbol": by_symbol_payload,
+    }
+
+
+def _load_runtime_profitability_gate_rollback_attribution(
+    state: object,
+) -> dict[str, object]:
+    gate_artifact_path = str(getattr(state, "last_autonomy_gates", "") or "").strip()
+    gate_payload = _load_json_artifact_payload(gate_artifact_path)
+    gate6 = _extract_gate_result(
+        cast(list[object], gate_payload.get("gates") or []),
+        gate_id="gate6_profitability_evidence",
+    )
+
+    promotion_decision = _to_str_map(gate_payload.get("promotion_decision"))
+    promotion_recommendation = _to_str_map(gate_payload.get("promotion_recommendation"))
+    provenance = _to_str_map(gate_payload.get("provenance"))
+
+    rollback_evidence_path = str(
+        getattr(state, "rollback_incident_evidence_path", "") or ""
+    ).strip()
+    rollback_payload = _load_json_artifact_payload(rollback_evidence_path)
+    rollback_reasons_raw = rollback_payload.get("reasons")
+    rollback_reasons = (
+        [
+            str(item)
+            for item in cast(list[object], rollback_reasons_raw)
+            if str(item).strip()
+        ]
+        if isinstance(rollback_reasons_raw, list)
+        else []
+    )
+    rollback_verification = _to_str_map(rollback_payload.get("verification"))
+    metrics = getattr(state, "metrics", None)
+    return {
+        "gate_report_artifact": gate_artifact_path or None,
+        "gate_report_run_id": str(gate_payload.get("run_id") or "").strip() or None,
+        "gate_report_trace_id": str(
+            provenance.get("gate_report_trace_id") or ""
+        ).strip()
+        or None,
+        "recommendation_trace_id": str(
+            provenance.get("recommendation_trace_id") or ""
+        ).strip()
+        or None,
+        "gate6_profitability_evidence": gate6,
+        "promotion_decision": {
+            "promotion_target": promotion_decision.get("promotion_target"),
+            "recommended_mode": promotion_decision.get("recommended_mode"),
+            "promotion_allowed": promotion_decision.get("promotion_allowed"),
+            "reason_codes": promotion_decision.get("reason_codes"),
+            "promotion_gate_artifact": promotion_decision.get(
+                "promotion_gate_artifact"
+            ),
+            "recommendation_action": promotion_recommendation.get("action"),
+        },
+        "profitability_artifacts": {
+            "benchmark": provenance.get("profitability_benchmark_artifact"),
+            "evidence": provenance.get("profitability_evidence_artifact"),
+            "validation": provenance.get("profitability_validation_artifact"),
+        },
+        "rollback": {
+            "emergency_stop_active": bool(
+                getattr(state, "emergency_stop_active", False)
+            ),
+            "emergency_stop_reason": getattr(state, "emergency_stop_reason", None),
+            "incidents_total": _safe_int(getattr(state, "rollback_incidents_total", 0)),
+            "incident_evidence_path": rollback_evidence_path or None,
+            "incident_reason_codes": rollback_reasons,
+            "incident_evidence_complete": rollback_verification.get(
+                "incident_evidence_complete"
+            ),
+            "signal_continuity_promotion_block_total": _safe_int(
+                getattr(metrics, "signal_continuity_promotion_block_total", 0)
+            ),
+        },
+    }
+
+
+def _load_json_artifact_payload(path: str) -> dict[str, object]:
+    if not path:
+        return {}
+    if "://" in path and not path.startswith("file://"):
+        return {}
+    resolved = Path(path.replace("file://", "", 1))
+    if not resolved.exists() or not resolved.is_file():
+        return {}
+    try:
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if isinstance(payload, dict):
+        return cast(dict[str, object], payload)
+    return {}
+
+
+def _extract_gate_result(gates: list[object], *, gate_id: str) -> dict[str, object]:
+    for raw_gate in gates:
+        if not isinstance(raw_gate, Mapping):
+            continue
+        gate = cast(Mapping[object, object], raw_gate)
+        gate_name = str(gate.get("gate_id") or "").strip()
+        if gate_name != gate_id:
+            continue
+        reasons_raw = gate.get("reasons")
+        artifact_refs_raw = gate.get("artifact_refs")
+        return {
+            "gate_id": gate_name,
+            "status": str(gate.get("status") or "unknown").strip() or "unknown",
+            "reasons": (
+                [
+                    str(item)
+                    for item in cast(list[object], reasons_raw)
+                    if str(item).strip()
+                ]
+                if isinstance(reasons_raw, list)
+                else []
+            ),
+            "artifact_refs": (
+                [
+                    str(item)
+                    for item in cast(list[object], artifact_refs_raw)
+                    if str(item).strip()
+                ]
+                if isinstance(artifact_refs_raw, list)
+                else []
+            ),
+        }
+    return {
+        "gate_id": gate_id,
+        "status": "unknown",
+        "reasons": [],
+        "artifact_refs": [],
+    }
+
+
+def _to_str_map(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    source = cast(Mapping[object, object], value)
+    return {str(key): item for key, item in source.items()}
+
+
+def _normalized_adapter_name(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized or "unknown"
+
+
+def _decimal_average(values: list[Decimal]) -> Decimal | None:
+    if not values:
+        return None
+    return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def _decimal_percentile(values: list[Decimal], percentile: int) -> Decimal | None:
+    if not values:
+        return None
+    bounded = max(1, min(100, percentile))
+    ordered = sorted(values)
+    index = ((len(ordered) * bounded) + 99) // 100 - 1
+    if index < 0:
+        index = 0
+    return ordered[index]
+
+
+def _decimal_to_string(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    text = format(value, "f")
+    if "." not in text:
+        return text
+    normalized = text.rstrip("0").rstrip(".")
+    return normalized or "0"
+
+
+def _safe_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return 0
 
 
 def _load_llm_evaluation(session: Session) -> dict[str, object]:
