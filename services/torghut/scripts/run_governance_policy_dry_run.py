@@ -94,6 +94,26 @@ def main() -> int:
             '{"schema_version":"recalibration_report_v1","status":"not_required","recalibration_run_id":null}\n',
             encoding="utf-8",
         )
+        (root / "gates" / "janus-event-car-v1.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "janus-event-car-v1",
+                    "summary": {"event_count": 2},
+                    "records": [{"event_id": "evt-1"}, {"event_id": "evt-2"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "gates" / "janus-hgrm-reward-v1.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "janus-hgrm-reward-v1",
+                    "summary": {"reward_count": 2},
+                    "rewards": [{"reward_id": "rwd-1"}, {"reward_id": "rwd-2"}],
+                }
+            ),
+            encoding="utf-8",
+        )
         (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
             "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dry-run\n",
             encoding="utf-8",

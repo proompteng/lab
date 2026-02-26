@@ -107,6 +107,12 @@ def main() -> int:
         "profitability_validation_path": str(
             result.output_dir / "gates" / "profitability-evidence-validation.json"
         ),
+        "janus_event_car_path": str(
+            result.output_dir / "gates" / "janus-event-car-v1.json"
+        ),
+        "janus_hgrm_reward_path": str(
+            result.output_dir / "gates" / "janus-hgrm-reward-v1.json"
+        ),
         "promotion_gate_path": str(
             result.output_dir / "gates" / "promotion-evidence-gate.json"
         ),

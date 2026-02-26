@@ -149,6 +149,9 @@ class TestAutonomousLane(TestCase):
             evidence = gate_payload["promotion_evidence"]
             self.assertEqual(evidence["fold_metrics"]["count"], 1)
             self.assertEqual(evidence["stress_metrics"]["count"], 4)
+            self.assertIn("janus_q", evidence)
+            self.assertEqual(evidence["janus_q"]["event_car"]["count"], 3)
+            self.assertEqual(evidence["janus_q"]["hgrm_reward"]["count"], 3)
             self.assertTrue(
                 bool(evidence["promotion_rationale"].get("recommendation_trace_id"))
             )
@@ -162,6 +165,10 @@ class TestAutonomousLane(TestCase):
                 (
                     output_dir / "gates" / "profitability-evidence-validation.json"
                 ).exists()
+            )
+            self.assertTrue((output_dir / "gates" / "janus-event-car-v1.json").exists())
+            self.assertTrue(
+                (output_dir / "gates" / "janus-hgrm-reward-v1.json").exists()
             )
             self.assertTrue(
                 (output_dir / "gates" / "promotion-evidence-gate.json").exists()

@@ -63,10 +63,15 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
+    janus_required = _requires_janus_evidence(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     required_artifacts = _required_artifacts_for_target(
         policy_payload,
         promotion_target,
         include_profitability_artifacts=profitability_required,
+        include_janus_artifacts=janus_required,
     )
     missing_artifacts = [
         item for item in required_artifacts if not (artifact_root / item).exists()
@@ -112,6 +117,13 @@ def evaluate_promotion_prerequisites(
     )
     if profitability_required:
         _append_profitability_evidence_reasons(
+            reasons=reasons,
+            reason_details=reason_details,
+            policy_payload=policy_payload,
+            artifact_root=artifact_root,
+        )
+    if janus_required:
+        _append_janus_evidence_reasons(
             reasons=reasons,
             reason_details=reason_details,
             policy_payload=policy_payload,
@@ -408,6 +420,99 @@ def _append_profitability_evidence_reasons(
         )
 
 
+def _append_janus_evidence_reasons(
+    *,
+    reasons: list[str],
+    reason_details: list[dict[str, object]],
+    policy_payload: dict[str, Any],
+    artifact_root: Path,
+) -> None:
+    event_path = artifact_root / str(
+        policy_payload.get(
+            "promotion_janus_event_car_artifact", "gates/janus-event-car-v1.json"
+        )
+    )
+    event_payload = _load_json_if_exists(event_path)
+    if event_payload is None:
+        reasons.append("janus_event_car_artifact_missing")
+        reason_details.append(
+            {
+                "reason": "janus_event_car_artifact_missing",
+                "artifact_ref": str(event_path),
+            }
+        )
+    else:
+        if str(event_payload.get("schema_version", "")).strip() != "janus-event-car-v1":
+            reasons.append("janus_event_car_schema_invalid")
+            reason_details.append(
+                {
+                    "reason": "janus_event_car_schema_invalid",
+                    "artifact_ref": str(event_path),
+                    "expected": "janus-event-car-v1",
+                }
+            )
+        event_count = _int_or_default(
+            _as_dict(event_payload.get("summary")).get("event_count"),
+            _list_count(event_payload.get("records")),
+        )
+        min_event_count = max(
+            1, _int_or_default(policy_payload.get("promotion_min_janus_event_count"), 1)
+        )
+        if event_count < min_event_count:
+            reasons.append("janus_event_car_count_below_minimum")
+            reason_details.append(
+                {
+                    "reason": "janus_event_car_count_below_minimum",
+                    "artifact_ref": str(event_path),
+                    "actual_event_count": event_count,
+                    "minimum_event_count": min_event_count,
+                }
+            )
+
+    reward_path = artifact_root / str(
+        policy_payload.get(
+            "promotion_janus_hgrm_reward_artifact", "gates/janus-hgrm-reward-v1.json"
+        )
+    )
+    reward_payload = _load_json_if_exists(reward_path)
+    if reward_payload is None:
+        reasons.append("janus_hgrm_reward_artifact_missing")
+        reason_details.append(
+            {
+                "reason": "janus_hgrm_reward_artifact_missing",
+                "artifact_ref": str(reward_path),
+            }
+        )
+        return
+
+    if str(reward_payload.get("schema_version", "")).strip() != "janus-hgrm-reward-v1":
+        reasons.append("janus_hgrm_reward_schema_invalid")
+        reason_details.append(
+            {
+                "reason": "janus_hgrm_reward_schema_invalid",
+                "artifact_ref": str(reward_path),
+                "expected": "janus-hgrm-reward-v1",
+            }
+        )
+    reward_count = _int_or_default(
+        _as_dict(reward_payload.get("summary")).get("reward_count"),
+        _list_count(reward_payload.get("rewards")),
+    )
+    min_reward_count = max(
+        1, _int_or_default(policy_payload.get("promotion_min_janus_reward_count"), 1)
+    )
+    if reward_count < min_reward_count:
+        reasons.append("janus_hgrm_reward_count_below_minimum")
+        reason_details.append(
+            {
+                "reason": "janus_hgrm_reward_count_below_minimum",
+                "artifact_ref": str(reward_path),
+                "actual_reward_count": reward_count,
+                "minimum_reward_count": min_reward_count,
+            }
+        )
+
+
 def _regime_slice_count(benchmark_payload: dict[str, Any]) -> int:
     regime_slices = 0
     for item in _list_from_any(benchmark_payload.get("slices")):
@@ -472,6 +577,7 @@ def _required_artifacts_for_target(
     promotion_target: str,
     *,
     include_profitability_artifacts: bool,
+    include_janus_artifacts: bool,
 ) -> list[str]:
     base_raw = policy_payload.get(
         "promotion_required_artifacts",
@@ -503,6 +609,18 @@ def _required_artifacts_for_target(
         for artifact in profitability_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
+    if include_janus_artifacts:
+        janus_artifacts_raw = policy_payload.get(
+            "promotion_janus_required_artifacts",
+            [
+                "gates/janus-event-car-v1.json",
+                "gates/janus-hgrm-reward-v1.json",
+            ],
+        )
+        janus_artifacts = _list_from_any(janus_artifacts_raw)
+        for artifact in janus_artifacts:
+            if isinstance(artifact, str):
+                required.append(artifact)
     return sorted(set(required))
 
 
@@ -515,6 +633,28 @@ def _requires_profitability_evidence(
         return False
     required_targets_raw = policy_payload.get(
         "promotion_profitability_required_targets", ["paper", "live"]
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
+def _requires_janus_evidence(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("gate6_require_profitability_evidence", True)):
+        return False
+    if not bool(policy_payload.get("gate6_require_janus_evidence", True)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_janus_required_targets", ["paper", "live"]
     )
     required_targets = [
         str(target)
@@ -585,6 +725,14 @@ def _evaluate_promotion_evidence(
     details.extend(stress_details)
     refs.extend(stress_refs)
 
+    janus_reasons, janus_details, janus_refs = _evaluate_janus_evidence(
+        policy_payload=policy_payload,
+        evidence=evidence,
+    )
+    reasons.extend(janus_reasons)
+    details.extend(janus_details)
+    refs.extend(janus_refs)
+
     rationale_reasons, rationale_details = _evaluate_rationale_evidence(
         policy_payload=policy_payload,
         gate_report_payload=gate_report_payload,
@@ -595,6 +743,74 @@ def _evaluate_promotion_evidence(
     details.extend(rationale_details)
 
     return sorted(set(reasons)), details, sorted(set(refs))
+
+
+def _evaluate_janus_evidence(
+    *,
+    policy_payload: dict[str, Any],
+    evidence: dict[str, Any],
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    if not bool(policy_payload.get("promotion_require_janus_evidence", True)):
+        return [], [], []
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    refs: list[str] = []
+    janus_raw = evidence.get("janus_q")
+    janus = cast(dict[str, Any], janus_raw) if isinstance(janus_raw, dict) else {}
+    if not janus:
+        reasons.append("janus_q_evidence_missing")
+        details.append({"reason": "janus_q_evidence_missing"})
+        return reasons, details, refs
+
+    event_raw = janus.get("event_car")
+    event_car = cast(dict[str, Any], event_raw) if isinstance(event_raw, dict) else {}
+    event_count = _int_or_default(event_car.get("count"), 0)
+    min_event_count = max(
+        1, _int_or_default(policy_payload.get("promotion_min_janus_event_count"), 1)
+    )
+    if event_count < min_event_count:
+        reasons.append("janus_event_car_evidence_insufficient")
+        details.append(
+            {
+                "reason": "janus_event_car_evidence_insufficient",
+                "actual_event_count": event_count,
+                "minimum_event_count": min_event_count,
+            }
+        )
+    event_ref = str(event_car.get("artifact_ref") or "").strip()
+    if event_ref:
+        refs.append(event_ref)
+
+    reward_raw = janus.get("hgrm_reward")
+    hgrm_reward = (
+        cast(dict[str, Any], reward_raw) if isinstance(reward_raw, dict) else {}
+    )
+    reward_count = _int_or_default(hgrm_reward.get("count"), 0)
+    min_reward_count = max(
+        1, _int_or_default(policy_payload.get("promotion_min_janus_reward_count"), 1)
+    )
+    if reward_count < min_reward_count:
+        reasons.append("janus_hgrm_reward_evidence_insufficient")
+        details.append(
+            {
+                "reason": "janus_hgrm_reward_evidence_insufficient",
+                "actual_reward_count": reward_count,
+                "minimum_reward_count": min_reward_count,
+            }
+        )
+    reward_ref = str(hgrm_reward.get("artifact_ref") or "").strip()
+    if reward_ref:
+        refs.append(reward_ref)
+
+    if not bool(janus.get("evidence_complete", False)):
+        reasons.append("janus_q_evidence_incomplete")
+        details.append(
+            {
+                "reason": "janus_q_evidence_incomplete",
+                "reasons": _list_of_strings(janus.get("reasons")),
+            }
+        )
+    return reasons, details, refs
 
 
 def _evaluate_fold_metrics_evidence(
@@ -775,6 +991,18 @@ def _list_from_any(value: Any) -> list[object]:
     if not isinstance(value, list):
         return []
     return cast(list[object], value)
+
+
+def _list_count(value: Any) -> int:
+    if not isinstance(value, list):
+        return 0
+    return len(cast(list[object], value))
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return cast(dict[str, Any], value)
 
 
 def _list_of_strings(value: Any) -> list[str]:

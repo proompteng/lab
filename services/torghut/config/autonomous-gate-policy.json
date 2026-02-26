@@ -19,6 +19,9 @@
   "gate3_max_forecast_fallback_rate": "0.05",
   "gate3_max_forecast_latency_ms_p95": 200,
   "gate3_min_forecast_calibration_score": "0.85",
+  "gate6_require_janus_evidence": true,
+  "gate6_min_janus_event_count": 1,
+  "gate6_min_janus_reward_count": 1,
   "gate5_live_enabled": false,
   "gate5_require_approval_token": true,
   "promotion_required_artifacts": [
@@ -27,6 +30,16 @@
     "gates/gate-evaluation.json"
   ],
   "promotion_require_patch_targets": ["paper", "live"],
+  "promotion_janus_required_targets": ["paper", "live"],
+  "promotion_janus_required_artifacts": [
+    "gates/janus-event-car-v1.json",
+    "gates/janus-hgrm-reward-v1.json"
+  ],
+  "promotion_require_janus_evidence": true,
+  "promotion_janus_event_car_artifact": "gates/janus-event-car-v1.json",
+  "promotion_janus_hgrm_reward_artifact": "gates/janus-hgrm-reward-v1.json",
+  "promotion_min_janus_event_count": 1,
+  "promotion_min_janus_reward_count": 1,
   "rollback_required_checks": ["killSwitchDryRunPassed", "gitopsRevertDryRunPassed", "strategyDisableDryRunPassed"],
   "rollback_dry_run_max_age_hours": 72,
   "rollback_require_human_approval": true
