@@ -463,6 +463,77 @@ https://example.com/paper.pdf
             rollout_rows = session.execute(select(WhitepaperRolloutTransition)).scalars().all()
             self.assertTrue(any(row.to_stage == "scaled_live" and row.status == "passed" for row in rollout_rows))
 
+    def test_finalize_uses_persisted_verdict_fields_for_deterministic_reason_codes(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+        os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(session, self._issue_payload(), source="api")
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            first_result = service.finalize_run(
+                session,
+                run_id=run_row.run_id,
+                payload={
+                    "status": "completed",
+                    "synthesis": {
+                        "executive_summary": "Candidate requires more evidence and confidence uplift.",
+                        "implementation_plan_md": "Hold implementation pending manual review.",
+                    },
+                    "verdict": {
+                        "verdict": "conditional_implement",
+                        "score": "0.61",
+                        "confidence": "0.52",
+                        "requires_followup": True,
+                        "gating_json": {
+                            "blocked": True,
+                            "blocking_reasons": ["Needs external validation"],
+                            "gates": {
+                                "G1": {"status": "pass"},
+                                "G2": {"status": "pass"},
+                                "G3": {"status": "pass"},
+                                "G4": {"status": "pass"},
+                                "G5": {"status": "pass"},
+                            },
+                        },
+                    },
+                },
+            )
+            session.commit()
+
+            second_result = service.finalize_run(
+                session,
+                run_id=run_row.run_id,
+                payload={"status": "completed"},
+            )
+            session.commit()
+
+            first_trigger = cast(dict[str, Any], first_result["engineering_trigger"])
+            second_trigger = cast(dict[str, Any], second_result["engineering_trigger"])
+            expected_reason_codes = [
+                "confidence_below_min",
+                "gating_blocked_flag_true",
+                "gating_blocker_needs_external_validation",
+                "requires_followup_true",
+                "score_below_min",
+            ]
+
+            self.assertEqual(first_trigger["implementation_grade"], "reject")
+            self.assertEqual(first_trigger["decision"], "suppressed")
+            self.assertEqual(sorted(cast(list[str], first_trigger["reason_codes"])), sorted(expected_reason_codes))
+            self.assertEqual(first_trigger["reason_codes"], second_trigger["reason_codes"])
+            self.assertEqual(second_trigger["gate_snapshot_hash"], first_trigger["gate_snapshot_hash"])
+
+            trigger_row = session.execute(select(WhitepaperEngineeringTrigger)).scalar_one()
+            self.assertEqual(sorted(cast(list[str], trigger_row.reason_codes_json or [])), sorted(expected_reason_codes))
+            self.assertEqual(trigger_row.implementation_grade, "reject")
+            self.assertEqual(trigger_row.decision, "suppressed")
+
     def test_finalize_retry_preserves_existing_engineering_dispatch(self) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()

@@ -215,6 +215,20 @@ Manual override writes auditable fields:
 - `approved_at`
 - `approval_reason`
 
+## Jangar whitepaper library API integration for approval
+
+Jangar whitepaper detail UI calls:
+
+- `POST /api/whitepapers/<run_id>/`
+- request body: `approvedBy`, `approvalReason`, optional `targetScope`, `repository`, `base`, `head`, `rolloutProfile`
+
+Jangar server forwards to Torghut:
+
+- `POST /whitepapers/runs/<run_id>/approve-implementation`
+- payload contract is normalized to snake_case and always sets `approval_source=jangar_ui`
+- below-threshold runs remain `decision=suppressed` until this manual action is submitted
+- once approved, dispatch remains B1-only; deterministic B2-B6 gates and rollout fail-closed behavior still apply unchanged
+
 ## Data stored in DB after workflow completion
 
 When run finalization is called (`POST /whitepapers/runs/{run_id}/finalize`) and status is `completed`, Torghut persists:
