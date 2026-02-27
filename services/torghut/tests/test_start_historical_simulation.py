@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import patch
 
 from scripts.start_historical_simulation import (
     ClickHouseRuntimeConfig,
@@ -8,9 +12,12 @@ from scripts.start_historical_simulation import (
     _build_plan_report,
     _build_postgres_runtime_config,
     _build_resources,
+    _dump_sha256_for_replay,
     _merge_env_entries,
     _normalize_run_token,
+    _offset_for_time_lookup,
     _pacing_delay_seconds,
+    _replay_dump,
 )
 
 
@@ -153,3 +160,98 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertIn('state_path', report['artifacts'])
         self.assertIn('run_manifest_path', report['artifacts'])
         self.assertIn('dump_path', report['artifacts'])
+
+    def test_offset_for_time_lookup_falls_back_for_missing_or_invalid_offset(self) -> None:
+        class _OffsetMeta:
+            def __init__(self, offset: object) -> None:
+                self.offset = offset
+
+        self.assertEqual(_offset_for_time_lookup(metadata=None, fallback=17), 17)
+        self.assertEqual(_offset_for_time_lookup(metadata=_OffsetMeta(-1), fallback=17), 17)
+        self.assertEqual(_offset_for_time_lookup(metadata=_OffsetMeta('bad'), fallback=17), 17)
+        self.assertEqual(_offset_for_time_lookup(metadata=_OffsetMeta(9), fallback=17), 9)
+
+    def test_replay_dump_ignores_stale_marker_when_dump_changes(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+
+        class _FakeProducer:
+            def __init__(self) -> None:
+                self.sent: list[tuple[str, int | None]] = []
+
+            def send(
+                self,
+                topic: str,
+                *,
+                key: bytes | None = None,
+                value: bytes | None = None,
+                headers: list[tuple[str, bytes]] | None = None,
+                timestamp_ms: int | None = None,
+            ) -> None:
+                _ = (key, value, headers)
+                self.sent.append((topic, timestamp_ms))
+
+            def flush(self, timeout: int) -> None:
+                _ = timeout
+
+            def close(self, timeout: int) -> None:
+                _ = timeout
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+            row = {
+                'source_topic': resources.source_topic_by_role['trades'],
+                'replay_topic': resources.simulation_topic_by_role['trades'],
+                'source_timestamp_ms': 1704067200000,
+                'key_b64': None,
+                'value_b64': None,
+                'headers': [],
+            }
+            dump_path.write_text(json.dumps(row) + '\n', encoding='utf-8')
+
+            marker_path = dump_path.with_suffix('.replay-marker.json')
+            marker_path.write_text(
+                json.dumps(
+                    {
+                        'reused_existing_replay': False,
+                        'records': 999,
+                        'dump_sha256': 'stale-checksum',
+                    }
+                ),
+                encoding='utf-8',
+            )
+
+            producer = _FakeProducer()
+            with patch(
+                'scripts.start_historical_simulation._producer_for_replay',
+                return_value=producer,
+            ):
+                report = _replay_dump(
+                    resources=resources,
+                    kafka_config=kafka_config,
+                    manifest={'replay': {'pace_mode': 'max_throughput'}},
+                    dump_path=dump_path,
+                    force=False,
+                )
+            self.assertFalse(report['reused_existing_replay'])
+            self.assertEqual(report['records'], 1)
+            self.assertEqual(
+                producer.sent,
+                [(resources.simulation_topic_by_role['trades'], 1704067200000)],
+            )
+            marker_payload = json.loads(marker_path.read_text(encoding='utf-8'))
+            self.assertEqual(
+                marker_payload.get('dump_sha256'),
+                _dump_sha256_for_replay(dump_path),
+            )

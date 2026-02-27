@@ -965,6 +965,19 @@ def _json_to_headers(value: Any) -> list[tuple[str, bytes]]:
     return headers
 
 
+def _offset_for_time_lookup(*, metadata: Any, fallback: int) -> int:
+    if metadata is None:
+        return fallback
+    raw_offset = getattr(metadata, 'offset', None)
+    try:
+        offset = int(raw_offset)
+    except (TypeError, ValueError):
+        return fallback
+    if offset < 0:
+        return fallback
+    return offset
+
+
 def _dump_topics(
     *,
     resources: SimulationResources,
@@ -1021,18 +1034,18 @@ def _dump_topics(
         for tp in topic_partitions:
             start_meta = start_offsets_raw.get(tp)
             stop_meta = stop_offsets_raw.get(tp)
-            start_offset = (
-                int(start_meta.offset)
-                if start_meta is not None and getattr(start_meta, 'offset', -1) >= 0
-                else int(beginning_offsets[tp])
+            partition_beginning = int(beginning_offsets[tp])
+            partition_end = int(end_offsets[tp])
+            start_offset = _offset_for_time_lookup(
+                metadata=start_meta,
+                fallback=partition_end,
             )
-            stop_offset = (
-                int(stop_meta.offset)
-                if stop_meta is not None and getattr(stop_meta, 'offset', -1) >= 0
-                else int(end_offsets[tp])
+            stop_offset = _offset_for_time_lookup(
+                metadata=stop_meta,
+                fallback=partition_end,
             )
-            start_offsets[tp] = max(start_offset, int(beginning_offsets[tp]))
-            stop_offsets[tp] = max(stop_offset, start_offsets[tp])
+            start_offsets[tp] = min(max(start_offset, partition_beginning), partition_end)
+            stop_offsets[tp] = min(max(stop_offset, start_offsets[tp]), partition_end)
             consumer.seek(tp, start_offsets[tp])
 
         _ensure_directory(dump_path)
@@ -1128,6 +1141,18 @@ def _count_lines(path: Path) -> int:
         return sum(1 for _ in handle)
 
 
+def _dump_sha256_for_replay(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open('r', encoding='utf-8') as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            hasher.update(stripped.encode('utf-8'))
+            hasher.update(b'\n')
+    return hasher.hexdigest()
+
+
 def _replay_dump(
     *,
     resources: SimulationResources,
@@ -1142,8 +1167,11 @@ def _replay_dump(
     marker_path = dump_path.with_suffix('.replay-marker.json')
     if marker_path.exists() and not force:
         marker_payload = _load_json(marker_path)
-        marker_payload['reused_existing_replay'] = True
-        return marker_payload
+        marker_dump_sha = _as_text(marker_payload.get('dump_sha256'))
+        current_dump_sha = _dump_sha256_for_replay(dump_path)
+        if marker_dump_sha == current_dump_sha:
+            marker_payload['reused_existing_replay'] = True
+            return marker_payload
 
     replay_cfg = _as_mapping(manifest.get('replay'))
     pace_mode = (_as_text(replay_cfg.get('pace_mode')) or 'max_throughput').lower()
