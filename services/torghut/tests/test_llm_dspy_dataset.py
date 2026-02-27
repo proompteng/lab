@@ -147,111 +147,14 @@ class TestLLMDSPyDatasetBuilder(TestCase):
                     second.dataset_path.read_text(encoding="utf-8"),
                 )
 
-    def test_build_dataset_artifacts_filters_torghut_equity_enabled_symbols(self) -> None:
-        now = datetime(2026, 2, 27, 9, 30, tzinfo=timezone.utc)
-        with Session(self.engine) as session:
-            enabled_strategy = self._create_strategy(
-                session,
-                name="enabled-strategy",
-                universe_symbols=["AAPL", "MSFT"],
-                enabled=True,
-            )
-            disabled_strategy = self._create_strategy(
-                session,
-                name="disabled-strategy",
-                universe_symbols=["GOOG"],
-                enabled=False,
-            )
-
-            self._insert_reviewed_decision(
-                session=session,
-                strategy_id=str(enabled_strategy.id),
-                symbol="AAPL",
-                created_at=now - timedelta(hours=1),
-                verdict="approve",
-                include_market_context=True,
-            )
-            self._insert_reviewed_decision(
-                session=session,
-                strategy_id=str(enabled_strategy.id),
-                symbol="MSFT",
-                created_at=now - timedelta(hours=2),
-                verdict="approve",
-                include_market_context=True,
-            )
-            self._insert_reviewed_decision(
-                session=session,
-                strategy_id=str(disabled_strategy.id),
-                symbol="GOOG",
-                created_at=now - timedelta(hours=3),
-                verdict="approve",
-                include_market_context=True,
-            )
-
-            with TemporaryDirectory() as tmp:
-                result = build_dspy_dataset_artifacts(
-                    session,
-                    repository="proompteng/lab",
-                    base="main",
-                    head="codex/dspy-dataset",
-                    artifact_path=tmp,
-                    dataset_window="P10D",
-                    universe_ref="torghut:equity:enabled",
-                    window_end=now,
-                )
-
-                self.assertEqual(result.total_rows, 2)
-                dataset_payload = json.loads(
-                    result.dataset_path.read_text(encoding="utf-8")
-                )
-                rows = dataset_payload.get("rows")
-                self.assertIsInstance(rows, list)
-                assert isinstance(rows, list)
-                symbols = {str(row["decision"]["symbol"]) for row in rows}
-                self.assertEqual(symbols, {"AAPL", "MSFT"})
-
-    def test_build_dataset_artifacts_rejects_empty_explicit_symbol_filter(self) -> None:
-        now = datetime(2026, 2, 27, 9, 30, tzinfo=timezone.utc)
-        with Session(self.engine) as session:
-            strategy = self._create_strategy(session)
-            self._insert_reviewed_decision(
-                session=session,
-                strategy_id=str(strategy.id),
-                symbol="AAPL",
-                created_at=now - timedelta(hours=1),
-                verdict="approve",
-                include_market_context=True,
-            )
-
-            with TemporaryDirectory() as tmp:
-                with self.assertRaisesRegex(ValueError, "universe_ref_symbols_empty"):
-                    build_dspy_dataset_artifacts(
-                        session,
-                        repository="proompteng/lab",
-                        base="main",
-                        head="codex/dspy-dataset",
-                        artifact_path=tmp,
-                        dataset_window="P10D",
-                        universe_ref="symbols:   ,  ",
-                        window_end=now,
-                    )
-
-    def _create_strategy(
-        self,
-        session: Session,
-        *,
-        name: str = "test-strategy",
-        enabled: bool = True,
-        universe_type: str = "equity",
-        universe_symbols: list[str] | None = None,
-    ) -> Strategy:
+    def _create_strategy(self, session: Session) -> Strategy:
         strategy = Strategy(
-            name=name,
+            name="test-strategy",
             description="dataset test strategy",
-            enabled=enabled,
+            enabled=True,
             base_timeframe="1m",
-            universe_type=universe_type,
-            universe_symbols=universe_symbols or ["AAPL", "MSFT", "TSLA"],
+            universe_type="equity",
+            universe_symbols=["AAPL", "MSFT", "TSLA"],
         )
         session.add(strategy)
         session.commit()

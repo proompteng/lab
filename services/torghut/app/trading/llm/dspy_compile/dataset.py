@@ -13,7 +13,7 @@ from typing import Any, Mapping, Sequence, cast
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ....models import LLMDecisionReview, Strategy, TradeDecision, coerce_json_payload
+from ....models import LLMDecisionReview, TradeDecision, coerce_json_payload
 from .hashing import canonical_json, hash_payload
 
 DATASET_SCHEMA_VERSION = "torghut.dspy.dataset.v1"
@@ -73,10 +73,7 @@ def build_dspy_dataset_artifacts(
     duration = _parse_dataset_window(dataset_window)
     resolved_window_end = _coerce_utc_datetime(window_end or datetime.now(timezone.utc))
     resolved_window_start = resolved_window_end - duration
-    resolved_filter = _resolve_symbol_filter(
-        session=session,
-        universe_ref=normalized_universe_ref,
-    )
+    resolved_filter = _resolve_symbol_filter(normalized_universe_ref)
 
     rows = _query_dataset_source_rows(
         session=session,
@@ -177,7 +174,7 @@ class _UniverseFilter:
     symbols: set[str] | None
 
 
-def _resolve_symbol_filter(*, session: Session, universe_ref: str) -> _UniverseFilter:
+def _resolve_symbol_filter(universe_ref: str) -> _UniverseFilter:
     normalized = universe_ref.strip()
     if not normalized:
         return _UniverseFilter(mode="all", symbols=None)
@@ -193,15 +190,10 @@ def _resolve_symbol_filter(*, session: Session, universe_ref: str) -> _UniverseF
             for symbol in raw_symbols.split(",")
             if symbol.strip()
         }
-        if not parsed_symbols:
-            raise ValueError("universe_ref_symbols_empty")
         return _UniverseFilter(mode="explicit", symbols=parsed_symbols)
 
     if lowered == "torghut:equity:enabled":
-        return _UniverseFilter(
-            mode="equity_enabled",
-            symbols=_load_enabled_equity_universe_symbols(session),
-        )
+        return _UniverseFilter(mode="equity_enabled_hint", symbols=None)
 
     return _UniverseFilter(mode="unrecognized_ref", symbols=None)
 
@@ -227,7 +219,7 @@ def _query_dataset_source_rows(
             LLMDecisionReview.id.asc(),
         )
     )
-    if symbols is not None:
+    if symbols:
         stmt = stmt.where(TradeDecision.symbol.in_(sorted(symbols)))
     rows = session.execute(stmt).all()
     return [
@@ -297,24 +289,6 @@ def _build_dataset_row(
             }
         ),
     )
-
-
-def _load_enabled_equity_universe_symbols(session: Session) -> set[str]:
-    rows = session.execute(
-        select(Strategy.universe_symbols)
-        .where(Strategy.enabled.is_(True))
-        .where(Strategy.universe_type == "equity")
-    ).scalars()
-
-    symbols: set[str] = set()
-    for raw_symbols in rows:
-        if not isinstance(raw_symbols, (list, tuple, set)):
-            continue
-        for symbol_value in cast(Sequence[object], raw_symbols):
-            normalized = str(symbol_value).strip().upper()
-            if normalized:
-                symbols.add(normalized)
-    return symbols
 
 
 def _extract_market_context_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
