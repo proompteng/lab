@@ -5,6 +5,14 @@ vi.mock('~/server/db', () => ({
 }))
 
 describe('torghut market context agents', () => {
+  it('sanitizes symbols for Kubernetes labels', async () => {
+    const { toKubernetesLabelValue } = await import('../torghut-market-context-agents')
+
+    expect(toKubernetesLabelValue('BTC/USD')).toBe('BTC-USD')
+    expect(toKubernetesLabelValue('..AAPL..')).toBe('AAPL')
+    expect(toKubernetesLabelValue('///')).toBe('unknown')
+  })
+
   it('does not stamp missing provider context with current as-of', async () => {
     const { getMarketContextProviderResult } = await import('../torghut-market-context-agents')
 

@@ -80,7 +80,11 @@ const verifyServiceAccountTokenWithTokenReview = async (token: string) => {
       typeof response.body === 'object'
         ? response.body
         : response
-    const status = body && typeof body === 'object' ? (body.status as Record<string, unknown> | undefined) : undefined
+    const bodyRecord = body && typeof body === 'object' ? (body as Record<string, unknown>) : null
+    const status =
+      bodyRecord && bodyRecord.status && typeof bodyRecord.status === 'object'
+        ? (bodyRecord.status as Record<string, unknown>)
+        : null
     if (!status || status.authenticated !== true) return false
 
     const user = status.user

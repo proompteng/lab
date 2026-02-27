@@ -83,6 +83,19 @@ const parseNumber = (value: unknown): number | null => {
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
 const toIso = (value: Date) => value.toISOString()
+const KUBERNETES_LABEL_MAX_LENGTH = 63
+
+export const toKubernetesLabelValue = (raw: string, fallback = 'unknown') => {
+  const normalized = raw
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]+/g, '-')
+    .replace(/^[^A-Za-z0-9]+/, '')
+    .replace(/[^A-Za-z0-9]+$/, '')
+
+  if (!normalized) return fallback
+  const truncated = normalized.slice(0, KUBERNETES_LABEL_MAX_LENGTH).replace(/[^A-Za-z0-9]+$/, '')
+  return truncated || fallback
+}
 
 const coerceRiskFlags = (value: unknown): string[] => {
   if (!Array.isArray(value)) return []
@@ -355,7 +368,7 @@ const dispatchDomainAgentRun = async (params: {
       generateName: `torghut-market-context-${params.domain}-`,
       namespace: settings.dispatchNamespace,
       labels: {
-        'torghut.proompteng.ai/symbol': params.symbol,
+        'torghut.proompteng.ai/symbol': toKubernetesLabelValue(params.symbol),
         'torghut.proompteng.ai/domain': params.domain,
         'jangar.proompteng.ai/source': 'torghut-market-context',
       },
