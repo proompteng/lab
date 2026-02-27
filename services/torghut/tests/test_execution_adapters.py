@@ -59,6 +59,9 @@ class FakeFallbackAdapter:
         _ = status
         return list(self.submitted)
 
+    def list_positions(self) -> list[dict[str, str]]:
+        return []
+
 
 class FakeOrderFirewall:
     def submit_order(self, **kwargs):  # type: ignore[no-untyped-def]
@@ -87,6 +90,9 @@ class FakeReadClient:
 
     def list_orders(self, status: str = 'all') -> list[dict[str, str]]:
         _ = status
+        return []
+
+    def list_positions(self) -> list[dict[str, str]]:
         return []
 
 
@@ -265,6 +271,14 @@ class TestExecutionAdapters(TestCase):
         self.assertEqual(orders[0].get('id'), 'order-1')
         self.assertEqual(orders[0].get('_execution_fallback_reason'), 'lean_list_orders_contract_violation')
         self.assertEqual(orders[0].get('_execution_fallback_count'), 1)
+
+    def test_lean_list_positions_returns_none_without_fallback(self) -> None:
+        adapter = LeanExecutionAdapter(
+            base_url='http://lean.invalid',
+            timeout_seconds=1,
+            fallback=None,
+        )
+        self.assertIsNone(adapter.list_positions())
 
     def test_lean_submit_symbol_mismatch_triggers_fallback(self) -> None:
         class InvalidLeanAdapter(LeanExecutionAdapter):

@@ -21,7 +21,11 @@ from .features import (
 from .forecasting import ForecastRoutingTelemetry, build_default_forecast_router
 from .models import SignalEnvelope, StrategyDecision
 from .prices import MarketSnapshot, PriceFetcher
-from .quantity_rules import min_qty_for_symbol, quantize_qty_for_symbol
+from .quantity_rules import (
+    fractional_equities_enabled_for_trade,
+    min_qty_for_symbol,
+    quantize_qty_for_symbol,
+)
 from .strategy_runtime import (
     RuntimeErrorRecord,
     RuntimeObservation,
@@ -191,6 +195,7 @@ class DecisionEngine:
             qty, sizing_meta = _resolve_qty_for_aggregated(
                 source_strategies,
                 symbol=intent.symbol,
+                action=intent.direction,
                 price=price,
                 equity=equity,
             )
@@ -319,6 +324,7 @@ class DecisionEngine:
         qty, sizing_meta = _resolve_qty(
             strategy,
             symbol=signal.symbol,
+            action=action,
             price=price,
             equity=equity,
         )
@@ -553,6 +559,7 @@ def _resolve_qty(
     strategy: Strategy,
     *,
     symbol: str,
+    action: str,
     price: Optional[Decimal],
     equity: Optional[Decimal],
 ) -> tuple[Decimal, dict[str, Any]]:
@@ -599,8 +606,19 @@ def _resolve_qty(
     if notional_budget is None or notional_budget <= 0:
         return default_qty, {"method": "default_qty", "reason": "missing_budget"}
 
-    qty = quantize_qty_for_symbol(symbol, notional_budget / price)
-    min_qty = min_qty_for_symbol(symbol)
+    fractional_equities_enabled = fractional_equities_enabled_for_trade(
+        action=action,
+        global_enabled=settings.trading_fractional_equities_enabled,
+        allow_shorts=settings.trading_allow_shorts,
+    )
+    qty = quantize_qty_for_symbol(
+        symbol,
+        notional_budget / price,
+        fractional_equities_enabled=fractional_equities_enabled,
+    )
+    min_qty = min_qty_for_symbol(
+        symbol, fractional_equities_enabled=fractional_equities_enabled
+    )
     if qty < min_qty:
         qty = min_qty
 
@@ -615,6 +633,7 @@ def _resolve_qty_for_aggregated(
     strategies: list[Strategy],
     *,
     symbol: str,
+    action: str,
     price: Optional[Decimal],
     equity: Optional[Decimal],
 ) -> tuple[Decimal, dict[str, Any]]:
@@ -628,8 +647,19 @@ def _resolve_qty_for_aggregated(
     if total_budget <= 0:
         return default_qty, {"method": "default_qty", "reason": "missing_budget"}
 
-    qty = quantize_qty_for_symbol(symbol, total_budget / price)
-    min_qty = min_qty_for_symbol(symbol)
+    fractional_equities_enabled = fractional_equities_enabled_for_trade(
+        action=action,
+        global_enabled=settings.trading_fractional_equities_enabled,
+        allow_shorts=settings.trading_allow_shorts,
+    )
+    qty = quantize_qty_for_symbol(
+        symbol,
+        total_budget / price,
+        fractional_equities_enabled=fractional_equities_enabled,
+    )
+    min_qty = min_qty_for_symbol(
+        symbol, fractional_equities_enabled=fractional_equities_enabled
+    )
     if qty < min_qty:
         qty = min_qty
     return qty, {

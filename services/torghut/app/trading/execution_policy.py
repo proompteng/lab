@@ -18,6 +18,7 @@ from .microstructure import (
 from .models import StrategyDecision
 from .prices import MarketSnapshot
 from .quantity_rules import (
+    fractional_equities_enabled_for_trade,
     min_qty_for_symbol,
     qty_has_valid_increment,
     quantize_qty_for_symbol,
@@ -141,8 +142,13 @@ class ExecutionPolicy:
         )
 
         price = _resolve_price(decision, market_snapshot)
+        position_qty = _position_summary(decision.symbol, positions)
+        short_increasing = _is_short_increasing(decision, positions)
         qty, notional = self._resolve_qty_and_notional(
             decision=decision,
+            position_qty=position_qty,
+            short_increasing=short_increasing,
+            allow_shorts=config.allow_shorts,
             price=price,
             reasons=reasons,
         )
@@ -163,7 +169,7 @@ class ExecutionPolicy:
         ):
             reasons.append("max_notional_exceeded")
 
-        if _is_short_increasing(decision, positions) and not config.allow_shorts:
+        if short_increasing and not config.allow_shorts:
             reasons.append('shorts_not_allowed')
 
         impact_inputs = _build_impact_inputs(
@@ -235,18 +241,38 @@ class ExecutionPolicy:
         self,
         *,
         decision: StrategyDecision,
+        position_qty: Decimal,
+        short_increasing: bool,
+        allow_shorts: bool,
         price: Decimal | None,
         reasons: list[str],
     ) -> tuple[Decimal, Decimal | None]:
         qty = _optional_decimal(decision.qty)
-        min_qty = min_qty_for_symbol(decision.symbol)
+        fractional_equities_enabled = fractional_equities_enabled_for_trade(
+            action=decision.action,
+            global_enabled=settings.trading_fractional_equities_enabled,
+            allow_shorts=allow_shorts,
+            position_qty=position_qty,
+            requested_qty=qty,
+        ) and not short_increasing
+        min_qty = min_qty_for_symbol(
+            decision.symbol, fractional_equities_enabled=fractional_equities_enabled
+        )
         if qty is None or qty <= 0:
             reasons.append("qty_non_positive")
             qty = Decimal("0")
         elif qty < min_qty:
             reasons.append("qty_below_min")
-        elif not qty_has_valid_increment(decision.symbol, qty):
-            quantized = quantize_qty_for_symbol(decision.symbol, qty)
+        elif not qty_has_valid_increment(
+            decision.symbol,
+            qty,
+            fractional_equities_enabled=fractional_equities_enabled,
+        ):
+            quantized = quantize_qty_for_symbol(
+                decision.symbol,
+                qty,
+                fractional_equities_enabled=fractional_equities_enabled,
+            )
             reasons.append(f"qty_invalid_increment:step={_stringify_decimal(min_qty)}")
             qty = quantized
         notional = price * qty if price is not None else None

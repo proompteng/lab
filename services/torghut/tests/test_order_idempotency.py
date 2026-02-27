@@ -62,6 +62,13 @@ class FakeAlpacaClient:
             'status': 'accepted',
         }
 
+    def list_positions(self) -> list[dict[str, str]]:
+        return []
+
+    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+        _ = status
+        return []
+
 
 class ConflictingOrderClient(FakeAlpacaClient):
     def list_orders(self, status: str = "all") -> list[dict[str, str]]:
@@ -82,16 +89,83 @@ class ConflictingOrderClient(FakeAlpacaClient):
         ]
 
 
+class HeldInventoryClient(FakeAlpacaClient):
+    def list_positions(self) -> list[dict[str, str]]:
+        return [
+            {
+                "symbol": "AAPL",
+                "qty": "1",
+                "side": "long",
+            }
+        ]
+
+    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+        if status != "open":
+            return []
+        return [
+            {
+                "id": "order-held-1",
+                "client_order_id": "existing-sell-order",
+                "symbol": "AAPL",
+                "side": "sell",
+                "type": "limit",
+                "time_in_force": "day",
+                "qty": "1",
+                "filled_qty": "0",
+                "status": "accepted",
+            }
+        ]
+
+
+class PositionLookupUnavailableClient(FakeAlpacaClient):
+    def list_positions(self) -> list[dict[str, str]]:
+        raise RuntimeError("positions lookup unavailable")
+
+
+class PositionLookupNoneClient(FakeAlpacaClient):
+    def list_positions(self) -> list[dict[str, str]] | None:
+        return None
+
+
+class PositionLookupUnavailableHeldInventoryClient(PositionLookupUnavailableClient):
+    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+        if status != "open":
+            return []
+        return [
+            {
+                "id": "order-held-unknown-1",
+                "client_order_id": "existing-sell-order",
+                "symbol": "AAPL",
+                "side": "sell",
+                "type": "limit",
+                "time_in_force": "day",
+                "qty": "1",
+                "filled_qty": "0",
+                "status": "accepted",
+            }
+        ]
+
+
 class TestOrderIdempotency(TestCase):
     def setUp(self) -> None:
         engine = create_engine('sqlite+pysqlite:///:memory:', future=True)
         Base.metadata.create_all(engine)
         self.session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
         self._orig_multi_account_enabled = settings.trading_multi_account_enabled
+        self._orig_allow_shorts = settings.trading_allow_shorts
+        self._orig_fractional_equities_enabled = (
+            settings.trading_fractional_equities_enabled
+        )
         settings.trading_multi_account_enabled = False
+        settings.trading_allow_shorts = False
+        settings.trading_fractional_equities_enabled = False
 
     def tearDown(self) -> None:
         settings.trading_multi_account_enabled = self._orig_multi_account_enabled
+        settings.trading_allow_shorts = self._orig_allow_shorts
+        settings.trading_fractional_equities_enabled = (
+            self._orig_fractional_equities_enabled
+        )
 
     def test_decision_hash_stable_for_same_intent(self) -> None:
         event_ts = datetime(2026, 2, 10, tzinfo=timezone.utc)
@@ -689,6 +763,241 @@ class TestOrderIdempotency(TestCase):
             payload = json.loads(str(context.exception))
             self.assertEqual(payload.get("source"), "local_pre_submit")
             self.assertEqual(payload.get("code"), "local_qty_below_min")
+
+    def test_submit_order_precheck_allows_equity_fractional_long_when_enabled(self) -> None:
+        settings.trading_fractional_equities_enabled = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            execution = executor.submit_order(
+                session,
+                FakeAlpacaClient(),
+                decision,
+                decision_row,
+                "paper",
+            )
+            self.assertIsNotNone(execution)
+
+    def test_submit_order_precheck_blocks_fractional_short_increasing_sell_when_enabled(
+        self,
+    ) -> None:
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(session, FakeAlpacaClient(), decision, decision_row, "paper")
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "local_pre_submit")
+            self.assertEqual(payload.get("code"), "local_qty_below_min")
+
+    def test_submit_order_precheck_allows_fractional_sell_when_position_lookup_unavailable(
+        self,
+    ) -> None:
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            execution = executor.submit_order(
+                session,
+                PositionLookupUnavailableClient(),
+                decision,
+                decision_row,
+                "paper",
+            )
+            self.assertIsNotNone(execution)
+
+    def test_submit_order_precheck_allows_fractional_sell_when_position_lookup_returns_none(
+        self,
+    ) -> None:
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            execution = executor.submit_order(
+                session,
+                PositionLookupNoneClient(),
+                decision,
+                decision_row,
+                "paper",
+            )
+            self.assertIsNotNone(execution)
+
+    def test_submit_order_precheck_blocks_sell_when_inventory_held_by_open_orders(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(
+                    session,
+                    HeldInventoryClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "broker_precheck")
+            self.assertEqual(payload.get("code"), "precheck_sell_qty_exceeds_available")
+
+    def test_submit_order_precheck_blocks_sell_when_inventory_held_and_position_lookup_unavailable(
+        self,
+    ) -> None:
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(
+                    session,
+                    PositionLookupUnavailableHeldInventoryClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "broker_precheck")
+            self.assertEqual(payload.get("code"), "precheck_sell_qty_exceeds_available")
+            self.assertEqual(payload.get("position_qty"), None)
 
     def test_local_pre_submit_rejection_formats_with_distinct_reason_prefix(self) -> None:
         error = RuntimeError(

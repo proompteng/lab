@@ -27,6 +27,7 @@ from .route_metadata import resolve_order_route_metadata
 from .execution_policy import should_retry_order_error
 from .models import ExecutionRequest, StrategyDecision, decision_hash
 from .quantity_rules import (
+    fractional_equities_enabled_for_trade,
     min_qty_for_symbol,
     quantize_qty_for_symbol,
     qty_has_valid_increment,
@@ -155,7 +156,14 @@ class OrderExecutor:
             stop_price=decision.stop_price,
             client_order_id=decision_row.decision_hash,
         )
-        pre_submit_error = _validate_pre_submit_request(request)
+        fractional_equities_enabled = self._fractional_equities_enabled_for_request(
+            execution_client,
+            request,
+        )
+        pre_submit_error = _validate_pre_submit_request(
+            request,
+            fractional_equities_enabled=fractional_equities_enabled,
+        )
         if pre_submit_error is not None:
             raise RuntimeError(json.dumps(pre_submit_error))
 
@@ -268,29 +276,37 @@ class OrderExecutor:
         execution_client: Any,
         request: ExecutionRequest,
     ) -> None:
-        conflicting_order = self._find_conflicting_open_order(execution_client, request)
-        if conflicting_order is None:
-            return
-        existing_order_id = (
-            conflicting_order.get("id")
-            or conflicting_order.get("order_id")
-            or conflicting_order.get("client_order_id")
+        open_orders = self._list_open_orders(execution_client)
+        conflicting_order = self._find_conflicting_open_order(request, open_orders)
+        if conflicting_order is not None:
+            existing_order_id = (
+                conflicting_order.get("id")
+                or conflicting_order.get("order_id")
+                or conflicting_order.get("client_order_id")
+            )
+            existing_order_type = str(
+                conflicting_order.get("type")
+                or conflicting_order.get("order_type")
+                or "unknown"
+            ).lower()
+            existing_order_side = str(conflicting_order.get("side") or "unknown").lower()
+            payload = {
+                "source": "broker_precheck",
+                "code": "precheck_opposite_side_open_order",
+                "reject_reason": f"opposite side {existing_order_type} order exists",
+                "existing_order_id": existing_order_id,
+                "existing_order_side": existing_order_side,
+                "existing_order_type": existing_order_type,
+            }
+            raise RuntimeError(json.dumps(payload))
+
+        sell_inventory_conflict = self._find_sell_inventory_conflict(
+            execution_client,
+            request,
+            open_orders,
         )
-        existing_order_type = str(
-            conflicting_order.get("type")
-            or conflicting_order.get("order_type")
-            or "unknown"
-        ).lower()
-        existing_order_side = str(conflicting_order.get("side") or "unknown").lower()
-        payload = {
-            "source": "broker_precheck",
-            "code": "precheck_opposite_side_open_order",
-            "reject_reason": f"opposite side {existing_order_type} order exists",
-            "existing_order_id": existing_order_id,
-            "existing_order_side": existing_order_side,
-            "existing_order_type": existing_order_type,
-        }
-        raise RuntimeError(json.dumps(payload))
+        if sell_inventory_conflict is not None:
+            raise RuntimeError(json.dumps(sell_inventory_conflict))
 
     def _submit_order_with_retry(
         self,
@@ -386,14 +402,14 @@ class OrderExecutor:
     @classmethod
     def _find_conflicting_open_order(
         cls,
-        execution_client: Any,
         request: ExecutionRequest,
+        open_orders: list[dict[str, Any]],
     ) -> Optional[dict[str, Any]]:
         request_symbol = request.symbol.strip().upper()
         request_side = request.side.strip().lower()
         if not request_symbol or request_side not in {"buy", "sell"}:
             return None
-        for order in cls._list_open_orders(execution_client):
+        for order in open_orders:
             symbol = str(order.get("symbol") or "").strip().upper()
             if symbol != request_symbol:
                 continue
@@ -410,6 +426,139 @@ class OrderExecutor:
                 continue
             return order
         return None
+
+    @classmethod
+    def _find_sell_inventory_conflict(
+        cls,
+        execution_client: Any,
+        request: ExecutionRequest,
+        open_orders: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        request_symbol = request.symbol.strip().upper()
+        request_side = request.side.strip().lower()
+        if not request_symbol or request_side != "sell":
+            return None
+
+        held_for_open_sells = Decimal("0")
+        existing_order_ids: list[str] = []
+        for order in open_orders:
+            symbol = str(order.get("symbol") or "").strip().upper()
+            if symbol != request_symbol:
+                continue
+            side = str(order.get("side") or "").strip().lower()
+            if side != "sell":
+                continue
+            status = str(order.get("status") or "").strip().lower()
+            if status in {"filled", "canceled", "cancelled", "rejected", "expired"}:
+                continue
+            remaining_qty = cls._remaining_order_qty(order)
+            if remaining_qty <= 0:
+                continue
+            held_for_open_sells += remaining_qty
+            existing_order_id = (
+                order.get("id")
+                or order.get("order_id")
+                or order.get("client_order_id")
+            )
+            if existing_order_id is not None:
+                existing_order_ids.append(str(existing_order_id))
+
+        if held_for_open_sells <= 0:
+            return None
+
+        position_qty = cls._position_qty_for_symbol(execution_client, request_symbol)
+        if position_qty is None:
+            if request.qty > held_for_open_sells:
+                return None
+            return {
+                "source": "broker_precheck",
+                "code": "precheck_sell_qty_exceeds_available",
+                "reject_reason": (
+                    "sell qty may exceed available inventory; position lookup unavailable and "
+                    "open sell reservations cover requested qty"
+                ),
+                "symbol": request_symbol,
+                "qty": str(request.qty),
+                "position_qty": None,
+                "held_for_open_sells": str(held_for_open_sells),
+                "available_qty": None,
+                "existing_order_id": existing_order_ids[0] if existing_order_ids else None,
+                "existing_order_ids": existing_order_ids,
+            }
+        if position_qty <= 0:
+            return None
+
+        available_qty = position_qty - held_for_open_sells
+        if available_qty < 0:
+            available_qty = Decimal("0")
+        if request.qty <= available_qty:
+            return None
+
+        return {
+            "source": "broker_precheck",
+            "code": "precheck_sell_qty_exceeds_available",
+            "reject_reason": "sell qty exceeds available inventory after open sell reservations",
+            "symbol": request_symbol,
+            "qty": str(request.qty),
+            "position_qty": str(position_qty),
+            "held_for_open_sells": str(held_for_open_sells),
+            "available_qty": str(available_qty),
+            "existing_order_id": existing_order_ids[0] if existing_order_ids else None,
+            "existing_order_ids": existing_order_ids,
+        }
+
+    @classmethod
+    def _remaining_order_qty(cls, order: Mapping[str, Any]) -> Decimal:
+        qty = _optional_decimal(order.get("qty") or order.get("quantity"))
+        filled_qty = _optional_decimal(
+            order.get("filled_qty") or order.get("filled_quantity")
+        ) or Decimal("0")
+        if qty is None:
+            return Decimal("0")
+        remaining = qty - filled_qty
+        if remaining < 0:
+            return Decimal("0")
+        return remaining
+
+    def _fractional_equities_enabled_for_request(
+        self,
+        execution_client: Any,
+        request: ExecutionRequest,
+    ) -> bool:
+        position_qty = self._position_qty_for_symbol(
+            execution_client,
+            request.symbol.strip().upper(),
+        )
+        return fractional_equities_enabled_for_trade(
+            action=request.side,
+            global_enabled=settings.trading_fractional_equities_enabled,
+            allow_shorts=settings.trading_allow_shorts,
+            position_qty=position_qty,
+            requested_qty=request.qty,
+        )
+
+    @classmethod
+    def _position_qty_for_symbol(
+        cls,
+        execution_client: Any,
+        symbol: str,
+    ) -> Decimal | None:
+        positions = cls._list_positions(execution_client)
+        if positions is None:
+            return None
+        total_qty = Decimal("0")
+        for position in positions:
+            position_symbol = str(position.get("symbol") or "").strip().upper()
+            if position_symbol != symbol:
+                continue
+            qty = _optional_decimal(position.get("qty") or position.get("quantity"))
+            if qty is None:
+                continue
+            side = str(position.get("side") or "").strip().lower()
+            if side == "short":
+                qty = -abs(qty)
+            total_qty += qty
+        return total_qty
 
     @staticmethod
     def _list_open_orders(execution_client: Any) -> list[dict[str, Any]]:
@@ -442,6 +591,30 @@ class OrderExecutor:
             normalized.append({str(key): value for key, value in mapped.items()})
         return normalized
 
+    @staticmethod
+    def _list_positions(execution_client: Any) -> list[dict[str, Any]] | None:
+        lister = getattr(execution_client, "list_positions", None)
+        if not callable(lister):
+            return None
+        positions: Any
+        try:
+            positions = lister()
+        except Exception as exc:
+            logger.warning("Failed to list positions for broker precheck: %s", exc)
+            return None
+        if positions is None:
+            return None
+        if not isinstance(positions, list):
+            return []
+        raw_positions = cast(list[object], positions)
+        normalized: list[dict[str, Any]] = []
+        for position in raw_positions:
+            if not isinstance(position, Mapping):
+                continue
+            mapped = cast(Mapping[object, Any], position)
+            normalized.append({str(key): value for key, value in mapped.items()})
+        return normalized
+
 
 def _coerce_json(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
@@ -450,7 +623,11 @@ def _coerce_json(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _validate_pre_submit_request(request: ExecutionRequest) -> dict[str, Any] | None:
+def _validate_pre_submit_request(
+    request: ExecutionRequest,
+    *,
+    fractional_equities_enabled: bool,
+) -> dict[str, Any] | None:
     if request.qty <= 0:
         return {
             "source": "local_pre_submit",
@@ -459,7 +636,9 @@ def _validate_pre_submit_request(request: ExecutionRequest) -> dict[str, Any] | 
             "symbol": request.symbol,
             "qty": str(request.qty),
         }
-    min_qty = min_qty_for_symbol(request.symbol)
+    min_qty = min_qty_for_symbol(
+        request.symbol, fractional_equities_enabled=fractional_equities_enabled
+    )
     if request.qty < min_qty:
         return {
             "source": "local_pre_submit",
@@ -469,9 +648,19 @@ def _validate_pre_submit_request(request: ExecutionRequest) -> dict[str, Any] | 
             "qty": str(request.qty),
             "min_qty": str(min_qty),
         }
-    if not qty_has_valid_increment(request.symbol, request.qty):
-        step = qty_step_for_symbol(request.symbol)
-        quantized_qty = quantize_qty_for_symbol(request.symbol, request.qty)
+    if not qty_has_valid_increment(
+        request.symbol,
+        request.qty,
+        fractional_equities_enabled=fractional_equities_enabled,
+    ):
+        step = qty_step_for_symbol(
+            request.symbol, fractional_equities_enabled=fractional_equities_enabled
+        )
+        quantized_qty = quantize_qty_for_symbol(
+            request.symbol,
+            request.qty,
+            fractional_equities_enabled=fractional_equities_enabled,
+        )
         return {
             "source": "local_pre_submit",
             "code": "local_qty_invalid_increment",

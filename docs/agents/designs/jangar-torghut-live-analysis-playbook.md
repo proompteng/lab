@@ -100,7 +100,13 @@ kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select count(*) from s
 kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select status, count(*) from trade_decisions group by status order by count(*) desc;"
 kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select count(*), max(created_at) from executions;"
 kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select count(*), max(as_of) from position_snapshots;"
+kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select alpaca_account_label, status, count(*) from trade_decisions where created_at >= now() - interval '24 hours' group by alpaca_account_label, status order by alpaca_account_label, status;"
+kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select alpaca_account_label, max(created_at) as last_decision_ts from trade_decisions group by alpaca_account_label order by alpaca_account_label;"
 ```
+
+Account-scope rule:
+
+- Always segment rejects/freshness by `alpaca_account_label`; stale legacy lanes can mask active-lane health.
 
 ### 6. CNPG data checks (Jangar)
 
@@ -113,6 +119,8 @@ kubectl cnpg psql -n jangar jangar-db -- -d jangar -c "select status, count(*) f
 ### 7. ClickHouse feed and freshness checks
 
 Do not use default user; use `torghut` credentials from secret.
+
+Prefer exporter freshness gauges for routine checks. Use direct ClickHouse queries only with bounded UTC windows.
 
 ```bash
 CH_PASS=$(kubectl -n torghut get secret torghut-clickhouse-auth -o jsonpath='{.data.torghut_password}' | base64 --decode)
@@ -129,6 +137,11 @@ kubectl -n torghut exec chi-torghut-clickhouse-default-0-0-0 -- \
 kubectl -n torghut exec chi-torghut-clickhouse-default-0-0-0 -- \
   clickhouse-client --user torghut --password "$CH_PASS" \
   --query "SELECT min(event_ts), max(event_ts), count() FROM torghut.ta_signals WHERE event_ts >= toDateTime64('<start-utc>',3,'UTC') AND event_ts < toDateTime64('<end-utc>',3,'UTC') FORMAT Vertical"
+
+# Same bounded pattern for microbars to avoid max() full-scan memory spikes.
+kubectl -n torghut exec chi-torghut-clickhouse-default-0-0-0 -- \
+  clickhouse-client --user torghut --password "$CH_PASS" \
+  --query "SELECT min(window_end), max(window_end), count() FROM torghut.ta_microbars WHERE window_end >= toDateTime64('<start-utc>',3,'UTC') AND window_end < toDateTime64('<end-utc>',3,'UTC') FORMAT Vertical"
 ```
 
 ### 8. Lag Root-Cause Differential (Postgres + ClickHouse + Revision Config)
@@ -159,6 +172,16 @@ kubectl -n torghut get revision <new-revision> -o yaml | rg -n "TRADING_EMERGENC
 ```
 
 ### 9. Exporter metrics checks
+
+Market-context checks (explicit symbols; do not rely on endpoint default):
+
+```bash
+# Endpoint defaults to AAPL if symbol is omitted; always pass active symbols explicitly.
+SYMS=$(kubectl cnpg psql -n torghut torghut-db -- -d torghut -At -c "select distinct symbol from trade_decisions where created_at >= now() - interval '1 day' and status in ('planned','submitted','accepted','filled') order by symbol limit 8;")
+for s in $SYMS; do
+  curl -fsS "http://127.0.0.1:18080/api/torghut/market-context/health?symbol=${s}" | jq '{symbol: .symbol, healthy: .healthy, reasons: .reasons}'
+done
+```
 
 ```bash
 kubectl -n torghut port-forward svc/torghut-llm-guardrails-exporter 19110:9110
@@ -240,6 +263,33 @@ Symptoms:
 2. Compare Knative revisions and env (`TRADING_EMERGENCY_STOP_ENABLED`, lag threshold) around incident time.
 3. Verify whether rejects stop immediately after revision/config change.
 4. If freshness has recovered and only recoverable reasons remain, validate auto-clear hysteresis behavior in scheduler safety logs.
+
+### `alpaca_order_rejected code=40310000` with `insufficient qty available`
+
+Symptoms:
+
+- Repeated sell rejects on the same symbol.
+- Reject body includes `requested`, `available`, and `held_for_orders`.
+  Likely cause:
+- Open sell orders already reserve full inventory; scheduler keeps attempting new sells.
+  First actions:
+
+1. Check open sell orders for symbol and remaining qty.
+2. Compare `position_snapshots.qty_available` vs open sell reservations.
+3. Cancel stale/duplicate open sell orders before retrying new exits.
+4. Verify precheck reject code `precheck_sell_qty_exceeds_available` is emitted after fix.
+
+### Frequent `qty_below_min` on equities with small approved notionals
+
+Symptoms:
+
+- `decision_json.qty` may appear whole-share, but reject reason is `qty_below_min`.
+- Allocator/execution caps produce sub-share residual notional that rounds below minimum increment.
+  First actions:
+
+1. Inspect `decision_json.params.allocator.approved_notional` and `price` for rejected rows.
+2. Confirm whether residual notional is expected from budget/cap clamps.
+3. Enable long-only fractional equities and re-check reject distribution.
 
 ## Evidence Output Template
 
