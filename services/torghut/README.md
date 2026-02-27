@@ -98,6 +98,20 @@ uv run python scripts/build_dspy_dataset.py \
   --universe-ref torghut:equity:enabled
 ```
 
+Compile helper (matches `torghut-dspy-compile-mipro-v1` contract):
+
+```bash
+cd services/torghut
+uv run python scripts/compile_dspy_program.py \
+  --repository proompteng/lab \
+  --base main \
+  --head codex/dspy-compile \
+  --artifact-path artifacts/dspy/run-1/compile \
+  --dataset-ref artifacts/dspy/run-1/dataset-build/dspy-dataset.json \
+  --metric-policy-ref config/trading/llm/dspy-metrics.yaml \
+  --optimizer miprov2
+```
+
 ## Feature flags (Flipt)
 
 - Torghut runtime gates are resolved via Flipt boolean evaluations when `TRADING_FEATURE_FLAGS_ENABLED=true`.
