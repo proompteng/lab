@@ -7,6 +7,18 @@ from .dataset import (
     DSPyDatasetBuildResult,
     build_dspy_dataset_artifacts,
 )
+from .compiler import (
+    COMPILED_ARTIFACT_SCHEMA_VERSION,
+    COMPILE_METRICS_SCHEMA_VERSION,
+    DEFAULT_COMPILE_METRICS_NAME,
+    DEFAULT_COMPILE_RESULT_NAME,
+    DEFAULT_COMPILE_SEED,
+    DEFAULT_COMPILED_ARTIFACT_NAME,
+    DEFAULT_PROGRAM_NAME,
+    DEFAULT_SIGNATURE_VERSION,
+    DSPyCompileArtifactResult,
+    compile_dspy_program_artifacts,
+)
 from .hashing import canonical_json, hash_payload, sha256_hex
 from .schemas import (
     DSPyArtifactBundle,
@@ -36,8 +48,18 @@ __all__ = [
     "DSPyWorkflowLane",
     "DATASET_METADATA_SCHEMA_VERSION",
     "DATASET_SCHEMA_VERSION",
+    "COMPILED_ARTIFACT_SCHEMA_VERSION",
+    "COMPILE_METRICS_SCHEMA_VERSION",
+    "DEFAULT_COMPILE_METRICS_NAME",
+    "DEFAULT_COMPILE_RESULT_NAME",
+    "DEFAULT_COMPILE_SEED",
+    "DEFAULT_COMPILED_ARTIFACT_NAME",
+    "DEFAULT_PROGRAM_NAME",
+    "DEFAULT_SIGNATURE_VERSION",
     "DEFAULT_SAMPLING_SEED",
+    "DSPyCompileArtifactResult",
     "build_compile_result",
+    "compile_dspy_program_artifacts",
     "build_dspy_dataset_artifacts",
     "build_dspy_agentrun_payload",
     "build_eval_report",
