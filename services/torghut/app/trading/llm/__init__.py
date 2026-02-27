@@ -2,12 +2,14 @@
 
 from .dspy_compile import (
     DSPyArtifactBundle,
+    DSPyEvalArtifactResult,
     DSPyCompileResult,
     DSPyEvalReport,
     DSPyPromotionRecord,
     build_compile_result,
     build_dspy_agentrun_payload,
     build_eval_report,
+    evaluate_dspy_compile_artifact,
     orchestrate_dspy_agentrun_workflow,
     build_promotion_record,
     submit_jangar_agentrun,
@@ -20,6 +22,7 @@ from .review_engine import LLMReviewEngine, LLMReviewOutcome
 __all__ = [
     "DSPyArtifactBundle",
     "DSPyCompileResult",
+    "DSPyEvalArtifactResult",
     "DSPyEvalReport",
     "DSPyPromotionRecord",
     "DSPyReviewRuntime",
@@ -31,6 +34,7 @@ __all__ = [
     "build_compile_result",
     "build_dspy_agentrun_payload",
     "build_eval_report",
+    "evaluate_dspy_compile_artifact",
     "orchestrate_dspy_agentrun_workflow",
     "build_promotion_record",
     "submit_jangar_agentrun",
