@@ -272,6 +272,14 @@ class TestExecutionAdapters(TestCase):
         self.assertEqual(orders[0].get('_execution_fallback_reason'), 'lean_list_orders_contract_violation')
         self.assertEqual(orders[0].get('_execution_fallback_count'), 1)
 
+    def test_lean_list_positions_returns_none_without_fallback(self) -> None:
+        adapter = LeanExecutionAdapter(
+            base_url='http://lean.invalid',
+            timeout_seconds=1,
+            fallback=None,
+        )
+        self.assertIsNone(adapter.list_positions())
+
     def test_lean_submit_symbol_mismatch_triggers_fallback(self) -> None:
         class InvalidLeanAdapter(LeanExecutionAdapter):
             def _request_json(  # type: ignore[override]

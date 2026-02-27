@@ -602,6 +602,8 @@ class OrderExecutor:
         except Exception as exc:
             logger.warning("Failed to list positions for broker precheck: %s", exc)
             return None
+        if positions is None:
+            return None
         if not isinstance(positions, list):
             return []
         raw_positions = cast(list[object], positions)

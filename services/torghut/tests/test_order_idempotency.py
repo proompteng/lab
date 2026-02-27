@@ -122,6 +122,11 @@ class PositionLookupUnavailableClient(FakeAlpacaClient):
         raise RuntimeError("positions lookup unavailable")
 
 
+class PositionLookupNoneClient(FakeAlpacaClient):
+    def list_positions(self) -> list[dict[str, str]] | None:
+        return None
+
+
 class PositionLookupUnavailableHeldInventoryClient(PositionLookupUnavailableClient):
     def list_orders(self, status: str = "all") -> list[dict[str, str]]:
         if status != "open":
@@ -865,6 +870,45 @@ class TestOrderIdempotency(TestCase):
             execution = executor.submit_order(
                 session,
                 PositionLookupUnavailableClient(),
+                decision,
+                decision_row,
+                "paper",
+            )
+            self.assertIsNotNone(execution)
+
+    def test_submit_order_precheck_allows_fractional_sell_when_position_lookup_returns_none(
+        self,
+    ) -> None:
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            execution = executor.submit_order(
+                session,
+                PositionLookupNoneClient(),
                 decision,
                 decision_row,
                 "paper",

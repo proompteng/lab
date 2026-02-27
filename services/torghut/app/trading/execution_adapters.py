@@ -54,7 +54,7 @@ class ExecutionAdapter(Protocol):
     def list_orders(self, status: str = 'all') -> list[dict[str, Any]]:
         ...
 
-    def list_positions(self) -> list[dict[str, Any]]:
+    def list_positions(self) -> list[dict[str, Any]] | None:
         ...
 
 
@@ -312,17 +312,19 @@ class LeanExecutionAdapter:
                 return [cast(dict[str, Any], item) for item in items if isinstance(item, Mapping)]
         return []
 
-    def list_positions(self) -> list[dict[str, Any]]:
+    def list_positions(self) -> list[dict[str, Any]] | None:
         if self.fallback is None:
-            return []
+            return None
         lister = getattr(self.fallback, 'list_positions', None)
         if not callable(lister):
-            return []
+            return None
         try:
             positions = lister()
         except Exception as exc:
             logger.warning("Lean adapter fallback list_positions failed: %s", exc)
-            return []
+            return None
+        if positions is None:
+            return None
         if not isinstance(positions, list):
             return []
         items = cast(list[Any], positions)
