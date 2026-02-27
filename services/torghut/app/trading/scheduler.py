@@ -92,6 +92,32 @@ class RuntimeUncertaintyGate:
     conformal_interval_width: Decimal | None = None
 
 
+def _runtime_uncertainty_gate_rank(action: RuntimeUncertaintyGateAction) -> int:
+    ranking: dict[RuntimeUncertaintyGateAction, int] = {
+        "pass": 0,
+        "degrade": 1,
+        "abstain": 2,
+        "fail": 3,
+    }
+    return ranking[action]
+
+
+def _select_strictest_runtime_uncertainty_gate(
+    candidates: list[RuntimeUncertaintyGate],
+) -> RuntimeUncertaintyGate:
+    selected = candidates[0]
+    for candidate in candidates[1:]:
+        if _runtime_uncertainty_gate_rank(candidate.action) > _runtime_uncertainty_gate_rank(
+            selected.action
+        ):
+            selected = candidate
+    return selected
+
+
+def _clone_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [dict(position) for position in positions]
+
+
 def _split_emergency_stop_reasons(raw: str | None) -> list[str]:
     if not raw:
         return []
@@ -1089,7 +1115,7 @@ class TradingPipeline:
             "cash": str(account_snapshot.cash),
             "buying_power": str(account_snapshot.buying_power),
         }
-        positions = account_snapshot.positions
+        positions = _clone_positions(account_snapshot.positions)
 
         universe_resolution = self.universe_resolver.get_resolution()
         self.state.universe_source_status = universe_resolution.status
@@ -1216,7 +1242,7 @@ class TradingPipeline:
             decision = allocation_result.decision
             self.state.metrics.decisions_total += 1
             try:
-                self._handle_decision(
+                submitted_decision = self._handle_decision(
                     session,
                     decision,
                     strategies,
@@ -1224,6 +1250,8 @@ class TradingPipeline:
                     positions,
                     allowed_symbols,
                 )
+                if submitted_decision is not None:
+                    _apply_projected_position_decision(positions, submitted_decision)
             except Exception:
                 logger.exception(
                     "Decision handling failed strategy_id=%s symbol=%s timeframe=%s",
@@ -1369,7 +1397,7 @@ class TradingPipeline:
         account: dict[str, str],
         positions: list[dict[str, Any]],
         allowed_symbols: set[str],
-    ) -> None:
+    ) -> StrategyDecision | None:
         decision_row: Optional[TradeDecision] = None
         try:
             strategy_context = self._resolve_strategy_context(
@@ -1431,13 +1459,16 @@ class TradingPipeline:
             ):
                 return
 
-            self._submit_decision_execution(
+            submitted = self._submit_decision_execution(
                 session=session,
                 decision=decision,
                 decision_row=decision_row,
                 policy_outcome=policy_outcome,
                 symbol_allowlist=symbol_allowlist,
             )
+            if not submitted:
+                return None
+            return decision
         except Exception as exc:
             logger.exception(
                 "Decision handling failed strategy_id=%s symbol=%s error=%s",
@@ -1452,7 +1483,7 @@ class TradingPipeline:
                     decision_row,
                     f"decision_handler_error {type(exc).__name__}",
                 )
-            return
+            return None
 
     def _resolve_strategy_context(
         self,
@@ -1591,27 +1622,17 @@ class TradingPipeline:
         decision, gate_payload, gate_rejection = self._apply_runtime_uncertainty_gate(
             decision, positions=positions
         )
-        gate_params = decision.model_dump(mode="json").get("params", {})
-        params_update: dict[str, Any] = {"runtime_uncertainty_gate": gate_payload}
-        if isinstance(gate_params, Mapping):
-            params_update = dict(cast(Mapping[str, Any], gate_params))
-            params_update["runtime_uncertainty_gate"] = gate_payload
-        self.executor.update_decision_params(session, decision_row, params_update)
-
-        gate_action = str(gate_payload.get("action") or "pass").strip().lower()
-        if gate_action in {"pass", "degrade", "abstain", "fail"}:
-            self.state.metrics.record_runtime_uncertainty_gate(
-                cast(RuntimeUncertaintyGateAction, gate_action),
-                blocked=gate_rejection is not None,
-            )
-            self.state.last_runtime_uncertainty_gate_action = gate_action
-        else:
-            self.state.last_runtime_uncertainty_gate_action = None
-        self.state.last_runtime_uncertainty_gate_source = (
-            str(gate_payload.get("source") or "").strip() or None
+        self._persist_runtime_uncertainty_gate_payload(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            gate_payload=gate_payload,
         )
-        self.state.last_runtime_uncertainty_gate_reason = gate_rejection
         if gate_rejection:
+            self._record_runtime_uncertainty_gate_result(
+                gate_payload=gate_payload,
+                gate_rejection=gate_rejection,
+            )
             self._record_decision_rejection(
                 session=session,
                 decision=decision,
@@ -1627,6 +1648,10 @@ class TradingPipeline:
             session, decision, decision_row, account, positions
         )
         if llm_reject_reason:
+            self._record_runtime_uncertainty_gate_result(
+                gate_payload=gate_payload,
+                gate_rejection=None,
+            )
             self._record_decision_rejection(
                 session=session,
                 decision=decision,
@@ -1635,7 +1660,109 @@ class TradingPipeline:
                 log_template="Decision rejected by llm review strategy_id=%s symbol=%s reason=%s",
             )
             return None
+
+        gate_rejection = self._recheck_runtime_uncertainty_gate_after_llm(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            positions=positions,
+            gate_payload=gate_payload,
+        )
+        if gate_rejection:
+            self._record_runtime_uncertainty_gate_result(
+                gate_payload=gate_payload,
+                gate_rejection=gate_rejection,
+            )
+            self._record_decision_rejection(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reasons=[gate_rejection],
+                log_template=(
+                    "Decision rejected by runtime uncertainty gate strategy_id=%s symbol=%s reason=%s"
+                ),
+            )
+            return None
+
+        self._record_runtime_uncertainty_gate_result(
+            gate_payload=gate_payload,
+            gate_rejection=None,
+        )
         return decision, snapshot
+
+    def _record_runtime_uncertainty_gate_result(
+        self,
+        *,
+        gate_payload: Mapping[str, Any],
+        gate_rejection: str | None,
+    ) -> None:
+        gate_action = str(gate_payload.get("action") or "pass").strip().lower()
+        if gate_action in {"pass", "degrade", "abstain", "fail"}:
+            self.state.metrics.record_runtime_uncertainty_gate(
+                cast(RuntimeUncertaintyGateAction, gate_action),
+                blocked=gate_rejection is not None,
+            )
+            self.state.last_runtime_uncertainty_gate_action = gate_action
+        else:
+            self.state.last_runtime_uncertainty_gate_action = None
+        self.state.last_runtime_uncertainty_gate_source = (
+            str(gate_payload.get("source") or "").strip() or None
+        )
+        self.state.last_runtime_uncertainty_gate_reason = gate_rejection
+
+    def _persist_runtime_uncertainty_gate_payload(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        gate_payload: Mapping[str, Any],
+    ) -> None:
+        gate_params = decision.model_dump(mode="json").get("params", {})
+        params_update: dict[str, Any] = {"runtime_uncertainty_gate": dict(gate_payload)}
+        if isinstance(gate_params, Mapping):
+            params_update = dict(cast(Mapping[str, Any], gate_params))
+            params_update["runtime_uncertainty_gate"] = dict(gate_payload)
+        self.executor.update_decision_params(session, decision_row, params_update)
+
+    def _recheck_runtime_uncertainty_gate_after_llm(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        positions: list[dict[str, Any]],
+        gate_payload: dict[str, Any],
+    ) -> str | None:
+        gate_action = str(gate_payload.get("action") or "pass").strip().lower()
+        if gate_action not in {"abstain", "fail"}:
+            return None
+        risk_increasing_entry = _is_runtime_risk_increasing_entry(decision, positions)
+        gate_payload["risk_increasing_entry"] = risk_increasing_entry
+        if not risk_increasing_entry:
+            gate_payload["entry_blocked"] = False
+            gate_payload["block_reason"] = None
+            self._persist_runtime_uncertainty_gate_payload(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                gate_payload=gate_payload,
+            )
+            return None
+        reason = (
+            "runtime_uncertainty_gate_fail_block_new_entries"
+            if gate_action == "fail"
+            else "runtime_uncertainty_gate_abstain_block_risk_increasing_entries"
+        )
+        gate_payload["entry_blocked"] = True
+        gate_payload["block_reason"] = reason
+        self._persist_runtime_uncertainty_gate_payload(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            gate_payload=gate_payload,
+        )
+        return reason
 
     def _record_decision_rejection(
         self,
@@ -1767,7 +1894,7 @@ class TradingPipeline:
         decision_row: TradeDecision,
         policy_outcome: Any,
         symbol_allowlist: set[str],
-    ) -> None:
+    ) -> bool:
         execution_client = self._execution_client_for_symbol(
             decision.symbol,
             symbol_allowlist=symbol_allowlist,
@@ -1801,11 +1928,11 @@ class TradingPipeline:
             retry_delays=policy_outcome.retry_delays,
         )
         if rejected:
-            return
+            return False
         if execution is None:
             self._sync_lean_observability(execution_client)
             self.state.metrics.orders_submitted_total += 1
-            return
+            return True
 
         actual_adapter_name = str(
             getattr(execution_client, "last_route", selected_adapter_name)
@@ -1831,6 +1958,7 @@ class TradingPipeline:
             actual_adapter_name,
             execution.alpaca_order_id,
         )
+        return True
 
     def _maybe_record_lean_strategy_shadow(
         self,
@@ -2007,12 +2135,13 @@ class TradingPipeline:
         self, decision: StrategyDecision
     ) -> RuntimeUncertaintyGate:
         params = decision.params
+        candidates: list[RuntimeUncertaintyGate] = []
         direct_action = _coerce_runtime_uncertainty_gate_action(
             params.get("uncertainty_gate_action")
         )
         if direct_action is not None:
-            return RuntimeUncertaintyGate(
-                action=direct_action, source="decision_params"
+            candidates.append(
+                RuntimeUncertaintyGate(action=direct_action, source="decision_params")
             )
 
         runtime_payload = params.get("runtime_uncertainty_gate")
@@ -2022,9 +2151,11 @@ class TradingPipeline:
                 runtime_map.get("action")
             )
             if runtime_action is not None:
-                return RuntimeUncertaintyGate(
-                    action=runtime_action,
-                    source="decision_runtime_payload",
+                candidates.append(
+                    RuntimeUncertaintyGate(
+                        action=runtime_action,
+                        source="decision_runtime_payload",
+                    )
                 )
 
         forecast_audit = params.get("forecast_audit")
@@ -2034,35 +2165,66 @@ class TradingPipeline:
                 audit_map.get("uncertainty_gate_action")
             )
             if audit_action is not None:
-                return RuntimeUncertaintyGate(
-                    action=audit_action,
-                    source="forecast_audit",
+                candidates.append(
+                    RuntimeUncertaintyGate(
+                        action=audit_action,
+                        source="forecast_audit",
+                    )
                 )
 
         gate_path_raw = self.state.last_autonomy_gates
         if gate_path_raw:
             try:
                 payload = json.loads(Path(gate_path_raw).read_text(encoding="utf-8"))
-            except Exception:
-                payload = {}
-            if isinstance(payload, Mapping):
-                gate_map = cast(Mapping[str, Any], payload)
-                gate_action = _coerce_runtime_uncertainty_gate_action(
-                    gate_map.get("uncertainty_gate_action")
+            except Exception as exc:
+                logger.warning(
+                    "Failed to read autonomy gate report path=%s error=%s",
+                    gate_path_raw,
+                    exc,
                 )
-                if gate_action is not None:
-                    return RuntimeUncertaintyGate(
-                        action=gate_action,
-                        source="autonomy_gate_report",
-                        coverage_error=_optional_decimal(
-                            gate_map.get("coverage_error")
-                        ),
-                        shift_score=_optional_decimal(gate_map.get("shift_score")),
-                        conformal_interval_width=_optional_decimal(
-                            gate_map.get("conformal_interval_width")
-                        ),
+                candidates.append(
+                    RuntimeUncertaintyGate(
+                        action="abstain",
+                        source="autonomy_gate_report_read_error",
                     )
-        return RuntimeUncertaintyGate(action="pass", source="default_pass")
+                )
+            else:
+                if isinstance(payload, Mapping):
+                    gate_map = cast(Mapping[str, Any], payload)
+                    gate_action = _coerce_runtime_uncertainty_gate_action(
+                        gate_map.get("uncertainty_gate_action")
+                    )
+                    if gate_action is not None:
+                        candidates.append(
+                            RuntimeUncertaintyGate(
+                                action=gate_action,
+                                source="autonomy_gate_report",
+                                coverage_error=_optional_decimal(
+                                    gate_map.get("coverage_error")
+                                ),
+                                shift_score=_optional_decimal(gate_map.get("shift_score")),
+                                conformal_interval_width=_optional_decimal(
+                                    gate_map.get("conformal_interval_width")
+                                ),
+                            )
+                        )
+                    else:
+                        candidates.append(
+                            RuntimeUncertaintyGate(
+                                action="abstain",
+                                source="autonomy_gate_report_missing_action",
+                            )
+                        )
+                else:
+                    candidates.append(
+                        RuntimeUncertaintyGate(
+                            action="abstain",
+                            source="autonomy_gate_report_invalid_payload",
+                        )
+                    )
+        if not candidates:
+            return RuntimeUncertaintyGate(action="pass", source="default_pass")
+        return _select_strictest_runtime_uncertainty_gate(candidates)
 
     def _apply_runtime_uncertainty_gate(
         self,
@@ -3194,6 +3356,32 @@ def _position_qty(symbol: str, positions: list[dict[str, Any]]) -> Decimal:
             qty = -abs(qty)
         total_qty += qty
     return total_qty
+
+
+def _apply_projected_position_decision(
+    positions: list[dict[str, Any]],
+    decision: StrategyDecision,
+) -> None:
+    qty = _optional_decimal(decision.qty)
+    if qty is None or qty <= 0:
+        return
+    if decision.action not in {"buy", "sell"}:
+        return
+
+    current_qty = _position_qty(decision.symbol, positions)
+    delta = qty if decision.action == "buy" else -qty
+    projected_qty = current_qty + delta
+
+    positions[:] = [position for position in positions if position.get("symbol") != decision.symbol]
+    if projected_qty == 0:
+        return
+    positions.append(
+        {
+            "symbol": decision.symbol,
+            "qty": str(abs(projected_qty)),
+            "side": "short" if projected_qty < 0 else "long",
+        }
+    )
 
 
 def _is_runtime_risk_increasing_entry(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
+import math
 from pathlib import Path
 from typing import Any, cast
 
@@ -253,10 +254,30 @@ def _append_uncertainty_reasons(
             }
         )
 
-    max_coverage_error = _float_or_default(
-        policy_payload.get("promotion_uncertainty_max_coverage_error"),
-        0.03,
+    promotion_threshold = _float_or_none(
+        policy_payload.get("promotion_uncertainty_max_coverage_error")
     )
+    gate7_threshold = _float_or_none(policy_payload.get("gate7_max_coverage_error_pass"))
+    if promotion_threshold is None and gate7_threshold is not None:
+        max_coverage_error = gate7_threshold
+    elif promotion_threshold is not None:
+        max_coverage_error = promotion_threshold
+    else:
+        max_coverage_error = 0.03
+    if (
+        promotion_threshold is not None
+        and gate7_threshold is not None
+        and promotion_threshold != gate7_threshold
+    ):
+        reasons.append("uncertainty_policy_threshold_mismatch")
+        reason_details.append(
+            {
+                "reason": "uncertainty_policy_threshold_mismatch",
+                "promotion_uncertainty_max_coverage_error": promotion_threshold,
+                "gate7_max_coverage_error_pass": gate7_threshold,
+            }
+        )
+        max_coverage_error = min(max_coverage_error, gate7_threshold)
     coverage_error = _float_or_default(gate_report_payload.get("coverage_error"), 1.0)
     if coverage_error > max_coverage_error:
         reasons.append("uncertainty_calibration_slo_failed")
@@ -1045,16 +1066,29 @@ def _int_or_default(value: Any, default: int) -> int:
 
 
 def _float_or_default(value: Any, default: float) -> float:
+    parsed = _float_or_none(value)
+    if parsed is None:
+        return default
+    return parsed
+
+
+def _float_or_none(value: Any) -> float | None:
     if isinstance(value, (int, float)):
-        return float(value)
+        parsed = float(value)
+        if math.isfinite(parsed):
+            return parsed
+        return None
     if isinstance(value, str):
         stripped = value.strip()
         if stripped:
             try:
-                return float(stripped)
+                parsed = float(stripped)
             except ValueError:
-                return default
-    return default
+                return None
+            if math.isfinite(parsed):
+                return parsed
+            return None
+    return None
 
 
 def _promotion_rank(target: str) -> int:

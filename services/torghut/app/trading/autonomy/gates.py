@@ -929,11 +929,16 @@ def _decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
     if isinstance(value, Decimal):
+        if not value.is_finite():
+            return None
         return value
     try:
-        return Decimal(str(value))
+        parsed = Decimal(str(value))
     except (ArithmeticError, TypeError, ValueError):
         return None
+    if not parsed.is_finite():
+        return None
+    return parsed
 
 
 def _decimal_or_default(value: Any, default: Decimal) -> Decimal:

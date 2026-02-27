@@ -590,6 +590,113 @@ class TestPolicyChecks(TestCase):
         self.assertIn("uncertainty_gate_not_pass", promotion.reasons)
         self.assertIn("uncertainty_calibration_slo_failed", promotion.reasons)
 
+    def test_promotion_prerequisites_fail_when_uncertainty_coverage_non_finite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "profitability-evidence-v4.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "gates" / "profitability-benchmark-v4.json").write_text(
+                json.dumps(
+                    {
+                        "slices": [
+                            {"slice_type": "regime", "slice_key": "regime:neutral"}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "gates" / "profitability-evidence-validation.json").write_text(
+                json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "recalibration-report.json").write_text(
+                json.dumps({"status": "not_required"}),
+                encoding="utf-8",
+            )
+            _write_janus_artifacts(root)
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={"promotion_uncertainty_max_coverage_error": "0.03"},
+                gate_report_payload={
+                    **_gate_report(),
+                    "uncertainty_gate_action": "pass",
+                    "coverage_error": "NaN",
+                },
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("uncertainty_calibration_slo_failed", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_uncertainty_thresholds_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "profitability-evidence-v4.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "gates" / "profitability-benchmark-v4.json").write_text(
+                json.dumps(
+                    {
+                        "slices": [
+                            {"slice_type": "regime", "slice_key": "regime:neutral"}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "gates" / "profitability-evidence-validation.json").write_text(
+                json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "recalibration-report.json").write_text(
+                json.dumps({"status": "not_required"}),
+                encoding="utf-8",
+            )
+            _write_janus_artifacts(root)
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_uncertainty_max_coverage_error": "0.03",
+                    "gate7_max_coverage_error_pass": "0.05",
+                },
+                gate_report_payload={
+                    **_gate_report(),
+                    "uncertainty_gate_action": "pass",
+                    "coverage_error": "0.02",
+                },
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("uncertainty_policy_threshold_mismatch", promotion.reasons)
+
     def test_promotion_prerequisites_fail_when_fold_evidence_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
