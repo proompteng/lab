@@ -809,11 +809,20 @@ def _configure_torghut_service_for_simulation(
 
 def _restore_ta_configuration(resources: SimulationResources, state: Mapping[str, Any]) -> None:
     ta_data = _as_mapping(state.get('ta_data'))
+    existing = _kubectl_json(
+        resources.namespace,
+        ['get', 'configmap', resources.ta_configmap, '-o', 'json'],
+    )
+    existing_data = _as_mapping(existing.get('data'))
+    patch_data: dict[str, Any] = dict(ta_data)
+    for key in existing_data:
+        if key not in ta_data:
+            patch_data[key] = None
     _kubectl_patch(
         resources.namespace,
         'configmap',
         resources.ta_configmap,
-        {'data': ta_data},
+        {'data': patch_data},
     )
 
 

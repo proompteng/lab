@@ -29,9 +29,12 @@ def resolve_simulation_context(
 ) -> dict[str, Any] | None:
     """Build normalized simulation context from runtime settings + signal metadata."""
 
+    enabled = simulation_context_enabled()
     context: dict[str, Any] = {}
     if source is not None:
         context.update(_coerce_context_mapping(source))
+    if not enabled and not context:
+        return None
 
     if signal is not None:
         symbol = getattr(signal, "symbol", None)
@@ -61,7 +64,7 @@ def resolve_simulation_context(
 
     if context:
         return context
-    if simulation_context_enabled():
+    if enabled:
         return {
             "simulation_run_id": run_id or "simulation",
             "dataset_id": dataset_id or "unknown",

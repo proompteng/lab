@@ -18,6 +18,7 @@ from scripts.start_historical_simulation import (
     _offset_for_time_lookup,
     _pacing_delay_seconds,
     _redact_dsn_credentials,
+    _restore_ta_configuration,
     _replay_dump,
 )
 
@@ -278,3 +279,43 @@ class TestStartHistoricalSimulation(TestCase):
                 marker_payload.get('dump_sha256'),
                 _dump_sha256_for_replay(dump_path),
             )
+
+    def test_restore_ta_configuration_removes_simulation_only_keys(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        state = {
+            'ta_data': {
+                'TA_GROUP_ID': 'torghut-ta-main',
+                'TA_TRADES_TOPIC': 'torghut.trades.v1',
+            }
+        }
+        current_configmap = {
+            'data': {
+                'TA_GROUP_ID': 'torghut-ta-sim-sim_1',
+                'TA_TRADES_TOPIC': 'torghut.sim.trades.v1',
+                'TA_AUTO_OFFSET_RESET': 'earliest',
+            }
+        }
+
+        with (
+            patch('scripts.start_historical_simulation._kubectl_json', return_value=current_configmap),
+            patch('scripts.start_historical_simulation._kubectl_patch') as patch_mock,
+        ):
+            _restore_ta_configuration(resources, state)
+
+        patch_mock.assert_called_once_with(
+            resources.namespace,
+            'configmap',
+            resources.ta_configmap,
+            {
+                'data': {
+                    'TA_GROUP_ID': 'torghut-ta-main',
+                    'TA_TRADES_TOPIC': 'torghut.trades.v1',
+                    'TA_AUTO_OFFSET_RESET': None,
+                }
+            },
+        )

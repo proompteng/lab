@@ -538,3 +538,33 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(simulation_context.get('dataset_id'), 'dataset-1')
         self.assertEqual(simulation_context.get('dataset_event_id'), 'evt-321')
         self.assertEqual(simulation_context.get('signal_seq'), 321)
+
+    def test_decision_params_do_not_include_simulation_context_when_disabled(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='no-sim',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            seq=11,
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+            },
+        )
+
+        with patch.object(settings, 'trading_simulation_enabled', False):
+            decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        self.assertNotIn('simulation_context', decisions[0].params)
