@@ -81,6 +81,7 @@ The v1 documents are written to stay consistent with:
 | `v1/component-strategy-catalog-and-hot-reload.md`             | Component: strategy catalog and hot reload           |
 | `v1/strategy-authoring-kit.md`                                | Strategy authoring kit                               |
 | `v1/backtesting-and-simulation.md`                            | Backtesting and simulation                           |
+| `v1/historical-dataset-simulation.md`                         | Historical dataset simulation                        |
 | `v1/test-harness-and-fixtures.md`                             | Test harness and fixtures                            |
 | `v1/data-quality-and-dedup-contracts.md`                      | Data quality and dedup contracts                     |
 | `v1/observability-metrics-logs-traces.md`                     | Observability: metrics, logs, traces                 |
