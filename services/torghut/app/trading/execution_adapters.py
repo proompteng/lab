@@ -265,6 +265,10 @@ class SimulationExecutionAdapter:
             return [dict(value) for value in values]
         return [dict(value) for value in values if str(value.get('status', '')).strip().lower() == normalized]
 
+    def list_positions(self) -> list[dict[str, Any]]:
+        self.last_route = self.name
+        return []
+
     def _build_producer(self, bootstrap_servers: str) -> Any | None:
         try:
             from kafka import KafkaProducer  # type: ignore[import-not-found]
