@@ -329,6 +329,7 @@ def build_dspy_agentrun_payload(
     head: str,
     artifact_path: str,
     parameter_overrides: Mapping[str, Any],
+    issue_number: str = "0",
     namespace: str = "agents",
     agent_name: str = "codex-agent",
     vcs_ref_name: str = "github",
@@ -345,6 +346,10 @@ def build_dspy_agentrun_payload(
         "base": base.strip(),
         "head": head.strip(),
         "artifactPath": artifact_path.strip(),
+        "issueNumber": _normalize_string_parameter(
+            key="issueNumber",
+            value=issue_number,
+        ),
     }
     for key, value in parameter_overrides.items():
         normalized_key = str(key).strip()
@@ -508,6 +513,7 @@ def orchestrate_dspy_agentrun_workflow(
     artifact_root: str,
     run_prefix: str,
     auth_token: str | None,
+    issue_number: str = "0",
     lane_parameter_overrides: Mapping[DSPyWorkflowLane, Mapping[str, Any]]
     | None = None,
     include_gepa_experiment: bool = False,
@@ -552,6 +558,7 @@ def orchestrate_dspy_agentrun_workflow(
             head=head,
             artifact_path=artifact_path,
             parameter_overrides=lane_overrides,
+            issue_number=issue_number,
             namespace=namespace,
             agent_name=agent_name,
             vcs_ref_name=vcs_ref_name,

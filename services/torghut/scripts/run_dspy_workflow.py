@@ -68,6 +68,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base", default="main", help="VCS base branch")
     parser.add_argument("--head", required=True, help="VCS head branch")
     parser.add_argument(
+        "--issue-number",
+        default="0",
+        help="Issue number metadata required by codex agent runner (default: 0)",
+    )
+    parser.add_argument(
         "--run-prefix", required=True, help="Stable run prefix for idempotency keys"
     )
     parser.add_argument(
@@ -158,6 +163,7 @@ def main() -> int:
             artifact_root=args.artifact_root,
             run_prefix=args.run_prefix,
             auth_token=(args.auth_token.strip() or None),
+            issue_number=args.issue_number,
             lane_parameter_overrides=lane_overrides,
             include_gepa_experiment=bool(args.include_gepa_experiment),
             namespace=args.namespace,
