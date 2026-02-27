@@ -439,10 +439,6 @@ class OrderExecutor:
         if not request_symbol or request_side != "sell":
             return None
 
-        position_qty = cls._position_qty_for_symbol(execution_client, request_symbol)
-        if position_qty is None or position_qty <= 0:
-            return None
-
         held_for_open_sells = Decimal("0")
         existing_order_ids: list[str] = []
         for order in open_orders:
@@ -466,6 +462,31 @@ class OrderExecutor:
             )
             if existing_order_id is not None:
                 existing_order_ids.append(str(existing_order_id))
+
+        if held_for_open_sells <= 0:
+            return None
+
+        position_qty = cls._position_qty_for_symbol(execution_client, request_symbol)
+        if position_qty is None:
+            if request.qty > held_for_open_sells:
+                return None
+            return {
+                "source": "broker_precheck",
+                "code": "precheck_sell_qty_exceeds_available",
+                "reject_reason": (
+                    "sell qty may exceed available inventory; position lookup unavailable and "
+                    "open sell reservations cover requested qty"
+                ),
+                "symbol": request_symbol,
+                "qty": str(request.qty),
+                "position_qty": None,
+                "held_for_open_sells": str(held_for_open_sells),
+                "available_qty": None,
+                "existing_order_id": existing_order_ids[0] if existing_order_ids else None,
+                "existing_order_ids": existing_order_ids,
+            }
+        if position_qty <= 0:
+            return None
 
         available_qty = position_qty - held_for_open_sells
         if available_qty < 0:

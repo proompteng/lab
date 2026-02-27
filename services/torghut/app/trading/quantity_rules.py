@@ -69,10 +69,10 @@ def fractional_equities_enabled_for_trade(
     if normalized_action != "sell":
         return False
 
-    # When positions are unavailable, allow sell-side fractional only when shorts are
-    # disabled (sell can only reduce an existing long).
+    # Position data may be unavailable on some execution clients. In that case, avoid
+    # hard local false rejects and defer short-increasing checks to policy/broker.
     if position_qty is None:
-        return not allow_shorts
+        return True
     if position_qty <= 0:
         return False
     if requested_qty is None or requested_qty <= 0:
