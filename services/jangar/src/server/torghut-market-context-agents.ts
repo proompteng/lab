@@ -1,4 +1,6 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { request as httpsRequest } from 'node:https'
 
 import { AuthenticationV1Api, KubeConfig, type V1TokenReview } from '@kubernetes/client-node'
 import { sql } from 'kysely'
@@ -87,6 +89,8 @@ const DEFAULT_FUNDAMENTALS_DISPATCH_STUCK_SECONDS = 45 * 60
 const DEFAULT_NEWS_DISPATCH_STUCK_SECONDS = 10 * 60
 const DEFAULT_AGENT_RUN_TTL_SECONDS = 30 * 60
 const DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX = 'system:serviceaccount:agents:'
+const IN_CLUSTER_SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
+const IN_CLUSTER_SERVICE_ACCOUNT_CA_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
 
 const parseBoolean = (value: string | undefined, fallback: boolean) => {
   if (!value) return fallback
@@ -840,45 +844,152 @@ const logIngestAuth = (payload: Record<string, unknown>) => {
   console.info('[jangar] market_context_ingest_auth', payload)
 }
 
-const verifyServiceAccountTokenWithTokenReview = async (token: string) => {
-  const api = resolveAuthApi()
-  if (!api) return false
+const buildTokenReviewRequest = (token: string): V1TokenReview => ({
+  apiVersion: 'authentication.k8s.io/v1',
+  kind: 'TokenReview',
+  spec: { token },
+})
 
-  const body: V1TokenReview = {
-    apiVersion: 'authentication.k8s.io/v1',
-    kind: 'TokenReview',
-    spec: { token },
+const parseTokenReviewResponse = (response: unknown) => {
+  const responseRecord = response && typeof response === 'object' ? (response as Record<string, unknown>) : null
+  const maybeBody =
+    responseRecord && responseRecord.body && typeof responseRecord.body === 'object'
+      ? (responseRecord.body as Record<string, unknown>)
+      : responseRecord
+
+  const status =
+    maybeBody && maybeBody.status && typeof maybeBody.status === 'object'
+      ? (maybeBody.status as Record<string, unknown>)
+      : null
+  if (!status) return { authenticated: false, username: '' }
+
+  const user = status.user && typeof status.user === 'object' ? (status.user as Record<string, unknown>) : null
+  const username = user && typeof user.username === 'string' ? user.username : ''
+
+  return {
+    authenticated: status.authenticated === true,
+    username,
   }
+}
+
+const resolveTokenReviewAuthorization = (response: unknown, method: string) => {
+  const { authenticated, username } = parseTokenReviewResponse(response)
+  if (!authenticated) {
+    logIngestAuth({ method, authenticated: false })
+    return false
+  }
+  if (!username) {
+    logIngestAuth({ method, authenticated: false, reason: 'missing_username' })
+    return false
+  }
+
+  const allowedPrefixes = resolveAllowedServiceAccountPrefixes()
+  const allowed = allowedPrefixes.some((prefix) => username.startsWith(prefix))
+  logIngestAuth({ method, authenticated: true, username, allowed })
+  return allowed
+}
+
+const createTokenReviewWithInClusterHttps = async (body: V1TokenReview): Promise<unknown | null> => {
+  const host = process.env.KUBERNETES_SERVICE_HOST?.trim()
+  if (!host) return null
+  const port = process.env.KUBERNETES_SERVICE_PORT?.trim() || '443'
+
+  let reviewerToken = ''
+  let caCertificate = ''
+  try {
+    reviewerToken = readFileSync(IN_CLUSTER_SERVICE_ACCOUNT_TOKEN_PATH, 'utf8').trim()
+    caCertificate = readFileSync(IN_CLUSTER_SERVICE_ACCOUNT_CA_PATH, 'utf8')
+  } catch {
+    return null
+  }
+  if (!reviewerToken || !caCertificate.trim()) return null
+
+  const payload = JSON.stringify(body)
+
+  return await new Promise<unknown>((resolve, reject) => {
+    const request = httpsRequest(
+      {
+        protocol: 'https:',
+        hostname: host,
+        port,
+        path: '/apis/authentication.k8s.io/v1/tokenreviews',
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${reviewerToken}`,
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(payload).toString(),
+        },
+        ca: caCertificate,
+      },
+      (response) => {
+        let raw = ''
+        response.setEncoding('utf8')
+        response.on('data', (chunk) => {
+          raw += chunk
+        })
+        response.on('end', () => {
+          const statusCode = response.statusCode ?? 0
+          if (statusCode < 200 || statusCode >= 300) {
+            reject(new Error(`tokenreview_http_${statusCode}`))
+            return
+          }
+          if (!raw.trim()) {
+            resolve({})
+            return
+          }
+          try {
+            resolve(JSON.parse(raw) as Record<string, unknown>)
+          } catch (error) {
+            reject(new Error(`invalid_tokenreview_json: ${error instanceof Error ? error.message : String(error)}`))
+          }
+        })
+      },
+    )
+
+    request.on('error', reject)
+    request.write(payload)
+    request.end()
+  })
+}
+
+const verifyServiceAccountTokenWithHttpsTokenReview = async (body: V1TokenReview) => {
+  try {
+    const response = await createTokenReviewWithInClusterHttps(body)
+    if (!response) {
+      logIngestAuth({
+        method: 'service_account_token_review_https',
+        authenticated: false,
+        reason: 'in_cluster_reviewer_credentials_unavailable',
+      })
+      return false
+    }
+    return resolveTokenReviewAuthorization(response, 'service_account_token_review_https')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    logIngestAuth({
+      method: 'service_account_token_review_https',
+      authenticated: false,
+      error: message.slice(0, 200),
+    })
+    return false
+  }
+}
+
+const verifyServiceAccountTokenWithTokenReview = async (token: string) => {
+  const body = buildTokenReviewRequest(token)
+  const api = resolveAuthApi()
+  if (!api) return verifyServiceAccountTokenWithHttpsTokenReview(body)
 
   try {
     // @kubernetes/client-node v1 expects `createTokenReview({ body })`.
     const response = await (api.createTokenReview as unknown as (arg: { body: V1TokenReview }) => Promise<unknown>)({
       body,
     })
-    const responseRecord = response && typeof response === 'object' ? (response as Record<string, unknown>) : null
-    const maybeBody =
-      responseRecord && responseRecord.body && typeof responseRecord.body === 'object'
-        ? (responseRecord.body as Record<string, unknown>)
-        : responseRecord
-
-    const status =
-      maybeBody && maybeBody.status && typeof maybeBody.status === 'object'
-        ? (maybeBody.status as Record<string, unknown>)
-        : null
-    if (!status || status.authenticated !== true) return false
-
-    const user = status.user && typeof status.user === 'object' ? (status.user as Record<string, unknown>) : null
-    const username = user && typeof user.username === 'string' ? user.username : ''
-    if (!username) return false
-
-    const allowedPrefixes = resolveAllowedServiceAccountPrefixes()
-    const allowed = allowedPrefixes.some((prefix) => username.startsWith(prefix))
-    logIngestAuth({ method: 'service_account_token_review', authenticated: true, username, allowed })
-    return allowed
+    return resolveTokenReviewAuthorization(response, 'service_account_token_review')
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     logIngestAuth({ method: 'service_account_token_review', authenticated: false, error: message.slice(0, 200) })
-    return false
+    return verifyServiceAccountTokenWithHttpsTokenReview(body)
   }
 }
 

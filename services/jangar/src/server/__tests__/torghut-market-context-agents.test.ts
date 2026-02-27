@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 
 const createTokenReview = vi.fn()
 const loadFromCluster = vi.fn()
 const makeApiClient = vi.fn(() => ({ createTokenReview }))
+const readFileSync = vi.fn()
+const httpsRequest = vi.fn()
 
 vi.mock('@kubernetes/client-node', () => {
   class KubeConfig {
@@ -18,10 +21,23 @@ vi.mock('@kubernetes/client-node', () => {
   }
 })
 
+vi.mock('node:fs', () => ({
+  readFileSync,
+}))
+
+vi.mock('node:https', () => ({
+  request: httpsRequest,
+}))
+
 const clearAuthEnv = () => {
   delete process.env.JANGAR_MARKET_CONTEXT_INGEST_TOKEN
   delete process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN
   delete process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES
+}
+
+const clearKubeServiceEnv = () => {
+  delete process.env.KUBERNETES_SERVICE_HOST
+  delete process.env.KUBERNETES_SERVICE_PORT
 }
 
 describe('market context ingest auth', () => {
@@ -31,11 +47,15 @@ describe('market context ingest auth', () => {
     loadFromCluster.mockReset()
     makeApiClient.mockReset()
     makeApiClient.mockReturnValue({ createTokenReview })
+    readFileSync.mockReset()
+    httpsRequest.mockReset()
     clearAuthEnv()
+    clearKubeServiceEnv()
   })
 
   afterEach(() => {
     clearAuthEnv()
+    clearKubeServiceEnv()
   })
 
   it('returns false when bearer token is missing', async () => {
@@ -158,6 +178,64 @@ describe('market context ingest auth', () => {
         },
       },
     })
+  })
+
+  it('falls back to in-cluster https TokenReview when kubernetes client TLS verification fails', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN = 'true'
+    process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES = 'system:serviceaccount:agents:agents-sa'
+    process.env.KUBERNETES_SERVICE_HOST = '10.96.0.1'
+    process.env.KUBERNETES_SERVICE_PORT = '443'
+
+    createTokenReview.mockRejectedValueOnce(new Error('unable to verify the first certificate'))
+    readFileSync.mockImplementation((path: string) => {
+      if (path.endsWith('/token')) return 'reviewer-token'
+      if (path.endsWith('/ca.crt')) return 'reviewer-ca'
+      throw new Error(`unexpected file path ${path}`)
+    })
+
+    httpsRequest.mockImplementationOnce((_, callback: (response: EventEmitter) => void) => {
+      const request = new EventEmitter() as EventEmitter & { write: (chunk: string) => void; end: () => void }
+      request.write = vi.fn()
+      request.end = vi.fn(() => {
+        const response = new EventEmitter() as EventEmitter & {
+          statusCode?: number
+          setEncoding: (encoding: string) => void
+        }
+        response.statusCode = 201
+        response.setEncoding = vi.fn()
+        callback(response)
+        response.emit(
+          'data',
+          JSON.stringify({
+            apiVersion: 'authentication.k8s.io/v1',
+            kind: 'TokenReview',
+            status: {
+              authenticated: true,
+              user: {
+                username: 'system:serviceaccount:agents:agents-sa',
+              },
+            },
+          }),
+        )
+        response.emit('end')
+      })
+      return request
+    })
+
+    const { isMarketContextIngestAuthorized } = await import('../torghut-market-context-agents')
+
+    const authorized = await isMarketContextIngestAuthorized(
+      new Request('http://localhost/api/torghut/market-context/ingest', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer k8s-sa-token',
+        },
+      }),
+    )
+
+    expect(authorized).toBe(true)
+    expect(createTokenReview).toHaveBeenCalledTimes(1)
+    expect(httpsRequest).toHaveBeenCalledTimes(1)
   })
 
   it('rejects token review usernames outside allowed service account prefixes', async () => {
