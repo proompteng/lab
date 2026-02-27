@@ -54,6 +54,10 @@ The v1 documents are written to stay consistent with:
   with comprehensive design docs and per-paper technique synthesis.
   - Entry point: `docs/torghut/design-system/v5/index.md`
 
+- `v6/` - beyond-TSMOM intraday autonomy pack translating fresh multi-agent, regime-routing, and contamination-safe
+  evaluation research into production implementation and rollout docs (2026-02-27).
+  - Entry point: `docs/torghut/design-system/v6/index.md`
+
 - `v1/` - first cohesive design-system pass aligned to production reality as of **2026-02-08**.
 
 ### v1 Index
