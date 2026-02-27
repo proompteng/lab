@@ -170,6 +170,45 @@ Metrics emitted on `/metrics`:
 - `torghut_trading_order_feed_apply_updates_total`
 - `torghut_trading_order_feed_consumer_errors_total`
 
+## Historical simulation starter
+
+Use a single command to plan/apply/teardown historical simulation runs backed by isolated topics + storage:
+
+```bash
+cd services/torghut
+uv run python scripts/start_historical_simulation.py \
+  --mode plan \
+  --run-id sim-2026-02-27-01 \
+  --dataset-manifest config/simulation/example-dataset.yaml
+```
+
+Apply requires an explicit confirmation phrase:
+
+```bash
+cd services/torghut
+uv run python scripts/start_historical_simulation.py \
+  --mode apply \
+  --run-id sim-2026-02-27-01 \
+  --dataset-manifest config/simulation/example-dataset.yaml \
+  --confirm START_HISTORICAL_SIMULATION
+```
+
+Teardown restores previously captured TA + Torghut runtime config:
+
+```bash
+cd services/torghut
+uv run python scripts/start_historical_simulation.py \
+  --mode teardown \
+  --run-id sim-2026-02-27-01 \
+  --dataset-manifest config/simulation/example-dataset.yaml
+```
+
+Artifacts are written under `artifacts/torghut/simulations/<run_token>/`:
+
+- `state.json` (pre-simulation cluster config snapshot)
+- `source-dump.ndjson` (bounded source-topic dump)
+- `run-manifest.json` (apply report)
+
 ## v3 autonomous lane (phase 1/2 foundation)
 
 Deterministic research -> gate evaluation -> paper candidate patch pipeline:

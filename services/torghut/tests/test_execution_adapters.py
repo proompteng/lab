@@ -5,7 +5,12 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app import config
-from app.trading.execution_adapters import LeanExecutionAdapter, adapter_enabled_for_symbol, build_execution_adapter
+from app.trading.execution_adapters import (
+    LeanExecutionAdapter,
+    SimulationExecutionAdapter,
+    adapter_enabled_for_symbol,
+    build_execution_adapter,
+)
 
 
 class FakeFallbackAdapter:
@@ -97,6 +102,81 @@ class FakeReadClient:
 
 
 class TestExecutionAdapters(TestCase):
+    def test_simulation_adapter_returns_filled_order_with_simulation_context(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+        payload = adapter.submit_order(
+            symbol='AAPL',
+            side='buy',
+            qty=2.0,
+            order_type='market',
+            time_in_force='day',
+            extra_params={
+                'client_order_id': 'decision-1',
+                'simulation_context': {
+                    'dataset_event_id': 'evt-1',
+                    'source_topic': 'torghut.trades.v1',
+                    'source_partition': 2,
+                    'source_offset': 100,
+                },
+            },
+        )
+        self.assertEqual(payload.get('status'), 'filled')
+        self.assertEqual(payload.get('client_order_id'), 'decision-1')
+        simulation_context = payload.get('simulation_context')
+        self.assertIsInstance(simulation_context, dict)
+        assert isinstance(simulation_context, dict)
+        self.assertEqual(simulation_context.get('simulation_run_id'), 'sim-2026-02-27-01')
+        self.assertEqual(simulation_context.get('dataset_id'), 'dataset-1')
+        self.assertEqual(simulation_context.get('dataset_event_id'), 'evt-1')
+        self.assertEqual(payload.get('_execution_route_actual'), 'simulation')
+
+    def test_build_execution_adapter_uses_simulation_when_enabled(self) -> None:
+        original_adapter = config.settings.trading_execution_adapter
+        original_sim_enabled = config.settings.trading_simulation_enabled
+        original_sim_topic = config.settings.trading_simulation_order_updates_topic
+        original_sim_bootstrap = config.settings.trading_simulation_order_updates_bootstrap_servers
+        original_order_bootstrap = config.settings.trading_order_feed_bootstrap_servers
+        original_run_id = config.settings.trading_simulation_run_id
+        original_dataset = config.settings.trading_simulation_dataset_id
+        try:
+            config.settings.trading_execution_adapter = 'alpaca'
+            config.settings.trading_simulation_enabled = True
+            config.settings.trading_simulation_order_updates_topic = 'torghut.sim.trade-updates.v1'
+            config.settings.trading_simulation_order_updates_bootstrap_servers = None
+            config.settings.trading_order_feed_bootstrap_servers = None
+            config.settings.trading_simulation_run_id = 'sim-2026'
+            config.settings.trading_simulation_dataset_id = 'dataset-a'
+            adapter = build_execution_adapter(
+                alpaca_client=FakeReadClient(),
+                order_firewall=FakeOrderFirewall(),
+            )
+            self.assertEqual(adapter.name, 'simulation')
+        finally:
+            config.settings.trading_execution_adapter = original_adapter
+            config.settings.trading_simulation_enabled = original_sim_enabled
+            config.settings.trading_simulation_order_updates_topic = original_sim_topic
+            config.settings.trading_simulation_order_updates_bootstrap_servers = original_sim_bootstrap
+            config.settings.trading_order_feed_bootstrap_servers = original_order_bootstrap
+            config.settings.trading_simulation_run_id = original_run_id
+            config.settings.trading_simulation_dataset_id = original_dataset
+
+    def test_adapter_enabled_for_symbol_true_for_simulation(self) -> None:
+        original_adapter = config.settings.trading_execution_adapter
+        original_sim_enabled = config.settings.trading_simulation_enabled
+        try:
+            config.settings.trading_execution_adapter = 'simulation'
+            config.settings.trading_simulation_enabled = False
+            self.assertTrue(adapter_enabled_for_symbol('AAPL'))
+        finally:
+            config.settings.trading_execution_adapter = original_adapter
+            config.settings.trading_simulation_enabled = original_sim_enabled
+
     def test_lean_submit_includes_correlation_and_idempotency_audit_fields(self) -> None:
         class CapturingLeanAdapter(LeanExecutionAdapter):
             def __init__(self, **kwargs):  # type: ignore[no-untyped-def]

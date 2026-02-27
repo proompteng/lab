@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models import Base, TradeCursor
+from app.config import settings
 from app.trading.ingest import ClickHouseSignalIngestor
 
 
@@ -123,6 +124,46 @@ class TestSignalIngest(TestCase):
         self.assertEqual(signal.payload.get("imbalance", {}).get("bid_px"), 125.70)
         self.assertEqual(signal.payload.get("imbalance", {}).get("ask_px"), 125.80)
         self.assertEqual(signal.payload.get("imbalance", {}).get("spread"), 0.08)
+
+    def test_parse_row_attaches_simulation_context_from_row_fields(self) -> None:
+        ingestor = ClickHouseSignalIngestor(schema='envelope', fast_forward_stale_cursor=False)
+        row = {
+            'event_ts': datetime(2026, 1, 1, tzinfo=timezone.utc),
+            'symbol': 'AAPL',
+            'seq': 55,
+            'payload': {
+                'macd': {'macd': 0.5, 'signal': 0.2},
+                'rsi14': 30,
+            },
+            'dataset_event_id': 'evt-55',
+            'source_topic': 'torghut.trades.v1',
+            'source_partition': 2,
+            'source_offset': 900,
+            'replay_topic': 'torghut.sim.trades.v1',
+        }
+        original_enabled = settings.trading_simulation_enabled
+        original_run_id = settings.trading_simulation_run_id
+        original_dataset_id = settings.trading_simulation_dataset_id
+        try:
+            settings.trading_simulation_enabled = True
+            settings.trading_simulation_run_id = 'sim-2026-02-27-01'
+            settings.trading_simulation_dataset_id = 'dataset-a'
+            signal = ingestor.parse_row(row)
+        finally:
+            settings.trading_simulation_enabled = original_enabled
+            settings.trading_simulation_run_id = original_run_id
+            settings.trading_simulation_dataset_id = original_dataset_id
+
+        self.assertIsNotNone(signal)
+        assert signal is not None
+        context = signal.payload.get('simulation_context')
+        self.assertIsInstance(context, dict)
+        assert isinstance(context, dict)
+        self.assertEqual(context.get('simulation_run_id'), 'sim-2026-02-27-01')
+        self.assertEqual(context.get('dataset_id'), 'dataset-a')
+        self.assertEqual(context.get('dataset_event_id'), 'evt-55')
+        self.assertEqual(context.get('source_topic'), 'torghut.trades.v1')
+        self.assertEqual(context.get('signal_seq'), 55)
 
     def test_build_query_flat_schema(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals", fast_forward_stale_cursor=False)

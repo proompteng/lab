@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Iterable, Literal, Optional, cast
@@ -26,6 +27,7 @@ from .quantity_rules import (
     min_qty_for_symbol,
     quantize_qty_for_symbol,
 )
+from .simulation import resolve_simulation_context
 from .strategy_runtime import (
     RuntimeErrorRecord,
     RuntimeObservation,
@@ -410,6 +412,17 @@ def _build_params(
     forecast_contract: dict[str, Any] | None = None,
     forecast_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    source_context = signal.payload.get("simulation_context")
+    source_context_payload: dict[str, Any] | None = None
+    if isinstance(source_context, Mapping):
+        source_context_payload = {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], source_context).items()
+        }
+    simulation_context = resolve_simulation_context(
+        signal=signal,
+        source=source_context_payload,
+    )
     params: dict[str, Any] = {
         "macd": macd,
         "macd_signal": macd_signal,
@@ -437,6 +450,8 @@ def _build_params(
     fragility_snapshot = _resolve_fragility_snapshot_payload(signal)
     if fragility_snapshot is not None:
         params["fragility_snapshot"] = fragility_snapshot
+    if simulation_context is not None:
+        params["simulation_context"] = simulation_context
     return params
 
 

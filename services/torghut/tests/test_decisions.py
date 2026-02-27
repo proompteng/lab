@@ -491,3 +491,50 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0].params.get('signal_seq'), 17)
+
+    def test_decision_params_include_simulation_context(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='sim-wiring',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            seq=321,
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+                'simulation_context': {
+                    'dataset_event_id': 'evt-321',
+                    'source_topic': 'torghut.trades.v1',
+                    'source_partition': 4,
+                    'source_offset': 1200,
+                    'replay_topic': 'torghut.sim.trades.v1',
+                },
+            },
+        )
+
+        with (
+            patch.object(settings, 'trading_simulation_enabled', True),
+            patch.object(settings, 'trading_simulation_run_id', 'sim-2026-02-27-01'),
+            patch.object(settings, 'trading_simulation_dataset_id', 'dataset-1'),
+        ):
+            decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        simulation_context = decisions[0].params.get('simulation_context')
+        self.assertIsInstance(simulation_context, dict)
+        assert isinstance(simulation_context, dict)
+        self.assertEqual(simulation_context.get('simulation_run_id'), 'sim-2026-02-27-01')
+        self.assertEqual(simulation_context.get('dataset_id'), 'dataset-1')
+        self.assertEqual(simulation_context.get('dataset_event_id'), 'evt-321')
+        self.assertEqual(simulation_context.get('signal_seq'), 321)

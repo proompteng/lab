@@ -218,6 +218,25 @@ class TestConfig(TestCase):
                 DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
             )
 
+    def test_simulation_settings_are_normalized(self) -> None:
+        settings = Settings(
+            TRADING_ENABLED=False,
+            TRADING_UNIVERSE_SOURCE="static",
+            TRADING_EXECUTION_ADAPTER="simulation",
+            TRADING_SIMULATION_ENABLED=True,
+            TRADING_SIMULATION_RUN_ID="  sim-2026-02-27-01  ",
+            TRADING_SIMULATION_DATASET_ID="  dataset-a  ",
+            TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS="  kafka:9092  ",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(settings.trading_execution_adapter, "simulation")
+        self.assertEqual(settings.trading_simulation_run_id, "sim-2026-02-27-01")
+        self.assertEqual(settings.trading_simulation_dataset_id, "dataset-a")
+        self.assertEqual(
+            settings.trading_simulation_order_updates_bootstrap_servers,
+            "kafka:9092",
+        )
+
     def test_parses_signal_staleness_critical_reasons(self) -> None:
         settings = Settings(
             TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS="cursor_ahead_of_stream, universe_source_unavailable",

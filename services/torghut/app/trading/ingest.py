@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPSConnection
-from typing import Any, Optional, cast
+from typing import Any, Mapping, Optional, cast
 from urllib.parse import urlencode, urlsplit
 
 from sqlalchemy import select
@@ -18,6 +18,7 @@ from ..config import settings
 from ..models import TradeCursor
 from .clickhouse import normalize_symbol, to_datetime64
 from .models import SignalEnvelope
+from .simulation import resolve_simulation_context
 
 logger = logging.getLogger(__name__)
 
@@ -513,6 +514,7 @@ class ClickHouseSignalIngestor:
             payload = _normalize_payload(row.get("payload"))
             if not payload:
                 payload = _payload_from_flat_row(row)
+            payload = _attach_simulation_context(payload=payload, row=row, event_ts=event_ts)
             return SignalEnvelope(
                 event_ts=event_ts,
                 ingest_ts=_parse_ts(row.get("ingest_ts")),
@@ -1100,6 +1102,12 @@ def _select_columns(columns: set[str], time_column: str) -> list[str]:
         "spread",
         "imbalance_bid_px",
         "imbalance_ask_px",
+        "simulation_context",
+        "dataset_event_id",
+        "source_topic",
+        "source_partition",
+        "source_offset",
+        "replay_topic",
     ]
     selected: list[str] = []
     seen: set[str] = set()
@@ -1120,6 +1128,50 @@ def _dedupe_columns(columns: list[str]) -> list[str]:
         selected.append(col)
         seen.add(col)
     return selected
+
+
+def _attach_simulation_context(
+    *,
+    payload: dict[str, Any],
+    row: Mapping[str, Any],
+    event_ts: datetime,
+) -> dict[str, Any]:
+    source_context: Mapping[str, Any] | None = None
+    existing = payload.get("simulation_context")
+    if isinstance(existing, Mapping):
+        source_context = cast(Mapping[str, Any], existing)
+
+    row_context: dict[str, Any] = {}
+    for field_name in (
+        "dataset_event_id",
+        "source_topic",
+        "source_partition",
+        "source_offset",
+        "replay_topic",
+    ):
+        value = row.get(field_name)
+        if value is None:
+            continue
+        row_context[field_name] = value
+    if row_context:
+        combined = dict(source_context or {})
+        combined.update(row_context)
+        source_context = combined
+
+    context = resolve_simulation_context(
+        source=source_context,
+    )
+    if context is None:
+        return payload
+    if context.get("signal_event_ts") in (None, ""):
+        context["signal_event_ts"] = event_ts.isoformat()
+    seq_value = row.get("seq")
+    if seq_value is not None and context.get("signal_seq") in (None, ""):
+        context["signal_seq"] = _coerce_seq(seq_value)
+
+    updated = dict(payload)
+    updated["simulation_context"] = context
+    return updated
 
 
 def _split_table(table: str) -> tuple[str, str]:

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 from .alpaca_client import TorghutAlpacaClient
 from .models import Execution, PositionSnapshot, coerce_json_payload
 from .trading.route_metadata import coerce_route_text, coerce_route_int, normalize_route_provenance
+from .trading.simulation import resolve_simulation_context
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +211,36 @@ def _build_execution_payload(
     resolved_fallback_reason: str | None,
     resolved_fallback_count: int,
 ) -> dict[str, Any]:
+    raw_order_payload = dict(order_response)
+    raw_audit = order_response.get("_execution_audit")
+    audit_payload: dict[str, Any] = {}
+    if isinstance(raw_audit, Mapping):
+        audit_payload = {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], raw_audit).items()
+        }
+
+    source_context: dict[str, Any] | None = None
+    for candidate in (
+        order_response.get("_simulation_context"),
+        order_response.get("simulation_context"),
+        audit_payload.get("simulation_context"),
+    ):
+        if isinstance(candidate, Mapping):
+            source_context = {
+                str(key): value
+                for key, value in cast(Mapping[object, Any], candidate).items()
+            }
+            break
+    simulation_context = resolve_simulation_context(
+        source=source_context,
+        decision_id=trade_decision_id,
+        decision_hash=_coerce_text(order_response.get("client_order_id")),
+    )
+    if simulation_context is not None:
+        audit_payload["simulation_context"] = simulation_context
+        raw_order_payload["simulation_context"] = simulation_context
+
     return {
         "trade_decision_id": trade_decision_id,
         "alpaca_account_label": account_label,
@@ -232,10 +264,8 @@ def _build_execution_payload(
         "execution_idempotency_key": _coerce_text(
             order_response.get("_execution_idempotency_key")
         ),
-        "execution_audit_json": coerce_json_payload(
-            order_response.get("_execution_audit") or {}
-        ),
-        "raw_order": coerce_json_payload(order_response),
+        "execution_audit_json": coerce_json_payload(audit_payload),
+        "raw_order": coerce_json_payload(raw_order_payload),
         "last_update_at": datetime.now(timezone.utc),
     }
 

@@ -1,0 +1,38 @@
+dataset_id: torghut-trades-2025q4
+
+window:
+  start: '2025-10-01T00:00:00Z'
+  end: '2025-12-31T23:59:59Z'
+
+kafka:
+  bootstrap_servers: kafka-kafka-bootstrap.kafka:9092
+  security_protocol: SASL_PLAINTEXT
+  sasl_mechanism: SCRAM-SHA-512
+  sasl_username: torghut-ws
+  sasl_password_env: TORGHUT_SIM_KAFKA_PASSWORD
+  default_partitions: 8
+  replication_factor: 1
+
+clickhouse:
+  http_url: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+  username: torghut
+  password: ''
+  simulation_database: torghut_sim_sim_2026_02_27_01
+
+postgres:
+  admin_dsn: postgresql://torghut:torghut@postgres-rw.torghut.svc.cluster.local:5432/postgres
+  simulation_dsn_template: postgresql://torghut:torghut@postgres-rw.torghut.svc.cluster.local:5432/{db}
+  migrations_command: uv run --frozen alembic upgrade head
+
+runtime:
+  namespace: torghut
+  ta_configmap: torghut-ta-config
+  ta_deployment: torghut-ta
+  torghut_service: torghut
+  output_root: artifacts/torghut/simulations
+
+replay:
+  pace_mode: accelerated
+  acceleration: 60
+  max_sleep_seconds: 5
+  auto_offset_reset: earliest
