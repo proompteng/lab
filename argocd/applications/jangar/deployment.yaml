@@ -286,10 +286,8 @@ spec:
               value: "120"
             - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/providers/fundamentals
-              valueFrom: null
             - name: JANGAR_MARKET_CONTEXT_NEWS_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/providers/news
-              valueFrom: null
             - name: JANGAR_MARKET_CONTEXT_AGENT_DISPATCH_ENABLED
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_AGENT_NAMESPACE
@@ -310,6 +308,10 @@ spec:
               value: http://jangar.jangar.svc.cluster.local
             - name: JANGAR_MARKET_CONTEXT_AGENT_TTL_SECONDS
               value: "1800"
+            - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN
+              value: "true"
+            - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES
+              value: system:serviceaccount:agents:default,system:serviceaccount:agents:agents-sa
             - name: JANGAR_MARKET_CONTEXT_INGEST_TOKEN
               valueFrom:
                 secretKeyRef:

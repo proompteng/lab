@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+
 import { getMarketContextProviderResult } from '~/server/torghut-market-context-agents'
 
 export const Route = createFileRoute('/api/torghut/market-context/providers/news')({
