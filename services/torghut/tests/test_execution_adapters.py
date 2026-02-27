@@ -59,6 +59,9 @@ class FakeFallbackAdapter:
         _ = status
         return list(self.submitted)
 
+    def list_positions(self) -> list[dict[str, str]]:
+        return []
+
 
 class FakeOrderFirewall:
     def submit_order(self, **kwargs):  # type: ignore[no-untyped-def]
@@ -87,6 +90,9 @@ class FakeReadClient:
 
     def list_orders(self, status: str = 'all') -> list[dict[str, str]]:
         _ = status
+        return []
+
+    def list_positions(self) -> list[dict[str, str]]:
         return []
 
 

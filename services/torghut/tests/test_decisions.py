@@ -156,6 +156,42 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(snapshot.get("price"), "101.5")
         self.assertEqual(snapshot.get("spread"), "0.02")
 
+    def test_legacy_buy_supports_fractional_equity_qty_when_enabled(self) -> None:
+        original_fractional = settings.trading_fractional_equities_enabled
+        original_allow_shorts = settings.trading_allow_shorts
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = False
+        try:
+            engine = DecisionEngine(price_fetcher=None)
+            strategy = Strategy(
+                name="fractional-buy",
+                description=None,
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=None,
+                max_position_pct_equity=None,
+                max_notional_per_trade=Decimal("50"),
+            )
+            signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                    "rsi14": Decimal("20"),
+                    "price": Decimal("100"),
+                },
+                timeframe="1Min",
+            )
+
+            decisions = engine.evaluate(signal, [strategy])
+
+            self.assertEqual(len(decisions), 1)
+            self.assertEqual(decisions[0].qty, Decimal("0.5000"))
+        finally:
+            settings.trading_fractional_equities_enabled = original_fractional
+            settings.trading_allow_shorts = original_allow_shorts
+
     def test_scheduler_runtime_mode_emits_aggregated_metadata(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(

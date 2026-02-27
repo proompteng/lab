@@ -160,6 +160,11 @@ flags:
     description: Allows short-side trading intents.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
+  - key: torghut_trading_fractional_equities_enabled
+    name: Torghut Trading Fractional Equities Enabled
+    description: Enables fractional equity quantities for long-side orders.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
   - key: torghut_trading_kill_switch_enabled
     name: Torghut Trading Kill Switch Enabled
     description: Enables kill switch checks before order submission.

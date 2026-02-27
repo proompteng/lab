@@ -54,6 +54,9 @@ class ExecutionAdapter(Protocol):
     def list_orders(self, status: str = 'all') -> list[dict[str, Any]]:
         ...
 
+    def list_positions(self) -> list[dict[str, Any]]:
+        ...
+
 
 class AlpacaExecutionAdapter:
     """Default adapter that mutates via OrderFirewall and reads via TorghutAlpacaClient."""
@@ -108,6 +111,9 @@ class AlpacaExecutionAdapter:
 
     def list_orders(self, status: str = 'all') -> list[dict[str, Any]]:
         return self._read_client.list_orders(status=status)
+
+    def list_positions(self) -> list[dict[str, Any]]:
+        return self._read_client.list_positions()
 
 
 class LeanExecutionAdapter:
@@ -305,6 +311,22 @@ class LeanExecutionAdapter:
                 items = cast(list[Any], orders)
                 return [cast(dict[str, Any], item) for item in items if isinstance(item, Mapping)]
         return []
+
+    def list_positions(self) -> list[dict[str, Any]]:
+        if self.fallback is None:
+            return []
+        lister = getattr(self.fallback, 'list_positions', None)
+        if not callable(lister):
+            return []
+        try:
+            positions = lister()
+        except Exception as exc:
+            logger.warning("Lean adapter fallback list_positions failed: %s", exc)
+            return []
+        if not isinstance(positions, list):
+            return []
+        items = cast(list[Any], positions)
+        return [cast(dict[str, Any], item) for item in items if isinstance(item, Mapping)]
 
     def _request_json_with_headers(
         self,

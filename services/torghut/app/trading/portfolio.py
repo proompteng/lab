@@ -16,7 +16,11 @@ from .fragility import (
     FragilityState,
 )
 from .models import StrategyDecision
-from .quantity_rules import min_qty_for_symbol, quantize_qty_for_symbol
+from .quantity_rules import (
+    fractional_equities_enabled_for_trade,
+    min_qty_for_symbol,
+    quantize_qty_for_symbol,
+)
 
 ALLOCATOR_REJECT_NO_PRICE = "allocator_reject_no_price"
 ALLOCATOR_REJECT_ZERO_QTY = "allocator_reject_zero_qty"
@@ -175,6 +179,7 @@ class PortfolioSizer:
             decision=decision,
             price=price,
             notional=notional,
+            current_qty=current_qty,
             reasons=reasons,
         )
 
@@ -303,10 +308,24 @@ class PortfolioSizer:
         decision: StrategyDecision,
         price: Decimal,
         notional: Decimal,
+        current_qty: Decimal,
         reasons: list[str],
     ) -> tuple[Decimal, Decimal, bool, list[str]]:
-        qty = quantize_qty_for_symbol(decision.symbol, notional / price)
-        min_qty = min_qty_for_symbol(decision.symbol)
+        fractional_equities_enabled = fractional_equities_enabled_for_trade(
+            action=decision.action,
+            global_enabled=settings.trading_fractional_equities_enabled,
+            allow_shorts=settings.trading_allow_shorts,
+            position_qty=current_qty,
+            requested_qty=decision.qty,
+        )
+        qty = quantize_qty_for_symbol(
+            decision.symbol,
+            notional / price,
+            fractional_equities_enabled=fractional_equities_enabled,
+        )
+        min_qty = min_qty_for_symbol(
+            decision.symbol, fractional_equities_enabled=fractional_equities_enabled
+        )
         if qty < min_qty and "shorts_not_allowed" not in reasons:
             reasons.append("qty_below_min")
 
@@ -402,7 +421,17 @@ class IntentAggregator:
                 chosen_qty = sell_qty - buy_qty
 
             primary = bucket[0]
-            chosen_qty = quantize_qty_for_symbol(primary.symbol, chosen_qty)
+            fractional_equities_enabled = fractional_equities_enabled_for_trade(
+                action=chosen_action,
+                global_enabled=settings.trading_fractional_equities_enabled,
+                allow_shorts=settings.trading_allow_shorts,
+                requested_qty=chosen_qty,
+            )
+            chosen_qty = quantize_qty_for_symbol(
+                primary.symbol,
+                chosen_qty,
+                fractional_equities_enabled=fractional_equities_enabled,
+            )
             params = dict(primary.params)
             allocator_meta = dict(_mapping(params.get("allocator")))
             allocator_meta.update(
@@ -652,7 +681,7 @@ class PortfolioAllocator:
         if price is None:
             raise RuntimeError("allocator_price_missing_after_validation")
 
-        _, symbol_value = _position_summary(decision.symbol, runtime.current_positions)
+        symbol_qty, symbol_value = _position_summary(decision.symbol, runtime.current_positions)
         if self._should_reject_crisis_entry(apply_fragility, fragility_adjustment, decision.action, symbol_value):
             reason_codes.append("allocator_reject_crisis_entry")
             adjusted_decision = decision.model_copy(update={"qty": Decimal("0")})
@@ -675,6 +704,7 @@ class PortfolioAllocator:
             decision=decision,
             price=price,
             approved_notional=approved_notional,
+            current_qty=symbol_qty,
             reason_codes=reason_codes,
         )
         adjusted_decision = decision.model_copy(update={"qty": adjusted_qty})
@@ -783,10 +813,24 @@ class PortfolioAllocator:
         decision: StrategyDecision,
         price: Decimal,
         approved_notional: Decimal,
+        current_qty: Decimal,
         reason_codes: list[str],
     ) -> tuple[Decimal, bool, bool, Decimal]:
-        adjusted_qty = quantize_qty_for_symbol(decision.symbol, approved_notional / price)
-        min_qty = min_qty_for_symbol(decision.symbol)
+        fractional_equities_enabled = fractional_equities_enabled_for_trade(
+            action=decision.action,
+            global_enabled=settings.trading_fractional_equities_enabled,
+            allow_shorts=settings.trading_allow_shorts,
+            position_qty=current_qty,
+            requested_qty=decision.qty,
+        )
+        adjusted_qty = quantize_qty_for_symbol(
+            decision.symbol,
+            approved_notional / price,
+            fractional_equities_enabled=fractional_equities_enabled,
+        )
+        min_qty = min_qty_for_symbol(
+            decision.symbol, fractional_equities_enabled=fractional_equities_enabled
+        )
         if adjusted_qty < min_qty:
             if approved_notional > 0:
                 reason_codes.append(ALLOCATOR_REJECT_QTY_BELOW_MIN)

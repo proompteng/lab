@@ -40,6 +40,7 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_execution_advisor_enabled": "torghut_trading_execution_advisor_enabled",
     "trading_execution_advisor_live_apply_enabled": "torghut_trading_execution_advisor_live_apply_enabled",
     "trading_allow_shorts": "torghut_trading_allow_shorts",
+    "trading_fractional_equities_enabled": "torghut_trading_fractional_equities_enabled",
     "trading_kill_switch_enabled": "torghut_trading_kill_switch_enabled",
     "trading_emergency_stop_enabled": "torghut_trading_emergency_stop_enabled",
     "trading_market_context_required": "torghut_trading_market_context_required",
@@ -998,6 +999,14 @@ class Settings(BaseSettings):
         ),
     )
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
+    trading_fractional_equities_enabled: bool = Field(
+        default=False,
+        alias="TRADING_FRACTIONAL_EQUITIES_ENABLED",
+        description=(
+            "Allow fractional equity quantities for long-side orders. "
+            "Short-increasing equity orders remain whole-share only."
+        ),
+    )
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
     trading_accounts_json: Optional[str] = Field(
         default=None,

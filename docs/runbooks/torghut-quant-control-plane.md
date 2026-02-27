@@ -37,6 +37,8 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq .`
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg '^torghut_trading_'`
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg 'torghut_trading_(signal_continuity_actionable|signal_continuity_alert_active|signal_actionable_staleness_total|signal_expected_staleness_total|universe_fail_safe_reason_total|universe_symbols_count|universe_cache_age_seconds)'`
+   - `kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select alpaca_account_label, status, count(*) from trade_decisions where created_at >= now() - interval '1 day' group by alpaca_account_label, status order by alpaca_account_label, status;"`
+   - Treat account lanes independently; stale legacy lanes can hide active-lane degradation.
 3. Validate signal freshness and TA pipeline health.
    - `kubectl -n torghut get deploy torghut-clickhouse-guardrails-exporter torghut-ws torghut-ta`
    - `kubectl -n torghut port-forward svc/torghut-ws 19090:9090`
@@ -55,7 +57,10 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - Fail criteria:
      - `TorghutSignalsStaleDuringMarketHours`, `TorghutMicrobarsStaleDuringMarketHours`, `TorghutWSDesiredSymbolsFetchFailing`,
        or `TorghutClickHouseFreshnessQueryFallbacks` is firing.
-4. Check Jangar SSE health for control-plane dashboards.
+4. Validate market-context health on active symbols (not default symbol only).
+   - `SYMS=$(kubectl cnpg psql -n torghut torghut-db -- -d torghut -At -c "select distinct symbol from trade_decisions where created_at >= now() - interval '1 day' and status in ('planned','submitted','accepted','filled') order by symbol limit 8;")`
+   - `for s in $SYMS; do curl -fsS "http://127.0.0.1:8080/api/torghut/market-context/health?symbol=${s}" | jq '{symbol: .symbol, healthy: .healthy, reasons: .reasons}'; done`
+5. Check Jangar SSE health for control-plane dashboards.
    - Review Jangar logs for `torghut-quant` stream errors.
    - Verify the quant control-plane UI connection in Jangar (`/torghut/control-plane`).
 
@@ -71,7 +76,14 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 - If `TorghutClickHouseFreshnessQueryFallbacks` is active:
   - Treat this as ClickHouse query pressure. Check disk pressure/read-only alerts and run `SYSTEM RELOAD CONFIG` only if
     ClickHouse config changed.
+  - Avoid broad `max()` scans on large tables; use bounded UTC-window queries and exporter gauges first.
   - Keep monitoring on low-memory mode until fallback rate returns to zero.
+- If reject rate is high with `alpaca_order_rejected code=40310000`:
+  - Compare open sell order qty vs current position qty (`qty_available` / held inventory).
+  - Cancel stale duplicate sell orders; verify new rejects shift to local precheck (`precheck_sell_qty_exceeds_available`) instead of broker reject.
+- If reject rate is high with `qty_below_min`:
+  - Check `decision_json.params.allocator.approved_notional` against decision price; residual-cap notionals can quantize below minimum share step.
+  - For equities, enable long-only fractional quantities (`TRADING_FRACTIONAL_EQUITIES_ENABLED=true`) and verify reject reduction.
 - If SSE errors persist, restart Jangar and verify `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` connectivity.
 - As a rollback, disable quant control-plane compute:
   - Set `JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED=false` in GitOps and sync the Jangar app.

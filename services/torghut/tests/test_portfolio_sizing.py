@@ -23,6 +23,16 @@ from app.trading.portfolio import (
 
 
 class TestPortfolioSizing(TestCase):
+    def setUp(self) -> None:
+        self._original_fractional_equities_enabled = (
+            config.settings.trading_fractional_equities_enabled
+        )
+
+    def tearDown(self) -> None:
+        config.settings.trading_fractional_equities_enabled = (
+            self._original_fractional_equities_enabled
+        )
+
     def test_intent_aggregator_preserves_fractional_qty_for_crypto(self) -> None:
         aggregator = IntentAggregator()
         decisions = [
@@ -667,6 +677,118 @@ class TestPortfolioSizing(TestCase):
             self.assertFalse(result.approved)
             self.assertIn("shorts_not_allowed", result.reasons)
             self.assertEqual(result.decision.qty, Decimal("0"))
+        finally:
+            config.settings.trading_allow_shorts = original_allow_shorts
+
+    def test_sizer_allows_fractional_equity_buy_when_enabled(self) -> None:
+        original_allow_shorts = config.settings.trading_allow_shorts
+        config.settings.trading_allow_shorts = False
+        config.settings.trading_fractional_equities_enabled = True
+        try:
+            sizer = PortfolioSizer(
+                PortfolioSizingConfig(
+                    notional_per_position=None,
+                    volatility_target=None,
+                    volatility_floor=Decimal("0"),
+                    max_positions=None,
+                    max_notional_per_symbol=None,
+                    max_position_pct_equity=None,
+                    max_gross_exposure=None,
+                    max_net_exposure=None,
+                )
+            )
+            decision = StrategyDecision(
+                strategy_id="s1",
+                symbol="NVDA",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("0.5"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("100")},
+            )
+
+            result = sizer.size(decision, account={"equity": "10000"}, positions=[])
+
+            self.assertTrue(result.approved)
+            self.assertEqual(result.decision.qty, Decimal("0.5"))
+        finally:
+            config.settings.trading_allow_shorts = original_allow_shorts
+
+    def test_sizer_blocks_fractional_short_increasing_sell_when_enabled(self) -> None:
+        original_allow_shorts = config.settings.trading_allow_shorts
+        config.settings.trading_allow_shorts = True
+        config.settings.trading_fractional_equities_enabled = True
+        try:
+            sizer = PortfolioSizer(
+                PortfolioSizingConfig(
+                    notional_per_position=None,
+                    volatility_target=None,
+                    volatility_floor=Decimal("0"),
+                    max_positions=None,
+                    max_notional_per_symbol=None,
+                    max_position_pct_equity=None,
+                    max_gross_exposure=None,
+                    max_net_exposure=None,
+                )
+            )
+            decision = StrategyDecision(
+                strategy_id="s1",
+                symbol="NVDA",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("0.5"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("100")},
+            )
+
+            result = sizer.size(decision, account={"equity": "10000"}, positions=[])
+
+            self.assertFalse(result.approved)
+            self.assertIn("qty_below_min", result.reasons)
+        finally:
+            config.settings.trading_allow_shorts = original_allow_shorts
+
+    def test_sizer_allows_fractional_sell_to_reduce_long_when_enabled(self) -> None:
+        original_allow_shorts = config.settings.trading_allow_shorts
+        config.settings.trading_allow_shorts = True
+        config.settings.trading_fractional_equities_enabled = True
+        try:
+            sizer = PortfolioSizer(
+                PortfolioSizingConfig(
+                    notional_per_position=None,
+                    volatility_target=None,
+                    volatility_floor=Decimal("0"),
+                    max_positions=None,
+                    max_notional_per_symbol=None,
+                    max_position_pct_equity=None,
+                    max_gross_exposure=None,
+                    max_net_exposure=None,
+                )
+            )
+            decision = StrategyDecision(
+                strategy_id="s1",
+                symbol="NVDA",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("0.5"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("100")},
+            )
+
+            result = sizer.size(
+                decision,
+                account={"equity": "10000"},
+                positions=[{"symbol": "NVDA", "qty": "1", "market_value": "100"}],
+            )
+
+            self.assertTrue(result.approved)
+            self.assertEqual(result.decision.qty, Decimal("0.5"))
         finally:
             config.settings.trading_allow_shorts = original_allow_shorts
 

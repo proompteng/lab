@@ -55,10 +55,14 @@ class TestExecutionPolicy(TestCase):
         self._advisor_live_apply = (
             config.settings.trading_execution_advisor_live_apply_enabled
         )
+        self._fractional_equities_enabled = (
+            config.settings.trading_fractional_equities_enabled
+        )
         config.settings.trading_execution_advisor_enabled = False
         config.settings.trading_execution_advisor_live_apply_enabled = True
         config.settings.trading_execution_advisor_max_staleness_seconds = 15
         config.settings.trading_execution_advisor_timeout_ms = 250
+        config.settings.trading_fractional_equities_enabled = False
 
     def tearDown(self) -> None:
         config.settings.trading_execution_advisor_enabled = self._advisor_enabled
@@ -69,6 +73,9 @@ class TestExecutionPolicy(TestCase):
             self._advisor_staleness
         )
         config.settings.trading_execution_advisor_timeout_ms = self._advisor_timeout_ms
+        config.settings.trading_fractional_equities_enabled = (
+            self._fractional_equities_enabled
+        )
 
     def test_kill_switch_blocks(self) -> None:
         policy = ExecutionPolicy(config=_config(kill_switch_enabled=True))
@@ -151,6 +158,42 @@ class TestExecutionPolicy(TestCase):
         )
         self.assertFalse(outcome.approved)
         self.assertIn("qty_below_min", outcome.reasons)
+
+    def test_equity_fractional_qty_allowed_for_longs_when_enabled(self) -> None:
+        config.settings.trading_fractional_equities_enabled = True
+        policy = ExecutionPolicy(config=_config())
+        outcome = policy.evaluate(
+            _decision(qty=Decimal("0.5"), price=Decimal("100")),
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+        self.assertTrue(outcome.approved)
+        self.assertNotIn("qty_below_min", outcome.reasons)
+
+    def test_equity_fractional_short_increasing_sell_rejected_when_enabled(self) -> None:
+        config.settings.trading_fractional_equities_enabled = True
+        policy = ExecutionPolicy(config=_config(allow_shorts=True))
+        outcome = policy.evaluate(
+            _decision(action="sell", qty=Decimal("0.5"), price=Decimal("100")),
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+        self.assertFalse(outcome.approved)
+        self.assertIn("qty_below_min", outcome.reasons)
+
+    def test_equity_fractional_sell_to_reduce_long_allowed_when_enabled(self) -> None:
+        config.settings.trading_fractional_equities_enabled = True
+        policy = ExecutionPolicy(config=_config(allow_shorts=True))
+        outcome = policy.evaluate(
+            _decision(action="sell", qty=Decimal("0.5"), price=Decimal("100")),
+            strategy=None,
+            positions=[{"symbol": "AAPL", "qty": "1", "side": "long"}],
+            market_snapshot=None,
+        )
+        self.assertTrue(outcome.approved)
+        self.assertNotIn("qty_below_min", outcome.reasons)
 
     def test_approved_orders_stay_within_caps(self) -> None:
         policy = ExecutionPolicy(
