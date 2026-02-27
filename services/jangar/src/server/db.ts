@@ -200,32 +200,6 @@ type TorghutSymbols = {
   updated_at: Generated<Timestamp>
 }
 
-type TorghutMarketContextSnapshot = {
-  id: Generated<string>
-  symbol: string
-  domain: string
-  as_of: Timestamp
-  source_count: number
-  quality_score: number
-  payload: unknown
-  citations: unknown
-  risk_flags: string[]
-  provider: string
-  run_name: string | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-}
-
-type TorghutMarketContextDispatchState = {
-  symbol: string
-  domain: string
-  last_dispatched_at: Timestamp | null
-  last_run_name: string | null
-  last_status: string | null
-  last_error: string | null
-  updated_at: Timestamp
-}
-
 type TerminalSessions = {
   id: string
   status: string
@@ -685,8 +659,6 @@ export type Database = {
   'atlas.ingestion_targets': AtlasIngestionTargets
   'memories.entries': MemoriesEntries
   torghut_symbols: TorghutSymbols
-  torghut_market_context_snapshots: TorghutMarketContextSnapshot
-  torghut_market_context_dispatch_state: TorghutMarketContextDispatchState
   'terminals.sessions': TerminalSessions
   'jangar_github.events': JangarGithubEvents
   'jangar_github.pr_state': JangarGithubPrState
