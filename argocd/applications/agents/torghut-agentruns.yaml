@@ -199,7 +199,6 @@ spec:
     Inputs:
     - symbol, domain, asOfUtc, reason
     - callbackUrl, requestId
-    - callbackToken (optional bearer token)
 
     Required output payload shape:
     {
@@ -230,7 +229,9 @@ spec:
     2) Write the JSON payload to `/tmp/market-context-fundamentals.json`.
     3) Submit the payload:
        - AUTH=()
-       - if [ -n "${callbackToken}" ]; then AUTH=(-H "authorization: Bearer ${callbackToken}"); fi
+       - TOKEN_PATH="/var/run/secrets/kubernetes.io/serviceaccount/token"
+       - if [ -r "${TOKEN_PATH}" ]; then TOKEN="$(tr -d '\n' < "${TOKEN_PATH}")"; fi
+       - if [ -n "${TOKEN:-}" ]; then AUTH=(-H "authorization: Bearer ${TOKEN}"); fi
        - curl -fsS -X POST "${callbackUrl}" -H "content-type: application/json" "${AUTH[@]}" --data-binary @/tmp/market-context-fundamentals.json
     4) Ensure callback response contains `"ok": true`. If it fails, retry once; if still failing, exit non-zero.
 ---
@@ -261,7 +262,6 @@ spec:
     Inputs:
     - symbol, domain, asOfUtc, reason
     - callbackUrl, requestId
-    - callbackToken (optional bearer token)
 
     Required output payload shape:
     {
@@ -297,6 +297,8 @@ spec:
     2) Write the JSON payload to `/tmp/market-context-news.json`.
     3) Submit the payload:
        - AUTH=()
-       - if [ -n "${callbackToken}" ]; then AUTH=(-H "authorization: Bearer ${callbackToken}"); fi
+       - TOKEN_PATH="/var/run/secrets/kubernetes.io/serviceaccount/token"
+       - if [ -r "${TOKEN_PATH}" ]; then TOKEN="$(tr -d '\n' < "${TOKEN_PATH}")"; fi
+       - if [ -n "${TOKEN:-}" ]; then AUTH=(-H "authorization: Bearer ${TOKEN}"); fi
        - curl -fsS -X POST "${callbackUrl}" -H "content-type: application/json" "${AUTH[@]}" --data-binary @/tmp/market-context-news.json
     4) Ensure callback response contains `"ok": true`. If it fails, retry once; if still failing, exit non-zero.

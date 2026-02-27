@@ -148,7 +148,6 @@ const resolveSettings = () => {
       DEFAULT_NEWS_DISPATCH_COOLDOWN_SECONDS,
     ),
     callbackIngestUrl,
-    ingestToken: process.env.JANGAR_MARKET_CONTEXT_INGEST_TOKEN?.trim() || '',
     agentRunTtlSeconds: parsePositiveInt(
       process.env.JANGAR_MARKET_CONTEXT_AGENT_TTL_SECONDS,
       DEFAULT_AGENT_RUN_TTL_SECONDS,
@@ -346,7 +345,6 @@ const dispatchDomainAgentRun = async (params: {
     runtimeConfig.serviceAccountName = settings.runtimeServiceAccount
   }
 
-  const callbackToken = settings.ingestToken
   const windowBucket = Math.floor(params.now.getTime() / (cooldownSeconds * 1000))
   const idempotencyKey = `torghut-market-context:${params.domain}:${params.symbol}:${windowBucket}`
 
@@ -371,7 +369,6 @@ const dispatchDomainAgentRun = async (params: {
         asOfUtc: toIso(params.now),
         reason: params.reason,
         callbackUrl: settings.callbackIngestUrl,
-        callbackToken,
         requestId: randomUUID(),
       },
       runtime:
@@ -575,24 +572,14 @@ export const ingestMarketContextProviderResult = async (input: Record<string, un
   const payloadJson = JSON.stringify(payload)
   const citationsJson = JSON.stringify(citations)
   const now = new Date()
+  const shouldPersistSnapshot = runStatus === 'succeeded' || runStatus === 'partial'
 
-  await db
-    .insertInto('torghut_market_context_snapshots')
-    .values({
-      symbol,
-      domain,
-      as_of: asOf,
-      source_count: sourceCount,
-      quality_score: qualityScore,
-      payload: payloadJson as unknown as Record<string, unknown>,
-      citations: citationsJson,
-      risk_flags: riskFlags,
-      provider,
-      run_name: runName,
-      updated_at: now,
-    })
-    .onConflict((oc) =>
-      oc.columns(['symbol', 'domain']).doUpdateSet({
+  if (shouldPersistSnapshot) {
+    await db
+      .insertInto('torghut_market_context_snapshots')
+      .values({
+        symbol,
+        domain,
         as_of: asOf,
         source_count: sourceCount,
         quality_score: qualityScore,
@@ -602,9 +589,22 @@ export const ingestMarketContextProviderResult = async (input: Record<string, un
         provider,
         run_name: runName,
         updated_at: now,
-      }),
-    )
-    .execute()
+      })
+      .onConflict((oc) =>
+        oc.columns(['symbol', 'domain']).doUpdateSet({
+          as_of: asOf,
+          source_count: sourceCount,
+          quality_score: qualityScore,
+          payload: payloadJson as unknown as Record<string, unknown>,
+          citations: citationsJson,
+          risk_flags: riskFlags,
+          provider,
+          run_name: runName,
+          updated_at: now,
+        }),
+      )
+      .execute()
+  }
 
   await db
     .insertInto('torghut_market_context_dispatch_state')
@@ -628,7 +628,9 @@ export const ingestMarketContextProviderResult = async (input: Record<string, un
     )
     .execute()
 
-  clearMarketContextCache()
+  if (shouldPersistSnapshot) {
+    clearMarketContextCache()
+  }
 
   return {
     ok: true as const,
