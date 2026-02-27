@@ -300,10 +300,16 @@ spec:
               value: torghut-market-context-fundamentals-v1
             - name: JANGAR_MARKET_CONTEXT_NEWS_IMPLEMENTATION_SPEC
               value: torghut-market-context-news-v1
+            - name: JANGAR_MARKET_CONTEXT_AGENT_SERVICE_ACCOUNT
+              value: agents-sa
             - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_DISPATCH_COOLDOWN_SECONDS
               value: "1800"
             - name: JANGAR_MARKET_CONTEXT_NEWS_DISPATCH_COOLDOWN_SECONDS
               value: "120"
+            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_DISPATCH_STUCK_SECONDS
+              value: "2700"
+            - name: JANGAR_MARKET_CONTEXT_NEWS_DISPATCH_STUCK_SECONDS
+              value: "600"
             - name: JANGAR_MARKET_CONTEXT_AGENT_CALLBACK_BASE_URL
               value: http://jangar.jangar.svc.cluster.local
             - name: JANGAR_MARKET_CONTEXT_AGENT_TTL_SECONDS
@@ -311,13 +317,7 @@ spec:
             - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES
-              value: system:serviceaccount:agents:default,system:serviceaccount:agents:agents-sa
-            - name: JANGAR_MARKET_CONTEXT_INGEST_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: jangar-market-context-providers
-                  key: ingest_token
-                  optional: true
+              value: system:serviceaccount:agents:agents-sa
             - name: JANGAR_TORGHUT_DECISION_ENGINE_ENABLED
               value: "true"
             - name: JANGAR_TORGHUT_DECISION_ENGINE_ENABLED_FLAG_KEY

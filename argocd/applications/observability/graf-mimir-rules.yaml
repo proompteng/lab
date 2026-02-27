@@ -1260,3 +1260,58 @@ data:
                 Quant frames are being computed but are stale according to the configured max staleness threshold.
                 This typically indicates upstream Torghut decisions/executions are not updating.
               runbook_url: docs/runbooks/torghut-quant-control-plane.md
+      - name: torghut-market-context.rules
+        rules:
+          - alert: JangarTorghutMarketContextIngestUnauthorized
+            expr: |
+              sum(increase(jangar_torghut_market_context_ingest_requests_total{outcome="unauthorized"}[10m])) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar market-context ingest is rejecting callbacks (401)
+              description: |
+                Market-context provider callbacks are failing authorization. This blocks fundamentals/news snapshots
+                and can force Torghut into low-quality market context mode.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
+          - alert: JangarTorghutMarketContextIngestSuccessRateLow
+            expr: |
+              (
+                sum(rate(jangar_torghut_market_context_ingest_requests_total{outcome="accepted"}[15m]))
+                /
+                clamp_min(sum(rate(jangar_torghut_market_context_ingest_requests_total[15m])), 0.001)
+              ) < 0.6
+              and sum(rate(jangar_torghut_market_context_ingest_requests_total[15m])) > 0.01
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar market-context callback success rate is degraded
+              description: |
+                Accepted market-context ingest callbacks are below 60% of total callbacks over 15 minutes.
+                Provider snapshots may stop refreshing and Torghut market-context quality can drop below gate thresholds.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
+          - alert: JangarTorghutMarketContextDispatchErrors
+            expr: |
+              sum(increase(jangar_torghut_market_context_dispatch_attempts_total{outcome="dispatch_error"}[15m])) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar market-context dispatch errors detected
+              description: |
+                Jangar failed to submit one or more market-context AgentRuns in the last 15 minutes.
+                Fundamentals/news backfill can stall until dispatch recovers.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
+          - alert: JangarTorghutMarketContextDispatchStuck
+            expr: |
+              sum(increase(jangar_torghut_market_context_dispatch_stuck_total[15m])) > 0
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: Jangar market-context dispatch is stuck in submitted state
+              description: |
+                Market-context dispatch state has remained submitted past configured stuck thresholds.
+                This indicates callback ingest and/or runner completion handoff is blocked.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
