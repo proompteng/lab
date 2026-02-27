@@ -633,67 +633,61 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
 
   const shouldPersistSnapshot = runStatus === 'succeeded' || runStatus === 'partial'
   if (shouldPersistSnapshot) {
-    await sql`
-      INSERT INTO torghut_market_context_snapshots (
+    await db
+      .insertInto('torghut_market_context_snapshots')
+      .values({
         symbol,
         domain,
-        as_of,
-        source_count,
-        quality_score,
+        as_of: asOf,
+        source_count: sourceCount,
+        quality_score: qualityScore,
         payload,
         citations,
-        risk_flags,
+        risk_flags: riskFlags,
         provider,
-        run_name,
-        updated_at
+        run_name: runName,
+        updated_at: now,
+      })
+      .onConflict((conflict) =>
+        conflict
+          .columns(['symbol', 'domain'])
+          .doUpdateSet({
+            as_of: asOf,
+            source_count: sourceCount,
+            quality_score: qualityScore,
+            payload,
+            citations,
+            risk_flags: riskFlags,
+            provider,
+            run_name: runName,
+            updated_at: now,
+          })
+          .where('torghut_market_context_snapshots.as_of', '<=', asOf),
       )
-      VALUES (
-        ${symbol},
-        ${domain},
-        ${asOf},
-        ${sourceCount},
-        ${qualityScore},
-        ${sql`${JSON.stringify(payload)}::jsonb`},
-        ${sql`${JSON.stringify(citations)}::jsonb`},
-        ${riskFlags},
-        ${provider},
-        ${runName},
-        ${now}
-      )
-      ON CONFLICT (symbol, domain) DO UPDATE
-        SET
-          as_of = EXCLUDED.as_of,
-          source_count = EXCLUDED.source_count,
-          quality_score = EXCLUDED.quality_score,
-          payload = EXCLUDED.payload,
-          citations = EXCLUDED.citations,
-          risk_flags = EXCLUDED.risk_flags,
-          provider = EXCLUDED.provider,
-          run_name = EXCLUDED.run_name,
-          updated_at = EXCLUDED.updated_at
-      WHERE torghut_market_context_snapshots.as_of <= EXCLUDED.as_of;
-    `.execute(db)
+      .execute()
   }
 
-  await sql`
-    INSERT INTO torghut_market_context_dispatch_state (
+  await db
+    .insertInto('torghut_market_context_dispatch_state')
+    .values({
       symbol,
       domain,
-      last_dispatched_at,
-      last_run_name,
-      last_status,
-      last_error,
-      updated_at
+      last_dispatched_at: now,
+      last_run_name: runName,
+      last_status: runStatus,
+      last_error: runError,
+      updated_at: now,
+    })
+    .onConflict((conflict) =>
+      conflict.columns(['symbol', 'domain']).doUpdateSet({
+        last_dispatched_at: now,
+        last_run_name: runName,
+        last_status: runStatus,
+        last_error: runError,
+        updated_at: now,
+      }),
     )
-    VALUES (${symbol}, ${domain}, ${now}, ${runName}, ${runStatus}, ${runError}, ${now})
-    ON CONFLICT (symbol, domain) DO UPDATE
-      SET
-        last_dispatched_at = EXCLUDED.last_dispatched_at,
-        last_run_name = EXCLUDED.last_run_name,
-        last_status = EXCLUDED.last_status,
-        last_error = EXCLUDED.last_error,
-        updated_at = EXCLUDED.updated_at;
-  `.execute(db)
+    .execute()
 
   if (shouldPersistSnapshot) {
     clearMarketContextCache()

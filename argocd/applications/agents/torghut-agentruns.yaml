@@ -174,24 +174,6 @@ spec:
     5) Output PR URL and clear rollback instructions.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
-kind: Agent
-metadata:
-  name: torghut-fundamentals-agent
-  namespace: agents
-spec:
-  providerRef:
-    name: codex-spark
----
-apiVersion: agents.proompteng.ai/v1alpha1
-kind: Agent
-metadata:
-  name: torghut-news-agent
-  namespace: agents
-spec:
-  providerRef:
-    name: codex-spark
----
-apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
   name: torghut-market-context-fundamentals-v1
