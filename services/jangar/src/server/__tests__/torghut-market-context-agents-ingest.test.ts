@@ -58,6 +58,40 @@ describe('ingestMarketContextProviderResult', () => {
     expect(clearMarketContextCache).not.toHaveBeenCalled()
   })
 
+  it('does not overwrite snapshots when runStatus is missing or unknown', async () => {
+    const missingStatusTracker = buildInsertTracker()
+    const unknownStatusTracker = buildInsertTracker()
+    const clearMarketContextCache = vi.fn()
+
+    vi.doMock('~/server/db', () => ({
+      getDb: vi.fn().mockReturnValueOnce(missingStatusTracker.db).mockReturnValueOnce(unknownStatusTracker.db),
+    }))
+    vi.doMock('~/server/kysely-migrations', () => ({
+      ensureMigrations: async () => undefined,
+    }))
+    vi.doMock('~/server/torghut-market-context', () => ({
+      clearMarketContextCache,
+    }))
+
+    const { ingestMarketContextProviderResult } = await import('../torghut-market-context-agents')
+
+    await ingestMarketContextProviderResult({
+      symbol: 'AAPL',
+      domain: 'fundamentals',
+      payload: { peRatio: 21.4 },
+    })
+    await ingestMarketContextProviderResult({
+      symbol: 'AAPL',
+      domain: 'fundamentals',
+      runStatus: 'cancelled',
+      payload: { peRatio: 22.1 },
+    })
+
+    expect(missingStatusTracker.tableCalls).toEqual(['torghut_market_context_dispatch_state'])
+    expect(unknownStatusTracker.tableCalls).toEqual(['torghut_market_context_dispatch_state'])
+    expect(clearMarketContextCache).not.toHaveBeenCalled()
+  })
+
   it('persists snapshots when runStatus is succeeded', async () => {
     const tracker = buildInsertTracker()
     const clearMarketContextCache = vi.fn()

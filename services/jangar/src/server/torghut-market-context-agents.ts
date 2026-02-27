@@ -529,13 +529,14 @@ export const getMarketContextProviderResult = async (params: {
 }
 
 const coerceRunStatus = (value: unknown) => {
-  if (typeof value !== 'string') return 'succeeded'
+  if (typeof value !== 'string') return 'failed'
   const normalized = value.trim().toLowerCase()
-  if (!normalized) return 'succeeded'
+  if (!normalized) return 'failed'
+  if (normalized === 'succeeded' || normalized === 'success' || normalized === 'ok') return 'succeeded'
   if (normalized === 'failed' || normalized === 'error') return 'failed'
   if (normalized === 'submitted' || normalized === 'queued') return 'submitted'
   if (normalized === 'partial') return 'partial'
-  return 'succeeded'
+  return 'failed'
 }
 
 const coerceSourceCount = (value: unknown) => Math.max(0, Math.trunc(parseNumber(value) ?? 0))
