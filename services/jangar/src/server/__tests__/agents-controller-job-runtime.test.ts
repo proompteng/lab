@@ -27,9 +27,10 @@ describe('agents controller job-runtime module', () => {
     expect(normalizeLabelValue('___')).toBe('unknown')
   })
 
-  it('resolves runner service account from runtime config or env default', () => {
+  it('resolves runner service account from runtime config aliases or env default', () => {
     process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT = 'runner-default'
     expect(resolveRunnerServiceAccount({ serviceAccount: 'runtime-sa' })).toBe('runtime-sa')
+    expect(resolveRunnerServiceAccount({ serviceAccountName: 'runtime-sa-name' })).toBe('runtime-sa-name')
     expect(resolveRunnerServiceAccount({})).toBe('runner-default')
   })
 
