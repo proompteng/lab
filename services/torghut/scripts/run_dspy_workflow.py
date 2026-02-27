@@ -5,17 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
-from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-# Imports intentionally follow path bootstrap above for direct script execution.
-from app.config import settings  # noqa: E402
-from app.db import SessionLocal  # noqa: E402
-from app.trading.llm.dspy_compile import orchestrate_dspy_agentrun_workflow  # noqa: E402
+from app.config import settings
+from app.db import SessionLocal
+from app.trading.llm.dspy_compile import orchestrate_dspy_agentrun_workflow
 
 
 def _default_base_url() -> str:
