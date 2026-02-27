@@ -311,16 +311,17 @@ class PortfolioSizer:
         current_qty: Decimal,
         reasons: list[str],
     ) -> tuple[Decimal, Decimal, bool, list[str]]:
+        target_qty = notional / price
         fractional_equities_enabled = fractional_equities_enabled_for_trade(
             action=decision.action,
             global_enabled=settings.trading_fractional_equities_enabled,
             allow_shorts=settings.trading_allow_shorts,
             position_qty=current_qty,
-            requested_qty=decision.qty,
+            requested_qty=target_qty,
         )
         qty = quantize_qty_for_symbol(
             decision.symbol,
-            notional / price,
+            target_qty,
             fractional_equities_enabled=fractional_equities_enabled,
         )
         min_qty = min_qty_for_symbol(
@@ -816,16 +817,17 @@ class PortfolioAllocator:
         current_qty: Decimal,
         reason_codes: list[str],
     ) -> tuple[Decimal, bool, bool, Decimal]:
+        target_qty = approved_notional / price
         fractional_equities_enabled = fractional_equities_enabled_for_trade(
             action=decision.action,
             global_enabled=settings.trading_fractional_equities_enabled,
             allow_shorts=settings.trading_allow_shorts,
             position_qty=current_qty,
-            requested_qty=decision.qty,
+            requested_qty=target_qty,
         )
         adjusted_qty = quantize_qty_for_symbol(
             decision.symbol,
-            approved_notional / price,
+            target_qty,
             fractional_equities_enabled=fractional_equities_enabled,
         )
         min_qty = min_qty_for_symbol(

@@ -792,6 +792,46 @@ class TestPortfolioSizing(TestCase):
         finally:
             config.settings.trading_allow_shorts = original_allow_shorts
 
+    def test_sizer_allows_fractional_sell_after_inventory_clip_when_enabled(self) -> None:
+        original_allow_shorts = config.settings.trading_allow_shorts
+        config.settings.trading_allow_shorts = False
+        config.settings.trading_fractional_equities_enabled = True
+        try:
+            sizer = PortfolioSizer(
+                PortfolioSizingConfig(
+                    notional_per_position=None,
+                    volatility_target=None,
+                    volatility_floor=Decimal("0"),
+                    max_positions=None,
+                    max_notional_per_symbol=None,
+                    max_position_pct_equity=None,
+                    max_gross_exposure=None,
+                    max_net_exposure=None,
+                )
+            )
+            decision = StrategyDecision(
+                strategy_id="s1",
+                symbol="NVDA",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("100")},
+            )
+
+            result = sizer.size(
+                decision,
+                account={"equity": "10000"},
+                positions=[{"symbol": "NVDA", "qty": "0.5", "market_value": "50"}],
+            )
+
+            self.assertTrue(result.approved)
+            self.assertEqual(result.decision.qty, Decimal("0.5000"))
+        finally:
+            config.settings.trading_allow_shorts = original_allow_shorts
+
     def test_sell_clipped_to_inventory_when_shorts_disabled(self) -> None:
         original_allow_shorts = config.settings.trading_allow_shorts
         config.settings.trading_allow_shorts = False
@@ -825,6 +865,58 @@ class TestPortfolioSizing(TestCase):
 
             self.assertTrue(result.approved)
             self.assertEqual(result.decision.qty, Decimal("3"))
+        finally:
+            config.settings.trading_allow_shorts = original_allow_shorts
+
+    def test_allocator_allows_fractional_sell_after_capacity_clip_when_enabled(self) -> None:
+        original_allow_shorts = config.settings.trading_allow_shorts
+        config.settings.trading_allow_shorts = False
+        config.settings.trading_fractional_equities_enabled = True
+        try:
+            allocator = PortfolioAllocator(
+                AllocationConfig(
+                    enabled=True,
+                    default_regime="neutral",
+                    default_budget_multiplier=Decimal("1.0"),
+                    default_capacity_multiplier=Decimal("1.0"),
+                    min_multiplier=Decimal("0"),
+                    max_multiplier=Decimal("2"),
+                    max_symbol_pct_equity=Decimal("0.005"),
+                    max_symbol_notional=None,
+                    max_gross_exposure=None,
+                    strategy_notional_caps={},
+                    symbol_notional_caps={},
+                    correlation_group_caps={},
+                    symbol_correlation_groups={},
+                    regime_budget_multipliers={},
+                    regime_capacity_multipliers={},
+                )
+            )
+            decision = StrategyDecision(
+                strategy_id="s1",
+                symbol="NVDA",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("100")},
+            )
+
+            results = allocator.allocate(
+                [decision],
+                account={"equity": "10000", "buying_power": "10000", "cash": "10000"},
+                positions=[{"symbol": "NVDA", "qty": "0.5", "market_value": "50"}],
+                regime_label="neutral",
+            )
+
+            self.assertEqual(len(results), 1)
+            result = results[0]
+            self.assertTrue(result.approved)
+            self.assertTrue(result.clipped)
+            self.assertIn(ALLOCATOR_CLIP_SYMBOL_CAPACITY, result.reason_codes)
+            self.assertEqual(result.decision.qty, Decimal("0.5000"))
         finally:
             config.settings.trading_allow_shorts = original_allow_shorts
 
