@@ -53,6 +53,36 @@ def parse_args() -> argparse.Namespace:
         default="torghut-dspy-compile-seed-v1",
         help="Deterministic compile seed.",
     )
+    parser.add_argument(
+        "--schema-valid-rate",
+        type=float,
+        default=None,
+        help="Optional observed schema validity rate [0,1] for eval gating.",
+    )
+    parser.add_argument(
+        "--veto-alignment-rate",
+        type=float,
+        default=None,
+        help="Optional observed veto alignment rate [0,1] for eval gating.",
+    )
+    parser.add_argument(
+        "--false-veto-rate",
+        type=float,
+        default=None,
+        help="Optional observed false veto rate [0,1] for eval gating.",
+    )
+    parser.add_argument(
+        "--fallback-rate",
+        type=float,
+        default=None,
+        help="Optional observed fallback rate [0,1] for eval gating.",
+    )
+    parser.add_argument(
+        "--latency-p95-ms",
+        type=int,
+        default=None,
+        help="Optional observed p95 latency in milliseconds for eval gating.",
+    )
     return parser.parse_args()
 
 
@@ -69,6 +99,11 @@ def main() -> int:
         program_name=args.program_name,
         signature_version=args.signature_version,
         seed=args.seed,
+        schema_valid_rate=args.schema_valid_rate,
+        veto_alignment_rate=args.veto_alignment_rate,
+        false_veto_rate=args.false_veto_rate,
+        fallback_rate=args.fallback_rate,
+        latency_p95_ms=args.latency_p95_ms,
     )
     payload = {
         "ok": True,

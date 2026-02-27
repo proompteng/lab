@@ -236,6 +236,32 @@ class TestLLMDSPyDatasetBuilder(TestCase):
                         window_end=now,
                     )
 
+    def test_build_dataset_artifacts_rejects_unknown_universe_ref(self) -> None:
+        now = datetime(2026, 2, 27, 9, 30, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            strategy = self._create_strategy(session)
+            self._insert_reviewed_decision(
+                session=session,
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                created_at=now - timedelta(hours=1),
+                verdict="approve",
+                include_market_context=True,
+            )
+
+            with TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(ValueError, "universe_ref_unrecognized"):
+                    build_dspy_dataset_artifacts(
+                        session,
+                        repository="proompteng/lab",
+                        base="main",
+                        head="codex/dspy-dataset",
+                        artifact_path=tmp,
+                        dataset_window="P10D",
+                        universe_ref="torghut:equity:typo",
+                        window_end=now,
+                    )
+
     def _create_strategy(
         self,
         session: Session,

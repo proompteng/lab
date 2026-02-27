@@ -217,6 +217,42 @@ class TestLLMDSPyEval(TestCase):
             )
             self.assertEqual(first.eval_report.eval_hash, second.eval_report.eval_hash)
 
+    def test_eval_report_rejects_compile_results_without_observed_metrics(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            compile_result_path = self._write_compile_result(
+                root,
+                metric_bundle={
+                    "datasetRef": "artifacts/dspy/run-1/dataset-build/dspy-dataset.json",
+                    "metricPolicyRef": "config/trading/llm/dspy-metrics.yaml",
+                },
+            )
+            gate_policy_path = self._write_gate_policy(
+                root,
+                [
+                    "schemaVersion: torghut.dspy.metrics.v1",
+                    "policy:",
+                    "  schemaValidRateMin: 0.995",
+                    "  vetoAlignmentRateMin: 0.80",
+                    "  falseVetoRateMax: 0.03",
+                    "  fallbackRateMax: 0.03",
+                    "  latencyP95MsMax: 1800",
+                ],
+            )
+
+            with self.assertRaisesRegex(
+                ValueError, "compile_result_missing_observed_metrics"
+            ):
+                evaluate_dspy_compile_artifact(
+                    repository="proompteng/lab",
+                    base="main",
+                    head="codex/dspy-eval-test",
+                    artifact_path=root / "eval",
+                    compile_result_ref=str(compile_result_path),
+                    gate_policy_ref=str(gate_policy_path),
+                    created_at=datetime(2026, 2, 27, 16, 0, tzinfo=timezone.utc),
+                )
+
     def _write_compile_result(
         self,
         root: Path,

@@ -203,7 +203,7 @@ def _resolve_symbol_filter(*, session: Session, universe_ref: str) -> _UniverseF
             symbols=_load_enabled_equity_universe_symbols(session),
         )
 
-    return _UniverseFilter(mode="unrecognized_ref", symbols=None)
+    raise ValueError("universe_ref_unrecognized")
 
 
 def _query_dataset_source_rows(
