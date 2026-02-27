@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import time
 from datetime import datetime, timezone
 from http.client import HTTPConnection, HTTPSConnection
@@ -34,6 +36,8 @@ _IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
     "promote": "torghut-dspy-promote-artifact-v1",
 }
 _TERMINAL_PHASES = {"succeeded", "failed", "cancelled"}
+_K8S_LABEL_VALUE_MAX_LENGTH = 63
+_IDEMPOTENCY_HASH_HEX_LENGTH = 10
 
 
 def build_compile_result(
@@ -328,7 +332,7 @@ def build_dspy_agentrun_payload(
     namespace: str = "agents",
     agent_name: str = "codex-agent",
     vcs_ref_name: str = "github",
-    secret_binding_ref: str = "codex-whitepaper-github-token",
+    secret_binding_ref: str = "codex-github-token",
     ttl_seconds_after_finished: int = 14_400,
 ) -> dict[str, Any]:
     normalized_idempotency = idempotency_key.strip()
@@ -365,6 +369,26 @@ def build_dspy_agentrun_payload(
         "policy": {"secretBindingRef": secret_binding_ref.strip()},
         "ttlSecondsAfterFinished": max(int(ttl_seconds_after_finished), 0),
     }
+
+
+def _sanitize_idempotency_key(value: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip())
+    normalized = normalized.strip("-.")
+    if not normalized:
+        raise ValueError("idempotency_key_invalid")
+    if len(normalized) <= _K8S_LABEL_VALUE_MAX_LENGTH:
+        return normalized
+
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[
+        :_IDEMPOTENCY_HASH_HEX_LENGTH
+    ]
+    max_head_length = (
+        _K8S_LABEL_VALUE_MAX_LENGTH - _IDEMPOTENCY_HASH_HEX_LENGTH - 1
+    )
+    head = normalized[:max_head_length].rstrip("-.")
+    if not head:
+        return digest
+    return f"{head}-{digest}"
 
 
 def submit_jangar_agentrun(
@@ -490,7 +514,7 @@ def orchestrate_dspy_agentrun_workflow(
     namespace: str = "agents",
     agent_name: str = "codex-agent",
     vcs_ref_name: str = "github",
-    secret_binding_ref: str = "codex-whitepaper-github-token",
+    secret_binding_ref: str = "codex-github-token",
     ttl_seconds_after_finished: int = 14_400,
     timeout_seconds: int = 20,
     poll_interval_seconds: int = 5,
@@ -518,10 +542,11 @@ def orchestrate_dspy_agentrun_workflow(
         lane_overrides = overrides_by_lane.get(lane, {})
 
         run_key = f"{normalized_run_prefix}:{lane}"
+        idempotency_key = _sanitize_idempotency_key(f"{normalized_run_prefix}-{lane}")
         artifact_path = f"{artifact_root_normalized}/{lane}"
         payload = build_dspy_agentrun_payload(
             lane=lane,
-            idempotency_key=run_key,
+            idempotency_key=idempotency_key,
             repository=repository,
             base=base,
             head=head,
@@ -538,7 +563,7 @@ def orchestrate_dspy_agentrun_workflow(
             response_payload = submit_jangar_agentrun(
                 base_url=base_url,
                 payload=payload,
-                idempotency_key=run_key,
+                idempotency_key=idempotency_key,
                 auth_token=auth_token,
                 timeout_seconds=timeout_seconds,
             )
@@ -550,7 +575,7 @@ def orchestrate_dspy_agentrun_workflow(
                 lane=lane,
                 status="submitted",
                 implementation_spec_ref=_IMPLEMENTATION_SPEC_BY_LANE[lane],
-                idempotency_key=run_key,
+                idempotency_key=idempotency_key,
                 request_payload=payload,
                 response_payload=response_payload,
                 compile_result=None,
@@ -583,7 +608,7 @@ def orchestrate_dspy_agentrun_workflow(
                 lane=lane,
                 status=terminal_phase,
                 implementation_spec_ref=_IMPLEMENTATION_SPEC_BY_LANE[lane],
-                idempotency_key=run_key,
+                idempotency_key=idempotency_key,
                 request_payload=payload,
                 response_payload=response_payload,
                 compile_result=None,

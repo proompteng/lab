@@ -1246,7 +1246,7 @@ class Settings(BaseSettings):
         alias="LLM_DSPY_COMPILE_METRICS_POLICY_REF",
     )
     llm_dspy_secret_binding_ref: str = Field(
-        default="codex-whitepaper-github-token",
+        default="codex-github-token",
         alias="LLM_DSPY_SECRET_BINDING_REF",
     )
     llm_dspy_agentrun_ttl_seconds: int = Field(
