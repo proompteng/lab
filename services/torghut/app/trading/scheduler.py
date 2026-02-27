@@ -107,9 +107,9 @@ def _select_strictest_runtime_uncertainty_gate(
 ) -> RuntimeUncertaintyGate:
     selected = candidates[0]
     for candidate in candidates[1:]:
-        if _runtime_uncertainty_gate_rank(candidate.action) > _runtime_uncertainty_gate_rank(
-            selected.action
-        ):
+        if _runtime_uncertainty_gate_rank(
+            candidate.action
+        ) > _runtime_uncertainty_gate_rank(selected.action):
             selected = candidate
     return selected
 
@@ -2202,7 +2202,9 @@ class TradingPipeline:
                                 coverage_error=_optional_decimal(
                                     gate_map.get("coverage_error")
                                 ),
-                                shift_score=_optional_decimal(gate_map.get("shift_score")),
+                                shift_score=_optional_decimal(
+                                    gate_map.get("shift_score")
+                                ),
                                 conformal_interval_width=_optional_decimal(
                                     gate_map.get("conformal_interval_width")
                                 ),
@@ -2847,8 +2849,8 @@ class TradingPipeline:
         self._persist_llm_review(
             session=session,
             decision_row=decision_row,
-            model=settings.llm_model,
-            prompt_version=settings.llm_prompt_version,
+            model=self._llm_runtime_model_identifier(),
+            prompt_version=self._llm_runtime_prompt_identifier(),
             request_json=request_json,
             response_json=response_json,
             verdict="error",
@@ -2929,8 +2931,8 @@ class TradingPipeline:
         self._persist_llm_review(
             session=session,
             decision_row=decision_row,
-            model=settings.llm_model,
-            prompt_version=settings.llm_prompt_version,
+            model=self._llm_runtime_model_identifier(),
+            prompt_version=self._llm_runtime_prompt_identifier(),
             request_json=request_payload,
             response_json={
                 "error": reason,
@@ -3038,6 +3040,14 @@ class TradingPipeline:
         if effective_fail_mode in {"veto", "pass_through"}:
             return effective_fail_mode
         return settings.llm_effective_fail_mode()
+
+    @staticmethod
+    def _llm_runtime_model_identifier() -> str:
+        return f"dspy:{settings.llm_dspy_program_name}"
+
+    @staticmethod
+    def _llm_runtime_prompt_identifier() -> str:
+        return f"dspy:{settings.llm_dspy_signature_version}"
 
     def _fetch_market_context(
         self, symbol: str
@@ -3358,7 +3368,9 @@ def _position_qty(symbol: str, positions: list[dict[str, Any]]) -> Decimal:
     return total_qty
 
 
-def _position_market_value(symbol: str, positions: list[dict[str, Any]]) -> Decimal | None:
+def _position_market_value(
+    symbol: str, positions: list[dict[str, Any]]
+) -> Decimal | None:
     total_market_value = Decimal("0")
     has_market_value = False
     for position in positions:
@@ -3400,11 +3412,15 @@ def _apply_projected_position_decision(
     projected_qty = current_qty + delta
     decision_price = _extract_decision_price(decision)
     if decision_price is not None:
-        projected_market_value = (current_market_value or Decimal("0")) + (delta * decision_price)
+        projected_market_value = (current_market_value or Decimal("0")) + (
+            delta * decision_price
+        )
     else:
         projected_market_value = current_market_value
 
-    positions[:] = [position for position in positions if position.get("symbol") != decision.symbol]
+    positions[:] = [
+        position for position in positions if position.get("symbol") != decision.symbol
+    ]
     if projected_qty == 0:
         return
 

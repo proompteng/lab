@@ -310,8 +310,6 @@ spec:
               value: "0.25"
             - name: TRADING_ROLLBACK_MAX_DRAWDOWN_LIMIT
               value: "0.08"
-            - name: LLM_PROVIDER
-              value: jangar
             - name: LLM_MODEL
               value: gpt-5.3-codex-spark
             - name: LLM_MODEL_VERSION_LOCK
@@ -320,8 +318,6 @@ spec:
               value: gpt-5.3-codex-spark
             - name: LLM_ALLOWED_PROMPT_VERSIONS
               value: v1
-            - name: LLM_ENABLED
-              value: "true"
             - name: LLM_ROLLOUT_STAGE
               value: stage1
             - name: LLM_SHADOW_MODE
@@ -342,8 +338,6 @@ spec:
               value: "1200"
             - name: LLM_TIMEOUT_SECONDS
               value: "20"
-            - name: LLM_DSPY_RUNTIME_MODE
-              value: active
             - name: LLM_DSPY_ARTIFACT_HASH
               value: df087a5e643d6478b1ebe51bf44ad2d0e2228825c1c0a8e9dc345729d6a3bbff
             - name: LLM_DSPY_PROGRAM_NAME
@@ -366,10 +360,6 @@ spec:
               value: "600"
             - name: LLM_ADJUSTMENT_APPROVED
               value: "false"
-            - name: LLM_SELF_HOSTED_BASE_URL
-              value: http://saigak.saigak.svc.cluster.local:11434/v1
-            - name: LLM_SELF_HOSTED_MODEL
-              value: qwen3-coder-saigak:30b
             - name: TA_CLICKHOUSE_URL
               value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
             - name: TA_CLICKHOUSE_USERNAME

@@ -38,6 +38,8 @@ _IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
 _TERMINAL_PHASES = {"succeeded", "failed", "cancelled"}
 _K8S_LABEL_VALUE_MAX_LENGTH = 63
 _IDEMPOTENCY_HASH_HEX_LENGTH = 10
+_PROMOTION_MIN_SCHEMA_VALID_RATE = 0.995
+_PROMOTION_MAX_FALLBACK_RATE = 0.05
 
 
 def build_compile_result(
@@ -387,9 +389,7 @@ def _sanitize_idempotency_key(value: str) -> str:
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[
         :_IDEMPOTENCY_HASH_HEX_LENGTH
     ]
-    max_head_length = (
-        _K8S_LABEL_VALUE_MAX_LENGTH - _IDEMPOTENCY_HASH_HEX_LENGTH - 1
-    )
+    max_head_length = _K8S_LABEL_VALUE_MAX_LENGTH - _IDEMPOTENCY_HASH_HEX_LENGTH - 1
     head = normalized[:max_head_length].rstrip("-.")
     if not head:
         return digest
@@ -503,6 +503,159 @@ def _extract_submitted_agentrun_id(submit_response: Mapping[str, Any]) -> str:
     raise RuntimeError("jangar_submit_missing_agent_run_id")
 
 
+def _lane_overrides_with_defaults(
+    *,
+    lane: DSPyWorkflowLane,
+    lane_overrides: Mapping[str, Any],
+    artifact_root: str,
+) -> dict[str, Any]:
+    normalized = dict(lane_overrides)
+    if lane == "compile":
+        normalized.setdefault(
+            "datasetRef",
+            f"{artifact_root}/dataset-build/dspy-dataset.json",
+        )
+    elif lane == "eval":
+        normalized.setdefault(
+            "compileResultRef",
+            f"{artifact_root}/compile/dspy-compile-result.json",
+        )
+    elif lane == "promote":
+        normalized.setdefault(
+            "evalReportRef",
+            f"{artifact_root}/eval/dspy-eval-report.json",
+        )
+    return normalized
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in {"true", "pass", "passed", "1", "yes", "y"}:
+        return True
+    if text in {"false", "fail", "failed", "0", "no", "n"}:
+        return False
+    return None
+
+
+def _json_copy(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return json.loads(json.dumps(dict(payload), sort_keys=True))
+
+
+def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
+    parsed_ref = urlsplit(eval_report_ref)
+    if parsed_ref.scheme:
+        return None
+    candidate = Path(eval_report_ref)
+    if not candidate.exists() or not candidate.is_file():
+        return None
+    payload_raw = json.loads(candidate.read_text(encoding="utf-8"))
+    if not isinstance(payload_raw, dict):
+        return None
+    payload = cast(dict[str, Any], payload_raw)
+    metric_bundle = cast(dict[str, Any], payload.get("metricBundle") or {})
+    deterministic_compatibility = cast(
+        dict[str, Any], metric_bundle.get("deterministicCompatibility") or {}
+    )
+    observed_metrics = cast(dict[str, Any], metric_bundle.get("observed") or {})
+    return {
+        "gate_compatibility": str(payload.get("gateCompatibility") or "")
+        .strip()
+        .lower(),
+        "schema_valid_rate": _to_float(payload.get("schemaValidRate")),
+        "deterministic_compatibility": _to_bool(
+            deterministic_compatibility.get("passed")
+        ),
+        "fallback_rate": _to_float(observed_metrics.get("fallbackRate")),
+    }
+
+
+def _resolve_promotion_gate_snapshot(
+    lane_overrides: Mapping[str, Any],
+) -> dict[str, Any]:
+    eval_report_ref = str(lane_overrides.get("evalReportRef") or "").strip()
+    snapshot = (
+        _load_eval_gate_snapshot(eval_report_ref) if eval_report_ref else None
+    ) or {}
+    snapshot["gate_compatibility"] = (
+        str(
+            lane_overrides.get("gateCompatibility")
+            or lane_overrides.get("evalGateCompatibility")
+            or snapshot.get("gate_compatibility")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    snapshot["schema_valid_rate"] = (
+        _to_float(
+            lane_overrides.get("schemaValidRate")
+            or lane_overrides.get("evalSchemaValidRate")
+        )
+        if lane_overrides.get("schemaValidRate") is not None
+        or lane_overrides.get("evalSchemaValidRate") is not None
+        else snapshot.get("schema_valid_rate")
+    )
+    snapshot["deterministic_compatibility"] = (
+        _to_bool(
+            lane_overrides.get("deterministicCompatibility")
+            or lane_overrides.get("evalDeterministicCompatibility")
+        )
+        if lane_overrides.get("deterministicCompatibility") is not None
+        or lane_overrides.get("evalDeterministicCompatibility") is not None
+        else snapshot.get("deterministic_compatibility")
+    )
+    snapshot["fallback_rate"] = (
+        _to_float(
+            lane_overrides.get("fallbackRate") or lane_overrides.get("evalFallbackRate")
+        )
+        if lane_overrides.get("fallbackRate") is not None
+        or lane_overrides.get("evalFallbackRate") is not None
+        else snapshot.get("fallback_rate")
+    )
+    return snapshot
+
+
+def _promotion_gate_failures(gate_snapshot: Mapping[str, Any]) -> list[str]:
+    failures: list[str] = []
+    gate_compatibility = (
+        str(gate_snapshot.get("gate_compatibility") or "").strip().lower()
+    )
+    if gate_compatibility != "pass":
+        failures.append("gate_compatibility_not_pass")
+
+    schema_valid_rate = _to_float(gate_snapshot.get("schema_valid_rate"))
+    if schema_valid_rate is None:
+        failures.append("schema_valid_rate_missing")
+    elif schema_valid_rate < _PROMOTION_MIN_SCHEMA_VALID_RATE:
+        failures.append("schema_valid_rate_below_min")
+
+    deterministic_compatibility = _to_bool(
+        gate_snapshot.get("deterministic_compatibility")
+    )
+    if deterministic_compatibility is None:
+        failures.append("deterministic_compatibility_missing")
+    elif not deterministic_compatibility:
+        failures.append("deterministic_compatibility_failed")
+
+    fallback_rate = _to_float(gate_snapshot.get("fallback_rate"))
+    if fallback_rate is not None and fallback_rate > _PROMOTION_MAX_FALLBACK_RATE:
+        failures.append("fallback_rate_above_max")
+    return failures
+
+
 def orchestrate_dspy_agentrun_workflow(
     session: Session,
     *,
@@ -543,9 +696,51 @@ def orchestrate_dspy_agentrun_workflow(
 
     overrides_by_lane = lane_parameter_overrides or {}
     responses: dict[DSPyWorkflowLane, dict[str, Any]] = {}
+    lineage_by_lane: dict[str, dict[str, Any]] = {}
 
     for lane_index, lane in enumerate(lanes):
-        lane_overrides = overrides_by_lane.get(lane, {})
+        lane_overrides = _lane_overrides_with_defaults(
+            lane=lane,
+            lane_overrides=overrides_by_lane.get(lane, {}),
+            artifact_root=artifact_root_normalized,
+        )
+        gate_snapshot: dict[str, Any] | None = None
+
+        if lane == "promote":
+            gate_snapshot = _resolve_promotion_gate_snapshot(lane_overrides)
+            gate_failures = _promotion_gate_failures(gate_snapshot)
+            if gate_failures:
+                run_key = f"{normalized_run_prefix}:{lane}"
+                idempotency_key = _sanitize_idempotency_key(
+                    f"{normalized_run_prefix}-{lane}"
+                )
+                upsert_workflow_artifact_record(
+                    session,
+                    run_key=run_key,
+                    lane=lane,
+                    status="blocked",
+                    implementation_spec_ref=_IMPLEMENTATION_SPEC_BY_LANE[lane],
+                    idempotency_key=idempotency_key,
+                    request_payload=None,
+                    response_payload=None,
+                    compile_result=None,
+                    eval_report=None,
+                    promotion_record=None,
+                    metadata={
+                        "orchestration": {
+                            "runPrefix": normalized_run_prefix,
+                            "laneOrder": lane_index,
+                            "blockedAt": datetime.now(timezone.utc).isoformat(),
+                            "lineageByLane": _json_copy(lineage_by_lane),
+                            "gateSnapshot": gate_snapshot,
+                            "gateFailures": gate_failures,
+                        }
+                    },
+                )
+                session.commit()
+                raise RuntimeError(
+                    f"dspy_promotion_gate_blocked:{','.join(gate_failures)}"
+                )
 
         run_key = f"{normalized_run_prefix}:{lane}"
         idempotency_key = _sanitize_idempotency_key(f"{normalized_run_prefix}-{lane}")
@@ -565,6 +760,12 @@ def orchestrate_dspy_agentrun_workflow(
             secret_binding_ref=secret_binding_ref,
             ttl_seconds_after_finished=ttl_seconds_after_finished,
         )
+        lineage_by_lane[lane] = {
+            "artifactPath": artifact_path,
+            "parameterOverrides": lane_overrides,
+            "implementationSpecRef": _IMPLEMENTATION_SPEC_BY_LANE[lane],
+            "gateSnapshot": gate_snapshot,
+        }
 
         try:
             response_payload = submit_jangar_agentrun(
@@ -593,6 +794,7 @@ def orchestrate_dspy_agentrun_workflow(
                         "runPrefix": normalized_run_prefix,
                         "laneOrder": lane_index,
                         "submittedAt": datetime.now(timezone.utc).isoformat(),
+                        "lineageByLane": _json_copy(lineage_by_lane),
                     }
                 },
             )
@@ -627,12 +829,15 @@ def orchestrate_dspy_agentrun_workflow(
                         "laneOrder": lane_index,
                         "terminalPhase": terminal_phase,
                         "terminalObservedAt": datetime.now(timezone.utc).isoformat(),
+                        "lineageByLane": _json_copy(lineage_by_lane),
                     }
                 },
             )
             session.commit()
             if terminal_phase != "succeeded":
-                raise RuntimeError(f"jangar_agentrun_not_succeeded:{lane}:{terminal_phase}")
+                raise RuntimeError(
+                    f"jangar_agentrun_not_succeeded:{lane}:{terminal_phase}"
+                )
         except Exception:
             session.rollback()
             raise

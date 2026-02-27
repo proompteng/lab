@@ -1102,19 +1102,23 @@ class Settings(BaseSettings):
     jangar_base_url: Optional[str] = Field(default=None, alias="JANGAR_BASE_URL")
     jangar_api_key: Optional[str] = Field(default=None, alias="JANGAR_API_KEY")
 
-    llm_enabled: bool = Field(default=False, alias="LLM_ENABLED")
+    llm_enabled: bool = Field(default=True, alias="LLM_ENABLED")
+    # Deprecated in the DSPy-only decision path. Kept for backward-compatible tooling.
     llm_provider: Literal["jangar", "openai"] = Field(
         default="openai", alias="LLM_PROVIDER"
     )
     llm_model: str = Field(default="gpt-5.3-codex-spark", alias="LLM_MODEL")
     # Used only when `LLM_PROVIDER=jangar` and the Jangar request fails.
     # This should point at an OpenAI-compatible endpoint (e.g. vLLM, Ollama, llama.cpp server).
+    # Deprecated in the DSPy-only decision path. Kept for backward-compatible tooling.
     llm_self_hosted_base_url: Optional[str] = Field(
         default=None, alias="LLM_SELF_HOSTED_BASE_URL"
     )
+    # Deprecated in the DSPy-only decision path. Kept for backward-compatible tooling.
     llm_self_hosted_api_key: Optional[str] = Field(
         default=None, alias="LLM_SELF_HOSTED_API_KEY"
     )
+    # Deprecated in the DSPy-only decision path. Kept for backward-compatible tooling.
     llm_self_hosted_model: Optional[str] = Field(
         default=None, alias="LLM_SELF_HOSTED_MODEL"
     )
@@ -1221,6 +1225,7 @@ class Settings(BaseSettings):
         default="veto",
         alias="LLM_COMMITTEE_FAIL_CLOSED_VERDICT",
     )
+    # Deprecated runtime toggle; DSPy runtime path is always used by review engine.
     llm_dspy_runtime_mode: Literal["disabled", "shadow", "active"] = Field(
         default="disabled",
         alias="LLM_DSPY_RUNTIME_MODE",
@@ -1640,7 +1645,10 @@ class Settings(BaseSettings):
             raise ValueError("LLM_DSPY_TIMEOUT_SECONDS must be > 0")
         if self.llm_dspy_agentrun_ttl_seconds < 0:
             raise ValueError("LLM_DSPY_AGENTRUN_TTL_SECONDS must be >= 0")
-        if self.llm_dspy_runtime_mode in {"shadow", "active"} and not self.llm_dspy_artifact_hash:
+        if (
+            self.llm_dspy_runtime_mode in {"shadow", "active"}
+            and not self.llm_dspy_artifact_hash
+        ):
             raise ValueError(
                 "LLM_DSPY_ARTIFACT_HASH is required when LLM_DSPY_RUNTIME_MODE is shadow or active"
             )
