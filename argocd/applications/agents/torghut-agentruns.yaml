@@ -226,14 +226,17 @@ spec:
 
     Steps:
     1) Research current fundamentals for `${symbol}` (valuation, growth, profitability, balance-sheet/capital structure, near-term catalysts).
-    2) Write the JSON payload to `/tmp/market-context-fundamentals.json`.
-    3) Submit the payload:
+    2) Write the payload to `/tmp/market-context-fundamentals.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
+    3) Validate payload before submit:
+       - `python3 -m json.tool /tmp/market-context-fundamentals.json >/dev/null`
+       - `jq -e '.symbol and .domain == "fundamentals" and (.qualityScore | type == "number")' /tmp/market-context-fundamentals.json >/dev/null`
+    4) Submit the payload:
        - AUTH=()
        - TOKEN_PATH="/var/run/secrets/kubernetes.io/serviceaccount/token"
        - if [ -r "${TOKEN_PATH}" ]; then TOKEN="$(tr -d '\n' < "${TOKEN_PATH}")"; fi
        - if [ -n "${TOKEN:-}" ]; then AUTH=(-H "authorization: Bearer ${TOKEN}"); fi
-       - curl -fsS -X POST "${callbackUrl}" -H "content-type: application/json" "${AUTH[@]}" --data-binary @/tmp/market-context-fundamentals.json
-    4) Ensure callback response contains `"ok": true`. If it fails, retry once; if still failing, exit non-zero.
+       - Capture HTTP status and response body; require HTTP 200 and response contains `"ok": true`.
+    5) If callback fails on first attempt, print response body, repair payload, retry once; if second attempt fails, exit non-zero.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
@@ -294,14 +297,17 @@ spec:
 
     Steps:
     1) Gather recent high-signal company/sector/macro news relevant to `${symbol}`.
-    2) Write the JSON payload to `/tmp/market-context-news.json`.
-    3) Submit the payload:
+    2) Write the payload to `/tmp/market-context-news.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
+    3) Validate payload before submit:
+       - `python3 -m json.tool /tmp/market-context-news.json >/dev/null`
+       - `jq -e '.symbol and .domain == "news" and (.qualityScore | type == "number") and (.payload.headlines | type == "array")' /tmp/market-context-news.json >/dev/null`
+    4) Submit the payload:
        - AUTH=()
        - TOKEN_PATH="/var/run/secrets/kubernetes.io/serviceaccount/token"
        - if [ -r "${TOKEN_PATH}" ]; then TOKEN="$(tr -d '\n' < "${TOKEN_PATH}")"; fi
        - if [ -n "${TOKEN:-}" ]; then AUTH=(-H "authorization: Bearer ${TOKEN}"); fi
-       - curl -fsS -X POST "${callbackUrl}" -H "content-type: application/json" "${AUTH[@]}" --data-binary @/tmp/market-context-news.json
-    4) Ensure callback response contains `"ok": true`. If it fails, retry once; if still failing, exit non-zero.
+       - Capture HTTP status and response body; require HTTP 200 and response contains `"ok": true`.
+    5) If callback fails on first attempt, print response body, repair payload, retry once; if second attempt fails, exit non-zero.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
