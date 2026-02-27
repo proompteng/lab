@@ -156,3 +156,75 @@ class TestLLMDSPyCompiler(TestCase):
                     metric_policy_ref=str(metric_policy_path),
                     optimizer="miprov2",
                 )
+
+    def test_compile_result_includes_observed_metrics_when_provided(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_path = root / "dspy-dataset.json"
+            metric_policy_path = root / "dspy-metrics.yaml"
+            dataset_path.write_text(
+                canonical_json(
+                    {
+                        "schemaVersion": "torghut.dspy.dataset.v1",
+                        "rows": [{"rowId": "row-1", "split": "train"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            metric_policy_path.write_text(
+                "schemaVersion: torghut.dspy.metrics.v1\npolicy: {}\n",
+                encoding="utf-8",
+            )
+
+            result = compile_dspy_program_artifacts(
+                repository="proompteng/lab",
+                base="main",
+                head="codex/dspy-compile-test",
+                artifact_path=root / "compile",
+                dataset_ref=str(dataset_path),
+                metric_policy_ref=str(metric_policy_path),
+                optimizer="miprov2",
+                schema_valid_rate=0.998,
+                veto_alignment_rate=0.81,
+                false_veto_rate=0.02,
+                fallback_rate=0.02,
+                latency_p95_ms=1200,
+            )
+            self.assertEqual(result.compile_result.metric_bundle["schemaValidRate"], 0.998)
+            self.assertEqual(result.compile_result.metric_bundle["vetoAlignmentRate"], 0.81)
+            self.assertEqual(result.compile_result.metric_bundle["falseVetoRate"], 0.02)
+            self.assertEqual(result.compile_result.metric_bundle["fallbackRate"], 0.02)
+            self.assertEqual(result.compile_result.metric_bundle["latencyP95Ms"], 1200)
+
+    def test_compile_rejects_partial_observed_metrics(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_path = root / "dspy-dataset.json"
+            metric_policy_path = root / "dspy-metrics.yaml"
+            dataset_path.write_text(
+                canonical_json(
+                    {
+                        "schemaVersion": "torghut.dspy.dataset.v1",
+                        "rows": [{"rowId": "row-1", "split": "train"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            metric_policy_path.write_text(
+                "schemaVersion: torghut.dspy.metrics.v1\npolicy: {}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "observed_metrics_incomplete"):
+                compile_dspy_program_artifacts(
+                    repository="proompteng/lab",
+                    base="main",
+                    head="codex/dspy-compile-test",
+                    artifact_path=root / "compile",
+                    dataset_ref=str(dataset_path),
+                    metric_policy_ref=str(metric_policy_path),
+                    optimizer="miprov2",
+                    schema_valid_rate=0.998,
+                )

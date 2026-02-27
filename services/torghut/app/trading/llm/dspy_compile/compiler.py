@@ -52,6 +52,11 @@ def compile_dspy_program_artifacts(
     compiled_artifact_name: str = DEFAULT_COMPILED_ARTIFACT_NAME,
     compile_result_name: str = DEFAULT_COMPILE_RESULT_NAME,
     compile_metrics_name: str = DEFAULT_COMPILE_METRICS_NAME,
+    schema_valid_rate: float | None = None,
+    veto_alignment_rate: float | None = None,
+    false_veto_rate: float | None = None,
+    fallback_rate: float | None = None,
+    latency_p95_ms: int | None = None,
     created_at: datetime | None = None,
 ) -> DSPyCompileArtifactResult:
     """Compile Torghut DSPy program artifacts from deterministic local refs only."""
@@ -113,6 +118,14 @@ def compile_dspy_program_artifacts(
         "optimizer": normalized_optimizer,
         "policy": cast(dict[str, Any], metric_policy_payload.get("policy") or {}),
     }
+    observed_metrics = _build_observed_metrics(
+        schema_valid_rate=schema_valid_rate,
+        veto_alignment_rate=veto_alignment_rate,
+        false_veto_rate=false_veto_rate,
+        fallback_rate=fallback_rate,
+        latency_p95_ms=latency_p95_ms,
+    )
+    metric_bundle.update(observed_metrics)
     metric_bundle_hash = hash_payload(metric_bundle)
 
     compiled_artifact_payload: dict[str, Any] = {
@@ -254,6 +267,61 @@ def _count_rows_by_split(rows: Any) -> dict[str, int]:
             continue
         counts[split] = counts.get(split, 0) + 1
     return {key: counts[key] for key in sorted(counts)}
+
+
+def _build_observed_metrics(
+    *,
+    schema_valid_rate: float | None,
+    veto_alignment_rate: float | None,
+    false_veto_rate: float | None,
+    fallback_rate: float | None,
+    latency_p95_ms: int | None,
+) -> dict[str, Any]:
+    observed = {
+        "schemaValidRate": schema_valid_rate,
+        "vetoAlignmentRate": veto_alignment_rate,
+        "falseVetoRate": false_veto_rate,
+        "fallbackRate": fallback_rate,
+        "latencyP95Ms": latency_p95_ms,
+    }
+    provided_count = sum(1 for value in observed.values() if value is not None)
+    if provided_count == 0:
+        return {}
+    if provided_count != len(observed):
+        raise ValueError("observed_metrics_incomplete")
+
+    return {
+        "schemaValidRate": _normalize_rate(
+            cast(float, observed["schemaValidRate"]), field_name="schema_valid_rate"
+        ),
+        "vetoAlignmentRate": _normalize_rate(
+            cast(float, observed["vetoAlignmentRate"]),
+            field_name="veto_alignment_rate",
+        ),
+        "falseVetoRate": _normalize_rate(
+            cast(float, observed["falseVetoRate"]), field_name="false_veto_rate"
+        ),
+        "fallbackRate": _normalize_rate(
+            cast(float, observed["fallbackRate"]), field_name="fallback_rate"
+        ),
+        "latencyP95Ms": _normalize_non_negative_int(
+            cast(int, observed["latencyP95Ms"]), field_name="latency_p95_ms"
+        ),
+    }
+
+
+def _normalize_rate(value: float, *, field_name: str) -> float:
+    normalized = float(value)
+    if normalized < 0.0 or normalized > 1.0:
+        raise ValueError(f"{field_name}_out_of_range")
+    return normalized
+
+
+def _normalize_non_negative_int(value: int, *, field_name: str) -> int:
+    normalized = int(value)
+    if normalized < 0:
+        raise ValueError(f"{field_name}_must_be_non_negative")
+    return normalized
 
 
 def _build_artifact_uri(*, artifact_path: str, artifact_name: str) -> str:

@@ -109,7 +109,12 @@ uv run python scripts/compile_dspy_program.py \
   --artifact-path artifacts/dspy/run-1/compile \
   --dataset-ref artifacts/dspy/run-1/dataset-build/dspy-dataset.json \
   --metric-policy-ref config/trading/llm/dspy-metrics.yaml \
-  --optimizer miprov2
+  --optimizer miprov2 \
+  --schema-valid-rate 0.998 \
+  --veto-alignment-rate 0.81 \
+  --false-veto-rate 0.02 \
+  --fallback-rate 0.02 \
+  --latency-p95-ms 1200
 ```
 
 Eval helper (matches `torghut-dspy-eval-v1` contract):

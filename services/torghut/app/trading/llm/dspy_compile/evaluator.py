@@ -80,6 +80,7 @@ def evaluate_dspy_compile_artifact(
     policy = cast(dict[str, Any], gate_policy_payload.get("policy") or {})
 
     observed = _extract_observed_metrics(compile_result.metric_bundle)
+    _require_observed_metrics(observed)
     threshold_checks, threshold_snapshot, threshold_failures = _evaluate_threshold_checks(
         policy=policy,
         observed=observed,
@@ -246,6 +247,13 @@ def _extract_observed_metrics(metric_bundle: Mapping[str, Any]) -> _ObservedMetr
         fallback_rate=fallback_rate,
         missing_metric_keys=tuple(sorted(set(missing_metric_keys))),
     )
+
+
+def _require_observed_metrics(observed: _ObservedMetrics) -> None:
+    if not observed.missing_metric_keys:
+        return
+    missing_keys = ",".join(observed.missing_metric_keys)
+    raise ValueError(f"compile_result_missing_observed_metrics:{missing_keys}")
 
 
 def _evaluate_threshold_checks(
