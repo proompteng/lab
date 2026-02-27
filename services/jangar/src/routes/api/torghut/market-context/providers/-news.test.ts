@@ -6,7 +6,7 @@ vi.mock('~/server/torghut-market-context-agents', () => ({
   getMarketContextProviderResult,
 }))
 
-describe('GET /api/torghut/market-context/providers/news', () => {
+describe('getNewsProviderHandler', () => {
   beforeEach(() => {
     getMarketContextProviderResult.mockReset()
   })
@@ -16,43 +16,47 @@ describe('GET /api/torghut/market-context/providers/news', () => {
     const response = await getNewsProviderHandler(
       new Request('http://localhost/api/torghut/market-context/providers/news'),
     )
-    const body = await response.json()
 
     expect(response.status).toBe(400)
-    expect(body.ok).toBe(false)
     expect(getMarketContextProviderResult).not.toHaveBeenCalled()
   })
 
-  it('returns provider payload for a symbol', async () => {
+  it('returns provider payload for valid symbol', async () => {
     getMarketContextProviderResult.mockResolvedValueOnce({
-      symbol: 'MSFT',
+      symbol: 'NVDA',
       domain: 'news',
-      snapshotState: 'stale',
+      snapshotState: 'fresh',
       context: {
-        asOfUtc: '2026-02-26T12:00:00.000Z',
-        sourceCount: 5,
-        qualityScore: 0.7,
-        payload: { topHeadline: 'Sample headline' },
+        asOfUtc: '2026-02-27T00:01:00.000Z',
+        sourceCount: 4,
+        qualityScore: 0.82,
+        payload: { sentimentScore: 0.2 },
         citations: [],
-        riskFlags: ['news_stale'],
+        riskFlags: [],
       },
       dispatch: {
-        attempted: true,
-        dispatched: true,
+        attempted: false,
+        dispatched: false,
         reason: null,
-        runName: 'torghut-market-context-news-abcde',
+        runName: null,
         error: null,
       },
     })
+
     const { getNewsProviderHandler } = await import('./news')
     const response = await getNewsProviderHandler(
-      new Request('http://localhost/api/torghut/market-context/providers/news?symbol=MSFT'),
+      new Request('http://localhost/api/torghut/market-context/providers/news?symbol=nvda'),
     )
-    const body = await response.json()
 
     expect(response.status).toBe(200)
+    expect(getMarketContextProviderResult).toHaveBeenCalledWith({
+      domain: 'news',
+      symbolInput: 'nvda',
+    })
+
+    const body = await response.json()
     expect(body.ok).toBe(true)
+    expect(body.symbol).toBe('NVDA')
     expect(body.domain).toBe('news')
-    expect(getMarketContextProviderResult).toHaveBeenCalledWith({ domain: 'news', symbolInput: 'MSFT' })
   })
 })

@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from contextlib import AbstractContextManager
+from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
-from .signatures import DSPyCommitteeMemberOutput, DSPyTradeReviewInput, DSPyTradeReviewOutput
+from .signatures import (
+    DSPyCommitteeMemberOutput,
+    DSPyTradeReviewInput,
+    DSPyTradeReviewOutput,
+)
+
+try:
+    import dspy as _dspy  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - optional runtime dependency in local test envs
+    _dspy = None
+
+dspy: Any = _dspy
 
 _SAFE_DEFAULT_CHECKS = ["risk_engine", "order_firewall", "execution_policy"]
 
@@ -61,6 +74,87 @@ class HeuristicCommitteeProgram:
             committee=committee,
             calibrationMetadata={"runtime": "deterministic_heuristic_scaffold"},
         )
+
+
+@dataclass
+class LiveDSPyCommitteeProgram:
+    """Best-effort DSPy-backed committee executor.
+
+    This path is activated when an artifact manifest resolves to `executor=dspy_live`.
+    If DSPy dependencies or runtime configuration are unavailable, this module raises
+    and callers should trigger deterministic fallback behavior.
+    """
+
+    model_name: str
+    api_base: str | None = None
+    api_key: str | None = None
+    _predictor: Any = field(default=None, init=False, repr=False)
+    _lm: Any = field(default=None, init=False, repr=False)
+
+    def run(self, payload: DSPyTradeReviewInput) -> DSPyTradeReviewOutput:
+        self._ensure_predictor()
+        if dspy is None:  # pragma: no cover - defensive guard
+            raise RuntimeError("dspy_dependency_unavailable")
+        if self._predictor is None or self._lm is None:
+            raise RuntimeError("dspy_predictor_unavailable")
+
+        request_json = json.dumps(
+            payload.request_json, separators=(",", ":"), ensure_ascii=True
+        )
+        raw_result: Any
+        context_factory = getattr(dspy, "context", None)
+        if callable(context_factory):
+            context_manager = context_factory(lm=self._lm)
+            if not isinstance(context_manager, AbstractContextManager):
+                raise RuntimeError("dspy_context_manager_invalid")
+            with context_manager:
+                raw_result = self._predictor(request_json=request_json)
+        else:
+            configure = getattr(dspy, "configure")
+            configure(lm=self._lm)
+            raw_result = self._predictor(request_json=request_json)
+
+        response_json = getattr(raw_result, "response_json", None)
+        if response_json is None:
+            raise RuntimeError("dspy_response_missing")
+
+        parsed: Any = response_json
+        if isinstance(response_json, str):
+            parsed = json.loads(response_json)
+        if not isinstance(parsed, dict):
+            raise RuntimeError("dspy_response_not_object")
+        return DSPyTradeReviewOutput.model_validate(parsed)
+
+    def _ensure_predictor(self) -> None:
+        if self._predictor is not None:
+            return
+        if dspy is None:
+            raise RuntimeError("dspy_dependency_unavailable")
+        normalized_model = self.model_name.strip()
+        if not normalized_model:
+            raise RuntimeError("dspy_model_not_configured")
+
+        lm_kwargs: dict[str, Any] = {
+            "model": normalized_model,
+            "temperature": 0.0,
+            "max_tokens": 900,
+        }
+        if self.api_base:
+            lm_kwargs["api_base"] = self.api_base
+        if self.api_key:
+            lm_kwargs["api_key"] = self.api_key
+        self._lm = dspy.LM(**lm_kwargs)
+
+        input_field = getattr(dspy, "InputField")
+        output_field = getattr(dspy, "OutputField")
+
+        class TradeReviewSignature(dspy.Signature):  # type: ignore[name-defined,misc]
+            request_json = input_field(desc="JSON-encoded Torghut trade review request")
+            response_json = output_field(
+                desc="JSON object matching the DSPyTradeReviewOutput schema"
+            )
+
+        self._predictor = dspy.Predict(TradeReviewSignature)
 
 
 def _collect_risk_flags(market_context: dict[str, Any]) -> list[str]:
@@ -130,4 +224,10 @@ def _build_committee(risk_flags: list[str]) -> list[DSPyCommitteeMemberOutput]:
             )
         )
     return out
-__all__ = ["DSPyCommitteeProgram", "HeuristicCommitteeProgram"]
+
+
+__all__ = [
+    "DSPyCommitteeProgram",
+    "HeuristicCommitteeProgram",
+    "LiveDSPyCommitteeProgram",
+]

@@ -302,3 +302,158 @@ spec:
        - if [ -n "${TOKEN:-}" ]; then AUTH=(-H "authorization: Bearer ${TOKEN}"); fi
        - curl -fsS -X POST "${callbackUrl}" -H "content-type: application/json" "${AUTH[@]}" --data-binary @/tmp/market-context-news.json
     4) Ensure callback response contains `"ok": true`. If it fails, retry once; if still failing, exit non-zero.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-dspy-dataset-build-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - artifactPath
+      - datasetWindow
+      - universeRef
+  text: |
+    Objective: Build the DSPy training/evaluation dataset used by Torghut compile/eval lanes.
+
+    Guardrails:
+    - Read-only data extraction and deterministic transforms only.
+    - Emit a canonical JSON dataset at `${artifactPath}/dspy-dataset.json`.
+    - Include reproducibility metadata (window, filters, sampling seed, source refs).
+
+    Inputs:
+    - repository, base, head, artifactPath
+    - datasetWindow, universeRef
+
+    Steps:
+    1) Build dataset rows from Torghut decision/review history and market-context snapshots for `${datasetWindow}`.
+    2) Materialize `${artifactPath}/dspy-dataset.json` and `${artifactPath}/dspy-dataset-metadata.json`.
+    3) Compute and print dataset hash and row counts by split.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-dspy-compile-mipro-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - artifactPath
+      - datasetRef
+      - metricPolicyRef
+      - optimizer
+  text: |
+    Objective: Compile Torghut DSPy program prompts using MIPRO and emit deterministic compile artifacts.
+
+    Guardrails:
+    - Compile against `${datasetRef}` only.
+    - Emit compile artifacts under `${artifactPath}`.
+    - Persist compile metrics and reproducibility hashes.
+
+    Inputs:
+    - repository, base, head, artifactPath
+    - datasetRef, metricPolicyRef, optimizer
+
+    Steps:
+    1) Run DSPy compile with `${optimizer}` and `${metricPolicyRef}`.
+    2) Emit `${artifactPath}/dspy-compile-result.json` with artifactHash/reproducibilityHash.
+    3) Emit compiled prompt/program artifact referenced by `compiledArtifactUri`.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-dspy-eval-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - artifactPath
+      - compileResultRef
+      - gatePolicyRef
+  text: |
+    Objective: Evaluate compiled DSPy artifact against Torghut policy gates and produce promotion recommendation.
+
+    Guardrails:
+    - Block promotion when schema validity, deterministic compatibility, or fallback thresholds fail.
+    - Emit deterministic eval report JSON at `${artifactPath}/dspy-eval-report.json`.
+
+    Inputs:
+    - repository, base, head, artifactPath
+    - compileResultRef, gatePolicyRef
+
+    Steps:
+    1) Evaluate compile artifact referenced by `${compileResultRef}`.
+    2) Compute schemaValidRate, vetoAlignmentRate, falseVetoRate, latencyP95Ms.
+    3) Emit gate compatibility and promotion recommendation in eval report.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-dspy-gepa-experiment-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - artifactPath
+      - baselineArtifactRef
+      - experimentName
+  text: |
+    Objective: Run optional GEPA experimentation for DSPy prompt optimization and publish comparison artifacts.
+
+    Guardrails:
+    - Do not promote artifacts from this lane directly.
+    - Emit comparison metrics and candidate references only.
+
+    Inputs:
+    - repository, base, head, artifactPath
+    - baselineArtifactRef, experimentName
+
+    Steps:
+    1) Execute GEPA experiment `${experimentName}` against `${baselineArtifactRef}`.
+    2) Emit `${artifactPath}/dspy-gepa-report.json` with deltas and reproducibility metadata.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-dspy-promote-artifact-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - artifactPath
+      - evalReportRef
+      - artifactHash
+      - promotionTarget
+      - approvalRef
+  text: |
+    Objective: Promote an evaluated DSPy artifact to the requested rollout target only when policy gates pass.
+
+    Guardrails:
+    - Promotion is blocked unless schema validity >= 99.5%, deterministic compatibility passes,
+      and fallback/timeout thresholds are within policy.
+    - Emit promotion record at `${artifactPath}/dspy-promotion-record.json`.
+
+    Inputs:
+    - repository, base, head, artifactPath
+    - evalReportRef, artifactHash, promotionTarget, approvalRef
+
+    Steps:
+    1) Validate `${evalReportRef}` satisfies promotion policy for `${promotionTarget}`.
+    2) Verify `${artifactHash}` matches compile/eval lineage and reproducibility checks.
+    3) Emit approved/blocked promotion record with reasons and policy evidence.

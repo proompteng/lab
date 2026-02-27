@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 
+import { AuthenticationV1Api, KubeConfig, type V1TokenReview } from '@kubernetes/client-node'
 import { sql } from 'kysely'
 
 import { getDb } from '~/server/db'
@@ -10,33 +11,64 @@ import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
 
 export type MarketContextProviderDomain = 'fundamentals' | 'news'
 
-type ProviderCitation = {
+export type MarketContextProviderCitation = {
   source: string
   publishedAt: string
   url: string | null
 }
 
-export type MarketContextProviderContext = {
-  asOfUtc: string
-  sourceCount: number
-  qualityScore: number
-  payload: Record<string, unknown>
-  citations: ProviderCitation[]
-  riskFlags: string[]
+export type MarketContextDispatchResult = {
+  attempted: boolean
+  dispatched: boolean
+  reason: string | null
+  runName: string | null
+  error: string | null
 }
 
 export type MarketContextProviderResult = {
   symbol: string
   domain: MarketContextProviderDomain
-  snapshotState: 'fresh' | 'stale' | 'missing'
-  context: MarketContextProviderContext
-  dispatch: {
-    attempted: boolean
-    dispatched: boolean
-    reason: string | null
-    runName: string | null
-    error: string | null
+  snapshotState: 'missing' | 'stale' | 'fresh'
+  context: {
+    asOfUtc: string
+    sourceCount: number
+    qualityScore: number
+    payload: Record<string, unknown>
+    citations: MarketContextProviderCitation[]
+    riskFlags: string[]
   }
+  dispatch: MarketContextDispatchResult
+}
+
+type SnapshotRow = {
+  symbol: string
+  domain: MarketContextProviderDomain
+  asOf: Date
+  sourceCount: number
+  qualityScore: number
+  payload: Record<string, unknown>
+  citations: MarketContextProviderCitation[]
+  riskFlags: string[]
+}
+
+type IngestPayload = {
+  symbol?: unknown
+  domain?: unknown
+  asOfUtc?: unknown
+  asOf?: unknown
+  publishedAt?: unknown
+  sourceCount?: unknown
+  itemCount?: unknown
+  qualityScore?: unknown
+  payload?: unknown
+  context?: unknown
+  citations?: unknown
+  riskFlags?: unknown
+  provider?: unknown
+  runName?: unknown
+  runStatus?: unknown
+  error?: unknown
+  requestId?: unknown
 }
 
 const DEFAULT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS = 24 * 60 * 60
@@ -44,6 +76,7 @@ const DEFAULT_NEWS_MAX_FRESHNESS_SECONDS = 5 * 60
 const DEFAULT_FUNDAMENTALS_DISPATCH_COOLDOWN_SECONDS = 30 * 60
 const DEFAULT_NEWS_DISPATCH_COOLDOWN_SECONDS = 2 * 60
 const DEFAULT_AGENT_RUN_TTL_SECONDS = 30 * 60
+const DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX = 'system:serviceaccount:agents:'
 
 const parseBoolean = (value: string | undefined, fallback: boolean) => {
   if (!value) return fallback
@@ -83,21 +116,8 @@ const parseNumber = (value: unknown): number | null => {
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
 const toIso = (value: Date) => value.toISOString()
-const KUBERNETES_LABEL_MAX_LENGTH = 63
 
-export const toKubernetesLabelValue = (raw: string, fallback = 'unknown') => {
-  const normalized = raw
-    .trim()
-    .replace(/[^A-Za-z0-9_.-]+/g, '-')
-    .replace(/^[^A-Za-z0-9]+/, '')
-    .replace(/[^A-Za-z0-9]+$/, '')
-
-  if (!normalized) return fallback
-  const truncated = normalized.slice(0, KUBERNETES_LABEL_MAX_LENGTH).replace(/[^A-Za-z0-9]+$/, '')
-  return truncated || fallback
-}
-
-const coerceRiskFlags = (value: unknown): string[] => {
+const coerceRiskFlags = (value: unknown) => {
   if (!Array.isArray(value)) return []
   return value
     .map((item) => (typeof item === 'string' ? item.trim() : ''))
@@ -109,9 +129,9 @@ const coercePayload = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>
 }
 
-const coerceCitations = (value: unknown): ProviderCitation[] => {
+const coerceCitations = (value: unknown): MarketContextProviderCitation[] => {
   if (!Array.isArray(value)) return []
-  const citations: ProviderCitation[] = []
+  const citations: MarketContextProviderCitation[] = []
   for (const item of value) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue
     const row = item as Record<string, unknown>
@@ -125,6 +145,18 @@ const coerceCitations = (value: unknown): ProviderCitation[] => {
     })
   }
   return citations
+}
+
+const KUBERNETES_LABEL_MAX_LENGTH = 63
+const toKubernetesLabelValue = (raw: string, fallback = 'unknown') => {
+  const normalized = raw
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]+/g, '-')
+    .replace(/^[^A-Za-z0-9]+/, '')
+    .replace(/[^A-Za-z0-9]+$/, '')
+  if (!normalized) return fallback
+  const truncated = normalized.slice(0, KUBERNETES_LABEL_MAX_LENGTH).replace(/[^A-Za-z0-9]+$/, '')
+  return truncated || fallback
 }
 
 const resolveSettings = () => {
@@ -186,14 +218,12 @@ const resolveFreshnessSeconds = (now: Date, asOf: Date) =>
 const buildMissingContext = (params: {
   domain: MarketContextProviderDomain
   symbol: string
-  now: Date
   dispatchQueued: boolean
   dispatchError: string | null
-}): MarketContextProviderContext => {
+}) => {
   const riskFlags = [`${params.domain}_missing`]
   if (params.dispatchQueued) riskFlags.push(`${params.domain}_dispatch_queued`)
   if (params.dispatchError) riskFlags.push(`${params.domain}_dispatch_error`)
-
   return {
     asOfUtc: '',
     sourceCount: 0,
@@ -204,7 +234,7 @@ const buildMissingContext = (params: {
       provider: 'codex-spark',
       status: 'missing',
     },
-    citations: [],
+    citations: [] as MarketContextProviderCitation[],
     riskFlags,
   }
 }
@@ -223,33 +253,39 @@ const resolveDbWithMigrations = async () => {
   return db
 }
 
-type SnapshotRow = {
+const readLatestSnapshot = async (params: {
   symbol: string
-  domain: string
-  as_of: string | Date
-  source_count: number
-  quality_score: number
-  payload: unknown
-  citations: unknown
-  risk_flags: string[] | null
-}
-
-const readLatestSnapshot = async (params: { symbol: string; domain: MarketContextProviderDomain }) => {
+  domain: MarketContextProviderDomain
+}): Promise<SnapshotRow | null> => {
   const db = await resolveDbWithMigrations()
   if (!db) return null
-  const row = (await db
-    .selectFrom('torghut_market_context_snapshots')
-    .select(['symbol', 'domain', 'as_of', 'source_count', 'quality_score', 'payload', 'citations', 'risk_flags'])
-    .where('symbol', '=', params.symbol)
-    .where('domain', '=', params.domain)
-    .executeTakeFirst()) as SnapshotRow | undefined
 
+  const result = await sql<{
+    symbol: string
+    domain: string
+    as_of: unknown
+    source_count: unknown
+    quality_score: unknown
+    payload: unknown
+    citations: unknown
+    risk_flags: unknown
+  }>`
+    SELECT symbol, domain, as_of, source_count, quality_score, payload, citations, risk_flags
+    FROM torghut_market_context_snapshots
+    WHERE symbol = ${params.symbol}
+      AND domain = ${params.domain}
+    LIMIT 1
+  `.execute(db)
+
+  const row = result.rows[0]
   if (!row) return null
   const asOf = parseTimestamp(row.as_of)
-  if (!asOf) return null
+  const domain = asDomain(row.domain)
+  if (!asOf || !domain) return null
+
   return {
     symbol: row.symbol,
-    domain: row.domain as MarketContextProviderDomain,
+    domain,
     asOf,
     sourceCount: Math.max(0, Math.trunc(parseNumber(row.source_count) ?? 0)),
     qualityScore: clamp01(parseNumber(row.quality_score) ?? 0),
@@ -269,7 +305,9 @@ const reserveDispatchSlot = async (params: {
   if (!db) return false
 
   const threshold = new Date(params.now.getTime() - params.cooldownSeconds * 1000)
-  const result = await sql<{ symbol: string }>`
+  const result = await sql<{
+    symbol: string
+  }>`
     INSERT INTO torghut_market_context_dispatch_state (
       symbol,
       domain,
@@ -304,27 +342,44 @@ const updateDispatchState = async (params: {
 }) => {
   const db = await resolveDbWithMigrations()
   if (!db) return
-  await db
-    .insertInto('torghut_market_context_dispatch_state')
-    .values({
-      symbol: params.symbol,
-      domain: params.domain,
-      last_dispatched_at: params.now,
-      last_run_name: params.runName,
-      last_status: params.status,
-      last_error: params.error,
-      updated_at: params.now,
-    })
-    .onConflict((oc) =>
-      oc.columns(['symbol', 'domain']).doUpdateSet({
-        last_dispatched_at: params.now,
-        last_run_name: params.runName,
-        last_status: params.status,
-        last_error: params.error,
-        updated_at: params.now,
-      }),
+
+  await sql`
+    INSERT INTO torghut_market_context_dispatch_state (
+      symbol,
+      domain,
+      last_dispatched_at,
+      last_run_name,
+      last_status,
+      last_error,
+      updated_at
     )
-    .execute()
+    VALUES (
+      ${params.symbol},
+      ${params.domain},
+      ${params.now},
+      ${params.runName},
+      ${params.status},
+      ${params.error},
+      ${params.now}
+    )
+    ON CONFLICT (symbol, domain) DO UPDATE
+      SET
+        last_dispatched_at = EXCLUDED.last_dispatched_at,
+        last_run_name = EXCLUDED.last_run_name,
+        last_status = EXCLUDED.last_status,
+        last_error = EXCLUDED.last_error,
+        updated_at = EXCLUDED.updated_at;
+  `.execute(db)
+}
+
+export const buildMarketContextAgentRunRuntime = (params: { runtimeType: string; runtimeServiceAccount: string }) => {
+  const runtimeConfig: Record<string, string> = {}
+  if (params.runtimeServiceAccount.trim()) {
+    runtimeConfig.serviceAccount = params.runtimeServiceAccount.trim()
+  }
+  return Object.keys(runtimeConfig).length > 0
+    ? { type: params.runtimeType, config: runtimeConfig }
+    : { type: params.runtimeType }
 }
 
 const dispatchDomainAgentRun = async (params: {
@@ -332,7 +387,7 @@ const dispatchDomainAgentRun = async (params: {
   symbol: string
   now: Date
   reason: string
-}) => {
+}): Promise<MarketContextDispatchResult> => {
   const settings = resolveSettings()
   const cooldownSeconds = resolveDomainCooldown(params.domain, settings)
   const reserved = await reserveDispatchSlot({
@@ -341,6 +396,7 @@ const dispatchDomainAgentRun = async (params: {
     now: params.now,
     cooldownSeconds,
   })
+
   if (!reserved) {
     return {
       attempted: true,
@@ -349,13 +405,6 @@ const dispatchDomainAgentRun = async (params: {
       runName: null,
       error: null,
     }
-  }
-
-  const agentName = resolveAgentName(params.domain, settings)
-  const implementationSpec = resolveImplementationSpec(params.domain, settings)
-  const runtimeConfig: Record<string, unknown> = {}
-  if (settings.runtimeServiceAccount) {
-    runtimeConfig.serviceAccountName = settings.runtimeServiceAccount
   }
 
   const windowBucket = Math.floor(params.now.getTime() / (cooldownSeconds * 1000))
@@ -374,8 +423,8 @@ const dispatchDomainAgentRun = async (params: {
       },
     },
     spec: {
-      agentRef: { name: agentName },
-      implementationSpecRef: { name: implementationSpec },
+      agentRef: { name: resolveAgentName(params.domain, settings) },
+      implementationSpecRef: { name: resolveImplementationSpec(params.domain, settings) },
       parameters: {
         symbol: params.symbol,
         domain: params.domain,
@@ -384,10 +433,10 @@ const dispatchDomainAgentRun = async (params: {
         callbackUrl: settings.callbackIngestUrl,
         requestId: randomUUID(),
       },
-      runtime:
-        Object.keys(runtimeConfig).length > 0
-          ? { type: settings.runtimeType, config: runtimeConfig }
-          : { type: settings.runtimeType },
+      runtime: buildMarketContextAgentRunRuntime({
+        runtimeType: settings.runtimeType,
+        runtimeServiceAccount: settings.runtimeServiceAccount,
+      }),
       ttlSecondsAfterFinished: settings.agentRunTtlSeconds,
       idempotencyKey,
     },
@@ -401,6 +450,7 @@ const dispatchDomainAgentRun = async (params: {
         ? (applied.metadata as Record<string, unknown>)
         : ({} as Record<string, unknown>)
     const runName = typeof metadata.name === 'string' ? metadata.name : null
+
     await updateDispatchState({
       symbol: params.symbol,
       domain: params.domain,
@@ -409,6 +459,7 @@ const dispatchDomainAgentRun = async (params: {
       error: null,
       now: params.now,
     })
+
     return {
       attempted: true,
       dispatched: true,
@@ -426,6 +477,7 @@ const dispatchDomainAgentRun = async (params: {
       error: message.slice(0, 500),
       now: params.now,
     })
+
     return {
       attempted: true,
       dispatched: false,
@@ -455,7 +507,6 @@ export const getMarketContextProviderResult = async (params: {
         ...buildMissingContext({
           domain: params.domain,
           symbol,
-          now,
           dispatchQueued: false,
           dispatchError: null,
         }),
@@ -487,6 +538,7 @@ export const getMarketContextProviderResult = async (params: {
           runName: null,
           error: null,
         }
+
     return {
       symbol,
       domain: params.domain,
@@ -494,7 +546,6 @@ export const getMarketContextProviderResult = async (params: {
       context: buildMissingContext({
         domain: params.domain,
         symbol,
-        now,
         dispatchQueued: dispatch.dispatched,
         dispatchError: dispatch.error,
       }),
@@ -504,6 +555,7 @@ export const getMarketContextProviderResult = async (params: {
 
   const freshnessSeconds = resolveFreshnessSeconds(now, snapshot.asOf)
   const isStale = freshnessSeconds > maxFreshnessSeconds
+
   const dispatch =
     settings.dispatchEnabled && isStale
       ? await dispatchDomainAgentRun({
@@ -541,7 +593,7 @@ export const getMarketContextProviderResult = async (params: {
   }
 }
 
-const coerceRunStatus = (value: unknown) => {
+const coerceRunStatus = (value: unknown): 'succeeded' | 'failed' | 'submitted' | 'partial' => {
   if (typeof value !== 'string') return 'failed'
   const normalized = value.trim().toLowerCase()
   if (!normalized) return 'failed'
@@ -553,41 +605,33 @@ const coerceRunStatus = (value: unknown) => {
 }
 
 const coerceSourceCount = (value: unknown) => Math.max(0, Math.trunc(parseNumber(value) ?? 0))
-
 const coerceQualityScore = (value: unknown) => clamp01(parseNumber(value) ?? 0)
 
-export const ingestMarketContextProviderResult = async (input: Record<string, unknown>) => {
+export const ingestMarketContextProviderResult = async (input: IngestPayload) => {
   const db = await resolveDbWithMigrations()
-  if (!db) {
-    throw new Error('DATABASE_URL is not configured')
-  }
+  if (!db) throw new Error('DATABASE_URL is not configured')
 
   const domain = asDomain(input.domain)
-  if (!domain) {
-    throw new Error('domain must be fundamentals or news')
-  }
+  if (!domain) throw new Error('domain must be fundamentals or news')
 
   const symbolRaw = typeof input.symbol === 'string' ? input.symbol.trim() : ''
-  if (!symbolRaw) {
-    throw new Error('symbol is required')
-  }
-  const symbol = normalizeTorghutSymbol(symbolRaw)
+  if (!symbolRaw) throw new Error('symbol is required')
 
+  const symbol = normalizeTorghutSymbol(symbolRaw)
   const asOf = parseTimestamp(input.asOfUtc ?? input.asOf ?? input.publishedAt) ?? new Date()
   const sourceCount = coerceSourceCount(input.sourceCount ?? input.itemCount)
   const qualityScore = coerceQualityScore(input.qualityScore)
   const payload = coercePayload(input.payload ?? input.context)
   const citations = coerceCitations(input.citations)
   const riskFlags = coerceRiskFlags(input.riskFlags)
-  const provider = typeof input.provider === 'string' ? input.provider.trim() : 'codex-spark'
+  const provider =
+    typeof input.provider === 'string' && input.provider.trim().length > 0 ? input.provider.trim() : 'codex-spark'
   const runName = typeof input.runName === 'string' && input.runName.trim().length > 0 ? input.runName.trim() : null
   const runStatus = coerceRunStatus(input.runStatus)
   const runError = typeof input.error === 'string' && input.error.trim().length > 0 ? input.error.trim() : null
-  const payloadJson = JSON.stringify(payload)
-  const citationsJson = JSON.stringify(citations)
   const now = new Date()
-  const shouldPersistSnapshot = runStatus === 'succeeded' || runStatus === 'partial'
 
+  const shouldPersistSnapshot = runStatus === 'succeeded' || runStatus === 'partial'
   if (shouldPersistSnapshot) {
     await db
       .insertInto('torghut_market_context_snapshots')
@@ -597,22 +641,22 @@ export const ingestMarketContextProviderResult = async (input: Record<string, un
         as_of: asOf,
         source_count: sourceCount,
         quality_score: qualityScore,
-        payload: payloadJson as unknown as Record<string, unknown>,
-        citations: citationsJson,
+        payload,
+        citations,
         risk_flags: riskFlags,
         provider,
         run_name: runName,
         updated_at: now,
       })
-      .onConflict((oc) =>
-        oc
+      .onConflict((conflict) =>
+        conflict
           .columns(['symbol', 'domain'])
           .doUpdateSet({
             as_of: asOf,
             source_count: sourceCount,
             quality_score: qualityScore,
-            payload: payloadJson as unknown as Record<string, unknown>,
-            citations: citationsJson,
+            payload,
+            citations,
             risk_flags: riskFlags,
             provider,
             run_name: runName,
@@ -634,8 +678,8 @@ export const ingestMarketContextProviderResult = async (input: Record<string, un
       last_error: runError,
       updated_at: now,
     })
-    .onConflict((oc) =>
-      oc.columns(['symbol', 'domain']).doUpdateSet({
+    .onConflict((conflict) =>
+      conflict.columns(['symbol', 'domain']).doUpdateSet({
         last_dispatched_at: now,
         last_run_name: runName,
         last_status: runStatus,
@@ -650,7 +694,7 @@ export const ingestMarketContextProviderResult = async (input: Record<string, un
   }
 
   return {
-    ok: true as const,
+    ok: true,
     symbol,
     domain,
     runStatus,
@@ -662,6 +706,124 @@ export const ingestMarketContextProviderResult = async (input: Record<string, un
       payload,
       citations,
       riskFlags,
-    } satisfies MarketContextProviderContext,
+    },
   }
+}
+
+let authApi: AuthenticationV1Api | null | undefined
+
+const resolveAllowedServiceAccountPrefixes = () => {
+  const raw = process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES?.trim()
+  if (!raw) return [DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX]
+  const prefixes = raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+  return prefixes.length > 0 ? prefixes : [DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX]
+}
+
+const resolveAuthApi = () => {
+  if (authApi !== undefined) return authApi
+  try {
+    const kubeConfig = new KubeConfig()
+    kubeConfig.loadFromCluster()
+    authApi = kubeConfig.makeApiClient(AuthenticationV1Api)
+  } catch {
+    authApi = null
+  }
+  return authApi
+}
+
+const logIngestAuth = (payload: Record<string, unknown>) => {
+  console.info('[jangar] market_context_ingest_auth', payload)
+}
+
+const verifyServiceAccountTokenWithTokenReview = async (token: string) => {
+  const api = resolveAuthApi()
+  if (!api) return false
+
+  const body: V1TokenReview = {
+    apiVersion: 'authentication.k8s.io/v1',
+    kind: 'TokenReview',
+    spec: { token },
+  }
+
+  try {
+    // @kubernetes/client-node v1 expects `createTokenReview({ body })`.
+    const response = await (api.createTokenReview as unknown as (arg: { body: V1TokenReview }) => Promise<unknown>)({
+      body,
+    })
+    const responseRecord = response && typeof response === 'object' ? (response as Record<string, unknown>) : null
+    const maybeBody =
+      responseRecord && responseRecord.body && typeof responseRecord.body === 'object'
+        ? (responseRecord.body as Record<string, unknown>)
+        : responseRecord
+
+    const status =
+      maybeBody && maybeBody.status && typeof maybeBody.status === 'object'
+        ? (maybeBody.status as Record<string, unknown>)
+        : null
+    if (!status || status.authenticated !== true) return false
+
+    const user = status.user && typeof status.user === 'object' ? (status.user as Record<string, unknown>) : null
+    const username = user && typeof user.username === 'string' ? user.username : ''
+    if (!username) return false
+
+    const allowedPrefixes = resolveAllowedServiceAccountPrefixes()
+    const allowed = allowedPrefixes.some((prefix) => username.startsWith(prefix))
+    logIngestAuth({ method: 'service_account_token_review', authenticated: true, username, allowed })
+    return allowed
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    logIngestAuth({ method: 'service_account_token_review', authenticated: false, error: message.slice(0, 200) })
+    return false
+  }
+}
+
+const resolveSharedIngestToken = () => {
+  const token = process.env.JANGAR_MARKET_CONTEXT_INGEST_TOKEN?.trim()
+  return token && token.length > 0 ? token : null
+}
+
+const resolveServiceAccountTokenAuthEnabled = () =>
+  parseBoolean(process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN, true)
+
+const safeEquals = (left: string, right: string) => {
+  const leftBuffer = Buffer.from(left)
+  const rightBuffer = Buffer.from(right)
+  if (leftBuffer.length !== rightBuffer.length) return false
+  return timingSafeEqual(leftBuffer, rightBuffer)
+}
+
+const resolveBearerToken = (request: Request) => {
+  const raw = request.headers.get('authorization')?.trim()
+  if (!raw) return null
+  const [scheme, ...rest] = raw.split(/\s+/g)
+  if (scheme.toLowerCase() !== 'bearer') return null
+  const token = rest.join(' ').trim()
+  return token.length > 0 ? token : null
+}
+
+export const isMarketContextIngestAuthorized = async (request: Request) => {
+  const actual = resolveBearerToken(request)
+  if (!actual) {
+    logIngestAuth({ method: 'none', authorized: false, reason: 'missing_bearer_token' })
+    return false
+  }
+
+  const expected = resolveSharedIngestToken()
+  if (expected) {
+    const authorized = safeEquals(actual, expected)
+    logIngestAuth({ method: 'shared_token', authorized })
+    return authorized
+  }
+
+  if (!resolveServiceAccountTokenAuthEnabled()) {
+    logIngestAuth({ method: 'service_account_token', authorized: false, reason: 'service_account_auth_disabled' })
+    return false
+  }
+
+  const authorized = await verifyServiceAccountTokenWithTokenReview(actual)
+  logIngestAuth({ method: 'service_account_token', authorized })
+  return authorized
 }

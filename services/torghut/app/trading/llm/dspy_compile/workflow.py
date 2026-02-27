@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
 from typing import Any, Literal, Mapping, cast
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ....models import LLMDSPyWorkflowArtifact, coerce_json_payload
 from .hashing import hash_payload
-from .schemas import DSPyArtifactBundle, DSPyCompileResult, DSPyEvalReport, DSPyPromotionRecord
+from .schemas import (
+    DSPyArtifactBundle,
+    DSPyCompileResult,
+    DSPyEvalReport,
+    DSPyPromotionRecord,
+)
 
-DSPyWorkflowLane = Literal["dataset-build", "compile", "eval", "gepa-experiment", "promote"]
+DSPyWorkflowLane = Literal[
+    "dataset-build", "compile", "eval", "gepa-experiment", "promote"
+]
 
 _IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
     "dataset-build": "torghut-dspy-dataset-build-v1",
@@ -25,6 +33,7 @@ _IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
     "gepa-experiment": "torghut-dspy-gepa-experiment-v1",
     "promote": "torghut-dspy-promote-artifact-v1",
 }
+_TERMINAL_PHASES = {"succeeded", "failed", "cancelled"}
 
 
 def build_compile_result(
@@ -87,7 +96,9 @@ def build_eval_report(
     false_veto_rate: float,
     latency_p95_ms: int,
     gate_compatibility: Literal["pass", "fail"],
-    promotion_recommendation: Literal["hold", "paper", "shadow", "constrained_live", "scaled_live"],
+    promotion_recommendation: Literal[
+        "hold", "paper", "shadow", "constrained_live", "scaled_live"
+    ],
     metric_bundle: Mapping[str, Any],
     created_at: datetime | None = None,
 ) -> DSPyEvalReport:
@@ -193,7 +204,9 @@ def write_artifact_bundle(
     )
 
     files: dict[str, Any] = {
-        "dspy-compile-result.json": compile_result.model_dump(mode="json", by_alias=True),
+        "dspy-compile-result.json": compile_result.model_dump(
+            mode="json", by_alias=True
+        ),
         "dspy-eval-report.json": eval_report.model_dump(mode="json", by_alias=True),
         "dspy-bundle.json": bundle.model_dump(mode="json", by_alias=True),
     }
@@ -206,7 +219,9 @@ def write_artifact_bundle(
     written_hashes: dict[str, str] = {}
     for file_name, payload in files.items():
         path = output_dir / file_name
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        )
         path.write_text(encoded + "\n", encoding="utf-8")
         written_hashes[file_name] = hash_payload(payload)
     return written_hashes
@@ -228,7 +243,9 @@ def upsert_workflow_artifact_record(
     metadata: Mapping[str, Any] | None = None,
 ) -> LLMDSPyWorkflowArtifact:
     row = session.execute(
-        select(LLMDSPyWorkflowArtifact).where(LLMDSPyWorkflowArtifact.run_key == run_key)
+        select(LLMDSPyWorkflowArtifact).where(
+            LLMDSPyWorkflowArtifact.run_key == run_key
+        )
     ).scalar_one_or_none()
     if row is None:
         row = LLMDSPyWorkflowArtifact(
@@ -242,14 +259,25 @@ def upsert_workflow_artifact_record(
     row.status = status
     row.implementation_spec_ref = implementation_spec_ref
     row.idempotency_key = idempotency_key
-    row.request_payload_json = coerce_json_payload(dict(request_payload)) if request_payload is not None else None
-    row.response_payload_json = coerce_json_payload(dict(response_payload)) if response_payload is not None else None
-    row.metadata_json = coerce_json_payload(dict(metadata)) if metadata is not None else None
+    row.request_payload_json = (
+        coerce_json_payload(dict(request_payload))
+        if request_payload is not None
+        else None
+    )
+    row.response_payload_json = (
+        coerce_json_payload(dict(response_payload))
+        if response_payload is not None
+        else None
+    )
+    row.metadata_json = (
+        coerce_json_payload(dict(metadata)) if metadata is not None else None
+    )
 
     if compile_result is not None:
         row.program_name = compile_result.program_name
         row.signature_version = ",".join(
-            f"{key}:{value}" for key, value in sorted(compile_result.signature_versions.items())
+            f"{key}:{value}"
+            for key, value in sorted(compile_result.signature_versions.items())
         )
         row.optimizer = compile_result.optimizer
         row.artifact_uri = compile_result.compiled_artifact_uri
@@ -278,7 +306,9 @@ def upsert_workflow_artifact_record(
     metadata_payload = cast(dict[str, Any], resource.get("metadata") or {})
     if metadata_payload:
         row.agentrun_name = str(metadata_payload.get("name") or "").strip() or None
-        row.agentrun_namespace = str(metadata_payload.get("namespace") or "").strip() or None
+        row.agentrun_namespace = (
+            str(metadata_payload.get("namespace") or "").strip() or None
+        )
         row.agentrun_uid = str(metadata_payload.get("uid") or "").strip() or None
 
     session.add(row)
@@ -365,6 +395,219 @@ def submit_jangar_agentrun(
     return cast(dict[str, Any], parsed)
 
 
+def get_jangar_agentrun(
+    *,
+    base_url: str,
+    agent_run_id: str,
+    namespace: str,
+    auth_token: str | None,
+    timeout_seconds: int = 20,
+) -> dict[str, Any]:
+    normalized_agent_run_id = agent_run_id.strip()
+    if not normalized_agent_run_id:
+        raise RuntimeError("jangar_agentrun_id_required")
+
+    query = urlencode({"namespace": namespace.strip() or "agents"})
+    status_url = (
+        f"{base_url.rstrip('/')}/v1/agent-runs/{quote(normalized_agent_run_id, safe='')}"
+        f"?{query}"
+    )
+    status, body = _http_json_request(
+        status_url,
+        method="GET",
+        headers={**({"Authorization": f"Bearer {auth_token}"} if auth_token else {})},
+        body=b"",
+        timeout_seconds=timeout_seconds,
+    )
+    if status < 200 or status >= 300:
+        raise RuntimeError(f"jangar_get_agentrun_http_{status}:{body[:200]}")
+    parsed = json.loads(body)
+    if not isinstance(parsed, dict):
+        raise RuntimeError("invalid_jangar_agentrun_response")
+    return cast(dict[str, Any], parsed)
+
+
+def wait_for_jangar_agentrun_terminal_status(
+    *,
+    base_url: str,
+    agent_run_id: str,
+    namespace: str,
+    auth_token: str | None,
+    timeout_seconds: int = 20,
+    poll_interval_seconds: int = 5,
+    max_wait_seconds: int = 3600,
+) -> str:
+    normalized_poll = max(int(poll_interval_seconds), 1)
+    deadline = time.monotonic() + max(int(max_wait_seconds), normalized_poll)
+    last_phase = "unknown"
+
+    while True:
+        response = get_jangar_agentrun(
+            base_url=base_url,
+            agent_run_id=agent_run_id,
+            namespace=namespace,
+            auth_token=auth_token,
+            timeout_seconds=timeout_seconds,
+        )
+        phase_raw = (
+            cast(dict[str, Any], response.get("agentRun") or {}).get("status")
+            or cast(dict[str, Any], response.get("resource") or {}).get("status")
+            or ""
+        )
+        phase = str(phase_raw).strip().lower()
+        if phase:
+            last_phase = phase
+        if phase in _TERMINAL_PHASES:
+            return phase
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"jangar_agentrun_terminal_wait_timeout:last_phase={last_phase}:agent_run_id={agent_run_id}"
+            )
+        time.sleep(normalized_poll)
+
+
+def _extract_submitted_agentrun_id(submit_response: Mapping[str, Any]) -> str:
+    agent_run = cast(dict[str, Any], submit_response.get("agentRun") or {})
+    run_id = str(agent_run.get("id") or "").strip()
+    if run_id:
+        return run_id
+    raise RuntimeError("jangar_submit_missing_agent_run_id")
+
+
+def orchestrate_dspy_agentrun_workflow(
+    session: Session,
+    *,
+    base_url: str,
+    repository: str,
+    base: str,
+    head: str,
+    artifact_root: str,
+    run_prefix: str,
+    auth_token: str | None,
+    lane_parameter_overrides: Mapping[DSPyWorkflowLane, Mapping[str, Any]]
+    | None = None,
+    include_gepa_experiment: bool = False,
+    namespace: str = "agents",
+    agent_name: str = "codex-agent",
+    vcs_ref_name: str = "github",
+    secret_binding_ref: str = "codex-whitepaper-github-token",
+    ttl_seconds_after_finished: int = 14_400,
+    timeout_seconds: int = 20,
+    poll_interval_seconds: int = 5,
+    max_wait_seconds: int = 3600,
+) -> dict[DSPyWorkflowLane, dict[str, Any]]:
+    """Submit dataset-build -> compile -> eval -> [gepa] -> promote AgentRuns and persist lineage rows."""
+
+    normalized_run_prefix = run_prefix.strip()
+    if not normalized_run_prefix:
+        raise ValueError("run_prefix_required")
+
+    artifact_root_normalized = artifact_root.strip().rstrip("/")
+    if not artifact_root_normalized:
+        raise ValueError("artifact_root_required")
+
+    lanes: list[DSPyWorkflowLane] = ["dataset-build", "compile", "eval"]
+    if include_gepa_experiment:
+        lanes.append("gepa-experiment")
+    lanes.append("promote")
+
+    overrides_by_lane = lane_parameter_overrides or {}
+    responses: dict[DSPyWorkflowLane, dict[str, Any]] = {}
+
+    for lane_index, lane in enumerate(lanes):
+        lane_overrides = overrides_by_lane.get(lane, {})
+
+        run_key = f"{normalized_run_prefix}:{lane}"
+        artifact_path = f"{artifact_root_normalized}/{lane}"
+        payload = build_dspy_agentrun_payload(
+            lane=lane,
+            idempotency_key=run_key,
+            repository=repository,
+            base=base,
+            head=head,
+            artifact_path=artifact_path,
+            parameter_overrides=lane_overrides,
+            namespace=namespace,
+            agent_name=agent_name,
+            vcs_ref_name=vcs_ref_name,
+            secret_binding_ref=secret_binding_ref,
+            ttl_seconds_after_finished=ttl_seconds_after_finished,
+        )
+
+        try:
+            response_payload = submit_jangar_agentrun(
+                base_url=base_url,
+                payload=payload,
+                idempotency_key=run_key,
+                auth_token=auth_token,
+                timeout_seconds=timeout_seconds,
+            )
+            responses[lane] = response_payload
+
+            upsert_workflow_artifact_record(
+                session,
+                run_key=run_key,
+                lane=lane,
+                status="submitted",
+                implementation_spec_ref=_IMPLEMENTATION_SPEC_BY_LANE[lane],
+                idempotency_key=run_key,
+                request_payload=payload,
+                response_payload=response_payload,
+                compile_result=None,
+                eval_report=None,
+                promotion_record=None,
+                metadata={
+                    "orchestration": {
+                        "runPrefix": normalized_run_prefix,
+                        "laneOrder": lane_index,
+                        "submittedAt": datetime.now(timezone.utc).isoformat(),
+                    }
+                },
+            )
+
+            # Persist each accepted submission immediately so partial orchestration runs remain auditable.
+            session.commit()
+
+            terminal_phase = wait_for_jangar_agentrun_terminal_status(
+                base_url=base_url,
+                agent_run_id=_extract_submitted_agentrun_id(response_payload),
+                namespace=namespace,
+                auth_token=auth_token,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+                max_wait_seconds=max_wait_seconds,
+            )
+            upsert_workflow_artifact_record(
+                session,
+                run_key=run_key,
+                lane=lane,
+                status=terminal_phase,
+                implementation_spec_ref=_IMPLEMENTATION_SPEC_BY_LANE[lane],
+                idempotency_key=run_key,
+                request_payload=payload,
+                response_payload=response_payload,
+                compile_result=None,
+                eval_report=None,
+                promotion_record=None,
+                metadata={
+                    "orchestration": {
+                        "runPrefix": normalized_run_prefix,
+                        "laneOrder": lane_index,
+                        "terminalPhase": terminal_phase,
+                        "terminalObservedAt": datetime.now(timezone.utc).isoformat(),
+                    }
+                },
+            )
+            session.commit()
+            if terminal_phase != "succeeded":
+                raise RuntimeError(f"jangar_agentrun_not_succeeded:{lane}:{terminal_phase}")
+        except Exception:
+            session.rollback()
+            raise
+
+    return responses
+
+
 def _normalize_string_parameter(*, key: str, value: Any) -> str:
     if value is None:
         raise ValueError(f"parameter_{key}_must_be_non_null")
@@ -393,7 +636,9 @@ def _http_json_request(
     if parsed.query:
         path = f"{path}?{parsed.query}"
     connection_class = HTTPSConnection if parsed.scheme == "https" else HTTPConnection
-    connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout_seconds, 1))
+    connection = connection_class(
+        parsed.hostname, parsed.port, timeout=max(timeout_seconds, 1)
+    )
     try:
         connection.request(method, path, body=body, headers=dict(headers))
         response = connection.getresponse()
@@ -408,8 +653,11 @@ __all__ = [
     "build_compile_result",
     "build_dspy_agentrun_payload",
     "build_eval_report",
+    "orchestrate_dspy_agentrun_workflow",
     "build_promotion_record",
     "bundle_artifacts",
+    "get_jangar_agentrun",
+    "wait_for_jangar_agentrun_terminal_status",
     "submit_jangar_agentrun",
     "upsert_workflow_artifact_record",
     "write_artifact_bundle",

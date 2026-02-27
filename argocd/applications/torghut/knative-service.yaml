@@ -342,6 +342,22 @@ spec:
               value: "1200"
             - name: LLM_TIMEOUT_SECONDS
               value: "20"
+            - name: LLM_DSPY_RUNTIME_MODE
+              value: active
+            - name: LLM_DSPY_ARTIFACT_HASH
+              value: df087a5e643d6478b1ebe51bf44ad2d0e2228825c1c0a8e9dc345729d6a3bbff
+            - name: LLM_DSPY_PROGRAM_NAME
+              value: trade-review-committee-v1
+            - name: LLM_DSPY_SIGNATURE_VERSION
+              value: v1
+            - name: LLM_DSPY_TIMEOUT_SECONDS
+              value: "8"
+            - name: LLM_DSPY_COMPILE_METRICS_POLICY_REF
+              value: config/trading/llm/dspy-metrics.yaml
+            - name: LLM_DSPY_SECRET_BINDING_REF
+              value: codex-whitepaper-github-token
+            - name: LLM_DSPY_AGENTRUN_TTL_SECONDS
+              value: "14400"
             - name: LLM_CIRCUIT_MAX_ERRORS
               value: "3"
             - name: LLM_CIRCUIT_WINDOW_SECONDS
