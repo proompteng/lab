@@ -137,7 +137,7 @@ const isIngestAuthorized = async (request: Request) => {
   if (!actual) return false
 
   const expected = resolveSharedIngestToken()
-  if (expected && safeEquals(actual, expected)) return true
+  if (expected) return safeEquals(actual, expected)
   if (!resolveServiceAccountTokenAuthEnabled()) return false
   return verifyServiceAccountToken(actual)
 }

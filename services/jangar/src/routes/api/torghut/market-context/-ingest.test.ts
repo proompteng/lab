@@ -144,4 +144,24 @@ describe('POST /api/torghut/market-context/ingest', () => {
     expect(response.status).toBe(202)
     expect(ingestMarketContextProviderResult).toHaveBeenCalledWith({ symbol: 'AAPL', domain: 'news' })
   })
+
+  it('rejects service-account token when shared token is configured', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_INGEST_TOKEN = 'secret-token'
+    const { __setIngestServiceAccountTokenVerifierForTests, postMarketContextIngestHandler } = await import('./ingest')
+    __setIngestServiceAccountTokenVerifierForTests(async () => true)
+
+    const response = await postMarketContextIngestHandler(
+      new Request('http://localhost/api/torghut/market-context/ingest', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer sa-token',
+        },
+        body: JSON.stringify({ symbol: 'AAPL', domain: 'news' }),
+      }),
+    )
+
+    expect(response.status).toBe(401)
+    expect(ingestMarketContextProviderResult).not.toHaveBeenCalled()
+  })
 })

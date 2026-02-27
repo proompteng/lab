@@ -605,17 +605,20 @@ export const ingestMarketContextProviderResult = async (input: Record<string, un
         updated_at: now,
       })
       .onConflict((oc) =>
-        oc.columns(['symbol', 'domain']).doUpdateSet({
-          as_of: asOf,
-          source_count: sourceCount,
-          quality_score: qualityScore,
-          payload: payloadJson as unknown as Record<string, unknown>,
-          citations: citationsJson,
-          risk_flags: riskFlags,
-          provider,
-          run_name: runName,
-          updated_at: now,
-        }),
+        oc
+          .columns(['symbol', 'domain'])
+          .doUpdateSet({
+            as_of: asOf,
+            source_count: sourceCount,
+            quality_score: qualityScore,
+            payload: payloadJson as unknown as Record<string, unknown>,
+            citations: citationsJson,
+            risk_flags: riskFlags,
+            provider,
+            run_name: runName,
+            updated_at: now,
+          })
+          .where('torghut_market_context_snapshots.as_of', '<=', asOf),
       )
       .execute()
   }
