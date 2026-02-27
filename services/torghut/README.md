@@ -73,8 +73,7 @@ Endpoints:
   - `app/trading/llm/dspy_programs/` (typed signatures/modules/adapters)
   - `app/trading/llm/dspy_compile/` (compile/eval/promotion artifacts + AgentRun payload builder)
 - Runtime gates:
-  - `LLM_DSPY_RUNTIME_MODE=disabled|shadow|active` (default `disabled`)
-  - `LLM_DSPY_ARTIFACT_HASH=<sha256>` required when mode is `shadow` or `active`
+  - `LLM_DSPY_ARTIFACT_HASH=<sha256>` (required for active DSPy runtime)
   - `LLM_DSPY_PROGRAM_NAME`, `LLM_DSPY_SIGNATURE_VERSION`, `LLM_DSPY_TIMEOUT_SECONDS`
 
 AgentRun payload builder (`build_dspy_agentrun_payload`) enforces:

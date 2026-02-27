@@ -212,11 +212,15 @@ class TestLLMDSPyWorkflow(TestCase):
         responses = [
             {
                 "agentRun": {"id": "record-dataset"},
-                "resource": {"metadata": {"name": "run-dataset", "namespace": "agents"}},
+                "resource": {
+                    "metadata": {"name": "run-dataset", "namespace": "agents"}
+                },
             },
             {
                 "agentRun": {"id": "record-compile"},
-                "resource": {"metadata": {"name": "run-compile", "namespace": "agents"}},
+                "resource": {
+                    "metadata": {"name": "run-compile", "namespace": "agents"}
+                },
             },
             {
                 "agentRun": {"id": "record-eval"},
@@ -224,7 +228,9 @@ class TestLLMDSPyWorkflow(TestCase):
             },
             {
                 "agentRun": {"id": "record-promote"},
-                "resource": {"metadata": {"name": "run-promote", "namespace": "agents"}},
+                "resource": {
+                    "metadata": {"name": "run-promote", "namespace": "agents"}
+                },
             },
         ]
 
@@ -265,6 +271,10 @@ class TestLLMDSPyWorkflow(TestCase):
                                 "artifactHash": "a" * 64,
                                 "promotionTarget": "constrained_live",
                                 "approvalRef": "risk-committee",
+                                "gateCompatibility": "pass",
+                                "schemaValidRate": "0.998",
+                                "deterministicCompatibility": "pass",
+                                "fallbackRate": "0.01",
                             },
                         },
                         include_gepa_experiment=False,
@@ -316,6 +326,15 @@ class TestLLMDSPyWorkflow(TestCase):
                 idempotency_key = str(row.idempotency_key)
                 self.assertNotIn(":", idempotency_key)
                 self.assertLessEqual(len(idempotency_key), 63)
+                metadata = row.metadata_json or {}
+                self.assertIsInstance(metadata, dict)
+                orchestration = metadata.get("orchestration")
+                self.assertIsInstance(orchestration, dict)
+                assert isinstance(orchestration, dict)
+                lineage = orchestration.get("lineageByLane")
+                self.assertIsInstance(lineage, dict)
+                assert isinstance(lineage, dict)
+                self.assertIn("dataset-build", lineage)
 
     def test_orchestrate_dspy_agentrun_workflow_persists_submitted_lanes_before_failure(
         self,
@@ -323,11 +342,15 @@ class TestLLMDSPyWorkflow(TestCase):
         submit_side_effects = [
             {
                 "agentRun": {"id": "record-dataset"},
-                "resource": {"metadata": {"name": "run-dataset", "namespace": "agents"}},
+                "resource": {
+                    "metadata": {"name": "run-dataset", "namespace": "agents"}
+                },
             },
             {
                 "agentRun": {"id": "record-compile"},
-                "resource": {"metadata": {"name": "run-compile", "namespace": "agents"}},
+                "resource": {
+                    "metadata": {"name": "run-compile", "namespace": "agents"}
+                },
             },
             RuntimeError("submit_failed"),
         ]
@@ -370,6 +393,10 @@ class TestLLMDSPyWorkflow(TestCase):
                                     "artifactHash": "b" * 64,
                                     "promotionTarget": "constrained_live",
                                     "approvalRef": "risk-committee",
+                                    "gateCompatibility": "pass",
+                                    "schemaValidRate": "0.998",
+                                    "deterministicCompatibility": "pass",
+                                    "fallbackRate": "0.02",
                                 },
                             },
                             include_gepa_experiment=False,
@@ -397,11 +424,15 @@ class TestLLMDSPyWorkflow(TestCase):
         responses = [
             {
                 "agentRun": {"id": "record-dataset"},
-                "resource": {"metadata": {"name": "run-dataset", "namespace": "agents"}},
+                "resource": {
+                    "metadata": {"name": "run-dataset", "namespace": "agents"}
+                },
             },
             {
                 "agentRun": {"id": "record-compile"},
-                "resource": {"metadata": {"name": "run-compile", "namespace": "agents"}},
+                "resource": {
+                    "metadata": {"name": "run-compile", "namespace": "agents"}
+                },
             },
         ]
 
@@ -445,6 +476,10 @@ class TestLLMDSPyWorkflow(TestCase):
                                     "artifactHash": "c" * 64,
                                     "promotionTarget": "constrained_live",
                                     "approvalRef": "risk-committee",
+                                    "gateCompatibility": "pass",
+                                    "schemaValidRate": "0.998",
+                                    "deterministicCompatibility": "pass",
+                                    "fallbackRate": "0.02",
                                 },
                             },
                             include_gepa_experiment=False,
@@ -454,3 +489,92 @@ class TestLLMDSPyWorkflow(TestCase):
 
             self.assertEqual(submit_mock.call_count, 1)
             self.assertEqual(wait_mock.call_count, 1)
+
+    def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_on_gate_failure(
+        self,
+    ) -> None:
+        responses = [
+            {
+                "agentRun": {"id": "record-dataset"},
+                "resource": {
+                    "metadata": {"name": "run-dataset", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-compile"},
+                "resource": {
+                    "metadata": {"name": "run-compile", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-eval"},
+                "resource": {"metadata": {"name": "run-eval", "namespace": "agents"}},
+            },
+        ]
+
+        with patch(
+            "app.trading.llm.dspy_compile.workflow.submit_jangar_agentrun",
+            side_effect=responses,
+        ) as submit_mock:
+            with patch(
+                "app.trading.llm.dspy_compile.workflow.wait_for_jangar_agentrun_terminal_status",
+                side_effect=["succeeded", "succeeded", "succeeded"],
+            ) as wait_mock:
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "dspy_promotion_gate_blocked:gate_compatibility_not_pass,schema_valid_rate_below_min,deterministic_compatibility_failed,fallback_rate_above_max",
+                ):
+                    with Session(self.engine) as session:
+                        orchestrate_dspy_agentrun_workflow(
+                            session,
+                            base_url="http://jangar.test",
+                            repository="proompteng/lab",
+                            base="main",
+                            head="codex/dspy-rollout",
+                            artifact_root="artifacts/dspy/run-4",
+                            run_prefix="torghut-dspy-run-4",
+                            auth_token="token-123",
+                            lane_parameter_overrides={
+                                "dataset-build": {
+                                    "datasetWindow": "P30D",
+                                    "universeRef": "torghut:equity:enabled",
+                                },
+                                "compile": {
+                                    "datasetRef": "artifacts/dspy/run-4/dataset-build/dspy-dataset.json",
+                                    "metricPolicyRef": "config/trading/llm/dspy-metrics.yaml",
+                                    "optimizer": "miprov2",
+                                },
+                                "eval": {
+                                    "compileResultRef": "artifacts/dspy/run-4/compile/dspy-compile-result.json",
+                                    "gatePolicyRef": "config/trading/llm/dspy-metrics.yaml",
+                                },
+                                "promote": {
+                                    "evalReportRef": "artifacts/dspy/run-4/eval/dspy-eval-report.json",
+                                    "artifactHash": "d" * 64,
+                                    "promotionTarget": "constrained_live",
+                                    "approvalRef": "risk-committee",
+                                    "gateCompatibility": "fail",
+                                    "schemaValidRate": "0.91",
+                                    "deterministicCompatibility": "fail",
+                                    "fallbackRate": "0.42",
+                                },
+                            },
+                            include_gepa_experiment=False,
+                            secret_binding_ref="codex-whitepaper-github-token",
+                            ttl_seconds_after_finished=3600,
+                        )
+
+            self.assertEqual(submit_mock.call_count, 3)
+            self.assertEqual(wait_mock.call_count, 3)
+
+        with Session(self.engine) as session:
+            row = session.execute(
+                select(LLMDSPyWorkflowArtifact).where(
+                    LLMDSPyWorkflowArtifact.run_key == "torghut-dspy-run-4:promote"
+                )
+            ).scalar_one()
+            self.assertEqual(row.status, "blocked")
+            metadata = row.metadata_json or {}
+            self.assertIsInstance(metadata, dict)
+            orchestration = metadata.get("orchestration")
+            self.assertIsInstance(orchestration, dict)
