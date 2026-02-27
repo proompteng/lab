@@ -31,7 +31,11 @@ from app.trading.prices import PriceFetcher
 from app.trading.ingest import SignalBatch
 from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
-from app.trading.scheduler import TradingPipeline, TradingState
+from app.trading.scheduler import (
+    TradingPipeline,
+    TradingState,
+    _apply_projected_position_decision,
+)
 from app.trading.tca import AdaptiveExecutionPolicyDecision
 from app.trading.universe import UniverseResolver
 
@@ -1419,6 +1423,27 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_static_symbols_raw = original[
                 "trading_static_symbols_raw"
             ]
+
+    def test_apply_projected_position_decision_updates_market_value(self) -> None:
+        positions = [
+            {"symbol": "AAPL", "qty": "5", "side": "long", "market_value": "500"}
+        ]
+        decision = StrategyDecision(
+            strategy_id="demo",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("2"),
+            params={"price": "100"},
+        )
+
+        _apply_projected_position_decision(positions, decision)
+
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(positions[0]["qty"], "7")
+        self.assertEqual(positions[0]["side"], "long")
+        self.assertEqual(positions[0]["market_value"], "700")
 
     def test_pipeline_runtime_uncertainty_rechecks_after_llm_adjustment(self) -> None:
         from app import config

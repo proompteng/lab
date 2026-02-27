@@ -3358,6 +3358,32 @@ def _position_qty(symbol: str, positions: list[dict[str, Any]]) -> Decimal:
     return total_qty
 
 
+def _position_market_value(symbol: str, positions: list[dict[str, Any]]) -> Decimal | None:
+    total_market_value = Decimal("0")
+    has_market_value = False
+    for position in positions:
+        if position.get("symbol") != symbol:
+            continue
+        market_value = _optional_decimal(position.get("market_value"))
+        if market_value is None:
+            continue
+        total_market_value += market_value
+        has_market_value = True
+    if not has_market_value:
+        return None
+    return total_market_value
+
+
+def _extract_decision_price(decision: StrategyDecision) -> Decimal | None:
+    for key in ("price", "limit_price", "stop_price"):
+        value = decision.params.get(key)
+        if value is None:
+            value = getattr(decision, key, None)
+        if value is not None:
+            return _optional_decimal(value)
+    return None
+
+
 def _apply_projected_position_decision(
     positions: list[dict[str, Any]],
     decision: StrategyDecision,
@@ -3369,19 +3395,27 @@ def _apply_projected_position_decision(
         return
 
     current_qty = _position_qty(decision.symbol, positions)
+    current_market_value = _position_market_value(decision.symbol, positions)
     delta = qty if decision.action == "buy" else -qty
     projected_qty = current_qty + delta
+    decision_price = _extract_decision_price(decision)
+    if decision_price is not None:
+        projected_market_value = (current_market_value or Decimal("0")) + (delta * decision_price)
+    else:
+        projected_market_value = current_market_value
 
     positions[:] = [position for position in positions if position.get("symbol") != decision.symbol]
     if projected_qty == 0:
         return
-    positions.append(
-        {
-            "symbol": decision.symbol,
-            "qty": str(abs(projected_qty)),
-            "side": "short" if projected_qty < 0 else "long",
-        }
-    )
+
+    projected_position = {
+        "symbol": decision.symbol,
+        "qty": str(abs(projected_qty)),
+        "side": "short" if projected_qty < 0 else "long",
+    }
+    if projected_market_value is not None:
+        projected_position["market_value"] = str(projected_market_value)
+    positions.append(projected_position)
 
 
 def _is_runtime_risk_increasing_entry(
