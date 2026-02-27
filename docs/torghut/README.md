@@ -20,6 +20,7 @@ Start here:
 
 - Trading service (FastAPI) local dev: `services/torghut/README.md`
 - DB migrations (Alembic): `services/torghut/migrations/README.md`
+- Postgres table deep-dive reference: `docs/torghut/postgres-table-reference.md`
 - Build/release commands: `docs/torghut/ci-cd.md`
 - Whitepaper research workflow trigger runbook: `docs/torghut/whitepaper-research-workflow.md`
 
