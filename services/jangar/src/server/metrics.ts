@@ -34,6 +34,9 @@ type JangarMetrics = {
   torghutQuantStaleFrames: Counter
   torghutQuantComputeErrors: Counter
   torghutQuantComputeDurationMs: Histogram
+  torghutMarketContextIngestRequests: Counter
+  torghutMarketContextDispatchAttempts: Counter
+  torghutMarketContextDispatchStuck: Counter
 }
 
 type MetricsState = {
@@ -159,6 +162,32 @@ export const recordTorghutQuantComputeDurationMs = (durationMs: number, attribut
   if (Number.isFinite(durationMs) && durationMs >= 0) {
     recordHistogram(metricsState.metrics?.torghutQuantComputeDurationMs, durationMs, attributes)
   }
+}
+
+export const recordTorghutMarketContextIngestRequest = (params: {
+  outcome: 'accepted' | 'unauthorized' | 'invalid_payload' | 'ingest_error'
+  domain?: string
+  runStatus?: string
+}) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.torghutMarketContextIngestRequests, 1, {
+    outcome: params.outcome,
+    domain: params.domain?.trim() ? params.domain.trim() : 'unknown',
+    run_status: params.runStatus?.trim() ? params.runStatus.trim() : 'unknown',
+  })
+}
+
+export const recordTorghutMarketContextDispatchAttempt = (
+  domain: 'fundamentals' | 'news',
+  outcome: 'submitted' | 'dispatch_error' | 'cooldown_active' | 'dispatch_disabled',
+) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.torghutMarketContextDispatchAttempts, 1, { domain, outcome })
+}
+
+export const recordTorghutMarketContextDispatchStuck = (domain: 'fundamentals' | 'news', status: 'submitted') => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.torghutMarketContextDispatchStuck, 1, { domain, status })
 }
 
 type OtlpProtocol = 'http/json' | 'http/protobuf' | 'grpc'
@@ -493,6 +522,18 @@ const createMetricsState = (): MetricsState => {
       torghutQuantComputeDurationMs: meter.createHistogram('jangar_torghut_quant_compute_duration_ms', {
         description: 'Time spent computing torghut quant control-plane frames.',
         unit: 'ms',
+      }),
+      torghutMarketContextIngestRequests: meter.createCounter('jangar_torghut_market_context_ingest_requests_total', {
+        description: 'Count of market-context ingest callback requests by outcome/domain.',
+      }),
+      torghutMarketContextDispatchAttempts: meter.createCounter(
+        'jangar_torghut_market_context_dispatch_attempts_total',
+        {
+          description: 'Count of market-context provider dispatch attempts by domain/outcome.',
+        },
+      ),
+      torghutMarketContextDispatchStuck: meter.createCounter('jangar_torghut_market_context_dispatch_stuck_total', {
+        description: 'Count of market-context dispatch states observed stuck in submitted status.',
       }),
     }
 

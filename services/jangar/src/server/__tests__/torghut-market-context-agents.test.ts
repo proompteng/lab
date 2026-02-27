@@ -71,6 +71,7 @@ describe('market context ingest auth', () => {
 
   it('rejects static ingest token mismatch', async () => {
     process.env.JANGAR_MARKET_CONTEXT_INGEST_TOKEN = 'ingest-secret-123'
+    process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN = 'false'
 
     const { isMarketContextIngestAuthorized } = await import('../torghut-market-context-agents')
 
@@ -85,6 +86,38 @@ describe('market context ingest auth', () => {
 
     expect(authorized).toBe(false)
     expect(createTokenReview).not.toHaveBeenCalled()
+  })
+
+  it('falls back to token review when static token mismatches and service account auth is enabled', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_INGEST_TOKEN = 'ingest-secret-123'
+    process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN = 'true'
+    process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES =
+      'system:serviceaccount:agents:default,system:serviceaccount:agents:agents-sa'
+
+    createTokenReview.mockResolvedValueOnce({
+      body: {
+        status: {
+          authenticated: true,
+          user: {
+            username: 'system:serviceaccount:agents:default',
+          },
+        },
+      },
+    })
+
+    const { isMarketContextIngestAuthorized } = await import('../torghut-market-context-agents')
+
+    const authorized = await isMarketContextIngestAuthorized(
+      new Request('http://localhost/api/torghut/market-context/ingest', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer k8s-sa-token',
+        },
+      }),
+    )
+
+    expect(authorized).toBe(true)
+    expect(createTokenReview).toHaveBeenCalledTimes(1)
   })
 
   it('accepts agents service account token via TokenReview and correct request shape', async () => {
@@ -155,6 +188,51 @@ describe('market context ingest auth', () => {
     )
 
     expect(authorized).toBe(false)
+    expect(createTokenReview).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries auth client initialization after a transient in-cluster config failure', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN = 'true'
+    process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES = 'system:serviceaccount:agents:default'
+
+    loadFromCluster.mockImplementationOnce(() => {
+      throw new Error('transient bootstrap failure')
+    })
+    loadFromCluster.mockImplementation(() => undefined)
+
+    createTokenReview.mockResolvedValueOnce({
+      body: {
+        status: {
+          authenticated: true,
+          user: {
+            username: 'system:serviceaccount:agents:default',
+          },
+        },
+      },
+    })
+
+    const { isMarketContextIngestAuthorized } = await import('../torghut-market-context-agents')
+
+    const firstAttempt = await isMarketContextIngestAuthorized(
+      new Request('http://localhost/api/torghut/market-context/ingest', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer k8s-sa-token',
+        },
+      }),
+    )
+    const secondAttempt = await isMarketContextIngestAuthorized(
+      new Request('http://localhost/api/torghut/market-context/ingest', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer k8s-sa-token',
+        },
+      }),
+    )
+
+    expect(firstAttempt).toBe(false)
+    expect(secondAttempt).toBe(true)
+    expect(loadFromCluster).toHaveBeenCalledTimes(2)
     expect(createTokenReview).toHaveBeenCalledTimes(1)
   })
 })

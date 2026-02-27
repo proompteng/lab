@@ -5,6 +5,7 @@ import { sql } from 'kysely'
 
 import { getDb } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
+import { recordTorghutMarketContextDispatchAttempt, recordTorghutMarketContextDispatchStuck } from '~/server/metrics'
 import { createKubernetesClient } from '~/server/primitives-kube'
 import { clearMarketContextCache } from '~/server/torghut-market-context'
 import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
@@ -51,6 +52,13 @@ type SnapshotRow = {
   riskFlags: string[]
 }
 
+type DispatchStateRow = {
+  lastDispatchedAt: Date | null
+  lastRunName: string | null
+  lastStatus: string | null
+  lastError: string | null
+}
+
 type IngestPayload = {
   symbol?: unknown
   domain?: unknown
@@ -75,6 +83,8 @@ const DEFAULT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS = 24 * 60 * 60
 const DEFAULT_NEWS_MAX_FRESHNESS_SECONDS = 5 * 60
 const DEFAULT_FUNDAMENTALS_DISPATCH_COOLDOWN_SECONDS = 30 * 60
 const DEFAULT_NEWS_DISPATCH_COOLDOWN_SECONDS = 2 * 60
+const DEFAULT_FUNDAMENTALS_DISPATCH_STUCK_SECONDS = 45 * 60
+const DEFAULT_NEWS_DISPATCH_STUCK_SECONDS = 10 * 60
 const DEFAULT_AGENT_RUN_TTL_SECONDS = 30 * 60
 const DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX = 'system:serviceaccount:agents:'
 
@@ -192,6 +202,14 @@ const resolveSettings = () => {
       process.env.JANGAR_MARKET_CONTEXT_NEWS_DISPATCH_COOLDOWN_SECONDS,
       DEFAULT_NEWS_DISPATCH_COOLDOWN_SECONDS,
     ),
+    fundamentalsDispatchStuckSeconds: parsePositiveInt(
+      process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_DISPATCH_STUCK_SECONDS,
+      DEFAULT_FUNDAMENTALS_DISPATCH_STUCK_SECONDS,
+    ),
+    newsDispatchStuckSeconds: parsePositiveInt(
+      process.env.JANGAR_MARKET_CONTEXT_NEWS_DISPATCH_STUCK_SECONDS,
+      DEFAULT_NEWS_DISPATCH_STUCK_SECONDS,
+    ),
     callbackIngestUrl,
     agentRunTtlSeconds: parsePositiveInt(
       process.env.JANGAR_MARKET_CONTEXT_AGENT_TTL_SECONDS,
@@ -205,6 +223,11 @@ const resolveDomainMaxFreshness = (domain: MarketContextProviderDomain, settings
 
 const resolveDomainCooldown = (domain: MarketContextProviderDomain, settings: ReturnType<typeof resolveSettings>) =>
   domain === 'fundamentals' ? settings.fundamentalsDispatchCooldownSeconds : settings.newsDispatchCooldownSeconds
+
+const resolveDomainDispatchStuckThreshold = (
+  domain: MarketContextProviderDomain,
+  settings: ReturnType<typeof resolveSettings>,
+) => (domain === 'fundamentals' ? settings.fundamentalsDispatchStuckSeconds : settings.newsDispatchStuckSeconds)
 
 const resolveAgentName = (domain: MarketContextProviderDomain, settings: ReturnType<typeof resolveSettings>) =>
   domain === 'fundamentals' ? settings.fundamentalsAgentName : settings.newsAgentName
@@ -292,6 +315,38 @@ const readLatestSnapshot = async (params: {
     payload: coercePayload(row.payload),
     citations: coerceCitations(row.citations),
     riskFlags: coerceRiskFlags(row.risk_flags),
+  }
+}
+
+const readDispatchState = async (params: {
+  symbol: string
+  domain: MarketContextProviderDomain
+}): Promise<DispatchStateRow | null> => {
+  const db = await resolveDbWithMigrations()
+  if (!db) return null
+
+  const result = await sql<{
+    last_dispatched_at: unknown
+    last_run_name: unknown
+    last_status: unknown
+    last_error: unknown
+  }>`
+    SELECT last_dispatched_at, last_run_name, last_status, last_error
+    FROM torghut_market_context_dispatch_state
+    WHERE symbol = ${params.symbol}
+      AND domain = ${params.domain}
+    LIMIT 1
+  `.execute(db)
+
+  const row = result.rows[0]
+  if (!row) return null
+
+  return {
+    lastDispatchedAt: parseTimestamp(row.last_dispatched_at),
+    lastRunName:
+      typeof row.last_run_name === 'string' && row.last_run_name.trim().length > 0 ? row.last_run_name : null,
+    lastStatus: typeof row.last_status === 'string' && row.last_status.trim().length > 0 ? row.last_status : null,
+    lastError: typeof row.last_error === 'string' && row.last_error.trim().length > 0 ? row.last_error : null,
   }
 }
 
@@ -398,6 +453,7 @@ const dispatchDomainAgentRun = async (params: {
   })
 
   if (!reserved) {
+    recordTorghutMarketContextDispatchAttempt(params.domain, 'cooldown_active')
     return {
       attempted: true,
       dispatched: false,
@@ -460,6 +516,8 @@ const dispatchDomainAgentRun = async (params: {
       now: params.now,
     })
 
+    recordTorghutMarketContextDispatchAttempt(params.domain, 'submitted')
+
     return {
       attempted: true,
       dispatched: true,
@@ -477,6 +535,8 @@ const dispatchDomainAgentRun = async (params: {
       error: message.slice(0, 500),
       now: params.now,
     })
+
+    recordTorghutMarketContextDispatchAttempt(params.domain, 'dispatch_error')
 
     return {
       attempted: true,
@@ -523,6 +583,20 @@ export const getMarketContextProviderResult = async (params: {
   }
 
   const snapshot = await readLatestSnapshot({ symbol, domain: params.domain })
+  const dispatchState = await readDispatchState({ symbol, domain: params.domain })
+  const dispatchAgeSeconds = dispatchState?.lastDispatchedAt
+    ? resolveFreshnessSeconds(now, dispatchState.lastDispatchedAt)
+    : null
+  const dispatchStuckThresholdSeconds = resolveDomainDispatchStuckThreshold(params.domain, settings)
+  const dispatchStateStuck =
+    dispatchState?.lastStatus === 'submitted' &&
+    dispatchAgeSeconds !== null &&
+    dispatchAgeSeconds >= dispatchStuckThresholdSeconds
+
+  if (dispatchStateStuck) {
+    recordTorghutMarketContextDispatchStuck(params.domain, 'submitted')
+  }
+
   if (!snapshot) {
     const dispatch = settings.dispatchEnabled
       ? await dispatchDomainAgentRun({
@@ -539,17 +613,32 @@ export const getMarketContextProviderResult = async (params: {
           error: null,
         }
 
+    if (!settings.dispatchEnabled) {
+      recordTorghutMarketContextDispatchAttempt(params.domain, 'dispatch_disabled')
+    }
+
+    const effectiveDispatch = {
+      ...dispatch,
+      runName: dispatch.runName ?? dispatchState?.lastRunName ?? null,
+      error: dispatch.error ?? dispatchState?.lastError ?? null,
+    }
+
+    const context = buildMissingContext({
+      domain: params.domain,
+      symbol,
+      dispatchQueued: effectiveDispatch.dispatched || dispatchState?.lastStatus === 'submitted',
+      dispatchError: effectiveDispatch.error,
+    })
+    if (dispatchStateStuck) {
+      context.riskFlags.push(`${params.domain}_dispatch_stuck`)
+    }
+
     return {
       symbol,
       domain: params.domain,
       snapshotState: 'missing',
-      context: buildMissingContext({
-        domain: params.domain,
-        symbol,
-        dispatchQueued: dispatch.dispatched,
-        dispatchError: dispatch.error,
-      }),
-      dispatch,
+      context,
+      dispatch: effectiveDispatch,
     }
   }
 
@@ -572,10 +661,22 @@ export const getMarketContextProviderResult = async (params: {
           error: null,
         }
 
+  if (isStale && !settings.dispatchEnabled) {
+    recordTorghutMarketContextDispatchAttempt(params.domain, 'dispatch_disabled')
+  }
+
+  const effectiveDispatch = {
+    ...dispatch,
+    runName: dispatch.runName ?? dispatchState?.lastRunName ?? null,
+    error: dispatch.error ?? dispatchState?.lastError ?? null,
+  }
+
   const riskFlags = new Set(snapshot.riskFlags)
   if (isStale) riskFlags.add(`${params.domain}_stale`)
-  if (dispatch.dispatched) riskFlags.add(`${params.domain}_dispatch_queued`)
-  if (dispatch.error) riskFlags.add(`${params.domain}_dispatch_error`)
+  if (effectiveDispatch.dispatched || dispatchState?.lastStatus === 'submitted')
+    riskFlags.add(`${params.domain}_dispatch_queued`)
+  if (effectiveDispatch.error) riskFlags.add(`${params.domain}_dispatch_error`)
+  if (dispatchStateStuck) riskFlags.add(`${params.domain}_dispatch_stuck`)
 
   return {
     symbol,
@@ -589,7 +690,7 @@ export const getMarketContextProviderResult = async (params: {
       citations: snapshot.citations,
       riskFlags: Array.from(riskFlags),
     },
-    dispatch,
+    dispatch: effectiveDispatch,
   }
 }
 
@@ -723,15 +824,16 @@ const resolveAllowedServiceAccountPrefixes = () => {
 }
 
 const resolveAuthApi = () => {
-  if (authApi !== undefined) return authApi
+  if (authApi) return authApi
   try {
     const kubeConfig = new KubeConfig()
     kubeConfig.loadFromCluster()
     authApi = kubeConfig.makeApiClient(AuthenticationV1Api)
+    return authApi
   } catch {
     authApi = null
+    return null
   }
-  return authApi
 }
 
 const logIngestAuth = (payload: Record<string, unknown>) => {
@@ -813,8 +915,19 @@ export const isMarketContextIngestAuthorized = async (request: Request) => {
 
   const expected = resolveSharedIngestToken()
   if (expected) {
-    const authorized = safeEquals(actual, expected)
-    logIngestAuth({ method: 'shared_token', authorized })
+    if (safeEquals(actual, expected)) {
+      logIngestAuth({ method: 'shared_token', authorized: true })
+      return true
+    }
+
+    logIngestAuth({ method: 'shared_token', authorized: false, reason: 'token_mismatch' })
+    if (!resolveServiceAccountTokenAuthEnabled()) {
+      logIngestAuth({ method: 'service_account_token', authorized: false, reason: 'service_account_auth_disabled' })
+      return false
+    }
+
+    const authorized = await verifyServiceAccountTokenWithTokenReview(actual)
+    logIngestAuth({ method: 'service_account_token', authorized, reason: 'shared_token_mismatch_fallback' })
     return authorized
   }
 
