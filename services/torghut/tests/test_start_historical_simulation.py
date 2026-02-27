@@ -17,6 +17,7 @@ from scripts.start_historical_simulation import (
     _normalize_run_token,
     _offset_for_time_lookup,
     _pacing_delay_seconds,
+    _redact_dsn_credentials,
     _replay_dump,
 )
 
@@ -56,6 +57,24 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(
             config.simulation_dsn,
             'postgresql://torghut:secret@localhost:5432/torghut_sim_test',
+        )
+
+    def test_build_postgres_runtime_config_uses_db_from_explicit_dsn(self) -> None:
+        config = _build_postgres_runtime_config(
+            {
+                'postgres': {
+                    'admin_dsn': 'postgresql://torghut:secret@localhost:5432/postgres',
+                    'simulation_dsn': 'postgresql://torghut:secret@localhost:5432/custom_sim_db',
+                }
+            },
+            simulation_db='torghut_sim_should_not_win',
+        )
+        self.assertEqual(config.simulation_db, 'custom_sim_db')
+
+    def test_redact_dsn_credentials_masks_password(self) -> None:
+        self.assertEqual(
+            _redact_dsn_credentials('postgresql://torghut:secret@localhost:5432/torghut_sim'),
+            'postgresql://torghut:***@localhost:5432/torghut_sim',
         )
 
     def test_merge_env_entries_updates_and_removes(self) -> None:
@@ -160,6 +179,10 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertIn('state_path', report['artifacts'])
         self.assertIn('run_manifest_path', report['artifacts'])
         self.assertIn('dump_path', report['artifacts'])
+        postgres_dsn = report['resources']['postgres_simulation_dsn']
+        assert isinstance(postgres_dsn, str)
+        self.assertIn(':***@', postgres_dsn)
+        self.assertNotIn(':secret@', postgres_dsn)
 
     def test_offset_for_time_lookup_falls_back_for_missing_or_invalid_offset(self) -> None:
         class _OffsetMeta:

@@ -220,6 +220,10 @@ class SimulationExecutionAdapter:
         order = self._orders_by_id.get(order_id)
         if order is None:
             return False
+        current_status = str(order.get('status') or '').strip().lower()
+        if current_status in {'filled', 'canceled', 'cancelled', 'rejected', 'expired'}:
+            self.last_route = self.name
+            return False
         now = datetime.now(timezone.utc)
         order['status'] = 'canceled'
         order['updated_at'] = now.isoformat()

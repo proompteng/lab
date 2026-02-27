@@ -136,6 +136,27 @@ class TestExecutionAdapters(TestCase):
         self.assertEqual(simulation_context.get('dataset_event_id'), 'evt-1')
         self.assertEqual(payload.get('_execution_route_actual'), 'simulation')
 
+    def test_simulation_adapter_does_not_cancel_filled_order(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+        payload = adapter.submit_order(
+            symbol='AAPL',
+            side='buy',
+            qty=1.0,
+            order_type='market',
+            time_in_force='day',
+            extra_params={'client_order_id': 'decision-2'},
+        )
+        order_id = str(payload.get('id'))
+        self.assertFalse(adapter.cancel_order(order_id))
+        fetched = adapter.get_order(order_id)
+        self.assertEqual(fetched.get('status'), 'filled')
+
     def test_build_execution_adapter_uses_simulation_when_enabled(self) -> None:
         original_adapter = config.settings.trading_execution_adapter
         original_sim_enabled = config.settings.trading_simulation_enabled

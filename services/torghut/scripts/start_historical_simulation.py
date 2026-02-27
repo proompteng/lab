@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
-from urllib.parse import quote_plus, urlsplit
+from urllib.parse import quote, quote_plus, unquote_plus, urlsplit
 from http.client import HTTPConnection, HTTPSConnection
 
 import psycopg
@@ -252,6 +252,42 @@ def _derive_simulation_dsn(admin_dsn: str, db_name: str) -> str:
     return f'{parsed.scheme}://{parsed.netloc}/{quote_plus(db_name)}{suffix}'
 
 
+def _database_name_from_dsn(dsn: str, *, label: str) -> str:
+    parsed = urlsplit(dsn)
+    if not parsed.scheme or not parsed.netloc:
+        raise SystemExit(f'{label} must be a valid URL')
+    raw_path = parsed.path.lstrip('/')
+    if not raw_path:
+        raise SystemExit(f'{label} must include a database path')
+    database = unquote_plus(raw_path).strip()
+    if not database:
+        raise SystemExit(f'{label} must include a database path')
+    return database
+
+
+def _redact_dsn_credentials(dsn: str) -> str:
+    parsed = urlsplit(dsn)
+    if not parsed.scheme or not parsed.netloc:
+        return dsn
+    hostname = parsed.hostname
+    if not hostname:
+        return dsn
+    host = hostname
+    if ':' in host and not host.startswith('['):
+        host = f'[{host}]'
+    if parsed.port is not None:
+        host = f'{host}:{parsed.port}'
+    username = parsed.username
+    password = parsed.password
+    if username is None:
+        netloc = host
+    elif password is None:
+        netloc = f'{quote(username, safe="")}@{host}'
+    else:
+        netloc = f'{quote(username, safe="")}:***@{host}'
+    return parsed._replace(netloc=netloc).geturl()
+
+
 def _build_postgres_runtime_config(
     manifest: Mapping[str, Any],
     *,
@@ -268,6 +304,10 @@ def _build_postgres_runtime_config(
         simulation_dsn = simulation_template.replace('{db}', simulation_db)
     if simulation_dsn is None:
         simulation_dsn = _derive_simulation_dsn(admin_dsn, simulation_db)
+    simulation_db = _database_name_from_dsn(
+        simulation_dsn,
+        label='manifest.postgres.simulation_dsn',
+    )
 
     migrations_command = (
         _as_text(postgres.get('migrations_command'))
@@ -511,7 +551,7 @@ def _build_plan_report(
             'clickhouse_signal_table': resources.clickhouse_signal_table,
             'clickhouse_price_table': resources.clickhouse_price_table,
             'postgres_database': postgres_config.simulation_db,
-            'postgres_simulation_dsn': postgres_config.simulation_dsn,
+            'postgres_simulation_dsn': _redact_dsn_credentials(postgres_config.simulation_dsn),
         },
         'window': {
             'start': _as_text(window.get('start')),
@@ -1348,7 +1388,7 @@ def _apply(
             'output_root': str(resources.output_root),
         },
         'postgres': {
-            'simulation_dsn': postgres_config.simulation_dsn,
+            'simulation_dsn': _redact_dsn_credentials(postgres_config.simulation_dsn),
             'simulation_db': postgres_config.simulation_db,
         },
         'clickhouse': {
