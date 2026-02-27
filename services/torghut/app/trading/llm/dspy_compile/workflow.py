@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
 from typing import Any, Literal, Mapping, cast
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -32,6 +33,7 @@ _IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
     "gepa-experiment": "torghut-dspy-gepa-experiment-v1",
     "promote": "torghut-dspy-promote-artifact-v1",
 }
+_TERMINAL_PHASES = {"succeeded", "failed", "cancelled"}
 
 
 def build_compile_result(
@@ -393,6 +395,85 @@ def submit_jangar_agentrun(
     return cast(dict[str, Any], parsed)
 
 
+def get_jangar_agentrun(
+    *,
+    base_url: str,
+    agent_run_id: str,
+    namespace: str,
+    auth_token: str | None,
+    timeout_seconds: int = 20,
+) -> dict[str, Any]:
+    normalized_agent_run_id = agent_run_id.strip()
+    if not normalized_agent_run_id:
+        raise RuntimeError("jangar_agentrun_id_required")
+
+    query = urlencode({"namespace": namespace.strip() or "agents"})
+    status_url = (
+        f"{base_url.rstrip('/')}/v1/agent-runs/{quote(normalized_agent_run_id, safe='')}"
+        f"?{query}"
+    )
+    status, body = _http_json_request(
+        status_url,
+        method="GET",
+        headers={**({"Authorization": f"Bearer {auth_token}"} if auth_token else {})},
+        body=b"",
+        timeout_seconds=timeout_seconds,
+    )
+    if status < 200 or status >= 300:
+        raise RuntimeError(f"jangar_get_agentrun_http_{status}:{body[:200]}")
+    parsed = json.loads(body)
+    if not isinstance(parsed, dict):
+        raise RuntimeError("invalid_jangar_agentrun_response")
+    return cast(dict[str, Any], parsed)
+
+
+def wait_for_jangar_agentrun_terminal_status(
+    *,
+    base_url: str,
+    agent_run_id: str,
+    namespace: str,
+    auth_token: str | None,
+    timeout_seconds: int = 20,
+    poll_interval_seconds: int = 5,
+    max_wait_seconds: int = 3600,
+) -> str:
+    normalized_poll = max(int(poll_interval_seconds), 1)
+    deadline = time.monotonic() + max(int(max_wait_seconds), normalized_poll)
+    last_phase = "unknown"
+
+    while True:
+        response = get_jangar_agentrun(
+            base_url=base_url,
+            agent_run_id=agent_run_id,
+            namespace=namespace,
+            auth_token=auth_token,
+            timeout_seconds=timeout_seconds,
+        )
+        phase_raw = (
+            cast(dict[str, Any], response.get("agentRun") or {}).get("status")
+            or cast(dict[str, Any], response.get("resource") or {}).get("status")
+            or ""
+        )
+        phase = str(phase_raw).strip().lower()
+        if phase:
+            last_phase = phase
+        if phase in _TERMINAL_PHASES:
+            return phase
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"jangar_agentrun_terminal_wait_timeout:last_phase={last_phase}:agent_run_id={agent_run_id}"
+            )
+        time.sleep(normalized_poll)
+
+
+def _extract_submitted_agentrun_id(submit_response: Mapping[str, Any]) -> str:
+    agent_run = cast(dict[str, Any], submit_response.get("agentRun") or {})
+    run_id = str(agent_run.get("id") or "").strip()
+    if run_id:
+        return run_id
+    raise RuntimeError("jangar_submit_missing_agent_run_id")
+
+
 def orchestrate_dspy_agentrun_workflow(
     session: Session,
     *,
@@ -412,6 +493,8 @@ def orchestrate_dspy_agentrun_workflow(
     secret_binding_ref: str = "codex-whitepaper-github-token",
     ttl_seconds_after_finished: int = 14_400,
     timeout_seconds: int = 20,
+    poll_interval_seconds: int = 5,
+    max_wait_seconds: int = 3600,
 ) -> dict[DSPyWorkflowLane, dict[str, Any]]:
     """Submit dataset-build -> compile -> eval -> [gepa] -> promote AgentRuns and persist lineage rows."""
 
@@ -484,6 +567,40 @@ def orchestrate_dspy_agentrun_workflow(
 
             # Persist each accepted submission immediately so partial orchestration runs remain auditable.
             session.commit()
+
+            terminal_phase = wait_for_jangar_agentrun_terminal_status(
+                base_url=base_url,
+                agent_run_id=_extract_submitted_agentrun_id(response_payload),
+                namespace=namespace,
+                auth_token=auth_token,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+                max_wait_seconds=max_wait_seconds,
+            )
+            upsert_workflow_artifact_record(
+                session,
+                run_key=run_key,
+                lane=lane,
+                status=terminal_phase,
+                implementation_spec_ref=_IMPLEMENTATION_SPEC_BY_LANE[lane],
+                idempotency_key=run_key,
+                request_payload=payload,
+                response_payload=response_payload,
+                compile_result=None,
+                eval_report=None,
+                promotion_record=None,
+                metadata={
+                    "orchestration": {
+                        "runPrefix": normalized_run_prefix,
+                        "laneOrder": lane_index,
+                        "terminalPhase": terminal_phase,
+                        "terminalObservedAt": datetime.now(timezone.utc).isoformat(),
+                    }
+                },
+            )
+            session.commit()
+            if terminal_phase != "succeeded":
+                raise RuntimeError(f"jangar_agentrun_not_succeeded:{lane}:{terminal_phase}")
         except Exception:
             session.rollback()
             raise
@@ -539,6 +656,8 @@ __all__ = [
     "orchestrate_dspy_agentrun_workflow",
     "build_promotion_record",
     "bundle_artifacts",
+    "get_jangar_agentrun",
+    "wait_for_jangar_agentrun_terminal_status",
     "submit_jangar_agentrun",
     "upsert_workflow_artifact_record",
     "write_artifact_bundle",
