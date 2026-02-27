@@ -364,6 +364,67 @@ class TestAutonomyGates(TestCase):
         self.assertEqual(report.uncertainty_gate_action, "abstain")
         self.assertIn("uncertainty_inputs_missing_or_invalid", report.reasons)
 
+    def test_gate_matrix_fails_closed_when_uncertainty_inputs_non_finite(self) -> None:
+        policy = GatePolicyMatrix()
+        inputs = GateInputs(
+            feature_schema_version="3.0.0",
+            required_feature_null_rate=Decimal("0.00"),
+            staleness_ms_p95=0,
+            symbol_coverage=2,
+            metrics={
+                "decision_count": 20,
+                "trade_count": 10,
+                "net_pnl": "50",
+                "max_drawdown": "100",
+                "turnover_ratio": "1.5",
+                "cost_bps": "5",
+            },
+            robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            forecast_metrics=_healthy_forecast_metrics_payload(),
+            profitability_evidence=_profitability_evidence_payload(coverage_error="NaN"),
+        )
+
+        report = evaluate_gate_matrix(
+            inputs, policy=policy, promotion_target="paper", code_version="test"
+        )
+
+        self.assertFalse(report.promotion_allowed)
+        self.assertEqual(report.uncertainty_gate_action, "abstain")
+        self.assertIn("uncertainty_inputs_missing_or_invalid", report.reasons)
+
+    def test_gate_matrix_fails_when_shift_score_reaches_fail_threshold(self) -> None:
+        policy = GatePolicyMatrix()
+        inputs = GateInputs(
+            feature_schema_version="3.0.0",
+            required_feature_null_rate=Decimal("0.00"),
+            staleness_ms_p95=0,
+            symbol_coverage=2,
+            metrics={
+                "decision_count": 20,
+                "trade_count": 10,
+                "net_pnl": "50",
+                "max_drawdown": "100",
+                "turnover_ratio": "1.5",
+                "cost_bps": "5",
+            },
+            robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            forecast_metrics=_healthy_forecast_metrics_payload(),
+            profitability_evidence=_profitability_evidence_payload(
+                coverage_error="0.02",
+                shift_score="0.95",
+                recalibration_run_id="recal-1",
+                recalibration_artifact_ref="/tmp/recalibration-report.json",
+            ),
+        )
+
+        report = evaluate_gate_matrix(
+            inputs, policy=policy, promotion_target="paper", code_version="test"
+        )
+
+        self.assertFalse(report.promotion_allowed)
+        self.assertEqual(report.uncertainty_gate_action, "fail")
+        self.assertIn("regime_shift_score_fail_threshold_exceeded", report.reasons)
+
 
 def _profitability_evidence_payload(
     *,
