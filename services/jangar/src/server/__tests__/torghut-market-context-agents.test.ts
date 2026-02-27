@@ -158,3 +158,34 @@ describe('market context ingest auth', () => {
     expect(createTokenReview).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('market context dispatch runtime', () => {
+  it('uses runtime.config.serviceAccount when service account override is set', async () => {
+    const { buildMarketContextAgentRunRuntime } = await import('../torghut-market-context-agents')
+
+    const runtime = buildMarketContextAgentRunRuntime({
+      runtimeType: 'job',
+      runtimeServiceAccount: 'agents-sa',
+    })
+
+    expect(runtime).toEqual({
+      type: 'job',
+      config: {
+        serviceAccount: 'agents-sa',
+      },
+    })
+  })
+
+  it('omits runtime config when service account override is empty', async () => {
+    const { buildMarketContextAgentRunRuntime } = await import('../torghut-market-context-agents')
+
+    const runtime = buildMarketContextAgentRunRuntime({
+      runtimeType: 'job',
+      runtimeServiceAccount: '',
+    })
+
+    expect(runtime).toEqual({
+      type: 'job',
+    })
+  })
+})

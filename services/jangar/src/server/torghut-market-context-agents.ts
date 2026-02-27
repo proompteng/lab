@@ -372,6 +372,16 @@ const updateDispatchState = async (params: {
   `.execute(db)
 }
 
+export const buildMarketContextAgentRunRuntime = (params: { runtimeType: string; runtimeServiceAccount: string }) => {
+  const runtimeConfig: Record<string, string> = {}
+  if (params.runtimeServiceAccount.trim()) {
+    runtimeConfig.serviceAccount = params.runtimeServiceAccount.trim()
+  }
+  return Object.keys(runtimeConfig).length > 0
+    ? { type: params.runtimeType, config: runtimeConfig }
+    : { type: params.runtimeType }
+}
+
 const dispatchDomainAgentRun = async (params: {
   domain: MarketContextProviderDomain
   symbol: string
@@ -395,11 +405,6 @@ const dispatchDomainAgentRun = async (params: {
       runName: null,
       error: null,
     }
-  }
-
-  const runtimeConfig: Record<string, string> = {}
-  if (settings.runtimeServiceAccount) {
-    runtimeConfig.serviceAccountName = settings.runtimeServiceAccount
   }
 
   const windowBucket = Math.floor(params.now.getTime() / (cooldownSeconds * 1000))
@@ -428,10 +433,10 @@ const dispatchDomainAgentRun = async (params: {
         callbackUrl: settings.callbackIngestUrl,
         requestId: randomUUID(),
       },
-      runtime:
-        Object.keys(runtimeConfig).length > 0
-          ? { type: settings.runtimeType, config: runtimeConfig }
-          : { type: settings.runtimeType },
+      runtime: buildMarketContextAgentRunRuntime({
+        runtimeType: settings.runtimeType,
+        runtimeServiceAccount: settings.runtimeServiceAccount,
+      }),
       ttlSecondsAfterFinished: settings.agentRunTtlSeconds,
       idempotencyKey,
     },

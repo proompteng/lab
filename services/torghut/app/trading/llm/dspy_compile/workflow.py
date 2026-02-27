@@ -451,37 +451,43 @@ def orchestrate_dspy_agentrun_workflow(
             ttl_seconds_after_finished=ttl_seconds_after_finished,
         )
 
-        response_payload = submit_jangar_agentrun(
-            base_url=base_url,
-            payload=payload,
-            idempotency_key=run_key,
-            auth_token=auth_token,
-            timeout_seconds=timeout_seconds,
-        )
-        responses[lane] = response_payload
+        try:
+            response_payload = submit_jangar_agentrun(
+                base_url=base_url,
+                payload=payload,
+                idempotency_key=run_key,
+                auth_token=auth_token,
+                timeout_seconds=timeout_seconds,
+            )
+            responses[lane] = response_payload
 
-        upsert_workflow_artifact_record(
-            session,
-            run_key=run_key,
-            lane=lane,
-            status="submitted",
-            implementation_spec_ref=_IMPLEMENTATION_SPEC_BY_LANE[lane],
-            idempotency_key=run_key,
-            request_payload=payload,
-            response_payload=response_payload,
-            compile_result=None,
-            eval_report=None,
-            promotion_record=None,
-            metadata={
-                "orchestration": {
-                    "runPrefix": normalized_run_prefix,
-                    "laneOrder": lane_index,
-                    "submittedAt": datetime.now(timezone.utc).isoformat(),
-                }
-            },
-        )
+            upsert_workflow_artifact_record(
+                session,
+                run_key=run_key,
+                lane=lane,
+                status="submitted",
+                implementation_spec_ref=_IMPLEMENTATION_SPEC_BY_LANE[lane],
+                idempotency_key=run_key,
+                request_payload=payload,
+                response_payload=response_payload,
+                compile_result=None,
+                eval_report=None,
+                promotion_record=None,
+                metadata={
+                    "orchestration": {
+                        "runPrefix": normalized_run_prefix,
+                        "laneOrder": lane_index,
+                        "submittedAt": datetime.now(timezone.utc).isoformat(),
+                    }
+                },
+            )
 
-    session.commit()
+            # Persist each accepted submission immediately so partial orchestration runs remain auditable.
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+
     return responses
 
 

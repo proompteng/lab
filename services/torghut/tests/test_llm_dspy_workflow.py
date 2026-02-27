@@ -238,3 +238,66 @@ class TestLLMDSPyWorkflow(TestCase):
             self.assertEqual(lane_by_run_key["torghut-dspy-run-1:compile"], "compile")
             self.assertEqual(lane_by_run_key["torghut-dspy-run-1:eval"], "eval")
             self.assertEqual(lane_by_run_key["torghut-dspy-run-1:promote"], "promote")
+
+    def test_orchestrate_dspy_agentrun_workflow_persists_submitted_lanes_before_failure(
+        self,
+    ) -> None:
+        submit_side_effects = [
+            {"resource": {"metadata": {"name": "run-dataset", "namespace": "agents"}}},
+            {"resource": {"metadata": {"name": "run-compile", "namespace": "agents"}}},
+            RuntimeError("submit_failed"),
+        ]
+
+        with patch(
+            "app.trading.llm.dspy_compile.workflow.submit_jangar_agentrun",
+            side_effect=submit_side_effects,
+        ) as submit_mock:
+            with self.assertRaisesRegex(RuntimeError, "submit_failed"):
+                with Session(self.engine) as session:
+                    orchestrate_dspy_agentrun_workflow(
+                        session,
+                        base_url="http://jangar.test",
+                        repository="proompteng/lab",
+                        base="main",
+                        head="codex/dspy-rollout",
+                        artifact_root="artifacts/dspy/run-2",
+                        run_prefix="torghut-dspy-run-2",
+                        auth_token="token-123",
+                        lane_parameter_overrides={
+                            "dataset-build": {
+                                "datasetWindow": "P30D",
+                                "universeRef": "torghut:equity:enabled",
+                            },
+                            "compile": {
+                                "datasetRef": "artifacts/dspy/run-2/dataset-build/dspy-dataset.json",
+                                "metricPolicyRef": "config/trading/llm/dspy-metrics.yaml",
+                                "optimizer": "miprov2",
+                            },
+                            "eval": {
+                                "compileResultRef": "artifacts/dspy/run-2/compile/dspy-compile-result.json",
+                                "gatePolicyRef": "config/trading/llm/dspy-metrics.yaml",
+                            },
+                            "promote": {
+                                "evalReportRef": "artifacts/dspy/run-2/eval/dspy-eval-report.json",
+                                "artifactHash": "b" * 64,
+                                "promotionTarget": "constrained_live",
+                                "approvalRef": "risk-committee",
+                            },
+                        },
+                        include_gepa_experiment=False,
+                        secret_binding_ref="codex-whitepaper-github-token",
+                        ttl_seconds_after_finished=3600,
+                    )
+
+            self.assertEqual(submit_mock.call_count, 3)
+
+        with Session(self.engine) as session:
+            rows = session.execute(select(LLMDSPyWorkflowArtifact)).scalars().all()
+            run_keys = sorted(row.run_key for row in rows)
+            self.assertEqual(
+                run_keys,
+                [
+                    "torghut-dspy-run-2:compile",
+                    "torghut-dspy-run-2:dataset-build",
+                ],
+            )
