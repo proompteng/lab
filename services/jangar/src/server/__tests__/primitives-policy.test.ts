@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { KubernetesClient } from '~/server/primitives-kube'
-import { validateApprovalPolicies, validateBudget, validateSecretBinding } from '~/server/primitives-policy'
+import {
+  extractRuntimeServiceAccount,
+  validateApprovalPolicies,
+  validateBudget,
+  validateSecretBinding,
+} from '~/server/primitives-policy'
 
 const createKubeMock = (resources: Record<string, Record<string, unknown> | null>): KubernetesClient => ({
   apply: vi.fn(async (resource) => resource),
@@ -93,5 +98,12 @@ describe('primitives policy', () => {
         kube,
       ),
     ).rejects.toThrow('missing secrets')
+  })
+
+  it('extracts runtime service account from either legacy or canonical config keys', () => {
+    expect(extractRuntimeServiceAccount({ runtime: { config: { serviceAccount: 'legacy-sa' } } })).toBe('legacy-sa')
+    expect(extractRuntimeServiceAccount({ runtime: { config: { serviceAccountName: 'canonical-sa' } } })).toBe(
+      'canonical-sa',
+    )
   })
 })

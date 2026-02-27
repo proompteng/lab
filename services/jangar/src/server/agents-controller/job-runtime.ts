@@ -110,7 +110,9 @@ const buildRunSpecContext = (
 }
 
 export const resolveRunnerServiceAccount = (runtimeConfig: Record<string, unknown>) =>
-  asString(runtimeConfig.serviceAccount) ?? asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
+  asString(runtimeConfig.serviceAccount) ??
+  asString(runtimeConfig.serviceAccountName) ??
+  asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
 
 const buildJobResources = (workload: Record<string, unknown>) => {
   const resources = asRecord(workload.resources) ?? {}
