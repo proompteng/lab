@@ -112,6 +112,19 @@ uv run python scripts/compile_dspy_program.py \
   --optimizer miprov2
 ```
 
+Eval helper (matches `torghut-dspy-eval-v1` contract):
+
+```bash
+cd services/torghut
+uv run python scripts/evaluate_dspy_compile.py \
+  --repository proompteng/lab \
+  --base main \
+  --head codex/dspy-eval \
+  --artifact-path artifacts/dspy/run-1/eval \
+  --compile-result-ref artifacts/dspy/run-1/compile/dspy-compile-result.json \
+  --gate-policy-ref config/trading/llm/dspy-metrics.yaml
+```
+
 ## Feature flags (Flipt)
 
 - Torghut runtime gates are resolved via Flipt boolean evaluations when `TRADING_FEATURE_FLAGS_ENABLED=true`.
