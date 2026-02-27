@@ -42,6 +42,8 @@ persistentVolume:
 envVarsExtra:
   - name: PGADMIN_SERVER_JSON_FILE
     value: /var/lib/pgadmin/servers/servers.json
+  - name: PGADMIN_REPLACE_SERVERS_ON_STARTUP
+    value: "True"
   - name: PGADMIN_CONFIG_ENABLE_SERVER_PASS_EXEC_CMD
     value: "True"
 
@@ -163,18 +165,24 @@ extraInitContainers: |
                 value = f'pga_user_{value}'
             return value.replace('@', '_').replace('/', 'slash').replace('\\', 'slash')
 
-        clusters = [
-            {'secret': 'keycloak-db-app', 'name': 'keycloak-db'},
-            {'secret': 'coder-cluster-app', 'name': 'coder-cluster'},
-            {'secret': 'convex-db-app', 'name': 'convex-db'},
-            {'secret': 'cms-db-app', 'name': 'cms-db'},
-            {'secret': 'app-db-app', 'name': 'app-db'},
-            {'secret': 'jangar-db-app', 'name': 'jangar-db'},
-            {'secret': 'golink-db-app', 'name': 'golink-db'},
-            {'secret': 'facteur-vector-cluster-app', 'name': 'facteur-vector-cluster'},
-            {'secret': 'dernier-db-app', 'name': 'dernier-db'},
-            {'secret': 'torghut-db-app', 'name': 'torghut-db'},
-        ]
+        def normalize_name(secret_name: str) -> str:
+            if secret_name.endswith('-app'):
+                return secret_name[:-4]
+            return secret_name
+
+        def discover_clusters(secrets_root: Path) -> list[dict[str, str]]:
+            clusters = []
+            if not secrets_root.exists():
+                return clusters
+
+            for secret_dir in sorted((p for p in secrets_root.iterdir() if p.is_dir()), key=lambda p: p.name):
+                uri_path = secret_dir / 'uri'
+                if not uri_path.exists():
+                    continue
+                clusters.append({'secret': secret_dir.name, 'name': normalize_name(secret_dir.name)})
+            return clusters
+
+        clusters = discover_clusters(Path('/etc/pgadmin/secrets'))
 
         servers = {}
         index = 1
