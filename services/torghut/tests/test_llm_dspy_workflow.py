@@ -117,6 +117,23 @@ class TestLLMDSPyWorkflow(TestCase):
         )
         self.assertEqual(payload["ttlSecondsAfterFinished"], 14400)
         self.assertIsInstance(payload["parameters"]["datasetRef"], str)
+        self.assertEqual(payload["parameters"]["issueNumber"], "0")
+
+    def test_build_dspy_agentrun_payload_allows_issue_number_override(self) -> None:
+        payload = build_dspy_agentrun_payload(
+            lane="dataset-build",
+            idempotency_key="torghut-dspy-dataset-abc123",
+            repository="proompteng/lab",
+            base="main",
+            head="codex/torghut-dspy-dataset-2026-02-27",
+            artifact_path="artifacts/dspy/run-1",
+            parameter_overrides={
+                "datasetWindow": "P30D",
+                "universeRef": "torghut:equity:enabled",
+            },
+            issue_number="2125",
+        )
+        self.assertEqual(payload["parameters"]["issueNumber"], "2125")
 
     def test_sanitize_idempotency_key_replaces_invalid_chars(self) -> None:
         key = _sanitize_idempotency_key(" :torghut:dspy:run:2026-02-27T07:39:00Z: ")
@@ -268,6 +285,9 @@ class TestLLMDSPyWorkflow(TestCase):
             for key in submitted_idempotency_keys:
                 self.assertNotIn(":", key)
                 self.assertLessEqual(len(key), 63)
+            for call in submit_mock.call_args_list:
+                payload = call.kwargs["payload"]
+                self.assertEqual(payload["parameters"]["issueNumber"], "0")
 
         with Session(self.engine) as session:
             rows = session.execute(select(LLMDSPyWorkflowArtifact)).scalars().all()
