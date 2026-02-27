@@ -3,9 +3,9 @@
 ## Status
 
 - Version: `v5`
-- Date: `2026-02-26`
+- Date: `2026-02-27`
 - Maturity: `production-quality design pack`
-- Scope: 5 prioritized new-feature strategy builds plus whitepaper synthesis plus crypto pipeline migration design plus multi-account execution migration design plus fundamentals/news Codex-spark context pipeline design
+- Scope: 5 prioritized new-feature strategy builds plus whitepaper synthesis plus crypto pipeline migration design plus multi-account execution migration design plus fundamentals/news Codex-spark context pipeline design plus DSPy-over-Jangar full rollout design
 
 ## Purpose
 
@@ -39,6 +39,7 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 11. `11-multi-account-trading-architecture-and-rollout-2026-02-22.md`
 12. `12-dspy-framework-adoption-for-quant-llm-autonomous-trading-2026-02-25.md`
 13. `13-fundamentals-news-codex-spark-agent-pipeline-2026-02-26.md`
+14. `14-dspy-jangar-openai-full-rollout-2026-02-27.md`
 
 ## Source-Verified Implementation Snapshot (2026-02-26 audit refresh)
 
@@ -49,6 +50,8 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 - `10-crypto-market-data-pipeline-production-design-2026-02-22.md`: Implemented (partial). Desired-symbol fetch failure metrics and alerting are now wired (`ForwarderMetrics` + `TorghutWSDesiredSymbolsFetchFailing`); remaining work is full cutover/rollout validation.
 - `11-multi-account-trading-architecture-and-rollout-2026-02-22.md`: Implemented (partial, feature-flagged). Account registry, per-account scheduler lanes, account-scoped idempotency/cursor constraints, and trade-updates v2 dual-read are merged; runtime keeps `TRADING_MULTI_ACCOUNT_ENABLED=false` by default.
 - `12-dspy-framework-adoption-for-quant-llm-autonomous-trading-2026-02-25.md`: Implemented (partial). DSPy advisory/runtime scaffolding, compile/eval artifact schemas, Jangar-compatible AgentRun payload builder, and artifact persistence migration are merged; full promotion-governed runtime rollout remains pending.
+- `13-fundamentals-news-codex-spark-agent-pipeline-2026-02-26.md`: Implemented (partial). Jangar market-context provider/ingest routes and Spark AgentRun contracts are wired; full-universe freshness/SLO stabilization remains ongoing.
+- `14-dspy-jangar-openai-full-rollout-2026-02-27.md`: Production rollout design published. Legacy runtime LLM path removal and DSPy-only serving cutover are defined but not yet completed in code/runtime.
 
 ## Recommended Build Order
 
@@ -60,7 +63,8 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 6. `07-autonomous-research-to-engineering-pipeline.md`
 7. `12-dspy-framework-adoption-for-quant-llm-autonomous-trading-2026-02-25.md`
 8. `13-fundamentals-news-codex-spark-agent-pipeline-2026-02-26.md`
-9. `09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
+9. `14-dspy-jangar-openai-full-rollout-2026-02-27.md`
+10. `09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
 
 ## Runtime Profitability Surface (2026-02-26)
 
