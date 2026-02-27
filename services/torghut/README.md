@@ -85,6 +85,19 @@ AgentRun payload builder (`build_dspy_agentrun_payload`) enforces:
 - `policy.secretBindingRef`
 - string-only `parameters`
 
+Dataset builder helper (matches `torghut-dspy-dataset-build-v1` contract):
+
+```bash
+cd services/torghut
+uv run python scripts/build_dspy_dataset.py \
+  --repository proompteng/lab \
+  --base main \
+  --head codex/dspy-dataset \
+  --artifact-path artifacts/dspy/run-1/dataset-build \
+  --dataset-window P30D \
+  --universe-ref torghut:equity:enabled
+```
+
 ## Feature flags (Flipt)
 
 - Torghut runtime gates are resolved via Flipt boolean evaluations when `TRADING_FEATURE_FLAGS_ENABLED=true`.
