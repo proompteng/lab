@@ -5,7 +5,7 @@
 - Version: `v5`
 - Date: `2026-02-26`
 - Maturity: `production-quality design pack`
-- Scope: 5 prioritized new-feature strategy builds plus whitepaper synthesis plus crypto pipeline migration design plus multi-account execution migration design
+- Scope: 5 prioritized new-feature strategy builds plus whitepaper synthesis plus crypto pipeline migration design plus multi-account execution migration design plus fundamentals/news Codex-spark context pipeline design
 
 ## Purpose
 
@@ -38,6 +38,7 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 10. `10-crypto-market-data-pipeline-production-design-2026-02-22.md`
 11. `11-multi-account-trading-architecture-and-rollout-2026-02-22.md`
 12. `12-dspy-framework-adoption-for-quant-llm-autonomous-trading-2026-02-25.md`
+13. `13-fundamentals-news-codex-spark-agent-pipeline-2026-02-26.md`
 
 ## Source-Verified Implementation Snapshot (2026-02-26 audit refresh)
 
@@ -58,7 +59,8 @@ This pack expands the top 5 strategy priorities into implementation-grade design
 5. `04-llm-multi-agent-committee-with-deterministic-veto.md`
 6. `07-autonomous-research-to-engineering-pipeline.md`
 7. `12-dspy-framework-adoption-for-quant-llm-autonomous-trading-2026-02-25.md`
-8. `09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
+8. `13-fundamentals-news-codex-spark-agent-pipeline-2026-02-26.md`
+9. `09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
 
 ## Runtime Profitability Surface (2026-02-26)
 
