@@ -1,0 +1,28 @@
+{
+  "run_id": "wp-d3cdc094c8e3184af629999a",
+  "verdict": "reject",
+  "score": 0.0,
+  "confidence": 0.97,
+  "decision_policy": "whitepaper_v1.blocked_on_source_access",
+  "rationale": "The required full-paper review could not be performed because the provided whitepaper sources were not accessible (primary URL 404, Ceph object not retrievable in this runtime, run not found in Torghut/Jangar). Any implementation decision beyond rejection would violate evidence requirements.",
+  "rejection_reasons": [
+    "Requirement unmet: full whitepaper could not be read end-to-end.",
+    "No section/claim-level citations can be grounded in source text.",
+    "Run metadata appears inconsistent (issue URL does not contain whitepaper context; run not present in reachable control plane)."
+  ],
+  "recommendations": [
+    "Provide one valid source artifact for this run: accessible PDF URL, presigned Ceph URL, or reachable run PDF endpoint.",
+    "Re-run analysis after source retrieval and include section/claim citations from the complete paper.",
+    "Validate issue/run linkage in Torghut so run_id, issue metadata, and source artifact are consistent before dispatch."
+  ],
+  "requires_followup": true,
+  "blocked_stage": "source_acquisition",
+  "block_reason": "whitepaper_source_unavailable",
+  "evidence": {
+    "primary_pdf_url_status": "404",
+    "ceph_retrieval": "blocked_missing_credentials_or_endpoint_visibility",
+    "torghut_run_lookup": "whitepaper_run_not_found",
+    "jangar_run_lookup": "404_whitepaper_run_not_found"
+  },
+  "smallest_unblocker": "Provide a working downloadable source PDF for run wp-d3cdc094c8e3184af629999a."
+}
