@@ -18,6 +18,7 @@ from app.trading.llm.dspy_compile import (
     upsert_workflow_artifact_record,
     write_artifact_bundle,
 )
+from app.trading.llm.dspy_compile.workflow import _sanitize_idempotency_key
 
 
 class TestLLMDSPyWorkflow(TestCase):
@@ -117,6 +118,21 @@ class TestLLMDSPyWorkflow(TestCase):
         self.assertEqual(payload["ttlSecondsAfterFinished"], 14400)
         self.assertIsInstance(payload["parameters"]["datasetRef"], str)
 
+    def test_sanitize_idempotency_key_replaces_invalid_chars(self) -> None:
+        key = _sanitize_idempotency_key(" :torghut:dspy:run:2026-02-27T07:39:00Z: ")
+        self.assertTrue(key)
+        self.assertNotIn(":", key)
+        self.assertLessEqual(len(key), 63)
+
+    def test_sanitize_idempotency_key_long_values_remain_unique(self) -> None:
+        prefix = "torghut-dspy-" + ("x" * 90)
+        dataset_key = _sanitize_idempotency_key(f"{prefix}-dataset-build")
+        compile_key = _sanitize_idempotency_key(f"{prefix}-compile")
+
+        self.assertLessEqual(len(dataset_key), 63)
+        self.assertLessEqual(len(compile_key), 63)
+        self.assertNotEqual(dataset_key, compile_key)
+
     def test_upsert_workflow_artifact_record_persists_audit_row(self) -> None:
         compile_result = build_compile_result(
             program_name="trade-review-committee-v1",
@@ -211,7 +227,7 @@ class TestLLMDSPyWorkflow(TestCase):
                         base="main",
                         head="codex/dspy-rollout",
                         artifact_root="artifacts/dspy/run-1",
-                        run_prefix="torghut-dspy-run-1",
+                        run_prefix="torghut-dspy-run-1:2026-02-27T07:39:00Z",
                         auth_token="token-123",
                         lane_parameter_overrides={
                             "dataset-build": {
@@ -244,17 +260,42 @@ class TestLLMDSPyWorkflow(TestCase):
             self.assertEqual(
                 sorted(result.keys()), ["compile", "dataset-build", "eval", "promote"]
             )
+            submitted_idempotency_keys = [
+                call.kwargs["idempotency_key"] for call in submit_mock.call_args_list
+            ]
+            self.assertEqual(len(submitted_idempotency_keys), 4)
+            self.assertEqual(len(set(submitted_idempotency_keys)), 4)
+            for key in submitted_idempotency_keys:
+                self.assertNotIn(":", key)
+                self.assertLessEqual(len(key), 63)
 
         with Session(self.engine) as session:
             rows = session.execute(select(LLMDSPyWorkflowArtifact)).scalars().all()
             self.assertEqual(len(rows), 4)
             lane_by_run_key = {row.run_key: row.lane for row in rows}
             self.assertEqual(
-                lane_by_run_key["torghut-dspy-run-1:dataset-build"], "dataset-build"
+                lane_by_run_key[
+                    "torghut-dspy-run-1:2026-02-27T07:39:00Z:dataset-build"
+                ],
+                "dataset-build",
             )
-            self.assertEqual(lane_by_run_key["torghut-dspy-run-1:compile"], "compile")
-            self.assertEqual(lane_by_run_key["torghut-dspy-run-1:eval"], "eval")
-            self.assertEqual(lane_by_run_key["torghut-dspy-run-1:promote"], "promote")
+            self.assertEqual(
+                lane_by_run_key["torghut-dspy-run-1:2026-02-27T07:39:00Z:compile"],
+                "compile",
+            )
+            self.assertEqual(
+                lane_by_run_key["torghut-dspy-run-1:2026-02-27T07:39:00Z:eval"],
+                "eval",
+            )
+            self.assertEqual(
+                lane_by_run_key["torghut-dspy-run-1:2026-02-27T07:39:00Z:promote"],
+                "promote",
+            )
+            for row in rows:
+                self.assertTrue(row.idempotency_key)
+                idempotency_key = str(row.idempotency_key)
+                self.assertNotIn(":", idempotency_key)
+                self.assertLessEqual(len(idempotency_key), 63)
 
     def test_orchestrate_dspy_agentrun_workflow_persists_submitted_lanes_before_failure(
         self,

@@ -355,7 +355,7 @@ spec:
             - name: LLM_DSPY_COMPILE_METRICS_POLICY_REF
               value: config/trading/llm/dspy-metrics.yaml
             - name: LLM_DSPY_SECRET_BINDING_REF
-              value: codex-whitepaper-github-token
+              value: codex-github-token
             - name: LLM_DSPY_AGENTRUN_TTL_SECONDS
               value: "14400"
             - name: LLM_CIRCUIT_MAX_ERRORS
