@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -9,10 +10,13 @@ from unittest.mock import patch
 from scripts.start_historical_simulation import (
     ClickHouseRuntimeConfig,
     KafkaRuntimeConfig,
+    PostgresRuntimeConfig,
     _build_plan_report,
     _build_postgres_runtime_config,
     _build_resources,
+    _dump_topics,
     _dump_sha256_for_replay,
+    _file_sha256,
     _merge_env_entries,
     _normalize_run_token,
     _offset_for_time_lookup,
@@ -20,6 +24,7 @@ from scripts.start_historical_simulation import (
     _redact_dsn_credentials,
     _restore_ta_configuration,
     _replay_dump,
+    _verify_isolation_guards,
 )
 
 
@@ -194,6 +199,120 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(_offset_for_time_lookup(metadata=_OffsetMeta(-1), fallback=17), 17)
         self.assertEqual(_offset_for_time_lookup(metadata=_OffsetMeta('bad'), fallback=17), 17)
         self.assertEqual(_offset_for_time_lookup(metadata=_OffsetMeta(9), fallback=17), 9)
+
+    def test_dump_topics_reuses_existing_dump_with_valid_marker(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+            row = {
+                'source_topic': resources.source_topic_by_role['trades'],
+                'replay_topic': resources.simulation_topic_by_role['trades'],
+                'source_timestamp_ms': 1704067200000,
+                'key_b64': None,
+                'value_b64': None,
+                'headers': [],
+            }
+            dump_path.write_text(json.dumps(row) + '\n', encoding='utf-8')
+            marker_path = dump_path.with_suffix('.dump-marker.json')
+            marker_path.write_text(
+                json.dumps(
+                    {
+                        'dump_sha256': _file_sha256(dump_path),
+                        'records': 1,
+                    }
+                ),
+                encoding='utf-8',
+            )
+
+            with patch(
+                'scripts.start_historical_simulation._consumer_for_dump',
+                side_effect=AssertionError('expected dump reuse; consumer should not be constructed'),
+            ):
+                report = _dump_topics(
+                    resources=resources,
+                    kafka_config=kafka_config,
+                    manifest={'window': {'start': '2026-01-01T00:00:00Z', 'end': '2026-01-01T01:00:00Z'}},
+                    dump_path=dump_path,
+                    force=False,
+                )
+
+        self.assertTrue(report['reused_existing_dump'])
+        self.assertEqual(report['records'], 1)
+
+    def test_dump_topics_redumps_when_marker_missing(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+            dump_path.write_text('{}\n', encoding='utf-8')
+
+            with (
+                patch.dict(
+                    'sys.modules',
+                    {'kafka': SimpleNamespace(TopicPartition=lambda topic, partition: (topic, partition))},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._consumer_for_dump',
+                    side_effect=RuntimeError('dump_invoked'),
+                ),
+                self.assertRaisesRegex(RuntimeError, 'dump_invoked'),
+            ):
+                _dump_topics(
+                    resources=resources,
+                    kafka_config=kafka_config,
+                    manifest={'window': {'start': '2026-01-01T00:00:00Z', 'end': '2026-01-01T01:00:00Z'}},
+                    dump_path=dump_path,
+                    force=False,
+                )
+
+    def test_verify_isolation_guards_rejects_simulation_topic_overlap(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+                'simulation_topics': {
+                    'trades': 'torghut.trades.v1',
+                },
+            },
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='uv run --frozen alembic upgrade head',
+        )
+
+        with self.assertRaisesRegex(RuntimeError, 'simulation_topics_isolated_from_sources'):
+            _verify_isolation_guards(
+                resources=resources,
+                postgres_config=postgres_config,
+                ta_data={'TA_GROUP_ID': 'torghut-ta-main'},
+            )
 
     def test_replay_dump_ignores_stale_marker_when_dump_changes(self) -> None:
         resources = _build_resources(

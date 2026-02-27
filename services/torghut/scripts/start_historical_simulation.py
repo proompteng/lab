@@ -523,6 +523,62 @@ def _load_json(path: Path) -> dict[str, Any]:
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
 
 
+def _load_optional_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
+
+
+def _file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open('rb') as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _dump_marker_path(dump_path: Path) -> Path:
+    return dump_path.with_suffix('.dump-marker.json')
+
+
+def _reusable_dump_report(dump_path: Path) -> dict[str, Any] | None:
+    if not dump_path.exists():
+        return None
+    marker_path = _dump_marker_path(dump_path)
+    marker = _load_optional_json(marker_path)
+    if marker is None:
+        return None
+
+    expected_sha = _as_text(marker.get('dump_sha256'))
+    raw_expected_records = marker.get('records')
+    if expected_sha is None or raw_expected_records is None:
+        return None
+    try:
+        expected_records = int(raw_expected_records)
+    except (TypeError, ValueError):
+        return None
+
+    actual_sha = _file_sha256(dump_path)
+    actual_records = _count_lines(dump_path)
+    if expected_sha != actual_sha or expected_records != actual_records:
+        return None
+    return {
+        'path': str(dump_path),
+        'records': actual_records,
+        'sha256': actual_sha,
+        'reused_existing_dump': True,
+    }
+
+
 def _build_plan_report(
     *,
     resources: SimulationResources,
@@ -1035,14 +1091,10 @@ def _dump_topics(
     dump_path: Path,
     force: bool,
 ) -> dict[str, Any]:
-    if dump_path.exists() and not force:
-        checksum = hashlib.sha256(dump_path.read_bytes()).hexdigest()
-        return {
-            'path': str(dump_path),
-            'records': _count_lines(dump_path),
-            'sha256': checksum,
-            'reused_existing_dump': True,
-        }
+    if not force:
+        reusable_report = _reusable_dump_report(dump_path)
+        if reusable_report is not None:
+            return reusable_report
 
     window = _as_mapping(manifest.get('window'))
     start = _parse_rfc3339_timestamp(_as_text(window.get('start')), label='window.start')
@@ -1149,7 +1201,7 @@ def _dump_topics(
                     if consumer.position(tp) >= stop_offset:
                         done.add(tp)
 
-        return {
+        report = {
             'path': str(dump_path),
             'records': count,
             'sha256': hasher.hexdigest(),
@@ -1158,6 +1210,15 @@ def _dump_topics(
             'end': end.isoformat(),
             'reused_existing_dump': False,
         }
+        _save_json(
+            _dump_marker_path(dump_path),
+            {
+                'completed_at': datetime.now(timezone.utc).isoformat(),
+                'dump_sha256': report['sha256'],
+                'records': report['records'],
+            },
+        )
+        return report
     finally:
         consumer.close()
 
@@ -1300,11 +1361,18 @@ def _verify_isolation_guards(
     postgres_config: PostgresRuntimeConfig,
     ta_data: Mapping[str, Any],
 ) -> dict[str, bool]:
+    source_topics = {topic for topic in resources.source_topic_by_role.values() if topic}
+    simulation_topics = {topic for topic in resources.simulation_topic_by_role.values() if topic}
+    replay_source_topics = {topic for topic in resources.replay_topic_by_source_topic.keys() if topic}
+    replay_target_topics = {topic for topic in resources.replay_topic_by_source_topic.values() if topic}
+    production_topics = {topic for topic in PRODUCTION_TOPIC_BY_ROLE.values() if topic}
+
     checks = {
         'clickhouse_db_isolated': resources.clickhouse_db != 'torghut',
         'postgres_db_isolated': postgres_config.simulation_db != 'torghut',
-        'order_updates_topic_isolated': resources.simulation_topic_by_role['order_updates']
-        != PRODUCTION_TOPIC_BY_ROLE['order_updates'],
+        'simulation_topics_isolated_from_sources': simulation_topics.isdisjoint(source_topics),
+        'replay_targets_isolated_from_replay_sources': replay_target_topics.isdisjoint(replay_source_topics),
+        'simulation_topics_not_production_defaults': simulation_topics.isdisjoint(production_topics),
         'ta_group_isolated': resources.ta_group_id != _as_text(ta_data.get('TA_GROUP_ID')),
     }
     if not all(checks.values()):
