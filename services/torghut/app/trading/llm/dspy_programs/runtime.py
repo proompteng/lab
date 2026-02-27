@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import string
 import time
 from dataclasses import dataclass
@@ -84,14 +83,13 @@ class DSPyReviewRuntime:
     def __init__(
         self,
         *,
-        mode: str,
         artifact_hash: str | None,
         program_name: str,
         signature_version: str,
         timeout_seconds: int,
         program: DSPyCommitteeProgram | None = None,
     ) -> None:
-        self.mode = mode.strip().lower()
+        self.mode = "active"
         self.artifact_hash = _normalize_hash(artifact_hash)
         self.program_name = program_name.strip() or _BOOTSTRAP_PROGRAM_NAME
         self.signature_version = (
@@ -108,7 +106,6 @@ class DSPyReviewRuntime:
     @classmethod
     def from_settings(cls) -> "DSPyReviewRuntime":
         return cls(
-            mode=settings.llm_dspy_runtime_mode,
             artifact_hash=settings.llm_dspy_artifact_hash,
             program_name=settings.llm_dspy_program_name,
             signature_version=settings.llm_dspy_signature_version,
@@ -120,13 +117,11 @@ class DSPyReviewRuntime:
         return _BOOTSTRAP_ARTIFACT_HASH
 
     def is_enabled(self) -> bool:
-        return self.mode in {"shadow", "active"} and bool(self.artifact_hash)
+        return bool(self.artifact_hash)
 
     def review(
         self, request: LLMReviewRequest
     ) -> tuple[LLMReviewResponse, DSPyRuntimeMetadata]:
-        if not self.is_enabled():
-            raise DSPyRuntimeError("dspy_runtime_disabled")
         if self.artifact_hash is None:
             raise DSPyRuntimeError("dspy_artifact_hash_missing")
 
@@ -308,7 +303,9 @@ class DSPyReviewRuntime:
             program = LiveDSPyCommitteeProgram(
                 model_name=_resolve_dspy_model_name(),
                 api_base=_resolve_dspy_api_base(),
-                api_key=os.getenv("OPENAI_API_KEY", "").strip() or None,
+                api_key=settings.jangar_api_key.strip()
+                if settings.jangar_api_key
+                else None,
             )
         else:
             program = HeuristicCommitteeProgram()
@@ -365,11 +362,7 @@ def _pick_signature_version(
 
 
 def _resolve_dspy_model_name() -> str:
-    raw = (
-        settings.llm_self_hosted_model.strip()
-        if settings.llm_self_hosted_model
-        else settings.llm_model.strip()
-    )
+    raw = settings.llm_model.strip()
     if not raw:
         raise DSPyRuntimeError("dspy_model_not_configured")
     if "/" in raw:
@@ -378,12 +371,10 @@ def _resolve_dspy_model_name() -> str:
 
 
 def _resolve_dspy_api_base() -> str | None:
-    if settings.llm_self_hosted_base_url:
-        raw_self_hosted = settings.llm_self_hosted_base_url.strip()
-        if raw_self_hosted:
-            return raw_self_hosted
-    raw = os.getenv("OPENAI_API_BASE", "").strip()
-    return raw or None
+    base_url = (settings.jangar_base_url or "").strip().rstrip("/")
+    if not base_url:
+        raise DSPyRuntimeError("dspy_jangar_base_url_missing")
+    return f"{base_url}/openai/v1"
 
 
 __all__ = ["DSPyRuntimeError", "DSPyRuntimeMetadata", "DSPyReviewRuntime"]
