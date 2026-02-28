@@ -635,8 +635,7 @@ def _http_clickhouse_query(
     config: ClickHouseRuntimeConfig,
     query: str,
 ) -> tuple[int, str]:
-    query_param = quote_plus(query)
-    request_url = f'{config.http_url}/?query={query_param}'
+    request_url = config.http_url
     parsed = urlsplit(request_url)
     scheme = parsed.scheme.lower()
     if scheme not in {'http', 'https'}:
@@ -656,7 +655,7 @@ def _http_clickhouse_query(
     connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
     connection = connection_class(parsed.hostname, parsed.port)
     try:
-        connection.request('GET', path, headers=headers)
+        connection.request('POST', path, body=query.encode('utf-8'), headers=headers)
         response = connection.getresponse()
         body = response.read().decode('utf-8', errors='replace').strip()
         return response.status, body
