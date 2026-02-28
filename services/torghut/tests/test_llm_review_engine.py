@@ -244,6 +244,86 @@ class TestLLMReviewEngine(TestCase):
         self.assertIsNotNone(request.market_context)
         self.assertEqual(request.market_context.symbol, "AAPL")
 
+    def test_build_request_includes_compact_regime_hmm_block(self) -> None:
+        engine = LLMReviewEngine(
+            dspy_runtime=FakeDSPyRuntime(
+                response_payload={
+                    "verdict": "approve",
+                    "confidence": 0.9,
+                    "confidence_band": "high",
+                    "calibrated_probabilities": {
+                        "approve": 0.9,
+                        "veto": 0.0,
+                        "adjust": 0.0,
+                        "abstain": 0.0,
+                        "escalate": 0.1,
+                    },
+                    "uncertainty": {"score": 0.12, "band": "low"},
+                    "calibration_metadata": {},
+                    "rationale": "ok",
+                    "required_checks": ["risk_engine"],
+                    "risk_flags": [],
+                }
+            )
+        )
+        account = {"equity": "10000", "cash": "5000", "buying_power": "15000"}
+        positions: list[dict[str, object]] = []
+        portfolio = PortfolioSnapshot(
+            equity=Decimal("10000"),
+            cash=Decimal("5000"),
+            buying_power=Decimal("15000"),
+            total_exposure=Decimal("0"),
+            exposure_by_symbol={},
+            positions=positions,
+        )
+        decision = StrategyDecision(
+            strategy_id="demo",
+            symbol="AAPL",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            rationale="demo",
+            params={
+                "regime_hmm": {
+                    "regime_id": "R2",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {
+                        "model_id": "hmm-regime-v1.2.0",
+                        "feature_schema": "hmm-v1-feature-schema",
+                        "training_run_id": "trn_2026-02-28",
+                    },
+                    "guardrail": {
+                        "stale": False,
+                        "fallback_to_defensive": False,
+                        "reason": "stable",
+                    },
+                    "macd": "unused",
+                }
+            },
+        )
+        request = engine.build_request(
+            decision,
+            account,
+            positions,
+            portfolio,
+            None,
+            None,
+            [],
+        )
+        assert request.decision.regime_hmm is not None
+        self.assertEqual(request.decision.regime_hmm.regime_id, "R2")
+        self.assertEqual(request.decision.regime_hmm.entropy_band, "medium")
+        self.assertEqual(request.decision.regime_hmm.predicted_next, "R3")
+        self.assertEqual(
+            request.decision.regime_hmm.artifact_version,
+            "hmm-regime-v1.2.0",
+        )
+        self.assertEqual(request.decision.regime_hmm.guardrail_reason, "stable")
+
     def test_review_uses_dspy_runtime_response(self) -> None:
         engine = LLMReviewEngine(
             dspy_runtime=FakeDSPyRuntime(

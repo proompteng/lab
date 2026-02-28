@@ -248,6 +248,20 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "fragility_state",
         "int",
     ),
+    "decision_regime_resolution_source_total": (
+        "torghut_trading_decision_regime_resolution_source_total",
+        "Decision regime source resolution by signal source.",
+        "counter",
+        "source",
+        "int",
+    ),
+    "decision_regime_resolution_fallback_total": (
+        "torghut_trading_decision_regime_resolution_fallback_total",
+        "Decision regime fallback reason counts.",
+        "counter",
+        "reason",
+        "int",
+    ),
 }
 
 _STRATEGY_RUNTIME_METRICS: dict[str, tuple[str, str]] = {

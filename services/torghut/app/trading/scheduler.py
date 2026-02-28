@@ -55,6 +55,11 @@ from .order_feed import OrderFeedIngestor
 from .reconcile import Reconciler
 from .risk import RiskEngine
 from .tca import AdaptiveExecutionPolicyDecision, derive_adaptive_execution_policy
+from .regime_hmm import (
+    resolve_hmm_context,
+    resolve_legacy_regime_label,
+    resolve_regime_route_label,
+)
 from .autonomy import (
     DriftThresholds,
     DriftTriggerPolicy,
@@ -447,6 +452,12 @@ class TradingMetrics:
     allocator_regime_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
+    decision_regime_resolution_source_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    decision_regime_resolution_fallback_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     allocator_fragility_state_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
@@ -785,6 +796,20 @@ class TradingMetrics:
         if calibration_error is not None:
             key = f"{family}|{symbol}|{horizon}"
             self.forecast_calibration_error[key] = str(calibration_error)
+
+    def record_decision_regime_resolution(
+        self, *, source: str, fallback_reason: str | None
+    ) -> None:
+        normalized_source = source.strip() or "unknown"
+        self.decision_regime_resolution_source_total[normalized_source] = (
+            self.decision_regime_resolution_source_total.get(normalized_source, 0) + 1
+        )
+        if fallback_reason is None:
+            return
+        normalized_reason = fallback_reason.strip() or "unknown"
+        self.decision_regime_resolution_fallback_total[normalized_reason] = (
+            self.decision_regime_resolution_fallback_total.get(normalized_reason, 0) + 1
+        )
 
     def record_adaptive_policy_result(
         self,
@@ -1790,10 +1815,17 @@ class TradingPipeline:
         positions: list[dict[str, Any]],
         snapshot: Optional[MarketSnapshot],
     ) -> tuple[StrategyDecision, Any] | None:
+        regime_label, regime_source, regime_fallback = _resolve_decision_regime_label_with_source(
+            decision
+        )
+        self.state.metrics.record_decision_regime_resolution(
+            source=regime_source,
+            fallback_reason=regime_fallback,
+        )
         adaptive_policy = derive_adaptive_execution_policy(
             session,
             symbol=decision.symbol,
-            regime_label=_resolve_decision_regime_label(decision),
+            regime_label=regime_label,
         )
         policy_outcome = self.execution_policy.evaluate(
             decision,
@@ -3224,36 +3256,72 @@ def _load_recent_decisions(
 def _resolve_signal_regime(signal: SignalEnvelope) -> Optional[str]:
     payload = signal.payload
     payload_map = cast(Mapping[str, Any], payload)
-    direct = payload_map.get("regime_label")
-    if isinstance(direct, str) and direct.strip():
-        return direct.strip().lower()
-    regime = payload_map.get("regime")
-    if isinstance(regime, Mapping):
-        regime_map = cast(Mapping[str, Any], regime)
-        label = regime_map.get("label")
-        if isinstance(label, str) and label.strip():
-            return label.strip().lower()
+    macd = _optional_decimal(payload_map.get("macd"))
+    if macd is None and isinstance(payload_map.get("macd"), Mapping):
+        macd_block = cast(Mapping[str, Any], payload_map.get("macd"))
+        macd = _optional_decimal(macd_block.get("macd"))
+    macd_signal = _optional_decimal(payload_map.get("macd_signal"))
+    if macd_signal is None and isinstance(payload_map.get("macd"), Mapping):
+        macd_block = cast(Mapping[str, Any], payload_map.get("macd"))
+        macd_signal = _optional_decimal(macd_block.get("signal"))
+    resolved = resolve_regime_route_label(
+        payload_map, macd=macd, macd_signal=macd_signal
+    )
+    if resolved != "unknown":
+        return resolved
+    regime_label = resolve_legacy_regime_label(payload_map)
+    if regime_label is not None:
+        return regime_label
     return None
 
 
-def _resolve_decision_regime_label(decision: StrategyDecision) -> Optional[str]:
-    params = decision.params
+def _resolve_decision_regime_label_with_source(
+    decision: StrategyDecision,
+) -> tuple[Optional[str], str, str | None]:
+    params = cast(Mapping[str, Any], decision.params)
     allocator = params.get("allocator")
     if isinstance(allocator, Mapping):
         allocator_map = cast(Mapping[str, Any], allocator)
         allocator_regime = allocator_map.get("regime_label")
         if isinstance(allocator_regime, str) and allocator_regime.strip():
-            return allocator_regime.strip().lower()
+            return allocator_regime.strip().lower(), "allocator", None
+
+    raw_regime_hmm = params.get("regime_hmm")
+    if isinstance(raw_regime_hmm, Mapping):
+        regime_id = _resolve_regime_hmm_id(cast(Mapping[str, Any], raw_regime_hmm))
+        if regime_id is not None and regime_id.lower() != "unknown":
+            return regime_id.lower(), "hmm", None
+        regime_context = resolve_hmm_context(cast(Mapping[str, Any], raw_regime_hmm))
+        if regime_context.has_regime:
+            return regime_context.regime_id.lower(), "hmm", None
+        regime_label = resolve_legacy_regime_label(params)
+        if regime_label is not None:
+            return regime_label, "legacy", "hmm_unknown"
+        return None, "none", "hmm_unknown"
+
     direct = params.get("regime_label")
     if isinstance(direct, str) and direct.strip():
-        return direct.strip().lower()
-    regime = params.get("regime")
-    if isinstance(regime, Mapping):
-        regime_map = cast(Mapping[str, Any], regime)
-        label = regime_map.get("label")
-        if isinstance(label, str) and label.strip():
-            return label.strip().lower()
-    return None
+        return direct.strip().lower(), "legacy", None
+
+    legacy_label = resolve_legacy_regime_label(params)
+    regime_label = legacy_label if legacy_label is not None else None
+    return regime_label, "legacy", None if regime_label is not None else "missing"
+
+
+def _resolve_decision_regime_label(decision: StrategyDecision) -> Optional[str]:  # pyright: ignore[reportUnusedFunction]
+    # kept for backwards compatibility with existing tests and callers
+    regime_label, _, _ = _resolve_decision_regime_label_with_source(decision)
+    return regime_label
+
+
+def _resolve_regime_hmm_id(raw_regime_hmm: Mapping[str, Any]) -> str | None:
+    raw_value = raw_regime_hmm.get("regime_id") or raw_regime_hmm.get("regimeId")
+    if not isinstance(raw_value, str):
+        return None
+    text = raw_value.strip()
+    if not text:
+        return None
+    return text
 
 
 def _allocator_rejection_reasons(decision: StrategyDecision) -> list[str]:
