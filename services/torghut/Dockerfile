@@ -34,15 +34,22 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:${PATH}"
 
 WORKDIR /app
+ARG KUBECTL_VERSION=v1.30.0
 
 RUN apt-get update \
- && apt-get install --no-install-recommends -y libpq5 \
+ && apt-get install --no-install-recommends -y \
+      ca-certificates \
+      curl \
+      libpq5 \
+ && curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+ && chmod +x /usr/local/bin/kubectl \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
 COPY alembic.ini ./
 COPY app ./app
 COPY migrations ./migrations
+COPY scripts ./scripts
 COPY README.md .
 
 RUN groupadd --system torghut && useradd --system --create-home --gid torghut torghut

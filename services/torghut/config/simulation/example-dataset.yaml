@@ -26,7 +26,9 @@ kafka:
 clickhouse:
   http_url: http://torghut-clickhouse.torghut.svc.cluster.local:8123
   username: torghut
-  password: ''
+  password_secret_name: torghut-clickhouse-auth
+  password_secret_key: torghut_password
+  secret_namespace: torghut
   simulation_database: torghut_sim_sim_2026_02_27_01
 
 postgres:
@@ -47,6 +49,8 @@ replay:
   acceleration: 60
   max_sleep_seconds: 5
   auto_offset_reset: earliest
+  status_update_every_records: 25000
+  status_update_every_seconds: 30
 
 monitor:
   timeout_seconds: 1200
