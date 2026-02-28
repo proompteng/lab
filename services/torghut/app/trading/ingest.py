@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 FLAT_CURSOR_OVERLAP = timedelta(seconds=2)
 LATEST_SIGNAL_TS_CACHE_TTL = timedelta(seconds=30)
 LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN = timedelta(minutes=5)
+SIMULATION_CURSOR_BASELINE = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 FLAT_SIGNAL_COLUMNS = [
     "ts",
@@ -103,6 +104,7 @@ class ClickHouseSignalIngestor:
         self.schema = schema or settings.trading_signal_schema
         self.account_label = account_label or settings.trading_account_label
         simulation_mode = bool(settings.trading_simulation_enabled)
+        self.simulation_mode = simulation_mode
         self.fast_forward_stale_cursor = False if simulation_mode else fast_forward_stale_cursor
         self.empty_batch_advance_seconds = (
             0 if simulation_mode else max(0, settings.trading_signal_empty_batch_advance_seconds)
@@ -763,6 +765,11 @@ class ClickHouseSignalIngestor:
         cursor_row = session.execute(stmt).scalar_one_or_none()
         if cursor_row:
             return cursor_row.cursor_at, cursor_row.cursor_seq, cursor_row.cursor_symbol
+
+        if self.simulation_mode:
+            # Historical simulation replays finalized windows where "now-lookback"
+            # would start ahead of the stream and suppress all decisions.
+            return SIMULATION_CURSOR_BASELINE, None, None
 
         lookback = timedelta(minutes=self.initial_lookback_minutes)
         return datetime.now(timezone.utc) - lookback, None, None

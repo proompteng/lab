@@ -226,6 +226,11 @@ class TestConfig(TestCase):
             TRADING_SIMULATION_ENABLED=True,
             TRADING_SIMULATION_RUN_ID="  sim-2026-02-27-01  ",
             TRADING_SIMULATION_DATASET_ID="  dataset-a  ",
+            TRADING_ORDER_FEED_BOOTSTRAP_SERVERS="  kafka-feed:9092  ",
+            TRADING_ORDER_FEED_SECURITY_PROTOCOL="  SASL_PLAINTEXT  ",
+            TRADING_ORDER_FEED_SASL_MECHANISM="  SCRAM-SHA-512  ",
+            TRADING_ORDER_FEED_SASL_USERNAME="  user  ",
+            TRADING_ORDER_FEED_SASL_PASSWORD="  secret  ",
             TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS="  kafka:9092  ",
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
@@ -235,6 +240,24 @@ class TestConfig(TestCase):
         self.assertEqual(
             settings.trading_simulation_order_updates_bootstrap_servers,
             "kafka:9092",
+        )
+        self.assertEqual(
+            settings.trading_order_feed_kafka_security_kwargs,
+            {
+                "security_protocol": "SASL_PLAINTEXT",
+                "sasl_mechanism": "SCRAM-SHA-512",
+                "sasl_plain_username": "user",
+                "sasl_plain_password": "secret",
+            },
+        )
+        self.assertEqual(
+            settings.trading_simulation_order_updates_kafka_security_kwargs,
+            {
+                "security_protocol": "SASL_PLAINTEXT",
+                "sasl_mechanism": "SCRAM-SHA-512",
+                "sasl_plain_username": "user",
+                "sasl_plain_password": "secret",
+            },
         )
 
     def test_parses_signal_staleness_critical_reasons(self) -> None:

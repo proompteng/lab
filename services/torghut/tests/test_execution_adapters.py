@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -105,6 +106,10 @@ class TestExecutionAdapters(TestCase):
     def test_simulation_adapter_returns_filled_order_with_simulation_context(self) -> None:
         adapter = SimulationExecutionAdapter(
             bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
             topic='torghut.sim.trade-updates.v1',
             account_label='paper',
             simulation_run_id='sim-2026-02-27-01',
@@ -139,6 +144,10 @@ class TestExecutionAdapters(TestCase):
     def test_simulation_adapter_does_not_cancel_filled_order(self) -> None:
         adapter = SimulationExecutionAdapter(
             bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
             topic='torghut.sim.trade-updates.v1',
             account_label='paper',
             simulation_run_id='sim-2026-02-27-01',
@@ -186,6 +195,40 @@ class TestExecutionAdapters(TestCase):
             config.settings.trading_order_feed_bootstrap_servers = original_order_bootstrap
             config.settings.trading_simulation_run_id = original_run_id
             config.settings.trading_simulation_dataset_id = original_dataset
+
+    def test_simulation_adapter_uses_kafka_security_kwargs(self) -> None:
+        captured_kwargs: dict[str, Any] = {}
+
+        class _FakeProducer:
+            def __init__(self, **kwargs: Any) -> None:
+                captured_kwargs.update(kwargs)
+
+            def send(self, *_args: Any, **_kwargs: Any) -> None:
+                return None
+
+            def flush(self, timeout: float = 0) -> None:
+                _ = timeout
+
+        with patch.dict(
+            'sys.modules',
+            {'kafka': SimpleNamespace(KafkaProducer=_FakeProducer)},
+        ):
+            adapter = SimulationExecutionAdapter(
+                bootstrap_servers='kafka:9092',
+                security_protocol='SASL_PLAINTEXT',
+                sasl_mechanism='SCRAM-SHA-512',
+                sasl_username='user',
+                sasl_password='secret',
+                topic='torghut.sim.trade-updates.v1',
+                account_label='paper',
+                simulation_run_id='sim-2026-02-27-01',
+                dataset_id='dataset-1',
+            )
+            self.assertIsNotNone(adapter)
+        self.assertEqual(captured_kwargs.get('security_protocol'), 'SASL_PLAINTEXT')
+        self.assertEqual(captured_kwargs.get('sasl_mechanism'), 'SCRAM-SHA-512')
+        self.assertEqual(captured_kwargs.get('sasl_plain_username'), 'user')
+        self.assertEqual(captured_kwargs.get('sasl_plain_password'), 'secret')
 
     def test_adapter_enabled_for_symbol_true_for_simulation(self) -> None:
         original_adapter = config.settings.trading_execution_adapter

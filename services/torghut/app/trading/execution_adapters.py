@@ -126,6 +126,10 @@ class SimulationExecutionAdapter:
         self,
         *,
         bootstrap_servers: str | None,
+        security_protocol: str | None,
+        sasl_mechanism: str | None,
+        sasl_username: str | None,
+        sasl_password: str | None,
         topic: str,
         account_label: str,
         simulation_run_id: str | None,
@@ -143,6 +147,15 @@ class SimulationExecutionAdapter:
         self._order_id_by_client_id: dict[str, str] = {}
         self._producer: Any | None = None
         self._producer_init_error: str | None = None
+        self._kafka_security_kwargs: dict[str, str] = {}
+        if security_protocol:
+            self._kafka_security_kwargs['security_protocol'] = security_protocol
+        if sasl_mechanism:
+            self._kafka_security_kwargs['sasl_mechanism'] = sasl_mechanism
+        if sasl_username:
+            self._kafka_security_kwargs['sasl_plain_username'] = sasl_username
+        if sasl_password:
+            self._kafka_security_kwargs['sasl_plain_password'] = sasl_password
         if bootstrap_servers and bootstrap_servers.strip():
             self._producer = self._build_producer(bootstrap_servers.strip())
 
@@ -289,6 +302,7 @@ class SimulationExecutionAdapter:
                 retries=1,
                 request_timeout_ms=2_000,
                 max_block_ms=2_000,
+                **self._kafka_security_kwargs,
             )
             return producer
         except Exception as exc:  # pragma: no cover - environment-dependent
@@ -317,11 +331,14 @@ class SimulationExecutionAdapter:
             'event_ts': event_ts.isoformat(),
             'seq': self._seq,
             'symbol': order.get('symbol'),
+            'account_label': self._account_label,
+            'accountLabel': self._account_label,
             'source': 'simulation',
             'simulation_context': simulation_context,
             'payload': {
                 'event': event_type,
                 'timestamp': event_ts.isoformat(),
+                'account_label': self._account_label,
                 'order': {
                     'id': order.get('id'),
                     'client_order_id': order.get('client_order_id'),
@@ -873,6 +890,22 @@ def build_execution_adapter(
         )
         return SimulationExecutionAdapter(
             bootstrap_servers=bootstrap_servers,
+            security_protocol=(
+                settings.trading_simulation_order_updates_security_protocol
+                or settings.trading_order_feed_security_protocol
+            ),
+            sasl_mechanism=(
+                settings.trading_simulation_order_updates_sasl_mechanism
+                or settings.trading_order_feed_sasl_mechanism
+            ),
+            sasl_username=(
+                settings.trading_simulation_order_updates_sasl_username
+                or settings.trading_order_feed_sasl_username
+            ),
+            sasl_password=(
+                settings.trading_simulation_order_updates_sasl_password
+                or settings.trading_order_feed_sasl_password
+            ),
             topic=settings.trading_simulation_order_updates_topic,
             account_label=settings.trading_account_label,
             simulation_run_id=settings.trading_simulation_run_id,
