@@ -504,6 +504,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
 
     window_start, window_end = _resolve_window_bounds(manifest)
     window_policy = _validate_window_policy(manifest)
+    strict_coverage_ratio = _safe_float(window_policy.get('strict_coverage_ratio'), default=0.95)
 
     output_dir = (
         Path(args.output_dir)
@@ -961,7 +962,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         stability_anomalies.append('no_executions')
     if len(executions) > 0 and len(order_events) == 0:
         stability_anomalies.append('no_execution_order_events')
-    if coverage_ratio is not None and coverage_ratio < 0.95:
+    if coverage_ratio is not None and coverage_ratio < strict_coverage_ratio:
         stability_anomalies.append('dump_coverage_below_95pct')
     if llm_total > 0 and llm['error_rate'] > 0.05:
         stability_anomalies.append('llm_error_rate_above_5pct')
@@ -984,7 +985,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         fail_reasons.append('trade_decisions_below_minimum')
     if len(executions) < min_executions:
         fail_reasons.append('executions_below_minimum')
-    if coverage_ratio is not None and coverage_ratio < 0.95:
+    if coverage_ratio is not None and coverage_ratio < strict_coverage_ratio:
         fail_reasons.append('window_coverage_ratio_below_95pct')
 
     if len(executions) > 0 and len(order_events) == 0:

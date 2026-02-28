@@ -1578,7 +1578,7 @@ def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[
 def _run_migrations(config: PostgresRuntimeConfig) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     env = dict(os.environ)
-    env['DB_DSN'] = config.simulation_dsn
+    env['DB_DSN'] = config.torghut_runtime_dsn
     _run_with_transient_postgres_retry(
         label='run_migrations',
         operation=lambda: _run_command(
@@ -2569,7 +2569,7 @@ def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int]:
 
 def _monitor_snapshot(postgres_config: PostgresRuntimeConfig) -> dict[str, Any]:
     def _snapshot() -> dict[str, Any]:
-        with psycopg.connect(postgres_config.simulation_dsn) as conn:
+        with psycopg.connect(postgres_config.torghut_runtime_dsn) as conn:
             with conn.cursor() as cursor:
                 cursor.execute('SELECT count(*) FROM trade_decisions')
                 decision_row = cursor.fetchone()
@@ -2752,7 +2752,7 @@ def _report_simulation(
         '--dataset-manifest',
         str(manifest_path),
         '--simulation-dsn',
-        postgres_config.simulation_dsn,
+        postgres_config.torghut_runtime_dsn,
         '--output-dir',
         str(report_dir),
         '--json',
@@ -2806,6 +2806,7 @@ def _run_full_lifecycle(
     errors: list[str] = []
     previous_automation_mode: str | None = None
     argocd_prepare_succeeded = False
+    argocd_restore_required = False
 
     try:
         if report_only:
@@ -2822,8 +2823,17 @@ def _run_full_lifecycle(
             )
         else:
             _update_run_state(resources=resources, phase='argocd_prepare', status='running')
+            if argocd_config.manage_automation:
+                current_state = _read_argocd_automation_mode(config=argocd_config)
+                previous_automation_mode = _normalized_automation_mode(
+                    _as_text(current_state.get('mode'))
+                )
+                argocd_restore_required = (
+                    previous_automation_mode != _normalized_automation_mode(argocd_config.desired_mode_during_run)
+                )
             argocd_prepare_report = _prepare_argocd_for_run(config=argocd_config)
-            previous_automation_mode = _as_text(argocd_prepare_report.get('previous_mode'))
+            if previous_automation_mode is None:
+                previous_automation_mode = _as_text(argocd_prepare_report.get('previous_mode'))
             argocd_prepare_succeeded = True
             _update_run_state(
                 resources=resources,
@@ -2918,7 +2928,7 @@ def _run_full_lifecycle(
                 status='skipped',
                 details=argocd_restore_report,
             )
-        elif not argocd_prepare_succeeded:
+        elif not argocd_prepare_succeeded and not argocd_restore_required:
             argocd_restore_report = {
                 'managed': False,
                 'changed': False,
