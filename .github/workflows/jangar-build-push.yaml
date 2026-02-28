@@ -67,6 +67,20 @@ jobs:
           fi
           echo "context=$PRUNE_DIR" >> "$GITHUB_OUTPUT"
 
+      - name: Prebuild jangar output (pruned context)
+        shell: bash
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          CI: 'true'
+          JANGAR_BUILD_MINIFY: '0'
+          JANGAR_BUILD_SOURCEMAP: '0'
+        run: |
+          set -euo pipefail
+          PRUNE_DIR="${{ steps.prune.outputs.context }}"
+          bun install --cwd "$PRUNE_DIR" --frozen-lockfile --ignore-scripts --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk --filter @proompteng/jangar
+          timeout 20m bun --cwd "$PRUNE_DIR/full/services/jangar" --bun vite build --logLevel warn
+          bun --cwd "$PRUNE_DIR/full/services/jangar" run copy:grpc-proto
+
       - name: Build and push jangar image
         env:
           JANGAR_BUILD_CONTEXT: ${{ steps.prune.outputs.context }}
@@ -85,8 +99,6 @@ jobs:
           JANGAR_BUILD_CONTEXT: ${{ steps.prune.outputs.context }}
           JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           JANGAR_IMAGE_PLATFORMS: linux/arm64
-          JANGAR_BUILD_CACHE_REF: registry.ide-newton.ts.net/lab/jangar:buildcache
-          JANGAR_BUILD_CACHE_MODE: min
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
           JANGAR_BUILD_SOURCEMAP: '0'
           JANGAR_BUILD_CI: 'true'
