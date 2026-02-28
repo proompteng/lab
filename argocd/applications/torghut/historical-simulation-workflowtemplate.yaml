@@ -64,6 +64,7 @@ spec:
             WORKFLOW_DIR=/tmp/torghut-historical-simulation
             MANIFEST_PATH="${WORKFLOW_DIR}/dataset-manifest.yaml"
             OUTPUT_ROOT="{{inputs.parameters.outputRoot}}"
+            export MANIFEST_PATH OUTPUT_ROOT
 
             if command -v apt-get >/dev/null 2>&1; then
               apt-get update
@@ -72,7 +73,7 @@ spec:
             fi
 
             pip install --no-cache-dir --upgrade pip
-            pip install --no-cache-dir kafka-python "psycopg[binary]" pyyaml alembic
+            pip install --no-cache-dir kafka-python "psycopg[binary]" pyyaml alembic uv
 
             if [ ! -f /usr/local/bin/kubectl ]; then
               K8S_STABLE="$(curl -fsSL https://dl.k8s.io/release/stable.txt | tr -d '[:space:]')"
@@ -159,4 +160,4 @@ spec:
         outputs:
           artifacts:
             - name: simulation-output
-              path: /tmp/torghut-simulations
+              path: "{{inputs.parameters.outputRoot}}"
