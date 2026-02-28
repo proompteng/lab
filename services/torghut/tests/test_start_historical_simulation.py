@@ -14,6 +14,7 @@ from scripts.start_historical_simulation import (
     _build_plan_report,
     _build_postgres_runtime_config,
     _build_resources,
+    _configure_torghut_service_for_simulation,
     _dump_topics,
     _dump_sha256_for_replay,
     _file_sha256,
@@ -246,6 +247,89 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(headers.get('Content-Type'), 'text/plain')
         self.assertEqual(headers.get('X-ClickHouse-User'), 'torghut')
         self.assertEqual(headers.get('X-ClickHouse-Key'), 'secret')
+
+    def test_configure_torghut_service_preserves_existing_container_fields(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol='SASL_PLAINTEXT',
+            sasl_mechanism='SCRAM-SHA-512',
+            sasl_username='user',
+            sasl_password='secret',
+        )
+        service_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'image': 'registry.example/lab/torghut@sha256:abc',
+                                'volumeMounts': [{'name': 'strategy-config', 'mountPath': '/etc/torghut'}],
+                                'env': [
+                                    {'name': 'DB_DSN', 'value': 'postgresql://old'},
+                                    {'name': 'TRADING_MODE', 'value': 'live'},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        captured_patch: dict[str, object] = {}
+
+        with (
+            patch(
+                'scripts.start_historical_simulation._kubectl_json',
+                return_value=service_payload,
+            ),
+            patch(
+                'scripts.start_historical_simulation._kubectl_patch',
+                side_effect=lambda namespace, kind, name, patch: captured_patch.update(
+                    {'namespace': namespace, 'kind': kind, 'name': name, 'patch': patch}
+                ),
+            ),
+        ):
+            _configure_torghut_service_for_simulation(
+                resources=resources,
+                postgres_config=postgres_config,
+                kafka_config=kafka_config,
+            )
+
+        patch_payload = captured_patch.get('patch')
+        self.assertIsInstance(patch_payload, dict)
+        assert isinstance(patch_payload, dict)
+        containers = (
+            patch_payload.get('spec', {})
+            .get('template', {})
+            .get('spec', {})
+            .get('containers', [])
+        )
+        self.assertIsInstance(containers, list)
+        assert isinstance(containers, list)
+        self.assertEqual(len(containers), 1)
+        container = containers[0]
+        self.assertIsInstance(container, dict)
+        assert isinstance(container, dict)
+        self.assertEqual(
+            container.get('image'),
+            'registry.example/lab/torghut@sha256:abc',
+        )
+        self.assertEqual(
+            container.get('volumeMounts'),
+            [{'name': 'strategy-config', 'mountPath': '/etc/torghut'}],
+        )
 
     def test_offset_for_time_lookup_falls_back_for_missing_or_invalid_offset(self) -> None:
         class _OffsetMeta:

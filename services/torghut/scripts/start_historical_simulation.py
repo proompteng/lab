@@ -463,6 +463,25 @@ def _kservice_env(service: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]
     return container_name, env
 
 
+def _kservice_container_with_env(
+    service: Mapping[str, Any],
+    env_entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    spec = _as_mapping(service.get('spec'))
+    template = _as_mapping(spec.get('template'))
+    template_spec = _as_mapping(template.get('spec'))
+    containers = template_spec.get('containers')
+    if not isinstance(containers, list) or not containers:
+        raise RuntimeError('kservice container spec missing')
+    first = containers[0]
+    if not isinstance(first, Mapping):
+        raise RuntimeError('kservice container spec invalid')
+    container = _as_mapping(first)
+    updated = dict(container)
+    updated['env'] = list(env_entries)
+    return updated
+
+
 def _merge_env_entries(
     env: list[dict[str, Any]],
     updates: Mapping[str, Any],
@@ -818,7 +837,7 @@ def _configure_torghut_service_for_simulation(
         resources.namespace,
         ['get', 'kservice', resources.torghut_service, '-o', 'json'],
     )
-    container_name, current_env = _kservice_env(service)
+    _, current_env = _kservice_env(service)
 
     updates = {
         'DB_DSN': postgres_config.simulation_dsn,
@@ -841,6 +860,7 @@ def _configure_torghut_service_for_simulation(
         'TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS': kafka_config.bootstrap_servers,
     }
     merged_env = _merge_env_entries(current_env, updates)
+    patched_container = _kservice_container_with_env(service, merged_env)
     _kubectl_patch(
         resources.namespace,
         'kservice',
@@ -849,12 +869,7 @@ def _configure_torghut_service_for_simulation(
             'spec': {
                 'template': {
                     'spec': {
-                        'containers': [
-                            {
-                                'name': container_name,
-                                'env': merged_env,
-                            }
-                        ]
+                        'containers': [patched_container]
                     }
                 }
             }
@@ -886,7 +901,7 @@ def _restore_torghut_env(resources: SimulationResources, state: Mapping[str, Any
         resources.namespace,
         ['get', 'kservice', resources.torghut_service, '-o', 'json'],
     )
-    container_name, current_env = _kservice_env(service)
+    _, current_env = _kservice_env(service)
     snapshot = _as_mapping(state.get('torghut_env_snapshot'))
     merged = list(current_env)
     for key in TORGHUT_ENV_KEYS:
@@ -898,6 +913,7 @@ def _restore_torghut_env(resources: SimulationResources, state: Mapping[str, Any
         entry_map.pop('name', None)
         merged = _merge_env_entries(merged, {key: entry_map})
 
+    patched_container = _kservice_container_with_env(service, merged)
     _kubectl_patch(
         resources.namespace,
         'kservice',
@@ -906,12 +922,7 @@ def _restore_torghut_env(resources: SimulationResources, state: Mapping[str, Any
             'spec': {
                 'template': {
                     'spec': {
-                        'containers': [
-                            {
-                                'name': container_name,
-                                'env': merged,
-                            }
-                        ]
+                        'containers': [patched_container]
                     }
                 }
             }
