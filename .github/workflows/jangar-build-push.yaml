@@ -77,7 +77,11 @@ jobs:
         run: |
           set -euo pipefail
           PRUNE_DIR="${{ steps.prune.outputs.context }}"
-          bun install --cwd "$PRUNE_DIR" --frozen-lockfile --ignore-scripts --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk --filter @proompteng/jangar
+          # turbo prune --docker emits package manifests into full/json (not the prune root).
+          if [ -f "$PRUNE_DIR/bun.lock" ]; then
+            cp "$PRUNE_DIR/bun.lock" "$PRUNE_DIR/full/bun.lock"
+          fi
+          bun install --cwd "$PRUNE_DIR/full" --ignore-scripts --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk --filter @proompteng/jangar
           timeout 20m bun --cwd "$PRUNE_DIR/full/services/jangar" --bun vite build --logLevel warn
           bun --cwd "$PRUNE_DIR/full/services/jangar" run copy:grpc-proto
 
