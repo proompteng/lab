@@ -126,13 +126,21 @@ Finding:
 
 Status: Complete
 
-1. Added explicit prebuild step before prune:
-   - builds `@proompteng/otel` and `@proompteng/temporal-bun-sdk`
-   - runs `bun --cwd services/jangar --bun vite build --logLevel warn`
-   - runs `bun --cwd services/jangar run copy:grpc-proto`
-2. Copies prebuilt `services/jangar/.output` into pruned context (`$PRUNE_DIR/full/services/jangar/.output`).
+1. Added explicit prebuild step against the pruned context:
+   - runs `bun install` in `$PRUNE_DIR` for required workspaces
+   - runs `bun --cwd "$PRUNE_DIR/full/services/jangar" --bun vite build --logLevel warn`
+   - runs `bun --cwd "$PRUNE_DIR/full/services/jangar" run copy:grpc-proto`
+   - wraps Vite prebuild with `timeout 20m` to fail fast on rare transform stalls.
+2. Prebuilt `.output` now remains in the pruned context directly (no copy from repository workspace needed).
 3. Removed remote cache export/import env from control-plane build step (it can reuse local builder cache from prior step in the same job).
 4. Renamed unignored route test file to `-search.test.tsx`.
+
+### E6: CI validation adjustment (workflow-dispatch on PR branch)
+
+Status: In progress
+
+- First validation run (`22511412766`) showed the original prebuild implementation (running from full repo context) taking unexpectedly long in CI.
+- Workflow was adjusted to prebuild from the pruned context instead, then rerun.
 
 ## Internet Research (Primary Sources)
 

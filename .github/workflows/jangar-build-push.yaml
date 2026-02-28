@@ -49,20 +49,6 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts --filter @proompteng/jangar
 
-      - name: Prebuild jangar output
-        shell: bash
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-          CI: 'true'
-          JANGAR_BUILD_MINIFY: '0'
-          JANGAR_BUILD_SOURCEMAP: '0'
-        run: |
-          set -euo pipefail
-          bun run --filter @proompteng/otel build
-          bun run --filter @proompteng/temporal-bun-sdk build
-          bun --cwd services/jangar --bun vite build --logLevel warn
-          bun --cwd services/jangar run copy:grpc-proto
-
       - name: Prepare pruned build context
         id: prune
         shell: bash
@@ -79,11 +65,21 @@ jobs:
             cp -R services/jangar/agentctl "$PRUNE_DIR/full/services/jangar/agentctl"
             cp -R services/jangar/agentctl "$PRUNE_DIR/json/services/jangar/agentctl"
           fi
-          if [ -d services/jangar/.output ]; then
-            mkdir -p "$PRUNE_DIR/full/services/jangar"
-            cp -R services/jangar/.output "$PRUNE_DIR/full/services/jangar/.output"
-          fi
           echo "context=$PRUNE_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Prebuild jangar output (pruned context)
+        shell: bash
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          CI: 'true'
+          JANGAR_BUILD_MINIFY: '0'
+          JANGAR_BUILD_SOURCEMAP: '0'
+        run: |
+          set -euo pipefail
+          PRUNE_DIR="${{ steps.prune.outputs.context }}"
+          bun install --cwd "$PRUNE_DIR" --frozen-lockfile --ignore-scripts --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk --filter @proompteng/jangar
+          timeout 20m bun --cwd "$PRUNE_DIR/full/services/jangar" --bun vite build --logLevel warn
+          bun --cwd "$PRUNE_DIR/full/services/jangar" run copy:grpc-proto
 
       - name: Build and push jangar image
         env:
