@@ -1,0 +1,13 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: stats
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`stats.huly.proompteng.ai`)
+      kind: Rule
+      services:
+        - name: stats
+          port: 80

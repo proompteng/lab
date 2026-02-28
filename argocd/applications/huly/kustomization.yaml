@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: huly
+resources:
+  - account/account-deployment.yaml
+  - account/account-ingress.yaml
+  - account/account-service.yaml
+  - cockroach/cockroach-deployment.yaml
+  - cockroach/cockroach-persistentvolumeclaim.yaml
+  - cockroach/cockroach-service.yaml
+  - collaborator/collaborator-deployment.yaml
+  - collaborator/collaborator-ingress.yaml
+  - collaborator/collaborator-service.yaml
+  - config/config.yaml
+  - config/secret.yaml
+  - elastic/elastic-deployment.yaml
+  - elastic/elastic-persistentvolumeclaim.yaml
+  - elastic/elastic-service.yaml
+  - front/front-deployment.yaml
+  - front/front-ingress.yaml
+  - front/front-service.yaml
+  - fulltext/fulltext-deployment.yaml
+  - fulltext/fulltext-service.yaml
+  - rekoni/rekoni-deployment.yaml
+  - rekoni/rekoni-ingress.yaml
+  - rekoni/rekoni-service.yaml
+  - stats/stats-deployment.yaml
+  - stats/stats-ingress.yaml
+  - stats/stats-service.yaml
+  - transactor/transactor-deployment.yaml
+  - transactor/transactor-ingress.yaml
+  - transactor/transactor-service.yaml
+  - workspace/workspace-deployment.yaml
