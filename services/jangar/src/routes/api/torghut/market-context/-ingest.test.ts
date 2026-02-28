@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const ingestMarketContextProviderResult = vi.fn()
 const isMarketContextIngestAuthorized = vi.fn()
 const recordTorghutMarketContextIngestRequest = vi.fn()
+const recordTorghutMarketContextRunEvent = vi.fn()
 
 vi.mock('~/server/torghut-market-context-agents', () => ({
   ingestMarketContextProviderResult,
@@ -11,6 +12,7 @@ vi.mock('~/server/torghut-market-context-agents', () => ({
 
 vi.mock('~/server/metrics', () => ({
   recordTorghutMarketContextIngestRequest,
+  recordTorghutMarketContextRunEvent,
 }))
 
 describe('postMarketContextIngestHandler', () => {
@@ -18,6 +20,7 @@ describe('postMarketContextIngestHandler', () => {
     ingestMarketContextProviderResult.mockReset()
     isMarketContextIngestAuthorized.mockReset()
     recordTorghutMarketContextIngestRequest.mockReset()
+    recordTorghutMarketContextRunEvent.mockReset()
   })
 
   it('returns 401 when ingest auth fails', async () => {
@@ -34,6 +37,7 @@ describe('postMarketContextIngestHandler', () => {
     expect(response.status).toBe(401)
     expect(ingestMarketContextProviderResult).not.toHaveBeenCalled()
     expect(recordTorghutMarketContextIngestRequest).toHaveBeenCalledWith({ outcome: 'unauthorized' })
+    expect(recordTorghutMarketContextRunEvent).toHaveBeenCalledWith({ endpoint: 'finalize', outcome: 'unauthorized' })
   })
 
   it('returns 400 when payload is invalid json object', async () => {
@@ -52,9 +56,13 @@ describe('postMarketContextIngestHandler', () => {
     expect(body.ok).toBe(false)
     expect(body.message).toContain('invalid JSON payload')
     expect(recordTorghutMarketContextIngestRequest).toHaveBeenCalledWith({ outcome: 'invalid_payload' })
+    expect(recordTorghutMarketContextRunEvent).toHaveBeenCalledWith({
+      endpoint: 'finalize',
+      outcome: 'invalid_payload',
+    })
   })
 
-  it('returns 202 and persisted payload on success', async () => {
+  it('returns 200 and persisted payload on success', async () => {
     isMarketContextIngestAuthorized.mockResolvedValueOnce(true)
     ingestMarketContextProviderResult.mockResolvedValueOnce({
       ok: true,
@@ -80,7 +88,7 @@ describe('postMarketContextIngestHandler', () => {
       }),
     )
 
-    expect(response.status).toBe(202)
+    expect(response.status).toBe(200)
     expect(ingestMarketContextProviderResult).toHaveBeenCalledWith({
       symbol: 'AAPL',
       domain: 'news',
@@ -93,6 +101,11 @@ describe('postMarketContextIngestHandler', () => {
       outcome: 'accepted',
       domain: 'news',
       runStatus: 'succeeded',
+    })
+    expect(recordTorghutMarketContextRunEvent).toHaveBeenCalledWith({
+      endpoint: 'finalize',
+      outcome: 'accepted',
+      domain: 'news',
     })
   })
 
@@ -111,6 +124,11 @@ describe('postMarketContextIngestHandler', () => {
     expect(response.status).toBe(400)
     expect(recordTorghutMarketContextIngestRequest).toHaveBeenCalledWith({
       outcome: 'ingest_error',
+      domain: 'news',
+    })
+    expect(recordTorghutMarketContextRunEvent).toHaveBeenCalledWith({
+      endpoint: 'finalize',
+      outcome: 'error',
       domain: 'news',
     })
   })

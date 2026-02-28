@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { request as httpsRequest } from 'node:https'
 
@@ -79,6 +79,68 @@ type IngestPayload = {
   runStatus?: unknown
   error?: unknown
   requestId?: unknown
+  metadata?: unknown
+}
+
+type RunStartPayload = {
+  requestId?: unknown
+  symbol?: unknown
+  domain?: unknown
+  runName?: unknown
+  reason?: unknown
+  provider?: unknown
+  metadata?: unknown
+}
+
+type RunProgressPayload = {
+  requestId?: unknown
+  seq?: unknown
+  status?: unknown
+  message?: unknown
+  metadata?: unknown
+}
+
+type RunEvidenceItem = {
+  source: string
+  publishedAt: string | null
+  url: string | null
+  headline: string | null
+  summary: string | null
+  sentiment: string | null
+  payload: Record<string, unknown>
+}
+
+type RunEvidencePayload = {
+  requestId?: unknown
+  seq?: unknown
+  symbol?: unknown
+  domain?: unknown
+  evidence?: unknown
+  items?: unknown
+  metadata?: unknown
+}
+
+type MarketContextRunStatusPayload = {
+  ok: true
+  requestId: string
+  symbol: string
+  domain: MarketContextProviderDomain
+  runName: string | null
+  provider: string
+  reason: string | null
+  status: string
+  metadata: Record<string, unknown>
+  error: string | null
+  startedAt: string
+  lastHeartbeatAt: string | null
+  finishedAt: string | null
+  updatedAt: string
+  events: Array<{
+    seq: number
+    eventType: string
+    payload: Record<string, unknown>
+    createdAt: string
+  }>
 }
 
 const DEFAULT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS = 24 * 60 * 60
@@ -89,6 +151,9 @@ const DEFAULT_FUNDAMENTALS_DISPATCH_STUCK_SECONDS = 45 * 60
 const DEFAULT_NEWS_DISPATCH_STUCK_SECONDS = 10 * 60
 const DEFAULT_AGENT_RUN_TTL_SECONDS = 30 * 60
 const DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX = 'system:serviceaccount:agents:'
+const DEFAULT_AGENT_REPOSITORY = 'proompteng/lab'
+const DEFAULT_AGENT_BASE_REF = 'main'
+const DEFAULT_AGENT_HEAD_PREFIX = 'codex/torghut-market-context'
 const IN_CLUSTER_SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 const IN_CLUSTER_SERVICE_ACCOUNT_CA_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
 
@@ -105,6 +170,15 @@ const parsePositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(value, 10)
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback
   return parsed
+}
+
+type AgentRunVcsMode = 'read-write' | 'read-only' | 'none'
+
+const parseVcsMode = (value: string | undefined, fallback: AgentRunVcsMode): AgentRunVcsMode => {
+  if (!value) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'read-write' || normalized === 'read-only' || normalized === 'none') return normalized
+  return fallback
 }
 
 const parseTimestamp = (value: unknown): Date | null => {
@@ -128,6 +202,19 @@ const parseNumber = (value: unknown): number | null => {
   return null
 }
 
+const parseNonEmptyString = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+const parseSeq = (value: unknown): number | null => {
+  const parsed = parseNumber(value)
+  if (parsed === null) return null
+  if (!Number.isInteger(parsed) || parsed < 0) return null
+  return parsed
+}
+
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
 const toIso = (value: Date) => value.toISOString()
 
@@ -142,6 +229,31 @@ const coercePayload = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return value as Record<string, unknown>
 }
+
+const createEvidenceDigest = (params: {
+  domain: MarketContextProviderDomain
+  source: string
+  publishedAt: string | null
+  url: string | null
+  headline: string | null
+  summary: string | null
+  sentiment: string | null
+  payload: Record<string, unknown>
+}) =>
+  createHash('sha256')
+    .update(
+      JSON.stringify({
+        domain: params.domain,
+        source: params.source,
+        publishedAt: params.publishedAt,
+        url: params.url,
+        headline: params.headline,
+        summary: params.summary,
+        sentiment: params.sentiment,
+        payload: params.payload,
+      }),
+    )
+    .digest('hex')
 
 const coerceCitations = (value: unknown): MarketContextProviderCitation[] => {
   if (!Array.isArray(value)) return []
@@ -161,6 +273,29 @@ const coerceCitations = (value: unknown): MarketContextProviderCitation[] => {
   return citations
 }
 
+const coerceEvidenceItems = (value: unknown): RunEvidenceItem[] => {
+  if (!Array.isArray(value)) return []
+  const items: RunEvidenceItem[] = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+    const row = item as Record<string, unknown>
+    const source = parseNonEmptyString(row.source)
+    if (!source) continue
+    const publishedAtTimestamp = parseTimestamp(row.publishedAt)
+    const publishedAt = publishedAtTimestamp ? toIso(publishedAtTimestamp) : null
+    items.push({
+      source,
+      publishedAt,
+      url: parseNonEmptyString(row.url),
+      headline: parseNonEmptyString(row.headline ?? row.title),
+      summary: parseNonEmptyString(row.summary),
+      sentiment: parseNonEmptyString(row.sentiment),
+      payload: coercePayload(row.payload),
+    })
+  }
+  return items
+}
+
 const KUBERNETES_LABEL_MAX_LENGTH = 63
 const toKubernetesLabelValue = (raw: string, fallback = 'unknown') => {
   const normalized = raw
@@ -173,10 +308,42 @@ const toKubernetesLabelValue = (raw: string, fallback = 'unknown') => {
   return truncated || fallback
 }
 
+const toGitBranchSegment = (raw: string, fallback = 'unknown') => {
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, '-')
+    .replace(/^[^a-z0-9]+/, '')
+    .replace(/[^a-z0-9]+$/, '')
+  if (!normalized) return fallback
+  return normalized.slice(0, 40).replace(/[^a-z0-9]+$/, '') || fallback
+}
+
+export const buildMarketContextHeadRef = (params: {
+  prefix: string
+  domain: MarketContextProviderDomain
+  symbol: string
+  now: Date
+}) => {
+  const prefix = params.prefix.trim().replace(/\/+$/, '') || DEFAULT_AGENT_HEAD_PREFIX
+  const symbol = toGitBranchSegment(params.symbol, 'symbol')
+  const timestamp = params.now
+    .toISOString()
+    .replace(/[-:TZ.]/g, '')
+    .slice(0, 14)
+  const entropy = randomUUID().slice(0, 8)
+  return `${prefix}/${params.domain}-${symbol}-${timestamp}-${entropy}`
+}
+
 const resolveSettings = () => {
   const callbackBaseUrl =
     process.env.JANGAR_MARKET_CONTEXT_AGENT_CALLBACK_BASE_URL?.trim() || 'http://jangar.jangar.svc.cluster.local'
   const callbackIngestUrl = `${callbackBaseUrl.replace(/\/+$/, '')}/api/torghut/market-context/ingest`
+  const vcsMode = parseVcsMode(process.env.JANGAR_MARKET_CONTEXT_AGENT_VCS_MODE, 'none')
+  const vcsRefName = process.env.JANGAR_MARKET_CONTEXT_AGENT_VCS_REF_NAME?.trim() || ''
+  const vcsRepository = process.env.JANGAR_MARKET_CONTEXT_AGENT_REPOSITORY?.trim() || DEFAULT_AGENT_REPOSITORY
+  const vcsBaseRef = process.env.JANGAR_MARKET_CONTEXT_AGENT_VCS_BASE_REF?.trim() || DEFAULT_AGENT_BASE_REF
+  const vcsHeadPrefix = process.env.JANGAR_MARKET_CONTEXT_AGENT_VCS_HEAD_PREFIX?.trim() || DEFAULT_AGENT_HEAD_PREFIX
   return {
     dispatchEnabled: parseBoolean(process.env.JANGAR_MARKET_CONTEXT_AGENT_DISPATCH_ENABLED, true),
     dispatchNamespace: process.env.JANGAR_MARKET_CONTEXT_AGENT_NAMESPACE?.trim() || 'agents',
@@ -219,6 +386,12 @@ const resolveSettings = () => {
       process.env.JANGAR_MARKET_CONTEXT_AGENT_TTL_SECONDS,
       DEFAULT_AGENT_RUN_TTL_SECONDS,
     ),
+    vcsMode,
+    vcsRequired: parseBoolean(process.env.JANGAR_MARKET_CONTEXT_AGENT_VCS_REQUIRED, true),
+    vcsRefName,
+    vcsRepository,
+    vcsBaseRef,
+    vcsHeadPrefix,
   }
 }
 
@@ -278,6 +451,19 @@ const resolveDbWithMigrations = async () => {
   if (!db) return null
   await ensureMigrations(db)
   return db
+}
+
+type MarketContextDb = NonNullable<Awaited<ReturnType<typeof resolveDbWithMigrations>>>
+
+const executeDbTransaction = async <T>(db: MarketContextDb | null, callback: (trx: MarketContextDb) => Promise<T>) => {
+  if (!db) throw new Error('DATABASE_URL is not configured')
+  if (
+    typeof (db as { transaction?: () => { execute: (fn: (trx: MarketContextDb) => Promise<T>) => Promise<T> } })
+      .transaction === 'function'
+  ) {
+    return db.transaction().execute((trx) => callback(trx))
+  }
+  return callback(db)
 }
 
 const readLatestSnapshot = async (params: {
@@ -469,6 +655,43 @@ const dispatchDomainAgentRun = async (params: {
 
   const windowBucket = Math.floor(params.now.getTime() / (cooldownSeconds * 1000))
   const idempotencyKey = `torghut-market-context:${params.domain}:${params.symbol}:${windowBucket}`
+  const requestId = randomUUID()
+  const runParameters: Record<string, unknown> = {
+    symbol: params.symbol,
+    domain: params.domain,
+    asOfUtc: toIso(params.now),
+    reason: params.reason,
+    callbackUrl: settings.callbackIngestUrl,
+    requestId,
+  }
+
+  const runSpec: Record<string, unknown> = {
+    agentRef: { name: resolveAgentName(params.domain, settings) },
+    implementationSpecRef: { name: resolveImplementationSpec(params.domain, settings) },
+    parameters: runParameters,
+    runtime: buildMarketContextAgentRunRuntime({
+      runtimeType: settings.runtimeType,
+      runtimeServiceAccount: settings.runtimeServiceAccount,
+    }),
+    ttlSecondsAfterFinished: settings.agentRunTtlSeconds,
+    idempotencyKey,
+  }
+
+  if (settings.vcsMode !== 'none' && settings.vcsRefName && settings.vcsRepository) {
+    runParameters.repository = settings.vcsRepository
+    runParameters.base = settings.vcsBaseRef
+    runParameters.head = buildMarketContextHeadRef({
+      prefix: settings.vcsHeadPrefix,
+      domain: params.domain,
+      symbol: params.symbol,
+      now: params.now,
+    })
+    runSpec.vcsRef = { name: settings.vcsRefName }
+    runSpec.vcsPolicy = {
+      required: settings.vcsRequired,
+      mode: settings.vcsMode,
+    }
+  }
 
   const resource: Record<string, unknown> = {
     apiVersion: 'agents.proompteng.ai/v1alpha1',
@@ -482,24 +705,7 @@ const dispatchDomainAgentRun = async (params: {
         'jangar.proompteng.ai/source': 'torghut-market-context',
       },
     },
-    spec: {
-      agentRef: { name: resolveAgentName(params.domain, settings) },
-      implementationSpecRef: { name: resolveImplementationSpec(params.domain, settings) },
-      parameters: {
-        symbol: params.symbol,
-        domain: params.domain,
-        asOfUtc: toIso(params.now),
-        reason: params.reason,
-        callbackUrl: settings.callbackIngestUrl,
-        requestId: randomUUID(),
-      },
-      runtime: buildMarketContextAgentRunRuntime({
-        runtimeType: settings.runtimeType,
-        runtimeServiceAccount: settings.runtimeServiceAccount,
-      }),
-      ttlSecondsAfterFinished: settings.agentRunTtlSeconds,
-      idempotencyKey,
-    },
+    spec: runSpec,
   }
 
   try {
@@ -712,6 +918,435 @@ const coerceRunStatus = (value: unknown): 'succeeded' | 'failed' | 'submitted' |
 const coerceSourceCount = (value: unknown) => Math.max(0, Math.trunc(parseNumber(value) ?? 0))
 const coerceQualityScore = (value: unknown) => clamp01(parseNumber(value) ?? 0)
 
+const coerceLifecycleStatus = (value: unknown, fallback: string) => {
+  if (typeof value !== 'string') return fallback
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return fallback
+  if (normalized === 'started') return 'started'
+  if (normalized === 'running' || normalized === 'in_progress' || normalized === 'progress') return 'running'
+  if (normalized === 'submitted' || normalized === 'queued') return 'submitted'
+  if (normalized === 'succeeded' || normalized === 'success' || normalized === 'ok') return 'succeeded'
+  if (normalized === 'failed' || normalized === 'error') return 'failed'
+  if (normalized === 'partial') return 'partial'
+  if (normalized === 'cancelled' || normalized === 'canceled') return 'cancelled'
+  return fallback
+}
+
+const isLifecycleStatusTerminal = (status: string) =>
+  status === 'succeeded' || status === 'failed' || status === 'partial' || status === 'cancelled'
+
+const parseRunIdentifier = (value: unknown) => {
+  const requestId = parseNonEmptyString(value)
+  if (!requestId) throw new Error('requestId is required')
+  return requestId
+}
+
+const loadRunContext = async (params: { requestId: string }) => {
+  const db = await resolveDbWithMigrations()
+  if (!db) throw new Error('DATABASE_URL is not configured')
+
+  const row = await sql<{
+    request_id: string
+    symbol: string
+    domain: string
+    status: string
+  }>`
+    SELECT request_id, symbol, domain, status
+    FROM torghut_market_context_runs
+    WHERE request_id = ${params.requestId}
+    LIMIT 1
+  `.execute(db)
+
+  const run = row.rows[0]
+  if (!run) throw new Error(`run not found for requestId ${params.requestId}`)
+  const domain = asDomain(run.domain)
+  if (!domain) throw new Error(`run domain is invalid for requestId ${params.requestId}`)
+  return {
+    db,
+    symbol: run.symbol,
+    domain,
+    status: run.status,
+  }
+}
+
+const insertRunEvent = async (params: {
+  db: MarketContextDb
+  requestId: string
+  seq: number
+  eventType: string
+  payload: Record<string, unknown>
+}) => {
+  const result = await sql<{ request_id: string }>`
+    INSERT INTO torghut_market_context_run_events (
+      request_id,
+      seq,
+      event_type,
+      payload,
+      created_at
+    )
+    VALUES (
+      ${params.requestId},
+      ${params.seq},
+      ${params.eventType},
+      ${params.payload},
+      now()
+    )
+    ON CONFLICT (request_id, seq) DO NOTHING
+    RETURNING request_id;
+  `.execute(params.db)
+
+  return result.rows.length > 0
+}
+
+const upsertRunLifecycle = async (params: {
+  db: MarketContextDb
+  requestId: string
+  symbol: string
+  domain: MarketContextProviderDomain
+  runName: string | null
+  provider: string
+  reason: string | null
+  status: string
+  error: string | null
+  metadata: Record<string, unknown>
+  now: Date
+}) => {
+  const finishedAt = isLifecycleStatusTerminal(params.status) ? params.now : null
+  await sql`
+    INSERT INTO torghut_market_context_runs (
+      request_id,
+      symbol,
+      domain,
+      run_name,
+      provider,
+      reason,
+      status,
+      metadata,
+      error,
+      started_at,
+      last_heartbeat_at,
+      finished_at,
+      updated_at
+    )
+    VALUES (
+      ${params.requestId},
+      ${params.symbol},
+      ${params.domain},
+      ${params.runName},
+      ${params.provider},
+      ${params.reason},
+      ${params.status},
+      ${params.metadata},
+      ${params.error},
+      ${params.now},
+      ${params.now},
+      ${finishedAt},
+      ${params.now}
+    )
+    ON CONFLICT (request_id) DO UPDATE
+      SET
+        symbol = EXCLUDED.symbol,
+        domain = EXCLUDED.domain,
+        run_name = COALESCE(EXCLUDED.run_name, torghut_market_context_runs.run_name),
+        provider = COALESCE(EXCLUDED.provider, torghut_market_context_runs.provider),
+        reason = COALESCE(EXCLUDED.reason, torghut_market_context_runs.reason),
+        status = EXCLUDED.status,
+        metadata = torghut_market_context_runs.metadata || EXCLUDED.metadata,
+        error = EXCLUDED.error,
+        last_heartbeat_at = EXCLUDED.last_heartbeat_at,
+        finished_at = COALESCE(EXCLUDED.finished_at, torghut_market_context_runs.finished_at),
+        updated_at = EXCLUDED.updated_at;
+  `.execute(params.db)
+}
+
+export const startMarketContextProviderRun = async (input: RunStartPayload) => {
+  const db = await resolveDbWithMigrations()
+  if (!db) throw new Error('DATABASE_URL is not configured')
+
+  const domain = asDomain(input.domain)
+  if (!domain) throw new Error('domain must be fundamentals or news')
+  const symbol = normalizeTorghutSymbol(parseNonEmptyString(input.symbol) ?? '')
+  if (!symbol) throw new Error('symbol is required')
+  const requestId = parseNonEmptyString(input.requestId) ?? randomUUID()
+  const runName = parseNonEmptyString(input.runName)
+  const provider = parseNonEmptyString(input.provider) ?? 'codex-spark'
+  const reason = parseNonEmptyString(input.reason)
+  const metadata = coercePayload(input.metadata)
+  const status = coerceLifecycleStatus('started', 'started')
+  const now = new Date()
+
+  await upsertRunLifecycle({
+    db,
+    requestId,
+    symbol,
+    domain,
+    runName,
+    provider,
+    reason,
+    status,
+    error: null,
+    metadata,
+    now,
+  })
+
+  const seq = parseSeq((input as { seq?: unknown }).seq) ?? 0
+  await insertRunEvent({
+    db,
+    requestId,
+    seq,
+    eventType: 'start',
+    payload: {
+      symbol,
+      domain,
+      runName,
+      reason,
+      provider,
+      metadata,
+    },
+  })
+
+  return {
+    ok: true as const,
+    requestId,
+    symbol,
+    domain,
+    status,
+  }
+}
+
+export const recordMarketContextProviderRunProgress = async (input: RunProgressPayload) => {
+  const requestId = parseRunIdentifier(input.requestId)
+  const seq = parseSeq(input.seq)
+  if (seq === null) throw new Error('seq must be a non-negative integer')
+  const status = coerceLifecycleStatus(input.status, 'running')
+  const message = parseNonEmptyString(input.message)
+  const metadata = coercePayload(input.metadata)
+  const now = new Date()
+
+  const context = await loadRunContext({ requestId })
+  const runError = status === 'failed' ? message : null
+  const finishedAt = isLifecycleStatusTerminal(status) ? now : null
+
+  await sql`
+    UPDATE torghut_market_context_runs
+    SET
+      status = ${status},
+      metadata = torghut_market_context_runs.metadata || ${metadata},
+      error = ${runError},
+      last_heartbeat_at = ${now},
+      finished_at = ${finishedAt},
+      updated_at = ${now}
+    WHERE request_id = ${requestId};
+  `.execute(context.db)
+
+  const inserted = await insertRunEvent({
+    db: context.db,
+    requestId,
+    seq,
+    eventType: 'progress',
+    payload: {
+      status,
+      message,
+      metadata,
+    },
+  })
+
+  return {
+    ok: true as const,
+    requestId,
+    symbol: context.symbol,
+    domain: context.domain,
+    status,
+    inserted,
+  }
+}
+
+export const recordMarketContextProviderEvidence = async (input: RunEvidencePayload) => {
+  const requestId = parseRunIdentifier(input.requestId)
+  const seq = parseSeq(input.seq)
+  if (seq === null) throw new Error('seq must be a non-negative integer')
+  const metadata = coercePayload(input.metadata)
+  const evidence = coerceEvidenceItems(input.evidence ?? input.items)
+  if (evidence.length === 0) throw new Error('evidence items are required')
+
+  const context = await loadRunContext({ requestId })
+  const symbol = normalizeTorghutSymbol(parseNonEmptyString(input.symbol) ?? context.symbol)
+  if (!symbol) throw new Error('symbol is required')
+  const payloadDomain = asDomain(input.domain)
+  const domain = payloadDomain ?? context.domain
+  if (!domain) throw new Error('domain must be fundamentals or news')
+  const now = new Date()
+
+  await sql`
+    UPDATE torghut_market_context_runs
+    SET
+      status = 'running',
+      metadata = torghut_market_context_runs.metadata || ${metadata},
+      last_heartbeat_at = ${now},
+      updated_at = ${now}
+    WHERE request_id = ${requestId};
+  `.execute(context.db)
+
+  let insertedEvidence = 0
+  for (const item of evidence) {
+    const digest = createEvidenceDigest({
+      domain,
+      source: item.source,
+      publishedAt: item.publishedAt,
+      url: item.url,
+      headline: item.headline,
+      summary: item.summary,
+      sentiment: item.sentiment,
+      payload: item.payload,
+    })
+    const inserted = await sql<{ id: string }>`
+      INSERT INTO torghut_market_context_evidence (
+        request_id,
+        symbol,
+        domain,
+        seq,
+        source,
+        published_at,
+        url,
+        headline,
+        summary,
+        sentiment,
+        payload,
+        digest,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        ${requestId},
+        ${symbol},
+        ${domain},
+        ${seq},
+        ${item.source},
+        ${item.publishedAt ? new Date(item.publishedAt) : null},
+        ${item.url},
+        ${item.headline},
+        ${item.summary},
+        ${item.sentiment},
+        ${item.payload},
+        ${digest},
+        ${now},
+        ${now}
+      )
+      ON CONFLICT (request_id, digest) DO NOTHING
+      RETURNING id;
+    `.execute(context.db)
+    if (inserted.rows.length > 0) insertedEvidence += 1
+  }
+
+  const eventInserted = await insertRunEvent({
+    db: context.db,
+    requestId,
+    seq,
+    eventType: 'evidence',
+    payload: {
+      evidenceCount: evidence.length,
+      insertedEvidence,
+      metadata,
+    },
+  })
+
+  return {
+    ok: true as const,
+    requestId,
+    symbol,
+    domain,
+    evidenceCount: evidence.length,
+    insertedEvidence,
+    inserted: eventInserted,
+  }
+}
+
+export const getMarketContextProviderRunStatus = async (
+  requestIdInput: string,
+): Promise<MarketContextRunStatusPayload> => {
+  const requestId = parseRunIdentifier(requestIdInput)
+  const db = await resolveDbWithMigrations()
+  if (!db) throw new Error('DATABASE_URL is not configured')
+
+  const runResult = await sql<{
+    request_id: string
+    symbol: string
+    domain: string
+    run_name: string | null
+    provider: string
+    reason: string | null
+    status: string
+    metadata: unknown
+    error: string | null
+    started_at: Date
+    last_heartbeat_at: Date | null
+    finished_at: Date | null
+    updated_at: Date
+  }>`
+    SELECT
+      request_id,
+      symbol,
+      domain,
+      run_name,
+      provider,
+      reason,
+      status,
+      metadata,
+      error,
+      started_at,
+      last_heartbeat_at,
+      finished_at,
+      updated_at
+    FROM torghut_market_context_runs
+    WHERE request_id = ${requestId}
+    LIMIT 1;
+  `.execute(db)
+
+  const run = runResult.rows[0]
+  if (!run) throw new Error(`run not found for requestId ${requestId}`)
+  const domain = asDomain(run.domain)
+  if (!domain) throw new Error(`run domain is invalid for requestId ${requestId}`)
+
+  const eventsResult = await sql<{
+    seq: number
+    event_type: string
+    payload: unknown
+    created_at: Date
+  }>`
+    SELECT seq, event_type, payload, created_at
+    FROM torghut_market_context_run_events
+    WHERE request_id = ${requestId}
+    ORDER BY seq DESC, created_at DESC
+    LIMIT 100;
+  `.execute(db)
+
+  return {
+    ok: true,
+    requestId,
+    symbol: run.symbol,
+    domain,
+    runName: run.run_name,
+    provider: run.provider,
+    reason: run.reason,
+    status: run.status,
+    metadata: coercePayload(run.metadata),
+    error: run.error,
+    startedAt: toIso(run.started_at),
+    lastHeartbeatAt: run.last_heartbeat_at ? toIso(run.last_heartbeat_at) : null,
+    finishedAt: run.finished_at ? toIso(run.finished_at) : null,
+    updatedAt: toIso(run.updated_at),
+    events: eventsResult.rows
+      .slice()
+      .reverse()
+      .map((event) => ({
+        seq: event.seq,
+        eventType: event.event_type,
+        payload: coercePayload(event.payload),
+        createdAt: toIso(event.created_at),
+      })),
+  }
+}
+
 export const ingestMarketContextProviderResult = async (input: IngestPayload) => {
   const db = await resolveDbWithMigrations()
   if (!db) throw new Error('DATABASE_URL is not configured')
@@ -728,71 +1363,140 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
   const qualityScore = coerceQualityScore(input.qualityScore)
   const payload = coercePayload(input.payload ?? input.context)
   const citations = coerceCitations(input.citations)
+  const citationsValue = sql`${JSON.stringify(citations)}::jsonb` as unknown as MarketContextProviderCitation[]
   const riskFlags = coerceRiskFlags(input.riskFlags)
   const provider =
     typeof input.provider === 'string' && input.provider.trim().length > 0 ? input.provider.trim() : 'codex-spark'
   const runName = typeof input.runName === 'string' && input.runName.trim().length > 0 ? input.runName.trim() : null
   const runStatus = coerceRunStatus(input.runStatus)
+  const lifecycleStatus = coerceLifecycleStatus(input.runStatus, runStatus)
   const runError = typeof input.error === 'string' && input.error.trim().length > 0 ? input.error.trim() : null
+  const requestId = parseNonEmptyString(input.requestId) ?? randomUUID()
+  const metadata = coercePayload(input.metadata)
   const now = new Date()
 
   const shouldPersistSnapshot = runStatus === 'succeeded' || runStatus === 'partial'
-  if (shouldPersistSnapshot) {
-    await db
-      .insertInto('torghut_market_context_snapshots')
+
+  await executeDbTransaction(db, async (trx) => {
+    if (shouldPersistSnapshot) {
+      await trx
+        .insertInto('torghut_market_context_snapshots')
+        .values({
+          symbol,
+          domain,
+          as_of: asOf,
+          source_count: sourceCount,
+          quality_score: qualityScore,
+          payload,
+          citations: citationsValue,
+          risk_flags: riskFlags,
+          provider,
+          run_name: runName,
+          updated_at: now,
+        })
+        .onConflict((conflict) =>
+          conflict
+            .columns(['symbol', 'domain'])
+            .doUpdateSet({
+              as_of: asOf,
+              source_count: sourceCount,
+              quality_score: qualityScore,
+              payload,
+              citations: citationsValue,
+              risk_flags: riskFlags,
+              provider,
+              run_name: runName,
+              updated_at: now,
+            })
+            .where('torghut_market_context_snapshots.as_of', '<=', asOf),
+        )
+        .execute()
+    }
+
+    await trx
+      .insertInto('torghut_market_context_dispatch_state')
       .values({
         symbol,
         domain,
-        as_of: asOf,
-        source_count: sourceCount,
-        quality_score: qualityScore,
-        payload,
-        citations,
-        risk_flags: riskFlags,
-        provider,
-        run_name: runName,
-        updated_at: now,
-      })
-      .onConflict((conflict) =>
-        conflict
-          .columns(['symbol', 'domain'])
-          .doUpdateSet({
-            as_of: asOf,
-            source_count: sourceCount,
-            quality_score: qualityScore,
-            payload,
-            citations,
-            risk_flags: riskFlags,
-            provider,
-            run_name: runName,
-            updated_at: now,
-          })
-          .where('torghut_market_context_snapshots.as_of', '<=', asOf),
-      )
-      .execute()
-  }
-
-  await db
-    .insertInto('torghut_market_context_dispatch_state')
-    .values({
-      symbol,
-      domain,
-      last_dispatched_at: now,
-      last_run_name: runName,
-      last_status: runStatus,
-      last_error: runError,
-      updated_at: now,
-    })
-    .onConflict((conflict) =>
-      conflict.columns(['symbol', 'domain']).doUpdateSet({
         last_dispatched_at: now,
         last_run_name: runName,
         last_status: runStatus,
         last_error: runError,
         updated_at: now,
-      }),
-    )
-    .execute()
+      })
+      .onConflict((conflict) =>
+        conflict.columns(['symbol', 'domain']).doUpdateSet({
+          last_dispatched_at: now,
+          last_run_name: runName,
+          last_status: runStatus,
+          last_error: runError,
+          updated_at: now,
+        }),
+      )
+      .execute()
+
+    const finishedAt = isLifecycleStatusTerminal(lifecycleStatus) ? now : null
+    await trx
+      .insertInto('torghut_market_context_runs')
+      .values({
+        request_id: requestId,
+        symbol,
+        domain,
+        run_name: runName,
+        provider,
+        reason: null,
+        status: lifecycleStatus,
+        metadata,
+        error: runError,
+        started_at: now,
+        last_heartbeat_at: now,
+        finished_at: finishedAt,
+        updated_at: now,
+      })
+      .onConflict((conflict) =>
+        conflict.columns(['request_id']).doUpdateSet({
+          symbol,
+          domain,
+          run_name: runName,
+          provider,
+          status: lifecycleStatus,
+          metadata,
+          error: runError,
+          last_heartbeat_at: now,
+          finished_at: finishedAt,
+          updated_at: now,
+        }),
+      )
+      .execute()
+
+    await trx
+      .insertInto('torghut_market_context_run_events')
+      .values({
+        request_id: requestId,
+        seq: Math.max(1, Math.floor(now.getTime() / 1000)),
+        event_type: 'finalize',
+        payload: {
+          runStatus: lifecycleStatus,
+          sourceCount,
+          qualityScore,
+          shouldPersistSnapshot,
+          metadata,
+        },
+      })
+      .onConflict((conflict) =>
+        conflict.columns(['request_id', 'seq']).doUpdateSet({
+          event_type: 'finalize',
+          payload: {
+            runStatus: lifecycleStatus,
+            sourceCount,
+            qualityScore,
+            shouldPersistSnapshot,
+            metadata,
+          },
+        }),
+      )
+      .execute()
+  })
 
   if (shouldPersistSnapshot) {
     clearMarketContextCache()
@@ -803,7 +1507,7 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
     symbol,
     domain,
     runStatus,
-    requestId: typeof input.requestId === 'string' ? input.requestId : randomUUID(),
+    requestId,
     context: {
       asOfUtc: toIso(asOf),
       sourceCount,

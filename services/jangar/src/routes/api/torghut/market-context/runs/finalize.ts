@@ -1,15 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { recordTorghutMarketContextRunEvent } from '~/server/metrics'
 import {
   ingestMarketContextProviderResult,
   isMarketContextIngestAuthorized,
 } from '~/server/torghut-market-context-agents'
-import { recordTorghutMarketContextIngestRequest, recordTorghutMarketContextRunEvent } from '~/server/metrics'
 
-export const Route = createFileRoute('/api/torghut/market-context/ingest')({
+export const Route = createFileRoute('/api/torghut/market-context/runs/finalize')({
   server: {
     handlers: {
-      POST: async ({ request }) => postMarketContextIngestHandler(request),
+      POST: async ({ request }) => postMarketContextRunFinalizeHandler(request),
     },
   },
 })
@@ -25,32 +25,24 @@ const jsonResponse = (payload: unknown, status = 200) => {
   })
 }
 
-export const postMarketContextIngestHandler = async (request: Request) => {
+export const postMarketContextRunFinalizeHandler = async (request: Request) => {
   if (!(await isMarketContextIngestAuthorized(request))) {
-    recordTorghutMarketContextIngestRequest({ outcome: 'unauthorized' })
     recordTorghutMarketContextRunEvent({ endpoint: 'finalize', outcome: 'unauthorized' })
     return jsonResponse({ ok: false, message: 'unauthorized' }, 401)
   }
 
   const payload = await request.json().catch(() => null)
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    recordTorghutMarketContextIngestRequest({ outcome: 'invalid_payload' })
     recordTorghutMarketContextRunEvent({ endpoint: 'finalize', outcome: 'invalid_payload' })
     return jsonResponse({ ok: false, message: 'invalid JSON payload' }, 400)
   }
 
   try {
     const result = await ingestMarketContextProviderResult(payload)
-    recordTorghutMarketContextIngestRequest({
-      outcome: 'accepted',
-      domain: result.domain,
-      runStatus: result.runStatus,
-    })
     recordTorghutMarketContextRunEvent({ endpoint: 'finalize', outcome: 'accepted', domain: result.domain })
     return jsonResponse(result, 200)
   } catch (error) {
     const domain = typeof payload.domain === 'string' ? payload.domain : undefined
-    recordTorghutMarketContextIngestRequest({ outcome: 'ingest_error', domain })
     recordTorghutMarketContextRunEvent({ endpoint: 'finalize', outcome: 'error', domain })
     const message = error instanceof Error ? error.message : 'market context ingest failed'
     return jsonResponse({ ok: false, message }, 400)

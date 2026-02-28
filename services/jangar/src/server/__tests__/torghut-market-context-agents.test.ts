@@ -344,4 +344,30 @@ describe('market context dispatch runtime', () => {
       type: 'job',
     })
   })
+
+  it('builds a sanitized git head ref for market-context runs', async () => {
+    const { buildMarketContextHeadRef } = await import('../torghut-market-context-agents')
+
+    const head = buildMarketContextHeadRef({
+      prefix: 'codex/torghut-market-context/',
+      domain: 'news',
+      symbol: 'BRK.B',
+      now: new Date('2026-02-28T06:00:00.000Z'),
+    })
+
+    expect(head).toMatch(/^codex\/torghut-market-context\/news-brk\.b-20260228060000-[0-9a-f]{8}$/)
+  })
+
+  it('falls back to default head prefix when prefix is blank', async () => {
+    const { buildMarketContextHeadRef } = await import('../torghut-market-context-agents')
+
+    const head = buildMarketContextHeadRef({
+      prefix: '   ',
+      domain: 'fundamentals',
+      symbol: 'AAPL',
+      now: new Date('2026-02-28T06:00:00.000Z'),
+    })
+
+    expect(head).toMatch(/^codex\/torghut-market-context\/fundamentals-aapl-20260228060000-[0-9a-f]{8}$/)
+  })
 })
