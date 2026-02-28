@@ -199,7 +199,10 @@ class ForecastRouterPolicyEntry:
         return (
             fnmatch.fnmatch(symbol, self.symbol_glob)
             and (self.horizon == '*' or self.horizon == horizon)
-            and (self.regime == '*' or self.regime == regime)
+            and (
+                self.regime == '*'
+                or self.regime.lower() == regime.lower()
+            )
         )
 
 

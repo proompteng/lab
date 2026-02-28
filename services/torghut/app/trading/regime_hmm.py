@@ -247,7 +247,9 @@ def _parse_context_map(payload: Mapping[str, Any]) -> HMMRegimeContext:
     predicted_next = _normalize_predicted_next(
         payload.get("predicted_next") or payload.get("predictedNext")
     )
-    transition_shock = bool(payload.get("transition_shock") or payload.get("transitionShock"))
+    transition_shock = _coerce_bool(
+        payload.get("transition_shock") or payload.get("transitionShock")
+    )
     duration_ms = _coerce_int(payload.get("duration_ms") or payload.get("durationMs"))
     artifact = _coerce_artifact(payload.get("artifact"))
     guardrail = _coerce_guardrail(
