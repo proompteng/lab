@@ -57,12 +57,12 @@ This design is intentionally **generic to Mimir** and is not coupled to any spec
 
 ```mermaid
 flowchart LR
-  A[PrometheusRule resources in observability app] -->|rule labels| B[Mimir Ruler]
-  B -->|alerts| C[Mimir Alertmanager StatefulSet]
-  C -->|route/group/group intervals| D[alertmanager.fallbackConfig]
-  D -->|HTTP POST| E[Discord relay (internal namespace service)]
-  E -->|validated payload| F[Discord incoming webhook endpoint]
-  C -->|no match / disabled route| G[default-receiver/no-op]
+  A["PrometheusRule resources in observability app"] -->|rule labels| B["Mimir Ruler"]
+  B -->|alerts| C["Mimir Alertmanager StatefulSet"]
+  C -->|route/group/group intervals| D["alertmanager.fallbackConfig"]
+  D -->|HTTP POST| E["Discord relay (internal namespace service)"]
+  E -->|validated payload| F["Discord incoming webhook endpoint"]
+  C -->|no match / disabled route| G["default-receiver/no-op"]
 ```
 
 ## Target alert model
