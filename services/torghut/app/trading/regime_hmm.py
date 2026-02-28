@@ -12,7 +12,6 @@ HMM_CONTEXT_SCHEMA_VERSION = "hmm_regime_context_v1"
 HMM_UNKNOWN_SCHEMA_VERSION = "unknown"
 HMM_UNKNOWN_REGIME_ID = "unknown"
 HMM_DEFAULT_ENTROPY = "0"
-HMM_UNKNOWN_POSTERIOR: dict[str, str] = {}
 HMM_ENTROPY_BANDS = {"low", "medium", "high"}
 HMM_ENTROPY_MEDIUM_THRESHOLD = Decimal("0.90")
 HMM_ENTROPY_HIGH_THRESHOLD = Decimal("1.35")
@@ -76,7 +75,7 @@ class HMMRegimeContext:
         return {
             "schema_version": self.schema_version,
             "regime_id": self.regime_id,
-            "posterior": self.posterior,
+            "posterior": dict(self.posterior),
             "entropy": self.entropy,
             "entropy_band": self.entropy_band,
             "predicted_next": self.predicted_next,
@@ -91,7 +90,7 @@ class HMMRegimeContext:
         return cls(
             schema_version=HMM_UNKNOWN_SCHEMA_VERSION,
             regime_id=HMM_UNKNOWN_REGIME_ID,
-            posterior=HMM_UNKNOWN_POSTERIOR,
+            posterior={},
             entropy=HMM_DEFAULT_ENTROPY,
             entropy_band="low",
             predicted_next=HMM_UNKNOWN_REGIME_ID,
@@ -248,14 +247,14 @@ def _parse_context_map(payload: Mapping[str, Any]) -> HMMRegimeContext:
         payload.get("predicted_next") or payload.get("predictedNext")
     )
     transition_shock = _coerce_bool(
-        payload.get("transition_shock") or payload.get("transitionShock")
+        _coerce_first_present(payload, "transition_shock", "transitionShock")
     )
     duration_ms = _coerce_int(payload.get("duration_ms") or payload.get("durationMs"))
     artifact = _coerce_artifact(payload.get("artifact"))
     guardrail = _coerce_guardrail(
         payload.get("guardrail"),
         fallback_to_defensive=_coerce_bool(
-            payload.get("fallback_to_defensive") or payload.get("fallbackToDefensive")
+            _coerce_first_present(payload, "fallback_to_defensive", "fallbackToDefensive")
         ),
     )
 
@@ -335,6 +334,13 @@ def _coerce_entropy_value(raw: str) -> Decimal:
         return Decimal("0")
 
 
+def _coerce_first_present(payload: Mapping[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in payload and payload.get(key) is not None:
+            return payload.get(key)
+    return None
+
+
 def _normalize_predicted_next(raw: Any) -> str:
     text = _coerce_string(raw)
     if not text:
@@ -399,14 +405,20 @@ def _coerce_guardrail(raw: Any, *, fallback_to_defensive: bool = False) -> HMMGu
     if isinstance(raw, Mapping):
         guardrail_map = cast(Mapping[str, Any], raw)
         stale = _coerce_bool(
-            guardrail_map.get("stale")
-            or guardrail_map.get("isStale")
-            or guardrail_map.get("is_stale")
+            _coerce_first_present(
+                guardrail_map,
+                "stale",
+                "isStale",
+                "is_stale",
+            )
         )
         if not fallback_to_defensive:
             fallback_to_defensive = _coerce_bool(
-                guardrail_map.get("fallback_to_defensive")
-                or guardrail_map.get("fallbackToDefensive")
+                _coerce_first_present(
+                    guardrail_map,
+                    "fallback_to_defensive",
+                    "fallbackToDefensive",
+                )
             )
         reason = _coerce_string(
             guardrail_map.get("reason")
