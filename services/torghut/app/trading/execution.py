@@ -33,6 +33,7 @@ from .quantity_rules import (
     qty_has_valid_increment,
     qty_step_for_symbol,
 )
+from .simulation import resolve_simulation_context
 from .tca import upsert_execution_tca_metric
 
 logger = logging.getLogger(__name__)
@@ -169,12 +170,23 @@ class OrderExecutor:
 
         if retry_delays is None:
             retry_delays = []
+        submission_extra_params: dict[str, Any] = {
+            "client_order_id": request.client_order_id
+        }
+        simulation_context = _resolve_submission_simulation_context(
+            execution_client=execution_client,
+            decision=decision,
+            decision_row=decision_row,
+        )
+        if simulation_context is not None:
+            submission_extra_params["simulation_context"] = simulation_context
         self._raise_if_conflicting_open_order(execution_client, request)
         order_response = self._submit_order_with_retry(
             execution_client=execution_client,
             request=request,
             retry_delays=retry_delays,
             decision_id=str(decision_row.id),
+            extra_params=submission_extra_params,
         )
 
         route_expected, route_actual, fallback_reason, fallback_count = (
@@ -315,6 +327,7 @@ class OrderExecutor:
         request: ExecutionRequest,
         retry_delays: list[float],
         decision_id: str,
+        extra_params: dict[str, Any],
     ) -> Any:
         attempt = 0
         while True:
@@ -331,7 +344,7 @@ class OrderExecutor:
                     stop_price=float(request.stop_price)
                     if request.stop_price is not None
                     else None,
-                    extra_params={"client_order_id": request.client_order_id},
+                    extra_params=dict(extra_params),
                 )
             except Exception as exc:
                 if attempt >= len(retry_delays) or not should_retry_order_error(exc):
@@ -702,6 +715,29 @@ def _extract_execution_policy_context(
         ),
         'adaptive': adaptive_payload,
     }
+
+
+def _resolve_submission_simulation_context(
+    *,
+    execution_client: Any,
+    decision: StrategyDecision,
+    decision_row: TradeDecision,
+) -> dict[str, Any] | None:
+    adapter_name = str(getattr(execution_client, "name", "") or "").strip().lower()
+    if adapter_name != "simulation" and not settings.trading_simulation_enabled:
+        return None
+    source_context = decision.params.get("simulation_context")
+    source_context_payload: dict[str, Any] | None = None
+    if isinstance(source_context, Mapping):
+        source_context_payload = {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], source_context).items()
+        }
+    return resolve_simulation_context(
+        source=source_context_payload,
+        decision_id=str(decision_row.id),
+        decision_hash=decision_row.decision_hash,
+    )
 
 
 def _attach_execution_policy_context(execution: Execution, context: dict[str, Any]) -> None:

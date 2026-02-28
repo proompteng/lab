@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from collections.abc import Mapping
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Optional, Protocol, cast
@@ -114,6 +115,245 @@ class AlpacaExecutionAdapter:
 
     def list_positions(self) -> list[dict[str, Any]]:
         return self._read_client.list_positions()
+
+
+class SimulationExecutionAdapter:
+    """Deterministic no-side-effect adapter for historical simulation runs."""
+
+    name = 'simulation'
+
+    def __init__(
+        self,
+        *,
+        bootstrap_servers: str | None,
+        topic: str,
+        account_label: str,
+        simulation_run_id: str | None,
+        dataset_id: str | None,
+    ) -> None:
+        self.last_route = self.name
+        self.last_correlation_id: str | None = None
+        self.last_idempotency_key: str | None = None
+        self._topic = topic.strip() or 'torghut.sim.trade-updates.v1'
+        self._account_label = account_label.strip() or 'paper'
+        self._simulation_run_id = (simulation_run_id or '').strip() or 'simulation'
+        self._dataset_id = (dataset_id or '').strip() or 'unknown'
+        self._seq = 0
+        self._orders_by_id: dict[str, dict[str, Any]] = {}
+        self._order_id_by_client_id: dict[str, str] = {}
+        self._producer: Any | None = None
+        self._producer_init_error: str | None = None
+        if bootstrap_servers and bootstrap_servers.strip():
+            self._producer = self._build_producer(bootstrap_servers.strip())
+
+    def submit_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_type: str,
+        time_in_force: str,
+        limit_price: Optional[float] = None,
+        stop_price: Optional[float] = None,
+        extra_params: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        payload = dict(extra_params or {})
+        requested_client_order_id = payload.get('client_order_id')
+        client_order_id = str(requested_client_order_id).strip() if requested_client_order_id else ''
+        if not client_order_id:
+            client_order_id = f'sim-client-{uuid4().hex[:20]}'
+        correlation_id = f'sim-{uuid4().hex[:20]}'
+        idempotency_key = client_order_id
+        now = datetime.now(timezone.utc)
+        order_id = self._order_id_by_client_id.get(client_order_id)
+        if order_id is None:
+            order_id = f'sim-order-{uuid4().hex[:20]}'
+        fill_price = _resolve_simulated_fill_price(
+            limit_price=limit_price,
+            stop_price=stop_price,
+        )
+        qty_value = max(float(qty), 0.0)
+        order: dict[str, Any] = {
+            'id': order_id,
+            'client_order_id': client_order_id,
+            'symbol': symbol,
+            'side': side,
+            'type': order_type,
+            'time_in_force': time_in_force,
+            'qty': _float_to_order_text(qty_value),
+            'filled_qty': _float_to_order_text(qty_value),
+            'filled_avg_price': _float_to_order_text(fill_price),
+            'status': 'filled',
+            'submitted_at': now.isoformat(),
+            'updated_at': now.isoformat(),
+            'alpaca_account_label': self._account_label,
+            '_execution_adapter': self.name,
+            '_execution_route_expected': self.name,
+            '_execution_route_actual': self.name,
+            '_execution_correlation_id': correlation_id,
+            '_execution_idempotency_key': idempotency_key,
+        }
+        simulation_context = _resolve_simulation_context_payload(
+            simulation_run_id=self._simulation_run_id,
+            dataset_id=self._dataset_id,
+            symbol=symbol,
+            source=payload.get('simulation_context') if isinstance(payload.get('simulation_context'), Mapping) else None,
+        )
+        order['_simulation_context'] = simulation_context
+        order['simulation_context'] = simulation_context
+        order['_execution_audit'] = {
+            'adapter': self.name,
+            'correlation_id': correlation_id,
+            'idempotency_key': idempotency_key,
+            'mode': 'historical_simulation',
+            'simulation_context': simulation_context,
+        }
+        self.last_route = self.name
+        self.last_correlation_id = correlation_id
+        self.last_idempotency_key = idempotency_key
+        self._orders_by_id[order_id] = dict(order)
+        self._order_id_by_client_id[client_order_id] = order_id
+        self._publish_trade_update(order, event_type='fill', event_ts=now)
+        return dict(order)
+
+    def cancel_order(self, order_id: str) -> bool:
+        order = self._orders_by_id.get(order_id)
+        if order is None:
+            return False
+        current_status = str(order.get('status') or '').strip().lower()
+        if current_status in {'filled', 'canceled', 'cancelled', 'rejected', 'expired'}:
+            self.last_route = self.name
+            return False
+        now = datetime.now(timezone.utc)
+        order['status'] = 'canceled'
+        order['updated_at'] = now.isoformat()
+        order['filled_qty'] = order.get('filled_qty') or '0'
+        self._publish_trade_update(order, event_type='canceled', event_ts=now)
+        self.last_route = self.name
+        return True
+
+    def cancel_all_orders(self) -> list[dict[str, Any]]:
+        canceled: list[dict[str, Any]] = []
+        for order_id in list(self._orders_by_id):
+            if self.cancel_order(order_id):
+                canceled.append({'id': order_id})
+        self.last_route = self.name
+        return canceled
+
+    def get_order(self, order_id: str) -> dict[str, Any]:
+        self.last_route = self.name
+        existing = self._orders_by_id.get(order_id)
+        if existing is None:
+            return {'id': order_id, 'status': 'not_found', '_execution_adapter': self.name}
+        return dict(existing)
+
+    def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, Any] | None:
+        self.last_route = self.name
+        order_id = self._order_id_by_client_id.get(client_order_id)
+        if order_id is None:
+            return None
+        existing = self._orders_by_id.get(order_id)
+        if existing is None:
+            return None
+        return dict(existing)
+
+    def list_orders(self, status: str = 'all') -> list[dict[str, Any]]:
+        self.last_route = self.name
+        normalized = status.strip().lower()
+        values = list(self._orders_by_id.values())
+        if normalized in {'all', ''}:
+            return [dict(value) for value in values]
+        return [dict(value) for value in values if str(value.get('status', '')).strip().lower() == normalized]
+
+    def list_positions(self) -> list[dict[str, Any]]:
+        self.last_route = self.name
+        return []
+
+    def _build_producer(self, bootstrap_servers: str) -> Any | None:
+        try:
+            from kafka import KafkaProducer  # type: ignore[import-not-found]
+        except Exception as exc:  # pragma: no cover - dependency/runtime error
+            self._producer_init_error = f'kafka_import_failed:{exc}'
+            logger.warning(
+                'Simulation adapter cannot emit trade-updates topic=%s reason=%s',
+                self._topic,
+                self._producer_init_error,
+            )
+            return None
+
+        try:
+            producer = KafkaProducer(
+                bootstrap_servers=[item.strip() for item in bootstrap_servers.split(',') if item.strip()],
+                value_serializer=None,
+                key_serializer=None,
+                retries=1,
+                request_timeout_ms=2_000,
+                max_block_ms=2_000,
+            )
+            return producer
+        except Exception as exc:  # pragma: no cover - environment-dependent
+            self._producer_init_error = f'kafka_producer_init_failed:{exc}'
+            logger.warning(
+                'Simulation adapter cannot initialize Kafka producer topic=%s reason=%s',
+                self._topic,
+                self._producer_init_error,
+            )
+            return None
+
+    def _publish_trade_update(self, order: Mapping[str, Any], *, event_type: str, event_ts: datetime) -> None:
+        self._seq += 1
+        simulation_context = (
+            dict(cast(Mapping[str, Any], order.get('simulation_context')))
+            if isinstance(order.get('simulation_context'), Mapping)
+            else _resolve_simulation_context_payload(
+                simulation_run_id=self._simulation_run_id,
+                dataset_id=self._dataset_id,
+                symbol=str(order.get('symbol') or '').strip().upper(),
+                source=None,
+            )
+        )
+        envelope = {
+            'channel': 'trade_updates',
+            'event_ts': event_ts.isoformat(),
+            'seq': self._seq,
+            'symbol': order.get('symbol'),
+            'source': 'simulation',
+            'simulation_context': simulation_context,
+            'payload': {
+                'event': event_type,
+                'timestamp': event_ts.isoformat(),
+                'order': {
+                    'id': order.get('id'),
+                    'client_order_id': order.get('client_order_id'),
+                    'symbol': order.get('symbol'),
+                    'status': order.get('status'),
+                    'side': order.get('side'),
+                    'type': order.get('type'),
+                    'time_in_force': order.get('time_in_force'),
+                    'qty': order.get('qty'),
+                    'filled_qty': order.get('filled_qty'),
+                    'filled_avg_price': order.get('filled_avg_price'),
+                    'alpaca_account_label': self._account_label,
+                },
+            },
+        }
+        if self._producer is None:
+            if self._producer_init_error is None:
+                logger.debug('Simulation adapter producer disabled; skip trade-update publish topic=%s', self._topic)
+            return
+
+        try:
+            payload = json.dumps(envelope, separators=(',', ':')).encode('utf-8')
+            key = str(order.get('symbol') or '').encode('utf-8')
+            self._producer.send(self._topic, key=key, value=payload, timestamp_ms=int(event_ts.timestamp() * 1000))
+            self._producer.flush(timeout=1.5)
+        except Exception:
+            logger.warning(
+                'Simulation adapter failed to publish trade-update topic=%s order_id=%s',
+                self._topic,
+                order.get('id'),
+                exc_info=True,
+            )
 
 
 class LeanExecutionAdapter:
@@ -625,6 +865,20 @@ def build_execution_adapter(
     """Build the primary execution adapter from runtime settings."""
 
     alpaca_adapter = AlpacaExecutionAdapter(firewall=order_firewall, read_client=alpaca_client)
+    simulation_enabled = settings.trading_simulation_enabled or settings.trading_execution_adapter == 'simulation'
+    if simulation_enabled:
+        bootstrap_servers = (
+            settings.trading_simulation_order_updates_bootstrap_servers
+            or settings.trading_order_feed_bootstrap_servers
+        )
+        return SimulationExecutionAdapter(
+            bootstrap_servers=bootstrap_servers,
+            topic=settings.trading_simulation_order_updates_topic,
+            account_label=settings.trading_account_label,
+            simulation_run_id=settings.trading_simulation_run_id,
+            dataset_id=settings.trading_simulation_dataset_id,
+        )
+
     if settings.trading_execution_adapter != 'lean':
         return alpaca_adapter
     if settings.trading_lean_lane_disable_switch:
@@ -665,11 +919,57 @@ def adapter_enabled_for_symbol(symbol: str, *, allowlist: set[str] | None = None
 
     _ = (symbol, allowlist)
 
+    if settings.trading_simulation_enabled or settings.trading_execution_adapter == 'simulation':
+        return True
     if settings.trading_execution_adapter != 'lean':
         return False
     if settings.trading_lean_lane_disable_switch:
         return False
     return True
+
+
+def _resolve_simulated_fill_price(
+    *,
+    limit_price: float | None,
+    stop_price: float | None,
+) -> float:
+    for candidate in (limit_price, stop_price):
+        if candidate is None:
+            continue
+        try:
+            value = float(candidate)
+        except Exception:
+            continue
+        if value > 0:
+            return value
+    return 1.0
+
+
+def _float_to_order_text(value: float) -> str:
+    normalized = max(float(value), 0.0)
+    rendered = f'{normalized:.8f}'.rstrip('0').rstrip('.')
+    if not rendered:
+        return '0'
+    return rendered
+
+
+def _resolve_simulation_context_payload(
+    *,
+    simulation_run_id: str | None,
+    dataset_id: str | None,
+    symbol: str,
+    source: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    context: dict[str, Any] = {}
+    if isinstance(source, Mapping):
+        context.update({str(key): value for key, value in source.items()})
+    if context.get('simulation_run_id') in (None, ''):
+        context['simulation_run_id'] = (simulation_run_id or '').strip() or 'simulation'
+    if context.get('dataset_id') in (None, ''):
+        context['dataset_id'] = (dataset_id or '').strip() or 'unknown'
+    if context.get('symbol') in (None, '') and symbol.strip():
+        context['symbol'] = symbol.strip().upper()
+    return context
 
 
 def _error_summary(exc: Exception) -> str:
@@ -781,6 +1081,7 @@ def _http_request_text(
 __all__ = [
     'ExecutionAdapter',
     'AlpacaExecutionAdapter',
+    'SimulationExecutionAdapter',
     'LeanExecutionAdapter',
     'build_execution_adapter',
     'adapter_enabled_for_symbol',

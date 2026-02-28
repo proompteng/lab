@@ -174,3 +174,46 @@ class TestSnapshots(TestCase):
 
             self.assertEqual(execution.execution_expected_adapter, 'lean')
             self.assertEqual(execution.execution_actual_adapter, 'lean')
+
+    def test_sync_order_to_db_persists_simulation_context_in_audit_and_raw_order(self) -> None:
+        with Session(self.engine) as session:
+            execution = sync_order_to_db(
+                session,
+                {
+                    'id': 'sim-order-1',
+                    'client_order_id': 'decision-hash-1',
+                    'symbol': 'AAPL',
+                    'side': 'buy',
+                    'type': 'market',
+                    'time_in_force': 'day',
+                    'qty': '1',
+                    'filled_qty': '1',
+                    'filled_avg_price': '100.5',
+                    'status': 'filled',
+                    '_execution_adapter': 'simulation',
+                    '_execution_audit': {
+                        'adapter': 'simulation',
+                        'simulation_context': {
+                            'simulation_run_id': 'sim-2026-02-27-01',
+                            'dataset_id': 'dataset-a',
+                            'dataset_event_id': 'evt-1',
+                            'source_topic': 'torghut.trades.v1',
+                            'source_partition': 3,
+                            'source_offset': 9001,
+                        },
+                    },
+                },
+                trade_decision_id='123e4567-e89b-12d3-a456-426614174000',
+            )
+            audit = execution.execution_audit_json
+            raw_order = execution.raw_order
+            self.assertIsInstance(audit, dict)
+            self.assertIsInstance(raw_order, dict)
+            assert isinstance(audit, dict)
+            assert isinstance(raw_order, dict)
+            simulation_context = audit.get('simulation_context')
+            self.assertIsInstance(simulation_context, dict)
+            assert isinstance(simulation_context, dict)
+            self.assertEqual(simulation_context.get('simulation_run_id'), 'sim-2026-02-27-01')
+            self.assertEqual(simulation_context.get('dataset_event_id'), 'evt-1')
+            self.assertEqual(raw_order.get('simulation_context'), simulation_context)

@@ -39,6 +39,7 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_drift_rollback_on_performance": "torghut_trading_drift_rollback_on_performance",
     "trading_execution_advisor_enabled": "torghut_trading_execution_advisor_enabled",
     "trading_execution_advisor_live_apply_enabled": "torghut_trading_execution_advisor_live_apply_enabled",
+    "trading_simulation_enabled": "torghut_trading_simulation_enabled",
     "trading_allow_shorts": "torghut_trading_allow_shorts",
     "trading_fractional_equities_enabled": "torghut_trading_fractional_equities_enabled",
     "trading_kill_switch_enabled": "torghut_trading_kill_switch_enabled",
@@ -694,7 +695,7 @@ class Settings(BaseSettings):
         alias="TRADING_EXECUTION_ADVISOR_TIMEOUT_MS",
         description="Maximum tolerated advisor inference latency before deterministic fallback.",
     )
-    trading_execution_adapter: Literal["alpaca", "lean"] = Field(
+    trading_execution_adapter: Literal["alpaca", "lean", "simulation"] = Field(
         default="alpaca",
         alias="TRADING_EXECUTION_ADAPTER",
         description="Primary execution adapter selection.",
@@ -713,6 +714,31 @@ class Settings(BaseSettings):
         default=None,
         alias="TRADING_EXECUTION_ADAPTER_SYMBOLS",
         description="Comma-separated symbol allowlist for adapter routing.",
+    )
+    trading_simulation_enabled: bool = Field(
+        default=False,
+        alias="TRADING_SIMULATION_ENABLED",
+        description="Enable simulation-mode persistence and execution metadata paths.",
+    )
+    trading_simulation_run_id: Optional[str] = Field(
+        default=None,
+        alias="TRADING_SIMULATION_RUN_ID",
+        description="Stable identifier for a simulation run.",
+    )
+    trading_simulation_dataset_id: Optional[str] = Field(
+        default=None,
+        alias="TRADING_SIMULATION_DATASET_ID",
+        description="Dataset identifier attached to simulation telemetry.",
+    )
+    trading_simulation_order_updates_topic: str = Field(
+        default="torghut.sim.trade-updates.v1",
+        alias="TRADING_SIMULATION_ORDER_UPDATES_TOPIC",
+        description="Kafka topic for simulated trade-updates events.",
+    )
+    trading_simulation_order_updates_bootstrap_servers: Optional[str] = Field(
+        default=None,
+        alias="TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS",
+        description="Kafka bootstrap servers for simulated trade-updates emission; defaults to order-feed bootstrap.",
     )
     trading_lean_runner_url: Optional[str] = Field(
         default=None,
@@ -1354,6 +1380,9 @@ class Settings(BaseSettings):
             "trading_order_feed_topic_v2",
             "trading_accounts_json",
             "trading_autonomy_approval_token",
+            "trading_simulation_run_id",
+            "trading_simulation_dataset_id",
+            "trading_simulation_order_updates_bootstrap_servers",
         ):
             raw_value = cast(str | None, getattr(self, field_name))
             if not raw_value:

@@ -49,6 +49,7 @@ flowchart TD
 - Replay concepts and kcat examples: `docs/torghut/test-harness.md`
 - Kafka topic tail helper: `packages/scripts/src/kafka/tail-topic.ts`
 - WS smoke test: `packages/scripts/src/torghut/ws-smoke.ts` (run via `bun run smoke:torghut-ws`)
+- Historical replay + simulation architecture: `docs/torghut/design-system/v1/historical-dataset-simulation.md`
 
 ## Configuration examples
 
