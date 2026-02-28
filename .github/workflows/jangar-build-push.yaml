@@ -49,6 +49,20 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts --filter @proompteng/jangar
 
+      - name: Prebuild jangar output
+        shell: bash
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          CI: 'true'
+          JANGAR_BUILD_MINIFY: '0'
+          JANGAR_BUILD_SOURCEMAP: '0'
+        run: |
+          set -euo pipefail
+          bun run --filter @proompteng/otel build
+          bun run --filter @proompteng/temporal-bun-sdk build
+          bun --cwd services/jangar --bun vite build --logLevel warn
+          bun --cwd services/jangar run copy:grpc-proto
+
       - name: Prepare pruned build context
         id: prune
         shell: bash
@@ -64,6 +78,10 @@ jobs:
             mkdir -p "$PRUNE_DIR/full/services/jangar" "$PRUNE_DIR/json/services/jangar"
             cp -R services/jangar/agentctl "$PRUNE_DIR/full/services/jangar/agentctl"
             cp -R services/jangar/agentctl "$PRUNE_DIR/json/services/jangar/agentctl"
+          fi
+          if [ -d services/jangar/.output ]; then
+            mkdir -p "$PRUNE_DIR/full/services/jangar"
+            cp -R services/jangar/.output "$PRUNE_DIR/full/services/jangar/.output"
           fi
           echo "context=$PRUNE_DIR" >> "$GITHUB_OUTPUT"
 
@@ -85,8 +103,6 @@ jobs:
           JANGAR_BUILD_CONTEXT: ${{ steps.prune.outputs.context }}
           JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           JANGAR_IMAGE_PLATFORMS: linux/arm64
-          JANGAR_BUILD_CACHE_REF: registry.ide-newton.ts.net/lab/jangar:buildcache
-          JANGAR_BUILD_CACHE_MODE: min
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
           JANGAR_BUILD_SOURCEMAP: '0'
           JANGAR_BUILD_CI: 'true'
