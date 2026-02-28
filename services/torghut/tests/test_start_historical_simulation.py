@@ -30,6 +30,7 @@ from scripts.start_historical_simulation import (
     _normalize_run_token,
     _offset_for_time_lookup,
     _pacing_delay_seconds,
+    _producer_for_replay,
     _redact_dsn_credentials,
     _restore_ta_configuration,
     _replay_dump,
