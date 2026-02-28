@@ -193,6 +193,24 @@ class KafkaRuntimeConfig:
             kwargs['sasl_plain_password'] = self.sasl_password
         return kwargs
 
+    def kafka_runtime_client_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            'bootstrap_servers': [
+                item.strip()
+                for item in self.runtime_bootstrap.split(',')
+                if item.strip()
+            ],
+        }
+        if self.runtime_security:
+            kwargs['security_protocol'] = self.runtime_security
+        if self.runtime_sasl:
+            kwargs['sasl_mechanism'] = self.runtime_sasl
+        if self.runtime_username:
+            kwargs['sasl_plain_username'] = self.runtime_username
+        if self.runtime_password:
+            kwargs['sasl_plain_password'] = self.runtime_password
+        return kwargs
+
 
 @dataclass(frozen=True)
 class ClickHouseRuntimeConfig:
@@ -1918,7 +1936,7 @@ def _consumer_for_dump(config: KafkaRuntimeConfig, run_token: str) -> Any:
 def _producer_for_replay(config: KafkaRuntimeConfig, run_token: str) -> Any:
     from kafka import KafkaProducer  # type: ignore[import-not-found]
 
-    kwargs = config.kafka_client_kwargs()
+    kwargs = config.kafka_runtime_client_kwargs()
     kwargs.update(
         {
             'client_id': f'torghut-sim-replay-{run_token}',

@@ -1034,6 +1034,55 @@ class TestStartHistoricalSimulation(TestCase):
             )
             self.assertEqual(report['replay_topic_overrides'], 1)
 
+    def test_replay_producer_uses_runtime_kafka_connection(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _FakeProducer:
+            def __init__(self, **kwargs: object) -> None:
+                captured.update(kwargs)
+
+            def send(
+                self,
+                topic: str,
+                *,
+                key: bytes | None = None,
+                value: bytes | None = None,
+                headers: list[tuple[str, bytes]] | None = None,
+                timestamp_ms: int | None = None,
+            ) -> None:
+                _ = (topic, key, value, headers, timestamp_ms)
+
+            def flush(self, timeout: int | float | None = None) -> None:
+                _ = timeout
+
+            def close(self, timeout: int | float | None = None) -> None:
+                _ = timeout
+
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka-source:9092',
+            security_protocol='PLAINTEXT',
+            sasl_mechanism='SCRAM-SHA-512',
+            sasl_username='source-user',
+            sasl_password='source-secret',
+            runtime_bootstrap_servers='kafka-runtime:9092',
+            runtime_security_protocol='SASL_SSL',
+            runtime_sasl_mechanism='SCRAM-SHA-256',
+            runtime_sasl_username='runtime-user',
+            runtime_sasl_password='runtime-secret',
+        )
+
+        with patch.dict(
+            'sys.modules',
+            {'kafka': SimpleNamespace(KafkaProducer=_FakeProducer)},
+        ):
+            _producer_for_replay(kafka_config, 'sim-run')
+
+        self.assertEqual(captured.get('bootstrap_servers'), ['kafka-runtime:9092'])
+        self.assertEqual(captured.get('security_protocol'), 'SASL_SSL')
+        self.assertEqual(captured.get('sasl_mechanism'), 'SCRAM-SHA-256')
+        self.assertEqual(captured.get('sasl_plain_username'), 'runtime-user')
+        self.assertEqual(captured.get('sasl_plain_password'), 'runtime-secret')
+
     def test_restore_ta_configuration_removes_simulation_only_keys(self) -> None:
         resources = _build_resources(
             'sim-1',
