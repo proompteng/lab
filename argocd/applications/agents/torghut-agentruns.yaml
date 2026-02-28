@@ -225,18 +225,21 @@ spec:
     }
 
     Steps:
-    1) Research current fundamentals for `${symbol}` (valuation, growth, profitability, balance-sheet/capital structure, near-term catalysts).
-    2) Write the payload to `/tmp/market-context-fundamentals.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
-    3) Validate payload before submit:
+    1) Start lifecycle tracking (required before research) using repo scripts:
+       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py start --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain fundamentals --reason "${reason}" --provider codex-spark --expect-status 200`
+       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py progress --callback-url "${callbackUrl}" --request-id "${requestId}" --seq 1 --status running --message fundamentals_collection_started --expect-status 200`
+    2) Research current fundamentals for `${symbol}` (valuation, growth, profitability, balance-sheet/capital structure, near-term catalysts).
+    3) Write the payload to `/tmp/market-context-fundamentals.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
+    4) Validate payload before submit:
        - `python3 -m json.tool /tmp/market-context-fundamentals.json >/dev/null`
-       - `jq -e '.symbol and .domain == "fundamentals" and (.qualityScore | type == "number")' /tmp/market-context-fundamentals.json >/dev/null`
-    4) Submit the payload:
-       - AUTH=()
-       - TOKEN_PATH="/var/run/secrets/kubernetes.io/serviceaccount/token"
-       - if [ -r "${TOKEN_PATH}" ]; then TOKEN="$(tr -d '\n' < "${TOKEN_PATH}")"; fi
-       - if [ -n "${TOKEN:-}" ]; then AUTH=(-H "authorization: Bearer ${TOKEN}"); fi
-       - Capture HTTP status and response body; require HTTP 200 and response contains `"ok": true`.
-    5) If callback fails on first attempt, print response body, repair payload, retry once; if second attempt fails, exit non-zero.
+       - `python3 /workspace/lab/skills/market-context/scripts/validate_market_context_payload.py --domain fundamentals --file /tmp/market-context-fundamentals.json`
+    5) Build citation evidence array in `/tmp/market-context-fundamentals-evidence.json` from the same sources you used for the payload.
+       - Evidence items must include at least `source`; include `publishedAt`, `url`, `headline`, and `summary` when available.
+       - Submit evidence:
+         `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py evidence --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain fundamentals --seq 2 --evidence-file /tmp/market-context-fundamentals-evidence.json --expect-status 200`
+    6) Finalize and persist via lifecycle finalize endpoint:
+       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py finalize --callback-url "${callbackUrl}" --request-id "${requestId}" --payload-file /tmp/market-context-fundamentals.json --expect-status 200 --retries 1`
+       - Require response JSON to include `"ok": true`.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
@@ -296,18 +299,21 @@ spec:
     }
 
     Steps:
-    1) Gather recent high-signal company/sector/macro news relevant to `${symbol}`.
-    2) Write the payload to `/tmp/market-context-news.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
-    3) Validate payload before submit:
+    1) Start lifecycle tracking (required before research) using repo scripts:
+       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py start --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain news --reason "${reason}" --provider codex-spark --expect-status 200`
+       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py progress --callback-url "${callbackUrl}" --request-id "${requestId}" --seq 1 --status running --message news_collection_started --expect-status 200`
+    2) Gather recent high-signal company/sector/macro news relevant to `${symbol}`.
+    3) Write the payload to `/tmp/market-context-news.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
+    4) Validate payload before submit:
        - `python3 -m json.tool /tmp/market-context-news.json >/dev/null`
-       - `jq -e '.symbol and .domain == "news" and (.qualityScore | type == "number") and (.payload.headlines | type == "array")' /tmp/market-context-news.json >/dev/null`
-    4) Submit the payload:
-       - AUTH=()
-       - TOKEN_PATH="/var/run/secrets/kubernetes.io/serviceaccount/token"
-       - if [ -r "${TOKEN_PATH}" ]; then TOKEN="$(tr -d '\n' < "${TOKEN_PATH}")"; fi
-       - if [ -n "${TOKEN:-}" ]; then AUTH=(-H "authorization: Bearer ${TOKEN}"); fi
-       - Capture HTTP status and response body; require HTTP 200 and response contains `"ok": true`.
-    5) If callback fails on first attempt, print response body, repair payload, retry once; if second attempt fails, exit non-zero.
+       - `python3 /workspace/lab/skills/market-context/scripts/validate_market_context_payload.py --domain news --file /tmp/market-context-news.json`
+    5) Build citation evidence array in `/tmp/market-context-news-evidence.json` from the same sources you used for the payload.
+       - Evidence items must include at least `source`; include `publishedAt`, `url`, `headline`, and `summary` when available.
+       - Submit evidence:
+         `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py evidence --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain news --seq 2 --evidence-file /tmp/market-context-news-evidence.json --expect-status 200`
+    6) Finalize and persist via lifecycle finalize endpoint:
+       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py finalize --callback-url "${callbackUrl}" --request-id "${requestId}" --payload-file /tmp/market-context-news.json --expect-status 200 --retries 1`
+       - Require response JSON to include `"ok": true`.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec

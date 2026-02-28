@@ -640,6 +640,50 @@ type TorghutMarketContextDispatchState = {
   updated_at: Generated<Timestamp>
 }
 
+type TorghutMarketContextRuns = {
+  request_id: string
+  symbol: string
+  domain: string
+  run_name: string | null
+  provider: string
+  reason: string | null
+  status: string
+  metadata: JsonValue
+  error: string | null
+  started_at: Generated<Timestamp>
+  last_heartbeat_at: Timestamp | null
+  finished_at: Timestamp | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type TorghutMarketContextRunEvents = {
+  id: Generated<string>
+  request_id: string
+  seq: number
+  event_type: string
+  payload: JsonValue
+  created_at: Generated<Timestamp>
+}
+
+type TorghutMarketContextEvidence = {
+  id: Generated<string>
+  request_id: string
+  symbol: string
+  domain: string
+  seq: number
+  source: string
+  published_at: Timestamp | null
+  url: string | null
+  headline: string | null
+  summary: string | null
+  sentiment: string | null
+  payload: JsonValue
+  digest: string
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
 export type Database = {
   'atlas.repositories': AtlasRepositories
   'atlas.file_keys': AtlasFileKeys
@@ -681,6 +725,9 @@ export type Database = {
   'torghut_control_plane.quant_pipeline_health': TorghutQuantPipelineHealth
   torghut_market_context_snapshots: TorghutMarketContextSnapshots
   torghut_market_context_dispatch_state: TorghutMarketContextDispatchState
+  torghut_market_context_runs: TorghutMarketContextRuns
+  torghut_market_context_run_events: TorghutMarketContextRunEvents
+  torghut_market_context_evidence: TorghutMarketContextEvidence
   'codex_judge.runs': CodexJudgeRuns
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations

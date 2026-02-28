@@ -35,6 +35,7 @@ type JangarMetrics = {
   torghutQuantComputeErrors: Counter
   torghutQuantComputeDurationMs: Histogram
   torghutMarketContextIngestRequests: Counter
+  torghutMarketContextRunEvents: Counter
   torghutMarketContextDispatchAttempts: Counter
   torghutMarketContextDispatchStuck: Counter
 }
@@ -174,6 +175,19 @@ export const recordTorghutMarketContextIngestRequest = (params: {
     outcome: params.outcome,
     domain: params.domain?.trim() ? params.domain.trim() : 'unknown',
     run_status: params.runStatus?.trim() ? params.runStatus.trim() : 'unknown',
+  })
+}
+
+export const recordTorghutMarketContextRunEvent = (params: {
+  endpoint: 'start' | 'progress' | 'evidence' | 'finalize' | 'status'
+  outcome: 'accepted' | 'unauthorized' | 'invalid_payload' | 'not_found' | 'error'
+  domain?: string
+}) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.torghutMarketContextRunEvents, 1, {
+    endpoint: params.endpoint,
+    outcome: params.outcome,
+    domain: params.domain?.trim() ? params.domain.trim() : 'unknown',
   })
 }
 
@@ -525,6 +539,9 @@ const createMetricsState = (): MetricsState => {
       }),
       torghutMarketContextIngestRequests: meter.createCounter('jangar_torghut_market_context_ingest_requests_total', {
         description: 'Count of market-context ingest callback requests by outcome/domain.',
+      }),
+      torghutMarketContextRunEvents: meter.createCounter('jangar_torghut_market_context_run_events_total', {
+        description: 'Count of market-context run lifecycle endpoint requests by endpoint/outcome/domain.',
       }),
       torghutMarketContextDispatchAttempts: meter.createCounter(
         'jangar_torghut_market_context_dispatch_attempts_total',

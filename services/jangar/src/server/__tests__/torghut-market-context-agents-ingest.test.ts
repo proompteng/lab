@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type InsertTracker = {
   tableCalls: string[]
+  valueCalls: Array<{
+    table: string
+    values: unknown
+  }>
   conflictWhereCalls: Array<{
     table: string
     args: unknown[]
@@ -13,6 +17,10 @@ type InsertTracker = {
 
 const buildInsertTracker = (): InsertTracker => {
   const tableCalls: string[] = []
+  const valueCalls: Array<{
+    table: string
+    values: unknown
+  }> = []
   const conflictWhereCalls: Array<{
     table: string
     args: unknown[]
@@ -21,7 +29,10 @@ const buildInsertTracker = (): InsertTracker => {
     insertInto: (table: string) => {
       tableCalls.push(table)
       const chain = {
-        values: () => chain,
+        values: (values: unknown) => {
+          valueCalls.push({ table, values })
+          return chain
+        },
         onConflict: (callback: unknown) => {
           if (typeof callback === 'function') {
             let whereArgs: unknown[] | null = null
@@ -48,7 +59,7 @@ const buildInsertTracker = (): InsertTracker => {
       return chain
     },
   }
-  return { tableCalls, conflictWhereCalls, db }
+  return { tableCalls, valueCalls, conflictWhereCalls, db }
 }
 
 describe('ingestMarketContextProviderResult', () => {
@@ -78,7 +89,11 @@ describe('ingestMarketContextProviderResult', () => {
       error: 'upstream timeout',
     })
 
-    expect(tracker.tableCalls).toEqual(['torghut_market_context_dispatch_state'])
+    expect(tracker.tableCalls).toEqual([
+      'torghut_market_context_dispatch_state',
+      'torghut_market_context_runs',
+      'torghut_market_context_run_events',
+    ])
     expect(clearMarketContextCache).not.toHaveBeenCalled()
   })
 
@@ -111,8 +126,16 @@ describe('ingestMarketContextProviderResult', () => {
       payload: { peRatio: 22.1 },
     })
 
-    expect(missingStatusTracker.tableCalls).toEqual(['torghut_market_context_dispatch_state'])
-    expect(unknownStatusTracker.tableCalls).toEqual(['torghut_market_context_dispatch_state'])
+    expect(missingStatusTracker.tableCalls).toEqual([
+      'torghut_market_context_dispatch_state',
+      'torghut_market_context_runs',
+      'torghut_market_context_run_events',
+    ])
+    expect(unknownStatusTracker.tableCalls).toEqual([
+      'torghut_market_context_dispatch_state',
+      'torghut_market_context_runs',
+      'torghut_market_context_run_events',
+    ])
     expect(clearMarketContextCache).not.toHaveBeenCalled()
   })
 
@@ -142,7 +165,17 @@ describe('ingestMarketContextProviderResult', () => {
       riskFlags: [],
     })
 
-    expect(tracker.tableCalls).toEqual(['torghut_market_context_snapshots', 'torghut_market_context_dispatch_state'])
+    expect(tracker.tableCalls).toEqual([
+      'torghut_market_context_snapshots',
+      'torghut_market_context_dispatch_state',
+      'torghut_market_context_runs',
+      'torghut_market_context_run_events',
+    ])
+    const snapshotValues = tracker.valueCalls.find(
+      (entry) => entry.table === 'torghut_market_context_snapshots',
+    )?.values
+    expect(snapshotValues).toBeTruthy()
+    expect(Array.isArray((snapshotValues as { citations?: unknown })?.citations)).toBe(false)
     expect(clearMarketContextCache).toHaveBeenCalledOnce()
   })
 

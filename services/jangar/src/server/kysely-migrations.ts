@@ -18,6 +18,7 @@ import * as atlasChunkSearchMigration from '~/server/migrations/20260209_atlas_c
 import * as torghutQuantControlPlaneMigration from '~/server/migrations/20260212_torghut_quant_control_plane'
 import * as removePromptTuningMigration from '~/server/migrations/20260220_remove_prompt_tuning'
 import * as torghutMarketContextAgentsMigration from '~/server/migrations/20260226_torghut_market_context_agents'
+import * as torghutMarketContextRunLifecycleMigration from '~/server/migrations/20260228_torghut_market_context_run_lifecycle'
 
 type MigrationMap = Record<string, Migration>
 
@@ -49,6 +50,7 @@ const migrations: MigrationMap = {
   '20260212_torghut_quant_control_plane': torghutQuantControlPlaneMigration,
   '20260220_remove_prompt_tuning': removePromptTuningMigration,
   '20260226_torghut_market_context_agents': torghutMarketContextAgentsMigration,
+  '20260228_torghut_market_context_run_lifecycle': torghutMarketContextRunLifecycleMigration,
 }
 
 const migrationProvider = new StaticMigrationProvider(migrations)
