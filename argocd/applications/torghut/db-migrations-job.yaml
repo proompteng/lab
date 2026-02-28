@@ -23,7 +23,7 @@ spec:
       containers:
         - name: migrate
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:794348fa1ad49a183199a43389ebfbd73780d3a4bcd2478cab2b4c2c00144176
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:414e40c4dc885a739f4a4f8aac283f794638098d8d56a65080276b21db811b93
           command:
             - alembic
           args:
