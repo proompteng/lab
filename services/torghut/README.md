@@ -209,6 +209,9 @@ Artifacts are written under `artifacts/torghut/simulations/<run_token>/`:
 - `source-dump.ndjson` (bounded source-topic dump)
 - `run-manifest.json` (apply report)
 
+For production execution and empirical evidence capture, use:
+`docs/torghut/rollouts/historical-simulation-playbook.md`.
+
 ## v3 autonomous lane (phase 1/2 foundation)
 
 Deterministic research -> gate evaluation -> paper candidate patch pipeline:

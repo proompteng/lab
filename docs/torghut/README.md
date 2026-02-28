@@ -14,6 +14,7 @@ Start here:
 
 - GitOps manifests: `argocd/applications/torghut/**`
 - TA replay procedure (concrete steps): `argocd/applications/torghut/README.md`
+- Historical simulation operations playbook: `docs/torghut/rollouts/historical-simulation-playbook.md`
 - Incident context (example): `docs/incidents/2025-12-20-longhorn-upgrade-kafka-failure.md`
 
 ## Service developer docs
