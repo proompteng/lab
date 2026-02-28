@@ -489,3 +489,24 @@ class TestTradingMetrics(TestCase):
             'torghut_trading_recalibration_runs_total{status="queued"} 1',
             payload,
         )
+
+    def test_regime_resolution_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.decision_regime_resolution_source_total["allocator"] = 3
+        metrics.decision_regime_resolution_source_total["hmm"] = 1
+        metrics.decision_regime_resolution_fallback_total["hmm_unknown"] = 2
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_decision_regime_resolution_source_total{source="allocator"} 3',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_decision_regime_resolution_source_total{source="hmm"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_decision_regime_resolution_fallback_total{reason="hmm_unknown"} 2',
+            payload,
+        )

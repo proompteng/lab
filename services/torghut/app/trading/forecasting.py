@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from .features import FeatureVectorV3, optional_decimal
+from .regime_hmm import resolve_hmm_context
 
 
 def _empty_dict() -> dict[str, Any]:
@@ -90,6 +91,11 @@ class ForecastContractV1:
     calibration_score: Decimal
     fallback: ForecastFallback
     inference_latency_ms: int
+    regime_id: str
+    regime_entropy_band: str
+    regime_entropy: str
+    regime_predicted_next: str
+    regime_inference_version: str
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -106,6 +112,11 @@ class ForecastContractV1:
             'calibration_score': str(self.calibration_score),
             'fallback': self.fallback.to_payload(),
             'inference_latency_ms': self.inference_latency_ms,
+            'regime_id': self.regime_id,
+            'regime_entropy_band': self.regime_entropy_band,
+            'regime_entropy': self.regime_entropy,
+            'regime_predicted_next': self.regime_predicted_next,
+            'regime_inference_version': self.regime_inference_version,
         }
 
 
@@ -123,6 +134,11 @@ class ForecastDecisionAudit:
     fallback_applied: bool
     fallback_reason: str | None
     policy_version: str
+    regime_id: str
+    regime_entropy_band: str
+    regime_entropy: str
+    regime_predicted_next: str
+    regime_inference_version: str
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -138,6 +154,11 @@ class ForecastDecisionAudit:
             'fallback_applied': self.fallback_applied,
             'fallback_reason': self.fallback_reason,
             'policy_version': self.policy_version,
+            'regime_id': self.regime_id,
+            'regime_entropy_band': self.regime_entropy_band,
+            'regime_entropy': self.regime_entropy,
+            'regime_predicted_next': self.regime_predicted_next,
+            'regime_inference_version': self.regime_inference_version,
         }
 
 
@@ -475,6 +496,7 @@ class ForecastRouterV5:
     ) -> ForecastRouterResult:
         symbol = feature_vector.symbol
         resolved_horizon = _coerce_horizon(horizon)
+        regime_context = resolve_hmm_context(feature_vector.values)
         regime = self._resolve_regime(feature_vector)
         route_key = f'{symbol}|{resolved_horizon}|{regime}'
         route = self.policy.resolve(symbol=symbol, horizon=resolved_horizon, regime=regime)
@@ -529,6 +551,11 @@ class ForecastRouterV5:
             calibration_score=final_calibration.quantize(Decimal('0.0001')),
             fallback=fallback,
             inference_latency_ms=output.inference_latency_ms,
+            regime_id=regime_context.regime_id,
+            regime_entropy_band=regime_context.entropy_band,
+            regime_entropy=regime_context.entropy,
+            regime_predicted_next=regime_context.predicted_next,
+            regime_inference_version=regime_context.artifact_model_id,
         )
         selected_version = selected_adapter.model_version if selected_adapter is not None else 'missing'
         audit = ForecastDecisionAudit(
@@ -544,6 +571,11 @@ class ForecastRouterV5:
             fallback_applied=fallback.applied,
             fallback_reason=fallback.reason,
             policy_version=self.policy.policy_version,
+            regime_id=regime_context.regime_id,
+            regime_entropy_band=regime_context.entropy_band,
+            regime_entropy=regime_context.entropy,
+            regime_predicted_next=regime_context.predicted_next,
+            regime_inference_version=regime_context.artifact_model_id,
         )
         telemetry = ForecastRoutingTelemetry(
             model_family=output.model_family,
@@ -557,6 +589,10 @@ class ForecastRouterV5:
         return ForecastRouterResult(contract=contract, audit=audit, telemetry=telemetry)
 
     def _resolve_regime(self, feature_vector: FeatureVectorV3) -> str:
+        context = resolve_hmm_context(feature_vector.values)
+        if context.has_regime:
+            return context.regime_id.lower()
+
         explicit = feature_vector.values.get('route_regime_label')
         if isinstance(explicit, str) and explicit.strip():
             return explicit.strip().lower()

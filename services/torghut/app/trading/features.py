@@ -10,6 +10,7 @@ from decimal import Decimal
 from typing import Any, Iterable, Optional, cast
 
 from .models import SignalEnvelope
+from .regime_hmm import resolve_hmm_context, resolve_regime_route_label
 
 FEATURE_SCHEMA_VERSION_V3 = '3.0.0'
 FEATURE_VECTOR_V3_REQUIRED_FIELDS = ('price', 'macd', 'macd_signal', 'rsi14')
@@ -30,6 +31,11 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'imbalance_spread',
     'spread',
     'signal_quality_flag',
+    'hmm_state_posterior',
+    'hmm_entropy',
+    'hmm_entropy_band',
+    'hmm_regime_id',
+    'hmm_guardrail',
     'route_regime_label',
     'staleness_ms',
 )
@@ -250,6 +256,7 @@ def normalize_feature_vector_v3(signal: SignalEnvelope) -> FeatureVectorV3:
 def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
     payload = signal.payload or {}
     macd, macd_signal = extract_macd(payload)
+    regime_context = resolve_hmm_context(payload)
 
     return {
         'price': extract_price(payload),
@@ -268,6 +275,11 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         'imbalance_spread': optional_decimal(payload.get('imbalance_spread') or _nested(payload, 'imbalance', 'spread')),
         'spread': optional_decimal(payload.get('spread')),
         'signal_quality_flag': payload.get('signal_quality_flag'),
+        'hmm_state_posterior': regime_context.posterior,
+        'hmm_entropy': regime_context.entropy,
+        'hmm_entropy_band': regime_context.entropy_band,
+        'hmm_regime_id': regime_context.regime_id,
+        'hmm_guardrail': regime_context.guardrail.to_payload(),
         'route_regime_label': _route_regime_label(payload, macd=macd, macd_signal=macd_signal),
         'staleness_ms': _staleness_ms(signal.event_ts, signal.ingest_ts),
     }
@@ -332,21 +344,7 @@ def _route_regime_label(
     macd: Decimal | None,
     macd_signal: Decimal | None,
 ) -> str:
-    explicit = payload.get('regime_label')
-    if isinstance(explicit, str) and explicit.strip():
-        return _normalize_route_regime(explicit)
-    if macd is None or macd_signal is None:
-        return 'unknown'
-    delta = macd - macd_signal
-    if delta >= Decimal('0.02'):
-        return 'trend'
-    if delta <= Decimal('-0.02'):
-        return 'mean_revert'
-    return 'range'
-
-
-def _normalize_route_regime(value: str) -> str:
-    return value.strip().lower()
+    return resolve_regime_route_label(payload, macd=macd, macd_signal=macd_signal)
 
 
 def _validate_signal_schema_version(signal: SignalEnvelope) -> None:

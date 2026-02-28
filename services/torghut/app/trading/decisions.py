@@ -21,6 +21,7 @@ from .features import (
 )
 from .forecasting import ForecastRoutingTelemetry, build_default_forecast_router
 from .models import SignalEnvelope, StrategyDecision
+from .regime_hmm import resolve_hmm_context, resolve_regime_route_label
 from .prices import MarketSnapshot, PriceFetcher
 from .quantity_rules import (
     fractional_equities_enabled_for_trade,
@@ -441,6 +442,11 @@ def _build_params(
         params["forecast"] = forecast_contract
     if forecast_audit is not None:
         params["forecast_audit"] = forecast_audit
+    regime_context_payload, regime_route_label = _resolve_regime_context(signal, macd=macd, macd_signal=macd_signal)
+    params["regime_hmm"] = regime_context_payload
+    if regime_route_label is not None:
+        params["regime_label"] = regime_route_label
+        params["route_regime_label"] = regime_route_label
     microstructure_state = _resolve_microstructure_state_payload(signal)
     if microstructure_state is not None:
         params["microstructure_state"] = microstructure_state
@@ -453,6 +459,22 @@ def _build_params(
     if simulation_context is not None:
         params["simulation_context"] = simulation_context
     return params
+
+
+def _resolve_regime_context(
+    signal: SignalEnvelope,
+    macd: Decimal | None,
+    macd_signal: Decimal | None,
+) -> tuple[dict[str, Any], str | None]:
+    payload = signal.payload
+    regime_context = resolve_hmm_context(payload)
+    route_regime_label = resolve_regime_route_label(
+        cast(Mapping[str, Any], payload),
+        macd=macd,
+        macd_signal=macd_signal,
+    )
+    normalized_route_label = route_regime_label.strip().lower() if route_regime_label else None
+    return regime_context.to_payload(), normalized_route_label
 
 
 def _resolve_microstructure_state_payload(

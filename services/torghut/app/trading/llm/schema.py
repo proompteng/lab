@@ -25,6 +25,18 @@ def _market_context_citations_default() -> list["MarketContextCitation"]:
     return []
 
 
+class LLMRegimeHMMContext(BaseModel):
+    """Compact HMM regime context provided to LLM review."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    regime_id: str
+    entropy_band: Literal["low", "medium", "high"]
+    predicted_next: str
+    artifact_version: str
+    guardrail_reason: str | None = None
+
+
 class LLMDecisionContext(BaseModel):
     """Minimal decision context passed to the LLM reviewer."""
 
@@ -39,6 +51,7 @@ class LLMDecisionContext(BaseModel):
     event_ts: datetime
     timeframe: str
     rationale: Optional[str] = None
+    regime_hmm: Optional[LLMRegimeHMMContext] = None
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -324,6 +337,7 @@ class LLMCommitteeTrace(BaseModel):
 
 
 __all__ = [
+    "LLMRegimeHMMContext",
     "LLMDecisionContext",
     "PortfolioSnapshot",
     "MarketSnapshot",

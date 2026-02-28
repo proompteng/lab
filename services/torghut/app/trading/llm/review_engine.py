@@ -16,6 +16,7 @@ from .dspy_programs import DSPyReviewRuntime, DSPyRuntimeError
 from .policy import allowed_order_types
 from .schema import (
     LLMDecisionContext,
+    LLMRegimeHMMContext,
     LLMPolicyContext,
     LLMReviewRequest,
     LLMReviewResponse,
@@ -35,6 +36,7 @@ _ALLOWED_DECISION_PARAMS = {
     "price_snapshot",
     "imbalance",
     "sizing",
+    "regime_hmm",
 }
 _ALLOWED_PRICE_SNAPSHOT_KEYS = {"as_of", "price", "spread", "source"}
 _ALLOWED_IMBALANCE_KEYS = {"spread"}
@@ -51,6 +53,14 @@ _ALLOWED_POSITION_KEYS = {
     "unrealized_plpc",
     "cost_basis",
 }
+_ALLOWED_LLM_REGIME_HMM_KEYS = {
+    "regime_id",
+    "entropy_band",
+    "predicted_next",
+    "artifact_version",
+    "guardrail_reason",
+}
+_LLM_REGIME_ENTROPY_BANDS = {"low", "medium", "high"}
 
 _SAFE_FALLBACK_CHECKS = ["execution_policy", "order_firewall", "risk_engine"]
 
@@ -165,6 +175,7 @@ class LLMReviewEngine:
         sanitized_account = _sanitize_account(account)
         sanitized_positions = _sanitize_positions(positions)
         sanitized_params = _sanitize_decision_params(decision.params or {})
+        regime_hmm = _extract_regime_hmm_context(sanitized_params.get("regime_hmm"))
         return LLMReviewRequest(
             decision=LLMDecisionContext(
                 strategy_id=decision.strategy_id,
@@ -176,6 +187,7 @@ class LLMReviewEngine:
                 event_ts=decision.event_ts,
                 timeframe=decision.timeframe,
                 rationale=decision.rationale,
+                regime_hmm=regime_hmm,
                 params=sanitized_params,
             ),
             portfolio=portfolio,
@@ -295,8 +307,61 @@ def _sanitize_decision_params(params: dict[str, Any]) -> dict[str, Any]:
                 cast(Mapping[str, Any], value),
                 _ALLOWED_SIZING_KEYS,
             )
+        elif key == "regime_hmm" and isinstance(value, Mapping):
+            sanitized[key] = _sanitize_regime_hmm_context(
+                cast(Mapping[str, Any], value)
+            )
         else:
             sanitized[key] = value
+    return sanitized
+
+
+def _sanitize_regime_hmm_context(value: Mapping[str, Any]) -> dict[str, Any]:
+    raw_regime_id = value.get("regime_id") or value.get("regimeId")
+    regime_id = _coerce_text(raw_regime_id, default="unknown")
+    raw_entropy_band = value.get("entropy_band") or value.get("entropyBand")
+    entropy_band = _coerce_entropy_band(raw_entropy_band)
+    raw_predicted_next = (
+        value.get("predicted_next")
+        or value.get("predictedNext")
+        or value.get("hmm_predicted_next")
+    )
+    predicted_next = _coerce_text(raw_predicted_next, default="unknown")
+
+    artifact_version = value.get("artifact_version")
+    if artifact_version is None:
+        artifact = value.get("artifact")
+        if isinstance(artifact, Mapping):
+            artifact_version = cast(Mapping[str, Any], artifact).get("model_id")
+            if artifact_version is None:
+                artifact_version = cast(
+                    Mapping[str, Any], artifact
+                ).get("artifact_version")
+    artifact_version = _coerce_text(
+        artifact_version,
+        default="unknown",
+    )
+
+    guardrail_reason = value.get("guardrail_reason")
+    if guardrail_reason is None:
+        guardrail = value.get("guardrail")
+        if isinstance(guardrail, Mapping):
+            guardrail_reason = cast(Mapping[str, Any], guardrail).get("reason")
+    guardrail_reason_text = (
+        _coerce_text(guardrail_reason, default=None)
+        if guardrail_reason is not None
+        else None
+    )
+    sanitized: dict[str, Any] = _sanitize_nested(
+        {
+            "regime_id": regime_id,
+            "entropy_band": entropy_band,
+            "predicted_next": predicted_next,
+            "artifact_version": artifact_version,
+            "guardrail_reason": guardrail_reason_text,
+        },
+        _ALLOWED_LLM_REGIME_HMM_KEYS,
+    )
     return sanitized
 
 
@@ -308,3 +373,33 @@ def _sanitize_nested(
         for key in allowed_keys
         if key in payload and payload[key] is not None
     }
+
+
+def _coerce_text(value: object, *, default: str | None = None) -> str | None:
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text or default
+
+
+def _coerce_entropy_band(raw: object) -> str:
+    raw_band = _coerce_text(raw, default="low")
+    if raw_band is None:
+        return "low"
+    normalized = raw_band.lower()
+    if normalized in _LLM_REGIME_ENTROPY_BANDS:
+        return normalized
+    return "low"
+
+
+def _extract_regime_hmm_context(
+    raw_regime_hmm: object,
+) -> LLMRegimeHMMContext | None:
+    if not isinstance(raw_regime_hmm, Mapping):
+        return None
+    if not raw_regime_hmm:
+        return None
+    payload = _sanitize_regime_hmm_context(cast(Mapping[str, Any], raw_regime_hmm))
+    if not payload:
+        return None
+    return LLMRegimeHMMContext.model_validate(payload)
