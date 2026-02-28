@@ -3267,9 +3267,12 @@ def _resolve_signal_regime(signal: SignalEnvelope) -> Optional[str]:
     resolved = resolve_regime_route_label(
         payload_map, macd=macd, macd_signal=macd_signal
     )
-    if resolved == "unknown":
-        return None
-    return resolved
+    if resolved != "unknown":
+        return resolved
+    regime_label = resolve_legacy_regime_label(payload_map)
+    if regime_label is not None:
+        return regime_label
+    return None
 
 
 def _resolve_decision_regime_label_with_source(
@@ -3297,14 +3300,11 @@ def _resolve_decision_regime_label_with_source(
         return None, "none", "hmm_unknown"
 
     direct = params.get("regime_label")
-    legacy_label = direct if isinstance(direct, str) else None
-    if legacy_label is None:
-        legacy_label = resolve_legacy_regime_label(params)
-    regime_label = (
-        legacy_label.strip().lower()
-        if isinstance(legacy_label, str) and legacy_label.strip()
-        else None
-    )
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip().lower(), "legacy", None
+
+    legacy_label = resolve_legacy_regime_label(params)
+    regime_label = legacy_label if legacy_label is not None else None
     return regime_label, "legacy", None if regime_label is not None else "missing"
 
 
