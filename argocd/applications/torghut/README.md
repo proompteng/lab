@@ -7,6 +7,42 @@ This directory contains the Argo CD application resources for the `torghut` name
 This is the single, canonical TA replay/backfill workflow that oncall should follow (and that an AgentRun can later
 automate via PR + Argo sync). Other docs should link here instead of duplicating steps.
 
+## Historical simulation workflow (GitOps controlled)
+
+The Argo WorkflowTemplate `torghut-historical-simulation` is now managed as part of
+`argocd/applications/torghut`.
+
+Trigger a simulation run via Argo:
+
+```bash
+argo submit --from workflowtemplate/torghut-historical-simulation -n argo-workflows \
+  --parameter mode=plan \
+  --parameter runId=sim-2026-02-28-01 \
+  --parameter datasetManifestB64="$(base64 -w0 services/torghut/config/simulation/example-dataset.yaml)"
+```
+
+Apply/run mode:
+
+```bash
+argo submit --from workflowtemplate/torghut-historical-simulation -n argo-workflows \
+  --parameter mode=apply \
+  --parameter runId=sim-2026-02-28-01 \
+  --parameter datasetManifestB64="$(base64 -w0 services/torghut/config/simulation/example-dataset.yaml)" \
+  --parameter confirmPhrase=START_HISTORICAL_SIMULATION
+```
+
+Teardown mode:
+
+```bash
+argo submit --from workflowtemplate/torghut-historical-simulation -n argo-workflows \
+  --parameter mode=teardown \
+  --parameter runId=sim-2026-02-28-01 \
+  --parameter datasetManifestB64="$(base64 -w0 services/torghut/config/simulation/example-dataset.yaml)"
+```
+
+The workflow output root can be overridden with `outputRoot` and replay/reapply behavior can be controlled with
+`forceReplay` / `forceDump`.
+
 ### Scope / target resources (as deployed)
 - Kubernetes namespace: `torghut`
 - Flink TA job: `FlinkDeployment/torghut-ta` (`argocd/applications/torghut/ta/flinkdeployment.yaml`)
