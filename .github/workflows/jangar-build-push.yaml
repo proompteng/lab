@@ -81,6 +81,9 @@ jobs:
           if [ -f "$PRUNE_DIR/bun.lock" ]; then
             cp "$PRUNE_DIR/bun.lock" "$PRUNE_DIR/full/bun.lock"
           fi
+          if [ -f "$PRUNE_DIR/tsconfig.base.json" ]; then
+            cp "$PRUNE_DIR/tsconfig.base.json" "$PRUNE_DIR/full/tsconfig.base.json"
+          fi
           bun install --cwd "$PRUNE_DIR/full" --ignore-scripts --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk --filter @proompteng/jangar
           timeout 20m bun --cwd "$PRUNE_DIR/full/services/jangar" --bun vite build --logLevel warn
           bun --cwd "$PRUNE_DIR/full/services/jangar" run copy:grpc-proto
