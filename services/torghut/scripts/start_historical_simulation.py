@@ -1280,6 +1280,42 @@ def _dump_marker_path(dump_path: Path) -> Path:
     return dump_path.with_suffix('.dump-marker.json')
 
 
+def _parse_dump_timestamp_bounds(payload: Mapping[str, Any]) -> tuple[int, int] | None:
+    min_raw = payload.get('min_source_timestamp_ms')
+    max_raw = payload.get('max_source_timestamp_ms')
+    if min_raw is None or max_raw is None:
+        return None
+    min_ms = _safe_int(min_raw, default=-1)
+    max_ms = _safe_int(max_raw, default=-1)
+    if min_ms < 0 or max_ms < min_ms:
+        return None
+    return min_ms, max_ms
+
+
+def _scan_dump_timestamp_bounds(dump_path: Path) -> tuple[int | None, int | None]:
+    min_ms: int | None = None
+    max_ms: int | None = None
+    with dump_path.open('r', encoding='utf-8') as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                payload = json.loads(stripped)
+            except Exception:
+                continue
+            if not isinstance(payload, Mapping):
+                continue
+            source_timestamp_ms = _safe_int(payload.get('source_timestamp_ms'), default=-1)
+            if source_timestamp_ms < 0:
+                continue
+            if min_ms is None or source_timestamp_ms < min_ms:
+                min_ms = source_timestamp_ms
+            if max_ms is None or source_timestamp_ms > max_ms:
+                max_ms = source_timestamp_ms
+    return min_ms, max_ms
+
+
 def _reusable_dump_report(dump_path: Path) -> dict[str, Any] | None:
     if not dump_path.exists():
         return None
@@ -1301,11 +1337,28 @@ def _reusable_dump_report(dump_path: Path) -> dict[str, Any] | None:
     actual_records = _count_lines(dump_path)
     if expected_sha != actual_sha or expected_records != actual_records:
         return None
+    timestamp_bounds = _parse_dump_timestamp_bounds(marker)
+    if timestamp_bounds is None:
+        min_ms, max_ms = _scan_dump_timestamp_bounds(dump_path)
+        timestamp_bounds = (
+            (min_ms, max_ms)
+            if min_ms is not None and max_ms is not None
+            else None
+        )
+        if timestamp_bounds is not None:
+            marker_with_bounds = dict(marker)
+            marker_with_bounds['min_source_timestamp_ms'] = timestamp_bounds[0]
+            marker_with_bounds['max_source_timestamp_ms'] = timestamp_bounds[1]
+            _save_json(marker_path, marker_with_bounds)
+    min_source_timestamp_ms = timestamp_bounds[0] if timestamp_bounds is not None else None
+    max_source_timestamp_ms = timestamp_bounds[1] if timestamp_bounds is not None else None
     return {
         'path': str(dump_path),
         'records': actual_records,
         'sha256': actual_sha,
         'reused_existing_dump': True,
+        'min_source_timestamp_ms': min_source_timestamp_ms,
+        'max_source_timestamp_ms': max_source_timestamp_ms,
     }
 
 
@@ -2080,6 +2133,8 @@ def _dump_topics(
                 'completed_at': datetime.now(timezone.utc).isoformat(),
                 'dump_sha256': report['sha256'],
                 'records': report['records'],
+                'min_source_timestamp_ms': report['min_source_timestamp_ms'],
+                'max_source_timestamp_ms': report['max_source_timestamp_ms'],
             },
         )
         return report

@@ -811,8 +811,13 @@ class TestStartHistoricalSimulation(TestCase):
                     force=False,
                 )
 
-        self.assertTrue(report['reused_existing_dump'])
-        self.assertEqual(report['records'], 1)
+            self.assertTrue(report['reused_existing_dump'])
+            self.assertEqual(report['records'], 1)
+            self.assertEqual(report['min_source_timestamp_ms'], 1704067200000)
+            self.assertEqual(report['max_source_timestamp_ms'], 1704067200000)
+            refreshed_marker = json.loads(marker_path.read_text(encoding='utf-8'))
+            self.assertEqual(refreshed_marker.get('min_source_timestamp_ms'), 1704067200000)
+            self.assertEqual(refreshed_marker.get('max_source_timestamp_ms'), 1704067200000)
 
     def test_dump_topics_redumps_when_marker_missing(self) -> None:
         resources = _build_resources(
