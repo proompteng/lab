@@ -36,3 +36,10 @@ replay:
   acceleration: 60
   max_sleep_seconds: 5
   auto_offset_reset: earliest
+
+# Optional Torghut runtime overrides applied only during simulation `apply` and restored on `teardown`.
+# If omitted, TRADING_FEATURE_MAX_STALENESS_MS is auto-derived from window.start.
+# Keep explicit values when you need a custom staleness policy for the run.
+torghut_env_overrides:
+  TRADING_FEATURE_QUALITY_ENABLED: 'true'
+  TRADING_FEATURE_MAX_STALENESS_MS: '43200000'

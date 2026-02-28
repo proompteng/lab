@@ -66,6 +66,13 @@ TORGHUT_ENV_KEYS = [
     'TRADING_MODE',
     'TRADING_LIVE_ENABLED',
     'TRADING_FEATURE_FLAGS_ENABLED',
+    'TRADING_FEATURE_QUALITY_ENABLED',
+    'TRADING_FEATURE_MAX_REQUIRED_NULL_RATE',
+    'TRADING_FEATURE_MAX_STALENESS_MS',
+    'TRADING_FEATURE_MAX_DUPLICATE_RATIO',
+    'TRADING_STRATEGY_RUNTIME_MODE',
+    'TRADING_STRATEGY_SCHEDULER_ENABLED',
+    'TRADING_STRATEGY_RUNTIME_FALLBACK_LEGACY',
     'TRADING_SIGNAL_TABLE',
     'TRADING_PRICE_TABLE',
     'TRADING_ORDER_FEED_ENABLED',
@@ -81,6 +88,20 @@ TORGHUT_ENV_KEYS = [
     'TRADING_SIMULATION_ORDER_UPDATES_TOPIC',
     'TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS',
 ]
+
+SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST = frozenset(
+    {
+        'TRADING_FEATURE_QUALITY_ENABLED',
+        'TRADING_FEATURE_MAX_REQUIRED_NULL_RATE',
+        'TRADING_FEATURE_MAX_STALENESS_MS',
+        'TRADING_FEATURE_MAX_DUPLICATE_RATIO',
+        'TRADING_STRATEGY_RUNTIME_MODE',
+        'TRADING_STRATEGY_SCHEDULER_ENABLED',
+        'TRADING_STRATEGY_RUNTIME_FALLBACK_LEGACY',
+    }
+)
+SIMULATION_FEATURE_STALENESS_MARGIN_MS = 300_000
+SIMULATION_FEATURE_STALENESS_MIN_MS = 120_000
 
 
 @dataclass(frozen=True)
@@ -516,6 +537,58 @@ def _merge_env_entries(
     return merged
 
 
+def _recommended_simulation_feature_staleness_ms(
+    manifest: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> int | None:
+    window = _as_mapping(manifest.get('window'))
+    window_start_raw = _as_text(window.get('start'))
+    if window_start_raw is None:
+        return None
+
+    try:
+        window_start = _parse_rfc3339_timestamp(window_start_raw, label='window.start')
+    except SystemExit:
+        return None
+
+    reference_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    age_ms = max(0, int((reference_now - window_start).total_seconds() * 1000))
+    return max(
+        SIMULATION_FEATURE_STALENESS_MIN_MS,
+        age_ms + SIMULATION_FEATURE_STALENESS_MARGIN_MS,
+    )
+
+
+def _torghut_env_overrides_from_manifest(
+    manifest: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, str]:
+    overrides_raw = _as_mapping(manifest.get('torghut_env_overrides'))
+    overrides: dict[str, str] = {}
+    for key, raw_value in overrides_raw.items():
+        env_key = str(key).strip()
+        if env_key not in SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST:
+            raise RuntimeError(
+                f'disallowed_torghut_env_override:{env_key} '
+                f'allowed={",".join(sorted(SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST))}'
+            )
+        value = _as_text(raw_value)
+        if value is None:
+            raise RuntimeError(f'invalid_torghut_env_override_value:{env_key}')
+        overrides[env_key] = value
+
+    if 'TRADING_FEATURE_MAX_STALENESS_MS' not in overrides:
+        recommended = _recommended_simulation_feature_staleness_ms(
+            manifest,
+            now=now,
+        )
+        if recommended is not None:
+            overrides['TRADING_FEATURE_MAX_STALENESS_MS'] = str(recommended)
+    return overrides
+
+
 def _state_paths(resources: SimulationResources) -> tuple[Path, Path, Path]:
     run_dir = resources.output_root / resources.run_token
     state_path = run_dir / 'state.json'
@@ -608,6 +681,7 @@ def _build_plan_report(
 ) -> dict[str, Any]:
     state_path, run_manifest_path, dump_path = _state_paths(resources)
     window = _as_mapping(manifest.get('window'))
+    torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
     return {
         'status': 'ok',
         'run_id': resources.run_id,
@@ -632,6 +706,7 @@ def _build_plan_report(
             'start': _as_text(window.get('start')),
             'end': _as_text(window.get('end')),
         },
+        'torghut_env_overrides': torghut_env_overrides,
         'kafka': {
             'bootstrap_servers': kafka_config.bootstrap_servers,
             'security_protocol': kafka_config.security_protocol,
@@ -832,6 +907,7 @@ def _configure_torghut_service_for_simulation(
     resources: SimulationResources,
     postgres_config: PostgresRuntimeConfig,
     kafka_config: KafkaRuntimeConfig,
+    torghut_env_overrides: Mapping[str, Any] | None = None,
 ) -> None:
     service = _kubectl_json(
         resources.namespace,
@@ -859,6 +935,9 @@ def _configure_torghut_service_for_simulation(
         'TRADING_SIMULATION_ORDER_UPDATES_TOPIC': resources.simulation_topic_by_role['order_updates'],
         'TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS': kafka_config.bootstrap_servers,
     }
+    if torghut_env_overrides:
+        for key, value in torghut_env_overrides.items():
+            updates[str(key)] = str(value)
     merged_env = _merge_env_entries(current_env, updates)
     patched_container = _kservice_container_with_env(service, merged_env)
     _kubectl_patch(
@@ -1402,6 +1481,7 @@ def _apply(
     force_replay: bool,
 ) -> dict[str, Any]:
     _ensure_supported_binary('kubectl')
+    torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
 
     state_path, run_manifest_path, dump_path = _state_paths(resources)
     _ensure_directory(state_path)
@@ -1457,6 +1537,7 @@ def _apply(
         resources=resources,
         postgres_config=postgres_config,
         kafka_config=kafka_config,
+        torghut_env_overrides=torghut_env_overrides,
     )
 
     report = {
@@ -1482,6 +1563,7 @@ def _apply(
             'http_url': clickhouse_config.http_url,
             'database': resources.clickhouse_db,
         },
+        'torghut_env_overrides': torghut_env_overrides,
     }
     _save_json(run_manifest_path, report)
     return report

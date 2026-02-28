@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -26,6 +27,7 @@ from scripts.start_historical_simulation import (
     _redact_dsn_credentials,
     _restore_ta_configuration,
     _replay_dump,
+    _torghut_env_overrides_from_manifest,
     _verify_isolation_guards,
 )
 
@@ -120,6 +122,68 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertNotIn('B', by_name)
         self.assertEqual(by_name['C']['valueFrom']['secretKeyRef']['name'], 'new-secret')
         self.assertEqual(by_name['D']['value'], '4')
+
+    def test_torghut_env_overrides_accept_allowlisted_keys(self) -> None:
+        overrides = _torghut_env_overrides_from_manifest(
+            {
+                'torghut_env_overrides': {
+                    'TRADING_FEATURE_MAX_STALENESS_MS': 43200000,
+                    'TRADING_FEATURE_QUALITY_ENABLED': 'true',
+                }
+            }
+        )
+        self.assertEqual(
+            overrides,
+            {
+                'TRADING_FEATURE_MAX_STALENESS_MS': '43200000',
+                'TRADING_FEATURE_QUALITY_ENABLED': 'true',
+            },
+        )
+
+    def test_torghut_env_overrides_reject_disallowed_keys(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, 'disallowed_torghut_env_override:TRADING_MODE'):
+            _torghut_env_overrides_from_manifest(
+                {
+                    'torghut_env_overrides': {
+                        'TRADING_MODE': 'paper',
+                    }
+                }
+            )
+
+    def test_torghut_env_overrides_auto_derives_staleness_for_historical_window(self) -> None:
+        overrides = _torghut_env_overrides_from_manifest(
+            {
+                'window': {
+                    'start': '2026-02-27T20:52:32Z',
+                }
+            },
+            now=datetime(2026, 2, 28, 1, 9, 22, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            overrides,
+            {
+                'TRADING_FEATURE_MAX_STALENESS_MS': '15710000',
+            },
+        )
+
+    def test_torghut_env_overrides_prefers_explicit_staleness(self) -> None:
+        overrides = _torghut_env_overrides_from_manifest(
+            {
+                'window': {
+                    'start': '2026-02-27T20:52:32Z',
+                },
+                'torghut_env_overrides': {
+                    'TRADING_FEATURE_MAX_STALENESS_MS': '43200000',
+                },
+            },
+            now=datetime(2026, 2, 28, 1, 9, 22, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            overrides,
+            {
+                'TRADING_FEATURE_MAX_STALENESS_MS': '43200000',
+            },
+        )
 
     def test_pacing_delay_modes(self) -> None:
         self.assertEqual(
@@ -329,6 +393,95 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(
             container.get('volumeMounts'),
             [{'name': 'strategy-config', 'mountPath': '/etc/torghut'}],
+        )
+
+    def test_configure_torghut_service_applies_manifest_overrides(self) -> None:
+        resources = _build_resources(
+            'sim-override',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_override',
+            simulation_db='torghut_sim_sim_override',
+            migrations_command='true',
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol='SASL_PLAINTEXT',
+            sasl_mechanism='SCRAM-SHA-512',
+            sasl_username='user',
+            sasl_password='secret',
+        )
+        service_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'image': 'registry.example/lab/torghut@sha256:abc',
+                                'env': [
+                                    {'name': 'TRADING_FEATURE_MAX_STALENESS_MS', 'value': '120000'},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        captured_patch: dict[str, object] = {}
+
+        with (
+            patch(
+                'scripts.start_historical_simulation._kubectl_json',
+                return_value=service_payload,
+            ),
+            patch(
+                'scripts.start_historical_simulation._kubectl_patch',
+                side_effect=lambda namespace, kind, name, patch: captured_patch.update(
+                    {'namespace': namespace, 'kind': kind, 'name': name, 'patch': patch}
+                ),
+            ),
+        ):
+            _configure_torghut_service_for_simulation(
+                resources=resources,
+                postgres_config=postgres_config,
+                kafka_config=kafka_config,
+                torghut_env_overrides={
+                    'TRADING_FEATURE_MAX_STALENESS_MS': '43200000',
+                    'TRADING_FEATURE_QUALITY_ENABLED': 'true',
+                },
+            )
+
+        patch_payload = captured_patch.get('patch')
+        self.assertIsInstance(patch_payload, dict)
+        assert isinstance(patch_payload, dict)
+        containers = (
+            patch_payload.get('spec', {})
+            .get('template', {})
+            .get('spec', {})
+            .get('containers', [])
+        )
+        self.assertIsInstance(containers, list)
+        assert isinstance(containers, list)
+        env_entries = containers[0].get('env') if containers else []
+        self.assertIsInstance(env_entries, list)
+        assert isinstance(env_entries, list)
+        env_by_name = {
+            str(item.get('name')): item
+            for item in env_entries
+            if isinstance(item, dict)
+        }
+        self.assertEqual(
+            env_by_name['TRADING_FEATURE_MAX_STALENESS_MS'].get('value'),
+            '43200000',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_FEATURE_QUALITY_ENABLED'].get('value'),
+            'true',
         )
 
     def test_offset_for_time_lookup_falls_back_for_missing_or_invalid_offset(self) -> None:

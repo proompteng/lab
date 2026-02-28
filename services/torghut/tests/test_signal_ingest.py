@@ -165,6 +165,20 @@ class TestSignalIngest(TestCase):
         self.assertEqual(context.get('source_topic'), 'torghut.trades.v1')
         self.assertEqual(context.get('signal_seq'), 55)
 
+    def test_simulation_mode_disables_cursor_fast_forward_and_empty_batch_advance(self) -> None:
+        original_enabled = settings.trading_simulation_enabled
+        original_empty_batch_advance = settings.trading_signal_empty_batch_advance_seconds
+        try:
+            settings.trading_simulation_enabled = True
+            settings.trading_signal_empty_batch_advance_seconds = 60
+            ingestor = ClickHouseSignalIngestor(schema='envelope', url='http://example')
+        finally:
+            settings.trading_simulation_enabled = original_enabled
+            settings.trading_signal_empty_batch_advance_seconds = original_empty_batch_advance
+
+        self.assertFalse(ingestor.fast_forward_stale_cursor)
+        self.assertEqual(ingestor.empty_batch_advance_seconds, 0)
+
     def test_build_query_flat_schema(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals", fast_forward_stale_cursor=False)
         query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), None, None)

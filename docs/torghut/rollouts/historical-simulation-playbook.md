@@ -39,11 +39,14 @@ Start from `services/torghut/config/simulation/example-dataset.yaml` and set:
 - `window.start` and `window.end` (RFC3339 UTC, explicit timestamps)
 - `clickhouse.simulation_database` (example: `torghut_sim_<run_token>`)
 - `postgres.simulation_dsn_template` or `postgres.simulation_dsn`
+- `torghut_env_overrides` for simulation-only runtime knobs (allowlist enforced by script)
 
 Recommendation:
 
 - use a dedicated Postgres DB per run (`torghut_sim_<run_token>`),
 - keep `replay.pace_mode=accelerated` for faster empirical runs.
+- by default, the script auto-derives `TRADING_FEATURE_MAX_STALENESS_MS` from `window.start`.
+- set `torghut_env_overrides.TRADING_FEATURE_MAX_STALENESS_MS` only for an explicit custom budget.
 
 ## Step 2: Plan
 
@@ -116,7 +119,8 @@ kubectl get ksvc torghut -n torghut -o jsonpath='
 {.spec.template.spec.containers[0].env[?(@.name=="TRADING_LIVE_ENABLED")].value}{"\n"}
 {.spec.template.spec.containers[0].env[?(@.name=="TRADING_EXECUTION_ADAPTER")].value}{"\n"}
 {.spec.template.spec.containers[0].env[?(@.name=="TRADING_SIMULATION_ENABLED")].value}{"\n"}
-{.spec.template.spec.containers[0].env[?(@.name=="TRADING_SIGNAL_TABLE")].value}{"\n"}'
+{.spec.template.spec.containers[0].env[?(@.name=="TRADING_SIGNAL_TABLE")].value}{"\n"}
+{.spec.template.spec.containers[0].env[?(@.name=="TRADING_FEATURE_MAX_STALENESS_MS")].value}{"\n"}'
 ```
 
 Expected values:
@@ -126,6 +130,7 @@ Expected values:
 - `simulation`
 - `true`
 - `<simulation_db>.ta_signals`
+- `<historical override value>` (for example `43200000`)
 
 2. Validate TA topic rewiring:
 
@@ -254,15 +259,17 @@ ENGINE = ReplicatedReplacingMergeTree(
 );
 ```
 
-3. Replay can succeed while producing zero executions.
+3. Replay can advance cursor but produce zero decisions/executions.
 
 - Typical causes:
   - replay window timestamps are outside market/actionable logic,
   - cursor already at replay tail,
-  - strategy gates reject all signals.
+  - strategy gates reject all signals,
+  - historical staleness exceeds live quality budget and batches are rejected pre-decision.
 - Mitigation:
   - verify `/trading/status` (`last_ingest_signal_count`, `last_reason`),
   - use a window known to produce production decisions,
+  - rely on the script's auto-derived staleness budget from `window.start` (or set an explicit override),
   - reset/inspect simulation `trade_cursor` when re-running with the same DB.
 
 ## Completion Checklist
