@@ -193,6 +193,10 @@ uv run python scripts/start_historical_simulation.py \
   --confirm START_HISTORICAL_SIMULATION
 ```
 
+For historical windows, the starter auto-derives
+`TRADING_FEATURE_MAX_STALENESS_MS` from `window.start` when no explicit override is supplied.
+Set `torghut_env_overrides.TRADING_FEATURE_MAX_STALENESS_MS` only when you want a custom budget.
+
 Teardown restores previously captured TA + Torghut runtime config:
 
 ```bash

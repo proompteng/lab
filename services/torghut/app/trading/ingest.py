@@ -102,8 +102,11 @@ class ClickHouseSignalIngestor:
         self.initial_lookback_minutes = initial_lookback_minutes or settings.trading_signal_lookback_minutes
         self.schema = schema or settings.trading_signal_schema
         self.account_label = account_label or settings.trading_account_label
-        self.fast_forward_stale_cursor = fast_forward_stale_cursor
-        self.empty_batch_advance_seconds = max(0, settings.trading_signal_empty_batch_advance_seconds)
+        simulation_mode = bool(settings.trading_simulation_enabled)
+        self.fast_forward_stale_cursor = False if simulation_mode else fast_forward_stale_cursor
+        self.empty_batch_advance_seconds = (
+            0 if simulation_mode else max(0, settings.trading_signal_empty_batch_advance_seconds)
+        )
         self._columns: Optional[set[str]] = None
         self._time_column: Optional[str] = None
         self._latest_signal_ts_cache: Optional[datetime] = None
