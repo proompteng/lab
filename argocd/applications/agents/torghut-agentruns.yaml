@@ -225,20 +225,24 @@ spec:
     }
 
     Steps:
-    1) Start lifecycle tracking (required before research) using repo scripts:
-       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py start --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain fundamentals --reason "${reason}" --provider codex-spark --expect-status 200`
-       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py progress --callback-url "${callbackUrl}" --request-id "${requestId}" --seq 1 --status running --message fundamentals_collection_started --expect-status 200`
-    2) Research current fundamentals for `${symbol}` (valuation, growth, profitability, balance-sheet/capital structure, near-term catalysts).
-    3) Write the payload to `/tmp/market-context-fundamentals.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
-    4) Validate payload before submit:
+    1) Resolve script root (required before lifecycle start):
+       - `SCRIPT_ROOT=/root/.codex/skills/market-context/scripts`
+       - `if [ ! -f "${SCRIPT_ROOT}/market_context_run_api.py" ]; then if [ -f "/workspace/lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/workspace/lab/skills/market-context/scripts; elif [ -f "/tmp/proompt-lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/tmp/proompt-lab/skills/market-context/scripts; else echo "market-context scripts not found" >&2; exit 1; fi; fi`
+       - `test -f "${SCRIPT_ROOT}/market_context_run_api.py"`
+    2) Start lifecycle tracking (required before research):
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" start --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain fundamentals --reason "${reason}" --provider codex-spark --expect-status 200`
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" progress --callback-url "${callbackUrl}" --request-id "${requestId}" --seq 1 --status running --message fundamentals_collection_started --expect-status 200`
+    3) Research current fundamentals for `${symbol}` (valuation, growth, profitability, balance-sheet/capital structure, near-term catalysts).
+    4) Write the payload to `/tmp/market-context-fundamentals.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
+    5) Validate payload before submit:
        - `python3 -m json.tool /tmp/market-context-fundamentals.json >/dev/null`
-       - `python3 /workspace/lab/skills/market-context/scripts/validate_market_context_payload.py --domain fundamentals --file /tmp/market-context-fundamentals.json`
-    5) Build citation evidence array in `/tmp/market-context-fundamentals-evidence.json` from the same sources you used for the payload.
+       - `python3 "${SCRIPT_ROOT}/validate_market_context_payload.py" --domain fundamentals --file /tmp/market-context-fundamentals.json`
+    6) Build citation evidence array in `/tmp/market-context-fundamentals-evidence.json` from the same sources you used for the payload.
        - Evidence items must include at least `source`; include `publishedAt`, `url`, `headline`, and `summary` when available.
        - Submit evidence:
-         `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py evidence --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain fundamentals --seq 2 --evidence-file /tmp/market-context-fundamentals-evidence.json --expect-status 200`
-    6) Finalize and persist via lifecycle finalize endpoint:
-       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py finalize --callback-url "${callbackUrl}" --request-id "${requestId}" --payload-file /tmp/market-context-fundamentals.json --expect-status 200 --retries 1`
+         `python3 "${SCRIPT_ROOT}/market_context_run_api.py" evidence --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain fundamentals --seq 2 --evidence-file /tmp/market-context-fundamentals-evidence.json --expect-status 200`
+    7) Finalize and persist via lifecycle finalize endpoint:
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" finalize --callback-url "${callbackUrl}" --request-id "${requestId}" --payload-file /tmp/market-context-fundamentals.json --expect-status 200 --retries 1`
        - Require response JSON to include `"ok": true`.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
@@ -299,20 +303,24 @@ spec:
     }
 
     Steps:
-    1) Start lifecycle tracking (required before research) using repo scripts:
-       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py start --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain news --reason "${reason}" --provider codex-spark --expect-status 200`
-       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py progress --callback-url "${callbackUrl}" --request-id "${requestId}" --seq 1 --status running --message news_collection_started --expect-status 200`
-    2) Gather recent high-signal company/sector/macro news relevant to `${symbol}`.
-    3) Write the payload to `/tmp/market-context-news.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
-    4) Validate payload before submit:
+    1) Resolve script root (required before lifecycle start):
+       - `SCRIPT_ROOT=/root/.codex/skills/market-context/scripts`
+       - `if [ ! -f "${SCRIPT_ROOT}/market_context_run_api.py" ]; then if [ -f "/workspace/lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/workspace/lab/skills/market-context/scripts; elif [ -f "/tmp/proompt-lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/tmp/proompt-lab/skills/market-context/scripts; else echo "market-context scripts not found" >&2; exit 1; fi; fi`
+       - `test -f "${SCRIPT_ROOT}/market_context_run_api.py"`
+    2) Start lifecycle tracking (required before research):
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" start --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain news --reason "${reason}" --provider codex-spark --expect-status 200`
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" progress --callback-url "${callbackUrl}" --request-id "${requestId}" --seq 1 --status running --message news_collection_started --expect-status 200`
+    3) Gather recent high-signal company/sector/macro news relevant to `${symbol}`.
+    4) Write the payload to `/tmp/market-context-news.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
+    5) Validate payload before submit:
        - `python3 -m json.tool /tmp/market-context-news.json >/dev/null`
-       - `python3 /workspace/lab/skills/market-context/scripts/validate_market_context_payload.py --domain news --file /tmp/market-context-news.json`
-    5) Build citation evidence array in `/tmp/market-context-news-evidence.json` from the same sources you used for the payload.
+       - `python3 "${SCRIPT_ROOT}/validate_market_context_payload.py" --domain news --file /tmp/market-context-news.json`
+    6) Build citation evidence array in `/tmp/market-context-news-evidence.json` from the same sources you used for the payload.
        - Evidence items must include at least `source`; include `publishedAt`, `url`, `headline`, and `summary` when available.
        - Submit evidence:
-         `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py evidence --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain news --seq 2 --evidence-file /tmp/market-context-news-evidence.json --expect-status 200`
-    6) Finalize and persist via lifecycle finalize endpoint:
-       - `python3 /workspace/lab/skills/market-context/scripts/market_context_run_api.py finalize --callback-url "${callbackUrl}" --request-id "${requestId}" --payload-file /tmp/market-context-news.json --expect-status 200 --retries 1`
+         `python3 "${SCRIPT_ROOT}/market_context_run_api.py" evidence --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain news --seq 2 --evidence-file /tmp/market-context-news-evidence.json --expect-status 200`
+    7) Finalize and persist via lifecycle finalize endpoint:
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" finalize --callback-url "${callbackUrl}" --request-id "${requestId}" --payload-file /tmp/market-context-news.json --expect-status 200 --retries 1`
        - Require response JSON to include `"ok": true`.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
