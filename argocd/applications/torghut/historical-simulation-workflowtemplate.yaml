@@ -157,7 +157,7 @@ spec:
 
             mkdir -p "$OUTPUT_ROOT"
             python3 "${WORK_ROOT}/services/torghut/scripts/start_historical_simulation.py" "${SCRIPT_ARGS[@]}"
-        outputs:
-          artifacts:
-            - name: simulation-output
-              path: "{{inputs.parameters.outputRoot}}"
+      outputs:
+        artifacts:
+          - name: simulation-output
+            path: "{{inputs.parameters.outputRoot}}"
