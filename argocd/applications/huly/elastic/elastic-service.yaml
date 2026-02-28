@@ -7,7 +7,7 @@ metadata:
   name: elastic
 spec:
   ports:
-    - name: "9200"
+    - name: http
       port: 9200
       targetPort: 9200
   selector:
