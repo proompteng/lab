@@ -17,6 +17,7 @@ from scripts.start_historical_simulation import (
     _dump_topics,
     _dump_sha256_for_replay,
     _file_sha256,
+    _http_clickhouse_query,
     _merge_env_entries,
     _normalize_run_token,
     _offset_for_time_lookup,
@@ -189,6 +190,62 @@ class TestStartHistoricalSimulation(TestCase):
         assert isinstance(postgres_dsn, str)
         self.assertIn(':***@', postgres_dsn)
         self.assertNotIn(':secret@', postgres_dsn)
+
+    def test_http_clickhouse_query_uses_post_with_query_body(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            status = 200
+
+            def read(self) -> bytes:
+                return b'1'
+
+        class _FakeConnection:
+            def __init__(self, host: str, port: int | None) -> None:
+                captured['host'] = host
+                captured['port'] = port
+
+            def request(
+                self,
+                method: str,
+                path: str,
+                body: bytes | None = None,
+                headers: dict[str, str] | None = None,
+            ) -> None:
+                captured['method'] = method
+                captured['path'] = path
+                captured['body'] = body
+                captured['headers'] = headers
+
+            def getresponse(self) -> _FakeResponse:
+                return _FakeResponse()
+
+            def close(self) -> None:
+                captured['closed'] = True
+
+        with patch('scripts.start_historical_simulation.HTTPConnection', _FakeConnection):
+            status, body = _http_clickhouse_query(
+                config=ClickHouseRuntimeConfig(
+                    http_url='http://clickhouse:8123',
+                    username='torghut',
+                    password='secret',
+                ),
+                query='SELECT 1',
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body, '1')
+        self.assertEqual(captured.get('host'), 'clickhouse')
+        self.assertEqual(captured.get('port'), 8123)
+        self.assertEqual(captured.get('method'), 'POST')
+        self.assertEqual(captured.get('path'), '/')
+        self.assertEqual(captured.get('body'), b'SELECT 1')
+        headers = captured.get('headers')
+        self.assertIsInstance(headers, dict)
+        assert isinstance(headers, dict)
+        self.assertEqual(headers.get('Content-Type'), 'text/plain')
+        self.assertEqual(headers.get('X-ClickHouse-User'), 'torghut')
+        self.assertEqual(headers.get('X-ClickHouse-Key'), 'secret')
 
     def test_offset_for_time_lookup_falls_back_for_missing_or_invalid_offset(self) -> None:
         class _OffsetMeta:
