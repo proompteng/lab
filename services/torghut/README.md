@@ -172,7 +172,7 @@ Metrics emitted on `/metrics`:
 
 ## Historical simulation starter
 
-Use a single command to plan/apply/teardown historical simulation runs backed by isolated topics + storage:
+Use a single command to plan/run/apply/report/teardown historical simulation runs backed by isolated topics + storage:
 
 ```bash
 cd services/torghut
@@ -182,7 +182,18 @@ uv run python scripts/start_historical_simulation.py \
   --dataset-manifest config/simulation/example-dataset.yaml
 ```
 
-Apply requires an explicit confirmation phrase:
+Run end-to-end lifecycle (`apply -> monitor -> report -> teardown`) with an explicit confirmation phrase:
+
+```bash
+cd services/torghut
+uv run python scripts/start_historical_simulation.py \
+  --mode run \
+  --run-id sim-2026-02-27-01 \
+  --dataset-manifest config/simulation/example-dataset.yaml \
+  --confirm START_HISTORICAL_SIMULATION
+```
+
+`--mode apply` remains available for split-run operation:
 
 ```bash
 cd services/torghut
@@ -196,6 +207,15 @@ uv run python scripts/start_historical_simulation.py \
 For historical windows, the starter auto-derives
 `TRADING_FEATURE_MAX_STALENESS_MS` from `window.start` when no explicit override is supplied.
 Set `torghut_env_overrides.TRADING_FEATURE_MAX_STALENESS_MS` only when you want a custom budget.
+
+When `window.profile=us_equities_regular`, the script enforces full U.S. regular session bounds
+(`09:30-16:00 America/New_York`, `390` minutes minimum) and fails if coverage is too short.
+
+If `argocd.manage_automation=true` in the dataset manifest, `--mode run` automatically sets Torghut
+ApplicationSet automation to `manual` during the simulation and restores the prior mode at the end.
+
+For secured Kafka clusters, set `kafka.runtime_*` auth fields in the manifest; the script will inject matching
+`TRADING_ORDER_FEED_*` and `TRADING_SIMULATION_ORDER_UPDATES_*` security env vars on the Torghut runtime.
 
 Teardown restores previously captured TA + Torghut runtime config:
 
@@ -212,6 +232,12 @@ Artifacts are written under `artifacts/torghut/simulations/<run_token>/`:
 - `state.json` (pre-simulation cluster config snapshot)
 - `source-dump.ndjson` (bounded source-topic dump)
 - `run-manifest.json` (apply report)
+- `run-state.json` (phase transitions)
+- `report/simulation-report.json` (statistical report contract: `torghut.simulation-report.v1`)
+- `report/simulation-report.md` (operator summary)
+- `report/trade-pnl.csv`
+- `report/execution-latency.csv`
+- `report/llm-review-summary.csv`
 
 For production execution and empirical evidence capture, use:
 `docs/torghut/rollouts/historical-simulation-playbook.md`.

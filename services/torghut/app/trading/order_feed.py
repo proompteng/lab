@@ -104,7 +104,7 @@ class OrderFeedIngestor:
     def _preconditions_met(self) -> bool:
         if not settings.trading_order_feed_enabled:
             return False
-        if settings.trading_order_feed_bootstrap_servers:
+        if settings.trading_order_feed_bootstrap_server_list:
             return True
         if not self._disabled_logged:
             logger.info('Order-feed ingestion enabled but TRADING_ORDER_FEED_BOOTSTRAP_SERVERS is not set; skipping')
@@ -197,10 +197,9 @@ class OrderFeedIngestor:
         except Exception as exc:  # pragma: no cover - import guarded at runtime
             raise RuntimeError('kafka-python dependency is required for order-feed ingestion') from exc
 
-        bootstrap_servers_raw = settings.trading_order_feed_bootstrap_servers or ''
         return KafkaConsumer(
             *settings.trading_order_feed_topics,
-            bootstrap_servers=[item.strip() for item in bootstrap_servers_raw.split(',') if item.strip()],
+            bootstrap_servers=settings.trading_order_feed_bootstrap_server_list,
             group_id=settings.trading_order_feed_group_id,
             client_id=settings.trading_order_feed_client_id,
             enable_auto_commit=False,
@@ -208,6 +207,7 @@ class OrderFeedIngestor:
             consumer_timeout_ms=max(settings.trading_order_feed_poll_ms, 1000),
             value_deserializer=None,
             key_deserializer=None,
+            **settings.trading_order_feed_kafka_security_kwargs,
         )
 
 
@@ -260,6 +260,9 @@ def normalize_order_feed_record(
     account_label = (
         _coerce_text(data_payload.get('account_label'))
         or _coerce_text(data_payload.get('accountLabel'))
+        or _coerce_text((order or {}).get('alpaca_account_label'))
+        or _coerce_text((order or {}).get('account_label'))
+        or _coerce_text((order or {}).get('accountLabel'))
         or _coerce_text(envelope.get('account_label') if envelope else None)
         or _coerce_text(envelope.get('accountLabel') if envelope else None)
         or default_account_label

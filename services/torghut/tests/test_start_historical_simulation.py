@@ -9,25 +9,34 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from scripts.start_historical_simulation import (
+    ArgocdAutomationConfig,
     ClickHouseRuntimeConfig,
     KafkaRuntimeConfig,
     PostgresRuntimeConfig,
+    _build_argocd_automation_config,
+    _build_kafka_runtime_config,
     _build_plan_report,
     _build_postgres_runtime_config,
     _build_resources,
     _configure_torghut_service_for_simulation,
+    _discover_automation_pointer,
     _dump_topics,
     _dump_sha256_for_replay,
+    _ensure_topics,
     _file_sha256,
     _http_clickhouse_query,
     _merge_env_entries,
+    _monitor_run_completion,
     _normalize_run_token,
     _offset_for_time_lookup,
     _pacing_delay_seconds,
     _redact_dsn_credentials,
     _restore_ta_configuration,
     _replay_dump,
+    _set_argocd_automation_mode,
     _torghut_env_overrides_from_manifest,
+    _validate_dump_coverage,
+    _validate_window_policy,
     _verify_isolation_guards,
 )
 
@@ -58,7 +67,7 @@ class TestStartHistoricalSimulation(TestCase):
                 'postgres': {
                     'admin_dsn': 'postgresql://torghut:secret@localhost:5432/postgres',
                     'simulation_dsn_template': 'postgresql://torghut:secret@localhost:5432/{db}',
-                    'migrations_command': 'uv run --frozen alembic upgrade head',
+                    'migrations_command': 'uv run --frozen alembic upgrade heads',
                 }
             },
             simulation_db='torghut_sim_test',
@@ -68,6 +77,43 @@ class TestStartHistoricalSimulation(TestCase):
             config.simulation_dsn,
             'postgresql://torghut:secret@localhost:5432/torghut_sim_test',
         )
+
+    def test_build_postgres_runtime_config_normalizes_alembic_upgrade_head(self) -> None:
+        config = _build_postgres_runtime_config(
+            {
+                'postgres': {
+                    'admin_dsn': 'postgresql://torghut:secret@localhost:5432/postgres',
+                    'simulation_dsn_template': 'postgresql://torghut:secret@localhost:5432/{db}',
+                    'migrations_command': 'uv run --frozen alembic upgrade head',
+                }
+            },
+            simulation_db='torghut_sim_test',
+        )
+        self.assertEqual(config.migrations_command, 'uv run --frozen alembic upgrade heads')
+
+    def test_build_kafka_runtime_config_supports_runtime_auth_overrides(self) -> None:
+        with patch.dict('os.environ', {'SIM_KAFKA_PASSWORD': 'sim-secret'}, clear=False):
+            config = _build_kafka_runtime_config(
+                {
+                    'kafka': {
+                        'bootstrap_servers': 'kafka:9092',
+                        'security_protocol': 'SASL_PLAINTEXT',
+                        'sasl_mechanism': 'SCRAM-SHA-512',
+                        'sasl_username': 'torghut',
+                        'sasl_password': 'base-secret',
+                        'runtime_bootstrap_servers': 'kafka-runtime:9092',
+                        'runtime_security_protocol': 'SASL_SSL',
+                        'runtime_sasl_mechanism': 'SCRAM-SHA-256',
+                        'runtime_sasl_username': 'torghut-runtime',
+                        'runtime_sasl_password_env': 'SIM_KAFKA_PASSWORD',
+                    }
+                }
+            )
+        self.assertEqual(config.runtime_bootstrap, 'kafka-runtime:9092')
+        self.assertEqual(config.runtime_security, 'SASL_SSL')
+        self.assertEqual(config.runtime_sasl, 'SCRAM-SHA-256')
+        self.assertEqual(config.runtime_username, 'torghut-runtime')
+        self.assertEqual(config.runtime_password, 'sim-secret')
 
     def test_build_postgres_runtime_config_uses_db_from_explicit_dsn(self) -> None:
         config = _build_postgres_runtime_config(
@@ -245,6 +291,15 @@ class TestStartHistoricalSimulation(TestCase):
                 password=None,
             ),
             postgres_config=postgres_config,
+            argocd_config=ArgocdAutomationConfig(
+                manage_automation=False,
+                applicationset_name='product',
+                applicationset_namespace='argocd',
+                app_name='torghut',
+                desired_mode_during_run='manual',
+                restore_mode_after_run='previous',
+                verify_timeout_seconds=600,
+            ),
             manifest={'window': {'start': '2026-01-01T00:00:00Z', 'end': '2026-01-01T01:00:00Z'}},
         )
         self.assertEqual(report['run_id'], 'sim-1')
@@ -311,6 +366,179 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(headers.get('Content-Type'), 'text/plain')
         self.assertEqual(headers.get('X-ClickHouse-User'), 'torghut')
         self.assertEqual(headers.get('X-ClickHouse-Key'), 'secret')
+
+    def test_ensure_topics_caps_partitions_to_available_brokers(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        manifest = {'kafka': {'default_partitions': 6, 'replication_factor': 1}}
+
+        class _FakeNewTopic:
+            def __init__(self, name: str, num_partitions: int, replication_factor: int) -> None:
+                self.name = name
+                self.num_partitions = num_partitions
+                self.replication_factor = replication_factor
+
+        class _FakeAdmin:
+            def __init__(self) -> None:
+                self.created: list[_FakeNewTopic] = []
+                self._client = SimpleNamespace(
+                    cluster=SimpleNamespace(
+                        brokers=lambda: {0, 1},
+                    )
+                )
+
+            def list_topics(self) -> list[str]:
+                return []
+
+            def describe_topics(self, topics: list[str]) -> list[dict[str, object]]:
+                return [
+                    {
+                        'topic': topic,
+                        'partitions': [{}, {}, {}],
+                    }
+                    for topic in topics
+                ]
+
+            def create_topics(self, new_topics: list[_FakeNewTopic], validate_only: bool = False) -> None:
+                _ = validate_only
+                self.created.extend(new_topics)
+
+            def close(self) -> None:
+                return None
+
+        fake_admin = _FakeAdmin()
+        with (
+            patch.dict(
+                'sys.modules',
+                {'kafka.admin': SimpleNamespace(NewTopic=_FakeNewTopic)},
+            ),
+            patch('scripts.start_historical_simulation._kafka_admin_client', return_value=fake_admin),
+        ):
+            report = _ensure_topics(
+                resources=resources,
+                config=kafka_config,
+                manifest=manifest,
+            )
+
+        created_by_topic = {topic.name: topic for topic in fake_admin.created}
+        self.assertEqual(report['available_brokers'], 2)
+        self.assertGreater(len(report['partition_caps']), 0)
+        self.assertEqual(
+            created_by_topic[resources.simulation_topic_by_role['trades']].num_partitions,
+            2,
+        )
+        self.assertEqual(
+            created_by_topic[resources.simulation_topic_by_role['quotes']].num_partitions,
+            2,
+        )
+        self.assertEqual(
+            created_by_topic[resources.simulation_topic_by_role['bars']].num_partitions,
+            2,
+        )
+        self.assertEqual(
+            created_by_topic[resources.simulation_topic_by_role['status']].num_partitions,
+            2,
+        )
+
+    def test_ensure_topics_respects_max_partitions_override(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        manifest = {
+            'kafka': {
+                'default_partitions': 6,
+                'replication_factor': 1,
+                'max_partitions_per_topic': 1,
+            }
+        }
+
+        class _FakeNewTopic:
+            def __init__(self, name: str, num_partitions: int, replication_factor: int) -> None:
+                self.name = name
+                self.num_partitions = num_partitions
+                self.replication_factor = replication_factor
+
+        class _FakeAdmin:
+            def __init__(self) -> None:
+                self.created: list[_FakeNewTopic] = []
+                self._client = SimpleNamespace(
+                    cluster=SimpleNamespace(
+                        brokers=lambda: {0, 1},
+                    )
+                )
+
+            def list_topics(self) -> list[str]:
+                return []
+
+            def describe_topics(self, topics: list[str]) -> list[dict[str, object]]:
+                return [
+                    {
+                        'topic': topic,
+                        'partitions': [{}, {}, {}],
+                    }
+                    for topic in topics
+                ]
+
+            def create_topics(self, new_topics: list[_FakeNewTopic], validate_only: bool = False) -> None:
+                _ = validate_only
+                self.created.extend(new_topics)
+
+            def close(self) -> None:
+                return None
+
+        fake_admin = _FakeAdmin()
+        with (
+            patch.dict(
+                'sys.modules',
+                {'kafka.admin': SimpleNamespace(NewTopic=_FakeNewTopic)},
+            ),
+            patch('scripts.start_historical_simulation._kafka_admin_client', return_value=fake_admin),
+        ):
+            report = _ensure_topics(
+                resources=resources,
+                config=kafka_config,
+                manifest=manifest,
+            )
+
+        created_by_topic = {topic.name: topic for topic in fake_admin.created}
+        self.assertEqual(report['max_partitions_per_topic'], 1)
+        self.assertEqual(
+            created_by_topic[resources.simulation_topic_by_role['trades']].num_partitions,
+            1,
+        )
+        self.assertEqual(
+            created_by_topic[resources.simulation_topic_by_role['quotes']].num_partitions,
+            1,
+        )
+        self.assertEqual(
+            created_by_topic[resources.simulation_topic_by_role['bars']].num_partitions,
+            1,
+        )
+        self.assertEqual(
+            created_by_topic[resources.simulation_topic_by_role['status']].num_partitions,
+            1,
+        )
 
     def test_configure_torghut_service_preserves_existing_container_fields(self) -> None:
         resources = _build_resources(
@@ -393,6 +621,46 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(
             container.get('volumeMounts'),
             [{'name': 'strategy-config', 'mountPath': '/etc/torghut'}],
+        )
+        env_entries = container.get('env')
+        self.assertIsInstance(env_entries, list)
+        assert isinstance(env_entries, list)
+        env_by_name = {
+            str(item.get('name')): item
+            for item in env_entries
+            if isinstance(item, dict)
+        }
+        self.assertEqual(
+            env_by_name['TRADING_ORDER_FEED_SECURITY_PROTOCOL'].get('value'),
+            'SASL_PLAINTEXT',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_ORDER_FEED_SASL_MECHANISM'].get('value'),
+            'SCRAM-SHA-512',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_ORDER_FEED_SASL_USERNAME'].get('value'),
+            'user',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_ORDER_FEED_SASL_PASSWORD'].get('value'),
+            'secret',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_SIMULATION_ORDER_UPDATES_SECURITY_PROTOCOL'].get('value'),
+            'SASL_PLAINTEXT',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_SIMULATION_ORDER_UPDATES_SASL_MECHANISM'].get('value'),
+            'SCRAM-SHA-512',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_SIMULATION_ORDER_UPDATES_SASL_USERNAME'].get('value'),
+            'user',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD'].get('value'),
+            'secret',
         )
 
     def test_configure_torghut_service_applies_manifest_overrides(self) -> None:
@@ -598,7 +866,7 @@ class TestStartHistoricalSimulation(TestCase):
             admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
             simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
             simulation_db='torghut_sim_sim_1',
-            migrations_command='uv run --frozen alembic upgrade head',
+            migrations_command='uv run --frozen alembic upgrade heads',
         )
 
         with self.assertRaisesRegex(RuntimeError, 'simulation_topics_isolated_from_sources'):
@@ -693,6 +961,74 @@ class TestStartHistoricalSimulation(TestCase):
                 _dump_sha256_for_replay(dump_path),
             )
 
+    def test_replay_dump_prefers_current_mapping_over_dump_replay_topic(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+
+        class _FakeProducer:
+            def __init__(self) -> None:
+                self.sent: list[tuple[str, int | None]] = []
+
+            def send(
+                self,
+                topic: str,
+                *,
+                key: bytes | None = None,
+                value: bytes | None = None,
+                headers: list[tuple[str, bytes]] | None = None,
+                timestamp_ms: int | None = None,
+            ) -> None:
+                _ = (key, value, headers)
+                self.sent.append((topic, timestamp_ms))
+
+            def flush(self, timeout: int) -> None:
+                _ = timeout
+
+            def close(self, timeout: int) -> None:
+                _ = timeout
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+            row = {
+                'source_topic': resources.source_topic_by_role['trades'],
+                'replay_topic': 'torghut.sim.legacy.trades.v1',
+                'source_timestamp_ms': 1704067200000,
+                'key_b64': None,
+                'value_b64': None,
+                'headers': [],
+            }
+            dump_path.write_text(json.dumps(row) + '\n', encoding='utf-8')
+
+            producer = _FakeProducer()
+            with patch(
+                'scripts.start_historical_simulation._producer_for_replay',
+                return_value=producer,
+            ):
+                report = _replay_dump(
+                    resources=resources,
+                    kafka_config=kafka_config,
+                    manifest={'replay': {'pace_mode': 'max_throughput'}},
+                    dump_path=dump_path,
+                    force=True,
+                )
+
+            self.assertEqual(
+                producer.sent,
+                [(resources.simulation_topic_by_role['trades'], 1704067200000)],
+            )
+            self.assertEqual(report['replay_topic_overrides'], 1)
+
     def test_restore_ta_configuration_removes_simulation_only_keys(self) -> None:
         resources = _build_resources(
             'sim-1',
@@ -732,3 +1068,181 @@ class TestStartHistoricalSimulation(TestCase):
                 }
             },
         )
+
+    def test_validate_window_policy_us_equities_regular_profile(self) -> None:
+        policy = _validate_window_policy(
+            {
+                'window': {
+                    'profile': 'us_equities_regular',
+                    'trading_day': '2026-02-27',
+                    'timezone': 'America/New_York',
+                    'start': '2026-02-27T14:30:00Z',
+                    'end': '2026-02-27T21:00:00Z',
+                }
+            }
+        )
+        self.assertEqual(policy['profile'], 'us_equities_regular')
+        self.assertEqual(policy['min_coverage_minutes'], 390)
+
+    def test_validate_window_policy_rejects_profile_mismatch(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, 'window_profile_mismatch:us_equities_regular'):
+            _validate_window_policy(
+                {
+                    'window': {
+                        'profile': 'us_equities_regular',
+                        'trading_day': '2026-02-27',
+                        'timezone': 'America/New_York',
+                        'start': '2026-02-27T15:00:00Z',
+                        'end': '2026-02-27T21:00:00Z',
+                    }
+                }
+            )
+
+    def test_validate_dump_coverage_rejects_short_dump_span(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, 'dump_coverage_too_short'):
+            _validate_dump_coverage(
+                manifest={
+                    'window': {
+                        'profile': 'us_equities_regular',
+                        'trading_day': '2026-02-27',
+                        'timezone': 'America/New_York',
+                        'start': '2026-02-27T14:30:00Z',
+                        'end': '2026-02-27T21:00:00Z',
+                    }
+                },
+                dump_report={
+                    'records': 100,
+                    'min_source_timestamp_ms': 1709044200000,
+                    'max_source_timestamp_ms': 1709044200000 + (30 * 60 * 1000),
+                },
+            )
+
+    def test_monitor_run_completion_requires_order_events_when_executions_exist(self) -> None:
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        manifest = {
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T21:00:00Z',
+            },
+            'monitor': {
+                'timeout_seconds': 10,
+                'poll_seconds': 1,
+                'min_trade_decisions': 1,
+                'min_executions': 1,
+                'min_execution_tca_metrics': 1,
+                'min_execution_order_events': 0,
+                'cursor_grace_seconds': 0,
+            },
+        }
+        with (
+            patch(
+                'scripts.start_historical_simulation._monitor_snapshot',
+                return_value={
+                    'trade_decisions': 10,
+                    'executions': 5,
+                    'execution_tca_metrics': 5,
+                    'execution_order_events': 0,
+                    'cursor_at': '2026-02-27T21:00:01Z',
+                },
+            ),
+            patch('scripts.start_historical_simulation.time.sleep', return_value=None),
+            self.assertRaisesRegex(
+                RuntimeError,
+                'monitor_thresholds_not_met_after_cursor_reached .*execution_order_events=0',
+            ),
+        ):
+            _monitor_run_completion(
+                manifest=manifest,
+                postgres_config=postgres_config,
+            )
+
+    def test_build_argocd_automation_config_defaults(self) -> None:
+        config = _build_argocd_automation_config({})
+        self.assertFalse(config.manage_automation)
+        self.assertEqual(config.applicationset_name, 'product')
+        self.assertEqual(config.applicationset_namespace, 'argocd')
+        self.assertEqual(config.app_name, 'torghut')
+
+    def test_discover_automation_pointer_finds_nested_element(self) -> None:
+        payload = {
+            'spec': {
+                'generators': [
+                    {
+                        'matrix': {
+                            'generators': [
+                                {'git': {'repoURL': 'https://example.invalid'}},
+                                {
+                                    'list': {
+                                        'elements': [
+                                            {'name': 'other', 'automation': 'auto'},
+                                            {'name': 'torghut', 'automation': 'manual'},
+                                        ]
+                                    }
+                                },
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+        discovered = _discover_automation_pointer(payload, app_name='torghut')
+        self.assertIsNotNone(discovered)
+        assert discovered is not None
+        pointer, mode = discovered
+        self.assertIn('/spec/', pointer)
+        self.assertEqual(mode, 'manual')
+
+    def test_set_argocd_automation_mode_patches_and_verifies(self) -> None:
+        payload_auto = {
+            'spec': {
+                'generators': [
+                    {
+                        'list': {
+                            'elements': [
+                                {'name': 'torghut', 'automation': 'auto'},
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+        payload_manual = {
+            'spec': {
+                'generators': [
+                    {
+                        'list': {
+                            'elements': [
+                                {'name': 'torghut', 'automation': 'manual'},
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+        with (
+            patch(
+                'scripts.start_historical_simulation._kubectl_json_global',
+                side_effect=[payload_auto, payload_manual],
+            ),
+            patch('scripts.start_historical_simulation._kubectl_patch_json') as patch_mock,
+        ):
+            report = _set_argocd_automation_mode(
+                config=ArgocdAutomationConfig(
+                    manage_automation=True,
+                    applicationset_name='product',
+                    applicationset_namespace='argocd',
+                    app_name='torghut',
+                    desired_mode_during_run='manual',
+                    restore_mode_after_run='previous',
+                    verify_timeout_seconds=30,
+                ),
+                desired_mode='manual',
+            )
+        self.assertTrue(report['changed'])
+        patch_mock.assert_called_once()
+        self.assertEqual(report['current_mode'], 'manual')

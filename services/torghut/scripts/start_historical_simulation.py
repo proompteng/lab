@@ -6,19 +6,22 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import importlib
 import json
 import os
 import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, Callable, Mapping, Sequence, cast
 from urllib.parse import quote, quote_plus, unquote_plus, urlsplit
 from http.client import HTTPConnection, HTTPSConnection
+from zoneinfo import ZoneInfo
 
 import psycopg
 from psycopg import sql
@@ -77,6 +80,10 @@ TORGHUT_ENV_KEYS = [
     'TRADING_PRICE_TABLE',
     'TRADING_ORDER_FEED_ENABLED',
     'TRADING_ORDER_FEED_BOOTSTRAP_SERVERS',
+    'TRADING_ORDER_FEED_SECURITY_PROTOCOL',
+    'TRADING_ORDER_FEED_SASL_MECHANISM',
+    'TRADING_ORDER_FEED_SASL_USERNAME',
+    'TRADING_ORDER_FEED_SASL_PASSWORD',
     'TRADING_ORDER_FEED_TOPIC',
     'TRADING_ORDER_FEED_TOPIC_V2',
     'TRADING_ORDER_FEED_GROUP_ID',
@@ -87,6 +94,10 @@ TORGHUT_ENV_KEYS = [
     'TRADING_SIMULATION_DATASET_ID',
     'TRADING_SIMULATION_ORDER_UPDATES_TOPIC',
     'TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS',
+    'TRADING_SIMULATION_ORDER_UPDATES_SECURITY_PROTOCOL',
+    'TRADING_SIMULATION_ORDER_UPDATES_SASL_MECHANISM',
+    'TRADING_SIMULATION_ORDER_UPDATES_SASL_USERNAME',
+    'TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD',
 ]
 
 SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST = frozenset(
@@ -98,10 +109,37 @@ SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST = frozenset(
         'TRADING_STRATEGY_RUNTIME_MODE',
         'TRADING_STRATEGY_SCHEDULER_ENABLED',
         'TRADING_STRATEGY_RUNTIME_FALLBACK_LEGACY',
+        'TRADING_SIGNAL_LOOKBACK_MINUTES',
     }
 )
 SIMULATION_FEATURE_STALENESS_MARGIN_MS = 300_000
 SIMULATION_FEATURE_STALENESS_MIN_MS = 120_000
+US_EQUITIES_REGULAR_PROFILE = 'us_equities_regular'
+US_EQUITIES_REGULAR_TIMEZONE = 'America/New_York'
+US_EQUITIES_REGULAR_MINUTES = 390
+DEFAULT_COVERAGE_STRICT_RATIO = 0.95
+DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS = 900
+DEFAULT_RUN_MONITOR_POLL_SECONDS = 15
+DEFAULT_RUN_MONITOR_MIN_DECISIONS = 1
+DEFAULT_RUN_MONITOR_MIN_EXECUTIONS = 1
+DEFAULT_RUN_MONITOR_MIN_TCA = 1
+DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS = 0
+DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS = 120
+DEFAULT_ARGOCD_APPSET_NAME = 'product'
+DEFAULT_ARGOCD_NAMESPACE = 'argocd'
+DEFAULT_ARGOCD_APP_NAME = 'torghut'
+DEFAULT_ARGOCD_RUN_MODE = 'manual'
+TRANSIENT_POSTGRES_ERROR_PATTERNS = (
+    'connection refused',
+    'connection reset by peer',
+    'could not receive data from server',
+    'server closed the connection unexpectedly',
+    'connection to server at',
+    'terminating connection due to administrator command',
+    'timeout expired',
+)
+TRANSIENT_POSTGRES_RETRY_ATTEMPTS = 8
+TRANSIENT_POSTGRES_RETRY_SLEEP_SECONDS = 0.5
 
 
 @dataclass(frozen=True)
@@ -111,6 +149,31 @@ class KafkaRuntimeConfig:
     sasl_mechanism: str | None
     sasl_username: str | None
     sasl_password: str | None
+    runtime_bootstrap_servers: str | None = None
+    runtime_security_protocol: str | None = None
+    runtime_sasl_mechanism: str | None = None
+    runtime_sasl_username: str | None = None
+    runtime_sasl_password: str | None = None
+
+    @property
+    def runtime_bootstrap(self) -> str:
+        return self.runtime_bootstrap_servers or self.bootstrap_servers
+
+    @property
+    def runtime_security(self) -> str | None:
+        return self.runtime_security_protocol or self.security_protocol
+
+    @property
+    def runtime_sasl(self) -> str | None:
+        return self.runtime_sasl_mechanism or self.sasl_mechanism
+
+    @property
+    def runtime_username(self) -> str | None:
+        return self.runtime_sasl_username or self.sasl_username
+
+    @property
+    def runtime_password(self) -> str | None:
+        return self.runtime_sasl_password or self.sasl_password
 
     def kafka_client_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
@@ -144,6 +207,11 @@ class PostgresRuntimeConfig:
     simulation_dsn: str
     simulation_db: str
     migrations_command: str
+    runtime_simulation_dsn: str | None = None
+
+    @property
+    def torghut_runtime_dsn(self) -> str:
+        return self.runtime_simulation_dsn or self.simulation_dsn
 
 
 @dataclass(frozen=True)
@@ -166,11 +234,22 @@ class SimulationResources:
     clickhouse_price_table: str
 
 
+@dataclass(frozen=True)
+class ArgocdAutomationConfig:
+    manage_automation: bool
+    applicationset_name: str
+    applicationset_namespace: str
+    app_name: str
+    desired_mode_during_run: str
+    restore_mode_after_run: str
+    verify_timeout_seconds: int
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Plan/apply/teardown historical simulation runs with isolated Kafka and storage targets.',
+        description='Plan/run/apply/report/teardown historical simulation runs with isolated Kafka and storage targets.',
     )
-    parser.add_argument('--mode', choices=['plan', 'apply', 'teardown'], default='plan')
+    parser.add_argument('--mode', choices=['plan', 'run', 'apply', 'report', 'teardown'], default='plan')
     parser.add_argument('--run-id', required=True, help='Stable simulation run id (used for all isolation names).')
     parser.add_argument('--dataset-manifest', required=True, help='JSON or YAML manifest describing dataset + infra endpoints.')
     parser.add_argument('--confirm', default='', help=f'Apply confirmation phrase: {APPLY_CONFIRMATION_PHRASE}')
@@ -181,6 +260,16 @@ def _parse_args() -> argparse.Namespace:
         '--allow-missing-state',
         action='store_true',
         help='Allow teardown without an existing state file (no-op restore).',
+    )
+    parser.add_argument(
+        '--skip-teardown',
+        action='store_true',
+        help='Do not teardown runtime after mode=run/report (for debugging only).',
+    )
+    parser.add_argument(
+        '--report-only',
+        action='store_true',
+        help='With mode=run, execute report generation after monitor without calling apply.',
     )
     return parser.parse_args()
 
@@ -235,21 +324,231 @@ def _parse_rfc3339_timestamp(value: str | None, *, label: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _safe_int(value: Any, *, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            try:
+                return int(stripped)
+            except ValueError:
+                return default
+    return default
+
+
+def _safe_float(value: Any, *, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            try:
+                return float(stripped)
+            except ValueError:
+                return default
+    return default
+
+
+def _resolve_window_bounds(manifest: Mapping[str, Any]) -> tuple[datetime, datetime]:
+    window = _as_mapping(manifest.get('window'))
+    start = _parse_rfc3339_timestamp(_as_text(window.get('start')), label='window.start')
+    end = _parse_rfc3339_timestamp(_as_text(window.get('end')), label='window.end')
+    if end <= start:
+        raise RuntimeError('window.end must be after window.start')
+    return start, end
+
+
+def _window_min_coverage_minutes(window: Mapping[str, Any], *, profile: str | None) -> int | None:
+    raw_minutes = window.get('min_coverage_minutes')
+    if raw_minutes is not None:
+        minutes = _safe_int(raw_minutes, default=-1)
+        if minutes <= 0:
+            raise RuntimeError('window.min_coverage_minutes must be > 0 when provided')
+        return minutes
+    if profile == US_EQUITIES_REGULAR_PROFILE:
+        return US_EQUITIES_REGULAR_MINUTES
+    return None
+
+
+def _validate_us_equities_regular_profile(
+    *,
+    start: datetime,
+    end: datetime,
+    window: Mapping[str, Any],
+) -> None:
+    trading_day_raw = _as_text(window.get('trading_day'))
+    if trading_day_raw is None:
+        raise RuntimeError('window.trading_day is required when window.profile=us_equities_regular')
+    timezone_name = _as_text(window.get('timezone')) or US_EQUITIES_REGULAR_TIMEZONE
+    try:
+        local_tz = ZoneInfo(timezone_name)
+    except Exception as exc:
+        raise RuntimeError(f'invalid_window_timezone:{timezone_name}') from exc
+    try:
+        trading_day = date.fromisoformat(trading_day_raw)
+    except ValueError as exc:
+        raise RuntimeError(f'invalid_window_trading_day:{trading_day_raw}') from exc
+
+    expected_start_local = datetime(
+        trading_day.year,
+        trading_day.month,
+        trading_day.day,
+        9,
+        30,
+        tzinfo=local_tz,
+    )
+    expected_end_local = datetime(
+        trading_day.year,
+        trading_day.month,
+        trading_day.day,
+        16,
+        0,
+        tzinfo=local_tz,
+    )
+    expected_start_utc = expected_start_local.astimezone(timezone.utc)
+    expected_end_utc = expected_end_local.astimezone(timezone.utc)
+    if start != expected_start_utc or end != expected_end_utc:
+        raise RuntimeError(
+            'window_profile_mismatch:us_equities_regular '
+            f'expected_start={expected_start_utc.isoformat()} '
+            f'expected_end={expected_end_utc.isoformat()} '
+            f'observed_start={start.isoformat()} '
+            f'observed_end={end.isoformat()}'
+        )
+
+
+def _validate_window_policy(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    start, end = _resolve_window_bounds(manifest)
+    window = _as_mapping(manifest.get('window'))
+    profile = (_as_text(window.get('profile')) or '').strip().lower() or None
+    if profile == US_EQUITIES_REGULAR_PROFILE:
+        _validate_us_equities_regular_profile(
+            start=start,
+            end=end,
+            window=window,
+        )
+    elif profile is not None:
+        raise RuntimeError(f'unsupported_window_profile:{profile}')
+
+    min_coverage_minutes = _window_min_coverage_minutes(window, profile=profile)
+    observed_minutes = (end - start).total_seconds() / 60.0
+    if min_coverage_minutes is not None and observed_minutes < float(min_coverage_minutes):
+        raise RuntimeError(
+            'window_coverage_too_short '
+            f'observed_minutes={observed_minutes:.2f} '
+            f'required_minutes={min_coverage_minutes}'
+        )
+    strict_ratio_raw = window.get('strict_coverage_ratio')
+    strict_ratio = (
+        _safe_float(strict_ratio_raw, default=DEFAULT_COVERAGE_STRICT_RATIO)
+        if strict_ratio_raw is not None
+        else DEFAULT_COVERAGE_STRICT_RATIO
+    )
+    if strict_ratio <= 0 or strict_ratio > 1:
+        raise RuntimeError('window.strict_coverage_ratio must be within (0,1]')
+
+    return {
+        'start': start.isoformat(),
+        'end': end.isoformat(),
+        'duration_minutes': observed_minutes,
+        'profile': profile,
+        'min_coverage_minutes': min_coverage_minutes,
+        'strict_coverage_ratio': strict_ratio,
+    }
+
+
+def _validate_dump_coverage(
+    *,
+    manifest: Mapping[str, Any],
+    dump_report: Mapping[str, Any],
+) -> dict[str, Any]:
+    window = _as_mapping(manifest.get('window'))
+    profile = (_as_text(window.get('profile')) or '').strip().lower() or None
+    min_coverage_minutes = _window_min_coverage_minutes(window, profile=profile)
+    strict_ratio_raw = window.get('strict_coverage_ratio')
+    strict_ratio = (
+        _safe_float(strict_ratio_raw, default=DEFAULT_COVERAGE_STRICT_RATIO)
+        if strict_ratio_raw is not None
+        else DEFAULT_COVERAGE_STRICT_RATIO
+    )
+
+    records = _safe_int(dump_report.get('records'))
+    if records <= 0:
+        raise RuntimeError('dump_records_empty')
+
+    min_source_timestamp_ms = dump_report.get('min_source_timestamp_ms')
+    max_source_timestamp_ms = dump_report.get('max_source_timestamp_ms')
+    if min_source_timestamp_ms is None or max_source_timestamp_ms is None:
+        return {
+            'applied': False,
+            'reason': 'timestamp_coverage_unavailable',
+        }
+
+    min_ms = _safe_int(min_source_timestamp_ms, default=-1)
+    max_ms = _safe_int(max_source_timestamp_ms, default=-1)
+    if min_ms < 0 or max_ms < 0 or max_ms < min_ms:
+        raise RuntimeError('dump_timestamp_coverage_invalid')
+    observed_minutes = (max_ms - min_ms) / 60_000.0
+
+    if min_coverage_minutes is not None:
+        required_minutes = float(min_coverage_minutes) * strict_ratio
+        if observed_minutes < required_minutes:
+            raise RuntimeError(
+                'dump_coverage_too_short '
+                f'observed_minutes={observed_minutes:.2f} '
+                f'required_minutes={required_minutes:.2f} '
+                f'strict_ratio={strict_ratio:.4f}'
+            )
+        return {
+            'applied': True,
+            'observed_minutes': observed_minutes,
+            'required_minutes': required_minutes,
+            'min_source_timestamp_ms': min_ms,
+            'max_source_timestamp_ms': max_ms,
+            'strict_ratio': strict_ratio,
+            'profile': profile,
+        }
+    return {
+        'applied': False,
+        'observed_minutes': observed_minutes,
+        'reason': 'no_minimum_coverage_policy',
+        'min_source_timestamp_ms': min_ms,
+        'max_source_timestamp_ms': max_ms,
+    }
+
+
 def _build_kafka_runtime_config(manifest: Mapping[str, Any]) -> KafkaRuntimeConfig:
     kafka = _as_mapping(manifest.get('kafka'))
     bootstrap_servers = _as_text(kafka.get('bootstrap_servers'))
     if not bootstrap_servers:
         raise SystemExit('manifest.kafka.bootstrap_servers is required')
+    runtime_bootstrap_servers = _as_text(kafka.get('runtime_bootstrap_servers')) or bootstrap_servers
     password = _as_text(kafka.get('sasl_password'))
     password_env = _as_text(kafka.get('sasl_password_env'))
     if password is None and password_env:
         password = _as_text(os.environ.get(password_env))
+    runtime_password = _as_text(kafka.get('runtime_sasl_password'))
+    runtime_password_env = _as_text(kafka.get('runtime_sasl_password_env'))
+    if runtime_password is None and runtime_password_env:
+        runtime_password = _as_text(os.environ.get(runtime_password_env))
     return KafkaRuntimeConfig(
         bootstrap_servers=bootstrap_servers,
         security_protocol=_as_text(kafka.get('security_protocol')),
         sasl_mechanism=_as_text(kafka.get('sasl_mechanism')),
         sasl_username=_as_text(kafka.get('sasl_username')),
         sasl_password=password,
+        runtime_bootstrap_servers=runtime_bootstrap_servers,
+        runtime_security_protocol=_as_text(kafka.get('runtime_security_protocol')),
+        runtime_sasl_mechanism=_as_text(kafka.get('runtime_sasl_mechanism')),
+        runtime_sasl_username=_as_text(kafka.get('runtime_sasl_username')),
+        runtime_sasl_password=runtime_password,
     )
 
 
@@ -286,6 +585,23 @@ def _database_name_from_dsn(dsn: str, *, label: str) -> str:
     return database
 
 
+def _replace_database_in_dsn(dsn: str, *, database: str, label: str) -> str:
+    parsed = urlsplit(dsn)
+    if not parsed.scheme or not parsed.netloc:
+        raise SystemExit(f'{label} must be a valid URL')
+    return parsed._replace(path='/' + quote_plus(database)).geturl()
+
+
+def _username_from_dsn(dsn: str) -> str | None:
+    parsed = urlsplit(dsn)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    if parsed.username is None:
+        return None
+    username = unquote_plus(parsed.username).strip()
+    return username or None
+
+
 def _redact_dsn_credentials(dsn: str) -> str:
     parsed = urlsplit(dsn)
     if not parsed.scheme or not parsed.netloc:
@@ -309,6 +625,17 @@ def _redact_dsn_credentials(dsn: str) -> str:
     return parsed._replace(netloc=netloc).geturl()
 
 
+def _normalize_migrations_command(command: str) -> str:
+    normalized = command.strip()
+    if not normalized:
+        return normalized
+    return re.sub(
+        r'\balembic\s+upgrade\s+head\b',
+        'alembic upgrade heads',
+        normalized,
+    )
+
+
 def _build_postgres_runtime_config(
     manifest: Mapping[str, Any],
     *,
@@ -329,16 +656,32 @@ def _build_postgres_runtime_config(
         simulation_dsn,
         label='manifest.postgres.simulation_dsn',
     )
+    runtime_simulation_dsn = _as_text(postgres.get('runtime_simulation_dsn'))
+    runtime_template = _as_text(postgres.get('runtime_simulation_dsn_template'))
+    if runtime_simulation_dsn is None and runtime_template is not None:
+        runtime_simulation_dsn = runtime_template.replace('{db}', simulation_db)
+    if runtime_simulation_dsn is not None:
+        runtime_db = _database_name_from_dsn(
+            runtime_simulation_dsn,
+            label='manifest.postgres.runtime_simulation_dsn',
+        )
+        if runtime_db != simulation_db:
+            raise SystemExit(
+                'manifest.postgres.runtime_simulation_dsn must target the same database as '
+                'manifest.postgres.simulation_dsn'
+            )
 
-    migrations_command = (
+    migrations_command_raw = (
         _as_text(postgres.get('migrations_command'))
-        or 'uv run --frozen alembic upgrade head'
+        or 'uv run --frozen alembic upgrade heads'
     )
+    migrations_command = _normalize_migrations_command(migrations_command_raw)
     return PostgresRuntimeConfig(
         admin_dsn=admin_dsn,
         simulation_dsn=simulation_dsn,
         simulation_db=simulation_db,
         migrations_command=migrations_command,
+        runtime_simulation_dsn=runtime_simulation_dsn,
     )
 
 
@@ -409,9 +752,46 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
     )
 
 
+def _build_argocd_automation_config(manifest: Mapping[str, Any]) -> ArgocdAutomationConfig:
+    argocd = _as_mapping(manifest.get('argocd'))
+    manage_automation = str(argocd.get('manage_automation', 'false')).strip().lower() in {
+        '1',
+        'true',
+        'yes',
+        'on',
+    }
+    desired_mode = (_as_text(argocd.get('desired_mode_during_run')) or DEFAULT_ARGOCD_RUN_MODE).lower()
+    if desired_mode not in {'manual', 'auto'}:
+        raise RuntimeError('argocd.desired_mode_during_run must be one of: manual,auto')
+    restore_mode = (_as_text(argocd.get('restore_mode_after_run')) or 'previous').lower()
+    if restore_mode not in {'previous', 'manual', 'auto'}:
+        raise RuntimeError('argocd.restore_mode_after_run must be one of: previous,manual,auto')
+    verify_timeout_seconds = _safe_int(argocd.get('verify_timeout_seconds'), default=600)
+    if verify_timeout_seconds <= 0:
+        raise RuntimeError('argocd.verify_timeout_seconds must be > 0')
+    return ArgocdAutomationConfig(
+        manage_automation=manage_automation,
+        applicationset_name=_as_text(argocd.get('applicationset_name')) or DEFAULT_ARGOCD_APPSET_NAME,
+        applicationset_namespace=_as_text(argocd.get('applicationset_namespace')) or DEFAULT_ARGOCD_NAMESPACE,
+        app_name=_as_text(argocd.get('app_name')) or DEFAULT_ARGOCD_APP_NAME,
+        desired_mode_during_run=desired_mode,
+        restore_mode_after_run=restore_mode,
+        verify_timeout_seconds=verify_timeout_seconds,
+    )
+
+
 def _ensure_supported_binary(name: str) -> None:
     if shutil.which(name) is None:
         raise SystemExit(f'{name} not found in PATH')
+
+
+def _ensure_lz4_codec_available() -> None:
+    try:
+        importlib.import_module('lz4.frame')
+    except Exception as exc:
+        raise RuntimeError(
+            'kafka_lz4_codec_unavailable: install lz4 (for example `uv sync --frozen --extra dev`)'
+        ) from exc
 
 
 def _run_command(
@@ -438,8 +818,46 @@ def _run_command(
         raise RuntimeError(f'command_failed: {" ".join(args)}: {detail}') from exc
 
 
+def _is_transient_postgres_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return any(pattern in message for pattern in TRANSIENT_POSTGRES_ERROR_PATTERNS)
+
+
+def _run_with_transient_postgres_retry(
+    *,
+    label: str,
+    operation: Callable[[], Any],
+    attempts: int = TRANSIENT_POSTGRES_RETRY_ATTEMPTS,
+    sleep_seconds: float = TRANSIENT_POSTGRES_RETRY_SLEEP_SECONDS,
+) -> Any:
+    if attempts <= 0:
+        raise RuntimeError(f'{label}: attempts must be > 0')
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return operation()
+        except Exception as exc:  # pragma: no cover - exercised by integration/runtime failures
+            if not _is_transient_postgres_error(exc):
+                raise
+            last_error = exc
+            if attempt >= attempts:
+                break
+            time.sleep(sleep_seconds * attempt)
+    if last_error is None:
+        raise RuntimeError(f'{label}: transient retry failed without captured exception')
+    raise RuntimeError(f'{label}: exhausted transient retries: {last_error}') from last_error
+
+
 def _kubectl_json(namespace: str, args: Sequence[str]) -> dict[str, Any]:
     result = _run_command(['kubectl', '-n', namespace, *args])
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, Mapping):
+        raise RuntimeError('kubectl did not return a mapping payload')
+    return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
+
+
+def _kubectl_json_global(args: Sequence[str]) -> dict[str, Any]:
+    result = _run_command(['kubectl', *args])
     payload = json.loads(result.stdout)
     if not isinstance(payload, Mapping):
         raise RuntimeError('kubectl did not return a mapping payload')
@@ -461,6 +879,182 @@ def _kubectl_patch(namespace: str, kind: str, name: str, patch: Mapping[str, Any
             json.dumps(dict(patch), separators=(',', ':')),
         ]
     )
+
+
+def _kubectl_patch_json(
+    namespace: str,
+    kind: str,
+    name: str,
+    patch_ops: Sequence[Mapping[str, Any]],
+) -> None:
+    _run_command(
+        [
+            'kubectl',
+            '-n',
+            namespace,
+            'patch',
+            kind,
+            name,
+            '--type',
+            'json',
+            '-p',
+            json.dumps(list(patch_ops), separators=(',', ':')),
+        ]
+    )
+
+
+def _json_pointer_escape(value: str) -> str:
+    return value.replace('~', '~0').replace('/', '~1')
+
+
+def _json_pointer_unescape(value: str) -> str:
+    return value.replace('~1', '/').replace('~0', '~')
+
+
+def _discover_automation_pointer(
+    node: Any,
+    *,
+    app_name: str,
+    path: str = '',
+) -> tuple[str, str] | None:
+    if isinstance(node, Mapping):
+        elements = node.get('elements')
+        if isinstance(elements, list):
+            elements_path = f'{path}/{_json_pointer_escape("elements")}'
+            for idx, entry in enumerate(elements):
+                if not isinstance(entry, Mapping):
+                    continue
+                name = _as_text(entry.get('name'))
+                automation = _as_text(entry.get('automation'))
+                if name == app_name and automation is not None:
+                    pointer = (
+                        f'{elements_path}/{idx}/{_json_pointer_escape("automation")}'
+                    )
+                    return pointer, automation
+        for key, value in node.items():
+            child_path = f'{path}/{_json_pointer_escape(str(key))}'
+            found = _discover_automation_pointer(value, app_name=app_name, path=child_path)
+            if found is not None:
+                return found
+        return None
+    if isinstance(node, list):
+        for idx, value in enumerate(node):
+            child_path = f'{path}/{idx}'
+            found = _discover_automation_pointer(value, app_name=app_name, path=child_path)
+            if found is not None:
+                return found
+    return None
+
+
+def _json_pointer_get(payload: Any, pointer: str) -> Any:
+    if pointer == '':
+        return payload
+    current = payload
+    for token in pointer.lstrip('/').split('/'):
+        part = _json_pointer_unescape(token)
+        if isinstance(current, list):
+            index = _safe_int(part, default=-1)
+            if index < 0 or index >= len(current):
+                raise RuntimeError(f'invalid_json_pointer:{pointer}')
+            current = current[index]
+            continue
+        if isinstance(current, Mapping):
+            if part not in current:
+                raise RuntimeError(f'invalid_json_pointer:{pointer}')
+            current = current[part]
+            continue
+        raise RuntimeError(f'invalid_json_pointer:{pointer}')
+    return current
+
+
+def _normalized_automation_mode(value: str | None) -> str:
+    normalized = (value or '').strip().lower()
+    if normalized not in {'manual', 'auto'}:
+        raise RuntimeError(f'unsupported_automation_mode:{value}')
+    return normalized
+
+
+def _read_argocd_automation_mode(
+    *,
+    config: ArgocdAutomationConfig,
+) -> dict[str, Any]:
+    payload = _kubectl_json_global(
+        [
+            '-n',
+            config.applicationset_namespace,
+            'get',
+            'applicationset',
+            config.applicationset_name,
+            '-o',
+            'json',
+        ]
+    )
+    discovered = _discover_automation_pointer(payload, app_name=config.app_name)
+    if discovered is None:
+        raise RuntimeError(
+            'argocd_automation_path_not_found '
+            f'applicationset={config.applicationset_name} app={config.app_name}'
+        )
+    pointer, automation = discovered
+    mode = _normalized_automation_mode(automation)
+    return {
+        'pointer': pointer,
+        'mode': mode,
+    }
+
+
+def _set_argocd_automation_mode(
+    *,
+    config: ArgocdAutomationConfig,
+    desired_mode: str,
+) -> dict[str, Any]:
+    normalized_desired = _normalized_automation_mode(desired_mode)
+    state = _read_argocd_automation_mode(config=config)
+    pointer = str(state['pointer'])
+    current_mode = _normalized_automation_mode(_as_text(state.get('mode')))
+    changed = current_mode != normalized_desired
+    if changed:
+        _kubectl_patch_json(
+            config.applicationset_namespace,
+            'applicationset',
+            config.applicationset_name,
+            [
+                {
+                    'op': 'replace',
+                    'path': pointer,
+                    'value': normalized_desired,
+                }
+            ],
+        )
+
+    started = datetime.now(timezone.utc)
+    deadline = started + timedelta(seconds=config.verify_timeout_seconds)
+    verified_mode = current_mode
+    while True:
+        verified_state = _read_argocd_automation_mode(config=config)
+        pointer_observed = str(verified_state['pointer'])
+        if pointer_observed != pointer:
+            raise RuntimeError(
+                'argocd_automation_pointer_changed '
+                f'expected={pointer} observed={pointer_observed}'
+            )
+        verified_mode = _normalized_automation_mode(_as_text(verified_state.get('mode')))
+        if verified_mode == normalized_desired:
+            break
+        if datetime.now(timezone.utc) >= deadline:
+            raise RuntimeError(
+                'argocd_automation_verify_timeout '
+                f'desired={normalized_desired} observed={verified_mode}'
+            )
+        time.sleep(2)
+
+    return {
+        'pointer': pointer,
+        'previous_mode': current_mode,
+        'desired_mode': normalized_desired,
+        'current_mode': verified_mode,
+        'changed': changed,
+    }
 
 
 def _kservice_env(service: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]]:
@@ -597,6 +1191,50 @@ def _state_paths(resources: SimulationResources) -> tuple[Path, Path, Path]:
     return state_path, run_manifest_path, dump_path
 
 
+def _run_state_path(resources: SimulationResources) -> Path:
+    run_dir = resources.output_root / resources.run_token
+    return run_dir / 'run-state.json'
+
+
+def _update_run_state(
+    *,
+    resources: SimulationResources,
+    phase: str,
+    status: str,
+    details: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    state_path = _run_state_path(resources)
+    state = _load_optional_json(state_path) or {
+        'run_id': resources.run_id,
+        'dataset_id': resources.dataset_id,
+        'run_token': resources.run_token,
+        'history': [],
+    }
+    history_raw = state.get('history')
+    if not isinstance(history_raw, list):
+        history: list[dict[str, Any]] = []
+    else:
+        history = [
+            _as_mapping(item)
+            for item in history_raw
+            if isinstance(item, Mapping)
+        ]
+    event = {
+        'phase': phase,
+        'status': status,
+        'at': datetime.now(timezone.utc).isoformat(),
+    }
+    if details:
+        event['details'] = dict(details)
+    history.append(event)
+    state['history'] = history
+    state['last_phase'] = phase
+    state['last_status'] = status
+    state['updated_at'] = event['at']
+    _save_json(state_path, state)
+    return state
+
+
 def _ensure_directory(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -677,11 +1315,14 @@ def _build_plan_report(
     kafka_config: KafkaRuntimeConfig,
     clickhouse_config: ClickHouseRuntimeConfig,
     postgres_config: PostgresRuntimeConfig,
+    argocd_config: ArgocdAutomationConfig,
     manifest: Mapping[str, Any],
 ) -> dict[str, Any]:
     state_path, run_manifest_path, dump_path = _state_paths(resources)
+    run_state_path = _run_state_path(resources)
     window = _as_mapping(manifest.get('window'))
     torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
+    window_policy = _validate_window_policy(manifest)
     return {
         'status': 'ok',
         'run_id': resources.run_id,
@@ -701,24 +1342,32 @@ def _build_plan_report(
             'clickhouse_price_table': resources.clickhouse_price_table,
             'postgres_database': postgres_config.simulation_db,
             'postgres_simulation_dsn': _redact_dsn_credentials(postgres_config.simulation_dsn),
+            'postgres_runtime_simulation_dsn': _redact_dsn_credentials(postgres_config.torghut_runtime_dsn),
         },
         'window': {
             'start': _as_text(window.get('start')),
             'end': _as_text(window.get('end')),
+            'policy': window_policy,
         },
         'torghut_env_overrides': torghut_env_overrides,
         'kafka': {
             'bootstrap_servers': kafka_config.bootstrap_servers,
+            'runtime_bootstrap_servers': kafka_config.runtime_bootstrap,
             'security_protocol': kafka_config.security_protocol,
+            'runtime_security_protocol': kafka_config.runtime_security,
+            'runtime_sasl_mechanism': kafka_config.runtime_sasl,
+            'runtime_sasl_username': kafka_config.runtime_username,
         },
         'clickhouse': {
             'http_url': clickhouse_config.http_url,
             'username': clickhouse_config.username,
         },
+        'argocd': asdict(argocd_config),
         'artifacts': {
             'state_path': str(state_path),
             'run_manifest_path': str(run_manifest_path),
             'dump_path': str(dump_path),
+            'run_state_path': str(run_state_path),
         },
         'confirmation_phrase': APPLY_CONFIRMATION_PHRASE,
     }
@@ -771,26 +1420,101 @@ def _ensure_clickhouse_database(
 
 
 def _ensure_postgres_database(config: PostgresRuntimeConfig) -> None:
-    with psycopg.connect(config.admin_dsn, autocommit=True) as conn:
-        with conn.cursor() as cursor:
-            cursor.execute('SELECT 1 FROM pg_database WHERE datname = %s', (config.simulation_db,))
-            exists = cursor.fetchone() is not None
-            if not exists:
-                cursor.execute(
-                    sql.SQL('CREATE DATABASE {}').format(
-                        sql.Identifier(config.simulation_db)
+    simulation_role = _username_from_dsn(config.torghut_runtime_dsn) or _username_from_dsn(config.simulation_dsn)
+
+    def _ensure() -> None:
+        with psycopg.connect(config.admin_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('SELECT 1 FROM pg_database WHERE datname = %s', (config.simulation_db,))
+                exists = cursor.fetchone() is not None
+                if not exists:
+                    if simulation_role:
+                        cursor.execute(
+                            sql.SQL('CREATE DATABASE {} OWNER {}').format(
+                                sql.Identifier(config.simulation_db),
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                    else:
+                        cursor.execute(
+                            sql.SQL('CREATE DATABASE {}').format(
+                                sql.Identifier(config.simulation_db)
+                            )
+                        )
+
+    _run_with_transient_postgres_retry(
+        label='ensure_postgres_database',
+        operation=_ensure,
+    )
+
+
+def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[str, Any]:
+    simulation_role = _username_from_dsn(config.torghut_runtime_dsn) or _username_from_dsn(config.simulation_dsn)
+    admin_simulation_dsn = _replace_database_in_dsn(
+        config.admin_dsn,
+        database=config.simulation_db,
+        label='manifest.postgres.admin_dsn',
+    )
+
+    def _ensure() -> dict[str, Any]:
+        grants_applied = False
+        with psycopg.connect(config.admin_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                if simulation_role:
+                    cursor.execute(
+                        sql.SQL('GRANT ALL PRIVILEGES ON DATABASE {} TO {}').format(
+                            sql.Identifier(config.simulation_db),
+                            sql.Identifier(simulation_role),
+                        )
                     )
-                )
+                    grants_applied = True
+
+        with psycopg.connect(admin_simulation_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('CREATE EXTENSION IF NOT EXISTS vector')
+                if simulation_role:
+                    cursor.execute(
+                        sql.SQL('GRANT USAGE, CREATE ON SCHEMA public TO {}').format(
+                            sql.Identifier(simulation_role),
+                        )
+                    )
+                    cursor.execute(
+                        sql.SQL('GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {}').format(
+                            sql.Identifier(simulation_role),
+                        )
+                    )
+                    cursor.execute(
+                        sql.SQL('GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {}').format(
+                            sql.Identifier(simulation_role),
+                        )
+                    )
+                    grants_applied = True
+        return {
+            'simulation_role': simulation_role,
+            'grants_applied': grants_applied,
+            'vector_extension_checked': True,
+        }
+
+    return cast(
+        dict[str, Any],
+        _run_with_transient_postgres_retry(
+            label='ensure_postgres_runtime_permissions',
+            operation=_ensure,
+        ),
+    )
 
 
 def _run_migrations(config: PostgresRuntimeConfig) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     env = dict(os.environ)
     env['DB_DSN'] = config.simulation_dsn
-    _run_command(
-        shlex.split(config.migrations_command),
-        cwd=repo_root,
-        env=env,
+    _run_with_transient_postgres_retry(
+        label='run_migrations',
+        operation=lambda: _run_command(
+            shlex.split(config.migrations_command),
+            cwd=repo_root,
+            env=env,
+        ),
     )
 
 
@@ -916,14 +1640,18 @@ def _configure_torghut_service_for_simulation(
     _, current_env = _kservice_env(service)
 
     updates = {
-        'DB_DSN': postgres_config.simulation_dsn,
+        'DB_DSN': postgres_config.torghut_runtime_dsn,
         'TRADING_MODE': 'paper',
         'TRADING_LIVE_ENABLED': 'false',
         'TRADING_FEATURE_FLAGS_ENABLED': 'false',
         'TRADING_SIGNAL_TABLE': resources.clickhouse_signal_table,
         'TRADING_PRICE_TABLE': resources.clickhouse_price_table,
         'TRADING_ORDER_FEED_ENABLED': 'true',
-        'TRADING_ORDER_FEED_BOOTSTRAP_SERVERS': kafka_config.bootstrap_servers,
+        'TRADING_ORDER_FEED_BOOTSTRAP_SERVERS': kafka_config.runtime_bootstrap,
+        'TRADING_ORDER_FEED_SECURITY_PROTOCOL': kafka_config.runtime_security,
+        'TRADING_ORDER_FEED_SASL_MECHANISM': kafka_config.runtime_sasl,
+        'TRADING_ORDER_FEED_SASL_USERNAME': kafka_config.runtime_username,
+        'TRADING_ORDER_FEED_SASL_PASSWORD': kafka_config.runtime_password,
         'TRADING_ORDER_FEED_TOPIC': resources.simulation_topic_by_role['order_updates'],
         'TRADING_ORDER_FEED_TOPIC_V2': '',
         'TRADING_ORDER_FEED_GROUP_ID': resources.order_feed_group_id,
@@ -933,7 +1661,11 @@ def _configure_torghut_service_for_simulation(
         'TRADING_SIMULATION_RUN_ID': resources.run_id,
         'TRADING_SIMULATION_DATASET_ID': resources.dataset_id,
         'TRADING_SIMULATION_ORDER_UPDATES_TOPIC': resources.simulation_topic_by_role['order_updates'],
-        'TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS': kafka_config.bootstrap_servers,
+        'TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS': kafka_config.runtime_bootstrap,
+        'TRADING_SIMULATION_ORDER_UPDATES_SECURITY_PROTOCOL': kafka_config.runtime_security,
+        'TRADING_SIMULATION_ORDER_UPDATES_SASL_MECHANISM': kafka_config.runtime_sasl,
+        'TRADING_SIMULATION_ORDER_UPDATES_SASL_USERNAME': kafka_config.runtime_username,
+        'TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD': kafka_config.runtime_password,
     }
     if torghut_env_overrides:
         for key, value in torghut_env_overrides.items():
@@ -1033,6 +1765,18 @@ def _source_topic_partition_counts(admin: Any, topics: Sequence[str]) -> dict[st
     return counts
 
 
+def _kafka_available_broker_count(admin: Any) -> int:
+    try:
+        cluster = getattr(admin, '_client').cluster
+        brokers = cluster.brokers()
+    except Exception:
+        return 1
+    try:
+        return max(1, len(brokers))
+    except Exception:
+        return 1
+
+
 def _ensure_topics(
     *,
     resources: SimulationResources,
@@ -1044,23 +1788,42 @@ def _ensure_topics(
     kafka = _as_mapping(manifest.get('kafka'))
     default_partitions = int(kafka.get('default_partitions') or 6)
     replication_factor = int(kafka.get('replication_factor') or 1)
+    max_partitions_per_topic = _safe_int(kafka.get('max_partitions_per_topic'), default=0)
+    if max_partitions_per_topic < 0:
+        raise RuntimeError('kafka.max_partitions_per_topic cannot be negative')
 
     admin = _kafka_admin_client(config)
     try:
         existing_topics = set(admin.list_topics())
+        available_broker_count = _kafka_available_broker_count(admin)
         source_topics = list(resources.replay_topic_by_source_topic.keys())
         source_partition_counts = _source_topic_partition_counts(admin, source_topics)
 
         planned_topics = set(resources.simulation_topic_by_role.values())
         new_topics: list[Any] = []
+        partition_caps: list[dict[str, int]] = []
         for topic in sorted(planned_topics):
             if topic in existing_topics:
                 continue
-            partitions = default_partitions
+            requested_partitions = default_partitions
             for source_topic, replay_topic in resources.replay_topic_by_source_topic.items():
                 if replay_topic == topic:
-                    partitions = source_partition_counts.get(source_topic, default_partitions)
+                    requested_partitions = source_partition_counts.get(source_topic, default_partitions)
                     break
+            partitions = min(
+                max(requested_partitions, 1),
+                available_broker_count,
+            )
+            if max_partitions_per_topic > 0:
+                partitions = min(partitions, max_partitions_per_topic)
+            if partitions < requested_partitions:
+                partition_caps.append(
+                    {
+                        'topic': topic,
+                        'requested_partitions': int(requested_partitions),
+                        'applied_partitions': int(partitions),
+                    }
+                )
             new_topics.append(
                 NewTopic(
                     name=topic,
@@ -1074,6 +1837,9 @@ def _ensure_topics(
         return {
             'existing': sorted(existing_topics),
             'created': [topic.name for topic in new_topics],
+            'available_brokers': available_broker_count,
+            'partition_caps': partition_caps,
+            'max_partitions_per_topic': max_partitions_per_topic if max_partitions_per_topic > 0 else None,
         }
     finally:
         admin.close()
@@ -1200,6 +1966,8 @@ def _dump_topics(
     hasher = hashlib.sha256()
     count = 0
     count_by_topic: dict[str, int] = {}
+    min_source_timestamp_ms: int | None = None
+    max_source_timestamp_ms: int | None = None
     try:
         topic_partitions: list[Any] = []
         for topic in resources.replay_topic_by_source_topic.keys():
@@ -1287,6 +2055,11 @@ def _dump_topics(
                         hasher.update(b'\n')
                         count += 1
                         count_by_topic[source_topic] = count_by_topic.get(source_topic, 0) + 1
+                        source_timestamp_ms = int(record.timestamp)
+                        if min_source_timestamp_ms is None or source_timestamp_ms < min_source_timestamp_ms:
+                            min_source_timestamp_ms = source_timestamp_ms
+                        if max_source_timestamp_ms is None or source_timestamp_ms > max_source_timestamp_ms:
+                            max_source_timestamp_ms = source_timestamp_ms
                     if consumer.position(tp) >= stop_offset:
                         done.add(tp)
 
@@ -1298,6 +2071,8 @@ def _dump_topics(
             'start': start.isoformat(),
             'end': end.isoformat(),
             'reused_existing_dump': False,
+            'min_source_timestamp_ms': min_source_timestamp_ms,
+            'max_source_timestamp_ms': max_source_timestamp_ms,
         }
         _save_json(
             _dump_marker_path(dump_path),
@@ -1352,6 +2127,24 @@ def _dump_sha256_for_replay(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _producer_flush_with_retry(
+    producer: Any,
+    *,
+    timeout_seconds: float,
+    attempts: int,
+) -> None:
+    for attempt in range(1, attempts + 1):
+        try:
+            producer.flush(timeout=timeout_seconds)
+            return
+        except Exception as exc:
+            message = str(exc)
+            timed_out = 'KafkaTimeoutError' in message or 'Timeout waiting for future' in message
+            if not timed_out or attempt >= attempts:
+                raise
+            time.sleep(min(2.0, 0.25 * attempt))
+
+
 def _replay_dump(
     *,
     resources: SimulationResources,
@@ -1376,12 +2169,20 @@ def _replay_dump(
     pace_mode = (_as_text(replay_cfg.get('pace_mode')) or 'max_throughput').lower()
     acceleration = float(replay_cfg.get('acceleration') or 60.0)
     max_sleep_seconds = float(replay_cfg.get('max_sleep_seconds') or 5.0)
+    flush_every_records = max(1, _safe_int(replay_cfg.get('flush_every_records'), default=10_000))
+    flush_timeout_seconds = max(1.0, _safe_float(replay_cfg.get('flush_timeout_seconds'), default=30.0))
+    final_flush_timeout_seconds = max(
+        flush_timeout_seconds,
+        _safe_float(replay_cfg.get('final_flush_timeout_seconds'), default=300.0),
+    )
+    flush_retry_attempts = max(1, _safe_int(replay_cfg.get('flush_retry_attempts'), default=6))
 
     producer = _producer_for_replay(kafka_config, resources.run_token)
     count = 0
     count_by_topic: dict[str, int] = {}
     previous_ts_ms: int | None = None
     checksum = hashlib.sha256()
+    replay_topic_overrides = 0
     try:
         with dump_path.open('r', encoding='utf-8') as handle:
             for line in handle:
@@ -1396,11 +2197,21 @@ def _replay_dump(
                     continue
                 row = _as_mapping(payload)
                 source_topic = _as_text(row.get('source_topic'))
-                replay_topic = _as_text(row.get('replay_topic'))
-                if replay_topic is None and source_topic is not None:
-                    replay_topic = resources.replay_topic_by_source_topic.get(source_topic)
+                mapped_replay_topic = (
+                    resources.replay_topic_by_source_topic.get(source_topic)
+                    if source_topic is not None
+                    else None
+                )
+                dump_replay_topic = _as_text(row.get('replay_topic'))
+                replay_topic = mapped_replay_topic or dump_replay_topic
                 if replay_topic is None:
                     raise RuntimeError('dump row is missing replay_topic and cannot infer mapping')
+                if (
+                    mapped_replay_topic is not None
+                    and dump_replay_topic is not None
+                    and mapped_replay_topic != dump_replay_topic
+                ):
+                    replay_topic_overrides += 1
 
                 current_ts_ms = cast(int | None, row.get('source_timestamp_ms'))
                 delay = _pacing_delay_seconds(
@@ -1425,11 +2236,22 @@ def _replay_dump(
                 count += 1
                 count_by_topic[replay_topic] = count_by_topic.get(replay_topic, 0) + 1
                 previous_ts_ms = current_ts_ms
-                if count % 1000 == 0:
-                    producer.flush(timeout=5)
-        producer.flush(timeout=30)
+                if count % flush_every_records == 0:
+                    _producer_flush_with_retry(
+                        producer,
+                        timeout_seconds=flush_timeout_seconds,
+                        attempts=flush_retry_attempts,
+                    )
+        _producer_flush_with_retry(
+            producer,
+            timeout_seconds=final_flush_timeout_seconds,
+            attempts=flush_retry_attempts,
+        )
     finally:
-        producer.close(timeout=10)
+        try:
+            producer.close(timeout=max(10.0, flush_timeout_seconds))
+        except Exception:
+            pass
 
     marker_payload = {
         'reused_existing_replay': False,
@@ -1437,6 +2259,11 @@ def _replay_dump(
         'records_by_topic': count_by_topic,
         'pace_mode': pace_mode,
         'acceleration': acceleration,
+        'flush_every_records': flush_every_records,
+        'flush_timeout_seconds': flush_timeout_seconds,
+        'final_flush_timeout_seconds': final_flush_timeout_seconds,
+        'flush_retry_attempts': flush_retry_attempts,
+        'replay_topic_overrides': replay_topic_overrides,
         'dump_sha256': checksum.hexdigest(),
         'completed_at': datetime.now(timezone.utc).isoformat(),
     }
@@ -1481,6 +2308,8 @@ def _apply(
     force_replay: bool,
 ) -> dict[str, Any]:
     _ensure_supported_binary('kubectl')
+    _ensure_lz4_codec_available()
+    window_policy = _validate_window_policy(manifest)
     torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
 
     state_path, run_manifest_path, dump_path = _state_paths(resources)
@@ -1506,6 +2335,7 @@ def _apply(
     )
     _ensure_clickhouse_database(config=clickhouse_config, database=resources.clickhouse_db)
     _ensure_postgres_database(postgres_config)
+    postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
     _run_migrations(postgres_config)
 
     dump_report = _dump_topics(
@@ -1514,6 +2344,10 @@ def _apply(
         manifest=manifest,
         dump_path=dump_path,
         force=force_dump,
+    )
+    dump_coverage = _validate_dump_coverage(
+        manifest=manifest,
+        dump_report=dump_report,
     )
     replay_report = _replay_dump(
         resources=resources,
@@ -1548,6 +2382,7 @@ def _apply(
         'applied_at': datetime.now(timezone.utc).isoformat(),
         'state_path': str(state_path),
         'dump': dump_report,
+        'dump_coverage': dump_coverage,
         'replay': replay_report,
         'topics': topics_report,
         'ta_restart_nonce': ta_restart_nonce,
@@ -1558,12 +2393,14 @@ def _apply(
         'postgres': {
             'simulation_dsn': _redact_dsn_credentials(postgres_config.simulation_dsn),
             'simulation_db': postgres_config.simulation_db,
+            'runtime_permissions': postgres_permissions_report,
         },
         'clickhouse': {
             'http_url': clickhouse_config.http_url,
             'database': resources.clickhouse_db,
         },
         'torghut_env_overrides': torghut_env_overrides,
+        'window_policy': window_policy,
     }
     _save_json(run_manifest_path, report)
     return report
@@ -1608,6 +2445,456 @@ def _teardown(
     return report
 
 
+def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int]:
+    monitor = _as_mapping(manifest.get('monitor'))
+    timeout_seconds = _safe_int(
+        monitor.get('timeout_seconds'),
+        default=DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS,
+    )
+    poll_seconds = _safe_int(
+        monitor.get('poll_seconds'),
+        default=DEFAULT_RUN_MONITOR_POLL_SECONDS,
+    )
+    min_decisions = _safe_int(
+        monitor.get('min_trade_decisions'),
+        default=DEFAULT_RUN_MONITOR_MIN_DECISIONS,
+    )
+    min_executions = _safe_int(
+        monitor.get('min_executions'),
+        default=DEFAULT_RUN_MONITOR_MIN_EXECUTIONS,
+    )
+    min_tca = _safe_int(
+        monitor.get('min_execution_tca_metrics'),
+        default=DEFAULT_RUN_MONITOR_MIN_TCA,
+    )
+    min_order_events = _safe_int(
+        monitor.get('min_execution_order_events'),
+        default=DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS,
+    )
+    cursor_grace_seconds = _safe_int(
+        monitor.get('cursor_grace_seconds'),
+        default=DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS,
+    )
+    if timeout_seconds <= 0:
+        raise RuntimeError('monitor.timeout_seconds must be > 0')
+    if poll_seconds <= 0:
+        raise RuntimeError('monitor.poll_seconds must be > 0')
+    if min_decisions < 0 or min_executions < 0 or min_tca < 0 or min_order_events < 0:
+        raise RuntimeError('monitor minimum thresholds cannot be negative')
+    if cursor_grace_seconds < 0:
+        raise RuntimeError('monitor.cursor_grace_seconds cannot be negative')
+    return {
+        'timeout_seconds': timeout_seconds,
+        'poll_seconds': poll_seconds,
+        'min_trade_decisions': min_decisions,
+        'min_executions': min_executions,
+        'min_execution_tca_metrics': min_tca,
+        'min_execution_order_events': min_order_events,
+        'cursor_grace_seconds': cursor_grace_seconds,
+    }
+
+
+def _monitor_snapshot(postgres_config: PostgresRuntimeConfig) -> dict[str, Any]:
+    def _snapshot() -> dict[str, Any]:
+        with psycopg.connect(postgres_config.simulation_dsn) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('SELECT count(*) FROM trade_decisions')
+                decision_row = cursor.fetchone()
+                trade_decisions = _safe_int(decision_row[0] if decision_row else 0)
+                cursor.execute('SELECT count(*) FROM executions')
+                execution_row = cursor.fetchone()
+                executions = _safe_int(execution_row[0] if execution_row else 0)
+                cursor.execute('SELECT count(*) FROM execution_tca_metrics')
+                tca_row = cursor.fetchone()
+                execution_tca_metrics = _safe_int(tca_row[0] if tca_row else 0)
+                cursor.execute('SELECT count(*) FROM execution_order_events')
+                order_event_row = cursor.fetchone()
+                execution_order_events = _safe_int(order_event_row[0] if order_event_row else 0)
+                cursor.execute(
+                    "SELECT max(cursor_at) FROM trade_cursor WHERE source='clickhouse'"
+                )
+                row = cursor.fetchone()
+                cursor_at_raw = row[0] if row else None
+                cursor_at = (
+                    cursor_at_raw.astimezone(timezone.utc)
+                    if isinstance(cursor_at_raw, datetime)
+                    else None
+                )
+        return {
+            'trade_decisions': trade_decisions,
+            'executions': executions,
+            'execution_tca_metrics': execution_tca_metrics,
+            'execution_order_events': execution_order_events,
+            'cursor_at': cursor_at.isoformat() if cursor_at is not None else None,
+        }
+
+    return cast(
+        dict[str, Any],
+        _run_with_transient_postgres_retry(
+            label='monitor_snapshot',
+            operation=_snapshot,
+        ),
+    )
+
+
+def _monitor_run_completion(
+    *,
+    manifest: Mapping[str, Any],
+    postgres_config: PostgresRuntimeConfig,
+) -> dict[str, Any]:
+    start, end = _resolve_window_bounds(manifest)
+    settings = _monitor_settings(manifest)
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=settings['timeout_seconds'])
+    polls: list[dict[str, Any]] = []
+    cursor_reached_at: datetime | None = None
+    while True:
+        snapshot = _monitor_snapshot(postgres_config)
+        polled_at = datetime.now(timezone.utc)
+        poll_payload = {
+            'polled_at': polled_at.isoformat(),
+            **snapshot,
+        }
+        polls.append(poll_payload)
+        cursor_at_raw = snapshot.get('cursor_at')
+        cursor_at = (
+            _parse_rfc3339_timestamp(cast(str | None, cursor_at_raw), label='cursor_at')
+            if isinstance(cursor_at_raw, str)
+            else None
+        )
+        cursor_reached = cursor_at is not None and cursor_at >= end
+        thresholds_met = (
+            _safe_int(snapshot.get('trade_decisions')) >= settings['min_trade_decisions']
+            and _safe_int(snapshot.get('executions')) >= settings['min_executions']
+            and _safe_int(snapshot.get('execution_tca_metrics'))
+            >= settings['min_execution_tca_metrics']
+            and _safe_int(snapshot.get('execution_order_events'))
+            >= settings['min_execution_order_events']
+        )
+        executions = _safe_int(snapshot.get('executions'))
+        order_events = _safe_int(snapshot.get('execution_order_events'))
+        order_event_contract_met = executions <= 0 or order_events > 0
+        completion_ready = thresholds_met and order_event_contract_met
+
+        if cursor_reached and cursor_reached_at is None:
+            cursor_reached_at = polled_at
+        if cursor_reached and completion_ready:
+            return {
+                'status': 'ok',
+                'window_start': start.isoformat(),
+                'window_end': end.isoformat(),
+                'monitor': settings,
+                'poll_count': len(polls),
+                'final_snapshot': poll_payload,
+                'polls': polls[-20:],
+            }
+        if cursor_reached and cursor_reached_at is not None and not completion_ready:
+            waited_seconds = int((polled_at - cursor_reached_at).total_seconds())
+            if waited_seconds >= settings['cursor_grace_seconds']:
+                raise RuntimeError(
+                    'monitor_thresholds_not_met_after_cursor_reached '
+                    f'waited_seconds={waited_seconds} '
+                    f'trade_decisions={snapshot.get("trade_decisions")} '
+                    f'executions={snapshot.get("executions")} '
+                    f'execution_tca_metrics={snapshot.get("execution_tca_metrics")} '
+                    f'execution_order_events={snapshot.get("execution_order_events")}'
+                )
+
+        if polled_at >= deadline:
+            raise RuntimeError(
+                'monitor_timeout '
+                f'trade_decisions={snapshot.get("trade_decisions")} '
+                f'executions={snapshot.get("executions")} '
+                f'execution_tca_metrics={snapshot.get("execution_tca_metrics")} '
+                f'execution_order_events={snapshot.get("execution_order_events")} '
+                f'cursor_at={snapshot.get("cursor_at")}'
+            )
+        time.sleep(settings['poll_seconds'])
+
+
+def _prepare_argocd_for_run(
+    *,
+    config: ArgocdAutomationConfig,
+) -> dict[str, Any]:
+    if not config.manage_automation:
+        return {
+            'managed': False,
+            'changed': False,
+            'current_mode': None,
+            'previous_mode': None,
+        }
+    patch_report = _set_argocd_automation_mode(
+        config=config,
+        desired_mode=config.desired_mode_during_run,
+    )
+    return {
+        'managed': True,
+        **patch_report,
+    }
+
+
+def _restore_argocd_after_run(
+    *,
+    config: ArgocdAutomationConfig,
+    previous_mode: str | None,
+) -> dict[str, Any]:
+    if not config.manage_automation:
+        return {
+            'managed': False,
+            'changed': False,
+            'restored_mode': None,
+        }
+    restore_mode = config.restore_mode_after_run
+    if restore_mode == 'previous':
+        target_mode = previous_mode or 'auto'
+    else:
+        target_mode = restore_mode
+    report = _set_argocd_automation_mode(
+        config=config,
+        desired_mode=target_mode,
+    )
+    return {
+        'managed': True,
+        'restored_mode': target_mode,
+        **report,
+    }
+
+
+def _report_simulation(
+    *,
+    resources: SimulationResources,
+    manifest_path: Path,
+    postgres_config: PostgresRuntimeConfig,
+    clickhouse_config: ClickHouseRuntimeConfig,
+) -> dict[str, Any]:
+    script_path = Path(__file__).resolve().with_name('analyze_historical_simulation.py')
+    if not script_path.exists():
+        raise RuntimeError(f'report_script_missing:{script_path}')
+    report_dir = resources.output_root / resources.run_token / 'report'
+    report_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable,
+        str(script_path),
+        '--run-id',
+        resources.run_id,
+        '--dataset-manifest',
+        str(manifest_path),
+        '--simulation-dsn',
+        postgres_config.simulation_dsn,
+        '--output-dir',
+        str(report_dir),
+        '--json',
+    ]
+    if clickhouse_config.http_url:
+        command.extend(['--clickhouse-http-url', clickhouse_config.http_url])
+    if clickhouse_config.username:
+        command.extend(['--clickhouse-username', clickhouse_config.username])
+    if clickhouse_config.password:
+        command.extend(['--clickhouse-password', clickhouse_config.password])
+
+    result = cast(
+        subprocess.CompletedProcess[str],
+        _run_with_transient_postgres_retry(
+            label='report_simulation',
+            operation=lambda: _run_command(command),
+        ),
+    )
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, Mapping):
+        raise RuntimeError('simulation report output must be a JSON object')
+    report = {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
+    report['report_dir'] = str(report_dir)
+    return report
+
+
+def _run_full_lifecycle(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    manifest_path: Path,
+    kafka_config: KafkaRuntimeConfig,
+    clickhouse_config: ClickHouseRuntimeConfig,
+    postgres_config: PostgresRuntimeConfig,
+    argocd_config: ArgocdAutomationConfig,
+    force_dump: bool,
+    force_replay: bool,
+    skip_teardown: bool,
+    report_only: bool,
+) -> dict[str, Any]:
+    _ensure_supported_binary('kubectl')
+    _validate_window_policy(manifest)
+    _update_run_state(resources=resources, phase='preflight', status='ok')
+
+    argocd_prepare_report: dict[str, Any] | None = None
+    argocd_restore_report: dict[str, Any] | None = None
+    apply_report: dict[str, Any] | None = None
+    monitor_report: dict[str, Any] | None = None
+    analytics_report: dict[str, Any] | None = None
+    teardown_report: dict[str, Any] | None = None
+    errors: list[str] = []
+    previous_automation_mode: str | None = None
+    argocd_prepare_succeeded = False
+
+    try:
+        if report_only:
+            argocd_prepare_report = {
+                'managed': False,
+                'changed': False,
+                'reason': 'report_only',
+            }
+            _update_run_state(
+                resources=resources,
+                phase='argocd_prepare',
+                status='skipped',
+                details=argocd_prepare_report,
+            )
+        else:
+            _update_run_state(resources=resources, phase='argocd_prepare', status='running')
+            argocd_prepare_report = _prepare_argocd_for_run(config=argocd_config)
+            previous_automation_mode = _as_text(argocd_prepare_report.get('previous_mode'))
+            argocd_prepare_succeeded = True
+            _update_run_state(
+                resources=resources,
+                phase='argocd_prepare',
+                status='ok',
+                details=argocd_prepare_report,
+            )
+
+        if not report_only:
+            _update_run_state(resources=resources, phase='apply', status='running')
+            apply_report = _apply(
+                resources=resources,
+                manifest=manifest,
+                kafka_config=kafka_config,
+                clickhouse_config=clickhouse_config,
+                postgres_config=postgres_config,
+                force_dump=force_dump,
+                force_replay=force_replay,
+            )
+            _update_run_state(resources=resources, phase='apply', status='ok')
+
+            _update_run_state(resources=resources, phase='monitor', status='running')
+            monitor_report = _monitor_run_completion(
+                manifest=manifest,
+                postgres_config=postgres_config,
+            )
+            _update_run_state(resources=resources, phase='monitor', status='ok')
+        else:
+            _update_run_state(
+                resources=resources,
+                phase='apply',
+                status='skipped',
+                details={'report_only': True},
+            )
+            _update_run_state(
+                resources=resources,
+                phase='monitor',
+                status='skipped',
+                details={'report_only': True},
+            )
+
+        _update_run_state(resources=resources, phase='report', status='running')
+        analytics_report = _report_simulation(
+            resources=resources,
+            manifest_path=manifest_path,
+            postgres_config=postgres_config,
+            clickhouse_config=clickhouse_config,
+        )
+        _update_run_state(resources=resources, phase='report', status='ok')
+    except Exception as exc:
+        errors.append(str(exc))
+        _update_run_state(
+            resources=resources,
+            phase='run',
+            status='error',
+            details={'error': str(exc)},
+        )
+    finally:
+        if not skip_teardown:
+            try:
+                _update_run_state(resources=resources, phase='teardown', status='running')
+                teardown_report = _teardown(
+                    resources=resources,
+                    allow_missing_state=True,
+                )
+                _update_run_state(resources=resources, phase='teardown', status='ok')
+            except Exception as exc:
+                errors.append(f'teardown:{exc}')
+                _update_run_state(
+                    resources=resources,
+                    phase='teardown',
+                    status='error',
+                    details={'error': str(exc)},
+                )
+        else:
+            _update_run_state(
+                resources=resources,
+                phase='teardown',
+                status='skipped',
+                details={'skip_teardown': True},
+            )
+
+        if report_only:
+            argocd_restore_report = {
+                'managed': False,
+                'changed': False,
+                'reason': 'report_only',
+            }
+            _update_run_state(
+                resources=resources,
+                phase='argocd_restore',
+                status='skipped',
+                details=argocd_restore_report,
+            )
+        elif not argocd_prepare_succeeded:
+            argocd_restore_report = {
+                'managed': False,
+                'changed': False,
+                'reason': 'argocd_prepare_failed',
+            }
+            _update_run_state(
+                resources=resources,
+                phase='argocd_restore',
+                status='skipped',
+                details=argocd_restore_report,
+            )
+        else:
+            try:
+                _update_run_state(resources=resources, phase='argocd_restore', status='running')
+                argocd_restore_report = _restore_argocd_after_run(
+                    config=argocd_config,
+                    previous_mode=previous_automation_mode,
+                )
+                _update_run_state(resources=resources, phase='argocd_restore', status='ok')
+            except Exception as exc:
+                errors.append(f'argocd_restore:{exc}')
+                _update_run_state(
+                    resources=resources,
+                    phase='argocd_restore',
+                    status='error',
+                    details={'error': str(exc)},
+                )
+
+    report = {
+        'status': 'ok' if not errors else 'error',
+        'mode': 'run',
+        'run_id': resources.run_id,
+        'dataset_id': resources.dataset_id,
+        'completed_at': datetime.now(timezone.utc).isoformat(),
+        'argocd_prepare': argocd_prepare_report,
+        'argocd_restore': argocd_restore_report,
+        'apply': apply_report,
+        'monitor': monitor_report,
+        'report': analytics_report,
+        'teardown': teardown_report,
+        'errors': errors,
+    }
+    run_manifest_path = _state_paths(resources)[1]
+    _save_json(run_manifest_path.with_name('run-full-lifecycle-manifest.json'), report)
+    if errors:
+        raise RuntimeError('simulation_run_failed:' + '; '.join(errors))
+    return report
+
+
 def _render_report(payload: Mapping[str, Any], *, json_only: bool) -> None:
     if json_only:
         print(json.dumps(dict(payload), sort_keys=True, separators=(',', ':')))
@@ -1622,6 +2909,7 @@ def main() -> None:
     resources = _build_resources(args.run_id, manifest)
     kafka_config = _build_kafka_runtime_config(manifest)
     clickhouse_config = _build_clickhouse_runtime_config(manifest)
+    argocd_config = _build_argocd_automation_config(manifest)
     postgres_config = _build_postgres_runtime_config(
         manifest,
         simulation_db=f'torghut_sim_{resources.run_token}',
@@ -1632,6 +2920,7 @@ def main() -> None:
         kafka_config=kafka_config,
         clickhouse_config=clickhouse_config,
         postgres_config=postgres_config,
+        argocd_config=argocd_config,
         manifest=manifest,
     )
 
@@ -1652,6 +2941,44 @@ def main() -> None:
             postgres_config=postgres_config,
             force_dump=bool(args.force_dump),
             force_replay=bool(args.force_replay),
+        )
+        _render_report(report, json_only=args.json)
+        return
+
+    if args.mode == 'report':
+        report = _report_simulation(
+            resources=resources,
+            manifest_path=manifest_path,
+            postgres_config=postgres_config,
+            clickhouse_config=clickhouse_config,
+        )
+        if not args.skip_teardown:
+            teardown_report = _teardown(
+                resources=resources,
+                allow_missing_state=True,
+            )
+            report = dict(report)
+            report['teardown'] = teardown_report
+        _render_report(report, json_only=args.json)
+        return
+
+    if args.mode == 'run':
+        if args.confirm != APPLY_CONFIRMATION_PHRASE:
+            raise SystemExit(
+                f'--confirm must equal {APPLY_CONFIRMATION_PHRASE!r} when mode=run'
+            )
+        report = _run_full_lifecycle(
+            resources=resources,
+            manifest=manifest,
+            manifest_path=manifest_path,
+            kafka_config=kafka_config,
+            clickhouse_config=clickhouse_config,
+            postgres_config=postgres_config,
+            argocd_config=argocd_config,
+            force_dump=bool(args.force_dump),
+            force_replay=bool(args.force_replay),
+            skip_teardown=bool(args.skip_teardown),
+            report_only=bool(args.report_only),
         )
         _render_report(report, json_only=args.json)
         return

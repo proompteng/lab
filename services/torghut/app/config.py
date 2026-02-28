@@ -353,6 +353,26 @@ class Settings(BaseSettings):
         alias="TRADING_ORDER_FEED_BOOTSTRAP_SERVERS",
         description="Comma-separated Kafka bootstrap servers for trade update ingestion.",
     )
+    trading_order_feed_security_protocol: Optional[str] = Field(
+        default=None,
+        alias="TRADING_ORDER_FEED_SECURITY_PROTOCOL",
+        description="Kafka security protocol override for order-feed ingestion.",
+    )
+    trading_order_feed_sasl_mechanism: Optional[str] = Field(
+        default=None,
+        alias="TRADING_ORDER_FEED_SASL_MECHANISM",
+        description="Kafka SASL mechanism for order-feed ingestion.",
+    )
+    trading_order_feed_sasl_username: Optional[str] = Field(
+        default=None,
+        alias="TRADING_ORDER_FEED_SASL_USERNAME",
+        description="Kafka SASL username for order-feed ingestion.",
+    )
+    trading_order_feed_sasl_password: Optional[str] = Field(
+        default=None,
+        alias="TRADING_ORDER_FEED_SASL_PASSWORD",
+        description="Kafka SASL password for order-feed ingestion.",
+    )
     trading_order_feed_topic: str = Field(
         default="torghut.trade-updates.v1",
         alias="TRADING_ORDER_FEED_TOPIC",
@@ -739,6 +759,26 @@ class Settings(BaseSettings):
         default=None,
         alias="TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS",
         description="Kafka bootstrap servers for simulated trade-updates emission; defaults to order-feed bootstrap.",
+    )
+    trading_simulation_order_updates_security_protocol: Optional[str] = Field(
+        default=None,
+        alias="TRADING_SIMULATION_ORDER_UPDATES_SECURITY_PROTOCOL",
+        description="Kafka security protocol for simulated trade-updates emission; defaults to order-feed protocol.",
+    )
+    trading_simulation_order_updates_sasl_mechanism: Optional[str] = Field(
+        default=None,
+        alias="TRADING_SIMULATION_ORDER_UPDATES_SASL_MECHANISM",
+        description="Kafka SASL mechanism for simulated trade-updates emission; defaults to order-feed mechanism.",
+    )
+    trading_simulation_order_updates_sasl_username: Optional[str] = Field(
+        default=None,
+        alias="TRADING_SIMULATION_ORDER_UPDATES_SASL_USERNAME",
+        description="Kafka SASL username for simulated trade-updates emission; defaults to order-feed username.",
+    )
+    trading_simulation_order_updates_sasl_password: Optional[str] = Field(
+        default=None,
+        alias="TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD",
+        description="Kafka SASL password for simulated trade-updates emission; defaults to order-feed password.",
     )
     trading_lean_runner_url: Optional[str] = Field(
         default=None,
@@ -1378,11 +1418,19 @@ class Settings(BaseSettings):
     def _normalize_optional_nullable_settings(self) -> None:
         for field_name in (
             "trading_order_feed_topic_v2",
+            "trading_order_feed_security_protocol",
+            "trading_order_feed_sasl_mechanism",
+            "trading_order_feed_sasl_username",
+            "trading_order_feed_sasl_password",
             "trading_accounts_json",
             "trading_autonomy_approval_token",
             "trading_simulation_run_id",
             "trading_simulation_dataset_id",
             "trading_simulation_order_updates_bootstrap_servers",
+            "trading_simulation_order_updates_security_protocol",
+            "trading_simulation_order_updates_sasl_mechanism",
+            "trading_simulation_order_updates_sasl_username",
+            "trading_simulation_order_updates_sasl_password",
         ):
             raw_value = cast(str | None, getattr(self, field_name))
             if not raw_value:
@@ -1761,6 +1809,62 @@ class Settings(BaseSettings):
             if v2 and v2 not in topics:
                 topics.insert(0, v2)
         return topics
+
+    @property
+    def trading_order_feed_bootstrap_server_list(self) -> list[str]:
+        raw = self.trading_order_feed_bootstrap_servers or ""
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+    @property
+    def trading_order_feed_kafka_security_kwargs(self) -> dict[str, str]:
+        kwargs: dict[str, str] = {}
+        if self.trading_order_feed_security_protocol:
+            kwargs["security_protocol"] = self.trading_order_feed_security_protocol
+        if self.trading_order_feed_sasl_mechanism:
+            kwargs["sasl_mechanism"] = self.trading_order_feed_sasl_mechanism
+        if self.trading_order_feed_sasl_username:
+            kwargs["sasl_plain_username"] = self.trading_order_feed_sasl_username
+        if self.trading_order_feed_sasl_password:
+            kwargs["sasl_plain_password"] = self.trading_order_feed_sasl_password
+        return kwargs
+
+    @property
+    def trading_simulation_order_updates_bootstrap_server_list(self) -> list[str]:
+        raw = (
+            self.trading_simulation_order_updates_bootstrap_servers
+            or self.trading_order_feed_bootstrap_servers
+            or ""
+        )
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+    @property
+    def trading_simulation_order_updates_kafka_security_kwargs(self) -> dict[str, str]:
+        kwargs: dict[str, str] = {}
+        security_protocol = (
+            self.trading_simulation_order_updates_security_protocol
+            or self.trading_order_feed_security_protocol
+        )
+        sasl_mechanism = (
+            self.trading_simulation_order_updates_sasl_mechanism
+            or self.trading_order_feed_sasl_mechanism
+        )
+        sasl_username = (
+            self.trading_simulation_order_updates_sasl_username
+            or self.trading_order_feed_sasl_username
+        )
+        sasl_password = (
+            self.trading_simulation_order_updates_sasl_password
+            or self.trading_order_feed_sasl_password
+        )
+        if security_protocol:
+            kwargs["security_protocol"] = security_protocol
+        if sasl_mechanism:
+            kwargs["sasl_mechanism"] = sasl_mechanism
+        if sasl_username:
+            kwargs["sasl_plain_username"] = sasl_username
+        if sasl_password:
+            kwargs["sasl_plain_password"] = sasl_password
+        return kwargs
 
     @property
     def trading_accounts(self) -> list[TradingAccountLane]:

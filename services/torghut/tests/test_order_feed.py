@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from unittest import TestCase
+from unittest.mock import patch
 
 from app.config import settings
 from app.models import Base, Execution, ExecutionOrderEvent, Strategy, TradeDecision
@@ -203,6 +205,55 @@ class TestOrderFeed(TestCase):
         )
         assert normalized.event is not None
         self.assertEqual(normalized.event.alpaca_account_label, 'paper-b')
+
+    def test_payload_uses_order_level_alpaca_account_label(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-7","client_order_id":"client-7","symbol":"AAPL","status":"filled",'
+            b'"alpaca_account_label":"paper-c","qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+        )
+        record = FakeRecord(value=payload, topic='torghut.trade-updates.v1', offset=12)
+
+        normalized = normalize_order_feed_record(
+            record,
+            default_topic='torghut.trade-updates.v1',
+            default_account_label='paper-a',
+        )
+        assert normalized.event is not None
+        self.assertEqual(normalized.event.alpaca_account_label, 'paper-c')
+
+    def test_build_consumer_applies_kafka_security_kwargs(self) -> None:
+        captured_kwargs: dict[str, object] = {}
+        original_security_protocol = settings.trading_order_feed_security_protocol
+        original_sasl_mechanism = settings.trading_order_feed_sasl_mechanism
+        original_sasl_username = settings.trading_order_feed_sasl_username
+        original_sasl_password = settings.trading_order_feed_sasl_password
+        try:
+            settings.trading_order_feed_security_protocol = 'SASL_PLAINTEXT'
+            settings.trading_order_feed_sasl_mechanism = 'SCRAM-SHA-512'
+            settings.trading_order_feed_sasl_username = 'user'
+            settings.trading_order_feed_sasl_password = 'secret'
+
+            class _FakeKafkaConsumer:
+                def __init__(self, *topics: str, **kwargs: object) -> None:
+                    captured_kwargs['topics'] = list(topics)
+                    captured_kwargs.update(kwargs)
+
+            with patch.dict(
+                'sys.modules',
+                {'kafka': SimpleNamespace(KafkaConsumer=_FakeKafkaConsumer)},
+            ):
+                OrderFeedIngestor._build_consumer()
+        finally:
+            settings.trading_order_feed_security_protocol = original_security_protocol
+            settings.trading_order_feed_sasl_mechanism = original_sasl_mechanism
+            settings.trading_order_feed_sasl_username = original_sasl_username
+            settings.trading_order_feed_sasl_password = original_sasl_password
+
+        self.assertEqual(captured_kwargs.get('security_protocol'), 'SASL_PLAINTEXT')
+        self.assertEqual(captured_kwargs.get('sasl_mechanism'), 'SCRAM-SHA-512')
+        self.assertEqual(captured_kwargs.get('sasl_plain_username'), 'user')
+        self.assertEqual(captured_kwargs.get('sasl_plain_password'), 'secret')
 
     def test_ingestor_applies_valid_events_and_tracks_missing_fields(self) -> None:
         good = FakeRecord(

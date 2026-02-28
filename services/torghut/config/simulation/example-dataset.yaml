@@ -1,15 +1,25 @@
 dataset_id: torghut-trades-2025q4
 
 window:
-  start: '2025-10-01T00:00:00Z'
-  end: '2025-12-31T23:59:59Z'
+  profile: us_equities_regular
+  trading_day: '2026-02-27'
+  timezone: America/New_York
+  start: '2026-02-27T14:30:00Z'
+  end: '2026-02-27T21:00:00Z'
+  min_coverage_minutes: 390
+  strict_coverage_ratio: 0.95
 
 kafka:
   bootstrap_servers: kafka-kafka-bootstrap.kafka:9092
+  runtime_bootstrap_servers: kafka-kafka-bootstrap.kafka:9092
   security_protocol: SASL_PLAINTEXT
   sasl_mechanism: SCRAM-SHA-512
   sasl_username: torghut-ws
   sasl_password_env: TORGHUT_SIM_KAFKA_PASSWORD
+  runtime_security_protocol: SASL_PLAINTEXT
+  runtime_sasl_mechanism: SCRAM-SHA-512
+  runtime_sasl_username: torghut-ws
+  runtime_sasl_password_env: TORGHUT_SIM_KAFKA_PASSWORD
   default_partitions: 8
   replication_factor: 1
 
@@ -22,7 +32,8 @@ clickhouse:
 postgres:
   admin_dsn: postgresql://torghut:torghut@postgres-rw.torghut.svc.cluster.local:5432/postgres
   simulation_dsn_template: postgresql://torghut:torghut@postgres-rw.torghut.svc.cluster.local:5432/{db}
-  migrations_command: uv run --frozen alembic upgrade head
+  runtime_simulation_dsn_template: postgresql://torghut:torghut@postgres-rw.torghut.svc.cluster.local:5432/{db}
+  migrations_command: uv run --frozen alembic upgrade heads
 
 runtime:
   namespace: torghut
@@ -36,6 +47,28 @@ replay:
   acceleration: 60
   max_sleep_seconds: 5
   auto_offset_reset: earliest
+
+monitor:
+  timeout_seconds: 1200
+  poll_seconds: 20
+  min_trade_decisions: 1
+  min_executions: 1
+  min_execution_tca_metrics: 1
+  min_execution_order_events: 1
+  cursor_grace_seconds: 120
+
+argocd:
+  manage_automation: true
+  applicationset_name: product
+  applicationset_namespace: argocd
+  app_name: torghut
+  desired_mode_during_run: manual
+  restore_mode_after_run: previous
+  verify_timeout_seconds: 600
+
+reporting:
+  commission_bps: '0'
+  per_trade_fee: '0'
 
 # Optional Torghut runtime overrides applied only during simulation `apply` and restored on `teardown`.
 # If omitted, TRADING_FEATURE_MAX_STALENESS_MS is auto-derived from window.start.

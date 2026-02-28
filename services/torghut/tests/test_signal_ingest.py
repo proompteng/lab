@@ -179,6 +179,24 @@ class TestSignalIngest(TestCase):
         self.assertFalse(ingestor.fast_forward_stale_cursor)
         self.assertEqual(ingestor.empty_batch_advance_seconds, 0)
 
+    def test_simulation_mode_initial_cursor_uses_archival_baseline(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        original_enabled = settings.trading_simulation_enabled
+        try:
+            settings.trading_simulation_enabled = True
+            ingestor = ClickHouseSignalIngestor(schema='envelope', url='http://example')
+            with session_local() as session:
+                cursor_at, cursor_seq, cursor_symbol = ingestor._get_cursor(session)
+        finally:
+            settings.trading_simulation_enabled = original_enabled
+
+        self.assertEqual(cursor_at, datetime(1970, 1, 1, tzinfo=timezone.utc))
+        self.assertIsNone(cursor_seq)
+        self.assertIsNone(cursor_symbol)
+
     def test_build_query_flat_schema(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals", fast_forward_stale_cursor=False)
         query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), None, None)

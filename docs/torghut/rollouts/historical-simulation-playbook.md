@@ -22,7 +22,7 @@ Use this playbook when you need to:
 - Never run simulation with production Postgres/ClickHouse targets.
 - Keep Torghut in paper mode during simulation (`TRADING_MODE=paper`, `TRADING_LIVE_ENABLED=false`).
 - Run `teardown` in the same `run_id` immediately after evidence collection.
-- Re-enable Argo automation after teardown if it was temporarily disabled.
+- Keep `argocd.manage_automation=true` in manifest so automation is switched/restored by the script.
 
 ## Prerequisites
 
@@ -36,9 +36,10 @@ Use this playbook when you need to:
 Start from `services/torghut/config/simulation/example-dataset.yaml` and set:
 
 - `dataset_id`
-- `window.start` and `window.end` (RFC3339 UTC, explicit timestamps)
+- `window.profile=us_equities_regular`, `window.trading_day`, and matching session `start/end`
 - `clickhouse.simulation_database` (example: `torghut_sim_<run_token>`)
 - `postgres.simulation_dsn_template` or `postgres.simulation_dsn`
+- `argocd.manage_automation=true` and ApplicationSet/app names
 - `torghut_env_overrides` for simulation-only runtime knobs (allowlist enforced by script)
 
 Recommendation:
@@ -47,6 +48,7 @@ Recommendation:
 - keep `replay.pace_mode=accelerated` for faster empirical runs.
 - by default, the script auto-derives `TRADING_FEATURE_MAX_STALENESS_MS` from `window.start`.
 - set `torghut_env_overrides.TRADING_FEATURE_MAX_STALENESS_MS` only for an explicit custom budget.
+- set `monitor.*` thresholds for minimum decisions/executions/TCA rows.
 
 ## Step 2: Plan
 
@@ -68,48 +70,36 @@ Verify plan output shows isolated targets:
 - `postgres_database` is not `torghut`
 - simulation topics are `torghut.sim.*`
 
-## Step 3: Temporarily Disable Argo Auto-Reconcile
+## Step 3: Run Simulation End-to-End
 
-`start_historical_simulation.py` patches runtime ConfigMap/KService fields. If Argo automation remains enabled, those
-patches are reverted almost immediately.
+`start_historical_simulation.py --mode run` handles:
 
-Set the `torghut` entry in `ApplicationSet/product` to `automation=manual` before `apply`.
-
-```bash
-INDEX=$(
-  kubectl get applicationset product -n argocd -o json \
-    | jq -r '.spec.generators[0].matrix.generators[1].list.elements
-      | to_entries[]
-      | select(.value.name=="torghut")
-      | .key'
-)
-
-kubectl patch applicationset product -n argocd --type json \
-  -p "[{\"op\":\"replace\",\"path\":\"/spec/generators/0/matrix/generators/1/list/elements/${INDEX}/automation\",\"value\":\"manual\"}]"
-```
-
-## Step 4: Apply Simulation
+- Argo automation switch to `manual` (if manifest enables management),
+- apply (dump/replay/configure),
+- monitor until cursor reaches run window and thresholds are met,
+- post-run report generation,
+- teardown + Argo automation restore.
 
 ```bash
 uv run python scripts/start_historical_simulation.py \
-  --mode apply \
+  --mode run \
   --run-id "${RUN_ID}" \
   --dataset-manifest "${MANIFEST}" \
   --confirm START_HISTORICAL_SIMULATION
 ```
 
-For repeat runs with the same dump:
+For reruns with existing dump/replay:
 
 ```bash
 uv run python scripts/start_historical_simulation.py \
-  --mode apply \
+  --mode run \
   --run-id "${RUN_ID}" \
   --dataset-manifest "${MANIFEST}" \
   --confirm START_HISTORICAL_SIMULATION \
   --force-replay
 ```
 
-## Step 5: Validate Simulation Runtime
+## Step 4: Validate Simulation Runtime (During Run)
 
 1. Validate Torghut simulation env:
 
@@ -152,13 +142,22 @@ Expected values are `torghut.sim.*` topics and `TA_GROUP_ID=torghut-ta-sim-<run_
 - `replay.records` > 0
 - `replay.records_by_topic` populated
 - `dump.sha256` present
+- `dump_coverage` present and passing
+- `window_policy` present
 
-## Step 6: Collect Empirical Evidence
+## Step 5: Collect Empirical Evidence
 
 Collect all of:
 
 - `run-manifest.json`
+- `run-full-lifecycle-manifest.json`
+- `run-state.json`
 - `source-dump.replay-marker.json`
+- `report/simulation-report.json`
+- `report/simulation-report.md`
+- `report/trade-pnl.csv`
+- `report/execution-latency.csv`
+- `report/llm-review-summary.csv`
 - Torghut `/trading/status` snapshot
 - TA + Torghut logs for the run window
 - Postgres row counts in simulation DB:
@@ -192,7 +191,7 @@ kubectl exec -i -n torghut chi-torghut-clickhouse-default-0-0-0 -- \
            GROUP BY table ORDER BY table FORMAT TabSeparated"
 ```
 
-## Step 7: Teardown
+## Step 6: Split-Mode Teardown (Only if you did not use `--mode run`)
 
 ```bash
 uv run python scripts/start_historical_simulation.py \
@@ -208,16 +207,10 @@ Verify:
 - Torghut restored to `TRADING_MODE=live`, `TRADING_EXECUTION_ADAPTER=lean`
 - `TRADING_SIMULATION_ENABLED` unset
 
-## Step 8: Re-enable Argo Automation
+## Step 7: Verify Argo Automation Restore
 
-Revert `ApplicationSet/product` torghut element back to `automation=auto`:
-
-```bash
-kubectl patch applicationset product -n argocd --type json \
-  -p "[{\"op\":\"replace\",\"path\":\"/spec/generators/0/matrix/generators/1/list/elements/${INDEX}/automation\",\"value\":\"auto\"}]"
-```
-
-Then force refresh and verify:
+When `argocd.manage_automation=true`, the script restores the previously captured automation mode.
+Verify after run:
 
 ```bash
 kubectl annotate application torghut -n argocd argocd.argoproj.io/refresh=hard --overwrite
@@ -232,9 +225,9 @@ Expected: `Synced`, `Healthy`, and `Succeeded`.
 
 ## Known Issues (as of 2026-02-28)
 
-1. Argo auto/self-heal reverts runtime simulation patches.
+1. Argo automation management can fail if ApplicationSet path structure changes.
 
-- Mitigation: switch `automation` to `manual` before `apply`; switch back to `auto` after teardown.
+- Mitigation: keep `argocd.applicationset_name/app_name` manifest settings current and verify `run-state.json` phase status.
 
 2. Simulation ClickHouse DB may not contain `ta_microbars`/`ta_signals` tables automatically.
 
@@ -267,17 +260,20 @@ ENGINE = ReplicatedReplacingMergeTree(
   - strategy gates reject all signals,
   - historical staleness exceeds live quality budget and batches are rejected pre-decision.
 - Mitigation:
-  - verify `/trading/status` (`last_ingest_signal_count`, `last_reason`),
-  - use a window known to produce production decisions,
-  - rely on the script's auto-derived staleness budget from `window.start` (or set an explicit override),
+  - verify `run-full-lifecycle-manifest.json.monitor`,
+  - use a day/window known to produce production decisions,
+  - rely on auto-derived staleness budget from `window.start` (or explicit override),
+  - ensure monitor thresholds are configured and fail-closed,
   - reset/inspect simulation `trade_cursor` when re-running with the same DB.
 
 ## Completion Checklist
 
 - [ ] Plan output validated (`isolated db/topics`)
 - [ ] Apply completed (`status=ok`, replay count > 0)
+- [ ] Run completed (`status=ok`, monitor thresholds met)
 - [ ] Simulation runtime validated (`paper`, `simulation`, isolated tables/topics)
+- [ ] Statistical report captured (`simulation-report.json/.md + CSV exports`)
 - [ ] Empirical evidence captured (artifacts + DB/ClickHouse counts + status snapshot)
-- [ ] Teardown completed (`status=ok`)
-- [ ] Argo automation restored (`auto`)
+- [ ] Teardown completed (`status=ok`, or split-mode manual teardown done)
+- [ ] Argo automation restored to previous mode
 - [ ] Application healthy and synced on production revision
