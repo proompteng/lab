@@ -40,7 +40,7 @@ spec:
     - broker
   storage:
     type: persistent-claim
-    size: 20Gi
+    size: 30Gi
     deleteClaim: false
     class: rook-ceph-block
 ---
