@@ -207,3 +207,46 @@ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set default.rg
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
 ```
+
+## Recovery: `MON_DISK_LOW` on a monitor node
+
+This is the recovery runbook for monitor available-space warnings such as:
+
+```text
+HEALTH_WARN mon x is low on available space
+```
+
+1. Confirm the warning and current monitor warning thresholds:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail | rg "MON_DISK_LOW|mon .*low on available space"
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config get mon mon_data_avail_warn
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config get mon mon_data_avail_crit
+```
+
+1. Identify which monitor is low and check host usage for monitor paths:
+
+```bash
+MON_ID=f  # e.g. a, e, or f
+MON_POD="$(kubectl -n rook-ceph get pods -l app=rook-ceph-mon -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.labels.ceph_daemon} {.metadata.labels.ceph_daemon_id}{\"\\n\"}{end}' | awk -v mon=\"${MON_ID}\" '$2==\"mon\" && $3==mon {print $1}' | head -n1)"
+kubectl -n rook-ceph exec "$MON_POD" -- sh -lc 'df -h / /run/ceph /var/lib/ceph /var/log/ceph'
+kubectl -n rook-ceph exec "$MON_POD" -- sh -lc "du -h /var/lib/ceph/mon/ceph-${MON_ID} | sort -rh | head -n 50"
+```
+
+1. Run low-impact monitor cleanup steps:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph crash stat
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph crash archive all
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell mon.${MON_ID} compact
+```
+
+1. Recheck health and disk status:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail | rg "MON_DISK_LOW|HEALTH_"
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
+kubectl -n rook-ceph exec "$MON_POD" -- df -h /run/ceph
+```
+
+If usage remains near-warning after compaction, inspect node-level pressure and clean obvious node/system log buildup outside Ceph before moving monitor storage.
