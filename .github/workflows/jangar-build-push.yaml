@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: jangar-build-${{ github.ref }}
+  group: jangar-build-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
