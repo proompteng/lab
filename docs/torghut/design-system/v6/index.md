@@ -33,6 +33,7 @@ This pack is positioned as the next architecture layer above:
 4. `04-alpha-discovery-and-autonomous-improvement-pipeline.md`
 5. `05-evaluation-benchmark-and-contamination-control-standard.md`
 6. `06-production-rollout-operations-and-governance.md`
+7. `07-hmm-regime-state-and-autonomous-llm-control-plane-2026-02-28.md`
 
 ## Recommended Build Order
 
@@ -42,6 +43,7 @@ This pack is positioned as the next architecture layer above:
 4. `03-dspy-llm-decision-layer-over-jangar.md`
 5. `04-alpha-discovery-and-autonomous-improvement-pipeline.md`
 6. `06-production-rollout-operations-and-governance.md`
+7. `07-hmm-regime-state-and-autonomous-llm-control-plane-2026-02-28.md`
 
 ## Why This Sequence
 
