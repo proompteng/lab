@@ -26,10 +26,6 @@ spec:
         value: 'false'
       - name: outputRoot
         value: /tmp/torghut-simulations
-      - name: gitRepo
-        value: https://github.com/proompteng/lab.git
-      - name: gitRef
-        value: main
   templates:
     - name: run
       inputs:
@@ -42,10 +38,8 @@ spec:
           - name: forceDump
           - name: allowMissingState
           - name: outputRoot
-          - name: gitRepo
-          - name: gitRef
       container:
-        image: python:3.11-slim
+        image: registry.ide-newton.ts.net/lab/torghut:latest
         command:
           - /bin/bash
           - -lc
@@ -60,43 +54,12 @@ spec:
           - |
             set -euo pipefail
 
-            WORK_ROOT=/workspace/lab
             WORKFLOW_DIR=/tmp/torghut-historical-simulation
             MANIFEST_PATH="${WORKFLOW_DIR}/dataset-manifest.yaml"
             OUTPUT_ROOT="{{inputs.parameters.outputRoot}}"
             export MANIFEST_PATH OUTPUT_ROOT
 
-            if command -v apt-get >/dev/null 2>&1; then
-              apt-get update
-              apt-get install -y --no-install-recommends git curl ca-certificates
-              rm -rf /var/lib/apt/lists/*
-            fi
-
-            pip install --no-cache-dir --upgrade pip
-            pip install --no-cache-dir kafka-python "psycopg[binary]" pyyaml alembic uv
-
-            if [ ! -f /usr/local/bin/kubectl ]; then
-              K8S_STABLE="$(curl -fsSL https://dl.k8s.io/release/stable.txt | tr -d '[:space:]')"
-              if [ -z "$K8S_STABLE" ]; then
-                K8S_STABLE="v1.30.0"
-              fi
-              curl -fsSL "https://dl.k8s.io/release/${K8S_STABLE}/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl
-              chmod +x /usr/local/bin/kubectl
-            fi
-
-            if ! command -v git >/dev/null 2>&1; then
-              echo "git is required to fetch services/torghut/scripts/start_historical_simulation.py" >&2
-              exit 1
-            fi
-
             mkdir -p "${WORKFLOW_DIR}"
-            if [ -d "${WORK_ROOT}/.git" ]; then
-              git -C "${WORK_ROOT}" fetch --depth 1 origin "{{inputs.parameters.gitRef}}"
-              git -C "${WORK_ROOT}" reset --hard "origin/{{inputs.parameters.gitRef}}"
-            else
-              rm -rf "${WORK_ROOT}"
-              git clone --depth 1 --branch "{{inputs.parameters.gitRef}}" "{{inputs.parameters.gitRepo}}" "${WORK_ROOT}"
-            fi
 
             if [ -z "{{inputs.parameters.datasetManifestB64}}" ]; then
               echo "datasetManifestB64 must be supplied" >&2
@@ -126,7 +89,6 @@ spec:
                 yaml.safe_dump(payload, handle, default_flow_style=False, sort_keys=False)
             PY
 
-            chmod +x "${WORK_ROOT}/services/torghut/scripts/start_historical_simulation.py"
             RUN_ID='{{inputs.parameters.runId}}'
             MODE='{{inputs.parameters.mode}}'
             if [ -z "$RUN_ID" ]; then
@@ -134,7 +96,7 @@ spec:
             fi
 
             case "$MODE" in
-              plan|apply|teardown) ;;
+              plan|apply|run|report|teardown) ;;
               *)
                 echo "invalid mode: $MODE" >&2
                 exit 1
@@ -142,7 +104,7 @@ spec:
             esac
 
             SCRIPT_ARGS=(--mode "$MODE" --run-id "$RUN_ID" --dataset-manifest "$MANIFEST_PATH" --json)
-            if [ "$MODE" = "apply" ]; then
+            if [ "$MODE" = "apply" ] || [ "$MODE" = "run" ]; then
               SCRIPT_ARGS+=(--confirm '{{inputs.parameters.confirmPhrase}}')
             fi
             if [ '{{inputs.parameters.forceReplay}}' = 'true' ]; then
@@ -156,7 +118,7 @@ spec:
             fi
 
             mkdir -p "$OUTPUT_ROOT"
-            python3 "${WORK_ROOT}/services/torghut/scripts/start_historical_simulation.py" "${SCRIPT_ARGS[@]}"
+            python3 /app/scripts/start_historical_simulation.py "${SCRIPT_ARGS[@]}"
       outputs:
         artifacts:
           - name: simulation-output
