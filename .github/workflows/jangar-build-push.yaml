@@ -68,6 +68,7 @@ jobs:
           echo "context=$PRUNE_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Prebuild jangar output (pruned context)
+        continue-on-error: true
         shell: bash
         env:
           NODE_OPTIONS: --max-old-space-size=4096
@@ -87,8 +88,11 @@ jobs:
           bun install --cwd "$PRUNE_DIR/full" --ignore-scripts --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk --filter @proompteng/jangar
           bun run --cwd "$PRUNE_DIR/full" --filter @proompteng/otel build
           bun run --cwd "$PRUNE_DIR/full" --filter @proompteng/temporal-bun-sdk build
-          timeout 20m bun --cwd "$PRUNE_DIR/full/services/jangar" --bun vite build --logLevel warn
-          bun --cwd "$PRUNE_DIR/full/services/jangar" run copy:grpc-proto
+          if timeout 8m bun --cwd "$PRUNE_DIR/full/services/jangar" --bun vite build --logLevel warn; then
+            bun --cwd "$PRUNE_DIR/full/services/jangar" run copy:grpc-proto
+          else
+            echo "Prebuild failed or timed out; continuing with Docker image build."
+          fi
 
       - name: Build and push jangar image
         env:
