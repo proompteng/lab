@@ -40,6 +40,7 @@ from .trading import TradingScheduler
 from .trading.autonomy import evaluate_evidence_continuity
 from .trading.lean_lanes import LeanLaneManager
 from .trading.llm.evaluation import build_llm_evaluation_metrics
+from .trading.tca import build_tca_gate_inputs
 from .whitepapers import (
     WhitepaperKafkaWorker,
     WhitepaperWorkflowService,
@@ -1381,30 +1382,7 @@ def _tca_row_payload(row: ExecutionTCAMetric | None) -> dict[str, object] | None
 
 
 def _load_tca_summary(session: Session) -> dict[str, object]:
-    row = session.execute(
-        select(
-            func.count(ExecutionTCAMetric.id),
-            func.avg(ExecutionTCAMetric.slippage_bps),
-            func.avg(ExecutionTCAMetric.shortfall_notional),
-            func.avg(ExecutionTCAMetric.churn_ratio),
-            func.avg(ExecutionTCAMetric.divergence_bps),
-            func.max(ExecutionTCAMetric.computed_at),
-        )
-    ).one()
-    order_count_raw = row[0]
-    order_count = (
-        int(order_count_raw)
-        if isinstance(order_count_raw, (int, float, Decimal))
-        else 0
-    )
-    return {
-        "order_count": order_count,
-        "avg_slippage_bps": row[1],
-        "avg_shortfall_notional": row[2],
-        "avg_churn_ratio": row[3],
-        "avg_divergence_bps": row[4],
-        "last_computed_at": row[5],
-    }
+    return build_tca_gate_inputs(session=session)
 
 
 def _load_route_provenance_summary(session: Session) -> dict[str, object]:

@@ -2036,7 +2036,7 @@ def _nearest_rank_percentile(values: list[int], percentile: int) -> int:
 
 def _load_tca_gate_inputs(
     session_factory: Callable[[], Session],
-) -> dict[str, Decimal | int]:
+) -> dict[str, object]:
     try:
         with session_factory() as session:
             return build_tca_gate_inputs(session)

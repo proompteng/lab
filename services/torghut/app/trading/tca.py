@@ -186,7 +186,7 @@ def upsert_execution_tca_metric(
 
 def build_tca_gate_inputs(
     session: Session, *, strategy_id: str | None = None
-) -> dict[str, Decimal | int]:
+) -> dict[str, object]:
     """Build aggregate TCA inputs used by autonomy gate thresholds."""
 
     stmt = select(
@@ -199,6 +199,7 @@ def build_tca_gate_inputs(
         func.avg(ExecutionTCAMetric.expected_shortfall_bps_p50),
         func.avg(ExecutionTCAMetric.expected_shortfall_bps_p95),
         func.avg(ExecutionTCAMetric.realized_shortfall_bps),
+        func.max(ExecutionTCAMetric.computed_at),
     )
     if strategy_id:
         stmt = stmt.where(ExecutionTCAMetric.strategy_id == strategy_id)
@@ -213,6 +214,7 @@ def build_tca_gate_inputs(
     avg_expected_shortfall_p50 = _decimal_or_none(row[6])
     avg_expected_shortfall_p95 = _decimal_or_none(row[7])
     avg_realized_shortfall_bps = _decimal_or_none(row[8])
+    last_computed_at = row[9]
     expected_shortfall_coverage = (
         Decimal(expected_count) / Decimal(order_count)
         if order_count > 0
@@ -239,6 +241,7 @@ def build_tca_gate_inputs(
         "avg_realized_shortfall_bps": avg_realized_shortfall_bps
         if avg_realized_shortfall_bps is not None
         else Decimal("0"),
+        "last_computed_at": last_computed_at,
     }
 
 
