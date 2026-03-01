@@ -5912,6 +5912,7 @@ class TradingScheduler:
             "governance_status": governance_status,
             "rollback_triggered": rollback_triggered,
             "rollback_incident_evidence": rollback_incident_evidence,
+            "rollback_incident_evidence_path": rollback_incident_evidence,
             "artifact_refs": evidence_refs,
             "phase_count": len(ordered_phases),
             "action_type": action_type,

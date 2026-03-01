@@ -1144,6 +1144,10 @@ def _build_phase_manifest(
     rollback_proof_path = _coerce_str(
         rollback_proof.get("rollback_incident_evidence_path"), default=""
     )
+    if not rollback_proof_path:
+        rollback_proof_path = _coerce_str(
+            rollback_proof.get("rollback_incident_evidence"), default=""
+        )
     rollback_proof_status = (
         "pass"
         if (not rollback_triggered)
@@ -1328,6 +1332,7 @@ def _build_phase_manifest(
             "observations": {
                 "rollback_triggered": rollback_triggered,
                 "rollback_incident_evidence_path": rollback_proof_path or None,
+                "rollback_incident_evidence": rollback_proof_path or None,
             },
             "artifact_refs": [rollback_proof_path] if rollback_proof_path else [],
             "reasons": list(rollback_proof.get("reasons", [])),
