@@ -91,16 +91,26 @@ class TestJangarFallbackChain(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     client.request_review(messages=[], temperature=0.2, max_tokens=10)
 
-    def test_raises_when_all_providers_fail_in_live_mode(self) -> None:
+    def test_does_not_fallback_to_self_hosted_in_live_mode_on_jangar_failure(
+        self,
+    ) -> None:
         settings.llm_provider = "jangar"
         settings.trading_mode = "live"
 
         client = LLMClient(model="gpt-test", timeout_seconds=1)
 
-        with patch.object(LLMClient, "_request_review_via_jangar", side_effect=RuntimeError("nope")):
-            with patch.object(LLMClient, "_request_review_via_self_hosted", side_effect=RuntimeError("nope2")):
+        with patch.object(
+            LLMClient,
+            "_request_review_via_jangar",
+            side_effect=RuntimeError("nope"),
+        ) as primary_exc:
+            with patch.object(
+                LLMClient, "_request_review_via_self_hosted", side_effect=RuntimeError("nope2")
+            ) as fallback_exc:
                 with self.assertRaises(RuntimeError):
                     client.request_review(messages=[], temperature=0.2, max_tokens=10)
+        self.assertTrue(primary_exc.called)
+        self.assertFalse(fallback_exc.called)
 
 
 class TestJangarRequestHeaders(unittest.TestCase):
