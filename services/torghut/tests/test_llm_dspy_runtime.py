@@ -133,7 +133,7 @@ class TestLLMDSPyRuntime(TestCase):
                 "https://jangar.openai.local/openai/v1/chat/completions",
             )
             self.assertEqual(program.api_key, "test-key")
-            self.assertEqual(program.model_name, settings.llm_model)
+            self.assertEqual(program.model_name, f"openai/{settings.llm_model}")
         finally:
             settings.jangar_base_url = original_base
             settings.jangar_api_key = original_api_key
