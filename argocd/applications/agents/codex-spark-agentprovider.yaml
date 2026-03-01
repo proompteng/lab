@@ -47,7 +47,7 @@ spec:
           "name": "codex-spark",
           "binary": "/usr/local/bin/codex-implement",
           "argsTemplate": [
-            "{{payloads.eventFilePath}}"
+            "{{payloads.eventBodyPath}}"
           ],
           "envTemplate": {
             "WORKFLOW_STAGE": "{{inputs.stage}}",
