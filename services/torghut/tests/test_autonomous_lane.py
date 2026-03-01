@@ -10,6 +10,7 @@ from unittest.mock import patch
 from unittest import TestCase
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
+from typing import Any
 
 from app.trading.autonomy.lane import (
     _AUTONOMY_PHASE_ORDER,
