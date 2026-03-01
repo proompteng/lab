@@ -147,6 +147,8 @@ class DSPyReviewRuntime:
 
         manifest = self._resolve_artifact_manifest()
         self._validate_manifest(manifest)
+        if manifest.executor not in {"heuristic", "dspy_live"}:
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_executor_unknown")
         if self.mode == "active" and manifest.executor != "dspy_live":
             raise DSPyRuntimeUnsupportedStateError(
                 "dspy_active_mode_requires_dspy_live_executor"
@@ -294,11 +296,12 @@ class DSPyReviewRuntime:
             metadata = {str(key): value for key, value in metadata_items.items()}
 
         executor_raw = str(metadata.get("executor") or "heuristic").strip().lower()
-        executor: Literal["heuristic", "dspy_live"]
         if executor_raw in {"dspy", "dspy_live", "live"}:
-            executor = "dspy_live"
-        else:
+            executor: Literal["heuristic", "dspy_live"] = "dspy_live"
+        elif executor_raw == "heuristic":
             executor = "heuristic"
+        else:
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_executor_unknown")
 
         compiled_prompt_raw = metadata.get("compiled_prompt")
         compiled_prompt: dict[str, Any] = {}

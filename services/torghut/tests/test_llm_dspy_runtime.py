@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
+from typing import cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -171,3 +173,29 @@ class TestLLMDSPyRuntime(TestCase):
             "dspy_active_mode_requires_dspy_live_executor",
             str(exc.exception),
         )
+
+    def test_unknown_artifact_executor_is_blocking(self) -> None:
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        manifest = cast(
+            DSPyArtifactManifest,
+            SimpleNamespace(
+                artifact_hash="a" * 64,
+                program_name="trade-review-committee-v1",
+                signature_version="v1",
+                executor="scaffold",
+                compiled_prompt={},
+                source="database",
+            ),
+        )
+
+        with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
+            with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
+                runtime.review(self._request())
+
+        self.assertIn("dspy_artifact_executor_unknown", str(exc.exception))
