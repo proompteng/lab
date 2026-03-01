@@ -107,6 +107,17 @@ Risk engine enforces:
 
 Orders must be idempotent across retries (see `v1/component-order-execution-and-idempotency.md`).
 
+### Rollout/verification (paper-first + live-gate posture)
+
+- GitOps precondition for production:
+  - `TRADING_MODE=paper`
+  - `TRADING_LIVE_ENABLED=false`
+  - `TRADING_ACCOUNTS_JSON` account entries in paper mode
+  - `LLM_FAIL_OPEN_LIVE_APPROVED=false`
+- Verification:
+  - `/trading/status` reports `trading_mode=paper` and no live execution path is active.
+  - confirm new `/trading/executions` records are paper-labeled.
+
 ## Failure modes, detection, recovery
 
 | Failure                 | Symptoms                          | Detection                                         | Recovery                                                                  |

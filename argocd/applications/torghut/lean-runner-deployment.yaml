@@ -39,7 +39,7 @@ spec:
             - name: APP_ENV
               value: prod
             - name: TRADING_MODE
-              value: live
+              value: paper
             - name: APCA_API_KEY_ID
               valueFrom:
                 secretKeyRef:
