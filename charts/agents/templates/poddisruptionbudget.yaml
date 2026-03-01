@@ -21,3 +21,27 @@ spec:
   maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
   {{- end }}
 {{- end }}
+
+{{- if and .Values.controllers.enabled .Values.controllers.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "agents.fullname" . }}-controllers
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+  {{- with .Values.controllers.podDisruptionBudget.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "agents.controllersSelectorLabels" . | nindent 6 }}
+  {{- if .Values.controllers.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.controllers.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.controllers.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.controllers.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+{{- end }}
