@@ -229,6 +229,22 @@ Set defaults for AgentRun and Schedule workload images when the CRD does not spe
 - `runtime.scheduleRunnerImage` → `JANGAR_SCHEDULE_RUNNER_IMAGE`
 - `runtime.scheduleServiceAccount` → `JANGAR_SCHEDULE_SERVICE_ACCOUNT`
 
+### Runner image release contract (GitOps)
+
+For production promotion, pin both the runner image and digest in:
+
+- `runner.image.repository`
+- `runner.image.tag`
+- `runner.image.digest`
+
+The release workflow calls `update-manifests.ts` with explicit `--runner-image-*` arguments and validates the
+candidate runner image before writing manifests:
+
+- `docker image inspect --format '{{json .}}' <runnerImageRef>`
+- `docker run --entrypoint /usr/local/bin/agent-runner --help <runnerImageRef>`
+
+If either check fails, the promotion step fails and manifest updates are not written.
+
 ### Agent comms subjects (optional)
 
 Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:

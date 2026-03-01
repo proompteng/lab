@@ -69,6 +69,7 @@ jobs:
           WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           COMMIT_SHA_INPUT: ${{ inputs.commit_sha }}
           IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+          RUNNER_ARCH: ${{ runner.arch }}
         run: |
           set -euo pipefail
 
@@ -131,6 +132,7 @@ jobs:
             echo "contract_digest=${CONTRACT_DIGEST}"
             echo "image=${IMAGE}"
             echo "control_plane_image=registry.ide-newton.ts.net/lab/jangar-control-plane"
+            echo "runner_platform=linux/${RUNNER_ARCH,,}"
             echo "promote=${PROMOTE}"
           } >> "$GITHUB_OUTPUT"
 
@@ -208,10 +210,12 @@ jobs:
       - name: Update Jangar manifests
         if: steps.meta.outputs.promote == 'true'
         env:
+          JANGAR_IMAGE: ${{ steps.meta.outputs.image }}
           JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           JANGAR_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
           JANGAR_CONTROL_PLANE_IMAGE_NAME: ${{ steps.meta.outputs.control_plane_image }}
           JANGAR_CONTROL_PLANE_IMAGE_DIGEST: ${{ steps.control_plane_digest.outputs.digest }}
+          JANGAR_RUNNER_IMAGE_PLATFORM: ${{ steps.meta.outputs.runner_platform }}
         run: |
           TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           bun run packages/scripts/src/jangar/update-manifests.ts \
@@ -219,6 +223,11 @@ jobs:
             --digest "${JANGAR_IMAGE_DIGEST}" \
             --control-plane-image-name "${JANGAR_CONTROL_PLANE_IMAGE_NAME}" \
             --control-plane-digest "${JANGAR_CONTROL_PLANE_IMAGE_DIGEST}" \
+            --runner-image-name "${JANGAR_IMAGE}" \
+            --runner-image-tag "${JANGAR_IMAGE_TAG}" \
+            --runner-image-digest "${JANGAR_IMAGE_DIGEST}" \
+            --runner-image-platform "${JANGAR_RUNNER_IMAGE_PLATFORM}" \
+            --verify-runner-image \
             --rollout-timestamp "${TIMESTAMP}" \
             --agents-values-path "argocd/applications/agents/values.yaml"
 
@@ -260,6 +269,10 @@ jobs:
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Image digest: `${{ steps.digest.outputs.digest }}`
+            - Runner image validated before manifest write:
+              - image: `${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}@${{ steps.digest.outputs.digest }}`
+              - platform: `${{ steps.meta.outputs.runner_platform }}`
+              - entrypoint probe: `agent-runner --help` via `update-manifests.ts`
             - Updated API and worker rollout annotations
             - Updated `argocd/applications/agents/values.yaml` for automated sync to namespace `agents`
 
