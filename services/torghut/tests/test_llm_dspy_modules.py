@@ -173,3 +173,15 @@ class TestDSPyTransportHardening(TestCase):
             ),
             "https://jangar.openai.local/openai/v1",
         )
+
+    def test_coerce_rejects_completion_urls_with_query_or_fragment(self) -> None:
+        with self.assertRaises(RuntimeError):
+            _coerce_dspy_api_base(
+                api_base=None,
+                api_completion_url="https://jangar.openai.local/openai/v1/chat/completions?x=1",
+            )
+        with self.assertRaises(RuntimeError):
+            _coerce_dspy_api_base(
+                api_base=None,
+                api_completion_url="https://jangar.openai.local/openai/v1/chat/completions#frag",
+            )
