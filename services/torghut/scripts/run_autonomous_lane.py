@@ -101,6 +101,15 @@ def main() -> int:
         "paper_patch_path": str(result.paper_patch_path)
         if result.paper_patch_path
         else None,
+        "candidate_spec_path": str(result.candidate_spec_path),
+        "candidate_generation_manifest_path": str(
+            result.candidate_generation_manifest_path
+        ),
+        "evaluation_manifest_path": str(result.evaluation_manifest_path),
+        "recommendation_manifest_path": str(result.recommendation_manifest_path),
+        "recommendation_artifact_path": str(result.recommendation_artifact_path),
+        "stage_trace_ids": result.stage_trace_ids,
+        "stage_lineage_root": result.stage_lineage_root,
         "profitability_benchmark_path": str(
             result.output_dir / "gates" / "profitability-benchmark-v4.json"
         ),

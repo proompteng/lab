@@ -272,6 +272,76 @@ class TestAutonomousLane(TestCase):
                 actuation_payload["artifact_refs"],
             )
 
+    def test_lane_progression_manifests_and_iteration_note(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-manifest"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+            candidate_manifest = json.loads(
+                result.candidate_generation_manifest_path.read_text(encoding="utf-8")
+            )
+            evaluation_manifest = json.loads(
+                result.evaluation_manifest_path.read_text(encoding="utf-8")
+            )
+            recommendation_manifest = json.loads(
+                result.recommendation_manifest_path.read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(candidate_manifest["stage"], "candidate-generation")
+            self.assertEqual(candidate_manifest["stage_index"], 1)
+            self.assertIsNone(candidate_manifest["parent_lineage_hash"])
+            self.assertEqual(
+                evaluation_manifest["parent_lineage_hash"],
+                candidate_manifest["lineage_hash"],
+            )
+            self.assertEqual(evaluation_manifest["parent_stage"], "candidate-generation")
+            self.assertEqual(evaluation_manifest["stage"], "evaluation")
+            self.assertEqual(evaluation_manifest["stage_index"], 2)
+            self.assertEqual(
+                recommendation_manifest["parent_lineage_hash"],
+                evaluation_manifest["lineage_hash"],
+            )
+            self.assertEqual(recommendation_manifest["parent_stage"], "evaluation")
+            self.assertEqual(recommendation_manifest["stage"], "promotion-recommendation")
+            self.assertEqual(recommendation_manifest["stage_index"], 3)
+            self.assertEqual(
+                result.stage_lineage_root,
+                candidate_manifest["lineage_hash"],
+            )
+            self.assertEqual(
+                result.stage_trace_ids["candidate-generation"],
+                candidate_manifest["stage_trace_id"],
+            )
+            self.assertEqual(
+                result.stage_trace_ids["evaluation"],
+                evaluation_manifest["stage_trace_id"],
+            )
+            self.assertEqual(
+                result.stage_trace_ids["promotion-recommendation"],
+                recommendation_manifest["stage_trace_id"],
+            )
+
+            notes = sorted((output_dir / "notes").glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            note_text = notes[0].read_text(encoding="utf-8")
+            self.assertIn("Autonomous lane iteration 1", note_text)
+            self.assertIn("candidate-generation", note_text)
+
     def test_lane_supports_governance_override_for_actuation_intent(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
         strategy_config_path = (
@@ -781,6 +851,116 @@ class TestAutonomousLane(TestCase):
             self.assertIsNotNone(
                 promotion_row.approve_reason or promotion_row.deny_reason
             )
+            candidate_spec = json.loads(
+                result.candidate_spec_path.read_text(encoding="utf-8")
+            )
+            self.assertIn("stage_lineage", candidate_spec)
+            self.assertEqual(
+                candidate_spec["stage_lineage"]["root_lineage_hash"],
+                result.stage_lineage_root,
+            )
+            self.assertIn("stages", candidate_spec["stage_lineage"])
+            self.assertIn("candidate_generation_manifest", candidate_spec["artifacts"])
+            self.assertIn("evaluation_manifest", candidate_spec["artifacts"])
+            self.assertIn("recommendation_manifest", candidate_spec["artifacts"])
+            self.assertIn("promotion_recommendation", candidate_spec["artifacts"])
+            self.assertIn(
+                "candidate-generation", candidate_spec["stage_trace_ids"],
+            )
+            self.assertIn(
+                "evaluation", candidate_spec["stage_trace_ids"],
+            )
+            self.assertIn(
+                "promotion-recommendation", candidate_spec["stage_trace_ids"],
+            )
+            self.assertEqual(
+                candidate_spec["stage_trace_ids"],
+                result.stage_trace_ids,
+            )
+            self.assertIn("replay_artifact_hashes", candidate_spec)
+            for key in (
+                "candidate_generation_manifest",
+                "evaluation_manifest",
+                "recommendation_manifest",
+                "promotion_recommendation",
+            ):
+                self.assertIn(key, candidate_spec["replay_artifact_hashes"])
+            self.assertIn("stage_lineage", candidate.metadata_bundle)
+            self.assertEqual(
+                candidate.metadata_bundle["stage_lineage"]["root_lineage_hash"],
+                result.stage_lineage_root,
+            )
+            self.assertIn(
+                "stage_manifest_refs",
+                candidate.metadata_bundle,
+            )
+            self.assertEqual(
+                candidate.metadata_bundle["stage_manifest_refs"],
+                candidate_spec["stage_manifest_refs"],
+            )
+            self.assertIn("stage_lineage", promotion_row.evidence_bundle)
+            self.assertEqual(
+                promotion_row.evidence_bundle["stage_lineage"]["root_lineage_hash"],
+                result.stage_lineage_root,
+            )
+            self.assertIn("replay_artifact_hashes", promotion_row.evidence_bundle)
+            self.assertEqual(
+                promotion_row.evidence_bundle["replay_artifact_hashes"],
+                candidate.metadata_bundle["replay_artifact_hashes"],
+            )
+
+    def test_lane_fails_closed_when_required_stage_artifact_is_missing(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        policy_payload = {
+            "promotion_required_artifacts": [
+                "research/candidate-spec.json",
+                "backtest/evaluation-report.json",
+                "gates/gate-evaluation.json",
+                "stages/does-not-exist-manifest.json",
+            ],
+            "promotion_require_patch_targets": [],
+            "gate6_require_profitability_evidence": False,
+            "gate6_require_janus_evidence": False,
+            "promotion_require_janus_evidence": False,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-missing-artifact"
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+                if result.actuation_intent_path
+                else "{}"
+            )
+            promotion_reqs = json.loads(
+                (output_dir / "gates" / "promotion-prerequisites.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertFalse(actuation_payload["actuation_allowed"])
+        self.assertIn(
+            "required_artifacts_missing",
+            actuation_payload["gates"]["recommendation_reasons"],
+        )
+        self.assertIn("required_artifacts_missing", promotion_reqs["reasons"])
+        self.assertIn(
+            "stages/does-not-exist-manifest.json",
+            promotion_reqs["missing_artifacts"],
+        )
 
     def test_upsert_no_signal_run_records_skipped_research_run(self) -> None:
         strategy_config_path = (
