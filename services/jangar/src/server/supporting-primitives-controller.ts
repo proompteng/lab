@@ -600,16 +600,24 @@ const scheduleSwarmUnfreezeReconcile = (
   clearSwarmUnfreezeTimer(namespace, swarmName)
 
   const key = `${namespace}/${swarmName}`
-  const delayMs = Math.max(0, untilMs - Date.now())
-  const timer = setTimeout(() => {
-    swarmUnfreezeTimers.delete(key)
-    enqueueNamespaceTask(namespace, async () => {
-      const latest = await kube.get(RESOURCE_MAP.Swarm, swarmName, namespace)
-      if (!latest) return
-      await reconcileSwarm(kube, latest, namespace)
-    })
-  }, delayMs)
-  swarmUnfreezeTimers.set(key, timer)
+  const scheduleChunk = (delayMs: number) => {
+    const clampedDelay = Math.min(Math.max(0, delayMs), 2_147_483_647)
+    const timer = setTimeout(async () => {
+      if (delayMs <= 2_147_483_647) {
+        swarmUnfreezeTimers.delete(key)
+        await enqueueNamespaceTask(namespace, async () => {
+          const latest = await kube.get(RESOURCE_MAP.Swarm, swarmName, namespace)
+          if (!latest) return
+          await reconcileSwarm(kube, latest, namespace)
+        })
+        return
+      }
+      scheduleChunk(delayMs - 2_147_483_647)
+    }, clampedDelay)
+    swarmUnfreezeTimers.set(key, timer)
+  }
+
+  scheduleChunk(Math.max(0, untilMs - Date.now()))
 }
 
 const sortByMostRecentRun = (resources: Record<string, unknown>[]) => {

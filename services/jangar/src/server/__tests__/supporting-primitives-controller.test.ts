@@ -671,6 +671,82 @@ describe('supporting primitives controller', () => {
     expect(finalStatus.freeze).toBeUndefined()
   })
 
+  it('chunks unfreeze timers so long freeze durations wait the full expiry time', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const longFreezeMs = 2_500_000_000
+    const freezeUntil = new Date(Date.now() + longFreezeMs).toISOString()
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'torghut-quant', namespace: 'agents', generation: 1, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'trading-owner', channel: 'swarm://owner/trading' },
+        domains: ['autonomous-trading'],
+        objectives: ['improve risk-adjusted return'],
+        mode: 'lights-out',
+        cadence: {
+          discoverEvery: '1m',
+          planEvery: '5m',
+          implementEvery: '15m',
+          verifyEvery: '1m',
+        },
+        discovery: { sources: [{ name: 'market-feed' }] },
+        delivery: { deploymentTargets: ['torghut'] },
+        risk: { freezeAfterFailures: 2, freezeDuration: '60m' },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'OrchestrationRun', name: 'orchestrationrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+      status: {
+        freeze: {
+          reason: 'ConsecutiveFailures',
+          until: freezeUntil,
+        },
+      },
+    }
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Swarm) return swarm
+      if (resource === RESOURCE_MAP.Schedule) {
+        return {
+          status: {
+            phase: 'Active',
+            lastRunTime: freezeUntil,
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun || resource === RESOURCE_MAP.OrchestrationRun) return { items: [] }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    expect(apply).toHaveBeenCalledTimes(0)
+    const initialStatusCall = applyStatus.mock.calls[0]
+    const initialStatus = (initialStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(initialStatus.phase).toBe('Frozen')
+
+    await vi.advanceTimersByTimeAsync(2_147_483_647)
+    expect(get).not.toHaveBeenCalled()
+
+    const remainingDelay = 2_500_000_000 - 2_147_483_647
+    await vi.advanceTimersByTimeAsync(remainingDelay)
+
+    expect(get).toHaveBeenCalledWith(RESOURCE_MAP.Swarm, 'torghut-quant', 'agents')
+    const finalStatusCall = applyStatus.mock.calls.at(-1)
+    const finalStatus = (finalStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(finalStatus.phase).toBe('Active')
+    expect(finalStatus.freeze).toBeUndefined()
+  })
+
   it('uses different schedule names for long swarms with identical prefixes', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
