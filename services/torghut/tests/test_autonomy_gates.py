@@ -144,6 +144,43 @@ class TestAutonomyGates(TestCase):
         self.assertIn("tca_shortfall_exceeds_maximum", report.reasons)
         self.assertIn("tca_churn_ratio_exceeds_maximum", report.reasons)
 
+    def test_gate_matrix_fails_when_tca_slippage_missing(self) -> None:
+        policy = GatePolicyMatrix()
+        inputs = GateInputs(
+            feature_schema_version="3.0.0",
+            required_feature_null_rate=Decimal("0.00"),
+            staleness_ms_p95=0,
+            symbol_coverage=3,
+            tca_metrics={
+                "order_count": 12,
+                "avg_shortfall_notional": "7",
+                "avg_churn_ratio": "0.45",
+            },
+            llm_metrics={"error_ratio": "0.00"},
+            metrics={
+                "decision_count": 20,
+                "trade_count": 10,
+                "net_pnl": "50",
+                "max_drawdown": "100",
+                "turnover_ratio": "1.5",
+                "cost_bps": "5",
+            },
+            robustness={
+                "fold_count": 4,
+                "negative_fold_count": 1,
+                "net_pnl_cv": "0.3",
+            },
+            forecast_metrics=_healthy_forecast_metrics_payload(),
+            profitability_evidence=_profitability_evidence_payload(),
+        )
+
+        report = evaluate_gate_matrix(
+            inputs, policy=policy, promotion_target="paper", code_version="test"
+        )
+
+        self.assertFalse(report.promotion_allowed)
+        self.assertIn("tca_slippage_missing", report.reasons)
+
     def test_gate_matrix_fails_when_tca_expected_shortfall_calibration_coverage_is_missing(self) -> None:
         policy = GatePolicyMatrix(
             gate2_min_tca_expected_shortfall_coverage=Decimal("0.50"),

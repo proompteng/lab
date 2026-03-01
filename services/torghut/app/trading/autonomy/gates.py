@@ -748,10 +748,10 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
         return ["tca_order_count_below_minimum"]
 
     reasons: list[str] = []
-    avg_tca_slippage = _decimal(inputs.tca_metrics.get("avg_slippage_bps")) or Decimal(
-        "0"
-    )
-    if avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
+    avg_tca_slippage = _decimal(inputs.tca_metrics.get("avg_slippage_bps"))
+    if avg_tca_slippage is None:
+        reasons.append("tca_slippage_missing")
+    elif avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
         reasons.append("tca_slippage_exceeds_maximum")
 
     avg_tca_shortfall = _decimal(inputs.tca_metrics.get("avg_shortfall_notional"))
