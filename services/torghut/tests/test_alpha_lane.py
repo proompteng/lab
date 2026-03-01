@@ -91,6 +91,53 @@ class TestAlphaLane(TestCase):
             self.assertIn("Alpha lane iteration 1", note_text)
             self.assertIn("candidate-generation", note_text)
 
+    def test_lane_iteration_notes_use_execution_context_artifact_path(self) -> None:
+        train, test = self._trend_frames()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "alpha-notes"
+            artifact_path = Path(tmpdir) / "external-notes-root"
+            result = run_alpha_discovery_lane(
+                artifact_path=output_dir,
+                train_prices=train,
+                test_prices=test,
+                execution_context={
+                    "execution_context": {
+                        "repository": "override/repo",
+                        "base": "feature/base",
+                        "head": "run/head",
+                        "priorityId": "P-5001",
+                        "artifactPath": str(artifact_path),
+                    }
+                },
+            )
+
+            notes_dir = artifact_path / "notes"
+            notes = sorted(notes_dir.glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            self.assertIn(
+                "Alpha lane iteration 1",
+                notes[0].read_text(encoding="utf-8"),
+            )
+            self.assertFalse(
+                any((output_dir / "notes").glob("iteration-*.md")),
+                "iteration notes should be written under provided execution context artifactPath",
+            )
+            self.assertEqual(result.output_dir, output_dir)
+
+            candidate_spec = json.loads(
+                result.candidate_spec_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                candidate_spec["input_context"],
+                {
+                    "repository": "override/repo",
+                    "base": "feature/base",
+                    "head": "run/head",
+                    "priority_id": "P-5001",
+                },
+            )
+
     def test_lane_lineage_persists_in_candidate_spec(self) -> None:
         train, test = self._trend_frames()
 

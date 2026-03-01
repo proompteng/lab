@@ -443,8 +443,8 @@ def run_autonomous_lane(
     evaluated_at: datetime | None = None,
     persist_results: bool = False,
     session_factory: Callable[[], Session] | None = None,
-    governance_repository: str = "proompteng/lab",
-    governance_base: str = "main",
+    governance_repository: str | None = None,
+    governance_base: str | None = None,
     governance_head: str | None = None,
     governance_artifact_path: str | None = None,
     priority_id: str | None = None,
@@ -494,11 +494,25 @@ def run_autonomous_lane(
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     phase_manifest_path = rollout_dir / "phase-manifest.json"
     run_row = None
-    governance_context = _normalize_governance_inputs(governance_inputs)
+    governance_context = _coalesce_governance_context(
+        governance_inputs=governance_inputs,
+        governance_repository=governance_repository,
+        governance_base=governance_base,
+        governance_head=governance_head,
+        governance_artifact_path=governance_artifact_path,
+        priority_id=priority_id,
+        now=now,
+    )
+    governance_context = _normalize_governance_inputs(governance_context)
     notes_artifact_root = _coerce_str(
         governance_context["execution_context"].get("artifactPath")
     )
     notes_root = Path(notes_artifact_root) if notes_artifact_root else output_dir
+    resolved_governance_repository = governance_context["execution_context"].get(
+        "repository"
+    )
+    resolved_governance_base = governance_context["execution_context"].get("base")
+    resolved_governance_head = governance_context["execution_context"].get("head")
     promotion_recommendation_path = gates_dir / "promotion-recommendation.json"
     stage_records: list[_StageManifestRecord] = []
     manifest_paths: dict[str, Path] = {}
@@ -1289,9 +1303,9 @@ def run_autonomous_lane(
             run_id=run_id,
             candidate_id=candidate_id,
             stage_records=stage_records,
-            repository=governance_repository,
-            base=governance_base,
-            head=governance_head,
+            repository=cast(str, resolved_governance_repository),
+            base=cast(str, resolved_governance_base),
+            head=cast(str, resolved_governance_head),
             priority_id=priority_id,
         )
 
@@ -1339,15 +1353,12 @@ def run_autonomous_lane(
             promotion_gate_path=promotion_gate_path,
             promotion_recommendation=promotion_recommendation,
             recommendations=promotion_reasons,
-            governance_repository=governance_repository,
-            governance_base=governance_base,
-            governance_head=governance_head
-            if governance_head
-            else f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}",
+            governance_repository=cast(str, resolved_governance_repository),
+            governance_base=cast(str, resolved_governance_base),
+            governance_head=cast(str, resolved_governance_head),
             governance_artifact_path=(
-                governance_artifact_path or str(output_dir)
-            ).strip()
-            or str(output_dir),
+                notes_artifact_root if notes_artifact_root else str(output_dir)
+            ),
             priority_id=priority_id,
             governance_change=governance_change,
             governance_reason=(
@@ -1496,6 +1507,64 @@ def _normalize_governance_inputs(
             "priorityId": _coerce_str(
                 execution_context.get("priorityId"),
                 default="",
+            ),
+        },
+        "runtime_governance": cast(Mapping[str, Any], runtime),
+        "rollback_proof": cast(Mapping[str, Any], rollback),
+    }
+
+
+def _coalesce_governance_context(
+    *,
+    governance_inputs: Mapping[str, Any] | None,
+    governance_repository: str | None,
+    governance_base: str | None,
+    governance_head: str | None,
+    governance_artifact_path: str | None,
+    priority_id: str | None,
+    now: datetime,
+) -> dict[str, Any]:
+    raw = governance_inputs if isinstance(governance_inputs, Mapping) else {}
+    execution_context = raw.get("execution_context", {})
+    if not isinstance(execution_context, Mapping):
+        execution_context = {}
+    runtime = raw.get("runtime_governance", {})
+    if not isinstance(runtime, Mapping):
+        runtime = {}
+    rollback = raw.get("rollback_proof", {})
+    if not isinstance(rollback, Mapping):
+        rollback = {}
+
+    fallback_head = execution_context.get("head") or (
+        f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
+    )
+    resolved_repository = _coerce_str(governance_repository)
+    if not resolved_repository:
+        resolved_repository = _coerce_str(execution_context.get("repository"))
+    if not resolved_repository:
+        resolved_repository = "proompteng/lab"
+    resolved_base = _coerce_str(governance_base)
+    if not resolved_base:
+        resolved_base = _coerce_str(execution_context.get("base"))
+    if not resolved_base:
+        resolved_base = "main"
+
+    return {
+        "execution_context": {
+            "repository": resolved_repository,
+            "base": resolved_base,
+            "head": _coerce_str(
+                governance_head or _coerce_str(fallback_head),
+                default="unknown",
+            ),
+            "artifactPath": (
+                _coerce_str(governance_artifact_path)
+                or _coerce_str(execution_context.get("artifactPath"))
+            ),
+            "priorityId": (
+                priority_id
+                if priority_id is not None
+                else _coerce_str(execution_context.get("priorityId"))
             ),
         },
         "runtime_governance": cast(Mapping[str, Any], runtime),

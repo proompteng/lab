@@ -360,7 +360,7 @@ class TestAutonomousLane(TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "lane-default-notes"
             artifact_path = Path(tmpdir) / "external-notes-root"
-            run_autonomous_lane(
+            result = run_autonomous_lane(
                 signals_path=fixture_path,
                 strategy_config_path=strategy_config_path,
                 gate_policy_path=gate_policy_path,
@@ -369,6 +369,10 @@ class TestAutonomousLane(TestCase):
                 code_version="test-sha",
                 governance_inputs={
                     "execution_context": {
+                        "repository": "override/repo",
+                        "base": "feature/base",
+                        "head": "run/head",
+                        "priorityId": "P-1001",
                         "artifactPath": str(artifact_path),
                     }
                 },
@@ -385,6 +389,99 @@ class TestAutonomousLane(TestCase):
                 any((output_dir / "notes").glob("iteration-*.md")),
                 "iteration notes should be written under execution artifactPath",
             )
+            phase_manifest = json.loads(
+                result.phase_manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                phase_manifest["execution_context"]["artifactPath"],
+                str(artifact_path),
+            )
+            self.assertEqual(
+                phase_manifest["execution_context"]["repository"],
+                "override/repo",
+            )
+            self.assertEqual(phase_manifest["execution_context"]["base"], "feature/base")
+            self.assertEqual(
+                phase_manifest["execution_context"]["head"],
+                "run/head",
+            )
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+                if result.actuation_intent_path
+                else "{}"
+            )
+            self.assertEqual(
+                actuation_payload["governance"]["artifact_path"],
+                str(artifact_path),
+            )
+            self.assertEqual(
+                actuation_payload["governance"]["repository"],
+                "override/repo",
+            )
+            self.assertEqual(
+                actuation_payload["governance"]["base"],
+                "feature/base",
+            )
+            self.assertEqual(actuation_payload["governance"]["head"], "run/head")
+            self.assertEqual(
+                actuation_payload["governance"]["priority_id"],
+                "P-1001",
+            )
+
+    def test_lane_prefers_governance_artifact_override_over_execution_context_artifact(
+        self,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-override-notes"
+            execution_artifact_path = Path(tmpdir) / "execution-notes-root"
+            explicit_artifact_path = Path(tmpdir) / "explicit-notes-root"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                governance_artifact_path=str(explicit_artifact_path),
+                governance_inputs={
+                    "execution_context": {
+                        "artifactPath": str(execution_artifact_path),
+                    }
+                },
+            )
+
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+                if result.actuation_intent_path
+                else "{}"
+            )
+            self.assertEqual(
+                actuation_payload["governance"]["artifact_path"],
+                str(explicit_artifact_path),
+            )
+            phase_manifest = json.loads(
+                result.phase_manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                phase_manifest["execution_context"]["artifactPath"],
+                str(explicit_artifact_path),
+            )
+            notes = sorted((execution_artifact_path / "notes").glob("iteration-*.md"))
+            self.assertEqual(
+                len(notes),
+                0,
+                "execution context artifactPath should be overridden by governance_artifact_path",
+            )
+            notes = sorted((explicit_artifact_path / "notes").glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
 
     def test_lane_supports_governance_override_for_actuation_intent(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"

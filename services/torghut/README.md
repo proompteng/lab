@@ -279,6 +279,7 @@ uv run python scripts/run_alpha_discovery_lane.py \
   --train-csv /path/to/train-prices.csv \
   --test-csv /path/to/test-prices.csv \
   --output-dir artifacts/alpha-lane \
+  --artifact-path artifacts/alpha-lane \
   --repository proompteng/lab \
   --base main \
   --head feature/alpha-discovery \

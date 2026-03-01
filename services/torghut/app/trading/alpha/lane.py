@@ -96,6 +96,54 @@ def _readable_iteration_number(notes_dir: Path) -> int:
     return highest + 1
 
 
+def _coerce_str(raw: Any, default: str = "") -> str:
+    if isinstance(raw, str):
+        return raw.strip() or default
+    return default
+
+
+def _coalesce_alpha_inputs(
+    *,
+    repository: str | None,
+    base: str | None,
+    head: str | None,
+    priority_id: str | None,
+    execution_context: Mapping[str, Any] | None,
+) -> tuple[str | None, str | None, str | None, str | None, Path | None]:
+    raw_execution_context = (
+        execution_context.get("execution_context")
+        if isinstance(execution_context, Mapping)
+        and isinstance(execution_context.get("execution_context"), Mapping)
+        else {}
+    )
+    runtime_context = cast(Mapping[str, Any], raw_execution_context)
+
+    repository_resolved = (
+        repository if repository is not None else _coerce_str(runtime_context.get("repository"))
+    )
+    base_resolved = (
+        base if base is not None else _coerce_str(runtime_context.get("base"))
+    )
+    head_resolved = (
+        head if head is not None else _coerce_str(runtime_context.get("head"))
+    )
+    priority_id_resolved = (
+        priority_id
+        if priority_id is not None
+        else _coerce_str(runtime_context.get("priorityId"))
+    )
+    artifact_path = _coerce_str(runtime_context.get("artifactPath"), default="")
+    notes_artifact_path = Path(artifact_path) if artifact_path else None
+
+    return (
+        repository_resolved,
+        base_resolved,
+        head_resolved,
+        priority_id_resolved,
+        notes_artifact_path,
+    )
+
+
 def _to_decimal(value: object, *, default: str) -> Decimal:
     if isinstance(value, Decimal):
         return value
@@ -523,6 +571,7 @@ def run_alpha_discovery_lane(
     gate_policy_path: Path | None = None,
     promotion_target: str = "paper",
     evaluated_at: datetime | None = None,
+    execution_context: Mapping[str, Any] | None = None,
 ) -> AlphaLaneResult:
     """Run deterministic alpha candidate generation, evaluation, and recommendation."""
 
@@ -533,8 +582,22 @@ def run_alpha_discovery_lane(
 
     now = evaluated_at or datetime.now(timezone.utc)
     output_dir = artifact_path
+    (
+        resolved_repository,
+        resolved_base,
+        resolved_head,
+        resolved_priority_id,
+        notes_artifact_root,
+    ) = _coalesce_alpha_inputs(
+        repository=repository,
+        base=base,
+        head=head,
+        priority_id=priority_id,
+        execution_context=execution_context,
+    )
     research_dir = output_dir / "research"
     stages_output_dir = output_dir / "stages"
+    notes_root = notes_artifact_root or output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     research_dir.mkdir(parents=True, exist_ok=True)
     stages_output_dir.mkdir(parents=True, exist_ok=True)
@@ -554,10 +617,10 @@ def run_alpha_discovery_lane(
 
     policy_payload = _read_policy_payload(gate_policy_path)
     run_signature = {
-        "repository": repository or "",
-        "base": base or "",
-        "head": head or "",
-        "priority_id": priority_id or "",
+        "repository": resolved_repository or "",
+        "base": resolved_base or "",
+        "head": resolved_head or "",
+        "priority_id": resolved_priority_id or "",
         "train_signature": _frame_signature(train),
         "test_signature": _frame_signature(test),
         "lookback_days": lookback_values,
@@ -637,10 +700,10 @@ def run_alpha_discovery_lane(
         inputs={
             "run_id": run_id,
             "candidate_id": candidate_id,
-            "repository": repository or "",
-            "base": base or "",
-            "head": head or "",
-            "priority_id": priority_id or "",
+            "repository": resolved_repository or "",
+            "base": resolved_base or "",
+            "head": resolved_head or "",
+            "priority_id": resolved_priority_id or "",
         },
         input_artifacts={
             "train_prices": train_snapshot_path,
@@ -877,10 +940,10 @@ def run_alpha_discovery_lane(
         },
         "stage_lineage": stage_lineage_payload,
         "input_context": {
-            "repository": repository,
-            "base": base,
-            "head": head,
-            "priority_id": priority_id,
+            "repository": resolved_repository,
+            "base": resolved_base,
+            "head": resolved_head,
+            "priority_id": resolved_priority_id,
         },
         "policy": _coerce_jsonable(policy_payload),
     }
@@ -890,14 +953,14 @@ def run_alpha_discovery_lane(
     )
 
     _write_iteration_notes(
-        artifact_root=output_dir,
+        artifact_root=notes_root,
         run_id=run_id,
         candidate_id=candidate_id,
         stage_records=stage_records,
-        repository=repository,
-        base=base,
-        head=head,
-        priority_id=priority_id,
+        repository=resolved_repository,
+        base=resolved_base,
+        head=resolved_head,
+        priority_id=resolved_priority_id,
     )
 
     return AlphaLaneResult(

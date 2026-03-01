@@ -29,6 +29,12 @@ def parse_args() -> argparse.Namespace:
         help="Priority identifier for candidate generation cycle.",
     )
     parser.add_argument(
+        "--artifact-path",
+        type=Path,
+        default=None,
+        help="Optional artifact root for execution-context notes.",
+    )
+    parser.add_argument(
         "--gate-policy",
         type=Path,
         default=None,
@@ -112,6 +118,13 @@ def main() -> int:
         cost_bps_per_turnover=args.cost_bps,
         gate_policy_path=args.gate_policy,
         promotion_target=args.promotion_target,
+        execution_context={
+            "execution_context": {
+                "artifactPath": str(args.artifact_path)
+            }
+        }
+        if args.artifact_path
+        else None,
     )
 
     payload = {
