@@ -25,6 +25,19 @@ Start here:
 - Build/release commands: `docs/torghut/ci-cd.md`
 - Whitepaper research workflow trigger runbook: `docs/torghut/whitepaper-research-workflow.md`
 
+## Security policy rollout notes
+
+- Security posture changes for Torghut runtime are tracked in `docs/torghut/design-system/v1/security-network-and-rbac.md`.
+- Keep the sequence:
+  - Capture baseline manifests (`kubectl -n torghut get role,rolebinding,netpol -o yaml`) and health state before sync.
+  - Apply GitOps changes in `argocd/applications/torghut/**` and let ArgoCD reconcile.
+  - Run post-sync policy checks:
+    - `kubectl -n torghut auth can-i get pods --as=system:serviceaccount:torghut:torghut-runtime`
+    - `kubectl -n torghut auth can-i create pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
+    - `kubectl -n torghut get networkpolicy`
+    - `kubectl -n torghut rollout status deploy/torghut-ws`
+  - If checks fail, rollback to the last-good GitOps revision before widening policies.
+
 ## Legacy / supporting docs
 
 The following are older snapshots or focused notes. They may be useful, but should not be treated as the primary design

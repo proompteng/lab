@@ -6,6 +6,11 @@ resources:
   - autonomous-configmap.yaml
   - autonomy-configmap.yaml
   - autonomy-gate-policy-configmap.yaml
+  - networkpolicy-common-dns-egress.yaml
+  - networkpolicy-ta-egress.yaml
+  - networkpolicy-ws-egress.yaml
+  - networkpolicy-lean-runner-egress.yaml
+  - networkpolicy-service-egress.yaml
   - db-migrations-job.yaml
   - knative-service.yaml
   - tailscale-service.yaml

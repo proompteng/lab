@@ -1,113 +1,33 @@
 # NetworkPolicy and RBAC Examples (torghut)
 
-> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+> Note: Canonical source-of-truth documents are in `docs/torghut/design-system/README.md` and `docs/torghut/design-system/v1/security-network-and-rbac.md`.
 
-## NetworkPolicy (kotlin-ws)
+## Production manifests (current GitOps baseline)
 
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: ws-egress
-  namespace: torghut
-spec:
-  podSelector:
-    matchLabels:
-      app: torghut-ws
-  policyTypes: [Egress]
-  egress:
-    - to:
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kafka } }
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
-        - ipBlock: { cidr: 0.0.0.0/0 } # replace with Alpaca IP/CIDR or FQDN via egress gateway
-      ports:
-        - port: 443
-          protocol: TCP
-    - to:
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: torghut } }
-      ports:
-        - port: 9093
-          protocol: TCP
-```
+- `argocd/applications/torghut/networkpolicy-common-dns-egress.yaml`
+- `argocd/applications/torghut/networkpolicy-ta-egress.yaml`
+- `argocd/applications/torghut/networkpolicy-ws-egress.yaml`
+- `argocd/applications/torghut/networkpolicy-lean-runner-egress.yaml`
+- `argocd/applications/torghut/networkpolicy-service-egress.yaml`
+- `argocd/applications/torghut/role.yaml`
 
-_(Adjust for Alpaca egress allowlist; replace ipBlock with egress gateway DNS policy if available.)_
+## Policy notes
 
-## NetworkPolicy (Flink JM/TM)
+- DNS egress is explicitly allowed for all Torghut workloads to `kube-system` (`k8s-app: kube-dns`).
+- `torghut-ws` is restricted to Kafka (9092) plus external HTTPS egress for broker/websocket endpoints.
+- Flink TA is restricted to Kafka, Kafka schema registry, ClickHouse, and the Ceph RGW endpoint used by the runtime.
+- The shared `torghut-runtime` service account is now limited to Pod diagnostics read verbs only (`get`, `list`, `watch` on `pods` + `pods/log`).
+- `torghut` service egress is constrained to namespace peers for Postgres/ClickHouse/features/agents/Jangar/Inngest/Saigak and Kafka.
 
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: flink-egress
-  namespace: torghut
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: flink
-  policyTypes: [Egress]
-  egress:
-    - to:
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kafka } }
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: torghut } }
-      ports:
-        - port: 9093
-          protocol: TCP
-    - to:
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: minio } }
-      ports:
-        - port: 9000
-          protocol: TCP
-    - to:
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
-      ports:
-        - port: 9090
-          protocol: TCP
-```
+## Rollout checklist
 
-## RBAC (minimal kotlin-ws)
-
-```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: torghut-ws
-  namespace: torghut
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: ws-basic
-  namespace: torghut
-rules:
-  - apiGroups: ['']
-    resources: ['pods', 'pods/log']
-    verbs: ['get', 'list']
-  - apiGroups: ['']
-    resources: ['configmaps', 'secrets']
-    verbs: ['get', 'list']
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: ws-basic-binding
-  namespace: torghut
-subjects:
-  - kind: ServiceAccount
-    name: torghut-ws
-roleRef:
-  kind: Role
-  name: ws-basic
-  apiGroup: rbac.authorization.k8s.io
-```
-
-## RBAC (Flink Operator already includes)
-
-- Use Operator-installed roles; for the FlinkDeployment namespace, ensure the ServiceAccount used by JM/TM can read Secrets/ConfigMaps and list pods.
-
-## Truststore mounts (Kafka/MinIO)
-
-- Mount Strimzi-provided truststore secret and set:
-  - `ssl.truststore.location=/etc/ssl/kafka/truststore.p12`
-  - `ssl.truststore.password` from secret
-  - `ssl.endpoint.identification.algorithm=HTTPS`
-- If MinIO uses custom CA, mount it into `/etc/ssl/certs` and set `fs.s3a.connection.ssl.enabled=true`.
+- Keep all changes under `argocd/applications/torghut/**` and apply through ArgoCD sync.
+- Validate RBAC/NetworkPolicy via:
+  - `kubectl -n torghut auth can-i get pods --as=system:serviceaccount:torghut:torghut-runtime`
+  - `kubectl -n torghut auth can-i create pods --as=system:serviceaccount:torghut:torghut-runtime` (expect denied)
+  - `kubectl -n torghut get networkpolicy`
+- Validate rollout:
+  - `kubectl -n torghut rollout status deploy/torghut-ws`
+  - `kubectl -n torghut rollout status deploy/torghut-lean-runner`
+  - `kubectl -n torghut get flinkdeployment torghut-ta`
+  - app health checks for `/healthz` endpoints as part of existing runbooks

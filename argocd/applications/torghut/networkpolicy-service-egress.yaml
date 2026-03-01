@@ -1,0 +1,66 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: torghut-service-egress
+  namespace: torghut
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: torghut
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: torghut
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8123
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kafka
+      ports:
+        - protocol: TCP
+          port: 9092
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: feature-flags
+      ports:
+        - protocol: TCP
+          port: 8013
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: jangar
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agents
+      ports:
+        - protocol: TCP
+          port: 80
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: inngest
+      ports:
+        - protocol: TCP
+          port: 8288
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: saigak
+      ports:
+        - protocol: TCP
+          port: 11434
