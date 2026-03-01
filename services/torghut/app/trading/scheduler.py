@@ -5043,7 +5043,7 @@ class TradingScheduler:
             governance_artifact_path=str(run_output_dir),
             priority_id=priority_id,
             execution_context=self._build_autonomy_execution_context(
-                run_output_dir=run_output_dir,
+                artifact_root=artifact_root,
                 promotion_target=promotion_target,
             ),
         )
@@ -5095,7 +5095,7 @@ class TradingScheduler:
     @staticmethod
     def _build_autonomy_execution_context(
         *,
-        run_output_dir: Path,
+        artifact_root: Path,
         promotion_target: str,
     ) -> dict[str, str]:
         repository = (os.getenv("GITHUB_REPOSITORY") or "unknown").strip() or "unknown"
@@ -5112,7 +5112,7 @@ class TradingScheduler:
             "repository": repository,
             "base": base_ref,
             "head": head_ref,
-            "artifactPath": str(run_output_dir),
+            "artifactPath": str(artifact_root),
             "priorityId": priority_id,
         }
 
@@ -5916,6 +5916,7 @@ class TradingScheduler:
         manifest["rollback_proof"] = {
             "requested_promotion_target": requested_promotion_target,
             "rollback_triggered": rollback_triggered,
+            "rollback_incident_evidence_path": rollback_incident_evidence,
             "rollback_incident_evidence": rollback_incident_evidence,
             "artifact_refs": (
                 [rollback_incident_evidence]

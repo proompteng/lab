@@ -1067,7 +1067,8 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertEqual(execution_context.get("base"), "release")
             self.assertEqual(execution_context.get("head"), "feature/abc-123")
             self.assertEqual(
-                execution_context.get("artifactPath"), str(deps.call_kwargs.get("output_dir"))
+                execution_context.get("artifactPath"),
+                str(Path(deps.call_kwargs.get("output_dir")).parent),
             )
             self.assertEqual(execution_context.get("priorityId"), "42")
 
@@ -1206,6 +1207,14 @@ class TestTradingSchedulerAutonomy(TestCase):
                 phases[6]["status"],
                 "pass",
                 "rollback proof should pass when evidence is attached",
+            )
+            self.assertIn(
+                "rollback_incident_evidence_path",
+                updated_manifest["rollback_proof"],
+            )
+            self.assertEqual(
+                updated_manifest["rollback_proof"]["rollback_incident_evidence_path"],
+                str(scheduler.state.rollback_incident_evidence_path),
             )
             self.assertIn(
                 str(scheduler.state.rollback_incident_evidence_path),
