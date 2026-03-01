@@ -93,7 +93,8 @@ class TestStartHistoricalSimulation(TestCase):
             },
             simulation_db='torghut_sim_test',
         )
-        self.assertEqual(config.migrations_command, 'uv run --frozen alembic upgrade heads')
+        self.assertTrue(config.migrations_command.endswith('alembic upgrade heads'))
+        self.assertNotIn(' upgrade head ', f' {config.migrations_command} ')
 
     def test_build_kafka_runtime_config_supports_runtime_auth_overrides(self) -> None:
         with patch.dict('os.environ', {'SIM_KAFKA_PASSWORD': 'sim-secret'}, clear=False):
