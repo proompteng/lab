@@ -182,7 +182,7 @@ controllers:
   podDisruptionBudget:
     enabled: true
     maxUnavailable: 1
-    ```
+```
 
 ### Controller rollout strategy (rollout safety)
 
