@@ -7,10 +7,12 @@ from typing import cast
 from unittest import TestCase
 from unittest.mock import patch
 
+from app.config import settings
 from app.trading.llm.dspy_programs.runtime import (
     DSPyArtifactManifest,
     DSPyReviewRuntime,
     DSPyRuntimeUnsupportedStateError,
+    _resolve_dspy_api_base,
 )
 from app.trading.llm.schema import (
     LLMDecisionContext,
@@ -198,4 +200,85 @@ class TestLLMDSPyRuntime(TestCase):
             with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
                 runtime.review(self._request())
 
-        self.assertIn("dspy_artifact_executor_unknown", str(exc.exception))
+        self.assertIn(
+            "dspy_active_mode_requires_dspy_live_executor",
+            str(exc.exception),
+        )
+
+    def test_active_readiness_rejects_heuristic_executor(self) -> None:
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        manifest = DSPyArtifactManifest(
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            executor="heuristic",
+            compiled_prompt={},
+            source="database",
+        )
+
+        with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
+            is_ready, reasons = runtime.evaluate_live_readiness()
+
+        self.assertFalse(is_ready)
+        self.assertIn(
+            "dspy_active_mode_requires_dspy_live_executor",
+            reasons,
+        )
+
+    def test_active_readiness_accepts_dspy_live_executor(self) -> None:
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        manifest = DSPyArtifactManifest(
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            executor="dspy_live",
+            compiled_prompt={},
+            source="database",
+        )
+
+        with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
+            is_ready, reasons = runtime.evaluate_live_readiness()
+
+        self.assertTrue(is_ready)
+        self.assertEqual(reasons, ())
+
+    def test_resolve_dspy_api_base_uses_jangar_openai_endpoint(self) -> None:
+        original_base = settings.jangar_base_url
+        try:
+            settings.jangar_base_url = "https://jangar.example/"
+            runtime = DSPyReviewRuntime(
+                mode="active",
+                artifact_hash="a" * 64,
+                program_name="trade-review-committee-v1",
+                signature_version="v1",
+                timeout_seconds=8,
+            )
+
+            with patch.object(
+                runtime, "_load_manifest_from_db", return_value=DSPyArtifactManifest(
+                    artifact_hash="a" * 64,
+                    program_name="trade-review-committee-v1",
+                    signature_version="v1",
+                    executor="dspy_live",
+                    compiled_prompt={},
+                    source="database",
+                )
+            ):
+                _, reasons = runtime.evaluate_live_readiness()
+                self.assertEqual(reasons, ())
+
+            self.assertEqual(_resolve_dspy_api_base(), "https://jangar.example/openai/v1")
+        finally:
+            settings.jangar_base_url = original_base
