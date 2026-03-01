@@ -28,32 +28,27 @@ metadata:
   name: codex-spark-review-step-v1
   namespace: agents
 spec:
-  contract:
-    requiredKeys:
-      - base
-  summary: 'Run non-interactive codex review and persist findings'
+  summary: 'Run non-interactive Codex review against main and persist findings.'
   text: |
-    Objective: Perform a review-only pass and persist findings for the same branch baseline.
+    Objective: Run a single non-interactive review pass and persist raw output only.
 
-    Review prompt:
-    - You are reviewing the currently checked-out changes for correctness, regressions, missing tests,
-      security risks, and maintainability issues.
-    - Keep findings actionable and scoped to code changes only.
-    - Prioritize high-confidence issues and include file-level context in each finding.
+    Constraints:
+    - Do not edit source files.
+    - Do not print preambles or summaries.
+    - Do not produce any output beyond running the command and persisting its output.
+    - Output path must be `/workspace/.agentrun/codex-spark-review/review-notes.md`.
 
-    1) Create/refresh the review output directory:
-       `mkdir -p /workspace/.agentrun/codex-spark-review`
-    2) Run the review command against `main` and pipe all output into:
-       `/workspace/.agentrun/codex-spark-review/review-notes.md`
-       so downstream automation can consume it via Unix pipe semantics.
-    3) Exit after writing the file.
+    Exact command sequence:
+    1) `mkdir -p /workspace/.agentrun/codex-spark-review`
+    2) `codex review --base main 2>&1 | tee /workspace/.agentrun/codex-spark-review/review-notes.md`
+    3) If review exits non-zero, fail with the same exit code.
+    4) Fail if `review-notes.md` is empty.
 
-    Exact shell sequence to run:
-    `mkdir -p /workspace/.agentrun/codex-spark-review && codex review --base main | tee /workspace/.agentrun/codex-spark-review/review-notes.md`
-
-    This step should not apply code changes.
+    Exit immediately after writing the file. No code changes.
   acceptanceCriteria:
-    - A non-empty `/workspace/.agentrun/codex-spark-review/review-notes.md` file exists at step end.
+    - The file `/workspace/.agentrun/codex-spark-review/review-notes.md` exists.
+    - The file is non-empty.
+    - The Codex review command was run once with `--base main`.
 
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
