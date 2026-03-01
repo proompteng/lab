@@ -51,7 +51,8 @@ Start from `services/torghut/config/simulation/example-dataset.yaml` and set:
 Recommendation:
 
 - use a dedicated Postgres DB per run (`torghut_sim_<run_token>`),
-- keep `replay.pace_mode=accelerated` for faster empirical runs.
+  - prefer `replay.pace_mode=max_throughput` for full-day deterministic runs to avoid artificial delays from sparse historical gaps;
+  - use `status_update_every_seconds` and `status_update_every_records` to control heartbeat cadence.
 - by default, the script auto-derives `TRADING_FEATURE_MAX_STALENESS_MS` from `window.start`.
 - set `torghut_env_overrides.TRADING_FEATURE_MAX_STALENESS_MS` only for an explicit custom budget.
 - set `monitor.*` thresholds for minimum decisions/executions/TCA rows.
@@ -191,11 +192,12 @@ Expected values are `torghut.sim.*` topics and `TA_GROUP_ID=torghut-ta-sim-<run_
 
 `artifacts/torghut/simulations/<run_token>/run-manifest.json`:
 
-- `replay.records` > 0
-- `replay.records_by_topic` populated
-- `dump.sha256` present
-- `dump_coverage` present and passing
-- `window_policy` present
+ - `replay.records` > 0
+ - `replay.records_by_topic` populated
+ - `dump.sha256` present
+  - latest `RUN_STATE ...` lines visible in argo logs showing `subphase=replay` with non-zero records while waiting
+ - `dump_coverage` present and passing
+ - `window_policy` present
 
 ## Step 5: Collect Empirical Evidence
 

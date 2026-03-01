@@ -1,12 +1,11 @@
 dataset_id: torghut-trades-2025q4
 
 window:
-  profile: us_equities_regular
   trading_day: '2026-02-27'
   timezone: America/New_York
   start: '2026-02-27T14:30:00Z'
-  end: '2026-02-27T21:00:00Z'
-  min_coverage_minutes: 390
+  end: '2026-02-27T16:30:00Z'
+  min_coverage_minutes: 120
   strict_coverage_ratio: 0.95
 
 kafka:
@@ -51,6 +50,9 @@ replay:
   acceleration: 60
   max_sleep_seconds: 5
   auto_offset_reset: earliest
+  flush_every_records: 50000
+  flush_timeout_seconds: 60
+  final_flush_timeout_seconds: 180
   status_update_every_records: 25000
   status_update_every_seconds: 30
 

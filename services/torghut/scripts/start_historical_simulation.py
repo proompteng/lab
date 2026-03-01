@@ -636,7 +636,7 @@ def _build_kafka_runtime_config(manifest: Mapping[str, Any]) -> KafkaRuntimeConf
             raise SystemExit('manifest.kafka.runtime_sasl_username is required for SASL runtime')
         if not runtime_password:
             raise SystemExit(
-                'manifest.kafka.runtime_sasl_password is missing. '
+                'manifest.kafka.runtime_sasl_password is missing for SASL runtime. '
                 'Set manifest.kafka.runtime_sasl_password_env/runtime_sasl_password '
                 'or fallback fields manifest.kafka.sasl_password_env/sasl_password'
             )
@@ -1494,7 +1494,28 @@ def _update_run_state(
     state['last_status'] = status
     state['updated_at'] = event['at']
     _save_json(state_path, state)
+    print(
+        'RUN_STATE '
+        + json.dumps(
+            {
+                'at': event['at'],
+                'phase': phase,
+                'status': status,
+                'details': event.get('details', {}),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     return state
+
+
+def _log_script_event(message: str, **fields: Any) -> None:
+    if fields:
+        payload = ' '.join(f'{key}={value!r}' for key, value in fields.items())
+        print(f'RUN_LOG {message} {payload}', file=sys.stderr, flush=True)
+    else:
+        print(f'RUN_LOG {message}', file=sys.stderr, flush=True)
 
 
 def _ensure_directory(path: Path) -> None:
@@ -3317,14 +3338,72 @@ def _render_report(payload: Mapping[str, Any], *, json_only: bool) -> None:
 def main() -> None:
     args = _parse_args()
     manifest_path = Path(args.dataset_manifest)
+    _log_script_event(
+        'starting_simulation',
+        mode=args.mode,
+        run_id=args.run_id,
+        dataset_manifest=str(manifest_path),
+        json_output=bool(args.json),
+        confirm_phrase_provided=bool(args.confirm),
+    )
     manifest = _load_manifest(manifest_path)
+    window = _as_mapping(manifest.get('window'))
+    _log_script_event(
+        'manifest_loaded',
+        dataset_id=_as_text(manifest.get('dataset_id')) or 'missing',
+        trading_day=_as_text(window.get('trading_day')),
+        start=_as_text(window.get('start')),
+        end=_as_text(window.get('end')),
+        min_coverage_minutes=_as_text(window.get('min_coverage_minutes')),
+        strict_coverage_ratio=window.get('strict_coverage_ratio'),
+    )
     resources = _build_resources(args.run_id, manifest)
+    _log_script_event(
+        'resources_built',
+        run_token=resources.run_token,
+        dataset_id=resources.dataset_id,
+        output_root=str(resources.output_root),
+        namespace=resources.namespace,
+        ta_configmap=resources.ta_configmap,
+        ta_deployment=resources.ta_deployment,
+    )
     kafka_config = _build_kafka_runtime_config(manifest)
+    _log_script_event(
+        'kafka_config_ready',
+        bootstrap_servers=kafka_config.bootstrap_servers,
+        runtime_bootstrap_servers=kafka_config.runtime_bootstrap,
+        security_protocol=kafka_config.security_protocol,
+        runtime_security_protocol=kafka_config.runtime_security,
+        sasl_mechanism=kafka_config.sasl_mechanism,
+        runtime_sasl_mechanism=kafka_config.runtime_sasl,
+        runtime_username_present=bool(kafka_config.runtime_username),
+        runtime_password_present=bool(kafka_config.runtime_password),
+    )
     clickhouse_config = _build_clickhouse_runtime_config(manifest)
+    _log_script_event(
+        'clickhouse_config_ready',
+        http_url=clickhouse_config.http_url,
+        username=clickhouse_config.username or 'none',
+        password_present=bool(clickhouse_config.password),
+    )
     argocd_config = _build_argocd_automation_config(manifest)
+    _log_script_event(
+        'argocd_config_ready',
+        manage_automation=argocd_config.manage_automation,
+        applicationset_name=argocd_config.applicationset_name,
+        app_name=argocd_config.app_name,
+        desired_mode_during_run=argocd_config.desired_mode_during_run,
+    )
     postgres_config = _build_postgres_runtime_config(
         manifest,
         simulation_db=f'torghut_sim_{resources.run_token}',
+    )
+    _log_script_event(
+        'postgres_config_ready',
+        admin_dsn=postgres_config.admin_dsn,
+        simulation_dsn=postgres_config.simulation_dsn,
+        simulation_db=postgres_config.simulation_db,
+        migration_command=postgres_config.migrations_command,
     )
 
     plan_report = _build_plan_report(
@@ -3337,10 +3416,12 @@ def main() -> None:
     )
 
     if args.mode == 'plan':
+        _log_script_event('plan_mode_start')
         _render_report(plan_report, json_only=args.json)
         return
 
     if args.mode == 'apply':
+        _log_script_event('apply_mode_start')
         if args.confirm != APPLY_CONFIRMATION_PHRASE:
             raise SystemExit(
                 f'--confirm must equal {APPLY_CONFIRMATION_PHRASE!r} when mode=apply'
@@ -3358,6 +3439,7 @@ def main() -> None:
         return
 
     if args.mode == 'report':
+        _log_script_event('report_mode_start')
         report = _report_simulation(
             resources=resources,
             manifest_path=manifest_path,
@@ -3375,6 +3457,7 @@ def main() -> None:
         return
 
     if args.mode == 'run':
+        _log_script_event('run_mode_start')
         if args.confirm != APPLY_CONFIRMATION_PHRASE:
             raise SystemExit(
                 f'--confirm must equal {APPLY_CONFIRMATION_PHRASE!r} when mode=run'
