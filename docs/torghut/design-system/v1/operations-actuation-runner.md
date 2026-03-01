@@ -14,7 +14,7 @@ kubectl mutations). This is the production-safe counterpart to the read-only hea
 Autonomy recommendation workflows should consume the `governance` block from
 `services/torghut/app/trading/autonomy/lane.py` `actuation-intent.json` payloads and pass the same values into the
 `run` parameters (`repository`, `base`, `head`, `artifact_path`, `change`, `reason`, and optional
-`priorityId`) so each PR is reproducible and auditable.
+`priority_id`) so each PR is reproducible and auditable.
 
 ## Guardrails (non-negotiable)
 
@@ -161,8 +161,10 @@ spec:
     head: agentruns/torghut-actuation-<yyyymmdd-hhmm>
     gitopsPath: argocd/applications/torghut
     torghutNamespace: torghut
+    artifact_path: <run-output-artifact-path>
     change: <pause-trading|restart-ws|suspend-ta|resume-ta>
     reason: <short-human-justification>
+    priority_id: <optional-priority-id>
     confirm: ACTUATE_TORGHUT
 ```
 
@@ -182,11 +184,13 @@ spec:
       - repository
       - base
       - head
+      - artifact_path
       - gitopsPath
       - torghutNamespace
       - change
       - reason
       - confirm
+      - priority_id
   text: |
     Objective: Perform a single Torghut actuation change via GitOps PR.
 

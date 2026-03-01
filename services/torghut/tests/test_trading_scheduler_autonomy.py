@@ -420,6 +420,38 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertIsNone(deps.call_kwargs["priority_id"])
 
+    def test_run_autonomous_cycle_accepts_governance_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            governance_root = Path(tmpdir) / "custom-autonomy-artifacts"
+            scheduler, deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
+                scheduler._run_autonomous_cycle(
+                    governance_repository="acme/lab",
+                    governance_base="release",
+                    governance_head="manual-autonomy-head",
+                    governance_artifact_root=str(governance_root),
+                    priority_id="priority-123",
+                )
+
+            self.assertEqual(
+                deps.call_kwargs["governance_repository"], "acme/lab"
+            )
+            self.assertEqual(deps.call_kwargs["governance_base"], "release")
+            self.assertEqual(deps.call_kwargs["governance_head"], "manual-autonomy-head")
+            self.assertEqual(deps.call_kwargs["priority_id"], "priority-123")
+            run_output_dir = Path(deps.call_kwargs["output_dir"])
+            self.assertTrue(str(run_output_dir).startswith(str(governance_root)))
+            self.assertEqual(
+                deps.call_kwargs["governance_artifact_path"], str(run_output_dir)
+            )
+
     def test_run_autonomous_cycle_records_gate_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, deps = self._build_scheduler_with_fixtures(

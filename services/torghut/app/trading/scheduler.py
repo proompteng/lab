@@ -4909,13 +4909,25 @@ class TradingScheduler:
             report.checked_at.timestamp()
         )
 
-    def _run_autonomous_cycle(self) -> None:
+    def _run_autonomous_cycle(
+        self,
+        *,
+        governance_repository: str = "proompteng/lab",
+        governance_base: str = "main",
+        governance_head: str | None = None,
+        governance_artifact_root: str | None = None,
+        priority_id: str | None = None,
+    ) -> None:
         if self._pipeline is None:
             raise RuntimeError("trading_pipeline_not_initialized")
 
         strategy_config_path, gate_policy_path = self._resolve_autonomy_config_paths()
         artifact_root = _resolve_autonomy_artifact_root(
-            Path(settings.trading_autonomy_artifact_dir)
+            Path(
+                governance_artifact_root
+                if governance_artifact_root
+                else settings.trading_autonomy_artifact_dir
+            )
         )
         now = datetime.now(timezone.utc)
         lookback_minutes = max(
@@ -4983,8 +4995,14 @@ class TradingScheduler:
             promotion_target=promotion_target,
             approval_token=approval_token,
             drift_gate_evidence=drift_gate_evidence,
-            governance_head=f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}",
+            governance_repository=governance_repository,
+            governance_base=governance_base,
+            governance_head=(
+                governance_head
+                or f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
+            ),
             governance_artifact_path=str(run_output_dir),
+            priority_id=priority_id,
         )
         if result is None:
             return
