@@ -42,10 +42,11 @@ RUN apt-get update \
       ca-certificates \
       curl \
       libpq5 \
- && case "${TARGETPLATFORM}" in \
-      "linux/amd64") KUBECTL_ARCH="amd64" ;; \
-      "linux/arm64") KUBECTL_ARCH="arm64" ;; \
-      *) echo "Unsupported platform: ${TARGETPLATFORM}" >&2; exit 1 ;; \
+ && PLATFORM="${TARGETPLATFORM:-linux/$(dpkg --print-architecture 2>/dev/null || uname -m)}" \
+ && case "${PLATFORM}" in \
+      linux/amd64|linux/amd64/*|amd64|x86_64) KUBECTL_ARCH="amd64" ;; \
+      linux/arm64|linux/arm64/*|linux/aarch64|arm64|aarch64) KUBECTL_ARCH="arm64" ;; \
+      *) echo "Unsupported platform: ${PLATFORM}" >&2; exit 1 ;; \
     esac \
  && curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KUBECTL_ARCH}/kubectl" \
  && chmod +x /usr/local/bin/kubectl \

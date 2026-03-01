@@ -763,19 +763,20 @@ def _normalize_migrations_command(command: str) -> str:
     normalized = command.strip()
     if not normalized:
         return normalized
+    uv_path = shutil.which('uv') or 'uv'
+    alembic_path = shutil.which('alembic') or 'alembic'
     if normalized in {'uv', 'uv run --frozen alembic upgrade heads'}:
-        normalized = '/opt/venv/bin/uv run --frozen /opt/venv/bin/alembic upgrade heads'
+        normalized = f'{uv_path} run --frozen {alembic_path} upgrade heads'
     elif normalized.startswith('uv '):
         if normalized.startswith('uv run --frozen alembic upgrade'):
             normalized = normalized.replace(
-                'uv run --frozen alembic upgrade',
-                '/opt/venv/bin/uv run --frozen /opt/venv/bin/alembic upgrade',
+                f'{uv_path} run --frozen {alembic_path} upgrade',
                 1,
             )
         else:
-            normalized = f'/opt/venv/bin/{normalized}'
+            normalized = f'{uv_path} {normalized[3:]}'
     elif normalized.startswith('alembic '):
-        normalized = f'/opt/venv/bin/{normalized}'
+        normalized = f'{alembic_path} {normalized[len("alembic "):]}'
     return re.sub(
         r'\balembic\s+upgrade\s+head\b',
         'alembic upgrade heads',
@@ -922,7 +923,7 @@ def _build_postgres_runtime_config(
 
     migrations_command_raw = (
         _as_text(postgres.get('migrations_command'))
-        or '/opt/venv/bin/alembic upgrade heads'
+        or 'uv run --frozen alembic upgrade heads'
     )
     migrations_command = _normalize_migrations_command(migrations_command_raw)
     return PostgresRuntimeConfig(
