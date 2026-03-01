@@ -903,7 +903,7 @@ def run_autonomous_lane(
         )
         actuation_allowed = (
             bool(recommendation_trace_id)
-            and promotion_recommendation.eligible
+            and (promotion_recommendation.eligible or patch_path is not None)
             and rollback_check.ready
         )
         actuation_intent_path = output_dir / _ACTUATION_INTENT_PATH
