@@ -75,12 +75,15 @@ Current deployed paper configuration (2026-02-09) sets `LLM_FAIL_MODE=pass_throu
   - `TRADING_LIVE_ENABLED=false`
   - `TRADING_KILL_SWITCH_ENABLED=true`
   - `TRADING_EMERGENCY_STOP_ENABLED=true`
+  - `TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION=false`
+  - `TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED=false`
   - `LLM_FAIL_OPEN_LIVE_APPROVED=false`
   - `LLM_FAIL_MODE_ENFORCEMENT=configured` (or `strict_veto` when enforcing hard fail-closed)
 - Verify after any config change:
   - `/trading/status` reports `trading_mode=paper`.
   - startup logs show `Settings` validation success.
   - live mode can only become pass-through after explicit approval; audit `llm.policy_resolution.classification` remains `compliant` under paper.
+  - run `services/torghut/tests/test_live_config_manifest_contract.py` contract checks.
 
 ## Provider fallback chain (v1)
 

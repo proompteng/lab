@@ -40,6 +40,16 @@ spec:
               value: prod
             - name: TRADING_MODE
               value: paper
+            - name: TRADING_LIVE_ENABLED
+              value: "false"
+            - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
+              value: "false"
+            - name: TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED
+              value: "false"
+            - name: TRADING_KILL_SWITCH_ENABLED
+              value: "true"
+            - name: TRADING_EMERGENCY_STOP_ENABLED
+              value: "true"
             - name: APCA_API_KEY_ID
               valueFrom:
                 secretKeyRef:

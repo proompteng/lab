@@ -91,6 +91,8 @@ spec:
               value: "false"
             - name: TRADING_MODE
               value: paper
+            - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
+              value: "false"
             - name: TRADING_ACCOUNT_LABEL
               value: PA3SX7FYNUTF
             - name: TRADING_ACCOUNTS_JSON
@@ -128,6 +130,8 @@ spec:
               value: alpaca
             - name: TRADING_EXECUTION_ADAPTER_POLICY
               value: all
+            - name: TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED
+              value: "false"
             - name: TRADING_CRYPTO_ENABLED
               value: "false"
             - name: TRADING_CRYPTO_LIVE_ENABLED
@@ -333,6 +337,8 @@ spec:
             - name: LLM_FAIL_MODE_ENFORCEMENT
               value: configured
             - name: LLM_FAIL_OPEN_LIVE_APPROVED
+              value: "false"
+            - name: LLM_ADJUSTMENT_ALLOWED
               value: "false"
             - name: LLM_TOKEN_BUDGET_MAX
               value: "1200"

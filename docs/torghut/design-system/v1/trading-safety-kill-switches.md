@@ -57,6 +57,7 @@ flowchart TD
 - Keep `TRADING_KILL_SWITCH_ENABLED=true` so hard order blocking remains enabled by default until an approved GitOps change disables it.
 - Keep `TRADING_EMERGENCY_STOP_ENABLED=true` so emergency stop remains ready.
 - Verify by checking:
+  - `kubectl -n torghut get ksvc torghut -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name==\"TRADING_KILL_SWITCH_ENABLED\")].value}{"\\n"}{.spec.template.spec.containers[0].env[?(@.name==\"TRADING_EMERGENCY_STOP_ENABLED\")].value}{"\\n"}'` shows `true`.
   - `/trading/status` shows `kill_switches`/`emergency_stop` are active and paper-gated.
   - audit log and executions do not contain live broker transitions.
 

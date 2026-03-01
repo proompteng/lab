@@ -229,6 +229,7 @@ Controls (from `services/torghut/app/config.py`):
 - Post-change verification:
   - `/trading/status` reports `trading_mode=paper`, `live_enabled=false`, and `emergency_stop=true`.
   - confirm live canary policy telemetry remains disabled or non-consequential unless explicitly approved.
+  - run `services/torghut/tests/test_live_config_manifest_contract.py` before applying any post-change rollout.
 
 ## Operations as design (automation-ready procedures)
 
