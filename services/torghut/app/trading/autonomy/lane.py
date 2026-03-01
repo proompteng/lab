@@ -770,16 +770,15 @@ def run_autonomous_lane(
             ],
         )
         promotion_allowed = promotion_recommendation.eligible
-        if promotion_allowed:
+        if patch_path is None and promotion_allowed:
             patch_path = _resolve_paper_patch_path(
                 gate_report=gate_report,
                 strategy_configmap_path=strategy_configmap_path,
                 runtime_strategies=runtime_strategies,
                 candidate_id=candidate_id,
+                promotion_target=promotion_target,
                 paper_dir=paper_dir,
             )
-        else:
-            patch_path = None
         promotion_reasons = promotion_recommendation.reasons
         recommended_mode = promotion_recommendation.recommended_mode
         recommendation_trace_id = promotion_recommendation.trace_id
