@@ -2280,6 +2280,7 @@ def _load_tca_gate_inputs(
             "avg_churn_ratio": Decimal("0"),
             "avg_divergence_bps": Decimal("0"),
             "avg_realized_shortfall_bps": Decimal("0"),
+            "avg_calibration_error_bps": Decimal("0"),
             "expected_shortfall_coverage": Decimal("0"),
             "expected_shortfall_sample_count": 0,
             "avg_expected_shortfall_bps_p50": Decimal("0"),

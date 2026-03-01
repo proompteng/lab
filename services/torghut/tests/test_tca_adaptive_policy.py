@@ -396,3 +396,4 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
             self.assertEqual(expected["avg_expected_shortfall_bps_p95"], Decimal("10"))
             self.assertEqual(expected["avg_realized_shortfall_bps"], Decimal("2"))
             self.assertEqual(expected["avg_divergence_bps"], Decimal("1"))
+            self.assertEqual(expected["avg_calibration_error_bps"], Decimal("2"))
