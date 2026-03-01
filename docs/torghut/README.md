@@ -43,6 +43,7 @@ Start here:
     - `kubectl -n torghut get pods -l app=torghut-ws`
     - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut-llm-guardrails-exporter -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status`
     - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut-clickhouse-guardrails-exporter -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status`
+  - Record pre/post role and network policy checksums plus this rollout evidence in `${artifactPath}/notes/iteration-<n>.md` (do not commit notes file).
   - If checks fail, rollback to the last-good GitOps revision before widening policies.
 
 ## Legacy / supporting docs

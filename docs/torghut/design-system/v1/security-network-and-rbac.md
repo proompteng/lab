@@ -86,6 +86,9 @@ Apply and validate in a controlled order:
    - `kubectl -n torghut get serviceaccount torghut-runtime`
    - `kubectl -n torghut get role,rolebinding torghut-runtime -o yaml`
    - `kubectl -n torghut get netpol -o jsonpath='{.items[*].metadata.name}{\"\\n\"}'`
+   - Record output and checksums for rollback evidence:
+     - `kubectl -n torghut get role,rolebinding torghut-runtime -o yaml | sha256sum`
+     - `kubectl -n torghut get networkpolicy -o yaml | sha256sum`
 
 2. After GitOps sync, run runtime checks for policy/RBAC behavior.
    - `kubectl -n torghut auth can-i get pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
@@ -107,6 +110,16 @@ Apply and validate in a controlled order:
    - `/healthz` on the Knative service
 
 4. If a check fails, restore the previous manifest set in ArgoCD and re-apply after fixing policy scope.
+
+5. For each iteration:
+   - keep this section up to date in `docs/torghut/design-system/v1/security-network-and-rbac.md` and `docs/torghut/network-and-rbac.md`
+   - add a runbook entry to `${artifactPath}/notes/iteration-<n>.md` (do not commit notes file).
+
+## RBAC target for this runtime
+
+- Target state for `argocd/applications/torghut/role.yaml` is least privilege by default:
+  - `rules: []` (no Kubernetes control-plane permissions).
+- Temporarily adding namespace or cluster-scope verbs is only allowed when an operational break is reproduced and documented with an approved follow-up rollback plan.
 
 ## Decisions (ADRs)
 

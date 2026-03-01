@@ -24,7 +24,10 @@
 - DNS egress is explicitly allowed for all Torghut workloads to `kube-system` (`k8s-app: kube-dns`).
 - `torghut-ws` is restricted to Kafka (9092) plus external HTTPS egress for broker/websocket endpoints.
 - Flink TA is restricted to Kafka, Kafka schema registry, ClickHouse, and the Ceph RGW endpoint used by the runtime.
-- `torghut` service ingress is constrained to trusted in-namespace callers on port `8181`, and egress is additionally constrained to the execution callbacks endpoint (`torghut-lean-runner:8088`) and Ceph RGW (`rook-ceph`:80/443) for whitepaper storage.
+- `torghut` service ingress is constrained to trusted in-namespace callers on port `8181`, and egress is additionally constrained to:
+  - execution callbacks endpoint (`torghut-lean-runner:8088`)
+  - Ceph RGW (`rook-ceph`:80/443) for whitepaper storage
+  - HTTPS API calls on `443` for external dependencies.
 - `torghut-lean-runner` ingress is constrained to calls from the trading service (`torghut`) on port `8088`.
 - Observability-to-runtime ingress is now explicit: Alloy scrape traffic is only allowed to `ta` (`9249`) and `ws` (`9090`) metric ports.
 - Guardrails exporter flows are now explicitly constrained:
@@ -52,3 +55,10 @@
   - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut-llm-guardrails-exporter -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status`
   - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut-clickhouse-guardrails-exporter -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status`
   - app health checks for `/healthz` endpoints as part of existing runbooks
+  - `kubectl -n torghut auth can-i create pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
+  - `kubectl -n torghut get networkpolicy -o yaml | sha256sum` (record pre/post)
+  - `kubectl -n torghut get role,rolebinding torghut-runtime -o yaml | sha256sum` (record pre/post)
+
+### Iteration documentation requirement
+
+- For every policy or RBAC change, add a non-committed note at `${artifactPath}/notes/iteration-<n>.md` with pre-check, post-check, and rollback results.
