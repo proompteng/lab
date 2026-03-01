@@ -2220,8 +2220,7 @@ def _resolve_feature_schema_version(*, gate_policy_payload: dict[str, Any]) -> s
     ).strip()
     if configured_version:
         return configured_version
-    configured_version = str(settings.trading_feature_schema_version).strip()
-    return configured_version if configured_version else "0.0.0"
+    return GatePolicyMatrix().required_feature_schema_version
 
 
 def _resolve_operational_readiness(

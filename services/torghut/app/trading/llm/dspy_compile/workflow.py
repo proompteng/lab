@@ -42,7 +42,6 @@ _PROMOTION_MIN_SCHEMA_VALID_RATE = 0.995
 _PROMOTION_MAX_FALLBACK_RATE = 0.05
 _PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS = 60 * 60 * 24
 _PROMOTION_EVIDENCE_OVERRIDE_KEYS = {
-    "artifactHash",
     "gateCompatibility",
     "schemaValidRate",
     "deterministicCompatibility",

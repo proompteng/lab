@@ -660,7 +660,7 @@ class TestLLMDSPyWorkflow(TestCase):
                 promote_parameters["evalReportRef"],
                 str(artifact_root / "eval" / "dspy-eval-report.json"),
             )
-            self.assertNotIn("artifactHash", promote_parameters)
+            self.assertEqual(promote_parameters["artifactHash"], "override-hash")
             self.assertNotIn("gateCompatibility", promote_parameters)
             self.assertNotIn("schemaValidRate", promote_parameters)
             self.assertNotIn("deterministicCompatibility", promote_parameters)

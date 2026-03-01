@@ -777,7 +777,6 @@ class TestAutonomousLane(TestCase):
                 json.dumps(
                     {
                         "policy_version": "v3-gates-1",
-                        "required_feature_schema_version": "3.0.0",
                         "gate0_max_null_rate": "0",
                         "gate0_max_staleness_ms": 120000,
                         "gate0_min_symbol_coverage": 1,
@@ -813,6 +812,7 @@ class TestAutonomousLane(TestCase):
                 if item["gate_id"] == "gate0_data_integrity"
             )
             self.assertEqual(gate0["status"], "pass")
+            self.assertNotIn("schema_version_incompatible", gate0["reasons"])
 
     def test_intraday_strategy_candidate_blocks_paper_patch_without_tca_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
