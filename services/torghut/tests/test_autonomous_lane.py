@@ -1371,6 +1371,91 @@ class TestAutonomousLane(TestCase):
             promotion_reqs["missing_artifacts"],
         )
 
+    def test_lane_fails_closed_still_records_stage_lineage(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        policy_payload = {
+            "promotion_required_artifacts": [
+                "research/candidate-spec.json",
+                "backtest/evaluation-report.json",
+                "stages/candidate-generation-manifest.json",
+                "stages/evaluation-manifest.json",
+                "stages/promotion-recommendation-manifest.json",
+            ],
+            "promotion_require_patch_targets": [],
+            "gate6_require_profitability_evidence": False,
+            "gate6_require_janus_evidence": False,
+            "promotion_require_janus_evidence": False,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-fail-closed"
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+            candidate_manifest = json.loads(
+                result.candidate_generation_manifest_path.read_text(encoding="utf-8")
+            )
+            evaluation_manifest = json.loads(
+                result.evaluation_manifest_path.read_text(encoding="utf-8")
+            )
+            recommendation_manifest = json.loads(
+                result.recommendation_manifest_path.read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(candidate_manifest["stage"], "candidate-generation")
+            self.assertEqual(evaluation_manifest["stage"], "evaluation")
+            self.assertEqual(
+                recommendation_manifest["stage"],
+                "promotion-recommendation",
+            )
+            self.assertEqual(
+                evaluation_manifest["parent_lineage_hash"],
+                candidate_manifest["lineage_hash"],
+            )
+            self.assertEqual(
+                recommendation_manifest["parent_lineage_hash"],
+                evaluation_manifest["lineage_hash"],
+            )
+
+            gate_payload = json.loads(
+                result.gate_report_path.read_text(encoding="utf-8")
+            )
+            self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
+            self.assertFalse(result.paper_patch_path)
+
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+            )
+            self.assertFalse(actuation_payload["actuation_allowed"])
+
+            candidate_spec = json.loads(
+                result.candidate_spec_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                candidate_spec["stage_trace_ids"],
+                result.stage_trace_ids,
+            )
+            self.assertEqual(
+                candidate_spec["stage_lineage"]["root_lineage_hash"],
+                result.stage_lineage_root,
+            )
+            self.assertIn("promotion-recommendation", candidate_spec["stage_trace_ids"])
+            self.assertIn(
+                "stage_lineage",
+                candidate_spec,
+            )
+
     def test_upsert_no_signal_run_records_skipped_research_run(self) -> None:
         strategy_config_path = (
             Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"

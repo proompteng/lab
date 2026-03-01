@@ -239,6 +239,69 @@ class TestAlphaLane(TestCase):
             self.assertEqual(recommendation["action"], "deny")
             self.assertIn("test_total_return_below_threshold", recommendation["reasons"])
 
+    def test_fail_closed_lane_still_records_full_stage_lineage(self) -> None:
+        train, test = self._trend_frames()
+
+        policy = {
+            "policy_version": "alpha-lane-policy-v1",
+            "alpha_min_train_total_return": "-1000000",
+            "alpha_min_test_total_return": "999999",
+            "alpha_min_train_sharpe": "-1000000",
+            "alpha_min_test_sharpe": "0",
+            "alpha_max_test_drawdown_abs": "1",
+            "require_candidate_accepted": True,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "alpha-fail-lineage"
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps(policy), encoding="utf-8")
+            result = run_alpha_discovery_lane(
+                artifact_path=output_dir,
+                train_prices=train,
+                test_prices=test,
+                gate_policy_path=policy_path,
+            )
+
+            recommendation_payload = json.loads(
+                result.recommendation_artifact_path.read_text(encoding="utf-8")
+            )
+            self.assertFalse(recommendation_payload["evaluation_passed"])
+            self.assertFalse(recommendation_payload["recommendation"]["eligible"])
+
+            candidate_manifest = json.loads(
+                result.candidate_generation_manifest_path.read_text(encoding="utf-8")
+            )
+            evaluation_manifest = json.loads(
+                result.evaluation_manifest_path.read_text(encoding="utf-8")
+            )
+            recommendation_manifest = json.loads(
+                result.recommendation_manifest_path.read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(candidate_manifest["stage"], "candidate-generation")
+            self.assertEqual(evaluation_manifest["stage"], "evaluation")
+            self.assertEqual(recommendation_manifest["stage"], "promotion-recommendation")
+            self.assertEqual(evaluation_manifest["parent_lineage_hash"], candidate_manifest["lineage_hash"])
+            self.assertEqual(recommendation_manifest["parent_lineage_hash"], evaluation_manifest["lineage_hash"])
+            self.assertEqual(result.stage_lineage_root, candidate_manifest["lineage_hash"])
+
+            candidate_spec = json.loads(
+                result.candidate_spec_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                candidate_spec["stage_lineage"]["root_lineage_hash"],
+                result.stage_lineage_root,
+            )
+            self.assertEqual(
+                candidate_spec["stage_trace_ids"],
+                result.stage_trace_ids,
+            )
+            self.assertIn(
+                "recommendation_artifact",
+                candidate_spec["replay_artifact_hashes"],
+            )
+
     def test_lane_replay_artifacts_are_immutable(self) -> None:
         train, test = self._trend_frames()
 
