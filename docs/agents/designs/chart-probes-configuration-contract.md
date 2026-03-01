@@ -37,6 +37,7 @@ The effective values are merged as:
 
 - `globalProbe = merge(deepCopy(.Values.<Probe>), deepCopy(.Values.<component>.<Probe>))`
 - Each component uses its merged probe contract (`livenessProbe`, `readinessProbe`, `startupProbe`).
+- `controlPlane` and `controllers` are independent contracts, even though they share global defaults by default.
 
 ### Defaults
 
@@ -50,6 +51,11 @@ Defaults in `charts/agents/values.yaml`:
   - startup probe inherits global defaults and remains opt-in per component
 
 If a component does not expose HTTP health, set component `livenessProbe.enabled` and/or `readinessProbe.enabled` to `false`.
+
+For rollout safety, probe semantics should be changed per component, not globally:
+
+- Start with one component change per release.
+- Keep the other Deployment on its prior probe contract until rollout behavior is validated.
 
 ## Config Mapping
 

@@ -40,6 +40,9 @@ Added keys:
 - `controllers.terminationGracePeriodSeconds`
 - `controlPlane.lifecycle`
 - `controllers.lifecycle`
+- `deploymentLifecycle` (global defaults for rollout/upgrade timing)
+- `controlPlane.deploymentLifecycle`
+- `controllers.deploymentLifecycle`
 
 ### Recommended defaults
 
@@ -54,6 +57,9 @@ Control plane uses global defaults by default and can be overridden via `control
 | ------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------ |
 | `controlPlane.terminationGracePeriodSeconds` | `deploy/agents.spec.template.spec.terminationGracePeriodSeconds`              | Gives control plane time to stop cleanly.    |
 | `controllers.terminationGracePeriodSeconds` | `deploy/agents-controllers.spec.template.spec.terminationGracePeriodSeconds` | Gives controllers time to stop cleanly.    |
+| `deploymentLifecycle` | `deploy/agents.spec.minReadySeconds`, `deploy/agents.spec.progressDeadlineSeconds`, `deploy/agents.spec.revisionHistoryLimit` (and equivalent in controllers) | Global rollout timing defaults for upgrade safety. |
+| `controlPlane.deploymentLifecycle` | `deploy/agents.spec.minReadySeconds`, `deploy/agents.spec.progressDeadlineSeconds`, `deploy/agents.spec.revisionHistoryLimit` | Control plane rollout timing override. |
+| `controllers.deploymentLifecycle` | `deploy/agents-controllers.spec.minReadySeconds`, `deploy/agents-controllers.spec.progressDeadlineSeconds`, `deploy/agents-controllers.spec.revisionHistoryLimit` | Controllers rollout timing override. |
 | `controlPlane.lifecycle`                    | `deploy/agents.spec.template.spec.containers[0].lifecycle`                   | Supports optional `preStop` and related hooks for control plane. |
 | `controllers.lifecycle`                     | `deploy/agents-controllers.spec.template.spec.containers[0].lifecycle`       | Supports optional `preStop` and related hooks for controllers. |
 
@@ -65,6 +71,17 @@ Control plane uses global defaults by default and can be overridden via `control
    - hooks remain unset until a rollout proves shutdown paths are safe
 2. Add controller/control plane logs on SIGTERM (“draining”) in application code as needed.
 3. Tune grace periods and hooks based on observed shutdown times.
+
+### Deployment lifecycle migration
+
+- Use staged rollout by component:
+  1. Set global `deploymentLifecycle` changes first (for both components).
+  2. Apply component-specific lifecycle changes to the least-critical component first.
+  3. Apply to the second component only after rollout completes and healthy.
+- If probes or drains misbehave, rollback in the reverse order:
+  1. Remove component `deploymentLifecycle` overrides.
+  2. Remove component `lifecycle` overrides.
+  3. Revert global `deploymentLifecycle`.
 
 ### Migration behavior
 
