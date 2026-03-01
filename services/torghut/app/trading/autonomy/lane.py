@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -45,6 +46,7 @@ from ..features import (
     normalize_feature_vector_v3,
 )
 from ..forecasting import build_default_forecast_router
+from ..llm.evaluation import build_llm_evaluation_metrics
 from ..models import SignalEnvelope
 from ..reporting import (
     EvaluationReport,
@@ -510,12 +512,17 @@ def run_autonomous_lane(
         gate_inputs = GateInputs(
             feature_schema_version="3.0.0",
             required_feature_null_rate=_required_feature_null_rate(signals),
-            staleness_ms_p95=0,
+            staleness_ms_p95=_resolve_gate_staleness_ms_p95(
+                signals=ordered_signals,
+            ),
             symbol_coverage=len({signal.symbol for signal in signals}),
             metrics=metrics_payload,
             robustness=report.robustness.to_payload(),
             tca_metrics=_load_tca_gate_inputs(factory),
-            llm_metrics={"error_ratio": "0"},
+            llm_metrics=_resolve_gate_llm_metrics(
+                session_factory=factory,
+                now=now,
+            ),
             forecast_metrics=forecast_gate_metrics,
             profitability_evidence=profitability_evidence_payload,
             fragility_state=fragility_state,
@@ -1907,6 +1914,65 @@ def _resolve_gate_forecast_metrics(
         "inference_latency_ms_p95": str(latency_ms_p95),
         "calibration_score_min": str(calibration_score_min),
     }
+
+
+def _resolve_gate_staleness_ms_p95(
+    *,
+    signals: list[SignalEnvelope],
+) -> int | None:
+    if not signals:
+        return None
+    staleness_values_ms: list[int] = []
+    for signal in signals:
+        if signal.ingest_ts is None:
+            return None
+        event_ts = signal.event_ts.astimezone(timezone.utc)
+        ingest_ts = signal.ingest_ts.astimezone(timezone.utc)
+        age_ms = int((ingest_ts - event_ts).total_seconds() * 1000)
+        if age_ms < 0:
+            age_ms = 0
+        staleness_values_ms.append(age_ms)
+    return _nearest_rank_percentile(staleness_values_ms, 95)
+
+
+def _to_finite_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+    elif isinstance(value, str):
+        value = value.strip()
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
+def _resolve_gate_llm_metrics(
+    *,
+    session_factory: Callable[[], Session],
+    now: datetime,
+) -> dict[str, str]:
+    try:
+        with session_factory() as session:
+            payload = build_llm_evaluation_metrics(session=session, now=now)
+            metrics_payload = payload.get("metrics")
+            if not isinstance(metrics_payload, dict):
+                return {}
+            error_rate = _to_finite_float(metrics_payload.get("error_rate"))
+            if error_rate is None or error_rate < 0 or error_rate > 1:
+                return {}
+            return {"error_ratio": str(Decimal(str(error_rate)))}
+    except Exception:
+        return {}
 
 
 def _nearest_rank_percentile(values: list[int], percentile: int) -> int:

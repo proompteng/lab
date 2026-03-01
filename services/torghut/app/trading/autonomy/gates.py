@@ -47,7 +47,7 @@ class GateResult:
 class GateInputs:
     feature_schema_version: str
     required_feature_null_rate: Decimal
-    staleness_ms_p95: int
+    staleness_ms_p95: int | None
     symbol_coverage: int
     metrics: dict[str, Any]
     robustness: dict[str, Any]
@@ -463,7 +463,9 @@ def _gate0_data_integrity(inputs: GateInputs, policy: GatePolicyMatrix) -> GateR
         reasons.append("schema_version_incompatible")
     if inputs.required_feature_null_rate > policy.gate0_max_null_rate:
         reasons.append("required_feature_null_rate_exceeds_threshold")
-    if inputs.staleness_ms_p95 > policy.gate0_max_staleness_ms:
+    if inputs.staleness_ms_p95 is None:
+        reasons.append("feature_staleness_missing")
+    elif inputs.staleness_ms_p95 > policy.gate0_max_staleness_ms:
         reasons.append("feature_staleness_exceeds_budget")
     if inputs.symbol_coverage < policy.gate0_min_symbol_coverage:
         reasons.append("symbol_coverage_below_minimum")
@@ -523,8 +525,10 @@ def _gate3_shadow_paper_quality(
     inputs: GateInputs, policy: GatePolicyMatrix
 ) -> GateResult:
     reasons: list[str] = []
-    llm_error_ratio = _decimal(inputs.llm_metrics.get("error_ratio")) or Decimal("0")
-    if llm_error_ratio > policy.gate3_max_llm_error_ratio:
+    llm_error_ratio = _decimal(inputs.llm_metrics.get("error_ratio"))
+    if llm_error_ratio is None:
+        reasons.append("llm_error_ratio_missing")
+    elif llm_error_ratio > policy.gate3_max_llm_error_ratio:
         reasons.append("llm_error_ratio_exceeds_threshold")
     fallback_rate = _decimal(inputs.forecast_metrics.get("fallback_rate"))
     if fallback_rate is None:

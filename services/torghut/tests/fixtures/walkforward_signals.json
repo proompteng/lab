@@ -1,6 +1,7 @@
 [
   {
     "event_ts": "2026-01-01T00:01:00+00:00",
+    "ingest_ts": "2026-01-01T00:01:00+00:00",
     "symbol": "AAPL",
     "timeframe": "1Min",
     "payload": {
@@ -14,6 +15,7 @@
   },
   {
     "event_ts": "2026-01-01T00:02:00+00:00",
+    "ingest_ts": "2026-01-01T00:02:00+00:00",
     "symbol": "AAPL",
     "timeframe": "1Min",
     "payload": {
@@ -27,6 +29,7 @@
   },
   {
     "event_ts": "2026-01-01T00:04:00+00:00",
+    "ingest_ts": "2026-01-01T00:04:00+00:00",
     "symbol": "AAPL",
     "timeframe": "1Min",
     "payload": {

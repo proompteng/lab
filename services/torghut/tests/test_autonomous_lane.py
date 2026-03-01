@@ -498,6 +498,9 @@ class TestAutonomousLane(TestCase):
                             "event_ts": datetime(
                                 2026, 1, 1, 0, 0, tzinfo=timezone.utc
                             ).isoformat(),
+                            "ingest_ts": datetime(
+                                2026, 1, 1, 0, 0, tzinfo=timezone.utc
+                            ).isoformat(),
                             "symbol": "AAPL",
                             "timeframe": "1Min",
                             "payload": {
@@ -567,6 +570,9 @@ class TestAutonomousLane(TestCase):
                             "event_ts": datetime(
                                 2026, 1, 1, 0, 1, tzinfo=timezone.utc
                             ).isoformat(),
+                            "ingest_ts": datetime(
+                                2026, 1, 1, 0, 1, tzinfo=timezone.utc
+                            ).isoformat(),
                             "symbol": "AAPL",
                             "timeframe": "1Min",
                             "payload": {
@@ -582,6 +588,9 @@ class TestAutonomousLane(TestCase):
                         },
                         {
                             "event_ts": datetime(
+                                2026, 1, 1, 0, 2, tzinfo=timezone.utc
+                            ).isoformat(),
+                            "ingest_ts": datetime(
                                 2026, 1, 1, 0, 2, tzinfo=timezone.utc
                             ).isoformat(),
                             "symbol": "AAPL",
