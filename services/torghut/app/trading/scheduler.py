@@ -2806,25 +2806,6 @@ class TradingPipeline:
         engine = self.llm_review_engine or LLMReviewEngine()
 
         if settings.llm_dspy_runtime_mode == "active":
-            dspy_gate_allowed, dspy_gate_reasons = (
-                settings.llm_dspy_live_runtime_gate()
-            )
-            if not dspy_gate_allowed:
-                return self._handle_llm_dspy_live_runtime_block(
-                    session=session,
-                    decision=decision,
-                    decision_row=decision_row,
-                    account=account,
-                    positions=positions,
-                    reason="llm_dspy_live_runtime_gate_blocked",
-                    risk_flags=list(dspy_gate_reasons),
-                    policy_resolution=_build_llm_policy_resolution(
-                        rollout_stage=guardrails.rollout_stage,
-                        effective_fail_mode="veto",
-                        guardrail_reasons=tuple(guardrails.reasons)
-                        + tuple(dspy_gate_reasons),
-                    ),
-                )
             dspy_runtime = getattr(engine, "dspy_runtime", None)
             if isinstance(dspy_runtime, DSPyReviewRuntime):
                 dspy_live_ready, dspy_live_readiness_reasons = (
