@@ -169,6 +169,36 @@ class TestAlphaLane(TestCase):
                 "iteration notes should be written under explicit artifactPath argument",
             )
 
+    def test_lane_iteration_notes_resolve_camelcase_artifact_and_priority_inputs(self) -> None:
+        train, test = self._trend_frames()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "alpha-notes"
+            notes_artifact_path = Path(tmpdir) / "camel-notes-root"
+            result = run_alpha_discovery_lane(
+                artifact_path=output_dir,
+                train_prices=train,
+                test_prices=test,
+                artifactPath=str(notes_artifact_path),
+                priorityId="P-5002",
+            )
+
+            notes_dir = notes_artifact_path / "notes"
+            notes = sorted(notes_dir.glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            self.assertIn(
+                "Alpha lane iteration 1",
+                notes[0].read_text(encoding="utf-8"),
+            )
+            self.assertFalse(
+                any((output_dir / "notes").glob("iteration-*.md")),
+                "iteration notes should be written under explicit artifactPath alias",
+            )
+            candidate_spec = json.loads(
+                result.candidate_spec_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(candidate_spec["input_context"]["priority_id"], "P-5002")
+
     def test_lane_lineage_persists_in_candidate_spec(self) -> None:
         train, test = self._trend_frames()
 
