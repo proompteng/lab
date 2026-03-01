@@ -14,6 +14,7 @@
 {{- $controlPlaneReadinessProbe := merge (deepCopy (.Values.readinessProbe | default dict)) (deepCopy (.Values.controlPlane.readinessProbe | default dict)) -}}
 {{- $controlPlaneStartupProbe := merge (deepCopy (.Values.startupProbe | default dict)) (deepCopy (.Values.controlPlane.startupProbe | default dict)) -}}
 {{- $controlPlaneLifecycle := merge (deepCopy (.Values.lifecycle | default dict)) (deepCopy (.Values.controlPlane.lifecycle | default dict)) -}}
+{{- $controlPlaneDeploymentLifecycle := merge (deepCopy (.Values.deploymentLifecycle | default dict)) (deepCopy (.Values.controlPlane.deploymentLifecycle | default dict)) -}}
 {{- $controlPlaneTerminationGracePeriodSeconds := .Values.terminationGracePeriodSeconds -}}
 {{- if hasKey .Values.controlPlane "terminationGracePeriodSeconds" }}
 {{-   $controlPlaneTerminationGracePeriodSeconds = .Values.controlPlane.terminationGracePeriodSeconds }}
@@ -36,6 +37,15 @@ spec:
   selector:
     matchLabels:
       {{- include "agents.selectorLabels" . | nindent 6 }}
+{{- if hasKey $controlPlaneDeploymentLifecycle "minReadySeconds" }}
+  minReadySeconds: {{ $controlPlaneDeploymentLifecycle.minReadySeconds }}
+{{- end }}
+{{- if hasKey $controlPlaneDeploymentLifecycle "progressDeadlineSeconds" }}
+  progressDeadlineSeconds: {{ $controlPlaneDeploymentLifecycle.progressDeadlineSeconds }}
+{{- end }}
+{{- if hasKey $controlPlaneDeploymentLifecycle "revisionHistoryLimit" }}
+  revisionHistoryLimit: {{ $controlPlaneDeploymentLifecycle.revisionHistoryLimit }}
+{{- end }}
   template:
     metadata:
       labels:

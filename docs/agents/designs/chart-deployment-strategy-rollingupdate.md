@@ -28,6 +28,7 @@ Rollout decisions are component-scoped so control plane and controllers can be t
 - Values:
   - `charts/agents/values.yaml` now sets baseline defaults under `deploymentStrategy`.
   - `controlPlane.deploymentStrategy` and `controllers.deploymentStrategy` remain available for component-specific overrides.
+  - `deploymentLifecycle` and per-component `deploymentLifecycle` keys now expose rollout lifecycle knobs (`minReadySeconds`, `progressDeadlineSeconds`, `revisionHistoryLimit`) for safer upgrades.
 
 ## Design
 
@@ -39,7 +40,11 @@ Control:
 - `controllers.deploymentStrategy`
 - `deploymentStrategy` (global default)
 
-Each accepts the same object structure as Kubernetes `spec.strategy`, and is merged with:
+Deployment strategy values accept the same object structure as Kubernetes `spec.strategy`, and are merged with:
+
+- component override first, then global fallback.
+
+Deployment lifecycle values also merge the same way:
 
 - component override first, then global fallback.
 
@@ -63,6 +68,12 @@ deploymentStrategy:
     maxSurge: 1
     maxUnavailable: 0
 
+deploymentLifecycle:
+  minReadySeconds: 0
+  progressDeadlineSeconds: 600
+  revisionHistoryLimit: 10
+```
+
 Component-specific override behavior:
 
 - To change control-plane rollout behavior without affecting controllers, set `controlPlane.deploymentStrategy`.
@@ -83,11 +94,21 @@ Component-specific override behavior:
 - Use component overrides only when operational intent differs:
   - `controlPlane.deploymentStrategy` for control-plane rollout semantics.
   - `controllers.deploymentStrategy` for controller rollout semantics.
+- For upgrade safety, control rollout lifecycle timing first and strategy second:
+  1. Set global `deploymentStrategy` if needed.
+  2. Set global `deploymentLifecycle` when rollout windows need explicit progress deadlines.
+  3. Add component-specific overrides only for the component under migration.
+  4. Repeat for the second component only after observing healthy rollout.
 
-  Recommended staged order:
+Rollback order:
+- Remove per-component `deploymentStrategy`/`deploymentLifecycle` overrides first.
+- Revert global values second.
+- Then rollout a full rollback to restore previous behavior.
+
+Recommended staged order:
   1. Set/verify global `deploymentStrategy` first.
-  2. If needed, roll out control-plane override.
-  3. Apply controller override only after control-plane behavior is observed stable.
+  2. If needed, roll out control-plane strategy/lifecycle override only.
+  3. Apply controllers strategy/lifecycle override only after control-plane behavior is observed stable.
 
 
 
@@ -98,6 +119,9 @@ Component-specific override behavior:
 | `deploymentStrategy`              | `Deployment.spec.strategy`                | Global default used if component overrides are absent. |
 | `controlPlane.deploymentStrategy` | `deploy/agents.spec.strategy`             | Component-specific override.                           |
 | `controllers.deploymentStrategy`  | `deploy/agents-controllers.spec.strategy` | Component-specific override.                           |
+| `deploymentLifecycle`             | `Deployment.spec.minReadySeconds`, `Deployment.spec.progressDeadlineSeconds`, `Deployment.spec.revisionHistoryLimit` | Global rollout lifecycle defaults. |
+| `controlPlane.deploymentLifecycle` | `deploy/agents.spec.minReadySeconds`, `deploy/agents.spec.progressDeadlineSeconds`, `deploy/agents.spec.revisionHistoryLimit` | Control-plane-specific lifecycle override. |
+| `controllers.deploymentLifecycle` | `deploy/agents-controllers.spec.minReadySeconds`, `deploy/agents-controllers.spec.progressDeadlineSeconds`, `deploy/agents-controllers.spec.revisionHistoryLimit` | Controllers-specific lifecycle override. |
 
 ## Rollout Plan
 

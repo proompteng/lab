@@ -34,6 +34,7 @@ controlPlane:
   startupProbe: {}
   lifecycle: {}
   terminationGracePeriodSeconds: 30
+  deploymentLifecycle: {}
 
 controllers:
   enabled: false
@@ -59,6 +60,7 @@ controllers:
   startupProbe: {}
   lifecycle: {}
   terminationGracePeriodSeconds: 60
+  deploymentLifecycle: {}
 
 runner:
   image:
@@ -194,6 +196,11 @@ deploymentStrategy:
   rollingUpdate:
     maxSurge: 1
     maxUnavailable: 0
+
+deploymentLifecycle:
+  minReadySeconds: 0
+  progressDeadlineSeconds: 600
+  revisionHistoryLimit: 10
 
 lifecycle: {}
 

@@ -98,6 +98,15 @@
           },
           "additionalProperties": false
         },
+        "deploymentLifecycle": {
+          "type": "object",
+          "properties": {
+            "minReadySeconds": { "type": "integer", "minimum": 0 },
+            "progressDeadlineSeconds": { "type": "integer", "minimum": 1 },
+            "revisionHistoryLimit": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
         "startupProbe": {
           "type": "object",
           "properties": {
@@ -172,6 +181,15 @@
               },
               "additionalProperties": false
             }
+          },
+          "additionalProperties": false
+        },
+        "deploymentLifecycle": {
+          "type": "object",
+          "properties": {
+            "minReadySeconds": { "type": "integer", "minimum": 0 },
+            "progressDeadlineSeconds": { "type": "integer", "minimum": 1 },
+            "revisionHistoryLimit": { "type": "integer", "minimum": 0 }
           },
           "additionalProperties": false
         },
@@ -384,6 +402,15 @@
           },
           "additionalProperties": false
         }
+      },
+      "additionalProperties": false
+    },
+    "deploymentLifecycle": {
+      "type": "object",
+      "properties": {
+        "minReadySeconds": { "type": "integer", "minimum": 0 },
+        "progressDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "revisionHistoryLimit": { "type": "integer", "minimum": 0 }
       },
       "additionalProperties": false
     },
