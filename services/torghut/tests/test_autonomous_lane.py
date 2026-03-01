@@ -280,7 +280,7 @@ class TestAutonomousLane(TestCase):
                 result.gate_report_path.read_text(encoding="utf-8")
             )
             self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
-            self.assertIn("tca_order_count_missing", gate_payload["promotion_decision"]["reasons"])
+            self.assertIn("tca_order_count_missing", gate_payload["promotion_decision"]["reason_codes"])
 
             with session_factory() as session:
                 run_row = session.execute(
@@ -674,7 +674,7 @@ class TestAutonomousLane(TestCase):
                 result.gate_report_path.read_text(encoding="utf-8")
             )
             self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
-            self.assertIn("tca_order_count_missing", gate_payload["promotion_decision"]["reasons"])
+            self.assertIn("tca_order_count_missing", gate_payload["promotion_decision"]["reason_codes"])
 
     def test_lane_blocks_promotion_when_profitability_threshold_not_met(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
