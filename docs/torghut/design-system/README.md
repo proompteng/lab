@@ -107,7 +107,6 @@ The v1 documents are written to stay consistent with:
 | `v1/operations-actuation-runner.md`                           | Operations: gated actuation runner                   |
 | `v1/security-threat-model.md`                                 | Security: threat model                               |
 | `v1/security-secrets-rotation.md`                             | Security: secrets rotation                           |
-| `v1/security-network-and-rbac.md`                             | Security: network and RBAC                           |
 | `v1/security-audit-logging-and-immutability.md`               | Security: audit logging and immutability             |
 | `v1/ci-cd-and-release-process.md`                             | CI/CD and release process                            |
 | `v1/argo-gitops-and-overlays.md`                              | Argo GitOps and overlays                             |
