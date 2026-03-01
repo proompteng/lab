@@ -233,9 +233,7 @@ class TestAutonomousLane(TestCase):
             self.assertTrue(
                 (output_dir / "gates" / "promotion-evidence-gate.json").exists()
             )
-            self.assertIsNotNone(result.paper_patch_path)
-            assert result.paper_patch_path is not None
-            self.assertTrue(result.paper_patch_path.exists())
+            self.assertIsNone(result.paper_patch_path)
             actuation_payload = json.loads(
                 result.actuation_intent_path.read_text(encoding="utf-8")
                 if result.actuation_intent_path
@@ -244,7 +242,7 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(
                 actuation_payload["schema_version"], "torghut.autonomy.actuation-intent.v1"
             )
-            self.assertTrue(actuation_payload["actuation_allowed"])
+            self.assertFalse(actuation_payload["actuation_allowed"])
             governance_payload = actuation_payload["governance"]
             self.assertEqual(governance_payload["repository"], "proompteng/lab")
             self.assertEqual(governance_payload["base"], "main")
@@ -380,9 +378,7 @@ class TestAutonomousLane(TestCase):
                 result.actuation_intent_path.read_text(encoding="utf-8")
             )
             self.assertFalse(actuation_payload["actuation_allowed"])
-            self.assertIsNotNone(result.paper_patch_path)
-            assert result.paper_patch_path is not None
-            self.assertTrue(result.paper_patch_path.exists())
+            self.assertIsNone(result.paper_patch_path)
         self.assertEqual(
             actuation_payload["audit"]["rollback_evidence_missing_checks"],
             ["killSwitchDryRunPassed"],
@@ -437,9 +433,7 @@ class TestAutonomousLane(TestCase):
                 session_factory=session_factory,
             )
 
-            self.assertIsNotNone(result.paper_patch_path)
-            assert result.paper_patch_path is not None
-            self.assertTrue(result.paper_patch_path.exists())
+            self.assertIsNone(result.paper_patch_path)
             with session_factory() as session:
                 candidate = session.execute(
                     select(ResearchCandidate).where(
