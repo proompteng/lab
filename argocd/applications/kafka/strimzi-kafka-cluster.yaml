@@ -14,14 +14,8 @@ spec:
         port: 9092
         type: internal
         tls: false
-        configuration:
-          bootstrap:
-            host: kafka-kafka-bootstrap.kafka.svc.cluster.local
-          advertisedHostTemplate: '{nodePodName}.kafka-kafka-brokers.kafka.svc.cluster.local'
         authentication:
           type: scram-sha-512
-        configuration:
-          advertisedHostTemplate: '{nodePodName}.kafka-kafka-brokers.kafka.svc.cluster.local'
       - name: plain2
         port: 9093
         type: internal
