@@ -19,10 +19,10 @@ const REQUIRED_CRDS = [
   RESOURCE_MAP.Signal,
   RESOURCE_MAP.SignalDelivery,
   RESOURCE_MAP.Schedule,
-  RESOURCE_MAP.Swarm,
   RESOURCE_MAP.Artifact,
   RESOURCE_MAP.Workspace,
 ]
+const OPTIONAL_CRDS = [RESOURCE_MAP.Swarm]
 
 type Condition = {
   type: string
@@ -61,6 +61,8 @@ let reconciling = false
 let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 let watchHandles: Array<{ stop: () => void }> = []
 const namespaceQueues = new Map<string, Promise<void>>()
+const optionalCrdsReady = new Set<string>()
+const swarmUnfreezeTimers = new Map<string, NodeJS.Timeout>()
 
 const nowIso = () => new Date().toISOString()
 
@@ -167,6 +169,17 @@ const checkCrds = async (): Promise<CrdCheckState> => {
       }
     }
   }
+  const optionalUnavailable: string[] = []
+  optionalCrdsReady.clear()
+  for (const name of OPTIONAL_CRDS) {
+    const resource = name.split('.')[0] ?? name
+    const result = await runKubectl(['get', resource, '-n', namespace, '-o', 'json'])
+    if (result.code === 0) {
+      optionalCrdsReady.add(name)
+      continue
+    }
+    optionalUnavailable.push(name)
+  }
   const state = {
     ok: missing.length === 0 && forbidden.length === 0,
     missing: [...missing, ...forbidden],
@@ -185,6 +198,11 @@ const checkCrds = async (): Promise<CrdCheckState> => {
         )}`,
       )
     }
+  }
+  if (optionalUnavailable.length > 0) {
+    console.warn(
+      `[jangar] optional supporting primitives CRDs unavailable in namespace ${namespace}: ${optionalUnavailable.join(', ')}`,
+    )
   }
   return state
 }
@@ -207,6 +225,21 @@ const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
       console.warn('[jangar] supporting controller task failed', error)
     })
   namespaceQueues.set(namespace, next)
+}
+
+const clearAllSwarmUnfreezeTimers = () => {
+  for (const timer of swarmUnfreezeTimers.values()) {
+    clearTimeout(timer)
+  }
+  swarmUnfreezeTimers.clear()
+}
+
+const clearSwarmUnfreezeTimer = (namespace: string, name: string) => {
+  const key = `${namespace}/${name}`
+  const timer = swarmUnfreezeTimers.get(key)
+  if (!timer) return
+  clearTimeout(timer)
+  swarmUnfreezeTimers.delete(key)
 }
 
 const normalizeConditions = (raw: unknown): Condition[] => {
@@ -553,6 +586,30 @@ const parseTimeOrNull = (value: string | null | undefined) => {
   const parsed = Date.parse(value)
   if (!Number.isFinite(parsed)) return null
   return parsed
+}
+
+const scheduleSwarmUnfreezeReconcile = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  swarmName: string,
+  freezeUntil: string,
+) => {
+  const untilMs = parseTimeOrNull(freezeUntil)
+  if (untilMs === null) return
+
+  clearSwarmUnfreezeTimer(namespace, swarmName)
+
+  const key = `${namespace}/${swarmName}`
+  const delayMs = Math.max(0, untilMs - Date.now())
+  const timer = setTimeout(() => {
+    swarmUnfreezeTimers.delete(key)
+    enqueueNamespaceTask(namespace, async () => {
+      const latest = await kube.get(RESOURCE_MAP.Swarm, swarmName, namespace)
+      if (!latest) return
+      await reconcileSwarm(kube, latest, namespace)
+    })
+  }, delayMs)
+  swarmUnfreezeTimers.set(key, timer)
 }
 
 const sortByMostRecentRun = (resources: Record<string, unknown>[]) => {
@@ -1021,6 +1078,7 @@ const reconcileSwarm = async (
   }
 
   if (errors.length > 0) {
+    clearSwarmUnfreezeTimer(swarmNamespace, swarmName)
     for (const stageConfig of stageConfigs) {
       try {
         await kube.delete(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace, { wait: false })
@@ -1062,10 +1120,11 @@ const reconcileSwarm = async (
   const runSeen = new Set<string>()
   const allRuns = runPayloads.flatMap(listItems).filter((run) => {
     const runMetadata = asRecord(run.metadata) ?? {}
+    const runKind = asString(run.kind) ?? ''
     const runNamespace = asString(runMetadata.namespace) ?? ''
     const runName = asString(runMetadata.name)
     if (!runName) return false
-    const runKey = `${runNamespace}/${runName}`
+    const runKey = `${runKind}/${runNamespace}/${runName}`
     if (runSeen.has(runKey)) return false
     runSeen.add(runKey)
     return true
@@ -1214,6 +1273,11 @@ const reconcileSwarm = async (
 
   let conditions = conditionsBase
   if (freezeActive) {
+    if (freezeUntil) {
+      scheduleSwarmUnfreezeReconcile(kube, swarmNamespace, swarmName, freezeUntil)
+    } else {
+      clearSwarmUnfreezeTimer(swarmNamespace, swarmName)
+    }
     conditions = upsertCondition(conditions, buildReadyCondition(false, 'Frozen', `swarm frozen until ${freezeUntil}`))
     conditions = upsertCondition(conditions, {
       type: 'Frozen',
@@ -1226,6 +1290,7 @@ const reconcileSwarm = async (
       until: freezeUntil,
     }
   } else {
+    clearSwarmUnfreezeTimer(swarmNamespace, swarmName)
     conditions = upsertCondition(conditions, buildReadyCondition(true, 'Active', 'swarm active'))
     conditions = upsertCondition(conditions, {
       type: 'Frozen',
@@ -1392,7 +1457,7 @@ const reconcileResource = async (
 }
 
 const reconcileNamespace = async (kube: ReturnType<typeof createKubernetesClient>, namespace: string) => {
-  const payloads = await Promise.all([
+  const listRequests = [
     kube.list(RESOURCE_MAP.Tool, namespace),
     kube.list(RESOURCE_MAP.ApprovalPolicy, namespace),
     kube.list(RESOURCE_MAP.Budget, namespace),
@@ -1400,10 +1465,13 @@ const reconcileNamespace = async (kube: ReturnType<typeof createKubernetesClient
     kube.list(RESOURCE_MAP.Signal, namespace),
     kube.list(RESOURCE_MAP.SignalDelivery, namespace),
     kube.list(RESOURCE_MAP.Schedule, namespace),
-    kube.list(RESOURCE_MAP.Swarm, namespace),
     kube.list(RESOURCE_MAP.Artifact, namespace),
     kube.list(RESOURCE_MAP.Workspace, namespace),
-  ])
+  ]
+  if (optionalCrdsReady.has(RESOURCE_MAP.Swarm)) {
+    listRequests.push(kube.list(RESOURCE_MAP.Swarm, namespace))
+  }
+  const payloads = await Promise.all(listRequests)
   const items = payloads.flatMap(listItems)
   for (const item of items) {
     await reconcileResource(kube, item, namespace)
@@ -1429,8 +1497,18 @@ const handleResourceEvent = (
   namespace: string,
   event: { type?: string; object?: Record<string, unknown> },
 ) => {
-  if (event.type === 'DELETED') return
   const resource = asRecord(event.object)
+  if (event.type === 'DELETED') {
+    const kind = asString(resource?.kind)
+    if (kind === 'Swarm') {
+      const name = asString(readNested(resource ?? {}, ['metadata', 'name']))
+      const resourceNamespace = asString(readNested(resource ?? {}, ['metadata', 'namespace'])) ?? namespace
+      if (name) {
+        clearSwarmUnfreezeTimer(resourceNamespace, name)
+      }
+    }
+    return
+  }
   if (!resource) return
   enqueueNamespaceTask(namespace, () => reconcileResource(kube, resource, namespace))
 }
@@ -1553,14 +1631,16 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] schedule watch failed', error),
         }),
       )
-      handles.push(
-        startResourceWatch({
-          resource: RESOURCE_MAP.Swarm,
-          namespace,
-          onEvent: (event) => handleResourceEvent(kube, namespace, event),
-          onError: (error) => console.warn('[jangar] swarm watch failed', error),
-        }),
-      )
+      if (optionalCrdsReady.has(RESOURCE_MAP.Swarm)) {
+        handles.push(
+          startResourceWatch({
+            resource: RESOURCE_MAP.Swarm,
+            namespace,
+            onEvent: (event) => handleResourceEvent(kube, namespace, event),
+            onError: (error) => console.warn('[jangar] swarm watch failed', error),
+          }),
+        )
+      }
       handles.push(
         startResourceWatch({
           resource: RESOURCE_MAP.Artifact,
@@ -1621,6 +1701,7 @@ export const stopSupportingPrimitivesController = () => {
   for (const handle of watchHandles) {
     handle.stop()
   }
+  clearAllSwarmUnfreezeTimers()
   watchHandles = []
   namespaceQueues.clear()
   started = false
