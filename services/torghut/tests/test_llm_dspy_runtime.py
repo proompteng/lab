@@ -101,6 +101,17 @@ class TestLLMDSPyRuntime(TestCase):
             settings.jangar_base_url = None
             with self.assertRaises(DSPyRuntimeUnsupportedStateError):
                 _resolve_dspy_api_base()
+            settings.jangar_base_url = "http://jangar.example/openai/v1/chat/completions"
+            self.assertEqual(
+                _resolve_dspy_api_base(),
+                "http://jangar.example/openai/v1/chat/completions",
+            )
+            settings.jangar_base_url = "http://jangar.example/openai/v1?x=y"
+            with self.assertRaises(DSPyRuntimeUnsupportedStateError):
+                _resolve_dspy_api_base()
+            settings.jangar_base_url = "http://jangar.example/foo"
+            with self.assertRaises(DSPyRuntimeUnsupportedStateError):
+                _resolve_dspy_api_base()
         finally:
             settings.jangar_base_url = original_base
 

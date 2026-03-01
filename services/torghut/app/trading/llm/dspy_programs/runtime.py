@@ -5,6 +5,7 @@ from __future__ import annotations
 import string
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 from typing import Any, Literal, Mapping, cast
 
 from ....config import settings
@@ -33,6 +34,38 @@ _BOOTSTRAP_ARTIFACT_BODY = {
 }
 _BOOTSTRAP_ARTIFACT_HASH = hash_payload(_BOOTSTRAP_ARTIFACT_BODY)
 _DSPY_OPENAI_CHAT_COMPLETION_SUFFIX = "/chat/completions"
+_DSPY_OPENAI_BASE_PATH = "/openai/v1"
+
+
+def _resolve_dspy_jangar_api_base() -> str:
+    base_url = (settings.jangar_base_url or "").strip()
+    if not base_url:
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
+
+    parsed_base_url = urlsplit(base_url)
+    if (
+        not parsed_base_url.scheme
+        or parsed_base_url.scheme not in {"http", "https"}
+        or not parsed_base_url.netloc
+    ):
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_invalid")
+    if parsed_base_url.query or parsed_base_url.fragment:
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_invalid")
+
+    normalized_path = parsed_base_url.path.rstrip("/")
+    if normalized_path == "":
+        api_base_path = ""
+    elif normalized_path == _DSPY_OPENAI_BASE_PATH:
+        api_base_path = _DSPY_OPENAI_BASE_PATH
+    elif normalized_path == _DSPY_OPENAI_BASE_PATH + _DSPY_OPENAI_CHAT_COMPLETION_SUFFIX:
+        api_base_path = _DSPY_OPENAI_BASE_PATH
+    else:
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_invalid")
+
+    normalized_base_url = (
+        f"{parsed_base_url.scheme}://{parsed_base_url.netloc}{api_base_path}"
+    )
+    return f"{normalized_base_url}{_DSPY_OPENAI_CHAT_COMPLETION_SUFFIX}"
 
 
 class DSPyRuntimeError(RuntimeError):
@@ -405,10 +438,8 @@ def _resolve_dspy_model_name() -> str:
 
 
 def _resolve_dspy_api_base() -> str:
-    base_url = (settings.jangar_base_url or "").strip().rstrip("/")
-    if not base_url:
-        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
-    return f"{base_url}/openai/v1{_DSPY_OPENAI_CHAT_COMPLETION_SUFFIX}"
+    normalized_base_url = _resolve_dspy_jangar_api_base()
+    return normalized_base_url
 
 
 __all__ = [

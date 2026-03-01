@@ -6,6 +6,7 @@ import json
 from json import JSONDecodeError
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 from typing import Any, Protocol, cast
 
 from .signatures import (
@@ -22,6 +23,8 @@ except Exception:  # pragma: no cover - optional runtime dependency in local tes
 dspy: Any = _dspy
 
 _SAFE_DEFAULT_CHECKS = ["risk_engine", "order_firewall", "execution_policy"]
+_DSPY_OPENAI_BASE_PATH = "/openai/v1"
+_DSPY_OPENAI_CHAT_COMPLETION_SUFFIX = "/chat/completions"
 
 
 class DSPyCommitteeProgram(Protocol):
@@ -249,12 +252,33 @@ def _coerce_dspy_api_base(
     *, api_base: str | None, api_completion_url: str | None
 ) -> str:
     candidate = api_completion_url if api_completion_url is not None else api_base
-    normalized = (candidate or "").strip().rstrip("/")
+    normalized = (candidate or "").strip()
     if not normalized:
         return ""
-    if normalized.endswith("/chat/completions"):
-        return normalized[: -len("/chat/completions")] or normalized
-    return normalized
+
+    parsed = urlsplit(normalized)
+    if (
+        not parsed.scheme
+        or parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+    ):
+        raise RuntimeError("dspy_api_base_invalid")
+    if parsed.query or parsed.fragment:
+        raise RuntimeError("dspy_api_base_invalid")
+
+    normalized_path = parsed.path.rstrip("/")
+    if normalized_path in ("", "/"):
+        base_path = ""
+    elif normalized_path == _DSPY_OPENAI_BASE_PATH:
+        base_path = _DSPY_OPENAI_BASE_PATH
+    elif normalized_path == _DSPY_OPENAI_BASE_PATH + _DSPY_OPENAI_CHAT_COMPLETION_SUFFIX:
+        base_path = _DSPY_OPENAI_BASE_PATH
+    else:
+        raise RuntimeError("dspy_api_base_invalid")
+
+    return (
+        f"{parsed.scheme}://{parsed.netloc}{base_path}"
+    )
 
 
 __all__ = [
