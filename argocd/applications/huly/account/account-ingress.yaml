@@ -5,6 +5,8 @@ metadata:
 spec:
   entryPoints:
     - websecure
+  tls:
+    secretName: huly-wildcard-tls
   routes:
     - match: Host(`account.huly.proompteng.ai`)
       kind: Rule
