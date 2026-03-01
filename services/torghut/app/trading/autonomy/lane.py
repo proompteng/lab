@@ -1235,30 +1235,29 @@ def run_autonomous_lane(
             stage_records=stage_records,
             manifest_paths=manifest_paths,
         )
-        replay_artifact_hashes = _artifact_hashes(
-            {
-                "signals": signals_path,
-                "strategy_config": strategy_config_path,
-                "gate_policy": gate_policy_path,
-                "walkforward_results": walk_results_path,
-                "baseline_evaluation_report": baseline_report_path,
-                "evaluation_report": evaluation_report_path,
-                "gate_report": gate_report_path,
-                "profitability_benchmark": profitability_benchmark_path,
-                "profitability_evidence": profitability_evidence_path,
-                "profitability_validation": profitability_validation_path,
-                "janus_event_car": janus_event_car_path,
-                "janus_hgrm_reward": janus_hgrm_reward_path,
-                "recalibration_report": recalibration_report_path,
-                "promotion_gate": promotion_gate_path,
-                "promotion_recommendation": promotion_recommendation_path,
-                "recommendation_manifest": manifest_paths.get(_STAGE_RECOMMENDATION),
-                "evaluation_manifest": manifest_paths.get(_STAGE_EVALUATION),
-                "candidate_generation_manifest": manifest_paths.get(
-                    _STAGE_CANDIDATE_GENERATION
-                ),
-            }
-        )
+        replay_artifacts = {
+            "signals": signals_path,
+            "strategy_config": strategy_config_path,
+            "gate_policy": gate_policy_path,
+            "walkforward_results": walk_results_path,
+            "baseline_evaluation_report": baseline_report_path,
+            "evaluation_report": evaluation_report_path,
+            "gate_report": gate_report_path,
+            "profitability_benchmark": profitability_benchmark_path,
+            "profitability_evidence": profitability_evidence_path,
+            "profitability_validation": profitability_validation_path,
+            "janus_event_car": janus_event_car_path,
+            "janus_hgrm_reward": janus_hgrm_reward_path,
+            "recalibration_report": recalibration_report_path,
+            "promotion_gate": promotion_gate_path,
+            "promotion_recommendation": promotion_recommendation_path,
+            "recommendation_manifest": manifest_paths.get(_STAGE_RECOMMENDATION),
+            "evaluation_manifest": manifest_paths.get(_STAGE_EVALUATION),
+            "candidate_generation_manifest": manifest_paths.get(
+                _STAGE_CANDIDATE_GENERATION
+            ),
+        }
+        replay_artifact_hashes = _artifact_hashes(replay_artifacts)
         research_spec["stage_lineage"] = stage_lineage_payload
         research_spec["stage_trace_ids"] = dict(stage_trace_ids)
         research_spec["stage_lineage_root"] = (
@@ -1272,6 +1271,11 @@ def run_autonomous_lane(
         }
         research_spec["artifacts"] = {
             **research_spec["artifacts"],
+            **{
+                key: str(artifact_path)
+                for key, artifact_path in replay_artifacts.items()
+                if artifact_path is not None
+            },
             "promotion_recommendation": str(promotion_recommendation_path),
             _STAGE_CANDIDATE_GENERATION: str(manifest_paths[_STAGE_CANDIDATE_GENERATION]),
             _STAGE_EVALUATION: str(manifest_paths[_STAGE_EVALUATION]),
@@ -1407,6 +1411,7 @@ def run_autonomous_lane(
             stage_lineage_payload=(
                 stage_lineage_payload
             ),
+            stage_manifest_refs=research_spec["stage_manifest_refs"],
             replay_artifact_hashes=replay_artifact_hashes,
         )
         _mark_run_passed_if_requested(
@@ -2161,6 +2166,7 @@ def _persist_run_outputs_if_requested(
     recommendation_trace_id: str,
     stage_trace_ids: dict[str, str],
     stage_lineage_payload: dict[str, Any],
+    stage_manifest_refs: dict[str, str],
     replay_artifact_hashes: dict[str, str],
 ) -> None:
     if not persist_results:
@@ -2191,6 +2197,7 @@ def _persist_run_outputs_if_requested(
         recommendation_trace_id=recommendation_trace_id,
         stage_trace_ids=stage_trace_ids,
         stage_lineage_payload=stage_lineage_payload,
+        stage_manifest_refs=stage_manifest_refs,
         replay_artifact_hashes=replay_artifact_hashes,
     )
 
@@ -2399,6 +2406,7 @@ def _persist_run_outputs(
     recommendation_trace_id: str,
     stage_trace_ids: dict[str, str],
     stage_lineage_payload: dict[str, Any],
+    stage_manifest_refs: dict[str, str],
     replay_artifact_hashes: dict[str, str],
 ) -> None:
     robustness_by_fold = {fold.fold_name: fold for fold in report.robustness.folds}
@@ -2453,6 +2461,7 @@ def _persist_run_outputs(
                 "gate_reasons": sorted(set(promotion_reasons)),
                 "stage_lineage": stage_lineage_payload,
                 "stage_trace_ids": dict(stage_trace_ids),
+                "stage_manifest_refs": dict(stage_manifest_refs),
                 "replay_artifact_hashes": replay_artifact_hashes,
                 "existing_champion_candidate_id": (
                     existing_champion.candidate_id
@@ -2571,6 +2580,7 @@ def _persist_run_outputs(
                 "actuation_allowed": effective_promotion_allowed,
                 "stage_lineage": stage_lineage_payload,
                 "stage_trace_ids": dict(stage_trace_ids),
+                "stage_manifest_refs": dict(stage_manifest_refs),
                 "replay_artifact_hashes": replay_artifact_hashes,
                 "reasons": list(promotion_recommendation.evidence.reasons),
                 "actuation_intent_artifact": (

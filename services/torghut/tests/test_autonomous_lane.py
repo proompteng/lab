@@ -904,9 +904,9 @@ class TestAutonomousLane(TestCase):
                 result.stage_lineage_root,
             )
             self.assertIn("stages", candidate_spec["stage_lineage"])
-            self.assertIn("candidate_generation_manifest", candidate_spec["artifacts"])
-            self.assertIn("evaluation_manifest", candidate_spec["artifacts"])
-            self.assertIn("recommendation_manifest", candidate_spec["artifacts"])
+            self.assertIn("candidate-generation", candidate_spec["artifacts"])
+            self.assertIn("evaluation", candidate_spec["artifacts"])
+            self.assertIn("promotion-recommendation", candidate_spec["artifacts"])
             self.assertIn("promotion_recommendation", candidate_spec["artifacts"])
             self.assertIn(
                 "candidate-generation", candidate_spec["stage_trace_ids"],
@@ -922,10 +922,24 @@ class TestAutonomousLane(TestCase):
                 result.stage_trace_ids,
             )
             self.assertIn("replay_artifact_hashes", candidate_spec)
+            artifact_paths = dict(candidate_spec["artifacts"])
+            artifact_paths.update(
+                {
+                    "candidate_generation_manifest": candidate_spec["stage_manifest_refs"][
+                        "candidate-generation"
+                    ],
+                    "evaluation_manifest": candidate_spec["stage_manifest_refs"][
+                        "evaluation"
+                    ],
+                    "recommendation_manifest": candidate_spec["stage_manifest_refs"][
+                        "promotion-recommendation"
+                    ],
+                }
+            )
             for artifact_key, expected_hash in candidate_spec[
                 "replay_artifact_hashes"
             ].items():
-                artifact_path = candidate_spec["artifacts"].get(artifact_key)
+                artifact_path = artifact_paths.get(artifact_key)
                 self.assertIsNotNone(
                     artifact_path, f"artifact {artifact_key} should be present"
                 )
