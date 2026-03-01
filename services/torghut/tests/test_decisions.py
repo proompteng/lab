@@ -651,6 +651,41 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(params.get('route_regime_label'), 'trend')
         self.assertEqual(params.get('regime_label'), 'trend')
 
+    def test_decision_regime_route_label_falls_back_to_nested_legacy_regime(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='regime-hmm-nested-fallback',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+                'regime': {'label': '  TREND  '},
+                'hmm_regime_id': 'not-a-regime-id',
+            },
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        params = decisions[0].params
+        self.assertEqual(params.get('route_regime_label'), 'trend')
+        self.assertEqual(params.get('regime_label'), 'trend')
+        regime_payload = params.get('regime_hmm')
+        self.assertIsInstance(regime_payload, dict)
+        self.assertEqual(regime_payload.get('regime_id'), 'not-a-regime-id')
+
     def test_decision_regime_route_label_falls_back_when_hmm_stale(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(

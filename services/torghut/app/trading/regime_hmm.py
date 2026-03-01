@@ -163,6 +163,10 @@ def resolve_regime_route_label(
         if explicit_value:
             return explicit_value.lower()
 
+    legacy_label = resolve_legacy_regime_label(payload)
+    if legacy_label is not None:
+        return legacy_label
+
     if macd is None or macd_signal is None:
         return "unknown"
     spread = macd - macd_signal
