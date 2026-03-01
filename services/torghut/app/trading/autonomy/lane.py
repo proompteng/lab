@@ -513,6 +513,9 @@ def run_autonomous_lane(
     )
     resolved_governance_base = governance_context["execution_context"].get("base")
     resolved_governance_head = governance_context["execution_context"].get("head")
+    resolved_governance_priority_id = governance_context["execution_context"].get(
+        "priorityId"
+    )
     promotion_recommendation_path = gates_dir / "promotion-recommendation.json"
     stage_records: list[_StageManifestRecord] = []
     manifest_paths: dict[str, Path] = {}
@@ -1306,7 +1309,9 @@ def run_autonomous_lane(
             repository=cast(str, resolved_governance_repository),
             base=cast(str, resolved_governance_base),
             head=cast(str, resolved_governance_head),
-            priority_id=priority_id,
+            priority_id=cast(str, resolved_governance_priority_id)
+            if resolved_governance_priority_id
+            else None,
         )
 
         actuation_allowed = (
@@ -1359,7 +1364,9 @@ def run_autonomous_lane(
             governance_artifact_path=(
                 notes_artifact_root if notes_artifact_root else str(output_dir)
             ),
-            priority_id=priority_id,
+            priority_id=cast(str, resolved_governance_priority_id)
+            if resolved_governance_priority_id
+            else None,
             governance_change=governance_change,
             governance_reason=(
                 governance_reason
