@@ -1,3 +1,5 @@
+import { isCelError, run as runCel, type CelInput } from '@bufbuild/cel'
+import { Effect } from 'effect'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { type createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
@@ -13,10 +15,14 @@ import { collectBlockedSecrets, resolveAuthSecretConfig, resolveVcsContext } fro
 import {
   normalizeWorkflowStatus,
   parseWorkflowSteps,
+  resolveWorkflowLoopStatusHistoryLimit,
   setWorkflowPhase,
   setWorkflowStepPhase,
   shouldRetryStep,
   validateWorkflowSteps,
+  type WorkflowLoopSpec,
+  type WorkflowLoopStatus,
+  type WorkflowStepStatus,
   type WorkflowStepSpec,
 } from './workflow'
 
@@ -58,6 +64,172 @@ type WorkflowReconcilerDependencies = {
   normalizeLabelValue: (value: string) => string
   isJobComplete: (job: Record<string, unknown>) => boolean
   isJobFailed: (job: Record<string, unknown>) => boolean
+}
+
+const LOOP_CONTROL_ANNOTATION = 'agents.proompteng.ai/loop-control'
+
+type LoopConditionEvaluationContext = {
+  index: number
+  maxIterations: number
+  phase: 'Succeeded' | 'Failed' | 'Cancelled'
+  control: Record<string, unknown>
+}
+
+const toCelInput = (value: unknown): CelInput => {
+  if (value === null) return null
+  if (typeof value === 'string' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return value
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => toCelInput(entry))
+  }
+  if (typeof value === 'object') {
+    const output: Record<string, CelInput> = {}
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      output[key] = toCelInput(entry)
+    }
+    return output
+  }
+  return null
+}
+
+const buildLoopConditionBindings = (context: LoopConditionEvaluationContext) => ({
+  iteration: {
+    index: context.index,
+    maxIterations: context.maxIterations,
+    last: {
+      phase: context.phase,
+      control: toCelInput(context.control),
+    },
+  },
+})
+
+const evaluateLoopConditionExpression = (expression: string, context: LoopConditionEvaluationContext) => {
+  return Effect.runSync(
+    Effect.gen(function* () {
+      const result = yield* Effect.try({
+        try: () => runCel(expression, buildLoopConditionBindings(context)),
+        catch: (error) =>
+          new Error(
+            `failed to evaluate loop condition expression: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+      })
+      if (isCelError(result)) {
+        return yield* Effect.fail(new Error(result.message))
+      }
+      if (typeof result !== 'boolean') {
+        return yield* Effect.fail(new Error(`loop condition expression must evaluate to bool, got ${typeof result}`))
+      }
+      return { ok: true as const, value: result }
+    }).pipe(
+      Effect.catchAll((error) =>
+        Effect.succeed({
+          ok: false as const,
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      ),
+    ),
+  )
+}
+
+const ensureWorkflowLoopStatus = (stepStatus: WorkflowStepStatus, loopSpec: WorkflowLoopSpec): WorkflowLoopStatus => {
+  const existing = stepStatus.loop
+  if (existing) {
+    existing.maxIterations = loopSpec.maxIterations
+    if (existing.currentIteration < 1) {
+      existing.currentIteration = Math.max(1, existing.completedIterations + 1)
+    }
+    if (!Array.isArray(existing.iterations)) {
+      existing.iterations = []
+    }
+    existing.retainedIterations = existing.iterations.length
+    return existing
+  }
+  const created: WorkflowLoopStatus = {
+    currentIteration: 1,
+    completedIterations: 0,
+    maxIterations: loopSpec.maxIterations,
+    retainedIterations: 0,
+    prunedIterations: 0,
+    iterations: [],
+  }
+  stepStatus.loop = created
+  return created
+}
+
+const compactWorkflowLoopIterations = (loopStatus: WorkflowLoopStatus) => {
+  const limit = resolveWorkflowLoopStatusHistoryLimit()
+  if (loopStatus.iterations.length <= limit) {
+    loopStatus.retainedIterations = loopStatus.iterations.length
+    return
+  }
+  const removed = loopStatus.iterations.length - limit
+  const dropped = loopStatus.iterations.slice(0, removed)
+  const kept = loopStatus.iterations.slice(removed)
+  const latestTerminalDropped = [...dropped]
+    .reverse()
+    .find((entry) => entry.phase === 'Failed' || entry.phase === 'Cancelled')
+  if (latestTerminalDropped && !kept.some((entry) => entry.index === latestTerminalDropped.index)) {
+    kept[0] = latestTerminalDropped
+    kept.sort((a, b) => a.index - b.index)
+  }
+  loopStatus.prunedIterations += removed
+  loopStatus.iterations = kept
+  loopStatus.retainedIterations = kept.length
+}
+
+const upsertWorkflowLoopIteration = (
+  loopStatus: WorkflowLoopStatus,
+  iterationIndex: number,
+  update: Partial<WorkflowLoopStatus['iterations'][number]>,
+) => {
+  const existing = loopStatus.iterations.find((item) => item.index === iterationIndex)
+  if (existing) {
+    Object.assign(existing, update)
+  } else {
+    loopStatus.iterations.push({
+      index: iterationIndex,
+      phase: update.phase ?? 'Pending',
+      attempts: update.attempts ?? 0,
+      startedAt: update.startedAt,
+      finishedAt: update.finishedAt,
+      message: update.message,
+      jobRef: update.jobRef,
+    })
+  }
+  loopStatus.iterations.sort((a, b) => a.index - b.index)
+  compactWorkflowLoopIterations(loopStatus)
+}
+
+const parseLoopControlPayload = (job: Record<string, unknown>) => {
+  const raw = asString(readNested(job, ['metadata', 'annotations', LOOP_CONTROL_ANNOTATION]))
+  if (!raw) {
+    return { kind: 'missing' as const }
+  }
+  return Effect.runSync(
+    Effect.gen(function* () {
+      const parsed = yield* Effect.try({
+        try: () => JSON.parse(raw) as unknown,
+        catch: (error) =>
+          new Error(`invalid loop control annotation JSON: ${error instanceof Error ? error.message : String(error)}`),
+      })
+      const control = asRecord(parsed)
+      if (!control) {
+        return yield* Effect.fail(new Error('loop control annotation must be a JSON object'))
+      }
+      return { kind: 'ok' as const, control }
+    }).pipe(
+      Effect.catchAll((error) =>
+        Effect.succeed({
+          kind: 'invalid' as const,
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      ),
+    ),
+  )
 }
 
 export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) => {
@@ -228,7 +400,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
     const workflowSteps = parseWorkflowSteps(agentRun)
     const baseWorkload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
-    const workflowValidation = validateWorkflowSteps(workflowSteps)
+    const workflowValidation = validateWorkflowSteps(workflowSteps, { baseWorkload })
     const conditions = deps.buildConditions(agentRun)
 
     if (!workflowValidation.ok) {
@@ -333,12 +505,17 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     for (let index = 0; index < workflowSteps.length; index += 1) {
       const stepSpec = workflowSteps[index]
       const stepStatus = workflowStatus.steps[index]
+      const loopSpec = stepSpec.loop
+      const loopStatus = loopSpec ? ensureWorkflowLoopStatus(stepStatus, loopSpec) : null
       if (stepStatus.phase === 'Succeeded') {
         continue
       }
       const maxAttempts = stepSpec.retries + 1
 
       if (stepStatus.phase === 'Failed') {
+        if (loopStatus && !loopStatus.stopReason) {
+          loopStatus.stopReason = 'LoopIterationFailed'
+        }
         workflowFailure = {
           reason: 'WorkflowStepFailed',
           message: `workflow step ${stepSpec.name} failed`,
@@ -357,9 +534,25 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
 
       if (stepStatus.phase === 'Pending' || stepStatus.phase === 'Retrying') {
         const attempt = stepStatus.attempt + 1
+        const iterationIndex = loopStatus
+          ? Math.max(1, loopStatus.currentIteration || loopStatus.completedIterations + 1)
+          : 0
+        if (loopStatus) {
+          loopStatus.currentIteration = iterationIndex
+        }
         if (attempt > maxAttempts) {
           setWorkflowStepPhase(stepStatus, 'Failed', 'Retry limit exceeded')
           stepStatus.finishedAt = deps.nowIso()
+          if (loopStatus) {
+            upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+              phase: 'Failed',
+              attempts: stepStatus.attempt,
+              finishedAt: stepStatus.finishedAt,
+              message: 'Retry limit exceeded',
+              jobRef: stepStatus.jobRef,
+            })
+            loopStatus.stopReason = 'LoopIterationFailed'
+          }
           workflowFailure = {
             reason: 'WorkflowStepRetriesExhausted',
             message: `workflow step ${stepSpec.name} exceeded retry limit`,
@@ -442,10 +635,13 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         if (stepVcs.status) {
           vcsStatus = stepVcs.status
         }
-        const jobSuffix = `step-${index + 1}-attempt-${attempt}`
+        const jobSuffix = loopStatus
+          ? `step-${index + 1}-iter-${iterationIndex}-attempt-${attempt}`
+          : `step-${index + 1}-attempt-${attempt}`
         const stepLabels = {
           'agents.proompteng.ai/step': deps.normalizeLabelValue(stepSpec.name),
           'agents.proompteng.ai/step-index': String(index + 1),
+          ...(loopStatus ? { 'agents.proompteng.ai/step-iteration': String(iterationIndex) } : {}),
         }
         const stepRuntimeRef = await deps.submitJobRun(
           kube,
@@ -470,14 +666,27 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
           },
         )
 
+        const startedAt = deps.nowIso()
         stepStatus.attempt = attempt
-        stepStatus.startedAt = deps.nowIso()
+        stepStatus.startedAt = startedAt
         stepStatus.finishedAt = undefined
         stepStatus.nextRetryAt = undefined
+        stepStatus.jobObservedAt = undefined
         stepStatus.jobRef = {
           name: asString(stepRuntimeRef.name) ?? '',
           namespace: asString(stepRuntimeRef.namespace) ?? namespace,
           uid: asString(stepRuntimeRef.uid) ?? undefined,
+        }
+        if (loopStatus) {
+          loopStatus.stopReason = undefined
+          upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+            phase: 'Running',
+            attempts: attempt,
+            startedAt,
+            finishedAt: undefined,
+            message: undefined,
+            jobRef: stepStatus.jobRef,
+          })
         }
         setWorkflowStepPhase(stepStatus, 'Running')
         runtimeRefUpdate = buildRuntimeRef('workflow', asString(stepRuntimeRef.name) ?? '', namespace, {
@@ -490,6 +699,9 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
       }
 
       if (stepStatus.phase === 'Running') {
+        const iterationIndex = loopStatus
+          ? Math.max(1, loopStatus.currentIteration || loopStatus.completedIterations + 1)
+          : 0
         if (stepSpec.timeoutSeconds > 0) {
           const startedAt = stepStatus.startedAt
           const startTime = startedAt ? Date.parse(startedAt) : Number.NaN
@@ -501,11 +713,32 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
                 stepSpec.retryBackoffSeconds > 0
                   ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
                   : deps.nowIso()
+              if (loopStatus) {
+                upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+                  phase: 'Running',
+                  attempts: stepStatus.attempt,
+                  startedAt: stepStatus.startedAt,
+                  finishedAt: stepStatus.finishedAt,
+                  message: 'Step timed out; retrying',
+                  jobRef: stepStatus.jobRef,
+                })
+              }
               workflowRunning = true
               break
             }
             setWorkflowStepPhase(stepStatus, 'Failed', 'Step timed out')
             stepStatus.finishedAt = deps.nowIso()
+            if (loopStatus) {
+              upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+                phase: 'Failed',
+                attempts: stepStatus.attempt,
+                startedAt: stepStatus.startedAt,
+                finishedAt: stepStatus.finishedAt,
+                message: 'Step timed out',
+                jobRef: stepStatus.jobRef,
+              })
+              loopStatus.stopReason = 'LoopIterationFailed'
+            }
             workflowFailure = {
               reason: 'WorkflowStepTimedOut',
               message: `workflow step ${stepSpec.name} timed out`,
@@ -517,6 +750,17 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         if (!jobName) {
           setWorkflowStepPhase(stepStatus, 'Failed', 'Job reference missing')
           stepStatus.finishedAt = deps.nowIso()
+          if (loopStatus) {
+            upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+              phase: 'Failed',
+              attempts: stepStatus.attempt,
+              startedAt: stepStatus.startedAt,
+              finishedAt: stepStatus.finishedAt,
+              message: 'Job reference missing',
+              jobRef: stepStatus.jobRef,
+            })
+            loopStatus.stopReason = 'LoopIterationFailed'
+          }
           workflowFailure = {
             reason: 'WorkflowJobMissing',
             message: `workflow step ${stepSpec.name} is missing a job reference`,
@@ -548,11 +792,32 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
               stepSpec.retryBackoffSeconds > 0
                 ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
                 : deps.nowIso()
+            if (loopStatus) {
+              upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+                phase: 'Running',
+                attempts: stepStatus.attempt,
+                startedAt: stepStatus.startedAt,
+                finishedAt: stepStatus.finishedAt,
+                message: 'Job missing; retrying',
+                jobRef: stepStatus.jobRef,
+              })
+            }
             workflowRunning = true
             break
           }
           setWorkflowStepPhase(stepStatus, 'Failed', 'Job missing')
           stepStatus.finishedAt = deps.nowIso()
+          if (loopStatus) {
+            upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+              phase: 'Failed',
+              attempts: stepStatus.attempt,
+              startedAt: stepStatus.startedAt,
+              finishedAt: stepStatus.finishedAt,
+              message: 'Job missing',
+              jobRef: stepStatus.jobRef,
+            })
+            loopStatus.stopReason = 'LoopIterationFailed'
+          }
           workflowFailure = {
             reason: 'WorkflowJobMissing',
             message: `workflow step ${stepSpec.name} job ${jobName} not found`,
@@ -566,9 +831,124 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         const succeeded = Number(jobStatus.succeeded ?? 0)
         const failed = Number(jobStatus.failed ?? 0)
         if (succeeded > 0 || deps.isJobComplete(job)) {
+          const startedAt = asString(jobStatus.startTime) ?? stepStatus.startedAt ?? undefined
+          const finishedAt = asString(jobStatus.completionTime) ?? deps.nowIso()
+          if (loopStatus && loopSpec) {
+            loopStatus.currentIteration = iterationIndex
+            loopStatus.completedIterations = Math.max(loopStatus.completedIterations, iterationIndex)
+
+            let shouldContinue = false
+            let stopReason = 'LoopConditionFalse'
+            let conditionFailure: { reason: string; message: string } | null = null
+            if (loopStatus.completedIterations >= loopStatus.maxIterations) {
+              shouldContinue = false
+              stopReason = 'LoopMaxIterationsReached'
+            } else if (!loopSpec.condition) {
+              shouldContinue = true
+              stopReason = ''
+            } else {
+              const controlResult = parseLoopControlPayload(job)
+              let control: Record<string, unknown> = {}
+              if (controlResult.kind === 'missing') {
+                if (loopSpec.condition.source.onMissing === 'fail') {
+                  conditionFailure = {
+                    reason: 'WorkflowLoopConditionError',
+                    message: `workflow step ${stepSpec.name} loop control payload is missing`,
+                  }
+                } else {
+                  shouldContinue = false
+                  stopReason = 'LoopConditionFalse'
+                  loopStatus.lastControl = undefined
+                }
+              } else if (controlResult.kind === 'invalid') {
+                if (loopSpec.condition.source.onInvalid === 'fail') {
+                  conditionFailure = {
+                    reason: 'WorkflowLoopConditionError',
+                    message: `workflow step ${stepSpec.name} ${controlResult.message}`,
+                  }
+                } else {
+                  shouldContinue = false
+                  stopReason = 'LoopConditionFalse'
+                  loopStatus.lastControl = undefined
+                }
+              } else {
+                control = controlResult.control
+                loopStatus.lastControl = control
+                const evaluated = evaluateLoopConditionExpression(loopSpec.condition.expression, {
+                  index: loopStatus.completedIterations,
+                  maxIterations: loopStatus.maxIterations,
+                  phase: 'Succeeded',
+                  control,
+                })
+                if (!evaluated.ok) {
+                  conditionFailure = {
+                    reason: 'WorkflowLoopConditionError',
+                    message: `workflow step ${stepSpec.name}: ${evaluated.message}`,
+                  }
+                } else {
+                  shouldContinue = evaluated.value
+                  stopReason = shouldContinue ? '' : 'LoopConditionFalse'
+                }
+              }
+            }
+
+            if (conditionFailure) {
+              setWorkflowStepPhase(stepStatus, 'Failed', conditionFailure.message)
+              stepStatus.startedAt = startedAt
+              stepStatus.finishedAt = finishedAt
+              loopStatus.stopReason = 'LoopConditionError'
+              upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+                phase: 'Failed',
+                attempts: stepStatus.attempt,
+                startedAt,
+                finishedAt,
+                message: conditionFailure.message,
+                jobRef: stepStatus.jobRef,
+              })
+              completedJobs.push({ job, namespace: jobNamespace })
+              workflowFailure = {
+                reason: conditionFailure.reason,
+                message: conditionFailure.message,
+              }
+              break
+            }
+
+            upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+              phase: 'Succeeded',
+              attempts: stepStatus.attempt,
+              startedAt,
+              finishedAt,
+              message: stopReason || undefined,
+              jobRef: stepStatus.jobRef,
+            })
+
+            if (shouldContinue) {
+              loopStatus.stopReason = undefined
+              loopStatus.currentIteration = loopStatus.completedIterations + 1
+              setWorkflowStepPhase(stepStatus, 'Pending', 'Loop continuing')
+              stepStatus.attempt = 0
+              stepStatus.startedAt = undefined
+              stepStatus.finishedAt = undefined
+              stepStatus.nextRetryAt = undefined
+              stepStatus.jobObservedAt = undefined
+              stepStatus.jobRef = undefined
+              completedJobs.push({ job, namespace: jobNamespace })
+              workflowRunning = true
+              break
+            }
+
+            setWorkflowStepPhase(stepStatus, 'Succeeded')
+            stepStatus.startedAt = startedAt
+            stepStatus.finishedAt = finishedAt
+            stepStatus.nextRetryAt = undefined
+            loopStatus.stopReason = stopReason || 'LoopConditionFalse'
+            completedJobs.push({ job, namespace: jobNamespace })
+            continue
+          }
+
           setWorkflowStepPhase(stepStatus, 'Succeeded')
-          stepStatus.startedAt = asString(jobStatus.startTime) ?? stepStatus.startedAt ?? undefined
-          stepStatus.finishedAt = asString(jobStatus.completionTime) ?? deps.nowIso()
+          stepStatus.startedAt = startedAt
+          stepStatus.finishedAt = finishedAt
           stepStatus.nextRetryAt = undefined
           completedJobs.push({ job, namespace: jobNamespace })
           continue
@@ -581,12 +961,33 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
               stepSpec.retryBackoffSeconds > 0
                 ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
                 : deps.nowIso()
+            if (loopStatus) {
+              upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+                phase: 'Running',
+                attempts: stepStatus.attempt,
+                startedAt: stepStatus.startedAt,
+                finishedAt: stepStatus.finishedAt,
+                message: 'Step failed; retrying',
+                jobRef: stepStatus.jobRef,
+              })
+            }
             completedJobs.push({ job, namespace: jobNamespace })
             workflowRunning = true
             break
           }
           setWorkflowStepPhase(stepStatus, 'Failed', 'Step failed')
           stepStatus.finishedAt = deps.nowIso()
+          if (loopStatus) {
+            upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+              phase: 'Failed',
+              attempts: stepStatus.attempt,
+              startedAt: stepStatus.startedAt,
+              finishedAt: stepStatus.finishedAt,
+              message: 'Step failed',
+              jobRef: stepStatus.jobRef,
+            })
+            loopStatus.stopReason = 'LoopIterationFailed'
+          }
           completedJobs.push({ job, namespace: jobNamespace })
           workflowFailure = {
             reason: 'WorkflowStepFailed',

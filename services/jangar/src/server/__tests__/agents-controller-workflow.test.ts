@@ -53,6 +53,7 @@ describe('agents controller workflow module', () => {
         retries: 0,
         retryBackoffSeconds: 4,
         timeoutSeconds: 11,
+        loop: null,
       },
     ])
   })
@@ -97,6 +98,7 @@ describe('agents controller workflow module', () => {
         retries: 0,
         retryBackoffSeconds: 0,
         timeoutSeconds: 0,
+        loop: null,
       },
       {
         name: 'build',
@@ -107,6 +109,7 @@ describe('agents controller workflow module', () => {
         retries: 0,
         retryBackoffSeconds: 0,
         timeoutSeconds: 0,
+        loop: null,
       },
     ]
 
@@ -131,6 +134,7 @@ describe('agents controller workflow module', () => {
         retries: 0,
         retryBackoffSeconds: 0,
         timeoutSeconds: 0,
+        loop: null,
       },
     ]
 
@@ -139,6 +143,87 @@ describe('agents controller workflow module', () => {
       reason: 'ParameterValueTooLarge',
       message: 'workflow step build: spec.parameters.bar exceeds 2048 bytes',
     })
+  })
+
+  it('validates loop state volume requirements for persistence', () => {
+    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    try {
+      const validSteps: WorkflowStepSpec[] = [
+        {
+          name: 'build',
+          implementationSpecRefName: null,
+          implementationInline: null,
+          parameters: {},
+          workload: null,
+          retries: 0,
+          retryBackoffSeconds: 0,
+          timeoutSeconds: 0,
+          loop: {
+            maxIterations: 2,
+            condition: null,
+            state: { required: true, volumeNames: ['workspace'] },
+          },
+        },
+      ]
+      expect(
+        validateWorkflowSteps(validSteps, {
+          baseWorkload: {
+            volumes: [{ type: 'pvc', name: 'workspace', claimName: 'workspace-pvc', mountPath: '/workspace' }],
+          },
+        }),
+      ).toEqual({ ok: true })
+
+      const missingVolume: WorkflowStepSpec[] = [
+        {
+          ...validSteps[0],
+          loop: {
+            maxIterations: 2,
+            condition: null,
+            state: { required: true, volumeNames: ['missing'] },
+          },
+        },
+      ]
+      expect(
+        validateWorkflowSteps(missingVolume, {
+          baseWorkload: {
+            volumes: [{ type: 'pvc', name: 'workspace', claimName: 'workspace-pvc', mountPath: '/workspace' }],
+          },
+        }),
+      ).toEqual({
+        ok: false,
+        reason: 'WorkflowLoopStateVolumeMissing',
+        message: 'workflow step build: loop.state.volumeNames references missing volume missing',
+      })
+
+      const nonPersistentVolume: WorkflowStepSpec[] = [
+        {
+          ...validSteps[0],
+          loop: {
+            maxIterations: 2,
+            condition: null,
+            state: { required: true, volumeNames: ['workspace'] },
+          },
+        },
+      ]
+      expect(
+        validateWorkflowSteps(nonPersistentVolume, {
+          baseWorkload: {
+            volumes: [{ type: 'emptyDir', name: 'workspace', mountPath: '/workspace' }],
+          },
+        }),
+      ).toEqual({
+        ok: false,
+        reason: 'WorkflowLoopStateVolumeNotPersistent',
+        message: 'workflow step build: loop.state.required requires at least one pvc volume with claimName',
+      })
+    } finally {
+      if (previousLoopsEnabled === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+      }
+    }
   })
 
   it('normalizes workflow status from existing values and defaults', () => {
@@ -155,6 +240,7 @@ describe('agents controller workflow module', () => {
         retries: 0,
         retryBackoffSeconds: 0,
         timeoutSeconds: 0,
+        loop: null,
       },
       {
         name: 'test',
@@ -165,6 +251,7 @@ describe('agents controller workflow module', () => {
         retries: 0,
         retryBackoffSeconds: 0,
         timeoutSeconds: 0,
+        loop: null,
       },
     ]
 

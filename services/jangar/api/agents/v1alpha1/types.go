@@ -130,7 +130,38 @@ type WorkflowStep struct {
 	Retries             int32             `json:"retries,omitempty"`
 	RetryBackoffSeconds int32             `json:"retryBackoffSeconds,omitempty"`
 	// +kubebuilder:validation:Minimum=0
-	TimeoutSeconds int32 `json:"timeoutSeconds,omitempty"`
+	TimeoutSeconds int32             `json:"timeoutSeconds,omitempty"`
+	Loop           *WorkflowLoopSpec `json:"loop,omitempty"`
+}
+
+type WorkflowLoopSpec struct {
+	// +kubebuilder:validation:Minimum=1
+	MaxIterations int32                      `json:"maxIterations"`
+	Condition     *WorkflowLoopConditionSpec `json:"condition,omitempty"`
+	State         *WorkflowLoopStateSpec     `json:"state,omitempty"`
+}
+
+type WorkflowLoopConditionSpec struct {
+	// +kubebuilder:validation:Enum=cel
+	Type       string                           `json:"type,omitempty"`
+	Expression string                           `json:"expression,omitempty"`
+	Source     *WorkflowLoopConditionSourceSpec `json:"source,omitempty"`
+}
+
+type WorkflowLoopConditionSourceSpec struct {
+	// +kubebuilder:validation:Enum=file
+	Type string `json:"type,omitempty"`
+	Path string `json:"path,omitempty"`
+	// +kubebuilder:validation:Enum=stop;fail
+	OnMissing string `json:"onMissing,omitempty"`
+	// +kubebuilder:validation:Enum=stop;fail
+	OnInvalid string `json:"onInvalid,omitempty"`
+}
+
+type WorkflowLoopStateSpec struct {
+	Required bool `json:"required,omitempty"`
+	// +kubebuilder:validation:MaxItems=20
+	VolumeNames []string `json:"volumeNames,omitempty"`
 }
 
 type WorkloadSpec struct {
@@ -208,11 +239,34 @@ type WorkflowStepStatus struct {
 	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 	// JobObservedAt is the time the controller first observed the Job backing this step.
 	// This must be part of the CRD schema so it is not pruned from status updates.
-	JobObservedAt      *metav1.Time `json:"jobObservedAt,omitempty"`
-	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
-	Message            string       `json:"message,omitempty"`
-	NextRetryAt        *metav1.Time `json:"nextRetryAt,omitempty"`
-	JobRef             *JobRef      `json:"jobRef,omitempty"`
+	JobObservedAt      *metav1.Time        `json:"jobObservedAt,omitempty"`
+	LastTransitionTime *metav1.Time        `json:"lastTransitionTime,omitempty"`
+	Message            string              `json:"message,omitempty"`
+	NextRetryAt        *metav1.Time        `json:"nextRetryAt,omitempty"`
+	JobRef             *JobRef             `json:"jobRef,omitempty"`
+	Loop               *WorkflowLoopStatus `json:"loop,omitempty"`
+}
+
+type WorkflowLoopStatus struct {
+	CurrentIteration    int32  `json:"currentIteration,omitempty"`
+	CompletedIterations int32  `json:"completedIterations,omitempty"`
+	MaxIterations       int32  `json:"maxIterations,omitempty"`
+	StopReason          string `json:"stopReason,omitempty"`
+	RetainedIterations  int32  `json:"retainedIterations,omitempty"`
+	PrunedIterations    int32  `json:"prunedIterations,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	LastControl map[string]apiextensionsv1.JSON `json:"lastControl,omitempty"`
+	Iterations  []WorkflowLoopIterationStatus   `json:"iterations,omitempty"`
+}
+
+type WorkflowLoopIterationStatus struct {
+	Index      int32        `json:"index,omitempty"`
+	Phase      string       `json:"phase,omitempty"`
+	Attempts   int32        `json:"attempts,omitempty"`
+	StartedAt  *metav1.Time `json:"startedAt,omitempty"`
+	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
+	Message    string       `json:"message,omitempty"`
+	JobRef     *JobRef      `json:"jobRef,omitempty"`
 }
 
 type JobRef struct {

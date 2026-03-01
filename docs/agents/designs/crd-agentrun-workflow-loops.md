@@ -330,6 +330,26 @@ kubectl -n agents get agentrun codex-loop-fixed -o yaml | rg -n "loop:|currentIt
 kubectl -n agents get job -l agents.proompteng.ai/agent-run=codex-loop-fixed
 ```
 
+## Example Manifests
+
+Use these chart examples as copy-paste baselines:
+
+- Fixed-count loop:
+  - `charts/agents/examples/agentrun-workflow-loop-fixed.yaml`
+- Conditional loop (CEL + control payload semantics):
+  - `charts/agents/examples/agentrun-workflow-loop-conditional.yaml`
+
+Apply and inspect:
+
+```bash
+kubectl -n agents apply -f charts/agents/examples/agentrun-workflow-loop-fixed.yaml
+kubectl -n agents apply -f charts/agents/examples/agentrun-workflow-loop-conditional.yaml
+
+kubectl -n agents get agentrun codex-workflow-loop-fixed -o yaml | rg -n "loop:|currentIteration|completedIterations|stopReason"
+kubectl -n agents get agentrun codex-workflow-loop-conditional -o yaml | rg -n "loop:|currentIteration|completedIterations|stopReason"
+kubectl -n agents get job -l agents.proompteng.ai/agent-run=codex-workflow-loop-conditional
+```
+
 ## Failure Modes and Mitigations
 
 - Unbounded runtime due to bad conditions:

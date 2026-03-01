@@ -2155,6 +2155,625 @@ describe('agents controller reconcileAgentRun', () => {
     expect(thirdSteps[1]?.phase).toBe('Succeeded')
   })
 
+  it('continues and stops loop workflow steps with CEL expressions', async () => {
+    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    try {
+      const jobStatuses = new Map<string, Record<string, unknown>>()
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        const applied = { ...resource, metadata: { ...metadata, uid } }
+        if (resource.kind === 'Job') {
+          const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
+          if (name) {
+            jobStatuses.set(name, applied)
+          }
+        }
+        return applied
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string, name: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return {
+              metadata: { name: 'provider-1' },
+              spec: { binary: '/usr/local/bin/agent-runner' },
+            }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          if (resource === 'job') {
+            return jobStatuses.get(name) ?? null
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'workflow', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workflow: {
+            steps: [
+              {
+                name: 'loop-step',
+                loop: {
+                  maxIterations: 3,
+                  condition: {
+                    type: 'cel',
+                    expression: 'iteration.index < iteration.maxIterations && iteration.last.control.continue == true',
+                    source: {
+                      type: 'file',
+                      path: '/workspace/.agentrun/loop-control.json',
+                      onMissing: 'stop',
+                      onInvalid: 'fail',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      })
+
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+      const firstStatus = getLastStatus(kube)
+      const firstWorkflow = firstStatus.workflow as Record<string, unknown>
+      const firstStep = ((firstWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      const firstJobName = (firstStep.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+      expect(firstJobName).toContain('iter-1')
+      expect(firstStep.phase).toBe('Running')
+
+      jobStatuses.set(firstJobName ?? '', {
+        ...jobStatuses.get(firstJobName ?? ''),
+        metadata: {
+          ...((jobStatuses.get(firstJobName ?? '')?.metadata as Record<string, unknown> | undefined) ?? {}),
+          annotations: { 'agents.proompteng.ai/loop-control': '{"continue":true}' },
+        },
+        status: { succeeded: 1, startTime: '2026-01-20T00:00:00Z', completionTime: '2026-01-20T00:01:00Z' },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        { ...agentRun, status: firstStatus },
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+
+      const secondStatus = getLastStatus(kube)
+      const secondWorkflow = secondStatus.workflow as Record<string, unknown>
+      const secondStep = ((secondWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      expect(secondStep.phase).toBe('Pending')
+      expect((secondStep.loop as Record<string, unknown> | undefined)?.currentIteration).toBe(2)
+      expect((secondStep.loop as Record<string, unknown> | undefined)?.completedIterations).toBe(1)
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        { ...agentRun, status: secondStatus },
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+
+      const thirdStatus = getLastStatus(kube)
+      const thirdWorkflow = thirdStatus.workflow as Record<string, unknown>
+      const thirdStep = ((thirdWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      const secondJobName = (thirdStep.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+      expect(thirdStep.phase).toBe('Running')
+      expect(secondJobName).toContain('iter-2')
+
+      jobStatuses.set(secondJobName ?? '', {
+        ...jobStatuses.get(secondJobName ?? ''),
+        metadata: {
+          ...((jobStatuses.get(secondJobName ?? '')?.metadata as Record<string, unknown> | undefined) ?? {}),
+          annotations: { 'agents.proompteng.ai/loop-control': '{"continue":false}' },
+        },
+        status: { succeeded: 1, startTime: '2026-01-20T00:02:00Z', completionTime: '2026-01-20T00:03:00Z' },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        { ...agentRun, status: thirdStatus },
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+
+      const fourthStatus = getLastStatus(kube)
+      const fourthWorkflow = fourthStatus.workflow as Record<string, unknown>
+      const fourthStep = ((fourthWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      expect(fourthStatus.phase).toBe('Succeeded')
+      expect(fourthWorkflow.phase).toBe('Succeeded')
+      expect(fourthStep.phase).toBe('Succeeded')
+      expect((fourthStep.loop as Record<string, unknown> | undefined)?.completedIterations).toBe(2)
+      expect((fourthStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionFalse')
+    } finally {
+      if (previousLoopsEnabled === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+      }
+    }
+  })
+
+  it('stops loop when control payload is missing and onMissing=stop', async () => {
+    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    try {
+      const jobStatuses = new Map<string, Record<string, unknown>>()
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        const applied = { ...resource, metadata: { ...metadata, uid } }
+        if (resource.kind === 'Job') {
+          const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
+          if (name) {
+            jobStatuses.set(name, applied)
+          }
+        }
+        return applied
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string, name: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return {
+              metadata: { name: 'provider-1' },
+              spec: { binary: '/usr/local/bin/agent-runner' },
+            }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          if (resource === 'job') {
+            return jobStatuses.get(name) ?? null
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'workflow', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workflow: {
+            steps: [
+              {
+                name: 'loop-step',
+                loop: {
+                  maxIterations: 5,
+                  condition: {
+                    type: 'cel',
+                    expression: 'iteration.last.control.continue == true',
+                    source: {
+                      type: 'file',
+                      onMissing: 'stop',
+                      onInvalid: 'fail',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      })
+
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      const firstStatus = getLastStatus(kube)
+      const firstWorkflow = firstStatus.workflow as Record<string, unknown>
+      const firstStep = ((firstWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      const firstJobName = (firstStep.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+      expect(firstJobName).toContain('iter-1')
+
+      jobStatuses.set(firstJobName ?? '', {
+        ...jobStatuses.get(firstJobName ?? ''),
+        status: { succeeded: 1, startTime: '2026-01-20T00:00:00Z', completionTime: '2026-01-20T00:01:00Z' },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        { ...agentRun, status: firstStatus },
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+
+      const secondStatus = getLastStatus(kube)
+      const secondWorkflow = secondStatus.workflow as Record<string, unknown>
+      const secondStep = ((secondWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      expect(secondStatus.phase).toBe('Succeeded')
+      expect(secondWorkflow.phase).toBe('Succeeded')
+      expect(secondStep.phase).toBe('Succeeded')
+      expect((secondStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionFalse')
+      expect((secondStep.loop as Record<string, unknown> | undefined)?.completedIterations).toBe(1)
+    } finally {
+      if (previousLoopsEnabled === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+      }
+    }
+  })
+
+  it('fails loop when control payload is missing and onMissing=fail', async () => {
+    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    try {
+      const jobStatuses = new Map<string, Record<string, unknown>>()
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        const applied = { ...resource, metadata: { ...metadata, uid } }
+        if (resource.kind === 'Job') {
+          const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
+          if (name) {
+            jobStatuses.set(name, applied)
+          }
+        }
+        return applied
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string, name: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return {
+              metadata: { name: 'provider-1' },
+              spec: { binary: '/usr/local/bin/agent-runner' },
+            }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          if (resource === 'job') {
+            return jobStatuses.get(name) ?? null
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'workflow', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workflow: {
+            steps: [
+              {
+                name: 'loop-step',
+                loop: {
+                  maxIterations: 5,
+                  condition: {
+                    type: 'cel',
+                    expression: 'iteration.last.control.continue == true',
+                    source: {
+                      type: 'file',
+                      onMissing: 'fail',
+                      onInvalid: 'fail',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      })
+
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      const firstStatus = getLastStatus(kube)
+      const firstWorkflow = firstStatus.workflow as Record<string, unknown>
+      const firstStep = ((firstWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      const firstJobName = (firstStep.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+      expect(firstJobName).toContain('iter-1')
+
+      jobStatuses.set(firstJobName ?? '', {
+        ...jobStatuses.get(firstJobName ?? ''),
+        status: { succeeded: 1, startTime: '2026-01-20T00:00:00Z', completionTime: '2026-01-20T00:01:00Z' },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        { ...agentRun, status: firstStatus },
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+
+      const secondStatus = getLastStatus(kube)
+      const secondWorkflow = secondStatus.workflow as Record<string, unknown>
+      const secondStep = ((secondWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      expect(secondStatus.phase).toBe('Failed')
+      expect(secondWorkflow.phase).toBe('Failed')
+      expect(secondStep.phase).toBe('Failed')
+      expect(String(secondStep.message ?? '')).toContain('loop control payload is missing')
+      expect((secondStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionError')
+    } finally {
+      if (previousLoopsEnabled === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+      }
+    }
+  })
+
+  it('fails loop when control payload is invalid and onInvalid=fail', async () => {
+    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    try {
+      const jobStatuses = new Map<string, Record<string, unknown>>()
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        const applied = { ...resource, metadata: { ...metadata, uid } }
+        if (resource.kind === 'Job') {
+          const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
+          if (name) {
+            jobStatuses.set(name, applied)
+          }
+        }
+        return applied
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string, name: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return {
+              metadata: { name: 'provider-1' },
+              spec: { binary: '/usr/local/bin/agent-runner' },
+            }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          if (resource === 'job') {
+            return jobStatuses.get(name) ?? null
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'workflow', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workflow: {
+            steps: [
+              {
+                name: 'loop-step',
+                loop: {
+                  maxIterations: 5,
+                  condition: {
+                    type: 'cel',
+                    expression: 'iteration.last.control.continue == true',
+                    source: {
+                      type: 'file',
+                      onMissing: 'stop',
+                      onInvalid: 'fail',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      })
+
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      const firstStatus = getLastStatus(kube)
+      const firstWorkflow = firstStatus.workflow as Record<string, unknown>
+      const firstStep = ((firstWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      const firstJobName = (firstStep.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+      expect(firstJobName).toContain('iter-1')
+
+      jobStatuses.set(firstJobName ?? '', {
+        ...jobStatuses.get(firstJobName ?? ''),
+        metadata: {
+          ...((jobStatuses.get(firstJobName ?? '')?.metadata as Record<string, unknown> | undefined) ?? {}),
+          annotations: { 'agents.proompteng.ai/loop-control': '{"continue":' },
+        },
+        status: { succeeded: 1, startTime: '2026-01-20T00:00:00Z', completionTime: '2026-01-20T00:01:00Z' },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        { ...agentRun, status: firstStatus },
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+
+      const secondStatus = getLastStatus(kube)
+      const secondWorkflow = secondStatus.workflow as Record<string, unknown>
+      const secondStep = ((secondWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      expect(secondStatus.phase).toBe('Failed')
+      expect(secondWorkflow.phase).toBe('Failed')
+      expect(secondStep.phase).toBe('Failed')
+      expect(String(secondStep.message ?? '')).toContain('invalid loop control annotation JSON')
+      expect((secondStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionError')
+    } finally {
+      if (previousLoopsEnabled === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+      }
+    }
+  })
+
+  it('stops loop at maxIterations when no condition is provided', async () => {
+    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    try {
+      const jobStatuses = new Map<string, Record<string, unknown>>()
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        const applied = { ...resource, metadata: { ...metadata, uid } }
+        if (resource.kind === 'Job') {
+          const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
+          if (name) {
+            jobStatuses.set(name, applied)
+          }
+        }
+        return applied
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string, name: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return {
+              metadata: { name: 'provider-1' },
+              spec: { binary: '/usr/local/bin/agent-runner' },
+            }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          if (resource === 'job') {
+            return jobStatuses.get(name) ?? null
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'workflow', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workflow: {
+            steps: [
+              {
+                name: 'loop-step',
+                loop: {
+                  maxIterations: 2,
+                },
+              },
+            ],
+          },
+        },
+      })
+
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      const firstStatus = getLastStatus(kube)
+      const firstWorkflow = firstStatus.workflow as Record<string, unknown>
+      const firstStep = ((firstWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      const firstJobName = (firstStep.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+      expect(firstJobName).toContain('iter-1')
+
+      jobStatuses.set(firstJobName ?? '', {
+        ...jobStatuses.get(firstJobName ?? ''),
+        status: { succeeded: 1, startTime: '2026-01-20T00:00:00Z', completionTime: '2026-01-20T00:01:00Z' },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        { ...agentRun, status: firstStatus },
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+      const secondStatus = getLastStatus(kube)
+      const secondWorkflow = secondStatus.workflow as Record<string, unknown>
+      const secondStep = ((secondWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      expect(secondStep.phase).toBe('Pending')
+      expect((secondStep.loop as Record<string, unknown> | undefined)?.currentIteration).toBe(2)
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        { ...agentRun, status: secondStatus },
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+      const thirdStatus = getLastStatus(kube)
+      const thirdWorkflow = thirdStatus.workflow as Record<string, unknown>
+      const thirdStep = ((thirdWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      const secondJobName = (thirdStep.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+      expect(secondJobName).toContain('iter-2')
+
+      jobStatuses.set(secondJobName ?? '', {
+        ...jobStatuses.get(secondJobName ?? ''),
+        status: { succeeded: 1, startTime: '2026-01-20T00:02:00Z', completionTime: '2026-01-20T00:03:00Z' },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        { ...agentRun, status: thirdStatus },
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+
+      const fourthStatus = getLastStatus(kube)
+      const fourthWorkflow = fourthStatus.workflow as Record<string, unknown>
+      const fourthStep = ((fourthWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+      expect(fourthStatus.phase).toBe('Succeeded')
+      expect(fourthWorkflow.phase).toBe('Succeeded')
+      expect(fourthStep.phase).toBe('Succeeded')
+      expect((fourthStep.loop as Record<string, unknown> | undefined)?.completedIterations).toBe(2)
+      expect((fourthStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopMaxIterationsReached')
+    } finally {
+      if (previousLoopsEnabled === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+      }
+    }
+  })
+
   it('waits for workflow job creation before reconciling status', async () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {

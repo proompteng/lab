@@ -1,0 +1,51 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: codex-workflow-loop-conditional
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-agent
+  implementationSpecRef:
+    name: codex-impl-sample
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 3600
+  workflow:
+    steps:
+      - name: implement
+        retries: 1
+        timeoutSeconds: 1800
+        parameters:
+          stage: implement
+        loop:
+          maxIterations: 8
+          condition:
+            type: cel
+            expression: 'iteration.index < iteration.maxIterations && iteration.last.control.continue == true'
+            source:
+              type: file
+              path: /workspace/.agentrun/loop-control.json
+              onMissing: stop
+              onInvalid: fail
+          state:
+            required: true
+            volumeNames:
+              - workspace
+  workload:
+    image: registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+    volumes:
+      - type: pvc
+        name: workspace
+        claimName: codex-loop-workspace
+        mountPath: /workspace
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/loop-conditional-example
+    issueNumber: '0'
+    issueTitle: 'Conditional loop workflow example'
