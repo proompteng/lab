@@ -108,6 +108,38 @@ Provide one of:
 
 Agent memory backends are configured separately via the `Memory` CRD.
 
+### Deterministic rollout on config/secret changes
+
+Control plane and controllers pods include rollout annotations only when `rolloutChecksums.enabled=true`.
+
+The chart always derives a checksum from an inline DB secret when `database.createSecret.enabled=true` because that secret content is chart-owned and deterministic.
+
+For other inputs, list the exact resources and checksums in values:
+
+- `rolloutChecksums.secrets`
+- `rolloutChecksums.configMaps`
+
+Example:
+
+```yaml
+rolloutChecksums:
+  enabled: true
+  secrets:
+    - name: agents-github-token-env
+      checksum: "d34db33f..." # checksum from external secret source of truth
+  configMaps:
+    - name: agents-runtime-env
+      namespace: agents
+      checksum: "a1b2c3d4..."
+```
+
+The chart merges these entries into pod annotations for both `Deployment/agents` and `Deployment/agents-controllers`.
+
+Limitations:
+
+- For external secret/configmap managers (ESO/ExternalSecrets, external controllers, etc.), Helm cannot safely read live object payloads during template rendering, so checksum updates must be supplied explicitly.
+- Include every secret/configmap that affects container runtime behavior; unmanaged edits to referenced values without matching checksums will not trigger rollout.
+
 ### Controller scope
 
 - Single namespace: default

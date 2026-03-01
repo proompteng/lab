@@ -254,6 +254,39 @@
       "additionalProperties": false
     },
     "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+    "rolloutChecksums": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "checksum"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "namespace": { "type": "string", "minLength": 1 },
+              "checksum": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "configMaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "checksum"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "namespace": { "type": "string", "minLength": 1 },
+              "checksum": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },
     "securityContext": { "type": "object" },
     "containerSecurityContext": { "type": "object" },

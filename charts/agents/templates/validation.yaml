@@ -25,6 +25,13 @@
 {{- $errors = append $errors "rbac.clusterScoped must be true when supportingController.namespaces includes '*' (wildcard)." -}}
 {{- end -}}
 
+{{- $rolloutChecksums := .Values.rolloutChecksums | default dict -}}
+{{- if $rolloutChecksums.enabled -}}
+{{- if and (not .Values.database.createSecret.enabled) (and (eq (len $rolloutChecksums.secrets) 0) (eq (len $rolloutChecksums.configMaps) 0)) -}}
+{{- $errors = append $errors "rolloutChecksums.enabled=true requires at least one checksum entry or database.createSecret.enabled=true." -}}
+{{- end -}}
+{{- end -}}
+
 {{- if gt (len $errors) 0 -}}
 {{- fail (printf "Agents chart values validation failed:\n- %s" (join "\n- " $errors)) -}}
 {{- end -}}

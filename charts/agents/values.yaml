@@ -146,6 +146,11 @@ limitRange:
 podAnnotations: {}
 podLabels: {}
 
+rolloutChecksums:
+  enabled: false
+  secrets: []
+  configMaps: []
+
 securityContext: {}
 containerSecurityContext: {}
 

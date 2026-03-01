@@ -41,6 +41,43 @@ app.kubernetes.io/name: {{ include "agents.controllersName" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- define "agents.rolloutChecksumAnnotations" -}}
+{{- if not .Values.rolloutChecksums.enabled -}}
+{{- else -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $annotations := dict -}}
+
+{{- if and .Values.database.createSecret.enabled .Values.database.url -}}
+{{- $dbSecretName := include "agents.databaseSecretName" . }}
+{{- $annotations = set $annotations (printf "checksum/secret/%s/%s" $namespace $dbSecretName) (sha256sum .Values.database.url) -}}
+{{- end -}}
+
+{{- range .Values.rolloutChecksums.secrets -}}
+{{- $secretName := .name | trim -}}
+{{- $checksum := .checksum | trim -}}
+{{- if and $secretName $checksum -}}
+{{- $secretNamespace := default $namespace .namespace -}}
+{{- $annotations = set $annotations (printf "checksum/secret/%s/%s" $secretNamespace $secretName) $checksum -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.rolloutChecksums.configMaps -}}
+{{- $configMapName := .name | trim -}}
+{{- $checksum := .checksum | trim -}}
+{{- if and $configMapName $checksum -}}
+{{- $configMapNamespace := default $namespace .namespace -}}
+{{- $annotations = set $annotations (printf "checksum/configmap/%s/%s" $configMapNamespace $configMapName) $checksum -}}
+{{- end -}}
+{{- end -}}
+
+{{- if gt (len $annotations) 0 -}}
+{{- range $annotationKey := sortAlpha (keys $annotations) -}}
+{{- printf "%s: %s\n" $annotationKey (index $annotations $annotationKey | quote) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "agents.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
 {{- if .Values.serviceAccount.name -}}
