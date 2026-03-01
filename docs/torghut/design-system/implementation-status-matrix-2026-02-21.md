@@ -5,7 +5,7 @@
 - audited every markdown design document under `docs/torghut/design-system/**`.
 - compared docs against implementation artifacts in `services/torghut/**`, `services/dorvud/**`, and `argocd/applications/torghut/**`.
 
-## Audit Addendum (2026-02-26 + 2026-03-01 iteration-10 hardening)
+## Audit Addendum (2026-02-26 + 2026-03-01 iteration-10+11 hardening)
 
 - Re-verified current code paths for:
   - signal continuity/freshness controls,
@@ -19,6 +19,7 @@
 - Performed a second strict-pass on `v2`/`v3` statuses and corrected stale `Not Implemented` and over-claimed `Implemented` rows where acceptance criteria are not yet fully satisfied.
 - Added `v1/index.md` and synchronized corpus-level counts so every versioned subtree has an index entry in both the matrix and audit.
 - Performed `iteration-10` hardening for sync metadata and row-level consistency checks across all status-bearing docs, matrix entries, and audit/index sources.
+- Performed `iteration-11` hardening for evidence-sync metadata, implementation-audit traceability, and status-bearing index synchronization.
 
 ## Strict Status Rules
 
