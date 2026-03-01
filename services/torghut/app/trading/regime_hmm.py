@@ -77,8 +77,23 @@ class HMMRegimeContext:
             self.has_regime
             and not self.guardrail.stale
             and not self.guardrail.fallback_to_defensive
+            and not self.transition_shock
             and _REGIME_ID_RE.match(self.regime_id) is not None
         )
+
+    @property
+    def authority_reason(self) -> str | None:
+        if self.has_regime and not _REGIME_ID_RE.match(self.regime_id):
+            return "invalid_regime_id"
+        if self.transition_shock:
+            return "transition_shock"
+        if self.guardrail.stale:
+            return "stale"
+        if self.guardrail.fallback_to_defensive:
+            return "fallback_to_defensive"
+        if not self.has_regime:
+            return "missing_regime"
+        return None
 
     def to_payload(self) -> dict[str, object]:
         return {

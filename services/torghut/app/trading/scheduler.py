@@ -2538,14 +2538,21 @@ class TradingPipeline:
                     or "regime_context_guardrail_stale"
                 ),
             )
-        if not regime_context.is_authoritative and regime_label is None:
+        if not regime_context.is_authoritative:
+            source = (
+                "regime_hmm_unknown_regime"
+                if regime_context.authority_reason in {"invalid_regime_id", "missing_regime"}
+                else "regime_hmm_non_authoritative"
+            )
             return RuntimeUncertaintyGate(
                 action="abstain",
-                source="regime_hmm_unknown_regime",
+                source=source,
                 regime_action_source="regime_hmm",
                 regime_stale=regime_stale,
                 reason=(
-                    regime_fallback or "regime_label_missing"
+                    regime_fallback
+                    if regime_fallback is not None
+                    else regime_context.authority_reason or "regime_hmm_non_authoritative"
                 ),
             )
         return RuntimeUncertaintyGate(

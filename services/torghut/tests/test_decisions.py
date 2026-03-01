@@ -686,3 +686,70 @@ class TestDecisionEngine(TestCase):
         params = decisions[0].params
         self.assertEqual(params.get('route_regime_label'), 'trend')
         self.assertEqual(params.get('regime_label'), 'trend')
+
+    def test_decision_regime_route_label_ignores_transition_shock(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='regime-hmm-transition-shock',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': Decimal('0.1'), 'signal': Decimal('0.5')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+                'regime_label': '  TREND  ',
+                'hmm_regime_id': 'R2',
+                'hmm_transition_shock': True,
+                'hmm_guardrail': {'stale': False, 'fallback_to_defensive': False},
+            },
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        params = decisions[0].params
+        self.assertEqual(params.get('route_regime_label'), 'trend')
+        self.assertEqual(params.get('regime_label'), 'trend')
+
+    def test_scheduler_runtime_mode_does_not_enable_without_migration_flag(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='runtime-disabled-no-flag',
+            description='version=1.0.0',
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_notional_per_trade=Decimal('500'),
+            max_position_pct_equity=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+            },
+        )
+        with (
+            patch.object(settings, 'trading_strategy_runtime_mode', 'scheduler_v3'),
+            patch.object(settings, 'trading_strategy_scheduler_enabled', False),
+            patch.object(settings, 'trading_strategy_runtime_fallback_legacy', True),
+        ):
+            decisions = engine.evaluate(signal, [strategy])
+            telemetry = engine.consume_runtime_telemetry()
+
+        self.assertEqual(len(decisions), 1)
+        self.assertFalse(telemetry.runtime_enabled)
+        self.assertEqual(telemetry.mode, 'legacy')
