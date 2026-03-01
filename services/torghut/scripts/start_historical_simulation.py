@@ -1847,6 +1847,8 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
             env=env,
         )
 
+    migration_error: Exception | None = None
+
     try:
         _run_with_transient_postgres_retry(
             label='run_migrations',
@@ -1856,13 +1858,14 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
     except RuntimeError as exc:
         if not _is_vector_extension_create_permission_error(exc):
             raise
+        migration_error = exc
 
     fallback_revision = _find_vector_extension_blocking_revision(repo_root)
     if fallback_revision is None:
         raise RuntimeError(
             'run_migrations_fallback_not_applicable: vector extension permission error occurred but '
             'a migration target for a pre-vector revision could not be discovered'
-        ) from exc
+        ) from migration_error
 
     fallback_command = _replace_alembic_upgrade_target(
         command=config.migrations_command,
@@ -1871,7 +1874,7 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
     if fallback_command is None:
         raise RuntimeError(
             f'run_migrations_fallback_target_parse_failed: command={config.migrations_command} target={fallback_revision}'
-        ) from exc
+        ) from migration_error
 
     _run_with_transient_postgres_retry(
         label='run_migrations_fallback_pre_vector',
