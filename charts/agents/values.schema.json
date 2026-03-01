@@ -264,8 +264,16 @@
             "type": "object",
             "required": ["name", "checksum"],
             "properties": {
-              "name": { "type": "string", "minLength": 1 },
-              "namespace": { "type": "string", "minLength": 1 },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+              },
               "checksum": { "type": "string", "minLength": 64, "pattern": "^[A-Fa-f0-9]{64}$" }
             },
             "additionalProperties": false
@@ -277,8 +285,16 @@
             "type": "object",
             "required": ["name", "checksum"],
             "properties": {
-              "name": { "type": "string", "minLength": 1 },
-              "namespace": { "type": "string", "minLength": 1 },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+              },
               "checksum": { "type": "string", "minLength": 64, "pattern": "^[A-Fa-f0-9]{64}$" }
             },
             "additionalProperties": false
