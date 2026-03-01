@@ -3,12 +3,12 @@ kind: ConfigMap
 metadata:
   name: huly-config
 data:
-  ACCOUNTS_URL: 'http://account.huly.proompteng.ai/'
-  COLLABORATOR_URL: 'ws://collaborator.huly.proompteng.ai/'
-  FRONT_URL: 'http://huly.proompteng.ai'
-  REKONI_URL: 'http://rekoni.huly.proompteng.ai/'
-  STATS_URL: 'http://stats.huly.proompteng.ai/'
-  TRANSACTOR_URL: 'ws://transactor;ws://transactor.huly.proompteng.ai/'
+  ACCOUNTS_URL: 'https://account.huly.proompteng.ai/'
+  COLLABORATOR_URL: 'wss://collaborator.huly.proompteng.ai/'
+  FRONT_URL: 'https://huly.proompteng.ai'
+  REKONI_URL: 'https://rekoni.huly.proompteng.ai/'
+  STATS_URL: 'https://stats.huly.proompteng.ai/'
+  TRANSACTOR_URL: 'wss://transactor;wss://transactor.huly.proompteng.ai/'
   MINIO_ENDPOINT: 'rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80'
   MONGO_URL: 'mongodb://mongodb:27017'
   ELASTIC_URL: 'http://elastic:9200'
