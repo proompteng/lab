@@ -122,7 +122,7 @@ class TestPolicyChecks(TestCase):
         self.assertIn("janus_event_car_artifact_missing", promotion.reasons)
         self.assertIn("janus_hgrm_reward_artifact_missing", promotion.reasons)
 
-    def test_promotion_prerequisites_skip_janus_when_profitability_gate_disabled(
+    def test_promotion_prerequisites_requires_janus_even_when_profitability_disabled(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -153,6 +153,50 @@ class TestPolicyChecks(TestCase):
                     "gate6_require_profitability_evidence": False,
                     "gate6_require_janus_evidence": True,
                     "promotion_require_janus_evidence": True,
+                    "promotion_janus_required_artifacts": [
+                        "gates/janus-event-car-v1.json",
+                        "gates/janus-hgrm-reward-v1.json",
+                    ],
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertTrue(any("janus" in reason for reason in promotion.reasons))
+        self.assertIn("required_artifacts_missing", promotion.reasons)
+        self.assertIn("janus_event_car_artifact_missing", promotion.reasons)
+        self.assertIn("janus_hgrm_reward_artifact_missing", promotion.reasons)
+
+    def test_promotion_prerequisites_skips_janus_when_not_required(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            gate_report = _gate_report()
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": True,
+                    "promotion_require_janus_evidence": False,
                 },
                 gate_report_payload=gate_report,
                 candidate_state_payload=_candidate_state(),
@@ -344,7 +388,11 @@ class TestPolicyChecks(TestCase):
             )
 
             promotion = evaluate_promotion_prerequisites(
-                policy_payload={"gate6_require_profitability_evidence": False},
+                policy_payload={
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                },
                 gate_report_payload=_gate_report(),
                 candidate_state_payload=_candidate_state(),
                 promotion_target="paper",

@@ -670,9 +670,9 @@ def _requires_janus_evidence(
 ) -> bool:
     if promotion_target == "shadow":
         return False
-    if not bool(policy_payload.get("gate6_require_profitability_evidence", True)):
-        return False
     if not bool(policy_payload.get("gate6_require_janus_evidence", True)):
+        return False
+    if not bool(policy_payload.get("promotion_require_janus_evidence", True)):
         return False
     required_targets_raw = policy_payload.get(
         "promotion_janus_required_targets", ["paper", "live"]

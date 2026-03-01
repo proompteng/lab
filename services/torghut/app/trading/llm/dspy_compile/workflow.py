@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
 from typing import Any, Literal, Mapping, cast
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import quote, urlencode, unquote, urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -40,6 +40,43 @@ _K8S_LABEL_VALUE_MAX_LENGTH = 63
 _IDEMPOTENCY_HASH_HEX_LENGTH = 10
 _PROMOTION_MIN_SCHEMA_VALID_RATE = 0.995
 _PROMOTION_MAX_FALLBACK_RATE = 0.05
+_PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS = 60 * 60 * 24
+_PROMOTION_EVIDENCE_OVERRIDE_KEYS = {
+    "gateCompatibility",
+    "schemaValidRate",
+    "deterministicCompatibility",
+    "fallbackRate",
+}
+
+
+def _normalize_local_path(candidate_ref: str) -> Path | None:
+    parsed_ref = urlsplit(candidate_ref)
+    if parsed_ref.scheme not in {"", "file"}:
+        return None
+    if parsed_ref.scheme == "file":
+        candidate = Path(unquote(parsed_ref.path))
+    else:
+        candidate = Path(candidate_ref)
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    return candidate.resolve()
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    parsed = value.strip()
+    if not parsed:
+        return None
+    if parsed.endswith("Z"):
+        parsed = f"{parsed[:-1]}+00:00"
+    try:
+        parsed_dt = datetime.fromisoformat(parsed)
+    except ValueError:
+        return None
+    if parsed_dt.tzinfo is None:
+        parsed_dt = parsed_dt.replace(tzinfo=timezone.utc)
+    return parsed_dt.astimezone(timezone.utc)
 
 
 def build_compile_result(
@@ -413,7 +450,7 @@ def submit_jangar_agentrun(
             "Idempotency-Key": idempotency_key,
             **({"Authorization": f"Bearer {auth_token}"} if auth_token else {}),
         },
-        body=json.dumps(dict(payload), sort_keys=True).encode("utf-8"),
+        body=json.dumps(dict(payload), sort_keys=True, default=str).encode("utf-8"),
         timeout_seconds=timeout_seconds,
     )
     if status < 200 or status >= 300:
@@ -510,6 +547,9 @@ def _lane_overrides_with_defaults(
     artifact_root: str,
 ) -> dict[str, Any]:
     normalized = dict(lane_overrides)
+    if lane == "promote":
+        for key in _PROMOTION_EVIDENCE_OVERRIDE_KEYS:
+            normalized.pop(key, None)
     if lane == "compile":
         normalized.setdefault(
             "datasetRef",
@@ -551,17 +591,21 @@ def _to_bool(value: Any) -> bool | None:
 
 
 def _json_copy(payload: Mapping[str, Any]) -> dict[str, Any]:
-    return json.loads(json.dumps(dict(payload), sort_keys=True))
+    return json.loads(
+        json.dumps(dict(payload), sort_keys=True, default=str)
+    )
 
 
 def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
-    parsed_ref = urlsplit(eval_report_ref)
-    if parsed_ref.scheme:
+    candidate = _normalize_local_path(eval_report_ref)
+    if candidate is None:
         return None
-    candidate = Path(eval_report_ref)
     if not candidate.exists() or not candidate.is_file():
         return None
-    payload_raw = json.loads(candidate.read_text(encoding="utf-8"))
+    try:
+        payload_raw = json.loads(candidate.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
     if not isinstance(payload_raw, dict):
         return None
     payload = cast(dict[str, Any], payload_raw)
@@ -570,7 +614,9 @@ def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
         dict[str, Any], metric_bundle.get("deterministicCompatibility") or {}
     )
     observed_metrics = cast(dict[str, Any], metric_bundle.get("observed") or {})
+    created_at = _parse_iso_datetime(payload.get("createdAt") or payload.get("created_at"))
     return {
+        "created_at": created_at,
         "gate_compatibility": str(payload.get("gateCompatibility") or "")
         .strip()
         .lower(),
@@ -584,52 +630,119 @@ def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
 
 def _resolve_promotion_gate_snapshot(
     lane_overrides: Mapping[str, Any],
+    *,
+    artifact_root: str,
 ) -> dict[str, Any]:
-    eval_report_ref = str(lane_overrides.get("evalReportRef") or "").strip()
-    snapshot = (
-        _load_eval_gate_snapshot(eval_report_ref) if eval_report_ref else None
-    ) or {}
-    snapshot["gate_compatibility"] = (
-        str(
-            lane_overrides.get("gateCompatibility")
-            or lane_overrides.get("evalGateCompatibility")
-            or snapshot.get("gate_compatibility")
-            or ""
-        )
-        .strip()
-        .lower()
+    expected_eval_report_ref = f"{artifact_root.rstrip('/')}/eval/dspy-eval-report.json"
+    requested_eval_report_ref = str(lane_overrides.get("evalReportRef") or "").strip()
+    snapshot = _load_eval_snapshot_for_promotion(
+        expected_eval_report_ref,
+        artifact_root=artifact_root,
+        requested_eval_report_ref=requested_eval_report_ref,
     )
-    snapshot["schema_valid_rate"] = (
-        _to_float(
-            lane_overrides.get("schemaValidRate")
-            or lane_overrides.get("evalSchemaValidRate")
-        )
-        if lane_overrides.get("schemaValidRate") is not None
-        or lane_overrides.get("evalSchemaValidRate") is not None
-        else snapshot.get("schema_valid_rate")
-    )
-    snapshot["deterministic_compatibility"] = (
-        _to_bool(
-            lane_overrides.get("deterministicCompatibility")
-            or lane_overrides.get("evalDeterministicCompatibility")
-        )
-        if lane_overrides.get("deterministicCompatibility") is not None
-        or lane_overrides.get("evalDeterministicCompatibility") is not None
-        else snapshot.get("deterministic_compatibility")
-    )
-    snapshot["fallback_rate"] = (
-        _to_float(
-            lane_overrides.get("fallbackRate") or lane_overrides.get("evalFallbackRate")
-        )
-        if lane_overrides.get("fallbackRate") is not None
-        or lane_overrides.get("evalFallbackRate") is not None
-        else snapshot.get("fallback_rate")
-    )
+    snapshot["expected_eval_report_ref"] = expected_eval_report_ref
+    snapshot["requested_eval_report_ref"] = requested_eval_report_ref
     return snapshot
 
 
-def _promotion_gate_failures(gate_snapshot: Mapping[str, Any]) -> list[str]:
+def _load_eval_snapshot_for_promotion(
+    eval_report_ref: str,
+    *,
+    artifact_root: str,
+    requested_eval_report_ref: str,
+) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {
+        "eval_report_ref": eval_report_ref,
+        "eval_report_trusted": True,
+    }
+    snapshot["requested_eval_report_ref"] = requested_eval_report_ref
+
+    artifact_root_path = Path(artifact_root).resolve()
+    expected_path = artifact_root_path / "eval" / "dspy-eval-report.json"
+
+    if requested_eval_report_ref:
+        requested_ref_path = _normalize_local_path(requested_eval_report_ref)
+        if requested_ref_path is None:
+            snapshot["eval_report_trusted"] = False
+            snapshot["eval_report_trust_reason"] = "reference_not_local"
+            snapshot["eval_report_loaded"] = False
+            return snapshot
+        if requested_ref_path != expected_path:
+            if not requested_ref_path.is_relative_to(artifact_root_path):
+                snapshot["eval_report_trusted"] = False
+                snapshot["eval_report_trust_reason"] = "outside_artifact_root"
+            else:
+                snapshot["eval_report_trusted"] = False
+                snapshot["eval_report_trust_reason"] = "reference_override_disallowed"
+            snapshot["eval_report_path"] = str(requested_ref_path)
+            snapshot["eval_report_loaded"] = False
+            return snapshot
+
+    resolved_ref_path = _normalize_local_path(eval_report_ref)
+    if resolved_ref_path is None:
+        snapshot["eval_report_trusted"] = False
+        snapshot["eval_report_trust_reason"] = "reference_not_local"
+        snapshot["eval_report_loaded"] = False
+        return snapshot
+
+    if not resolved_ref_path.is_relative_to(artifact_root_path):
+        snapshot["eval_report_trusted"] = False
+        snapshot["eval_report_trust_reason"] = "outside_artifact_root"
+        snapshot["eval_report_loaded"] = False
+        return snapshot
+
+    if resolved_ref_path != expected_path:
+        snapshot["eval_report_trusted"] = False
+        snapshot["eval_report_trust_reason"] = "reference_override_disallowed"
+        snapshot["eval_report_loaded"] = False
+        return snapshot
+
+    if not resolved_ref_path.exists() or not resolved_ref_path.is_file():
+        snapshot["eval_report_loaded"] = False
+        snapshot["eval_report_path"] = str(resolved_ref_path)
+        snapshot["eval_report_trust_reason"] = "missing_artifact"
+        return snapshot
+
+    snapshot["eval_report_path"] = str(resolved_ref_path)
+    artifact_snapshot = _load_eval_gate_snapshot(str(resolved_ref_path))
+    snapshot["eval_report_loaded"] = artifact_snapshot is not None
+    if artifact_snapshot is None:
+        snapshot["eval_report_trusted"] = False
+        snapshot["eval_report_trust_reason"] = "invalid_artifact"
+        return snapshot
+    snapshot.update(artifact_snapshot)
+    return snapshot
+
+
+def _promotion_gate_failures(
+    gate_snapshot: Mapping[str, Any], *, now: datetime
+) -> list[str]:
     failures: list[str] = []
+    if not gate_snapshot.get("eval_report_trusted", False):
+        trust_reason = str(gate_snapshot.get("eval_report_trust_reason") or "")
+        if trust_reason == "outside_artifact_root":
+            failures.append("eval_report_outside_artifact_root")
+        elif trust_reason == "reference_not_local":
+            failures.append("eval_report_reference_not_local")
+        elif trust_reason == "reference_override_disallowed":
+            failures.append("eval_report_reference_override_disallowed")
+        elif trust_reason == "missing_artifact":
+            failures.append("eval_report_not_found")
+        elif trust_reason == "invalid_artifact":
+            failures.append("eval_report_invalid_payload")
+        else:
+            failures.append("eval_report_not_trusted")
+    elif not gate_snapshot.get("eval_report_loaded", False):
+        failures.append("eval_report_not_found")
+
+    created_at = gate_snapshot.get("created_at")
+    if created_at is None:
+        failures.append("eval_report_created_at_missing")
+    elif not isinstance(created_at, datetime):
+        failures.append("eval_report_created_at_invalid")
+    elif (now - created_at).total_seconds() > _PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS:
+        failures.append("eval_report_stale")
+
     gate_compatibility = (
         str(gate_snapshot.get("gate_compatibility") or "").strip().lower()
     )
@@ -651,7 +764,9 @@ def _promotion_gate_failures(gate_snapshot: Mapping[str, Any]) -> list[str]:
         failures.append("deterministic_compatibility_failed")
 
     fallback_rate = _to_float(gate_snapshot.get("fallback_rate"))
-    if fallback_rate is not None and fallback_rate > _PROMOTION_MAX_FALLBACK_RATE:
+    if fallback_rate is None:
+        failures.append("fallback_rate_missing")
+    elif fallback_rate > _PROMOTION_MAX_FALLBACK_RATE:
         failures.append("fallback_rate_above_max")
     return failures
 
@@ -707,8 +822,14 @@ def orchestrate_dspy_agentrun_workflow(
         gate_snapshot: dict[str, Any] | None = None
 
         if lane == "promote":
-            gate_snapshot = _resolve_promotion_gate_snapshot(lane_overrides)
-            gate_failures = _promotion_gate_failures(gate_snapshot)
+            gate_snapshot = _resolve_promotion_gate_snapshot(
+                lane_overrides,
+                artifact_root=artifact_root_normalized,
+            )
+            gate_failures = _promotion_gate_failures(
+                gate_snapshot,
+                now=datetime.now(timezone.utc),
+            )
             if gate_failures:
                 run_key = f"{normalized_run_prefix}:{lane}"
                 idempotency_key = _sanitize_idempotency_key(

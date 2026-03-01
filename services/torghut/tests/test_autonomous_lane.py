@@ -10,7 +10,6 @@ from unittest.mock import patch
 from unittest import TestCase
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
-from yaml import safe_load
 
 from app.trading.autonomy.lane import (
     _resolve_gate_forecast_metrics,
@@ -34,6 +33,15 @@ from app.models import (
 
 
 class TestAutonomousLane(TestCase):
+    def _empty_session_factory(self) -> sessionmaker:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+        return sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
     def test_gate_forecast_metrics_are_derived_from_signals(self) -> None:
         signals = [
             SignalEnvelope(
@@ -103,13 +111,60 @@ class TestAutonomousLane(TestCase):
             )
         ]
 
-        state, score, stability = _resolve_gate_fragility_inputs(
+        state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
             metrics_payload=fallback_metrics, decisions=decisions
         )
 
         self.assertEqual(state, "crisis")
         self.assertEqual(score, Decimal("0.92"))
         self.assertTrue(stability)
+        self.assertTrue(inputs_valid)
+
+    def test_gate_fragility_inputs_fail_closed_on_missing_or_invalid_values(self) -> None:
+        state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
+            metrics_payload={},
+            decisions=[],
+        )
+        self.assertEqual(state, "crisis")
+        self.assertEqual(score, Decimal("1"))
+        self.assertFalse(stability)
+        self.assertFalse(inputs_valid)
+
+        state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
+            metrics_payload={},
+            decisions=[
+                WalkForwardDecision(
+                    decision=StrategyDecision(
+                        strategy_id="s1",
+                        symbol="AAPL",
+                        event_ts=datetime.now(timezone.utc),
+                        timeframe="1Min",
+                        action="buy",
+                        qty=Decimal("1"),
+                        order_type="market",
+                        time_in_force="day",
+                        params={
+                            "allocator": {
+                                "fragility_state": "not-a-state",
+                                "fragility_score": "maybe",
+                                "stability_mode_active": "n/a",
+                            }
+                        },
+                    ),
+                    features=SignalFeatures(
+                        macd=None,
+                        macd_signal=None,
+                        rsi=None,
+                        price=None,
+                        volatility=None,
+                    ),
+                )
+            ],
+        )
+        self.assertEqual(state, "crisis")
+        self.assertEqual(score, Decimal("1"))
+        self.assertFalse(stability)
+        self.assertFalse(inputs_valid)
 
     def test_lane_emits_gate_report_and_paper_patch(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
@@ -129,6 +184,7 @@ class TestAutonomousLane(TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "lane"
+            session_factory = self._empty_session_factory()
             result = run_autonomous_lane(
                 signals_path=fixture_path,
                 strategy_config_path=strategy_config_path,
@@ -136,6 +192,7 @@ class TestAutonomousLane(TestCase):
                 output_dir=output_dir,
                 promotion_target="paper",
                 strategy_configmap_path=strategy_configmap_path,
+                session_factory=session_factory,
                 code_version="test-sha",
             )
 
@@ -143,9 +200,10 @@ class TestAutonomousLane(TestCase):
                 result.gate_report_path.read_text(encoding="utf-8")
             )
             self.assertIn("gates", gate_payload)
-            self.assertEqual(gate_payload["recommended_mode"], "paper")
+            self.assertNotEqual(gate_payload["recommended_mode"], "paper")
             self.assertIn("promotion_evidence", gate_payload)
             self.assertIn("promotion_decision", gate_payload)
+            self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
             evidence = gate_payload["promotion_evidence"]
             self.assertEqual(evidence["fold_metrics"]["count"], 1)
             self.assertEqual(evidence["stress_metrics"]["count"], 4)
@@ -173,9 +231,7 @@ class TestAutonomousLane(TestCase):
             self.assertTrue(
                 (output_dir / "gates" / "promotion-evidence-gate.json").exists()
             )
-            self.assertIsNotNone(result.paper_patch_path)
-            assert result.paper_patch_path is not None
-            self.assertTrue(result.paper_patch_path.exists())
+            self.assertIsNone(result.paper_patch_path)
 
     def test_lane_blocks_live_without_policy_enablement(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
@@ -217,28 +273,22 @@ class TestAutonomousLane(TestCase):
             os.chdir(Path(__file__).parent.parent)
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_dir = Path(tmpdir) / "lane-default-path"
+                session_factory = self._empty_session_factory()
                 result = run_autonomous_lane(
                     signals_path=fixture_path,
                     strategy_config_path=strategy_config_path,
                     gate_policy_path=gate_policy_path,
                     output_dir=output_dir,
                     promotion_target="paper",
+                    session_factory=session_factory,
                     code_version="test-sha",
                 )
-                self.assertIsNotNone(result.paper_patch_path)
-                assert result.paper_patch_path is not None
-                self.assertTrue(result.paper_patch_path.exists())
-
-                patch_payload = safe_load(
-                    result.paper_patch_path.read_text(encoding="utf-8")
+                self.assertIsNone(result.paper_patch_path)
+                gate_payload = json.loads(
+                    result.gate_report_path.read_text(encoding="utf-8")
                 )
-                self.assertIsNotNone(patch_payload)
-                strategies_payload = safe_load(patch_payload["data"]["strategies.yaml"])
-                self.assertIsInstance(strategies_payload, dict)
-                strategies = strategies_payload.get("strategies", [])
-                self.assertTrue(strategies)
-                self.assertFalse(any("symbols" in strategy for strategy in strategies))
-                self.assertEqual(strategies[0]["universe_type"], "static")
+                self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
+                self.assertNotEqual(gate_payload["recommended_mode"], "paper")
         finally:
             os.chdir(previous_cwd)
 
@@ -272,7 +322,16 @@ class TestAutonomousLane(TestCase):
                 session_factory=session_factory,
             )
 
-            self.assertIsNotNone(result.paper_patch_path)
+            self.assertIsNone(result.paper_patch_path)
+            gate_payload = json.loads(
+                result.gate_report_path.read_text(encoding="utf-8")
+            )
+            self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
+            self.assertIn(
+                "tca_order_count_below_minimum",
+                gate_payload["promotion_decision"]["reason_codes"],
+            )
+
             with session_factory() as session:
                 run_row = session.execute(
                     select(ResearchRun).where(ResearchRun.run_id == result.run_id)
@@ -498,6 +557,9 @@ class TestAutonomousLane(TestCase):
                             "event_ts": datetime(
                                 2026, 1, 1, 0, 0, tzinfo=timezone.utc
                             ).isoformat(),
+                            "ingest_ts": datetime(
+                                2026, 1, 1, 0, 0, tzinfo=timezone.utc
+                            ).isoformat(),
                             "symbol": "AAPL",
                             "timeframe": "1Min",
                             "payload": {
@@ -553,7 +615,7 @@ class TestAutonomousLane(TestCase):
             )
             self.assertEqual(gate0["status"], "pass")
 
-    def test_intraday_strategy_candidate_uses_intraday_universe_type(self) -> None:
+    def test_intraday_strategy_candidate_blocks_paper_patch_without_tca_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             config_dir = Path(tmpdir) / "configs"
             config_dir.mkdir(parents=True, exist_ok=True)
@@ -565,6 +627,9 @@ class TestAutonomousLane(TestCase):
                     [
                         {
                             "event_ts": datetime(
+                                2026, 1, 1, 0, 1, tzinfo=timezone.utc
+                            ).isoformat(),
+                            "ingest_ts": datetime(
                                 2026, 1, 1, 0, 1, tzinfo=timezone.utc
                             ).isoformat(),
                             "symbol": "AAPL",
@@ -582,6 +647,9 @@ class TestAutonomousLane(TestCase):
                         },
                         {
                             "event_ts": datetime(
+                                2026, 1, 1, 0, 2, tzinfo=timezone.utc
+                            ).isoformat(),
+                            "ingest_ts": datetime(
                                 2026, 1, 1, 0, 2, tzinfo=timezone.utc
                             ).isoformat(),
                             "symbol": "AAPL",
@@ -641,22 +709,25 @@ class TestAutonomousLane(TestCase):
             )
 
             output_dir = Path(tmpdir) / "lane-tsmom"
+            session_factory = self._empty_session_factory()
             result = run_autonomous_lane(
                 signals_path=signals_path,
                 strategy_config_path=strategy_config_path,
                 gate_policy_path=gate_policy_path,
                 output_dir=output_dir,
                 promotion_target="paper",
+                session_factory=session_factory,
                 code_version="test-sha",
             )
-            self.assertIsNotNone(result.paper_patch_path)
-            assert result.paper_patch_path is not None
-            patch_payload = safe_load(
-                result.paper_patch_path.read_text(encoding="utf-8")
+            self.assertIsNone(result.paper_patch_path)
+            gate_payload = json.loads(
+                result.gate_report_path.read_text(encoding="utf-8")
             )
-            strategies_payload = safe_load(patch_payload["data"]["strategies.yaml"])
-            strategies = strategies_payload["strategies"]
-            self.assertEqual(strategies[0]["universe_type"], "intraday_tsmom_v1")
+            self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
+            self.assertIn(
+                "tca_order_count_below_minimum",
+                gate_payload["promotion_decision"]["reason_codes"],
+            )
 
     def test_lane_blocks_promotion_when_profitability_threshold_not_met(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"

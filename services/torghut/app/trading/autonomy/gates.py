@@ -47,7 +47,7 @@ class GateResult:
 class GateInputs:
     feature_schema_version: str
     required_feature_null_rate: Decimal
-    staleness_ms_p95: int
+    staleness_ms_p95: int | None
     symbol_coverage: int
     metrics: dict[str, Any]
     robustness: dict[str, Any]
@@ -58,6 +58,7 @@ class GateInputs:
     fragility_state: str = "elevated"
     fragility_score: Decimal = Decimal("0.5")
     stability_mode_active: bool = False
+    fragility_inputs_valid: bool = True
     operational_ready: bool = True
     runbook_validated: bool = True
     kill_switch_dry_run_passed: bool = True
@@ -463,7 +464,9 @@ def _gate0_data_integrity(inputs: GateInputs, policy: GatePolicyMatrix) -> GateR
         reasons.append("schema_version_incompatible")
     if inputs.required_feature_null_rate > policy.gate0_max_null_rate:
         reasons.append("required_feature_null_rate_exceeds_threshold")
-    if inputs.staleness_ms_p95 > policy.gate0_max_staleness_ms:
+    if inputs.staleness_ms_p95 is None:
+        reasons.append("feature_staleness_missing")
+    elif inputs.staleness_ms_p95 > policy.gate0_max_staleness_ms:
         reasons.append("feature_staleness_exceeds_budget")
     if inputs.symbol_coverage < policy.gate0_min_symbol_coverage:
         reasons.append("symbol_coverage_below_minimum")
@@ -523,8 +526,10 @@ def _gate3_shadow_paper_quality(
     inputs: GateInputs, policy: GatePolicyMatrix
 ) -> GateResult:
     reasons: list[str] = []
-    llm_error_ratio = _decimal(inputs.llm_metrics.get("error_ratio")) or Decimal("0")
-    if llm_error_ratio > policy.gate3_max_llm_error_ratio:
+    llm_error_ratio = _decimal(inputs.llm_metrics.get("error_ratio"))
+    if llm_error_ratio is None:
+        reasons.append("llm_error_ratio_missing")
+    elif llm_error_ratio > policy.gate3_max_llm_error_ratio:
         reasons.append("llm_error_ratio_exceeds_threshold")
     fallback_rate = _decimal(inputs.forecast_metrics.get("fallback_rate"))
     if fallback_rate is None:
@@ -685,6 +690,8 @@ def _gate7_uncertainty_calibration(
 
 def _gate2_base_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
     reasons: list[str] = []
+    if not inputs.fragility_inputs_valid:
+        reasons.append("fragility_inputs_invalid")
     max_drawdown = _decimal(inputs.metrics.get("max_drawdown")) or Decimal("0")
     turnover_ratio = _decimal(inputs.metrics.get("turnover_ratio")) or Decimal("0")
     cost_bps = _decimal(inputs.metrics.get("cost_bps")) or Decimal("0")
@@ -709,24 +716,35 @@ def _gate2_base_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[st
 
 
 def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
-    tca_order_count = int(inputs.tca_metrics.get("order_count", 0))
+    order_count_raw = inputs.tca_metrics.get("order_count")
+    if order_count_raw is None:
+        return ["tca_order_count_missing"]
+
+    try:
+        tca_order_count = int(order_count_raw)
+    except (TypeError, ValueError):
+        return ["tca_order_count_invalid"]
+
     if tca_order_count <= 0:
-        return []
+        return ["tca_order_count_below_minimum"]
+
     reasons: list[str] = []
-    avg_tca_slippage = _decimal(inputs.tca_metrics.get("avg_slippage_bps")) or Decimal(
-        "0"
-    )
-    avg_tca_shortfall = _decimal(
-        inputs.tca_metrics.get("avg_shortfall_notional")
-    ) or Decimal("0")
-    avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get("avg_churn_ratio")) or Decimal(
-        "0"
-    )
-    if avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
+    avg_tca_slippage = _decimal(inputs.tca_metrics.get("avg_slippage_bps"))
+    if avg_tca_slippage is None:
+        reasons.append("tca_slippage_missing")
+    elif avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
         reasons.append("tca_slippage_exceeds_maximum")
-    if avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
+
+    avg_tca_shortfall = _decimal(inputs.tca_metrics.get("avg_shortfall_notional"))
+    if avg_tca_shortfall is None:
+        reasons.append("tca_shortfall_missing")
+    elif avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
         reasons.append("tca_shortfall_exceeds_maximum")
-    if avg_tca_churn_ratio > policy.gate2_max_tca_churn_ratio:
+
+    avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get("avg_churn_ratio"))
+    if avg_tca_churn_ratio is None:
+        reasons.append("tca_churn_ratio_missing")
+    elif avg_tca_churn_ratio > policy.gate2_max_tca_churn_ratio:
         reasons.append("tca_churn_ratio_exceeds_maximum")
     return reasons
 
