@@ -928,10 +928,7 @@ def _combined_execution_seconds_scale(
     if adaptive_application is not None and adaptive_application.applied:
         execution_scale *= adaptive_application.decision.execution_seconds_scale
     execution_scale *= microstructure_execution_scale
-    execution_scale = max(
-        MICROSTRUCTURE_EXECUTION_SCALE_MIN,
-        min(MICROSTRUCTURE_EXECUTION_SCALE_MAX, execution_scale),
-    )
+    execution_scale = min(MICROSTRUCTURE_EXECUTION_SCALE_MAX, execution_scale)
     if execution_scale == 1:
         return None
     return execution_scale

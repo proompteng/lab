@@ -752,3 +752,39 @@ class TestExecutionPolicy(TestCase):
         self.assertEqual(outcome.decision.order_type, "limit")
         self.assertTrue(outcome.adaptive.decision.prefer_limit)
         self.assertEqual(outcome.adaptive.decision.aggressiveness, "defensive")
+
+    def test_adaptive_offensive_execution_scale_applies_with_neutral_microstructure(self) -> None:
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.2")))
+        adaptive_policy = AdaptiveExecutionPolicyDecision(
+            key="AAPL:trend",
+            symbol="AAPL",
+            regime_label="trend",
+            sample_size=6,
+            adaptive_samples=6,
+            baseline_slippage_bps=Decimal("8"),
+            recent_slippage_bps=Decimal("3"),
+            baseline_shortfall_notional=Decimal("1"),
+            recent_shortfall_notional=Decimal("0.5"),
+            effect_size_bps=Decimal("-2"),
+            degradation_bps=Decimal("1"),
+            expected_shortfall_coverage=Decimal("1"),
+            expected_shortfall_sample_count=6,
+            fallback_active=False,
+            fallback_reason=None,
+            prefer_limit=False,
+            participation_rate_scale=Decimal("1"),
+            execution_seconds_scale=Decimal("0.85"),
+            aggressiveness="offensive",
+            generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+
+        outcome = policy.evaluate(
+            _decision(qty=Decimal("1"), price=Decimal("100"), order_type="market"),
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+            adaptive_policy=adaptive_policy,
+        )
+
+        self.assertTrue(outcome.adaptive.applied)
+        self.assertEqual(outcome.impact_assumptions["inputs"]["execution_seconds"], 51)
