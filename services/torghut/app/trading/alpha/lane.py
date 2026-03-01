@@ -17,7 +17,6 @@ from .metrics import to_jsonable
 from .search import SearchResult, candidate_to_jsonable, run_tsmom_grid_search
 from ..reporting import (
     PromotionEvidenceSummary,
-    PromotionRecommendation,
     build_promotion_recommendation,
 )
 
