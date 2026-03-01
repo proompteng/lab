@@ -120,6 +120,49 @@ describe('agents controller workflow module', () => {
     })
   })
 
+  it('validates loop condition source policies', () => {
+    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    try {
+      const steps = parseWorkflowSteps({
+        spec: {
+          workflow: {
+            steps: [
+              {
+                name: 'loop-step',
+                loop: {
+                  maxIterations: 2,
+                  condition: {
+                    type: 'cel',
+                    expression: 'iteration.last.control.continue == true',
+                    source: {
+                      type: 'file',
+                      path: '/workspace/.agentrun/loop-control.json',
+                      onMissing: 'faill',
+                      onInvalid: 'stop',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      })
+
+      expect(validateWorkflowSteps(steps)).toEqual({
+        ok: false,
+        reason: 'WorkflowLoopConditionOnMissingInvalid',
+        message: 'workflow step loop-step: loop.condition.source.onMissing must be stop or fail',
+      })
+    } finally {
+      if (previousLoopsEnabled === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+      }
+    }
+  })
+
   it('propagates parameter validation failures with step context', () => {
     const steps: WorkflowStepSpec[] = [
       {

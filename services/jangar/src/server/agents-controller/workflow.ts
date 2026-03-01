@@ -11,6 +11,7 @@ const WORKFLOW_LOOP_STATUS_HISTORY_LIMIT_ENV = 'JANGAR_AGENTS_CONTROLLER_WORKFLO
 
 const WORKFLOW_LOOP_MAX_ITERATIONS_DEFAULT = 20
 const WORKFLOW_LOOP_STATUS_HISTORY_LIMIT_DEFAULT = 50
+const WORKFLOW_LOOP_CONTROL_DEFAULT_PATH = '/workspace/.agentrun/loop-control.json'
 
 const nowIso = () => new Date().toISOString()
 
@@ -29,14 +30,15 @@ const toNonNegativeInteger = (value: unknown, fallback = 0) => {
 }
 
 const normalizeLoopConditionSource = (source: Record<string, unknown> | null): WorkflowLoopConditionSourceSpec => {
-  const path = asString(source?.path) ?? '/workspace/.agentrun/loop-control.json'
-  const onMissingRaw = (asString(source?.onMissing) ?? 'stop').toLowerCase()
-  const onInvalidRaw = (asString(source?.onInvalid) ?? 'fail').toLowerCase()
+  const path =
+    (asString(source?.path) ?? WORKFLOW_LOOP_CONTROL_DEFAULT_PATH).trim() || WORKFLOW_LOOP_CONTROL_DEFAULT_PATH
+  const onMissingRaw = asString(source?.onMissing)?.trim().toLowerCase()
+  const onInvalidRaw = asString(source?.onInvalid)?.trim().toLowerCase()
   return {
     type: 'file',
     path,
-    onMissing: onMissingRaw === 'fail' ? 'fail' : 'stop',
-    onInvalid: onInvalidRaw === 'stop' ? 'stop' : 'fail',
+    onMissing: onMissingRaw ?? 'stop',
+    onInvalid: onInvalidRaw ?? 'fail',
   }
 }
 
@@ -51,8 +53,8 @@ export const resolveWorkflowLoopStatusHistoryLimit = () =>
 export type WorkflowLoopConditionSourceSpec = {
   type: 'file'
   path: string
-  onMissing: 'stop' | 'fail'
-  onInvalid: 'stop' | 'fail'
+  onMissing: string
+  onInvalid: string
 }
 
 export type WorkflowLoopConditionSpec = {
