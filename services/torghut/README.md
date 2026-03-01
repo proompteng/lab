@@ -262,7 +262,7 @@ Outputs:
 - `artifacts/autonomy-lane/backtest/evaluation-report.json`
 - `artifacts/autonomy-lane/gates/gate-evaluation.json`
 - `artifacts/autonomy-lane/gates/actuation-intent.json` (governed actuation payload with rollback-readiness evidence links)
-- `artifacts/autonomy-lane/paper-candidate/strategy-configmap-patch.yaml` (only when paper gates pass)
+- `artifacts/autonomy-lane/paper-candidate/strategy-configmap-patch.yaml` (only when paper gates pass and rollback-readiness gates are open)
 
 Safety defaults:
 

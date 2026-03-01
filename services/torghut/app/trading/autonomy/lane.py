@@ -668,13 +668,7 @@ def run_autonomous_lane(
             json.dumps(research_spec, indent=2), encoding="utf-8"
         )
 
-        patch_path = _resolve_paper_patch_path(
-            gate_report=gate_report,
-            strategy_configmap_path=strategy_configmap_path,
-            runtime_strategies=runtime_strategies,
-            candidate_id=candidate_id,
-            paper_dir=paper_dir,
-        )
+        patch_path: Path | None = None
 
         raw_gate_policy = gate_policy_payload
         candidate_state_payload = {
@@ -870,6 +864,19 @@ def run_autonomous_lane(
         gate_report_path.write_text(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
+        actuation_allowed = (
+            bool(recommendation_trace_id)
+            and promotion_recommendation.eligible
+            and rollback_check.ready
+        )
+        patch_path = _resolve_paper_patch_path(
+            gate_report=gate_report,
+            strategy_configmap_path=strategy_configmap_path,
+            runtime_strategies=runtime_strategies,
+            candidate_id=candidate_id,
+            paper_dir=paper_dir,
+            actuation_allowed=actuation_allowed,
+        )
         actuation_intent_path = output_dir / _ACTUATION_INTENT_PATH
         actuation_intent_path.parent.mkdir(parents=True, exist_ok=True)
         actuation_intent_payload = _build_actuation_intent_payload(
@@ -880,11 +887,7 @@ def run_autonomous_lane(
             gate_report_trace_id=gate_report_trace_id,
             promotion_target=promotion_target,
             recommended_mode=recommended_mode,
-            actuation_allowed=(
-                bool(recommendation_trace_id)
-                and promotion_recommendation.eligible
-                and rollback_check.ready
-            ),
+            actuation_allowed=actuation_allowed,
             promotion_check=promotion_check.to_payload(),
             rollback_check=rollback_check.to_payload(),
             candidate_state_payload=candidate_state_payload,
@@ -911,8 +914,6 @@ def run_autonomous_lane(
         actuation_intent_path.write_text(
             json.dumps(actuation_intent_payload, indent=2), encoding="utf-8"
         )
-        if not promotion_allowed:
-            patch_path = None
 
         _persist_run_outputs_if_requested(
             persist_results=persist_results,
@@ -931,6 +932,7 @@ def run_autonomous_lane(
             patch_path=patch_path,
             now=now,
             promotion_target=promotion_target,
+            actuation_allowed=actuation_allowed,
             promotion_allowed=promotion_allowed,
             promotion_reasons=promotion_reasons,
             promotion_recommendation=promotion_recommendation,
@@ -1150,7 +1152,10 @@ def _resolve_paper_patch_path(
     runtime_strategies: list[StrategyRuntimeConfig],
     candidate_id: str,
     paper_dir: Path,
+    actuation_allowed: bool,
 ) -> Path | None:
+    if not actuation_allowed:
+        return None
     if not gate_report.promotion_allowed:
         return None
     if gate_report.recommended_mode != "paper":
@@ -1182,6 +1187,7 @@ def _persist_run_outputs_if_requested(
     patch_path: Path | None,
     now: datetime,
     promotion_target: str,
+    actuation_allowed: bool,
     promotion_allowed: bool,
     promotion_reasons: list[str],
     promotion_recommendation: PromotionRecommendation,
@@ -1208,6 +1214,7 @@ def _persist_run_outputs_if_requested(
         patch_path=patch_path,
         now=now,
         promotion_target=promotion_target,
+        actuation_allowed=actuation_allowed,
         promotion_allowed=promotion_allowed,
         promotion_reasons=promotion_reasons,
         promotion_recommendation=promotion_recommendation,
@@ -1412,6 +1419,7 @@ def _persist_run_outputs(
     patch_path: Path | None,
     now: datetime,
     promotion_target: str,
+    actuation_allowed: bool,
     promotion_allowed: bool,
     promotion_reasons: list[str],
     promotion_recommendation: PromotionRecommendation,
@@ -1421,6 +1429,7 @@ def _persist_run_outputs(
     recommendation_trace_id: str,
 ) -> None:
     robustness_by_fold = {fold.fold_name: fold for fold in report.robustness.folds}
+    effective_promotion_allowed = bool(promotion_allowed and actuation_allowed)
 
     with session_factory() as session:
         with session.begin():
@@ -1454,7 +1463,7 @@ def _persist_run_outputs(
                 )
             )
             should_promote = (
-                promotion_allowed
+                effective_promotion_allowed
                 and promotion_recommendation.action == "promote"
                 and promotion_recommendation.recommended_mode in {"paper", "live"}
             )
@@ -1474,6 +1483,7 @@ def _persist_run_outputs(
                     if existing_champion is not None
                     else None
                 ),
+                "actuation_allowed": effective_promotion_allowed,
                 "actuation_intent_artifact": (
                     str(actuation_intent_path) if actuation_intent_path else None
                 ),
@@ -1484,7 +1494,7 @@ def _persist_run_outputs(
                 "status": "promoted_champion"
                 if should_promote
                 else "retained_challenger",
-                "promotable": promotion_allowed,
+                "promotable": effective_promotion_allowed,
                 "promotion_target": promotion_target,
                 "recommended_mode": recommended_mode,
                 "reason_codes": list(promotion_reasons),
@@ -1582,6 +1592,7 @@ def _persist_run_outputs(
                 "stress_metrics_count": stress_metrics_count,
                 "rationale_present": bool(promotion_recommendation.rationale),
                 "evidence_complete": promotion_recommendation.evidence.evidence_complete,
+                "actuation_allowed": effective_promotion_allowed,
                 "reasons": list(promotion_recommendation.evidence.reasons),
                 "actuation_intent_artifact": (
                     str(actuation_intent_path) if actuation_intent_path else None
@@ -1593,7 +1604,7 @@ def _persist_run_outputs(
                 "candidate_id": candidate_id,
                 "promotion_target": promotion_target,
                 "recommended_mode": recommended_mode,
-                "promotion_allowed": promotion_allowed,
+                "promotion_allowed": effective_promotion_allowed,
                 "reason_codes": list(promotion_reasons),
                 "recommendation_trace_id": recommendation_trace_id,
                 "gate_report_trace_id": gate_report_trace_id,
@@ -1602,17 +1613,19 @@ def _persist_run_outputs(
                 ResearchPromotion(
                     candidate_id=candidate_id,
                     requested_mode=promotion_target,
-                    approved_mode=recommended_mode if promotion_allowed else None,
+                    approved_mode=recommended_mode
+                    if effective_promotion_allowed
+                    else None,
                     approver="autonomous_scheduler",
                     approver_role="system",
                     approve_reason=json.dumps(challenger_decision, sort_keys=True)
-                    if promotion_allowed
+                    if effective_promotion_allowed
                     else None,
                     deny_reason=None
-                    if promotion_allowed
+                    if effective_promotion_allowed
                     else json.dumps(challenger_decision, sort_keys=True),
                     paper_candidate_patch_ref=str(patch_path) if patch_path else None,
-                    effective_time=now if promotion_allowed else None,
+                    effective_time=now if effective_promotion_allowed else None,
                     decision_action=promotion_recommendation.action,
                     decision_rationale=promotion_recommendation.rationale,
                     evidence_bundle=evidence_bundle,
