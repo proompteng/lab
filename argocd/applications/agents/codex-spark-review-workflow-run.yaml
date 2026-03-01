@@ -20,6 +20,14 @@ spec:
     name: codex-spark-review
   implementationSpecRef:
     name: codex-spark-review-step-v1
+  parameters:
+    repository: proompteng/lab
+    base: main
+    # supply per-run values when triggering a review/fix cycle (repository branch)
+    head: ''
+    issueNumber: ''
+    issueTitle: ''
+    issueUrl: ''
   ttlSecondsAfterFinished: 3600
   runtime:
     type: workflow
@@ -29,9 +37,16 @@ spec:
         implementationSpecRef:
           name: codex-spark-review-step-v1
         parameters:
+          stage: review
+          base: main
+      - name: fix
+        implementationSpecRef:
+          name: codex-spark-fix-step-v1
+        parameters:
+          stage: fix
+          reviewPath: /agentworkspace/.agentrun/codex-spark-review/review-notes.md
           base: main
   workload:
-    image: registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
     resources:
       requests:
         cpu: 500m
@@ -40,14 +55,11 @@ spec:
       - name: review-workspace
         type: pvc
         claimName: codex-spark-review-workspace
-        mountPath: /workspace
+        mountPath: /agentworkspace
   vcsRef:
     name: github
   vcsPolicy:
-    required: false
-    mode: read-only
+    required: true
+    mode: read-write
   secrets:
     - github-token
-  parameters:
-    repository: proompteng/lab
-    base: main

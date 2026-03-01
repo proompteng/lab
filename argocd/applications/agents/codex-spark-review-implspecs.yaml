@@ -13,7 +13,7 @@ spec:
     Use `stage` to determine which phase to run:
 
     - `stage=review`: run the review step and write review output to
-      `/workspace/.agentrun/codex-spark-review/review-notes.md`.
+      `/agentworkspace/.agentrun/codex-spark-review/review-notes.md`.
     - `stage=fix`: read that review output file and apply actionable fixes.
 
     Keep changes scoped to repository code and prefer minimal edits.
@@ -36,18 +36,18 @@ spec:
     - Do not edit source files.
     - Do not print preambles or summaries.
     - Use only the provider-configured command and persist its output to
-      `/workspace/.agentrun/codex-spark-review/review-notes.md`.
+      `/agentworkspace/.agentrun/codex-spark-review/review-notes.md`.
     - Do not perform any extra side effects.
 
     Behavior:
     1) Ensure the command writes the review output to
-       `/workspace/.agentrun/codex-spark-review/review-notes.md`.
+       `/agentworkspace/.agentrun/codex-spark-review/review-notes.md`.
     2) If the command exits non-zero, fail with the same exit code.
     3) If the output file is empty, fail.
 
     Exit after writing the file. No code changes.
   acceptanceCriteria:
-    - The file `/workspace/.agentrun/codex-spark-review/review-notes.md` exists.
+    - The file `/agentworkspace/.agentrun/codex-spark-review/review-notes.md` exists.
     - The file is non-empty.
     - The command must execute against `main`.
 
@@ -65,7 +65,7 @@ spec:
   text: |
     Objective: Consume review output and implement suggested fixes.
 
-    1) Read the entire file `/workspace/.agentrun/codex-spark-review/review-notes.md`.
+    1) Read the entire file `/agentworkspace/.agentrun/codex-spark-review/review-notes.md`.
     2) Treat its contents as review findings and apply the requested, actionable fixes in the workspace.
     3) Use minimal edits and keep behavior stable; do not broaden scope.
     4) Summarize changed files and changed hunks at the end of the run.
