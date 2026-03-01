@@ -1,12 +1,12 @@
 # Chart Config Checksum Rollouts
 
-Status: Draft (2026-02-07)
+Status: Current (2026-03-01)
 
 Docs index: [README](../README.md)
 
 ## Overview
 
-Kubernetes does not automatically restart pods when referenced Secrets/ConfigMaps change (especially when referenced via env vars). In GitOps environments, this frequently leads to “updated Secret, pods still using old value” incidents.
+Kubernetes does not automatically restart pods when referenced Secrets/ConfigMaps change (especially when referenced via env vars). In GitOps environments, this frequently leads to stale runtime config with active Pods still using old values.
 
 This doc proposes checksum annotations to trigger Deployment rollouts when selected config inputs change.
 
@@ -30,28 +30,66 @@ This doc proposes checksum annotations to trigger Deployment rollouts when selec
 
 ### Proposed values
 
-Add:
-
 - `rolloutChecksums.enabled` (default `false`)
 - `rolloutChecksums.secrets: []`
 - `rolloutChecksums.configMaps: []`
 
+Each checksum entry is an object:
+
+```yaml
+- name: <secret-or-configmap-name>
+  namespace: <optional-namespace> # defaults to release namespace
+  checksum: <sha256 value>
+```
+
 When enabled, annotate pod templates with:
 
-- `checksum/secret/<name>: <sha256>`
-- `checksum/configmap/<name>: <sha256>`
+- `checksum/secret/<namespace>/<name>: <sha256>`
+- `checksum/configmap/<namespace>/<name>: <sha256>`
 
-### Implementation detail
+### Source of truth
 
-- Hash the rendered Secret/ConfigMap data when defined in-chart, and the name only (or `lookup`) when managed externally.
-  - In GitOps, `lookup` behavior varies; prefer explicit operator-provided checksums when needed.
+- Runtime implementation in chart templates:
+  - `charts/agents/templates/deployment.yaml`
+  - `charts/agents/templates/deployment-controllers.yaml`
+  - `charts/agents/templates/_helpers.tpl`
+- Values + schema:
+  - `charts/agents/values.yaml`
+  - `charts/agents/values.schema.json`
+- Validation hook:
+  - `charts/agents/templates/validation.yaml`
+
+### Operator usage
+
+1. Enable rollout checksums:
+
+```yaml
+rolloutChecksums:
+  enabled: true
+```
+
+2. For chart-owned DB secret input (`database.createSecret.enabled=true`), chart calculates checksum from `database.url` automatically.
+
+3. For externally managed inputs, add explicit checksum entries:
+
+```yaml
+rolloutChecksums:
+  enabled: true
+  secrets:
+    - name: agents-github-token-env
+      checksum: 9f2c...
+      namespace: agents
+  configMaps:
+    - name: agents-runtime-config
+      checksum: 4a1b...
+```
 
 ## Config Mapping
 
-| Helm value                                               | Rendered annotation                       | Intended behavior                           |
-| -------------------------------------------------------- | ----------------------------------------- | ------------------------------------------- |
-| `rolloutChecksums.enabled=true`                          | `checksum/*` annotations                  | Any change triggers a Deployment rollout.   |
-| `rolloutChecksums.secrets=[\"agents-github-token-env\"]` | `checksum/secret/agents-github-token-env` | Restart when the referenced Secret changes. |
+| Helm value                                               | Rendered annotation                            | Intended behavior                          |
+| -------------------------------------------------------- | --------------------------------------------- | ----------------------------------------- |
+| `rolloutChecksums.enabled=true`                          | `checksum/*` annotations                       | Any change triggers a Deployment rollout.  |
+| `rolloutChecksums.secrets=[{\"name\":\"agents-github-token-env\",\"checksum\":\"...\"}]` | `checksum/secret/<namespace>/agents-github-token-env` | Restart when the referenced Secret checksum changes. |
 
 ## Rollout Plan
 
@@ -66,14 +104,14 @@ Rollback:
 ## Validation
 
 ```bash
-helm template agents charts/agents | rg -n \"checksum/\"
+helm template charts/agents --set rolloutChecksums.enabled=true --set rolloutChecksums.secrets[0].name=agents-github-token-env --set rolloutChecksums.secrets[0].checksum=9f2c | rg -n "checksum/secret/"
 kubectl -n agents get deploy agents -o jsonpath='{.spec.template.metadata.annotations}'; echo
 ```
 
 ## Failure Modes and Mitigations
 
 - Too many checksum sources cause frequent rollouts: mitigate with explicit allowlist and opt-in.
-- Checksum cannot be computed for external Secrets: mitigate by allowing user-provided checksum values.
+- Checksum cannot be safely computed for external resources at render time: mitigate by adding explicit checksum entries.
 
 ## Acceptance Criteria
 
