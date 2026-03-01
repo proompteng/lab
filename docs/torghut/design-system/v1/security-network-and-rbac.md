@@ -53,7 +53,7 @@ flowchart LR
 
 - Workloads should not need cluster-admin.
 - Most workloads should need only:
-  - read Pods/logs for diagnostics (`get`),
+  - read Pods for diagnostics (`get`),
   - access only required namespace services and DNS.
 
 ## Network principles (v1)
@@ -62,13 +62,15 @@ flowchart LR
 - Restrict Kafka access to only the required ports/namespaces.
 - Allow egress to Alpaca endpoints only from forwarder and trading service.
 - Keep Alloy scrape ingress on runtime metrics ports (`ws/9090`, `ta/9249`) constrained to Alloy endpoints.
+- Constrain guardrail exporter ingress to the Alloy scraper only and limit egress to their single data source.
 
 ## Failure modes and recovery
 
-| Failure                  | Symptoms                            | Detection                     | Recovery                                            |
-| ------------------------ | ----------------------------------- | ----------------------------- | --------------------------------------------------- |
-| NetworkPolicy too strict | forwarder cannot reach Alpaca       | readiness 503; connect errors | adjust egress rules (reviewed change)               |
-| RBAC privilege too broad | permission denied, startup failures | logs show denied permission   | fix Role/RoleBinding to include only required verbs |
+| Failure                  | Symptoms                            | Detection                              | Recovery                                            |
+| ------------------------ | ----------------------------------- | -------------------------------------- | --------------------------------------------------- |
+| NetworkPolicy too strict | forwarder cannot reach Alpaca       | readiness 503; connect errors          | adjust egress rules (reviewed change)               |
+| NetworkPolicy too strict | exporter cannot scrape runtime      | zero-metric freshness or scrape errors | allow the required guardrail scraping flow only     |
+| RBAC privilege too broad | permission denied, startup failures | logs show denied permission            | fix Role/RoleBinding to include only required verbs |
 
 ## Security considerations
 
@@ -86,13 +88,16 @@ Apply and validate in a controlled order:
 
 2. After GitOps sync, run runtime checks for policy/RBAC behavior.
    - `kubectl -n torghut auth can-i get pods --as=system:serviceaccount:torghut:torghut-runtime`
-   - `kubectl -n torghut auth can-i get pods/log --as=system:serviceaccount:torghut:torghut-runtime`
+   - `kubectl -n torghut auth can-i get pods/log --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
    - `kubectl -n torghut auth can-i create pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
-   - `kubectl -n torghut auth can-i list pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
+   - `kubectl -n torghut auth can-i get namespaces --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
    - `kubectl -n torghut get networkpolicy`
+   - `kubectl -n torghut get networkpolicy torghut-llm-guardrails-exporter-egress torghut-llm-guardrails-exporter-ingress-metrics torghut-clickhouse-guardrails-exporter-egress torghut-clickhouse-guardrails-exporter-ingress-metrics`
    - `kubectl -n torghut rollout status deploy/torghut-ws`
    - `kubectl -n torghut rollout status deploy/torghut-lean-runner`
    - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut`
+   - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut-llm-guardrails-exporter -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status`
+   - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut-clickhouse-guardrails-exporter -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status`
    - `kubectl -n torghut get pods -l app=torghut-ws -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status`
    - `kubectl -n torghut get pods -l serving.knative.dev/service=torghut`
 

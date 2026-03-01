@@ -9,8 +9,3 @@ rules:
       - pods
     verbs:
       - get
-  - apiGroups: [""]
-    resources:
-      - pods/log
-    verbs:
-      - get

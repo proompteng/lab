@@ -11,6 +11,10 @@ resources:
   - networkpolicy-ta-ingress-metrics.yaml
   - networkpolicy-ws-egress.yaml
   - networkpolicy-ws-ingress-metrics.yaml
+  - networkpolicy-llm-guardrails-exporter-egress.yaml
+  - networkpolicy-llm-guardrails-exporter-ingress-metrics.yaml
+  - networkpolicy-clickhouse-guardrails-exporter-egress.yaml
+  - networkpolicy-clickhouse-guardrails-exporter-ingress-metrics.yaml
   - networkpolicy-lean-runner-egress.yaml
   - networkpolicy-service-egress.yaml
   - db-migrations-job.yaml

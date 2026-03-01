@@ -33,12 +33,16 @@ Start here:
   - Apply GitOps changes in `argocd/applications/torghut/**` and let ArgoCD reconcile.
   - Run post-sync policy checks:
     - `kubectl -n torghut auth can-i get pods --as=system:serviceaccount:torghut:torghut-runtime`
-    - `kubectl -n torghut auth can-i get pods/log --as=system:serviceaccount:torghut:torghut-runtime`
+    - `kubectl -n torghut auth can-i get pods/log --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
     - `kubectl -n torghut auth can-i create pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
-    - `kubectl -n torghut auth can-i list pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
+    - `kubectl -n torghut auth can-i get namespaces --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
     - `kubectl -n torghut get networkpolicy`
+    - `kubectl -n torghut get networkpolicy torghut-llm-guardrails-exporter-egress torghut-llm-guardrails-exporter-ingress-metrics torghut-clickhouse-guardrails-exporter-egress torghut-clickhouse-guardrails-exporter-ingress-metrics`
     - `kubectl -n torghut rollout status deploy/torghut-ws`
+    - `kubectl -n torghut rollout status deploy/torghut-lean-runner`
     - `kubectl -n torghut get pods -l app=torghut-ws`
+    - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut-llm-guardrails-exporter -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status`
+    - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut-clickhouse-guardrails-exporter -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status`
   - If checks fail, rollback to the last-good GitOps revision before widening policies.
 
 ## Legacy / supporting docs
