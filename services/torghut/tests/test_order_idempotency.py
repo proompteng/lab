@@ -263,6 +263,145 @@ class TestOrderIdempotency(TestCase):
             executions = session.execute(select(Execution)).scalars().all()
             self.assertEqual(len(executions), 2)
 
+    def test_execution_exists_does_not_match_same_client_order_id_from_other_account(self) -> None:
+        settings.trading_multi_account_enabled = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision_row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label='paper-a',
+                symbol='AAPL',
+                timeframe='1Min',
+                decision_json={'symbol': 'AAPL', 'action': 'buy'},
+                rationale=None,
+                status='planned',
+                decision_hash='shared-client-id',
+            )
+            session.add(decision_row)
+            session.commit()
+            session.refresh(decision_row)
+
+            session.add(
+                Execution(
+                    trade_decision_id=None,
+                    alpaca_account_label='paper-b',
+                    alpaca_order_id='other-order',
+                    client_order_id='shared-client-id',
+                    symbol='AAPL',
+                    side='buy',
+                    order_type='market',
+                    time_in_force='day',
+                    submitted_qty=Decimal('1'),
+                    filled_qty=Decimal('0'),
+                    status='accepted',
+                    raw_order={'id': 'other-order'},
+                )
+            )
+            session.commit()
+
+            executor = OrderExecutor()
+            self.assertFalse(executor.execution_exists(session, decision_row))
+
+        settings.trading_multi_account_enabled = False
+
+    def test_reconciler_backfill_does_not_use_other_account_decisions_or_executions(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision_row_a = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label='paper-a',
+                symbol='AAPL',
+                timeframe='1Min',
+                decision_json={'symbol': 'AAPL', 'params': {'price': '100'}},
+                rationale=None,
+                status='planned',
+                decision_hash='shared-decision-hash',
+            )
+            decision_row_b = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label='paper-b',
+                symbol='AAPL',
+                timeframe='1Min',
+                decision_json={'symbol': 'AAPL', 'params': {'price': '100'}},
+                rationale=None,
+                status='planned',
+                decision_hash='shared-decision-hash',
+            )
+            session.add_all([decision_row_a, decision_row_b])
+            session.commit()
+            session.refresh(decision_row_a)
+            session.refresh(decision_row_b)
+
+            session.add(
+                Execution(
+                    trade_decision_id=decision_row_b.id,
+                    alpaca_account_label='paper-b',
+                    alpaca_order_id='existing-b-order',
+                    client_order_id='shared-decision-hash',
+                    symbol='AAPL',
+                    side='buy',
+                    order_type='market',
+                    time_in_force='day',
+                    submitted_qty=Decimal('1'),
+                    filled_qty=Decimal('0'),
+                    status='accepted',
+                    raw_order={'id': 'existing-b-order'},
+                )
+            )
+            session.commit()
+
+            alpaca_client = FakeAlpacaClient()
+            alpaca_client.submitted.append(
+                {
+                    'id': 'reconciled-a-order',
+                    'client_order_id': 'shared-decision-hash',
+                    'symbol': 'AAPL',
+                    'side': 'buy',
+                    'type': 'market',
+                    'time_in_force': 'day',
+                    'qty': '1',
+                    'filled_qty': '0',
+                    'status': 'accepted',
+                }
+            )
+
+            reconciler = Reconciler(account_label='paper-a')
+            updates = reconciler.reconcile(session, alpaca_client)
+
+            self.assertEqual(updates, 1)
+            executions_a = session.execute(
+                select(Execution).where(Execution.alpaca_account_label == 'paper-a')
+            ).scalars().all()
+            executions_b = session.execute(
+                select(Execution).where(Execution.alpaca_account_label == 'paper-b')
+            ).scalars().all()
+            self.assertEqual(len(executions_a), 1)
+            self.assertEqual(len(executions_b), 1)
+            self.assertEqual(executions_a[0].trade_decision_id, decision_row_a.id)
+            self.assertEqual(executions_b[0].trade_decision_id, decision_row_b.id)
+
     def test_execution_exists_matches_by_client_order_id_hash(self) -> None:
         with self.session_local() as session:
             strategy = Strategy(

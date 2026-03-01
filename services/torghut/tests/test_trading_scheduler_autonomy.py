@@ -940,6 +940,57 @@ class TestTradingSchedulerAutonomy(TestCase):
         self.assertEqual(failing_lane.reconcile_last_error, "reconcile_failed")
         self.assertEqual(healthy_lane.reconcile_last_error, None)
 
+    def test_run_autonomy_iteration_triggers_rollback_when_failure_streak_exceeds_limit(self) -> None:
+        original_emergency_stop = settings.trading_emergency_stop_enabled
+        original_autonomy_rollback_limit = (
+            settings.trading_rollback_autonomy_failure_streak_limit
+        )
+        original_critical_reasons = (
+            settings.trading_signal_staleness_alert_critical_reasons_raw
+        )
+
+        try:
+            settings.trading_emergency_stop_enabled = True
+            settings.trading_rollback_autonomy_failure_streak_limit = 1
+            settings.trading_signal_staleness_alert_critical_reasons_raw = ""
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                scheduler, _deps = self._build_scheduler_with_fixtures(
+                    tmpdir,
+                    allow_live=False,
+                    approval_token=None,
+                    no_signals=True,
+                    no_signal_reason=None,
+                )
+
+                with patch(
+                    "app.trading.scheduler.TradingScheduler._run_autonomous_cycle",
+                    side_effect=RuntimeError("autonomy-cycle-failed"),
+                ):
+                    asyncio.run(scheduler._run_autonomy_iteration())
+
+                self.assertEqual(
+                    scheduler.state.last_error,
+                    "emergency_stop_triggered reasons=autonomy_failure_streak_exceeded:1",
+                )
+                self.assertEqual(scheduler.state.last_autonomy_error, "autonomy-cycle-failed")
+                self.assertEqual(scheduler.state.autonomy_failure_streak, 1)
+                self.assertTrue(scheduler.state.emergency_stop_active)
+                self.assertIn(
+                    "autonomy_failure_streak_exceeded:1",
+                    scheduler.state.emergency_stop_reason or "",
+                )
+                self.assertIsNotNone(scheduler.state.rollback_incident_evidence_path)
+                self.assertEqual(scheduler.state.rollback_incidents_total, 1)
+        finally:
+            settings.trading_emergency_stop_enabled = original_emergency_stop
+            settings.trading_rollback_autonomy_failure_streak_limit = (
+                original_autonomy_rollback_limit
+            )
+            settings.trading_signal_staleness_alert_critical_reasons_raw = (
+                original_critical_reasons
+            )
+
     def test_build_pipeline_for_account_scopes_order_feed_ingestor(self) -> None:
         scheduler = TradingScheduler()
         lane = TradingAccountLane(
