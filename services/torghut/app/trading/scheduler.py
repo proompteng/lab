@@ -3223,11 +3223,12 @@ class TradingPipeline:
         request_json: dict[str, Any],
         error: Exception,
     ) -> tuple[StrategyDecision, Optional[str]]:
-        engine.circuit_breaker.record_error()
         self.state.metrics.llm_error_total += 1
         unsupported_state_error = isinstance(
             error, DSPyRuntimeUnsupportedStateError
         )
+        if not unsupported_state_error:
+            engine.circuit_breaker.record_error()
         if unsupported_state_error:
             policy_resolution = _build_llm_policy_resolution(
                 rollout_stage=guardrails.rollout_stage,
