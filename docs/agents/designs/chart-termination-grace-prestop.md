@@ -83,6 +83,12 @@ Control plane uses global defaults by default and can be overridden via `control
   2. Remove component `lifecycle` overrides.
   3. Revert global `deploymentLifecycle`.
 
+Tradeoffs:
+
+- Larger `terminationGracePeriodSeconds` improves graceful draining but increases rollout/scale-down time.
+- `preStop` hooks can reduce request/reconcile loss, but hooks that run too long can delay pod replacement and consume termination budget.
+- Different grace windows for control plane vs controllers is usually useful: controllers often need a longer window to finish reconcilers while control plane can return faster.
+
 ### Migration behavior
 
 - For upgrade/drain safety you can phase in shutdown behavior:
