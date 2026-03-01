@@ -24,7 +24,6 @@ from app.trading.autonomy.policy_checks import (
     RollbackReadinessResult,
 )
 from app.trading.autonomy.gates import GateEvaluationReport, GateResult
-from app.trading.autonomy.policy_checks import RollbackReadinessResult
 from app.trading.evaluation import WalkForwardDecision
 from app.trading.features import SignalFeatures
 from app.trading.models import SignalEnvelope, StrategyDecision
