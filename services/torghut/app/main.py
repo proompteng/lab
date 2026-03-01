@@ -682,6 +682,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "last_run_at": state.last_autonomy_run_at,
             "last_run_id": state.last_autonomy_run_id,
             "last_gates": state.last_autonomy_gates,
+            "last_actuation_intent": state.last_autonomy_actuation_intent,
             "last_patch": state.last_autonomy_patch,
             "last_recommendation": state.last_autonomy_recommendation,
             "last_error": state.last_autonomy_error,
@@ -854,6 +855,7 @@ def trading_autonomy() -> dict[str, object]:
         "last_run_at": state.last_autonomy_run_at,
         "last_run_id": state.last_autonomy_run_id,
         "last_gates": state.last_autonomy_gates,
+        "last_actuation_intent": state.last_autonomy_actuation_intent,
         "last_patch": state.last_autonomy_patch,
         "last_recommendation": state.last_autonomy_recommendation,
         "last_error": state.last_autonomy_error,
@@ -1743,6 +1745,10 @@ def _load_runtime_profitability_gate_rollback_attribution(
 ) -> dict[str, object]:
     gate_artifact_path = str(getattr(state, "last_autonomy_gates", "") or "").strip()
     gate_payload = _load_json_artifact_payload(gate_artifact_path)
+    actuation_artifact_path = str(
+        getattr(state, "last_autonomy_actuation_intent", "") or ""
+    ).strip()
+    actuation_payload = _load_json_artifact_payload(actuation_artifact_path)
     gate6 = _extract_gate_result(
         cast(list[object], gate_payload.get("gates") or []),
         gate_id="gate6_profitability_evidence",
@@ -1751,6 +1757,34 @@ def _load_runtime_profitability_gate_rollback_attribution(
     promotion_decision = _to_str_map(gate_payload.get("promotion_decision"))
     promotion_recommendation = _to_str_map(gate_payload.get("promotion_recommendation"))
     provenance = _to_str_map(gate_payload.get("provenance"))
+    actuation_gates = _to_str_map(actuation_payload.get("gates"))
+    actuation_root = _to_str_map(actuation_payload)
+    actuation_audit = _to_str_map(actuation_payload.get("audit"))
+    actuation_readiness = _to_str_map(
+        actuation_audit.get("rollback_readiness_readout")
+    )
+    def _optional_trace_id(value: object) -> str | None:
+        if value is None:
+            return None
+        trace_id = str(value).strip()
+        return trace_id or None
+
+    actuation_trace = _optional_trace_id(
+        actuation_gates.get("gate_report_trace_id")
+        or provenance.get("gate_report_trace_id")
+    )
+    actuation_recommendation_trace = _optional_trace_id(
+        actuation_gates.get("recommendation_trace_id")
+        or provenance.get("recommendation_trace_id")
+    )
+
+    actuation_artifact_refs_raw = actuation_payload.get("artifact_refs")
+    actuation_artifact_refs = (
+        [str(item) for item in cast(list[object], actuation_artifact_refs_raw)]
+        if isinstance(actuation_artifact_refs_raw, list)
+        else []
+    )
+    actuation_artifact_refs = [item for item in actuation_artifact_refs if item.strip()]
 
     rollback_evidence_path = str(
         getattr(state, "rollback_incident_evidence_path", "") or ""
@@ -1770,15 +1804,21 @@ def _load_runtime_profitability_gate_rollback_attribution(
     metrics = getattr(state, "metrics", None)
     return {
         "gate_report_artifact": gate_artifact_path or None,
-        "gate_report_run_id": str(gate_payload.get("run_id") or "").strip() or None,
-        "gate_report_trace_id": str(
-            provenance.get("gate_report_trace_id") or ""
-        ).strip()
-        or None,
-        "recommendation_trace_id": str(
-            provenance.get("recommendation_trace_id") or ""
-        ).strip()
-        or None,
+        "gate_report_run_id": (
+            str(actuation_payload.get("run_id") or gate_payload.get("run_id") or "")
+            .strip()
+            or None
+        ),
+        "gate_report_trace_id": (
+            actuation_trace
+            if actuation_trace
+            else _optional_trace_id(provenance.get("gate_report_trace_id"))
+        ),
+        "recommendation_trace_id": (
+            actuation_recommendation_trace
+            if actuation_recommendation_trace
+            else _optional_trace_id(provenance.get("recommendation_trace_id"))
+        ),
         "gate6_profitability_evidence": gate6,
         "promotion_decision": {
             "promotion_target": promotion_decision.get("promotion_target"),
@@ -1794,6 +1834,39 @@ def _load_runtime_profitability_gate_rollback_attribution(
             "benchmark": provenance.get("profitability_benchmark_artifact"),
             "evidence": provenance.get("profitability_evidence_artifact"),
             "validation": provenance.get("profitability_validation_artifact"),
+        },
+        "actuation_intent": {
+            "artifact_path": actuation_artifact_path or None,
+            "actuation_allowed": bool(actuation_root.get("actuation_allowed")),
+            "recommendation_trace_id": (
+                str(actuation_gates.get("recommendation_trace_id") or "").strip() or None
+            ),
+            "gate_report_trace_id": (
+                str(actuation_gates.get("gate_report_trace_id") or "").strip() or None
+            ),
+            "promotion_target": actuation_root.get("promotion_target"),
+            "recommended_mode": actuation_root.get("recommended_mode"),
+            "confirmation_phrase_required": bool(
+                actuation_root.get("confirmation_phrase_required")
+            ),
+            "rollback_readiness": {
+                "kill_switch_dry_run_passed": bool(
+                    actuation_readiness.get("kill_switch_dry_run_passed")
+                ),
+                "gitops_revert_dry_run_passed": bool(
+                    actuation_readiness.get("gitops_revert_dry_run_passed")
+                ),
+                "strategy_disable_dry_run_passed": bool(
+                    actuation_readiness.get("strategy_disable_dry_run_passed")
+                ),
+                "human_approved": bool(actuation_readiness.get("human_approved")),
+                "rollback_target": actuation_readiness.get("rollback_target"),
+                "dry_run_completed_at": actuation_readiness.get("dry_run_completed_at"),
+                "missing_checks": actuation_audit.get(
+                    "rollback_evidence_missing_checks"
+                ),
+                "evidence_links": sorted(set(actuation_artifact_refs)),
+            },
         },
         "rollback": {
             "emergency_stop_active": bool(

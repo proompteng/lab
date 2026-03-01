@@ -95,6 +95,9 @@ def main() -> int:
         "candidate_id": result.candidate_id,
         "output_dir": str(result.output_dir),
         "gate_report_path": str(result.gate_report_path),
+        "actuation_intent_path": str(result.actuation_intent_path)
+        if result.actuation_intent_path
+        else None,
         "paper_patch_path": str(result.paper_patch_path)
         if result.paper_patch_path
         else None,
