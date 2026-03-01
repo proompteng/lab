@@ -643,15 +643,40 @@ def _render_tca_summary_map(values: Mapping[str, object]) -> list[str]:
     scalar_metrics: list[tuple[str, str]] = [
         ("order_count", "torghut_trading_tca_order_count"),
         ("avg_slippage_bps", "torghut_trading_tca_avg_slippage_bps"),
+        ("avg_abs_slippage_bps", "torghut_trading_tca_avg_abs_slippage_bps"),
         ("avg_shortfall_notional", "torghut_trading_tca_avg_shortfall_notional"),
+        (
+            "avg_shortfall_notional_abs",
+            "torghut_trading_tca_avg_shortfall_notional_abs",
+        ),
         ("avg_churn_ratio", "torghut_trading_tca_avg_churn_ratio"),
         ("avg_divergence_bps", "torghut_trading_tca_avg_divergence_bps"),
+        ("avg_divergence_bps_abs", "torghut_trading_tca_avg_divergence_bps_abs"),
         ("avg_calibration_error_bps", "torghut_trading_tca_avg_calibration_error_bps"),
-        ("avg_realized_shortfall_bps", "torghut_trading_tca_avg_realized_shortfall_bps"),
-        ("avg_expected_shortfall_bps_p50", "torghut_trading_tca_avg_expected_shortfall_bps_p50"),
-        ("avg_expected_shortfall_bps_p95", "torghut_trading_tca_avg_expected_shortfall_bps_p95"),
-        ("expected_shortfall_coverage", "torghut_trading_tca_expected_shortfall_coverage"),
-        ("expected_shortfall_sample_count", "torghut_trading_tca_expected_shortfall_sample_count"),
+        (
+            "avg_realized_shortfall_bps",
+            "torghut_trading_tca_avg_realized_shortfall_bps",
+        ),
+        (
+            "avg_realized_shortfall_bps_abs",
+            "torghut_trading_tca_avg_realized_shortfall_bps_abs",
+        ),
+        (
+            "avg_expected_shortfall_bps_p50",
+            "torghut_trading_tca_avg_expected_shortfall_bps_p50",
+        ),
+        (
+            "avg_expected_shortfall_bps_p95",
+            "torghut_trading_tca_avg_expected_shortfall_bps_p95",
+        ),
+        (
+            "expected_shortfall_coverage",
+            "torghut_trading_tca_expected_shortfall_coverage",
+        ),
+        (
+            "expected_shortfall_sample_count",
+            "torghut_trading_tca_expected_shortfall_sample_count",
+        ),
     ]
     for summary_key, metric_name in scalar_metrics:
         metric_value = values.get(summary_key)
