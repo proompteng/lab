@@ -1039,7 +1039,7 @@ class TestAutonomousLane(TestCase):
                             {
                                 "strategy_id": "candidate-b",
                                 "strategy_type": "legacy_macd_rsi",
-                                "version": "1.0.1",
+                                "version": "1.0.0",
                                 "enabled": True,
                             }
                         ]
