@@ -35,7 +35,11 @@ _BOOTSTRAP_ARTIFACT_HASH = hash_payload(_BOOTSTRAP_ARTIFACT_BODY)
 
 
 class DSPyRuntimeError(RuntimeError):
-    """Raised when DSPy runtime execution fails and caller should fallback."""
+    """Raised when DSPy runtime execution fails and caller may fallback."""
+
+
+class DSPyRuntimeUnsupportedStateError(DSPyRuntimeError):
+    """Raised when DSPy runtime is not in a state allowed for execution."""
 
 
 @dataclass(frozen=True)
@@ -83,13 +87,14 @@ class DSPyReviewRuntime:
     def __init__(
         self,
         *,
+        mode: str,
         artifact_hash: str | None,
         program_name: str,
         signature_version: str,
         timeout_seconds: int,
         program: DSPyCommitteeProgram | None = None,
     ) -> None:
-        self.mode = "active"
+        self.mode = mode
         self.artifact_hash = _normalize_hash(artifact_hash)
         self.program_name = program_name.strip() or _BOOTSTRAP_PROGRAM_NAME
         self.signature_version = (
@@ -106,6 +111,7 @@ class DSPyReviewRuntime:
     @classmethod
     def from_settings(cls) -> "DSPyReviewRuntime":
         return cls(
+            mode=settings.llm_dspy_runtime_mode,
             artifact_hash=settings.llm_dspy_artifact_hash,
             program_name=settings.llm_dspy_program_name,
             signature_version=settings.llm_dspy_signature_version,
@@ -117,16 +123,36 @@ class DSPyReviewRuntime:
         return _BOOTSTRAP_ARTIFACT_HASH
 
     def is_enabled(self) -> bool:
-        return bool(self.artifact_hash)
+        return (
+            self.mode in {"shadow", "active"}
+            and bool(self.artifact_hash)
+            and not (
+                self.mode == "active"
+                and self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH
+            )
+        )
 
     def review(
         self, request: LLMReviewRequest
     ) -> tuple[LLMReviewResponse, DSPyRuntimeMetadata]:
+        if self.mode == "disabled":
+            raise DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled")
         if self.artifact_hash is None:
-            raise DSPyRuntimeError("dspy_artifact_hash_missing")
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_hash_missing")
+        if (
+            self.mode == "active"
+            and self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH
+        ):
+            raise DSPyRuntimeUnsupportedStateError("dspy_bootstrap_artifact_forbidden")
 
         manifest = self._resolve_artifact_manifest()
         self._validate_manifest(manifest)
+        if manifest.executor not in {"heuristic", "dspy_live"}:
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_executor_unknown")
+        if self.mode == "active" and manifest.executor != "dspy_live":
+            raise DSPyRuntimeUnsupportedStateError(
+                "dspy_active_mode_requires_dspy_live_executor"
+            )
         program = self._resolve_program(manifest)
 
         payload = review_request_to_dspy_input(
@@ -169,7 +195,7 @@ class DSPyReviewRuntime:
 
     def _resolve_artifact_manifest(self) -> DSPyArtifactManifest:
         if self.artifact_hash is None:
-            raise DSPyRuntimeError("dspy_artifact_hash_missing")
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_hash_missing")
 
         now = time.monotonic()
         if (
@@ -196,7 +222,7 @@ class DSPyReviewRuntime:
             manifest = self._load_manifest_from_db(self.artifact_hash)
 
         if manifest is None:
-            raise DSPyRuntimeError("dspy_artifact_manifest_not_found")
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_manifest_not_found")
 
         self._manifest_cache = manifest
         self._manifest_cache_loaded_at_monotonic = now
@@ -228,7 +254,9 @@ class DSPyReviewRuntime:
             return None
 
         if row.gate_compatibility and row.gate_compatibility != "pass":
-            raise DSPyRuntimeError("dspy_artifact_gate_compatibility_failed")
+            raise DSPyRuntimeUnsupportedStateError(
+                "dspy_artifact_gate_compatibility_failed"
+            )
 
         signature_versions = _parse_signature_versions(row.signature_version)
         if not signature_versions:
@@ -236,12 +264,16 @@ class DSPyReviewRuntime:
 
         program_name = (row.program_name or "").strip()
         if not program_name:
-            raise DSPyRuntimeError("dspy_artifact_program_name_missing")
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_program_name_missing")
 
         if not row.optimizer or not row.dataset_hash or not row.compiled_prompt_hash:
-            raise DSPyRuntimeError("dspy_artifact_missing_compile_fields")
+            raise DSPyRuntimeUnsupportedStateError(
+                "dspy_artifact_missing_compile_fields"
+            )
         if not row.artifact_uri or not row.reproducibility_hash:
-            raise DSPyRuntimeError("dspy_artifact_missing_reproducibility_fields")
+            raise DSPyRuntimeUnsupportedStateError(
+                "dspy_artifact_missing_reproducibility_fields"
+            )
 
         computed_hash = hash_payload(
             {
@@ -255,7 +287,7 @@ class DSPyReviewRuntime:
             }
         )
         if computed_hash != artifact_hash:
-            raise DSPyRuntimeError("dspy_artifact_hash_mismatch")
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_hash_mismatch")
 
         metadata: dict[str, Any] = {}
         metadata_raw = row.metadata_json
@@ -264,11 +296,12 @@ class DSPyReviewRuntime:
             metadata = {str(key): value for key, value in metadata_items.items()}
 
         executor_raw = str(metadata.get("executor") or "heuristic").strip().lower()
-        executor: Literal["heuristic", "dspy_live"]
         if executor_raw in {"dspy", "dspy_live", "live"}:
-            executor = "dspy_live"
-        else:
+            executor: Literal["heuristic", "dspy_live"] = "dspy_live"
+        elif executor_raw == "heuristic":
             executor = "heuristic"
+        else:
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_executor_unknown")
 
         compiled_prompt_raw = metadata.get("compiled_prompt")
         compiled_prompt: dict[str, Any] = {}
@@ -316,9 +349,9 @@ class DSPyReviewRuntime:
 
     def _validate_manifest(self, manifest: DSPyArtifactManifest) -> None:
         if manifest.program_name != self.program_name:
-            raise DSPyRuntimeError("dspy_program_name_mismatch")
+            raise DSPyRuntimeUnsupportedStateError("dspy_program_name_mismatch")
         if manifest.signature_version != self.signature_version:
-            raise DSPyRuntimeError("dspy_signature_version_mismatch")
+            raise DSPyRuntimeUnsupportedStateError("dspy_signature_version_mismatch")
 
 
 def _normalize_hash(value: str | None) -> str | None:
@@ -326,9 +359,9 @@ def _normalize_hash(value: str | None) -> str | None:
     if not normalized:
         return None
     if len(normalized) != _HASH_LENGTH:
-        raise DSPyRuntimeError("dspy_artifact_hash_invalid_length")
+        raise DSPyRuntimeUnsupportedStateError("dspy_artifact_hash_invalid_length")
     if any(ch not in string.hexdigits for ch in normalized):
-        raise DSPyRuntimeError("dspy_artifact_hash_not_hex")
+        raise DSPyRuntimeUnsupportedStateError("dspy_artifact_hash_not_hex")
     return normalized
 
 
@@ -364,7 +397,7 @@ def _pick_signature_version(
 def _resolve_dspy_model_name() -> str:
     raw = settings.llm_model.strip()
     if not raw:
-        raise DSPyRuntimeError("dspy_model_not_configured")
+        raise DSPyRuntimeUnsupportedStateError("dspy_model_not_configured")
     if "/" in raw:
         return raw
     return f"openai/{raw}"
@@ -373,8 +406,13 @@ def _resolve_dspy_model_name() -> str:
 def _resolve_dspy_api_base() -> str | None:
     base_url = (settings.jangar_base_url or "").strip().rstrip("/")
     if not base_url:
-        raise DSPyRuntimeError("dspy_jangar_base_url_missing")
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
     return f"{base_url}/openai/v1"
 
 
-__all__ = ["DSPyRuntimeError", "DSPyRuntimeMetadata", "DSPyReviewRuntime"]
+__all__ = [
+    "DSPyRuntimeError",
+    "DSPyRuntimeUnsupportedStateError",
+    "DSPyRuntimeMetadata",
+    "DSPyReviewRuntime",
+]

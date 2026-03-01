@@ -12,7 +12,11 @@ from typing import Any, Optional, cast
 from ...config import settings
 from ..models import StrategyDecision
 from .circuit import LLMCircuitBreaker
-from .dspy_programs import DSPyReviewRuntime, DSPyRuntimeError
+from .dspy_programs import (
+    DSPyReviewRuntime,
+    DSPyRuntimeError,
+    DSPyRuntimeUnsupportedStateError,
+)
 from .policy import allowed_order_types
 from .schema import (
     LLMDecisionContext,
@@ -131,6 +135,8 @@ class LLMReviewEngine:
             response_json["dspy"] = metadata.to_payload()
             used_model = f"dspy:{metadata.program_name}"
             used_prompt_version = f"dspy:{metadata.signature_version}"
+        except DSPyRuntimeUnsupportedStateError:
+            raise
         except DSPyRuntimeError as exc:
             response, dspy_payload = _deterministic_fallback_response(
                 runtime=self.dspy_runtime,
@@ -238,7 +244,7 @@ def _deterministic_fallback_response(
         }
     )
     dspy_payload: dict[str, Any] = {
-        "mode": "active",
+        "mode": runtime.mode,
         "program_name": runtime.program_name,
         "signature_version": runtime.signature_version,
         "artifact_hash": runtime.artifact_hash,

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 import yaml
 
 from app.config import FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD, Settings
+from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
 
 
 class _MockFlagResponse:
@@ -167,6 +168,32 @@ class TestConfig(TestCase):
         )
         self.assertEqual(settings.llm_dspy_runtime_mode, "shadow")
         self.assertEqual(settings.llm_dspy_artifact_hash, "a" * 64)
+
+    def test_live_dspy_runtime_gate_blocks_invalid_hash(self) -> None:
+        settings = Settings(
+            TRADING_MODE="live",
+            TRADING_LIVE_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="jangar",
+            LLM_DSPY_RUNTIME_MODE="active",
+            LLM_DSPY_ARTIFACT_HASH="z" * 64,
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        allowed, reasons = settings.llm_dspy_live_runtime_gate()
+        self.assertFalse(allowed)
+        self.assertIn("dspy_artifact_hash_not_hex", reasons)
+
+    def test_live_dspy_runtime_gate_blocks_bootstrap_artifact_hash(self) -> None:
+        settings = Settings(
+            TRADING_MODE="live",
+            TRADING_LIVE_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="jangar",
+            LLM_DSPY_RUNTIME_MODE="active",
+            LLM_DSPY_ARTIFACT_HASH=DSPyReviewRuntime.bootstrap_artifact_hash(),
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        allowed, reasons = settings.llm_dspy_live_runtime_gate()
+        self.assertFalse(allowed)
+        self.assertIn("dspy_bootstrap_artifact_forbidden", reasons)
 
     def test_allocator_regime_maps_are_normalized(self) -> None:
         settings = Settings(
