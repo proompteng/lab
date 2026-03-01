@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -47,6 +47,24 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Use stale rollback dry-run timestamp to trigger readiness failure.",
+    )
+    parser.add_argument(
+        "--simulate-stress-metrics-missing",
+        action="store_true",
+        default=False,
+        help="Delete stress metrics artifact to prove evidence dependency enforcement.",
+    )
+    parser.add_argument(
+        "--simulate-stress-metrics-stale",
+        action="store_true",
+        default=False,
+        help="Force stale stress metrics generated_at to trigger evidence staleness failure.",
+    )
+    parser.add_argument(
+        "--simulate-stress-metrics-untrusted",
+        action="store_true",
+        default=False,
+        help="Use untrusted stress metrics artifact reference to trigger reference enforcement failure.",
     )
     return parser
 
@@ -118,6 +136,31 @@ def main() -> int:
             "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dry-run\n",
             encoding="utf-8",
         )
+        stress_artifact = {
+            "schema_version": "stress-metrics-v1",
+            "run_id": str(gate_report.get("run_id", "run-dry-run")),
+        }
+        promotion_evidence = gate_report.get("promotion_evidence")
+        if isinstance(promotion_evidence, dict):
+            stress_metrics = promotion_evidence.get("stress_metrics")
+            if isinstance(stress_metrics, dict):
+                stress_artifact["count"] = int(stress_metrics.get("count") or 0)
+                stress_artifact["items"] = list(stress_metrics.get("items") or [])
+                if args.simulate_stress_metrics_stale:
+                    stress_artifact["generated_at"] = (
+                        datetime.now(timezone.utc) - timedelta(hours=25)
+                    ).isoformat()
+                elif isinstance(stress_metrics.get("generated_at"), str):
+                    stress_artifact["generated_at"] = stress_metrics["generated_at"]
+        if "generated_at" not in stress_artifact:
+            stress_artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
+        (root / "gates" / "stress-metrics-v1.json").write_text(
+            json.dumps(stress_artifact, indent=2), encoding="utf-8"
+        )
+        if args.simulate_stress_metrics_missing:
+            stress_path = root / "gates" / "stress-metrics-v1.json"
+            if stress_path.exists():
+                stress_path.unlink()
 
         if args.simulate_missing_artifact:
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").unlink()
@@ -159,6 +202,9 @@ def main() -> int:
             "simulation": {
                 "missing_artifact": args.simulate_missing_artifact,
                 "stale_rollback": args.simulate_stale_rollback,
+                "missing_stress_metrics": args.simulate_stress_metrics_missing,
+                "stale_stress_metrics": args.simulate_stress_metrics_stale,
+                "untrusted_stress_metrics": args.simulate_stress_metrics_untrusted,
             },
         }
 

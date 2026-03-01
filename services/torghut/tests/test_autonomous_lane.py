@@ -220,6 +220,13 @@ class TestAutonomousLane(TestCase):
             evidence = gate_payload["promotion_evidence"]
             self.assertEqual(evidence["fold_metrics"]["count"], 1)
             self.assertEqual(evidence["stress_metrics"]["count"], 4)
+            self.assertEqual(
+                evidence["stress_metrics"]["artifact_ref"],
+                str(output_dir / "gates" / "stress-metrics-v1.json"),
+            )
+            self.assertTrue(
+                (output_dir / "gates" / "stress-metrics-v1.json").exists()
+            )
             self.assertIn("janus_q", evidence)
             self.assertEqual(evidence["janus_q"]["event_car"]["count"], 3)
             self.assertEqual(evidence["janus_q"]["hgrm_reward"]["count"], 3)
@@ -273,6 +280,10 @@ class TestAutonomousLane(TestCase):
             )
             self.assertIn(
                 str(output_dir / "gates" / "rollback-readiness.json"),
+                actuation_payload["artifact_refs"],
+            )
+            self.assertIn(
+                str(output_dir / "gates" / "stress-metrics-v1.json"),
                 actuation_payload["artifact_refs"],
             )
 

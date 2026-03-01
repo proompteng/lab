@@ -11,9 +11,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from datetime import datetime, timezone
-from decimal import Decimal
-from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, cast
 
 from sqlalchemy import delete, select
@@ -92,6 +89,8 @@ _AUTONOMY_LANE_SCHEMA_VERSION = "torghut-autonomy-stage-manifest-v1"
 _STAGE_CANDIDATE_GENERATION = "candidate-generation"
 _STAGE_EVALUATION = "evaluation"
 _STAGE_RECOMMENDATION = "promotion-recommendation"
+_STRESS_METRICS_ARTIFACT_PATH = "gates/stress-metrics-v1.json"
+_STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
 
 
 @dataclass(frozen=True)
@@ -682,6 +681,7 @@ def run_autonomous_lane(
     profitability_validation_path = gates_dir / "profitability-evidence-validation.json"
     janus_event_car_path = gates_dir / "janus-event-car-v1.json"
     janus_hgrm_reward_path = gates_dir / "janus-hgrm-reward-v1.json"
+    stress_metrics_path = gates_dir / _STRESS_METRICS_ARTIFACT_PATH
     recalibration_report_path = gates_dir / "recalibration-report.json"
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     phase_manifest_path = rollout_dir / "phase-manifest.json"
@@ -1044,8 +1044,18 @@ def run_autonomous_lane(
         ]
         stress_evidence = [
             _build_stress_bundle(report, stress_case)
-            for stress_case in ("spread", "volatility", "liquidity", "halt")
+            for stress_case in _STRESS_METRICS_CASES
         ]
+        stress_metrics_payload = {
+            "schema_version": "stress-metrics-v1",
+            "run_id": run_id,
+            "generated_at": now.isoformat(),
+            "count": len(stress_evidence),
+            "items": stress_evidence,
+        }
+        stress_metrics_path.write_text(
+            json.dumps(stress_metrics_payload, indent=2), encoding="utf-8"
+        )
         gate_report_payload = gate_report.to_payload()
         gate_report_payload["run_id"] = run_id
         gate_report_payload["throughput"] = {
@@ -1066,7 +1076,7 @@ def run_autonomous_lane(
             "stress_metrics": {
                 "count": len(stress_evidence),
                 "items": stress_evidence,
-                "artifact_ref": "db:research_stress_metrics",
+                "artifact_ref": str(stress_metrics_path),
             },
             "janus_q": {
                 "event_car": {
@@ -1114,6 +1124,7 @@ def run_autonomous_lane(
                 "profitability_benchmark": str(profitability_benchmark_path),
                 "profitability_evidence": str(profitability_evidence_path),
                 "profitability_validation": str(profitability_validation_path),
+                "stress_metrics": str(stress_metrics_path),
                 "janus_event_car": str(janus_event_car_path),
                 "janus_hgrm_reward": str(janus_hgrm_reward_path),
                 "recalibration_report": str(recalibration_report_path),
@@ -1233,6 +1244,7 @@ def run_autonomous_lane(
                         str(gate_report_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(stress_metrics_path),
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         str(recalibration_report_path),
@@ -1255,6 +1267,7 @@ def run_autonomous_lane(
                         str(profitability_benchmark_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(stress_metrics_path),
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         *[
@@ -1282,7 +1295,7 @@ def run_autonomous_lane(
             "stress_metrics": {
                 "count": len(stress_evidence),
                 "items": stress_evidence,
-                "artifact_ref": "db:research_stress_metrics",
+                "artifact_ref": str(stress_metrics_path),
             },
             "janus_q": {
                 "event_car": {
