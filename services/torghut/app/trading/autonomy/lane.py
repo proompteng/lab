@@ -108,7 +108,7 @@ class _StageManifestRecord:
     inputs: dict[str, str] = field(default_factory=dict)
 
 
-def _readable_iteration_number(artifact_root: Path) -> int:
+def _readable_stage_iteration_number(artifact_root: Path) -> int:
     pattern = re.compile(r"^iteration-(\d+)\.md$")
     highest = 0
     for item in artifact_root.glob("iteration-*.md"):
@@ -141,7 +141,7 @@ def _write_stage_iteration_notes(
     priority_id: str | None,
 ) -> Path:
     artifact_root.mkdir(parents=True, exist_ok=True)
-    iteration = _readable_iteration_number(artifact_root)
+    iteration = _readable_stage_iteration_number(artifact_root)
     notes_path = artifact_root / f"iteration-{iteration}.md"
 
     lines = [
@@ -449,7 +449,7 @@ def _artifact_hashes(artifacts: Mapping[str, Path | None]) -> dict[str, str]:
     return digests
 
 
-def _readable_iteration_number(notes_dir: Path) -> int:
+def _readable_notes_iteration_number(notes_dir: Path) -> int:
     pattern = re.compile(r"^iteration-(\d+)\.md$")
     highest = 0
     for item in notes_dir.glob("iteration-*.md"):
@@ -570,7 +570,7 @@ def _write_iteration_notes(
 ) -> Path:
     notes_dir = artifact_root / "notes"
     notes_dir.mkdir(parents=True, exist_ok=True)
-    iteration = _readable_iteration_number(notes_dir)
+    iteration = _readable_notes_iteration_number(notes_dir)
     notes_path = notes_dir / f"iteration-{iteration}.md"
 
     lines = [
@@ -726,12 +726,6 @@ def run_autonomous_lane(
             code_version=code_version,
             now=now,
         )
-    effective_head = (
-        governance_head
-        if governance_head
-        else f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
-    )
-
     try:
         ordered_signals = sorted(
             signals, key=lambda item: (item.event_ts, item.symbol, item.seq or 0)
