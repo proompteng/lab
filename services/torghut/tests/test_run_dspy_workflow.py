@@ -69,12 +69,14 @@ class TestRunDSPyWorkflowScript(TestCase):
 
             output = json.loads((print_mock.call_args.args[0]))
             self.assertEqual(output["artifactRoot"], str(artifact_root.resolve()))
+            self.assertEqual(output["artifactPath"], str(artifact_root.resolve()))
             self.assertEqual(output["priorityId"], "P-1")
 
             iteration_path = artifact_root / "iteration-1.md"
             self.assertTrue(iteration_path.exists())
             iteration_report = iteration_path.read_text(encoding="utf-8")
             self.assertIn("- status: completed", iteration_report)
+            self.assertIn(f"- artifact_path: {artifact_root}", iteration_report)
             self.assertIn("- priority_id: P-1", iteration_report)
             self.assertIn("- responses: compile, dataset-build, eval, promote", iteration_report)
 

@@ -16,6 +16,7 @@ from typing import Any
 from app.trading.autonomy.lane import (
     _AUTONOMY_PHASE_ORDER,
     _build_phase_manifest,
+    _STRESS_METRICS_CASES,
     _resolve_paper_patch_path,
     _resolve_gate_forecast_metrics,
     _resolve_gate_fragility_inputs,
@@ -90,11 +91,6 @@ class TestAutonomousLane(TestCase):
         self.assertGreaterEqual(Decimal(metrics["calibration_score_min"]), Decimal("0"))
 
     def test_gate_fragility_inputs_are_derived_from_decision_payloads(self) -> None:
-        fallback_metrics = {
-            "fragility_state": "elevated",
-            "fragility_score": "0.40",
-            "stability_mode_active": False,
-        }
         decisions = [
             WalkForwardDecision(
                 decision=StrategyDecision(
@@ -125,7 +121,7 @@ class TestAutonomousLane(TestCase):
         ]
 
         state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
-            metrics_payload=fallback_metrics, decisions=decisions
+            decisions=decisions
         )
 
         self.assertEqual(state, "crisis")
@@ -135,8 +131,7 @@ class TestAutonomousLane(TestCase):
 
     def test_gate_fragility_inputs_fail_closed_on_missing_or_invalid_values(self) -> None:
         state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
-            metrics_payload={},
-            decisions=[],
+            decisions=[]
         )
         self.assertEqual(state, "not_measured")
         self.assertEqual(score, Decimal("0"))
@@ -144,7 +139,6 @@ class TestAutonomousLane(TestCase):
         self.assertFalse(inputs_valid)
 
         state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
-            metrics_payload={},
             decisions=[
                 WalkForwardDecision(
                     decision=StrategyDecision(
@@ -219,7 +213,9 @@ class TestAutonomousLane(TestCase):
             self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
             evidence = gate_payload["promotion_evidence"]
             self.assertEqual(evidence["fold_metrics"]["count"], 1)
-            self.assertEqual(evidence["stress_metrics"]["count"], 4)
+            self.assertEqual(
+                evidence["stress_metrics"]["count"], len(_STRESS_METRICS_CASES)
+            )
             self.assertEqual(
                 evidence["stress_metrics"]["artifact_ref"],
                 str(output_dir / "gates" / "stress-metrics-v1.json"),
@@ -2171,7 +2167,7 @@ class TestAutonomousLane(TestCase):
                         reasons=[],
                         evidence=PromotionEvidenceSummary(
                             fold_metrics_count=1,
-                            stress_metrics_count=4,
+                            stress_metrics_count=len(_STRESS_METRICS_CASES),
                             rationale_present=True,
                             evidence_complete=True,
                             reasons=[],
@@ -2282,7 +2278,7 @@ class TestAutonomousLane(TestCase):
                         reasons=["shadow_mode_recommended"],
                         evidence=PromotionEvidenceSummary(
                             fold_metrics_count=1,
-                            stress_metrics_count=4,
+                            stress_metrics_count=len(_STRESS_METRICS_CASES),
                             rationale_present=True,
                             evidence_complete=True,
                             reasons=[],

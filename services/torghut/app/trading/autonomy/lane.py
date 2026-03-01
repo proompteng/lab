@@ -85,15 +85,11 @@ _AUTONOMY_PHASE_ORDER: tuple[str, ...] = AUTONOMY_PHASE_ORDER
 _ACTUATION_INTENT_SCHEMA_VERSION = "torghut.autonomy.actuation-intent.v1"
 _ACTUATION_CONFIRMATION_PHRASE = "ACTUATE_TORGHUT"
 _ACTUATION_INTENT_PATH = "gates/actuation-intent.json"
-<<<<<<< HEAD
 _AUTONOMY_LANE_SCHEMA_VERSION = "torghut-autonomy-stage-manifest-v1"
 _STAGE_CANDIDATE_GENERATION = "candidate-generation"
 _STAGE_EVALUATION = "evaluation"
 _STAGE_RECOMMENDATION = "promotion-recommendation"
 _STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
-=======
-_STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
->>>>>>> a7a57d6d6 (fix(autonomy): correct stress metrics artifact path construction)
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
 
 
@@ -946,7 +942,6 @@ def run_autonomous_lane(
         profitability_evidence_payload["validation"] = (
             profitability_validation.to_payload()
         )
-        metrics_payload = report.metrics.to_payload()
         (
             fragility_state,
             fragility_score,
@@ -954,7 +949,7 @@ def run_autonomous_lane(
             fragility_inputs_valid,
         ) = (
             _resolve_gate_fragility_inputs(
-                metrics_payload=metrics_payload, decisions=walk_decisions
+                decisions=walk_decisions
             )
         )
         forecast_gate_metrics = _resolve_gate_forecast_metrics(signals=ordered_signals)
@@ -1050,11 +1045,12 @@ def run_autonomous_lane(
             _build_stress_bundle(report, stress_case)
             for stress_case in _STRESS_METRICS_CASES
         ]
+        stress_metrics_count = len(stress_evidence)
         stress_metrics_payload = {
             "schema_version": "stress-metrics-v1",
             "run_id": run_id,
             "generated_at": now.isoformat(),
-            "count": len(stress_evidence),
+            "count": stress_metrics_count,
             "items": stress_evidence,
         }
         stress_metrics_path.write_text(
@@ -1069,7 +1065,7 @@ def run_autonomous_lane(
             "no_signal_window": False,
             "no_signal_reason": None,
             "fold_metrics_count": len(walk_results.folds),
-            "stress_metrics_count": 4,
+            "stress_metrics_count": stress_metrics_count,
         }
         gate_report_payload["promotion_evidence"] = {
             "fold_metrics": {
@@ -1182,7 +1178,6 @@ def run_autonomous_lane(
             drift_promotion_evidence=drift_promotion_evidence,
         )
         fold_metrics_count = len(walk_results.folds)
-        stress_metrics_count = 4
         promotion_rationale = _build_promotion_rationale(
             gate_report=gate_report,
             promotion_check_reasons=promotion_check.reasons,
@@ -3350,19 +3345,8 @@ def _is_more_worse_fragility(
 
 def _resolve_gate_fragility_inputs(
     *,
-    metrics_payload: dict[str, object],
     decisions: list[WalkForwardDecision],
 ) -> tuple[str, Decimal, bool, bool]:
-    fallback_measurement = _coerce_fragility_measurement(
-        {
-            "fragility_state": metrics_payload.get("fragility_state"),
-            "fragility_score": metrics_payload.get("fragility_score"),
-            "stability_mode_active": metrics_payload.get(
-                "stability_mode_active"
-            ),
-        }
-    )
-
     selected_measurement: tuple[str, Decimal, bool] | None = None
 
     for item in decisions:
@@ -3404,10 +3388,7 @@ def _resolve_gate_fragility_inputs(
             selected_measurement = candidate
 
     if selected_measurement is None:
-        if fallback_measurement is None:
-            return ("not_measured", Decimal("0"), False, False)
-        selected_measurement = fallback_measurement
-
+        return ("not_measured", Decimal("0"), False, False)
     selected_state, selected_score, selected_stability = selected_measurement
     return selected_state, selected_score, selected_stability, True
 

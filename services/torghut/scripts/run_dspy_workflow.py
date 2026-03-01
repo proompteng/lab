@@ -99,6 +99,7 @@ def _write_iteration_report(
         f"- base: {base}",
         f"- head: {head}",
         f"- artifact_root: {artifact_root}",
+        f"- artifact_path: {artifact_root}",
         f"- run_prefix: {run_prefix}",
         f"- status: {status}",
     ]
@@ -262,6 +263,7 @@ def main() -> int:
         "base": args.base,
         "head": args.head,
         "artifactRoot": str(artifact_root),
+        "artifactPath": str(artifact_root),
         "priorityId": (args.priority_id.strip() if args.priority_id else None),
         "includeGepaExperiment": bool(args.include_gepa_experiment),
         "responses": responses,
