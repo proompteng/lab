@@ -53,13 +53,14 @@ flowchart LR
 
 - Workloads should not need cluster-admin.
 - Most workloads should need only:
-  - read Pods for diagnostics (`get`),
-  - access only required namespace services and DNS.
+  - avoid control-plane permissions by default (`rules: []` where possible),
+  - allow only required namespace services and DNS.
 
 ## Network principles (v1)
 
 - Keep ClickHouse and Postgres internal to the cluster network.
 - Restrict Kafka access to only the required ports/namespaces.
+- Allow service-to-service ingress only on explicitly modeled runtime paths (`8181` and `8088`).
 - Allow egress to Alpaca endpoints only from forwarder and trading service.
 - Keep Alloy scrape ingress on runtime metrics ports (`ws/9090`, `ta/9249`) constrained to Alloy endpoints.
 - Constrain guardrail exporter ingress to the Alloy scraper only and limit egress to their single data source.
@@ -87,12 +88,12 @@ Apply and validate in a controlled order:
    - `kubectl -n torghut get netpol -o jsonpath='{.items[*].metadata.name}{\"\\n\"}'`
 
 2. After GitOps sync, run runtime checks for policy/RBAC behavior.
-   - `kubectl -n torghut auth can-i get pods --as=system:serviceaccount:torghut:torghut-runtime`
+   - `kubectl -n torghut auth can-i get pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
    - `kubectl -n torghut auth can-i get pods/log --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
    - `kubectl -n torghut auth can-i create pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
    - `kubectl -n torghut auth can-i get namespaces --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
    - `kubectl -n torghut get networkpolicy`
-   - `kubectl -n torghut get networkpolicy torghut-llm-guardrails-exporter-egress torghut-llm-guardrails-exporter-ingress-metrics torghut-clickhouse-guardrails-exporter-egress torghut-clickhouse-guardrails-exporter-ingress-metrics`
+   - `kubectl -n torghut get networkpolicy torghut-ta-egress torghut-ta-ingress-metrics torghut-ws-egress torghut-ws-ingress-metrics torghut-lean-runner-egress torghut-lean-runner-ingress torghut-service-egress torghut-service-ingress torghut-llm-guardrails-exporter-egress torghut-llm-guardrails-exporter-ingress-metrics torghut-clickhouse-guardrails-exporter-egress torghut-clickhouse-guardrails-exporter-ingress-metrics`
    - `kubectl -n torghut rollout status deploy/torghut-ws`
    - `kubectl -n torghut rollout status deploy/torghut-lean-runner`
    - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut`

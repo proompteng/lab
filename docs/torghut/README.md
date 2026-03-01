@@ -32,12 +32,12 @@ Start here:
   - Capture baseline manifests (`kubectl -n torghut get role,rolebinding,netpol -o yaml`) and health state before sync.
   - Apply GitOps changes in `argocd/applications/torghut/**` and let ArgoCD reconcile.
   - Run post-sync policy checks:
-    - `kubectl -n torghut auth can-i get pods --as=system:serviceaccount:torghut:torghut-runtime`
+    - `kubectl -n torghut auth can-i get pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
     - `kubectl -n torghut auth can-i get pods/log --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
     - `kubectl -n torghut auth can-i create pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
     - `kubectl -n torghut auth can-i get namespaces --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
     - `kubectl -n torghut get networkpolicy`
-    - `kubectl -n torghut get networkpolicy torghut-llm-guardrails-exporter-egress torghut-llm-guardrails-exporter-ingress-metrics torghut-clickhouse-guardrails-exporter-egress torghut-clickhouse-guardrails-exporter-ingress-metrics`
+    - `kubectl -n torghut get networkpolicy torghut-ta-egress torghut-ta-ingress-metrics torghut-ws-egress torghut-ws-ingress-metrics torghut-lean-runner-egress torghut-lean-runner-ingress torghut-service-egress torghut-service-ingress torghut-llm-guardrails-exporter-egress torghut-llm-guardrails-exporter-ingress-metrics torghut-clickhouse-guardrails-exporter-egress torghut-clickhouse-guardrails-exporter-ingress-metrics`
     - `kubectl -n torghut rollout status deploy/torghut-ws`
     - `kubectl -n torghut rollout status deploy/torghut-lean-runner`
     - `kubectl -n torghut get pods -l app=torghut-ws`

@@ -1,25 +1,23 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: torghut-ws-ingress-metrics
+  name: torghut-lean-runner-ingress
   namespace: torghut
 spec:
   podSelector:
     matchLabels:
-      app: torghut-ws
+      app.kubernetes.io/name: torghut-lean-runner
   policyTypes:
     - Ingress
   ingress:
-    - ports:
-        - protocol: TCP
-          port: 8080
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: torghut
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: torghut-alloy
+              app.kubernetes.io/name: torghut
+              app.kubernetes.io/component: backend
       ports:
         - protocol: TCP
-          port: 9090
+          port: 8088

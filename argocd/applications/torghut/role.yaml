@@ -4,8 +4,4 @@ metadata:
   name: torghut-runtime
   namespace: torghut
 rules:
-  - apiGroups: [""]
-    resources:
-      - pods
-    verbs:
-      - get
+  []
