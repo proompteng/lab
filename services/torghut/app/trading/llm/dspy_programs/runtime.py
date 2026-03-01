@@ -369,7 +369,7 @@ class DSPyReviewRuntime:
         if manifest.executor == "dspy_live":
             program = LiveDSPyCommitteeProgram(
                 model_name=_resolve_dspy_model_name(),
-                api_base=_resolve_dspy_api_base(),
+                api_completion_url=_resolve_dspy_api_base(),
                 api_key=settings.jangar_api_key.strip()
                 if settings.jangar_api_key
                 else None,

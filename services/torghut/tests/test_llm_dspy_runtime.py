@@ -150,9 +150,10 @@ class TestLLMDSPyRuntime(TestCase):
             program = runtime._resolve_program(manifest)
             self.assertIsInstance(program, LiveDSPyCommitteeProgram)
             self.assertEqual(
-                program.api_base,
+                program.api_completion_url,
                 "https://jangar.openai.local/openai/v1/chat/completions",
             )
+            self.assertIsNone(program.api_base)
             self.assertEqual(program.api_key, "test-key")
             self.assertEqual(program.model_name, f"openai/{settings.llm_model}")
         finally:
