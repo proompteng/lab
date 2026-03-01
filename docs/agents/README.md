@@ -12,6 +12,7 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Chart intent and scope (high-level design): `agents-helm-chart-design.md`
 - Creating AgentRuns safely (prompt precedence): `agentrun-creation-guide.md`
 - Launching workflow loops correctly (state reuse + checks): `agentrun-workflow-loop-launch-guide.md`
+- Running Codex Spark review/fix PR cycles: `codex-spark-review-cycle.md`
 - How to validate changes in CI: `ci-validation-plan.md`
 - How to install/upgrade/debug (ops): `runbooks.md`
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
@@ -75,6 +76,7 @@ If you are changing behavior, update 1-3 first, then ensure 4-5 describe the res
 ### Top-Level (`docs/agents/*.md`)
 
 - [agentrun-creation-guide.md](agentrun-creation-guide.md)
+- [codex-spark-review-cycle.md](codex-spark-review-cycle.md)
 - [agentrun-workflow-loop-launch-guide.md](agentrun-workflow-loop-launch-guide.md)
 - [agent-run-retention-design.md](agent-run-retention-design.md)
 - [agentctl-cli-design.md](agentctl-cli-design.md)
