@@ -1,6 +1,6 @@
 # Chart Termination Grace + preStop Hook
 
-Status: Implemented (2026-03-01)
+Status: Current (2026-03-01)
 
 Docs index: [README](../README.md)
 
@@ -21,9 +21,10 @@ The chart now exposes termination grace-period and lifecycle hook controls at gl
 ## Current State
 
 - Templates:
-- `charts/agents/templates/deployment.yaml` and `deployment-controllers.yaml` now set these values when configured:
-  - `terminationGracePeriodSeconds`
-  - `lifecycle` (`preStop`, etc.)
+  - `charts/agents/templates/deployment.yaml` and `deployment-controllers.yaml` now set:
+    - `terminationGracePeriodSeconds`
+    - `lifecycle` (`preStop`, etc.)
+  - Rendering uses per-component values first (`controlPlane.*`, `controllers.*`) and then falls back to global defaults (`terminationGracePeriodSeconds`, `lifecycle`).
 - Runtime shutdown behavior is code-defined and may be abrupt if SIGTERM is not handled carefully:
   - Controllers: `services/jangar/src/server/agents-controller.ts` (shutdown path)
   - Control plane: server entrypoints under `services/jangar/src/server/*`
@@ -37,22 +38,24 @@ Added keys:
 - `terminationGracePeriodSeconds` (global default)
 - `controlPlane.terminationGracePeriodSeconds`
 - `controllers.terminationGracePeriodSeconds`
-- `controlPlane.lifecycle.preStop`
-- `controllers.lifecycle.preStop`
+- `controlPlane.lifecycle`
+- `controllers.lifecycle`
 
 ### Recommended defaults
 
 - Control plane: 30s
 - Controllers: 60s (to finish reconcile loops)
 
-The default control-plane grace period is inherited from global defaults (30s) and can be overridden via `controlPlane.terminationGracePeriodSeconds`.
+Control plane uses global defaults by default and can be overridden via `controlPlane.terminationGracePeriodSeconds`.
 
 ## Config Mapping
 
 | Helm value                                  | Rendered field                                                               | Intended behavior                          |
 | ------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------ |
+| `controlPlane.terminationGracePeriodSeconds` | `deploy/agents.spec.template.spec.terminationGracePeriodSeconds`              | Gives control plane time to stop cleanly.    |
 | `controllers.terminationGracePeriodSeconds` | `deploy/agents-controllers.spec.template.spec.terminationGracePeriodSeconds` | Gives controllers time to stop cleanly.    |
-| `controlPlane.lifecycle.preStop`            | `containers[].lifecycle.preStop`                                             | Stop accepting traffic before termination. |
+| `controlPlane.lifecycle`                    | `deploy/agents.spec.template.spec.containers[0].lifecycle`                   | Supports optional `preStop` and related hooks for control plane. |
+| `controllers.lifecycle`                     | `deploy/agents-controllers.spec.template.spec.containers[0].lifecycle`       | Supports optional `preStop` and related hooks for controllers. |
 
 ## Rollout Plan
 
@@ -62,6 +65,14 @@ The default control-plane grace period is inherited from global defaults (30s) a
    - hooks remain unset until a rollout proves shutdown paths are safe
 2. Add controller/control plane logs on SIGTERM (“draining”) in application code as needed.
 3. Tune grace periods and hooks based on observed shutdown times.
+
+### Migration behavior
+
+- For upgrade/drain safety you can phase in shutdown behavior:
+  1. Start with global `terminationGracePeriodSeconds` only (control plane and controllers inherit this baseline).
+  2. Add controller-specific override only after validating controller graceful behavior in rollouts.
+  3. Add control-plane-specific override only after controllers are stable.
+- On rollback, remove lifecycle hooks first (or clear them to `{}`) before lowering grace periods.
 
 Rollback:
 

@@ -33,6 +33,7 @@ controlPlane:
   readinessProbe: {}
   startupProbe: {}
   lifecycle: {}
+  terminationGracePeriodSeconds: 30
 
 controllers:
   enabled: false
@@ -188,7 +189,11 @@ startupProbe:
   timeoutSeconds: 2
   failureThreshold: 30
 
-deploymentStrategy: {}
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
 
 lifecycle: {}
 

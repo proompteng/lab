@@ -1,12 +1,13 @@
 # Chart Deployment Strategy: RollingUpdate Tuning
 
-Status: Implemented (2026-03-01)
+Status: Current (2026-03-01)
 
 Docs index: [README](../README.md)
 
 ## Overview
 
-The chart now supports explicit Deployment strategy configuration at both component levels, while preserving Kubernetes defaults when strategies are unset.
+The chart now supports explicit Deployment strategy configuration at both component levels.
+Rollout decisions are component-scoped so control plane and controllers can be tuned independently during staged migrations.
 
 ## Goals
 
@@ -22,9 +23,11 @@ The chart now supports explicit Deployment strategy configuration at both compon
 ## Current State
 
 - Templates:
-  - Control plane Deployment: `charts/agents/templates/deployment.yaml` has no `spec.strategy`.
-  - Controllers Deployment: `charts/agents/templates/deployment-controllers.yaml` has no `spec.strategy`.
-- Values: no strategy knobs exist in `charts/agents/values.yaml`.
+  - Control plane Deployment: `charts/agents/templates/deployment.yaml` renders `spec.strategy` from merged strategy values.
+  - Controllers Deployment: `charts/agents/templates/deployment-controllers.yaml` renders `spec.strategy` from merged strategy values.
+- Values:
+  - `charts/agents/values.yaml` now sets baseline defaults under `deploymentStrategy`.
+  - `controlPlane.deploymentStrategy` and `controllers.deploymentStrategy` remain available for component-specific overrides.
 
 ## Design
 
@@ -45,28 +48,48 @@ Example:
 ```yaml
 type: RollingUpdate
 rollingUpdate:
-  maxSurge: 25%
+  maxSurge: 1
   maxUnavailable: 0
 ```
 
-### Migration-safe defaults
+### Baseline defaults (current chart defaults)
 
-When left unset, behavior remains unchanged from chart defaults:
-
-- `spec.strategy` is not rendered, so Kubernetes uses its default rollout behavior.
-- Existing clusters that rely on chart defaults continue operating as before.
-
-For production hardening, a recommended starting point is:
+Current chart defaults:
 
 ```yaml
 deploymentStrategy:
   type: RollingUpdate
   rollingUpdate:
-    maxSurge: 25%
+    maxSurge: 1
     maxUnavailable: 0
+
+Component-specific override behavior:
+
+- To change control-plane rollout behavior without affecting controllers, set `controlPlane.deploymentStrategy`.
+- To change controller rollout behavior without affecting control plane, set `controllers.deploymentStrategy`.
 ```
 
-and then override per component as needed (for example controllers using `maxUnavailable: 1`).
+#### Migration behavior
+
+- This chart release renders an explicit `spec.strategy` block for both Deployments by default.
+- If a cluster cannot absorb `maxSurge: 1`, temporarily set:
+  ```yaml
+  deploymentStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 0
+  ```
+- Use component overrides only when operational intent differs:
+  - `controlPlane.deploymentStrategy` for control-plane rollout semantics.
+  - `controllers.deploymentStrategy` for controller rollout semantics.
+
+  Recommended staged order:
+  1. Set/verify global `deploymentStrategy` first.
+  2. If needed, roll out control-plane override.
+  3. Apply controller override only after control-plane behavior is observed stable.
+
+
 
 ## Config Mapping
 
@@ -78,13 +101,9 @@ and then override per component as needed (for example controllers using `maxUna
 
 ## Rollout Plan
 
-1. Add strategy objects in values only where upgrade behavior needs tightening.
+1. Add rollout defaults/overrides in a values-only change first.
 2. Verify rollout with a canary image change.
 3. Tune per-component overrides over two releases (global first, then component-specific).
-
-Rollback:
-
-- Remove `deploymentStrategy`, `controlPlane.deploymentStrategy`, and `controllers.deploymentStrategy` to return to chart-default rendering.
 
 ## Validation
 
