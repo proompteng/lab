@@ -400,6 +400,29 @@ class TestConfig(TestCase):
             "http://feature-flags.feature-flags.svc.cluster.local:8013",
         )
 
+    def test_feature_flags_cannot_enable_live_in_paper_mode(self) -> None:
+        def _mock_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+            payload = json.loads(request.data.decode("utf-8"))
+            key = payload.get("flagKey")
+            values = {
+                "torghut_trading_live_enabled": True,
+            }
+            return _MockFlagResponse({"enabled": values.get(key, False)})
+
+        with patch("app.config.urlopen", side_effect=_mock_urlopen):
+            settings = Settings(
+                TRADING_MODE="paper",
+                TRADING_AUTONOMY_ENABLED=False,
+                TRADING_ENABLED=False,
+                TRADING_UNIVERSE_SOURCE="static",
+                TRADING_FEATURE_FLAGS_ENABLED=True,
+                TRADING_FEATURE_FLAGS_URL="http://feature-flags.feature-flags.svc.cluster.local:8013/",
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
+        self.assertEqual(settings.trading_mode, "paper")
+        self.assertFalse(settings.trading_live_enabled)
+
     def test_feature_flags_use_flipt_evaluate_contract(self) -> None:
         requests: list[dict[str, object]] = []
 
