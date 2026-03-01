@@ -37,12 +37,8 @@ from .feature_quality import FeatureQualityThresholds, evaluate_feature_batch_qu
 from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor, SignalBatch
 from .llm import LLMReviewEngine, apply_policy
-from .llm.dspy_programs.runtime import (
-    DSPyReviewRuntime,
-    DSPyRuntimeUnsupportedStateError,
-)
+from .llm.dspy_programs.runtime import DSPyRuntimeUnsupportedStateError
 from .llm.guardrails import evaluate_llm_guardrails
-from .llm.policy import allowed_order_types
 from .lean_lanes import LeanLaneManager
 from .market_context import (
     MarketContextClient,
@@ -83,9 +79,6 @@ from .llm.schema import MarketContextBundle
 from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
 from .autonomy.phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
-    build_ordered_phase_summaries,
-    build_rollback_proof_phase_payload,
-    build_runtime_governance_phase_payload,
     coerce_phase_status,
     normalize_phase_transitions,
 )
@@ -1092,7 +1085,12 @@ class TradingPipeline:
         self.order_feed_ingestor = order_feed_ingestor or OrderFeedIngestor()
         self.market_context_client = MarketContextClient()
         self.lean_lane_manager = LeanLaneManager()
-        self.llm_review_engine = llm_review_engine
+        if llm_review_engine is not None:
+            self.llm_review_engine = llm_review_engine
+        elif settings.llm_enabled:
+            self.llm_review_engine = LLMReviewEngine()
+        else:
+            self.llm_review_engine = None
 
     def run_once(self) -> None:
         with self.session_factory() as session:
@@ -2808,11 +2806,12 @@ class TradingPipeline:
             guardrail_reasons=guardrails.reasons,
         )
         self._record_llm_policy_resolution_metrics(policy_resolution)
-        engine: LLMReviewEngine | None = None
 
         if settings.llm_dspy_runtime_mode == "active":
-            gate_allowed, dspy_live_gate_reasons = settings.llm_dspy_live_runtime_gate()
-            if not gate_allowed:
+            dspy_gate_allowed, dspy_gate_reasons = (
+                settings.llm_dspy_live_runtime_gate()
+            )
+            if not dspy_gate_allowed:
                 return self._handle_llm_dspy_live_runtime_block(
                     session=session,
                     decision=decision,
@@ -2820,41 +2819,12 @@ class TradingPipeline:
                     account=account,
                     positions=positions,
                     reason="llm_dspy_live_runtime_gate_blocked",
-                    risk_flags=list(dspy_live_gate_reasons),
+                    risk_flags=list(dspy_gate_reasons),
                     policy_resolution=_build_llm_policy_resolution(
                         rollout_stage=guardrails.rollout_stage,
                         effective_fail_mode="veto",
                         guardrail_reasons=tuple(guardrails.reasons)
-                        + tuple(dspy_live_gate_reasons),
-                    ),
-                )
-
-            engine = self.llm_review_engine or LLMReviewEngine()
-
-            dspy_runtime = getattr(engine, "dspy_runtime", None)
-            if isinstance(dspy_runtime, DSPyReviewRuntime):
-                dspy_live_ready, dspy_live_readiness_reasons = (
-                    dspy_runtime.evaluate_live_readiness()
-                )
-            else:
-                dspy_live_ready, dspy_live_readiness_reasons = (
-                    DSPyReviewRuntime.from_settings().evaluate_live_readiness()
-                )
-
-            if not dspy_live_ready:
-                return self._handle_llm_dspy_live_runtime_block(
-                    session=session,
-                    decision=decision,
-                    decision_row=decision_row,
-                    account=account,
-                    positions=positions,
-                    reason="llm_dspy_live_runtime_gate_blocked",
-                    risk_flags=list(dspy_live_readiness_reasons),
-                    policy_resolution=_build_llm_policy_resolution(
-                        rollout_stage=guardrails.rollout_stage,
-                        effective_fail_mode="veto",
-                        guardrail_reasons=tuple(guardrails.reasons)
-                        + tuple(dspy_live_readiness_reasons),
+                        + tuple(dspy_gate_reasons),
                     ),
                 )
 
@@ -2870,9 +2840,7 @@ class TradingPipeline:
         if guardrail_block is not None:
             return guardrail_block
 
-        if engine is None:
-            engine = self.llm_review_engine or LLMReviewEngine()
-
+        engine = self.llm_review_engine or LLMReviewEngine()
         circuit_open = self._handle_llm_circuit_open(
             session=session,
             decision=decision,
@@ -3374,40 +3342,16 @@ class TradingPipeline:
             decision.strategy_id,
             decision.symbol,
         )
-        if self.llm_review_engine is not None:
-            request_payload = self.llm_review_engine.build_request(
-                decision=decision,
-                account=account,
-                positions=positions,
-                portfolio=portfolio_snapshot,
-                market=market_snapshot,
-                market_context=market_context,
-                recent_decisions=recent_decisions,
-            ).model_dump(mode="json")
-        else:
-            request_payload = {
-                "decision": decision.model_dump(mode="json"),
-                "portfolio": portfolio_snapshot.model_dump(mode="json"),
-                "market": market_snapshot.model_dump(mode="json")
-                if market_snapshot is not None
-                else None,
-                "market_context": market_context.model_dump(mode="json")
-                if market_context is not None
-                else None,
-                "recent_decisions": [
-                    summary.model_dump(mode="json") for summary in recent_decisions
-                ],
-                "account": account,
-                "positions": positions,
-                "policy": {
-                    "adjustment_allowed": settings.llm_adjustment_allowed,
-                    "min_qty_multiplier": str(settings.llm_min_qty_multiplier),
-                    "max_qty_multiplier": str(settings.llm_max_qty_multiplier),
-                    "allowed_order_types": sorted(allowed_order_types(decision.order_type)),
-                },
-                "trading_mode": settings.trading_mode,
-                "prompt_version": f"dspy:{settings.llm_dspy_signature_version}",
-            }
+        engine = self.llm_review_engine or LLMReviewEngine()
+        request_payload = engine.build_request(
+            decision=decision,
+            account=account,
+            positions=positions,
+            portfolio=portfolio_snapshot,
+            market=market_snapshot,
+            market_context=market_context,
+            recent_decisions=recent_decisions,
+        ).model_dump(mode="json")
         response_payload = {
             "error": reason,
             "fallback": fallback,
@@ -4814,11 +4758,9 @@ class TradingScheduler:
             phase_lineage = cast(dict[str, Any], phase_payload.get("phase_lineage"))
         raw_phase_trace = phase_lineage.get("stage_ids")
         if isinstance(raw_phase_trace, list):
-            phase_manifest_trace: list[str] = []
-            for item in cast(list[Any], raw_phase_trace):
-                trace_id = str(item).strip()
-                if trace_id:
-                    phase_manifest_trace.append(trace_id)
+            phase_manifest_trace = [
+                str(item).strip() for item in raw_phase_trace if str(item).strip()
+            ]
         else:
             phase_manifest_trace = []
         provenance_raw = payload.get("provenance")
@@ -5137,12 +5079,6 @@ class TradingScheduler:
         promotion_target, approval_token = self._resolve_autonomy_promotion_target(
             drift_gate_evidence
         )
-        resolved_governance_repository = governance_repository or "proompteng/lab"
-        resolved_governance_base = governance_base or "main"
-        resolved_governance_head = (
-            governance_head
-            or f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
-        )
         result = self._execute_autonomous_lane(
             signals_path=signals_path,
             strategy_config_path=strategy_config_path,
@@ -5151,9 +5087,12 @@ class TradingScheduler:
             promotion_target=promotion_target,
             approval_token=approval_token,
             drift_gate_evidence=drift_gate_evidence,
-            governance_repository=resolved_governance_repository,
-            governance_base=resolved_governance_base,
-            governance_head=resolved_governance_head,
+            governance_repository=governance_repository or "proompteng/lab",
+            governance_base=governance_base or "main",
+            governance_head=(
+                governance_head
+                or f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
+            ),
             governance_artifact_path=str(run_output_dir),
             priority_id=priority_id,
             artifact_root=artifact_root,
@@ -5640,19 +5579,27 @@ class TradingScheduler:
     ) -> Any | None:
         if self._pipeline is None:
             raise RuntimeError("trading_pipeline_not_initialized")
-        governance_payload = self._build_autonomy_governance_inputs(
-            governance_inputs=governance_inputs,
-            artifact_root=artifact_root or run_output_dir,
-            promotion_target=promotion_target,
-            governance_repository=governance_repository,
-            governance_base=governance_base,
-            governance_head=governance_head,
-            priority_id=priority_id,
-        )
-        if execution_context is not None:
-            governance_payload["execution_context"] = dict(
-                execution_context
-            )
+        governance_payload: dict[str, Any] | None = None
+        if governance_inputs is not None:
+            governance_payload = dict(governance_inputs)
+        elif execution_context is not None:
+            governance_payload = {
+                "execution_context": dict(execution_context),
+                "runtime_governance": {
+                    "governance_status": "pass",
+                    "drift_status": "queued",
+                    "artifact_refs": [],
+                    "rollback_triggered": False,
+                    "reasons": [
+                        "autonomy_runtime_governance_pending",
+                    ],
+                },
+                "rollback_proof": {
+                    "rollback_triggered": False,
+                    "rollback_incident_evidence_path": "",
+                    "reasons": [],
+                },
+            }
         try:
             return run_autonomous_lane(
                 signals_path=signals_path,
@@ -5928,11 +5875,15 @@ class TradingScheduler:
                 }
             )
 
-        def _coerce_mapping(raw: Any) -> dict[str, Any]:
-            if isinstance(raw, Mapping):
-                mapped_items = cast(Mapping[Any, Any], raw)
-                return {str(key): value for key, value in mapped_items.items()}
-            return {}
+        def _build_placeholder_phase(name: str) -> dict[str, Any]:
+            return {
+                "name": name,
+                "status": "skip",
+                "timestamp": now.isoformat(),
+                "observations": {"note": "stage not evaluated"},
+                "slo_gates": [],
+                "artifact_refs": [],
+            }
 
         drift_status = str(
             drift_governance_payload.get("drift_status")
@@ -5992,6 +5943,11 @@ class TradingScheduler:
             self.state.emergency_stop_active
             or drift_governance_payload.get("rollback_triggered", False)
         )
+        governance_status = (
+            "fail"
+            if rollback_triggered or drift_status in {"drift_detected", "unhealthy"}
+            else "pass"
+        )
         reasons = sorted(
             {
                 str(item).strip()
@@ -6003,88 +5959,117 @@ class TradingScheduler:
                 if str(item).strip()
             }
         )
-        governance_phase: dict[str, Any] = build_runtime_governance_phase_payload(
-            requested_promotion_target=requested_promotion_target,
-            timestamp=now.isoformat(),
-            drift_status=drift_status,
-            action_type=action_type or None,
-            action_triggered=action_triggered,
-            rollback_triggered=rollback_triggered,
-            reasons=reasons,
-            artifact_refs=evidence_refs,
-        )
-        rollback_proof_phase: dict[str, Any] = build_rollback_proof_phase_payload(
-            timestamp=now.isoformat(),
-            rollback_triggered=rollback_triggered,
-            rollback_incident_evidence_path=rollback_incident_evidence,
-            reasons=reasons,
-        )
 
-        existing_runtime_governance = _coerce_mapping(manifest.get("runtime_governance"))
-        existing_rollback_proof = _coerce_mapping(manifest.get("rollback_proof"))
+        governance_phase: dict[str, Any] = {
+            "name": "runtime-governance",
+            "status": governance_status,
+            "timestamp": now.isoformat(),
+            "observations": {
+                "requested_promotion_target": requested_promotion_target,
+                "drift_status": drift_status,
+                "action_type": action_type or None,
+                "action_triggered": action_triggered,
+                "rollback_triggered": rollback_triggered,
+            },
+            "slo_gates": [
+                {
+                    "id": "slo_runtime_rollback_not_triggered",
+                    "status": "pass" if not rollback_triggered else "fail",
+                    "threshold": False,
+                    "value": rollback_triggered,
+                },
+            ],
+            "reasons": reasons,
+            "artifact_refs": evidence_refs,
+        }
+
+        rollback_proof_status = (
+            "pass" if (not rollback_triggered or rollback_incident_evidence) else "fail"
+        )
+        rollback_proof_phase: dict[str, Any] = {
+            "name": "rollback-proof",
+            "status": rollback_proof_status,
+            "timestamp": now.isoformat(),
+            "slo_gates": [
+                {
+                    "id": "slo_rollback_evidence_required_when_triggered",
+                    "status": "pass" if not rollback_triggered else (
+                        "pass" if rollback_incident_evidence else "fail"
+                    ),
+                    "threshold": True,
+                    "value": bool(rollback_incident_evidence),
+                },
+            ],
+            "observations": {
+                "rollback_triggered": rollback_triggered,
+                "rollback_incident_evidence_path": rollback_incident_evidence,
+            },
+            "reasons": reasons,
+            "artifact_refs": (
+                [rollback_incident_evidence] if rollback_incident_evidence else []
+            ),
+        }
 
         existing_phases = manifest.get("phases", [])
-        phase_payloads: list[dict[str, Any]] = []
+        phase_lookup: dict[str, dict[str, Any]] = {}
         if isinstance(existing_phases, list):
             for raw_phase in cast(list[Any], existing_phases):
                 if not isinstance(raw_phase, dict):
                     continue
                 phase = cast(dict[str, Any], raw_phase)
                 name = str(phase.get("name", "")).strip()
-                if name in {"runtime-governance", "rollback-proof"}:
-                    continue
-                phase_payloads.append(dict(phase))
-        phase_payloads.extend([governance_phase, rollback_proof_phase])
-        ordered_phases = build_ordered_phase_summaries(
-            phase_payloads,
-            phase_timestamp=now.isoformat(),
-            default_status="skip",
-        )
-        for phase_payload in ordered_phases:
+                if name:
+                    phase_lookup[name] = dict(phase)
+        phase_lookup["runtime-governance"] = governance_phase
+        phase_lookup["rollback-proof"] = rollback_proof_phase
+
+        ordered_phases: list[dict[str, Any]] = []
+        for name in _AUTONOMY_PHASE_ORDER:
+            phase_payload = phase_lookup.get(name)
+            if phase_payload is None:
+                ordered_phases.append(_build_placeholder_phase(name))
+                continue
+            phase_payload["name"] = name
+            phase_payload["status"] = coerce_phase_status(
+                phase_payload.get("status"), default="skip"
+            )
             phase_payload["artifact_refs"] = _coerce_strs(
                 phase_payload.get("artifact_refs", [])
             )
+            ordered_phases.append(phase_payload)
 
         manifest["phases"] = ordered_phases
         manifest["runtime_governance"] = {
-            **existing_runtime_governance,
             "requested_promotion_target": requested_promotion_target,
-            "drift_status": str(drift_status),
-            "governance_status": governance_phase.get("status"),
+            "drift_status": drift_status,
+            "governance_status": governance_status,
             "rollback_triggered": rollback_triggered,
             "rollback_incident_evidence": rollback_incident_evidence,
             "rollback_incident_evidence_path": rollback_incident_evidence,
-            "artifact_refs": list(governance_phase.get("artifact_refs", [])),
+            "artifact_refs": evidence_refs,
             "phase_count": len(ordered_phases),
-            "action_type": action_type or None,
+            "action_type": action_type,
             "action_triggered": action_triggered,
-            "reasons": list(governance_phase.get("reasons", [])),
+            "reasons": reasons,
         }
         manifest["rollback_proof"] = {
-            **existing_rollback_proof,
             "requested_promotion_target": requested_promotion_target,
             "rollback_triggered": rollback_triggered,
-            "rollback_incident_evidence_path": str(
-                rollback_proof_phase.get("observations", {}).get(
-                    "rollback_incident_evidence_path", rollback_incident_evidence
-                )
+            "rollback_incident_evidence_path": rollback_incident_evidence,
+            "rollback_incident_evidence": rollback_incident_evidence,
+            "artifact_refs": (
+                [rollback_incident_evidence]
+                if rollback_incident_evidence
+                else []
             ),
-            "rollback_incident_evidence": str(
-                rollback_proof_phase.get("observations", {}).get(
-                    "rollback_incident_evidence",
-                    rollback_incident_evidence,
-                )
-            ),
-            "artifact_refs": list(rollback_proof_phase.get("artifact_refs", [])),
-            "reasons": list(rollback_proof_phase.get("reasons", [])),
-            "status": rollback_proof_phase.get("status"),
+            "reasons": reasons,
+            "status": rollback_proof_status,
         }
 
         manifest["status"] = (
             "fail"
             if any(
-                coerce_phase_status(phase.get("status"), default="fail")
-                not in {"pass", "skipped", "skip"}
+                str(phase.get("status")) not in {"pass", "skipped", "skip"}
                 for phase in ordered_phases
             )
             else "pass"

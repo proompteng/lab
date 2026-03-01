@@ -7,7 +7,7 @@ import hashlib
 import json
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -74,10 +74,6 @@ from .policy_checks import evaluate_promotion_prerequisites, evaluate_rollback_r
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 from .phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
-    AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
-    AUTONOMY_SLO_CONTRACT_VERSION,
-    build_rollback_proof_phase_payload,
-    build_runtime_governance_phase_payload,
     AUTONOMY_PHASE_SLO_GATES,
     build_ordered_phase_summaries,
     coerce_phase_status,
@@ -88,10 +84,6 @@ from .phase_manifest_contract import (
 _ACTUATION_INTENT_SCHEMA_VERSION = "torghut.autonomy.actuation-intent.v1"
 _ACTUATION_CONFIRMATION_PHRASE = "ACTUATE_TORGHUT"
 _ACTUATION_INTENT_PATH = "gates/actuation-intent.json"
-_AUTONOMY_LANE_SCHEMA_VERSION = "torghut-autonomy-stage-manifest-v1"
-_STAGE_CANDIDATE_GENERATION = "candidate-generation"
-_STAGE_EVALUATION = "evaluation"
-_STAGE_RECOMMENDATION = "promotion-recommendation"
 _AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION = "torghut.autonomy.phase-manifest.v1"
 _AUTONOMY_PHASE_MANIFEST_PATH = "phase-manifest.json"
 _AUTONOMY_NOTES_DIR = "notes"
@@ -101,21 +93,6 @@ _STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
 
 
-@dataclass(frozen=True)
-class _StageManifestRecord:
-    stage: str
-    stage_index: int
-    stage_trace_id: str
-    lineage_hash: str
-    artifact_hashes: dict[str, str]
-    stage_payload_hash: str
-    created_at: str
-    created_by: str = "run_autonomous_lane"
-    parent_lineage_hash: str | None = None
-    parent_stage: str | None = None
-    inputs: dict[str, str] = field(default_factory=dict)
- 
- 
 def _stable_hash(payload: object) -> str:
     payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
@@ -323,13 +300,6 @@ class AutonomousLaneResult:
     phase_manifest_path: Path
     gate_report_trace_id: str
     recommendation_trace_id: str
-    recommendation_artifact_path: Path
-    candidate_spec_path: Path
-    candidate_generation_manifest_path: Path
-    evaluation_manifest_path: Path
-    recommendation_manifest_path: Path
-    stage_trace_ids: dict[str, str] = field(default_factory=dict)
-    stage_lineage_root: str | None = None
 
 
 def upsert_autonomy_no_signal_run(
@@ -656,9 +626,6 @@ def run_autonomous_lane(
     gate_policy_path: Path,
     output_dir: Path,
     promotion_target: PromotionTarget = "paper",
-    repository: str | None = None,
-    base: str | None = None,
-    head: str | None = None,
     strategy_configmap_path: Path | None = None,
     code_version: str = "local",
     approval_token: str | None = None,
@@ -667,8 +634,8 @@ def run_autonomous_lane(
     evaluated_at: datetime | None = None,
     persist_results: bool = False,
     session_factory: Callable[[], Session] | None = None,
-    governance_repository: str | None = None,
-    governance_base: str | None = None,
+    governance_repository: str = "proompteng/lab",
+    governance_base: str = "main",
     governance_head: str | None = None,
     governance_artifact_path: str | None = None,
     artifact_path: str | None = None,
@@ -692,8 +659,6 @@ def run_autonomous_lane(
     research_dir, backtest_dir, gates_dir, paper_dir, rollout_dir = (
         _prepare_lane_output_dirs(output_dir)
     )
-    stages_dir = output_dir / "stages"
-    stages_dir.mkdir(parents=True, exist_ok=True)
 
     now = evaluated_at or datetime.now(timezone.utc)
     runtime = StrategyRuntime(default_runtime_registry())
@@ -728,9 +693,9 @@ def run_autonomous_lane(
     )
     governance_context = _coalesce_governance_context(
         governance_inputs=governance_inputs,
-        governance_repository=governance_repository or repository,
-        governance_base=governance_base or base,
-        governance_head=governance_head or head,
+        governance_repository=governance_repository,
+        governance_base=governance_base,
+        governance_head=governance_head,
         governance_artifact_path=(
             governance_artifact_path or artifact_path or artifactPath
         ),
@@ -738,22 +703,15 @@ def run_autonomous_lane(
         now=now,
     )
     governance_context = _normalize_governance_inputs(governance_context)
-    notes_artifact_root = _coerce_str(
-        governance_context["execution_context"].get("artifactPath")
-    )
-    notes_root = Path(notes_artifact_root) if notes_artifact_root else output_dir
     resolved_governance_repository = governance_context["execution_context"].get(
         "repository"
     )
     resolved_governance_base = governance_context["execution_context"].get("base")
     resolved_governance_head = governance_context["execution_context"].get("head")
-    resolved_governance_priority_id = governance_context["execution_context"].get(
-        "priorityId"
+    resolved_governance_priority_id = _coerce_str(
+        governance_context["execution_context"].get("priorityId")
     )
     promotion_recommendation_path = gates_dir / "promotion-recommendation.json"
-    stage_records: list[_StageManifestRecord] = []
-    manifest_paths: dict[str, Path] = {}
-    stage_trace_ids: dict[str, str] = {}
 
     factory = session_factory or SessionLocal
     if persist_results:
@@ -846,39 +804,6 @@ def run_autonomous_lane(
             promotion_target="shadow",
         )
         write_evaluation_report(baseline_report, baseline_report_path)
-        candidate_generation_stage_record = _write_stage_manifest(
-            stage=_STAGE_CANDIDATE_GENERATION,
-            stage_index=1,
-            stage_output_dir=stages_dir,
-            run_id=run_id,
-            candidate_id=candidate_id,
-            lineage_parent_hash=None,
-            lineage_parent_stage=None,
-            inputs={
-                "run_id": run_id,
-                "candidate_id": candidate_id,
-                "promotion_target": promotion_target,
-                "strategy_count": str(len(runtime_strategies)),
-            },
-            input_artifacts={
-                "signals": signals_path,
-                "strategy_config": strategy_config_path,
-                "gate_policy": gate_policy_path,
-            },
-            output_artifacts={
-                "walkforward_results": walk_results_path,
-                "baseline_evaluation_report": baseline_report_path,
-                "evaluation_report": None,
-            },
-            created_at=now,
-        )
-        stage_records.append(candidate_generation_stage_record)
-        manifest_paths[_STAGE_CANDIDATE_GENERATION] = (
-            stages_dir / f"{_STAGE_CANDIDATE_GENERATION}-manifest.json"
-        )
-        stage_trace_ids[_STAGE_CANDIDATE_GENERATION] = (
-            candidate_generation_stage_record.stage_trace_id
-        )
         janus_event_car = build_janus_event_car_artifact_v1(
             run_id=run_id,
             signals=ordered_signals,
@@ -1161,9 +1086,18 @@ def run_autonomous_lane(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
 
+        candidate_hash = _compute_candidate_hash(
+            run_id=run_id,
+            runtime_strategies=runtime_strategies,
+            gate_report=gate_report,
+            signals_path=signals_path,
+            strategy_config_path=strategy_config_path,
+            gate_policy_path=gate_policy_path,
+        )
         research_spec: dict[str, Any] = {
             "run_id": run_id,
             "candidate_id": candidate_id,
+            "candidate_hash": candidate_hash,
             "promotion_target": promotion_target,
             "bounded_llm": {
                 "enabled": False,
@@ -1199,6 +1133,9 @@ def run_autonomous_lane(
             },
         }
         candidate_spec_path = research_dir / "candidate-spec.json"
+        candidate_spec_path.write_text(
+            json.dumps(research_spec, indent=2), encoding="utf-8"
+        )
 
         patch_path: Path | None = None
 
@@ -1400,173 +1337,6 @@ def run_autonomous_lane(
         gate_report_path.write_text(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
-
-        evaluation_stage_record = _write_stage_manifest(
-            stage=_STAGE_EVALUATION,
-            stage_index=2,
-            stage_output_dir=stages_dir,
-            run_id=run_id,
-            candidate_id=candidate_id,
-            lineage_parent_hash=candidate_generation_stage_record.lineage_hash,
-            lineage_parent_stage=candidate_generation_stage_record.stage,
-            inputs={
-                "run_id": run_id,
-                "candidate_id": candidate_id,
-                "recommendation_trace_id": "",
-            },
-            input_artifacts={
-                "walkforward_results": walk_results_path,
-                "baseline_evaluation_report": baseline_report_path,
-                "signals": signals_path,
-            },
-            output_artifacts={
-                "evaluation_report": evaluation_report_path,
-                "gate_evaluation": gate_report_path,
-                "profitability_benchmark": profitability_benchmark_path,
-                "profitability_evidence": profitability_evidence_path,
-                "profitability_validation": profitability_validation_path,
-                "janus_event_car": janus_event_car_path,
-                "janus_hgrm_reward": janus_hgrm_reward_path,
-                "recalibration_report": recalibration_report_path,
-            },
-            created_at=now,
-        )
-        stage_records.append(evaluation_stage_record)
-        manifest_paths[_STAGE_EVALUATION] = (
-            stages_dir / f"{_STAGE_EVALUATION}-manifest.json"
-        )
-        stage_trace_ids[_STAGE_EVALUATION] = evaluation_stage_record.stage_trace_id
-
-        promotion_recommendation_payload = {
-            "schema_version": "torghut-autonomy-promotion-recommendation-v1",
-            "run_id": run_id,
-            "candidate_id": candidate_id,
-            "promotion_target": promotion_target,
-            "recommendation": promotion_recommendation.to_payload(),
-            "recommendation_trace_id": recommendation_trace_id,
-            "stage_trace_ids": stage_trace_ids,
-            "gates": {
-                "gate_matrix_recommended_mode": gate_report.recommended_mode,
-                "gate_matrix_allowed": gate_report.promotion_allowed,
-                "drift_gate_allowed": bool(drift_gate_check.get("allowed")),
-                "rollback_ready": rollback_check.ready,
-                "prerequisite_allowed": promotion_check.allowed,
-            },
-            "artifact_refs": sorted(
-                set(
-                    [
-                        str(gate_report_path),
-                        str(promotion_gate_path),
-                        str(profitability_benchmark_path),
-                        str(profitability_validation_path),
-                        str(janus_event_car_path),
-                        str(janus_hgrm_reward_path),
-                        str(recalibration_report_path),
-                    ]
-                )
-            ),
-        }
-        promotion_recommendation_path.write_text(
-            json.dumps(promotion_recommendation_payload, indent=2),
-            encoding="utf-8",
-        )
-        recommendation_stage_record = _write_stage_manifest(
-            stage=_STAGE_RECOMMENDATION,
-            stage_index=3,
-            stage_output_dir=stages_dir,
-            run_id=run_id,
-            candidate_id=candidate_id,
-            lineage_parent_hash=evaluation_stage_record.lineage_hash,
-            lineage_parent_stage=evaluation_stage_record.stage,
-            inputs={
-                "run_id": run_id,
-                "candidate_id": candidate_id,
-                "recommendation_trace_id": recommendation_trace_id or "",
-                "stage_trace_ids": json.dumps(
-                    stage_trace_ids, sort_keys=True, separators=(",", ":")
-                ),
-            },
-            input_artifacts={
-                "gate_evaluation": gate_report_path,
-                "promotion_gate": promotion_gate_path,
-            },
-            output_artifacts={
-                "promotion_recommendation": promotion_recommendation_path,
-            },
-            created_at=now,
-        )
-        stage_records.append(recommendation_stage_record)
-        manifest_paths[_STAGE_RECOMMENDATION] = (
-            stages_dir / f"{_STAGE_RECOMMENDATION}-manifest.json"
-        )
-        stage_trace_ids[_STAGE_RECOMMENDATION] = (
-            recommendation_stage_record.stage_trace_id
-        )
-        stage_lineage_payload = _build_stage_lineage_payload(
-            stage_records=stage_records,
-            manifest_paths=manifest_paths,
-        )
-        replay_artifacts = {
-            "signals": signals_path,
-            "strategy_config": strategy_config_path,
-            "gate_policy": gate_policy_path,
-            "walkforward_results": walk_results_path,
-            "baseline_evaluation_report": baseline_report_path,
-            "evaluation_report": evaluation_report_path,
-            "gate_report": gate_report_path,
-            "profitability_benchmark": profitability_benchmark_path,
-            "profitability_evidence": profitability_evidence_path,
-            "profitability_validation": profitability_validation_path,
-            "janus_event_car": janus_event_car_path,
-            "janus_hgrm_reward": janus_hgrm_reward_path,
-            "recalibration_report": recalibration_report_path,
-            "promotion_gate": promotion_gate_path,
-            "promotion_recommendation": promotion_recommendation_path,
-            "recommendation_manifest": manifest_paths.get(_STAGE_RECOMMENDATION),
-            "evaluation_manifest": manifest_paths.get(_STAGE_EVALUATION),
-            "candidate_generation_manifest": manifest_paths.get(
-                _STAGE_CANDIDATE_GENERATION
-            ),
-        }
-        replay_artifact_hashes = _artifact_hashes(replay_artifacts)
-        candidate_hash = _compute_candidate_hash(
-            run_id=run_id,
-            runtime_strategies=runtime_strategies,
-            gate_report=gate_report,
-            signals_path=signals_path,
-            strategy_config_path=strategy_config_path,
-            gate_policy_path=gate_policy_path,
-            stage_lineage_payload=stage_lineage_payload,
-            replay_artifact_hashes=replay_artifact_hashes,
-        )
-        research_spec["candidate_hash"] = candidate_hash
-        research_spec["stage_lineage"] = stage_lineage_payload
-        research_spec["stage_trace_ids"] = dict(stage_trace_ids)
-        research_spec["stage_lineage_root"] = (
-            stage_lineage_payload.get("root_lineage_hash")
-        )
-        research_spec["replay_artifact_hashes"] = replay_artifact_hashes
-        research_spec["stage_manifest_refs"] = {
-            _STAGE_CANDIDATE_GENERATION: str(manifest_paths[_STAGE_CANDIDATE_GENERATION]),
-            _STAGE_EVALUATION: str(manifest_paths[_STAGE_EVALUATION]),
-            _STAGE_RECOMMENDATION: str(manifest_paths[_STAGE_RECOMMENDATION]),
-        }
-        research_spec["artifacts"] = {
-            **research_spec["artifacts"],
-            **{
-                key: str(artifact_path)
-                for key, artifact_path in replay_artifacts.items()
-                if artifact_path is not None
-            },
-            "promotion_recommendation": str(promotion_recommendation_path),
-            _STAGE_CANDIDATE_GENERATION: str(manifest_paths[_STAGE_CANDIDATE_GENERATION]),
-            _STAGE_EVALUATION: str(manifest_paths[_STAGE_EVALUATION]),
-            _STAGE_RECOMMENDATION: str(manifest_paths[_STAGE_RECOMMENDATION]),
-        }
-        candidate_spec_path.write_text(
-            json.dumps(research_spec, indent=2), encoding="utf-8"
-        )
-
         actuation_allowed = (
             bool(recommendation_trace_id)
             and promotion_recommendation.eligible
@@ -1589,12 +1359,6 @@ def run_autonomous_lane(
             gate_report_path=gate_report_path,
             rollback_check_path=rollback_check_path,
             candidate_spec_path=candidate_spec_path,
-            candidate_generation_manifest_path=manifest_paths[
-                _STAGE_CANDIDATE_GENERATION
-            ],
-            evaluation_manifest_path=manifest_paths[_STAGE_EVALUATION],
-            recommendation_manifest_path=manifest_paths[_STAGE_RECOMMENDATION],
-            promotion_recommendation_path=promotion_recommendation_path,
             evaluation_report_path=evaluation_report_path,
             walk_results_path=walk_results_path,
             paper_patch_path=patch_path,
@@ -1612,23 +1376,21 @@ def run_autonomous_lane(
             promotion_recommendation=promotion_recommendation,
             recommendations=promotion_reasons,
             phase_manifest_path=phase_manifest_path,
-            governance_repository=cast(str, resolved_governance_repository),
-            governance_base=cast(str, resolved_governance_base),
-            governance_head=cast(str, resolved_governance_head),
+            governance_repository=governance_repository,
+            governance_base=governance_base,
+            governance_head=governance_head
+            if governance_head
+            else f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}",
             governance_artifact_path=(
-                notes_artifact_root if notes_artifact_root else str(output_dir)
-            ),
-            priority_id=cast(str, resolved_governance_priority_id)
-            if resolved_governance_priority_id
-            else None,
+                governance_artifact_path or str(output_dir)
+            ).strip()
+            or str(output_dir),
+            priority_id=priority_id,
             governance_change=governance_change,
             governance_reason=(
                 governance_reason
                 or f"Autonomous recommendation for {promotion_target} target."
             ),
-            stage_lineage_payload=stage_lineage_payload,
-            replay_artifact_hashes=replay_artifact_hashes,
-            candidate_hash=candidate_hash,
         )
         actuation_intent_path.write_text(
             json.dumps(actuation_intent_payload, indent=2), encoding="utf-8"
@@ -1652,25 +1414,17 @@ def run_autonomous_lane(
             promotion_reasons=promotion_reasons,
             governance_inputs=governance_context,
             drift_promotion_evidence=drift_promotion_evidence,
-            stage_lineage_payload=stage_lineage_payload,
-            actuation_payload=actuation_intent_payload,
         )
         phase_manifest_path.write_text(
             json.dumps(phase_manifest_payload, indent=2), encoding="utf-8"
         )
-        _write_iteration_notes(
-            artifact_root=notes_root,
+        _write_autonomy_iteration_notes(
+            artifact_root=output_dir,
             run_id=run_id,
             candidate_id=candidate_id,
-            stage_records=stage_records,
-            repository=cast(str, resolved_governance_repository),
-            base=cast(str, resolved_governance_base),
-            head=cast(str, resolved_governance_head),
-            priority_id=cast(str, resolved_governance_priority_id)
-            if resolved_governance_priority_id
-            else None,
             phase_manifest_payload=phase_manifest_payload,
         )
+
         _persist_run_outputs_if_requested(
             persist_results=persist_results,
             session_factory=factory,
@@ -1696,12 +1450,6 @@ def run_autonomous_lane(
             stress_metrics_count=stress_metrics_count,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
-            stage_trace_ids=stage_trace_ids,
-            stage_lineage_payload=(
-                stage_lineage_payload
-            ),
-            stage_manifest_refs=research_spec["stage_manifest_refs"],
-            replay_artifact_hashes=replay_artifact_hashes,
         )
         _mark_run_passed_if_requested(
             persist_results=persist_results,
@@ -1736,21 +1484,8 @@ def run_autonomous_lane(
             actuation_intent_path=actuation_intent_path,
             paper_patch_path=patch_path,
             phase_manifest_path=phase_manifest_path,
-            recommendation_artifact_path=promotion_recommendation_path,
-            candidate_spec_path=candidate_spec_path,
-            candidate_generation_manifest_path=manifest_paths[
-                _STAGE_CANDIDATE_GENERATION
-            ],
-            evaluation_manifest_path=manifest_paths[_STAGE_EVALUATION],
-            recommendation_manifest_path=manifest_paths[_STAGE_RECOMMENDATION],
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
-            stage_trace_ids=stage_trace_ids,
-            stage_lineage_root=(
-                stage_lineage_payload["root_lineage_hash"]
-                if stage_lineage_payload
-                else None
-            ),
         )
     except Exception as exc:
         _mark_run_failed_if_requested(
@@ -2429,10 +2164,6 @@ def _build_actuation_intent_payload(
     gate_report_path: Path,
     rollback_check_path: Path,
     candidate_spec_path: Path,
-    candidate_generation_manifest_path: Path,
-    evaluation_manifest_path: Path,
-    recommendation_manifest_path: Path,
-    promotion_recommendation_path: Path,
     evaluation_report_path: Path,
     walk_results_path: Path,
     paper_patch_path: Path | None,
@@ -2454,9 +2185,6 @@ def _build_actuation_intent_payload(
     priority_id: str | None,
     governance_change: str,
     governance_reason: str,
-    stage_lineage_payload: dict[str, Any],
-    replay_artifact_hashes: dict[str, str],
-    candidate_hash: str,
 ) -> dict[str, Any]:
     raw_missing_checks = cast(object, rollback_check.get("missing_checks"))
     rollback_missing_checks = (
@@ -2472,10 +2200,6 @@ def _build_actuation_intent_payload(
             str(evaluation_report_path),
             str(walk_results_path),
             str(promotion_gate_path),
-            str(candidate_generation_manifest_path),
-            str(evaluation_manifest_path),
-            str(recommendation_manifest_path),
-            str(promotion_recommendation_path),
             str(profitability_benchmark_path),
             str(profitability_evidence_path),
             str(profitability_validation_path),
@@ -2527,7 +2251,6 @@ def _build_actuation_intent_payload(
             "promotion_action": promotion_recommendation.action,
             "recommendation_reasons": recommendations,
         },
-        "candidate_hash": candidate_hash,
         "artifact_refs": sorted(
             {item for item in rollback_evidence_links if item.strip()}
         ),
@@ -2535,8 +2258,6 @@ def _build_actuation_intent_payload(
             "candidate_state_payload": candidate_state_payload,
             "promotion_check": promotion_check,
             "rollback_check": rollback_check,
-            "stage_lineage": stage_lineage_payload,
-            "replay_artifact_hashes": replay_artifact_hashes,
             "patch_required": patch_required,
             "patch_available": paper_patch_path is not None,
             "rollback_readiness_readout": {
@@ -2617,68 +2338,11 @@ def _build_phase_stage_payload(
     return stage_payload, stage_payload_hash
 
 
-def _coerce_str(raw: Any, default: str = "") -> str:
-    if not isinstance(raw, str):
-        return default
-    return raw.strip() or default
-
-
-def _coerce_int(raw: Any, default: int = 0) -> int:
-    if isinstance(raw, bool):
-        return int(raw)
-    if isinstance(raw, int):
-        return raw
-    if isinstance(raw, float):
-        return int(raw)
-    if isinstance(raw, str):
-        try:
-            return int(raw)
-        except ValueError:
-            return default
-    return default
-
-
-def _coerce_path_strings(values: Any) -> list[str]:
-    if not isinstance(values, (list, tuple, set)):
-        return []
-    return sorted(
-        {
-            _coerce_str(value)
-            for value in values
-            if _coerce_str(value)
-        }
-    )
-
-
 def _coerce_mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
     value_dict = cast(dict[str, Any], vars(value)) if hasattr(value, "__dict__") else {}
     return dict(value_dict)
-
-
-def _coerce_gate_phase_gates(raw_gates: Any) -> list[dict[str, Any]]:
-    gates: list[dict[str, Any]] = []
-    if not isinstance(raw_gates, list):
-        return gates
-    for item in raw_gates:
-        if not isinstance(item, dict):
-            continue
-        payload = cast(dict[str, Any], item)
-        gate_id = str(payload.get("gate_id", "")).strip()
-        if not gate_id:
-            continue
-        status = str(payload.get("status", "fail")).strip()
-        gates.append(
-            {
-                "id": gate_id,
-                "status": status if status else "fail",
-                "reasons": payload.get("reasons", []),
-                "value": payload.get("value"),
-                "threshold": payload.get("threshold"),
-            }
-        )
-    return gates
 
 
 def _normalize_governance_inputs(
@@ -3327,6 +2991,7 @@ def _build_phase_manifest(
     )
     stage_records.append(actuation_payload_stage)
     stage_parent_hash = actuation_lineage_hash
+    stage_parent_stage = "actuation-intent"
 
     if patch_path is not None:
         paper_payload, paper_lineage_hash = _build_phase_stage_payload(
@@ -3539,10 +3204,6 @@ def _persist_run_outputs_if_requested(
     stress_metrics_count: int,
     gate_report_trace_id: str,
     recommendation_trace_id: str,
-    stage_trace_ids: dict[str, str],
-    stage_lineage_payload: dict[str, Any],
-    stage_manifest_refs: dict[str, str],
-    replay_artifact_hashes: dict[str, str],
 ) -> None:
     if not persist_results:
         return
@@ -3570,10 +3231,6 @@ def _persist_run_outputs_if_requested(
         stress_metrics_count=stress_metrics_count,
         gate_report_trace_id=gate_report_trace_id,
         recommendation_trace_id=recommendation_trace_id,
-        stage_trace_ids=stage_trace_ids,
-        stage_lineage_payload=stage_lineage_payload,
-        stage_manifest_refs=stage_manifest_refs,
-        replay_artifact_hashes=replay_artifact_hashes,
     )
 
 
@@ -3779,10 +3436,6 @@ def _persist_run_outputs(
     stress_metrics_count: int,
     gate_report_trace_id: str,
     recommendation_trace_id: str,
-    stage_trace_ids: dict[str, str],
-    stage_lineage_payload: dict[str, Any],
-    stage_manifest_refs: dict[str, str],
-    replay_artifact_hashes: dict[str, str],
 ) -> None:
     robustness_by_fold = {fold.fold_name: fold for fold in report.robustness.folds}
     effective_promotion_allowed = bool(promotion_allowed and actuation_allowed)
@@ -3834,10 +3487,6 @@ def _persist_run_outputs(
                     "trade_count": report.metrics.trade_count,
                 },
                 "gate_reasons": sorted(set(promotion_reasons)),
-                "stage_lineage": stage_lineage_payload,
-                "stage_trace_ids": dict(stage_trace_ids),
-                "stage_manifest_refs": dict(stage_manifest_refs),
-                "replay_artifact_hashes": replay_artifact_hashes,
                 "existing_champion_candidate_id": (
                     existing_champion.candidate_id
                     if existing_champion is not None
@@ -3953,10 +3602,6 @@ def _persist_run_outputs(
                 "rationale_present": bool(promotion_recommendation.rationale),
                 "evidence_complete": promotion_recommendation.evidence.evidence_complete,
                 "actuation_allowed": effective_promotion_allowed,
-                "stage_lineage": stage_lineage_payload,
-                "stage_trace_ids": dict(stage_trace_ids),
-                "stage_manifest_refs": dict(stage_manifest_refs),
-                "replay_artifact_hashes": replay_artifact_hashes,
                 "reasons": list(promotion_recommendation.evidence.reasons),
                 "actuation_intent_artifact": (
                     str(actuation_intent_path) if actuation_intent_path else None
@@ -4074,8 +3719,6 @@ def _compute_candidate_hash(
     signals_path: Path,
     strategy_config_path: Path,
     gate_policy_path: Path,
-    stage_lineage_payload: dict[str, Any],
-    replay_artifact_hashes: dict[str, str],
 ) -> str:
     hasher = hashlib.sha256()
     hasher.update(signals_path.read_bytes())
@@ -4085,20 +3728,6 @@ def _compute_candidate_hash(
     hasher.update(str(_strategy_parameter_set(runtime_strategies)).encode("utf-8"))
     hasher.update(gate_report.recommended_mode.encode("utf-8"))
     hasher.update(str(sorted(gate_report.reasons)).encode("utf-8"))
-    hasher.update(
-        json.dumps(
-            stage_lineage_payload,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
-    hasher.update(
-        json.dumps(
-            replay_artifact_hashes,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
     return hasher.hexdigest()[:32]
 
 
