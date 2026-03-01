@@ -1016,7 +1016,7 @@ def run_autonomous_lane(
             dict[str, Any], candidate_state_payload.get("rollbackReadiness", {})
         )
         gate_inputs = GateInputs(
-            feature_schema_version=settings.trading_feature_schema_version,
+            feature_schema_version=gate_policy.required_feature_schema_version,
             required_feature_null_rate=_required_feature_null_rate(signals),
             staleness_ms_p95=_resolve_gate_staleness_ms_p95(
                 signals=ordered_signals,

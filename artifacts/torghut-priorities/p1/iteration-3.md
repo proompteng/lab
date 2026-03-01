@@ -11,7 +11,7 @@
 
 - `services/torghut/app/trading/autonomy/lane.py`
   - Moved `candidate_state_payload` construction to the gate-evaluation section so gate inputs can be sourced from candidate rollout state.
-  - Replaced hardcoded `feature_schema_version="3.0.0"` with `settings.trading_feature_schema_version`.
+  - Replaced hardcoded `feature_schema_version="3.0.0"` with artifact policy value `gate_policy.required_feature_schema_version` to avoid config drift.
   - Replaced hardcoded values for `operational_ready`, `runbook_validated`, `kill_switch_dry_run_passed`, and `rollback_dry_run_passed` in `GateInputs` with fail-closed, evidence-derived booleans:
     - `operational_ready` from candidate paused state.
     - `runbook_validated` from `strategy_configmap_path` existence.
