@@ -7,6 +7,7 @@
 - Maturity: `production handoff package`
 - Primary scope: Torghut quant strategy engine modernization with AgentRun-ready implementation contracts.
 - Source-of-truth implementation status: `implementation-status-matrix-2026-02-21.md`
+- Evidence sync: `iteration-9.md`
 - Implementation status (strict): `Implemented=4`, `Partial=29`, `Planned=4` of 37
 
 ## Purpose

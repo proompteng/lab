@@ -1,11 +1,11 @@
-# Torghut Design Document Implementation Status Matrix (2026-02-21 strict snapshot + 2026-02-26 addendum + 2026-03-01 index harmonization)
+# Torghut Design Document Implementation Status Matrix (2026-02-21 strict snapshot + 2026-02-26 addendum + 2026-03-01 evidence sync)
 
 ## Scope
 
 - audited every markdown design document under `docs/torghut/design-system/**`.
 - compared docs against implementation artifacts in `services/torghut/**`, `services/dorvud/**`, and `argocd/applications/torghut/**`.
 
-## Audit Addendum (2026-02-26)
+## Audit Addendum (2026-02-26 + 2026-03-01 evidence hardening)
 
 - Re-verified current code paths for:
   - signal continuity/freshness controls,
@@ -15,7 +15,7 @@
   - GitOps runtime config defaults for crypto and multi-account rollout.
 - Updated `v3/full-loop/16-20` documents with historical markers and current-state audit notes where stale snapshot language previously looked like open implementation gaps.
 - Signal continuity/freshness is implemented and should not be treated as an open priority gap.
-- Profitability gate artifacts are implemented, but a dedicated runtime profitability endpoint/dashboard slice is still pending.
+- Profitability gate artifacts are implemented, and runtime profitability observability is now exposed at `GET /trading/profitability/runtime` (`services/torghut/app/main.py`; test coverage in `services/torghut/tests/test_trading_api.py`). Dashboard-level dedicated slices and end-to-end oncall runbooks remain iterative.
 - Performed a second strict-pass on `v2`/`v3` statuses and corrected stale `Not Implemented` and over-claimed `Implemented` rows where acceptance criteria are not yet fully satisfied.
 - Added `v1/index.md` and synchronized corpus-level counts so every versioned subtree has an index entry in both the matrix and audit.
 

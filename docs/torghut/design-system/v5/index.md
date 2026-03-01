@@ -7,6 +7,7 @@
 - Maturity: `production-quality design pack`
 - Scope: 5 prioritized new-feature strategy builds plus whitepaper synthesis plus crypto pipeline migration design plus multi-account execution migration design plus fundamentals/news Codex-spark context pipeline design plus DSPy-over-Jangar full rollout design
 - Source-of-truth implementation status: `implementation-status-matrix-2026-02-21.md`
+- Evidence sync: `iteration-9.md`
 - Implementation status (strict): `Implemented=0`, `Partial=7`, `Planned=8` of 15
 
 ## Purpose

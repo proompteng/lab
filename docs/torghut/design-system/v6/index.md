@@ -9,6 +9,7 @@
 - Implementation status: `Planned` (strict matrix status for this index file)
 - Implementation status (strict): `Implemented=0`, `Partial=5`, `Planned=3` of 8
 - Evidence: `implementation-status-matrix-2026-02-21.md`
+- Evidence sync: `iteration-9.md`
 - Rollout gap: child documents marked partial/planned in this pack are not yet represented by one closed phase in runtime.
 
 ## Purpose

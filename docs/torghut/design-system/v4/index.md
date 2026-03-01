@@ -7,6 +7,7 @@
 - Maturity: `research-to-implementation pack`
 - Scope: 10 additional design docs focused on profitability, robustness, and autonomous controls.
 - Source-of-truth implementation status: `implementation-status-matrix-2026-02-21.md`
+- Evidence sync: `iteration-9.md`
 - Implementation status (strict): `Implemented=0`, `Partial=1`, `Planned=10` of 11
 
 ## Objective
