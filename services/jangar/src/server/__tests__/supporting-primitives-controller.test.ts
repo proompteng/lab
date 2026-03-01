@@ -328,6 +328,147 @@ describe('supporting primitives controller', () => {
     expect(status.freeze).toBeTruthy()
   })
 
+  it('counts implement failures from configured target namespaces when deciding freeze', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue(null)
+    const list = vi.fn(async (_resource: string, namespace: string) => {
+      if (namespace === 'agents-implement') {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'run-2',
+                creationTimestamp: '2026-01-20T00:01:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: { phase: 'Failed' },
+            },
+            {
+              metadata: {
+                name: 'run-1',
+                creationTimestamp: '2026-01-20T00:00:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: { phase: 'Failed' },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'torghut-quant', namespace: 'agents', generation: 1, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'trading-owner', channel: 'swarm://owner/trading' },
+        domains: ['autonomous-trading'],
+        objectives: ['improve risk-adjusted return'],
+        mode: 'lights-out',
+        cadence: {
+          discoverEvery: '1m',
+          planEvery: '5m',
+          implementEvery: '15m',
+          verifyEvery: '1m',
+        },
+        discovery: { sources: [{ name: 'market-feed' }] },
+        delivery: { deploymentTargets: ['torghut'] },
+        risk: { freezeAfterFailures: 2, freezeDuration: '60m' },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample', namespace: 'agents-implement' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample', namespace: 'agents-implement' } },
+          implement: {
+            targetRef: { kind: 'OrchestrationRun', name: 'orchestrationrun-sample', namespace: 'agents-implement' },
+          },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample', namespace: 'agents-implement' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    expect(list).toHaveBeenCalledWith(
+      RESOURCE_MAP.AgentRun,
+      'agents-implement',
+      'swarm.proompteng.ai/name=torghut-quant',
+    )
+    expect(list).toHaveBeenCalledWith(
+      RESOURCE_MAP.OrchestrationRun,
+      'agents-implement',
+      'swarm.proompteng.ai/name=torghut-quant',
+    )
+    expect(apply).not.toHaveBeenCalled()
+    expect(deleteFn).toHaveBeenCalledTimes(4)
+    const firstStatusCall = applyStatus.mock.calls[0]
+    const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('Frozen')
+    expect(status.freeze).toBeTruthy()
+  })
+
+  it('uses different schedule names for long swarms with identical prefixes', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun || resource === RESOURCE_MAP.OrchestrationRun) {
+        return { items: [] }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const makeSwarm = (suffix: string) => ({
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm' as const,
+      metadata: { name: `${'a'.repeat(90)}-${suffix}`, namespace: 'agents', generation: 1, uid: `swarm-${suffix}` },
+      spec: {
+        owner: { id: `platform-owner-${suffix}`, channel: `swarm://owner/platform-${suffix}` },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: `agentrun-${suffix}` } },
+          plan: { targetRef: { kind: 'AgentRun', name: `agentrun-${suffix}` } },
+          implement: { targetRef: { kind: 'OrchestrationRun', name: `orchestrationrun-${suffix}` } },
+          verify: { targetRef: { kind: 'AgentRun', name: `agentrun-${suffix}` } },
+        },
+      },
+    })
+
+    await __test__.reconcileSwarm(kube, makeSwarm('one'), 'agents')
+    await __test__.reconcileSwarm(kube, makeSwarm('two'), 'agents')
+
+    const scheduleNames = apply.mock.calls.map((call) => {
+      const payload = call[0] as Record<string, unknown>
+      return asString(payload?.metadata ? (payload.metadata as Record<string, unknown>).name : undefined)
+    })
+    const uniqueNames = new Set(scheduleNames)
+    expect(scheduleNames.filter((name): name is string => typeof name === 'string')).toHaveLength(8)
+    expect(uniqueNames.size).toBe(8)
+  })
+
   it('deletes managed schedules when swarm spec is invalid', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})

@@ -376,14 +376,29 @@ const listItems = (payload: Record<string, unknown>) => {
   return items.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
 }
 
+const hashNameSuffix = (value: string) => {
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i)
+    hash |= 0
+  }
+  return Math.abs(hash).toString(36).padStart(8, '0').slice(0, 8)
+}
+
 const makeName = (base: string, suffix: string) => {
-  const max = 45
   const sanitized = base
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
-  const trimmed = sanitized.length > max ? sanitized.slice(0, max) : sanitized
-  return `${trimmed}-${suffix}`
+  const maxBaseLength = 63 - 1 - suffix.length
+  if (sanitized.length <= maxBaseLength) {
+    return `${sanitized}-${suffix}`
+  }
+  const hash = hashNameSuffix(base)
+  const separator = '-'
+  const hashBaseLength = Math.max(1, maxBaseLength - hash.length - separator.length)
+  const hashBase = sanitized.slice(0, hashBaseLength)
+  return `${hashBase}-${hash}-${suffix}`
 }
 
 const buildOwnerRefs = (resource: Record<string, unknown>) => {
@@ -1003,11 +1018,24 @@ const reconcileSwarm = async (
 
   const swarmLabel = normalizeLabelValue(swarmName)
   const swarmSelector = `swarm.proompteng.ai/name=${swarmLabel}`
-  const [agentRunsPayload, orchestrationRunsPayload] = await Promise.all([
-    kube.list(RESOURCE_MAP.AgentRun, swarmNamespace, swarmSelector),
-    kube.list(RESOURCE_MAP.OrchestrationRun, swarmNamespace, swarmSelector),
-  ])
-  const allRuns = [...listItems(agentRunsPayload), ...listItems(orchestrationRunsPayload)]
+  const runNamespaces = Array.from(
+    new Set(
+      stageConfigs
+        .filter((stageConfig) => stageConfig.enabled)
+        .map((stageConfig) => stageConfig.targetRef?.namespace)
+        .filter((targetNamespace): targetNamespace is string => {
+          return typeof targetNamespace === 'string' && targetNamespace.length > 0
+        }),
+    ),
+  )
+  const namespacesForRunQueries = runNamespaces.length > 0 ? runNamespaces : [swarmNamespace]
+  const runPayloads = await Promise.all(
+    namespacesForRunQueries.flatMap((targetNamespace) => [
+      kube.list(RESOURCE_MAP.AgentRun, targetNamespace, swarmSelector),
+      kube.list(RESOURCE_MAP.OrchestrationRun, targetNamespace, swarmSelector),
+    ]),
+  )
+  const allRuns = runPayloads.flatMap(listItems)
   const implementRuns = allRuns.filter(
     (run) => asString(readNested(run, ['metadata', 'labels', 'swarm.proompteng.ai/stage'])) === 'implement',
   )
