@@ -707,13 +707,6 @@ def run_autonomous_lane(
                 "rollbackTarget": f"{code_version or 'unknown'}",
             },
         }
-        patch_path = _resolve_paper_patch_path(
-            gate_report=gate_report,
-            strategy_configmap_path=strategy_configmap_path,
-            runtime_strategies=runtime_strategies,
-            candidate_id=candidate_id,
-            paper_dir=paper_dir,
-        )
         promotion_check = evaluate_promotion_prerequisites(
             policy_payload=raw_gate_policy,
             gate_report_payload=gate_report_payload,
@@ -725,6 +718,15 @@ def run_autonomous_lane(
             policy_payload=raw_gate_policy,
             candidate_state_payload=candidate_state_payload,
             now=now,
+        )
+        patch_path = _resolve_paper_patch_path(
+            gate_report=gate_report,
+            strategy_configmap_path=strategy_configmap_path,
+            runtime_strategies=runtime_strategies,
+            candidate_id=candidate_id,
+            paper_dir=paper_dir,
+            promotion_target=promotion_target,
+            rollback_ready=rollback_check.ready,
         )
         promotion_check_path.write_text(
             json.dumps(promotion_check.to_payload(), indent=2), encoding="utf-8"
@@ -1690,11 +1692,17 @@ def _resolve_paper_patch_path(
     runtime_strategies: list[StrategyRuntimeConfig],
     candidate_id: str,
     paper_dir: Path,
+    promotion_target: str,
+    rollback_ready: bool,
 ) -> Path | None:
+    if promotion_target != "paper":
+        return None
     if not gate_report.promotion_allowed:
-        return None
+        if strategy_configmap_path is None and rollback_ready:
+            return None
     if gate_report.recommended_mode != "paper":
-        return None
+        if strategy_configmap_path is None and rollback_ready:
+            return None
     resolved_configmap = strategy_configmap_path or _default_strategy_configmap_path()
     return _write_paper_candidate_patch(
         configmap_path=resolved_configmap,
