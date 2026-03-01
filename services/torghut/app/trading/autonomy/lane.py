@@ -254,10 +254,6 @@ def _stable_hash(payload: object) -> str:
     return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
 
-def _sha256_path(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _artifact_hashes(artifacts: Mapping[str, Path | None]) -> dict[str, str]:
     digests: dict[str, str] = {}
     for key, artifact_path in artifacts.items():
