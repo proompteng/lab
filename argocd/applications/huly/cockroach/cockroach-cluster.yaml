@@ -8,10 +8,12 @@ spec:
   dataStore:
     pvc:
       spec:
+        volumeMode: Filesystem
         accessModes:
           - ReadWriteOnce
+        storageClassName: rook-ceph-block
         resources:
           requests:
-            storage: 2Gi
+            storage: 5Gi
   image:
     name: cockroachdb/cockroach:v25.4.2
