@@ -2,12 +2,25 @@
 
 ## Status
 
-- Completed: `implemented` (2026-02-25)
-- Related PR: `https://github.com/proompteng/lab/pull/3641`
-- Implementation scope delivered in this completion pass:
+- Implementation status: `Partial`
+- Evidence checked against runtime contracts (2026-02-13 + 2026-02-26):
+  - `services/torghut/app/trading/ingest.py`
+  - `services/torghut/app/trading/scheduler.py`
+  - `services/torghut/app/main.py`
+  - `services/torghut/app/metrics.py`
+  - `services/torghut/app/trading/autonomy/lane.py`
+  - `services/torghut/tests/test_autonomy_evidence.py`
+  - `argocd/applications/observability/graf-mimir-rules.yaml`
+- Implemented scope in this completion pass:
   - deterministic whitepaper engineering trigger grading + dispatch contract,
   - manual approval override path with audit fields,
-  - fail-closed automatic rollout transitions with rollback/halt evidence logging.
+  - fail-closed automatic rollout transitions with rollback/halt evidence logging,
+  - signal continuity controls and profitability runtime evidence surface.
+- Gaps remaining before full implementation:
+  - no stable profit-positive live window has been proven yet (`signals_total` often `0` in `/trading/autonomy`),
+  - no sustained paper/live execution evidence across all required lanes has yet met rollout gate exit criteria,
+  - LEAN route-provenance/risk parity evidence is still partially staged during warmup and cannot be treated as a fully closed production handoff yet.
+- Related PR: `https://github.com/proompteng/lab/pull/3641` and implementation follow-up PRs.
 
 ## Update (2026-02-26)
 

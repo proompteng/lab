@@ -2,9 +2,9 @@
 
 ## Status
 
-- Completed: `implemented` (2026-02-13)
+- Implementation status: `Implemented`
 - Verification source: implemented in `services/torghut/app/trading/ingest.py`, `services/torghut/app/trading/scheduler.py`, and `services/torghut/app/trading/autonomy/lane.py`.
-- Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
+- Evidence check: code (`services/torghut/app/trading/ingest.py`, `services/torghut/app/trading/scheduler.py`, `services/torghut/app/trading/autonomy/lane.py`), tests (`services/torghut/tests/test_autonomy_evidence.py`), and runtime path (`argocd/applications/torghut/knative-service.yaml`) were verified (2026-02-21).
 
 ## Objective
 
