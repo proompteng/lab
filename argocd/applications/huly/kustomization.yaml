@@ -5,9 +5,8 @@ resources:
   - account/account-deployment.yaml
   - account/account-ingress.yaml
   - account/account-service.yaml
-  - cockroach/cockroach-deployment.yaml
-  - cockroach/cockroach-persistentvolumeclaim.yaml
-  - cockroach/cockroach-service.yaml
+  - cockroach/cockroach-bootstrap-job.yaml
+  - cockroach/cockroach-cluster.yaml
   - collaborator/collaborator-deployment.yaml
   - collaborator/collaborator-ingress.yaml
   - collaborator/collaborator-service.yaml

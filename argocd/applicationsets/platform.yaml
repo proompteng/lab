@@ -37,6 +37,13 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "true"
+              - name: cockroach-operator-system
+                path: argocd/applications/cockroach-operator
+                namespace: cockroach-operator-system
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
               - name: metrics-server
                 path: manifests/overlays/release-ha-1.21+
                 repoURL: https://github.com/kubernetes-sigs/metrics-server.git

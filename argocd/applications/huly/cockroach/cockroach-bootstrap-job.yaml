@@ -1,0 +1,75 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+  labels:
+    app.kubernetes.io/name: huly
+  name: huly-cockroach-bootstrap
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      containers:
+        - command:
+            - /bin/sh
+            - -ec
+            - |
+              wait_for_cluster() {
+                for i in $(seq 1 120); do
+                  if cockroach sql --certs-dir=/cockroach/cockroach-certs --host=cockroach-public --execute="SELECT 1"; then
+                    return 0
+                  fi
+                  sleep 5
+                done
+                echo "cockroach cluster is not ready"
+                return 1
+              }
+
+              escape_password() {
+                printf "%s" "${COCKROACH_PASSWORD:-}" | sed "s/'/''/g"
+              }
+
+              wait_for_cluster
+
+              SQL_PASSWORD="$(escape_password)"
+
+              cat > /tmp/bootstrap.sql <<EOF
+              CREATE DATABASE IF NOT EXISTS defaultdb;
+              CREATE USER IF NOT EXISTS selfhost;
+              ALTER USER selfhost WITH PASSWORD '${SQL_PASSWORD}';
+              GRANT ALL PRIVILEGES ON DATABASE defaultdb TO selfhost;
+              EOF
+
+              cockroach sql --certs-dir=/cockroach/cockroach-certs --host=cockroach-public < /tmp/bootstrap.sql
+          env:
+            - name: COCKROACH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: huly-secret
+                  key: COCKROACH_PASSWORD
+          image: cockroachdb/cockroach:v25.4.2
+          name: bootstrap
+          volumeMounts:
+            - name: client-certs
+              mountPath: /cockroach/cockroach-certs/
+      restartPolicy: OnFailure
+      volumes:
+        - name: client-certs
+          projected:
+            sources:
+              - secret:
+                  name: cockroach-node
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - secret:
+                  name: cockroach-root
+                  items:
+                    - key: tls.crt
+                      path: client.root.crt
+                    - key: tls.key
+                      path: client.root.key
