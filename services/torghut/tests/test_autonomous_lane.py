@@ -233,7 +233,9 @@ class TestAutonomousLane(TestCase):
             self.assertTrue(
                 (output_dir / "gates" / "promotion-evidence-gate.json").exists()
             )
-            self.assertIsNone(result.paper_patch_path)
+            self.assertIsNotNone(result.paper_patch_path)
+            assert result.paper_patch_path is not None
+            self.assertTrue(result.paper_patch_path.exists())
             actuation_payload = json.loads(
                 result.actuation_intent_path.read_text(encoding="utf-8")
                 if result.actuation_intent_path
@@ -382,7 +384,7 @@ class TestAutonomousLane(TestCase):
         self.assertEqual(
             actuation_payload["audit"]["rollback_evidence_missing_checks"],
             ["killSwitchDryRunPassed"],
-        )
+            )
         self.assertIn(
             "rollback_checks_missing_or_failed",
             actuation_payload["gates"]["recommendation_reasons"],
@@ -771,7 +773,6 @@ class TestAutonomousLane(TestCase):
                 json.dumps(
                     {
                         "policy_version": "v3-gates-1",
-                        "required_feature_schema_version": "3.0.0",
                         "gate0_max_null_rate": "0",
                         "gate0_max_staleness_ms": 120000,
                         "gate0_min_symbol_coverage": 1,
@@ -807,6 +808,7 @@ class TestAutonomousLane(TestCase):
                 if item["gate_id"] == "gate0_data_integrity"
             )
             self.assertEqual(gate0["status"], "pass")
+            self.assertNotIn("schema_version_incompatible", gate0["reasons"])
 
     def test_intraday_strategy_candidate_blocks_paper_patch_without_tca_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1037,7 +1039,7 @@ class TestAutonomousLane(TestCase):
                             {
                                 "strategy_id": "candidate-b",
                                 "strategy_type": "legacy_macd_rsi",
-                                "version": "1.0.1",
+                                "version": "1.0.0",
                                 "enabled": True,
                             }
                         ]

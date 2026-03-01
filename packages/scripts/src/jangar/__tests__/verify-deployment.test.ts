@@ -26,8 +26,6 @@ describe('verify-deployment', () => {
       '--require-synced',
       '--expected-revision',
       '0123456789abcdef0123456789abcdef01234567',
-      '--expected-revision-mode',
-      'ancestor',
       '--health-attempts',
       '10',
       '--health-interval-seconds',
@@ -42,7 +40,6 @@ describe('verify-deployment', () => {
     expect(parsed.deployments).toEqual(['jangar', 'jangar-worker'])
     expect(parsed.requireSynced).toBe(true)
     expect(parsed.expectedRevision).toBe('0123456789abcdef0123456789abcdef01234567')
-    expect(parsed.expectedRevisionMode).toBe('ancestor')
     expect(parsed.healthAttempts).toBe(10)
     expect(parsed.healthIntervalSeconds).toBe(5)
     expect(parsed.digestAttempts).toBe(8)
@@ -64,11 +61,9 @@ describe('verify-deployment', () => {
         imageName: 'registry.ide-newton.ts.net/lab/jangar',
         kustomizationPath: 'argocd/applications/jangar/kustomization.yaml',
         namespace: 'jangar',
-        expectedRevisionMode: 'exact',
         requireSynced: true,
         rolloutTimeout: '10m',
       },
-      false,
     )
 
     expect(waitReason).toContain('revision=')
@@ -90,36 +85,9 @@ describe('verify-deployment', () => {
         imageName: 'registry.ide-newton.ts.net/lab/jangar',
         kustomizationPath: 'argocd/applications/jangar/kustomization.yaml',
         namespace: 'jangar',
-        expectedRevisionMode: 'exact',
         requireSynced: true,
         rolloutTimeout: '10m',
       },
-      true,
-    )
-
-    expect(waitReason).toBeUndefined()
-  })
-
-  it('returns no wait reason when ancestor revision is acceptable', () => {
-    const waitReason = __private.getArgoWaitReason(
-      __private.parseArgoStatus('Synced Healthy abcdef0123456789abcdef0123456789abcdef01'),
-      {
-        argoApplication: 'jangar',
-        argoNamespace: 'argocd',
-        deployments: ['jangar'],
-        digestAttempts: 1,
-        digestIntervalSeconds: 1,
-        expectedRevision: '0123456789abcdef0123456789abcdef01234567',
-        expectedRevisionMode: 'ancestor',
-        healthAttempts: 1,
-        healthIntervalSeconds: 1,
-        imageName: 'registry.ide-newton.ts.net/lab/jangar',
-        kustomizationPath: 'argocd/applications/jangar/kustomization.yaml',
-        namespace: 'jangar',
-        requireSynced: true,
-        rolloutTimeout: '10m',
-      },
-      true,
     )
 
     expect(waitReason).toBeUndefined()

@@ -17,7 +17,6 @@ type CliOptions = {
   healthAttempts?: number
   healthIntervalSeconds?: number
   expectedRevision?: string
-  expectedRevisionMode?: 'exact' | 'ancestor'
   digestAttempts?: number
   digestIntervalSeconds?: number
   requireSynced?: boolean
@@ -46,7 +45,6 @@ type ResolvedOptions = {
   healthAttempts: number
   healthIntervalSeconds: number
   expectedRevision?: string
-  expectedRevisionMode: 'exact' | 'ancestor'
   digestAttempts: number
   digestIntervalSeconds: number
   requireSynced: boolean
@@ -64,8 +62,6 @@ const defaultHealthIntervalSeconds = 10
 const defaultDigestAttempts = 30
 const defaultDigestIntervalSeconds = 10
 const shaPattern = /^[0-9a-f]{40}$/i
-const supportedRevisionModes = ['exact', 'ancestor'] as const
-type ExpectedRevisionMode = (typeof supportedRevisionModes)[number]
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
 
@@ -122,64 +118,18 @@ const parseArgoStatus = (output: string): ArgoStatus => {
   return { syncStatus, healthStatus, revision }
 }
 
-const getArgoWaitReason = (
-  status: ArgoStatus,
-  options: ResolvedOptions,
-  revisionSatisfied: boolean,
-): string | undefined => {
+const getArgoWaitReason = (status: ArgoStatus, options: ResolvedOptions): string | undefined => {
   if (status.healthStatus !== 'Healthy') {
     return `health=${status.healthStatus}`
   }
   if (options.requireSynced && status.syncStatus !== 'Synced') {
     return `sync=${status.syncStatus}`
   }
-  if (options.expectedRevision && !revisionSatisfied) {
-    if (options.expectedRevisionMode === 'ancestor') {
-      return `revision=${status.revision} is not a descendant of expected=${options.expectedRevision}`
-    }
+  if (options.expectedRevision && status.revision !== options.expectedRevision) {
     return `revision=${status.revision} expected=${options.expectedRevision}`
   }
 
   return undefined
-}
-
-const isExpectedRevisionSatisfied = async (
-  statusRevision: string,
-  expectedRevision: string,
-  mode: ExpectedRevisionMode,
-): Promise<boolean> => {
-  if (!shaPattern.test(statusRevision) || !shaPattern.test(expectedRevision)) {
-    return false
-  }
-
-  if (statusRevision === expectedRevision) {
-    return true
-  }
-
-  if (mode === 'exact') {
-    return false
-  }
-
-  const ancestry = await runCommand('git', ['merge-base', '--is-ancestor', expectedRevision, statusRevision], true)
-  if (ancestry.exitCode === 0) {
-    return true
-  }
-  if (ancestry.exitCode === 1) {
-    return false
-  }
-
-  const reason = (ancestry.stderr || ancestry.stdout || '').trim()
-  throw new Error(`Unable to validate revision ancestry: ${reason}`)
-}
-
-const validateExpectedRevisionMode = (mode: string | undefined): ExpectedRevisionMode => {
-  if (!mode) {
-    return 'exact'
-  }
-  if (!supportedRevisionModes.includes(mode as ExpectedRevisionMode)) {
-    throw new Error(`Unknown --expected-revision-mode: ${mode}. Expected: ${supportedRevisionModes.join(', ')}`)
-  }
-  return mode as ExpectedRevisionMode
 }
 
 const parseArgs = (argv: string[]): CliOptions => {
@@ -201,7 +151,6 @@ Options:
   --health-attempts <number>         Argo health polling attempts (default: 60)
   --health-interval-seconds <number> Argo health polling interval seconds (default: 10)
   --expected-revision <sha>          Require Argo app to be synced to this commit SHA
-  --expected-revision-mode <mode>     Revision matching behavior when expectedRevision is set (exact|ancestor). default: exact
   --digest-attempts <number>         Digest polling attempts after rollout checks (default: 30)
   --digest-interval-seconds <number> Digest polling interval seconds (default: 10)
   --require-synced                   Require Argo application sync status to be Synced`)
@@ -260,9 +209,6 @@ Options:
       case '--expected-revision':
         options.expectedRevision = value
         break
-      case '--expected-revision-mode':
-        options.expectedRevisionMode = value as CliOptions['expectedRevisionMode']
-        break
       case '--digest-attempts':
         options.digestAttempts = Number.parseInt(value, 10)
         break
@@ -304,14 +250,11 @@ const waitForArgoState = async (options: ResolvedOptions) => {
     }
 
     const argoStatus = parseArgoStatus(status.stdout)
-    const revisionSatisfied =
-      !options.expectedRevision ||
-      (await isExpectedRevisionSatisfied(argoStatus.revision, options.expectedRevision, options.expectedRevisionMode))
+    const waitReason = getArgoWaitReason(argoStatus, options)
     console.log(
       `Attempt ${attempt}: sync=${argoStatus.syncStatus} health=${argoStatus.healthStatus} revision=${argoStatus.revision}`,
     )
 
-    const waitReason = getArgoWaitReason(argoStatus, options, revisionSatisfied)
     if (!waitReason) {
       return
     }
@@ -393,7 +336,6 @@ export const main = async (cliOptions?: CliOptions) => {
 
   const parsed = cliOptions ?? parseArgs(process.argv.slice(2))
   const expectedRevision = parsed.expectedRevision?.trim() || undefined
-  const expectedRevisionMode = validateExpectedRevisionMode(parsed.expectedRevisionMode)
   const resolvedOptions: ResolvedOptions = {
     namespace: parsed.namespace ?? defaultNamespace,
     deployments: parsed.deployments?.length ? parsed.deployments : [...defaultDeployments],
@@ -405,7 +347,6 @@ export const main = async (cliOptions?: CliOptions) => {
     healthAttempts: parsed.healthAttempts ?? defaultHealthAttempts,
     healthIntervalSeconds: parsed.healthIntervalSeconds ?? defaultHealthIntervalSeconds,
     expectedRevision,
-    expectedRevisionMode,
     digestAttempts: parsed.digestAttempts ?? defaultDigestAttempts,
     digestIntervalSeconds: parsed.digestIntervalSeconds ?? defaultDigestIntervalSeconds,
     requireSynced: parsed.requireSynced ?? false,

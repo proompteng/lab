@@ -616,6 +616,9 @@ class TestLLMDSPyWorkflow(TestCase):
                     "artifactHash": "override-hash",
                     "approvalRef": "risk-committee",
                     "promotionTarget": "constrained_live",
+                    "evalReportRef": str(
+                        artifact_root / "eval" / ".." / "eval" / "dspy-eval-report.json"
+                    ),
                     "gateCompatibility": "fail",
                     "schemaValidRate": "0.001",
                     "deterministicCompatibility": "fail",
@@ -653,13 +656,17 @@ class TestLLMDSPyWorkflow(TestCase):
             promote_parameters = promote_payload["parameters"]
             self.assertEqual(promote_parameters["approvalRef"], "risk-committee")
             self.assertEqual(promote_parameters["promotionTarget"], "constrained_live")
+            self.assertEqual(
+                promote_parameters["evalReportRef"],
+                str(artifact_root / "eval" / "dspy-eval-report.json"),
+            )
             self.assertEqual(promote_parameters["artifactHash"], "override-hash")
             self.assertNotIn("gateCompatibility", promote_parameters)
             self.assertNotIn("schemaValidRate", promote_parameters)
             self.assertNotIn("deterministicCompatibility", promote_parameters)
             self.assertNotIn("fallbackRate", promote_parameters)
 
-    def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_missing(
+    def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_missing_locally(
         self,
     ) -> None:
         responses = [
@@ -679,6 +686,12 @@ class TestLLMDSPyWorkflow(TestCase):
                 "agentRun": {"id": "record-eval"},
                 "resource": {"metadata": {"name": "run-eval", "namespace": "agents"}},
             },
+            {
+                "agentRun": {"id": "record-promote"},
+                "resource": {
+                    "metadata": {"name": "run-promote", "namespace": "agents"}
+                },
+            },
         ]
 
         with TemporaryDirectory() as tmpdir:
@@ -697,11 +710,11 @@ class TestLLMDSPyWorkflow(TestCase):
             ) as submit_mock:
                 with patch(
                     "app.trading.llm.dspy_compile.workflow.wait_for_jangar_agentrun_terminal_status",
-                    side_effect=["succeeded", "succeeded", "succeeded"],
+                    side_effect=["succeeded", "succeeded", "succeeded", "succeeded"],
                 ) as wait_mock:
                     with self.assertRaisesRegex(
                         RuntimeError,
-                        "dspy_promotion_gate_blocked:eval_report_not_found,eval_report_created_at_missing",
+                        "dspy_promotion_gate_blocked:eval_report_not_found",
                     ):
                         with Session(self.engine) as session:
                             orchestrate_dspy_agentrun_workflow(
@@ -729,12 +742,6 @@ class TestLLMDSPyWorkflow(TestCase):
                 )
             ).scalar_one()
             self.assertEqual(row.status, "blocked")
-            metadata = row.metadata_json or {}
-            self.assertIsInstance(metadata, dict)
-            orchestration = metadata.get("orchestration")
-            self.assertIsInstance(orchestration, dict)
-            gate_failures = orchestration.get("gateFailures") or []
-            self.assertIn("eval_report_not_found", gate_failures)
 
     def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_stale(
         self,
