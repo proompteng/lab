@@ -309,6 +309,53 @@ spec:
                           required:
                           - name
                           type: object
+                        loop:
+                          properties:
+                            condition:
+                              properties:
+                                expression:
+                                  type: string
+                                source:
+                                  properties:
+                                    onInvalid:
+                                      enum:
+                                      - stop
+                                      - fail
+                                      type: string
+                                    onMissing:
+                                      enum:
+                                      - stop
+                                      - fail
+                                      type: string
+                                    path:
+                                      type: string
+                                    type:
+                                      enum:
+                                      - file
+                                      type: string
+                                  type: object
+                                type:
+                                  enum:
+                                  - cel
+                                  type: string
+                              type: object
+                            maxIterations:
+                              format: int32
+                              minimum: 1
+                              type: integer
+                            state:
+                              properties:
+                                required:
+                                  type: boolean
+                                volumeNames:
+                                  items:
+                                    type: string
+                                  maxItems: 20
+                                  type: array
+                              type: object
+                          required:
+                          - maxIterations
+                          type: object
                         name:
                           type: string
                         parameters:
@@ -593,6 +640,61 @@ spec:
                         lastTransitionTime:
                           format: date-time
                           type: string
+                        loop:
+                          properties:
+                            completedIterations:
+                              format: int32
+                              type: integer
+                            currentIteration:
+                              format: int32
+                              type: integer
+                            iterations:
+                              items:
+                                properties:
+                                  attempts:
+                                    format: int32
+                                    type: integer
+                                  finishedAt:
+                                    format: date-time
+                                    type: string
+                                  index:
+                                    format: int32
+                                    type: integer
+                                  jobRef:
+                                    properties:
+                                      name:
+                                        type: string
+                                      namespace:
+                                        type: string
+                                      uid:
+                                        type: string
+                                    type: object
+                                  message:
+                                    type: string
+                                  phase:
+                                    type: string
+                                  startedAt:
+                                    format: date-time
+                                    type: string
+                                type: object
+                              type: array
+                            lastControl:
+                              additionalProperties:
+                                x-kubernetes-preserve-unknown-fields: true
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                            maxIterations:
+                              format: int32
+                              type: integer
+                            prunedIterations:
+                              format: int32
+                              type: integer
+                            retainedIterations:
+                              format: int32
+                              type: integer
+                            stopReason:
+                              type: string
+                          type: object
                         message:
                           type: string
                         name:

@@ -123,6 +123,19 @@ kubectl get job -n agents -l agents.proompteng.ai/agent-run=leader-election-impl
 kubectl logs -n agents job/<job-name> -f
 ```
 
+## Loop Workflow Examples
+
+If you want one step to run multiple iterations while reusing the same workspace/state volume, start from:
+
+- `charts/agents/examples/agentrun-workflow-loop-fixed.yaml`
+- `charts/agents/examples/agentrun-workflow-loop-conditional.yaml`
+
+Notes:
+
+- Use `runtime.type: workflow`.
+- Ensure loop state volumes are PVC-backed and reused across iterations.
+- Conditional loops use CEL expressions under `workflow.steps[].loop.condition.expression`.
+
 ## When To Use `parameters.prompt` (And When Not To)
 
 Use `parameters.prompt` when:
