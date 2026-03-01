@@ -85,11 +85,15 @@ _AUTONOMY_PHASE_ORDER: tuple[str, ...] = AUTONOMY_PHASE_ORDER
 _ACTUATION_INTENT_SCHEMA_VERSION = "torghut.autonomy.actuation-intent.v1"
 _ACTUATION_CONFIRMATION_PHRASE = "ACTUATE_TORGHUT"
 _ACTUATION_INTENT_PATH = "gates/actuation-intent.json"
+<<<<<<< HEAD
 _AUTONOMY_LANE_SCHEMA_VERSION = "torghut-autonomy-stage-manifest-v1"
 _STAGE_CANDIDATE_GENERATION = "candidate-generation"
 _STAGE_EVALUATION = "evaluation"
 _STAGE_RECOMMENDATION = "promotion-recommendation"
-_STRESS_METRICS_ARTIFACT_PATH = "gates/stress-metrics-v1.json"
+_STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
+=======
+_STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
+>>>>>>> a7a57d6d6 (fix(autonomy): correct stress metrics artifact path construction)
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
 
 
