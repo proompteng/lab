@@ -6,11 +6,12 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable, Mapping, cast
+from typing import Any, Callable, Mapping, Sequence, cast
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -73,6 +74,8 @@ from .policy_checks import evaluate_promotion_prerequisites, evaluate_rollback_r
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 from .phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
+    AUTONOMY_PHASE_SLO_GATES,
+    build_ordered_phase_summaries,
     coerce_phase_status,
     normalize_phase_transitions,
 )
@@ -760,7 +763,6 @@ def run_autonomous_lane(
             promotion_target=str(promotion_target),
             force_pre_prerequisite=promotion_target == "paper",
             paper_dir=paper_dir,
-            promotion_target=promotion_target,
         )
         promotion_check = evaluate_promotion_prerequisites(
             policy_payload=raw_gate_policy,
@@ -1027,6 +1029,12 @@ def run_autonomous_lane(
         phase_manifest_path.write_text(
             json.dumps(phase_manifest_payload, indent=2), encoding="utf-8"
         )
+        _write_autonomy_iteration_notes(
+            artifact_root=output_dir,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            phase_manifest_payload=phase_manifest_payload,
+        )
 
         _persist_run_outputs_if_requested(
             persist_results=persist_results,
@@ -1074,7 +1082,6 @@ def run_autonomous_lane(
             phase_manifest_path=phase_manifest_path,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
-            phase_manifest_path=phase_manifest_path,
         )
     except Exception as exc:
         _mark_run_failed_if_requested(
@@ -2626,6 +2633,7 @@ def _resolve_paper_patch_path(
     candidate_id: str,
     promotion_target: str,
     paper_dir: Path,
+    force_pre_prerequisite: bool = False,
 ) -> Path | None:
     requested_target = str(promotion_target or "").strip().lower()
     if force_pre_prerequisite:
