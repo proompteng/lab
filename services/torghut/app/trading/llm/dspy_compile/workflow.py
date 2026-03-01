@@ -582,7 +582,9 @@ def _to_bool(value: Any) -> bool | None:
 
 
 def _json_copy(payload: Mapping[str, Any]) -> dict[str, Any]:
-    return json.loads(json.dumps(dict(payload), sort_keys=True))
+    return json.loads(
+        json.dumps(dict(payload), sort_keys=True, default=str)
+    )
 
 
 def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:

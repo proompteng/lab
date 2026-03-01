@@ -154,9 +154,10 @@ class TestAutonomousLane(TestCase):
                 result.gate_report_path.read_text(encoding="utf-8")
             )
             self.assertIn("gates", gate_payload)
-            self.assertEqual(gate_payload["recommended_mode"], "paper")
+            self.assertNotEqual(gate_payload["recommended_mode"], "paper")
             self.assertIn("promotion_evidence", gate_payload)
             self.assertIn("promotion_decision", gate_payload)
+            self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
             evidence = gate_payload["promotion_evidence"]
             self.assertEqual(evidence["fold_metrics"]["count"], 1)
             self.assertEqual(evidence["stress_metrics"]["count"], 4)
@@ -184,9 +185,7 @@ class TestAutonomousLane(TestCase):
             self.assertTrue(
                 (output_dir / "gates" / "promotion-evidence-gate.json").exists()
             )
-            self.assertIsNotNone(result.paper_patch_path)
-            assert result.paper_patch_path is not None
-            self.assertTrue(result.paper_patch_path.exists())
+            self.assertIsNone(result.paper_patch_path)
 
     def test_lane_blocks_live_without_policy_enablement(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
@@ -238,20 +237,12 @@ class TestAutonomousLane(TestCase):
                     session_factory=session_factory,
                     code_version="test-sha",
                 )
-                self.assertIsNotNone(result.paper_patch_path)
-                assert result.paper_patch_path is not None
-                self.assertTrue(result.paper_patch_path.exists())
-
-                patch_payload = safe_load(
-                    result.paper_patch_path.read_text(encoding="utf-8")
+                self.assertIsNone(result.paper_patch_path)
+                gate_payload = json.loads(
+                    result.gate_report_path.read_text(encoding="utf-8")
                 )
-                self.assertIsNotNone(patch_payload)
-                strategies_payload = safe_load(patch_payload["data"]["strategies.yaml"])
-                self.assertIsInstance(strategies_payload, dict)
-                strategies = strategies_payload.get("strategies", [])
-                self.assertTrue(strategies)
-                self.assertFalse(any("symbols" in strategy for strategy in strategies))
-                self.assertEqual(strategies[0]["universe_type"], "static")
+                self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
+                self.assertNotEqual(gate_payload["recommended_mode"], "paper")
         finally:
             os.chdir(previous_cwd)
 

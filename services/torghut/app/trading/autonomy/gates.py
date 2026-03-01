@@ -713,24 +713,35 @@ def _gate2_base_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[st
 
 
 def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
-    tca_order_count = int(inputs.tca_metrics.get("order_count", 0))
+    order_count_raw = inputs.tca_metrics.get("order_count")
+    if order_count_raw is None:
+        return ["tca_order_count_missing"]
+
+    try:
+        tca_order_count = int(order_count_raw)
+    except (TypeError, ValueError):
+        return ["tca_order_count_invalid"]
+
     if tca_order_count <= 0:
-        return []
+        return ["tca_order_count_below_minimum"]
+
     reasons: list[str] = []
-    avg_tca_slippage = _decimal(inputs.tca_metrics.get("avg_slippage_bps")) or Decimal(
-        "0"
-    )
-    avg_tca_shortfall = _decimal(
-        inputs.tca_metrics.get("avg_shortfall_notional")
-    ) or Decimal("0")
-    avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get("avg_churn_ratio")) or Decimal(
-        "0"
-    )
-    if avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
+    avg_tca_slippage = _decimal(inputs.tca_metrics.get("avg_slippage_bps"))
+    if avg_tca_slippage is None:
+        reasons.append("tca_slippage_missing")
+    elif avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
         reasons.append("tca_slippage_exceeds_maximum")
-    if avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
+
+    avg_tca_shortfall = _decimal(inputs.tca_metrics.get("avg_shortfall_notional"))
+    if avg_tca_shortfall is None:
+        reasons.append("tca_shortfall_missing")
+    elif avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
         reasons.append("tca_shortfall_exceeds_maximum")
-    if avg_tca_churn_ratio > policy.gate2_max_tca_churn_ratio:
+
+    avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get("avg_churn_ratio"))
+    if avg_tca_churn_ratio is None:
+        reasons.append("tca_churn_ratio_missing")
+    elif avg_tca_churn_ratio > policy.gate2_max_tca_churn_ratio:
         reasons.append("tca_churn_ratio_exceeds_maximum")
     return reasons
 
