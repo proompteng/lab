@@ -1366,6 +1366,11 @@ class Settings(BaseSettings):
             return
         if not self.trading_feature_flags_url:
             return
+
+        trading_live_explicitly_set = (
+            "trading_live_enabled" in self.__pydantic_fields_set__
+        )
+
         endpoint = self.trading_feature_flags_url.strip().rstrip("/")
         if not endpoint:
             return
@@ -1396,6 +1401,17 @@ class Settings(BaseSettings):
                     flag_key,
                 )
                 break
+
+        if (
+            self.trading_mode == "paper"
+            and self.trading_live_enabled
+            and not trading_live_explicitly_set
+        ):
+            logger.warning(
+                "Feature flag override enabled trading live mode while TRADING_MODE=paper. "
+                "Normalizing TRADING_LIVE_ENABLED to false."
+            )
+            self.trading_live_enabled = False
 
     @staticmethod
     def _normalize_csv_setting(raw: str) -> str:
