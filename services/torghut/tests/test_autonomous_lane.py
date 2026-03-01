@@ -10,7 +10,6 @@ from unittest.mock import patch
 from unittest import TestCase
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
-from yaml import safe_load
 
 from app.trading.autonomy.lane import (
     _resolve_gate_forecast_metrics,
