@@ -2168,20 +2168,31 @@ class TradingPipeline:
     ) -> RuntimeUncertaintyGate:
         params = decision.params
         candidates: list[RuntimeUncertaintyGate] = []
-        direct_action = _coerce_runtime_uncertainty_gate_action(
-            params.get("uncertainty_gate_action")
-        )
-        if direct_action is not None:
-            candidates.append(
-                RuntimeUncertaintyGate(action=direct_action, source="decision_params")
+        if isinstance(params, Mapping):
+            direct_action_raw = params.get("uncertainty_gate_action")
+            direct_action = _coerce_runtime_uncertainty_gate_action(
+                direct_action_raw
             )
+            if direct_action is not None:
+                candidates.append(
+                    RuntimeUncertaintyGate(
+                        action=direct_action,
+                        source="decision_params",
+                    )
+                )
+            elif "uncertainty_gate_action" in params:
+                candidates.append(
+                    RuntimeUncertaintyGate(
+                        action="abstain",
+                        source="decision_params_invalid_action",
+                    )
+                )
 
         runtime_payload = params.get("runtime_uncertainty_gate")
         if isinstance(runtime_payload, Mapping):
             runtime_map = cast(Mapping[str, Any], runtime_payload)
-            runtime_action = _coerce_runtime_uncertainty_gate_action(
-                runtime_map.get("action")
-            )
+            runtime_action_raw = runtime_map.get("action")
+            runtime_action = _coerce_runtime_uncertainty_gate_action(runtime_action_raw)
             if runtime_action is not None:
                 candidates.append(
                     RuntimeUncertaintyGate(
@@ -2189,18 +2200,31 @@ class TradingPipeline:
                         source="decision_runtime_payload",
                     )
                 )
+            elif "action" in runtime_map:
+                candidates.append(
+                    RuntimeUncertaintyGate(
+                        action="abstain",
+                        source="decision_runtime_payload_invalid_action",
+                    )
+                )
 
         forecast_audit = params.get("forecast_audit")
         if isinstance(forecast_audit, Mapping):
             audit_map = cast(Mapping[str, Any], forecast_audit)
-            audit_action = _coerce_runtime_uncertainty_gate_action(
-                audit_map.get("uncertainty_gate_action")
-            )
+            audit_action_raw = audit_map.get("uncertainty_gate_action")
+            audit_action = _coerce_runtime_uncertainty_gate_action(audit_action_raw)
             if audit_action is not None:
                 candidates.append(
                     RuntimeUncertaintyGate(
                         action=audit_action,
                         source="forecast_audit",
+                    )
+                )
+            elif "uncertainty_gate_action" in audit_map:
+                candidates.append(
+                    RuntimeUncertaintyGate(
+                        action="abstain",
+                        source="forecast_audit_invalid_action",
                     )
                 )
 

@@ -972,6 +972,83 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(gate.action, "fail")
             self.assertEqual(gate.source, "autonomy_gate_report")
 
+    def test_runtime_uncertainty_invalid_direct_action_fails_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            params={"uncertainty_gate_action": "invalid"},
+        )
+
+        gate = pipeline._resolve_runtime_uncertainty_gate(decision)
+
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "decision_params_invalid_action")
+
+    def test_pipeline_runtime_uncertainty_invalid_direct_action_blocks_risk_increasing_entry(
+        self,
+    ) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("2"),
+            params={"uncertainty_gate_action": "invalid"},
+        )
+
+        adjusted_decision, gate_payload, gate_rejection = (
+            pipeline._apply_runtime_uncertainty_gate(
+                decision,
+                positions=[],
+            )
+        )
+
+        self.assertEqual(adjusted_decision, decision)
+        self.assertEqual(gate_payload.get("action"), "abstain")
+        self.assertEqual(
+            gate_payload.get("source"),
+            "decision_params_invalid_action",
+        )
+        self.assertTrue(gate_payload.get("risk_increasing_entry"))
+        self.assertTrue(gate_payload.get("entry_blocked"))
+        self.assertEqual(
+            gate_rejection,
+            "runtime_uncertainty_gate_abstain_block_risk_increasing_entries",
+        )
+
     def test_pipeline_runtime_uncertainty_gate_report_parse_error_fails_closed(self) -> None:
         from app import config
 
