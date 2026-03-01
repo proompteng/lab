@@ -1686,12 +1686,11 @@ class TradingPipeline:
             )
             return None
 
-        gate_rejection = self._recheck_runtime_uncertainty_gate_after_llm(
+        decision, gate_payload, gate_rejection = self._recheck_runtime_uncertainty_gate_after_llm(
             session=session,
             decision=decision,
             decision_row=decision_row,
             positions=positions,
-            gate_payload=gate_payload,
         )
         if gate_rejection:
             self._record_runtime_uncertainty_gate_result(
@@ -1757,37 +1756,24 @@ class TradingPipeline:
         decision: StrategyDecision,
         decision_row: TradeDecision,
         positions: list[dict[str, Any]],
-        gate_payload: dict[str, Any],
-    ) -> str | None:
-        gate_action = str(gate_payload.get("action") or "pass").strip().lower()
-        if gate_action not in {"abstain", "fail"}:
-            return None
-        risk_increasing_entry = _is_runtime_risk_increasing_entry(decision, positions)
-        gate_payload["risk_increasing_entry"] = risk_increasing_entry
-        if not risk_increasing_entry:
-            gate_payload["entry_blocked"] = False
-            gate_payload["block_reason"] = None
-            self._persist_runtime_uncertainty_gate_payload(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-                gate_payload=gate_payload,
-            )
-            return None
-        reason = (
-            "runtime_uncertainty_gate_fail_block_new_entries"
-            if gate_action == "fail"
-            else "runtime_uncertainty_gate_abstain_block_risk_increasing_entries"
+    ) -> tuple[StrategyDecision, dict[str, Any], str | None]:
+        """Re-run runtime uncertainty enforcement after LLM review.
+
+        LLM review can adjust order/decision fields; re-applying this gate keeps
+        enforcement deterministic and prevents advisory output from bypassing it.
+        """
+        decision, post_gate_payload, gate_rejection = self._apply_runtime_uncertainty_gate(
+            decision, positions=positions
         )
-        gate_payload["entry_blocked"] = True
-        gate_payload["block_reason"] = reason
         self._persist_runtime_uncertainty_gate_payload(
             session=session,
             decision=decision,
             decision_row=decision_row,
-            gate_payload=gate_payload,
+            gate_payload=post_gate_payload,
         )
-        return reason
+        if gate_rejection is not None:
+            return decision, post_gate_payload, gate_rejection
+        return decision, post_gate_payload, None
 
     def _record_decision_rejection(
         self,
@@ -2168,41 +2154,68 @@ class TradingPipeline:
     ) -> RuntimeUncertaintyGate:
         params = decision.params
         candidates: list[RuntimeUncertaintyGate] = []
-        direct_action = _coerce_runtime_uncertainty_gate_action(
-            params.get("uncertainty_gate_action")
-        )
-        if direct_action is not None:
-            candidates.append(
-                RuntimeUncertaintyGate(action=direct_action, source="decision_params")
+        if "uncertainty_gate_action" in params:
+            direct_action = _coerce_runtime_uncertainty_gate_action(
+                params.get("uncertainty_gate_action")
             )
+            if direct_action is None:
+                candidates.append(
+                    RuntimeUncertaintyGate(
+                        action="abstain",
+                        source="decision_params_invalid_action",
+                    )
+                )
+            else:
+                candidates.append(
+                    RuntimeUncertaintyGate(
+                        action=direct_action,
+                        source="decision_params",
+                    )
+                )
 
         runtime_payload = params.get("runtime_uncertainty_gate")
         if isinstance(runtime_payload, Mapping):
             runtime_map = cast(Mapping[str, Any], runtime_payload)
-            runtime_action = _coerce_runtime_uncertainty_gate_action(
-                runtime_map.get("action")
-            )
-            if runtime_action is not None:
-                candidates.append(
-                    RuntimeUncertaintyGate(
-                        action=runtime_action,
-                        source="decision_runtime_payload",
-                    )
+            if "action" in runtime_map:
+                runtime_action = _coerce_runtime_uncertainty_gate_action(
+                    runtime_map.get("action")
                 )
+                if runtime_action is None:
+                    candidates.append(
+                        RuntimeUncertaintyGate(
+                            action="abstain",
+                            source="decision_runtime_payload_invalid_action",
+                        )
+                    )
+                else:
+                    candidates.append(
+                        RuntimeUncertaintyGate(
+                            action=runtime_action,
+                            source="decision_runtime_payload",
+                        )
+                    )
 
         forecast_audit = params.get("forecast_audit")
         if isinstance(forecast_audit, Mapping):
             audit_map = cast(Mapping[str, Any], forecast_audit)
-            audit_action = _coerce_runtime_uncertainty_gate_action(
-                audit_map.get("uncertainty_gate_action")
-            )
-            if audit_action is not None:
-                candidates.append(
-                    RuntimeUncertaintyGate(
-                        action=audit_action,
-                        source="forecast_audit",
-                    )
+            if "uncertainty_gate_action" in audit_map:
+                audit_action = _coerce_runtime_uncertainty_gate_action(
+                    audit_map.get("uncertainty_gate_action")
                 )
+                if audit_action is None:
+                    candidates.append(
+                        RuntimeUncertaintyGate(
+                            action="abstain",
+                            source="forecast_audit_invalid_action",
+                        )
+                    )
+                else:
+                    candidates.append(
+                        RuntimeUncertaintyGate(
+                            action=audit_action,
+                            source="forecast_audit",
+                        )
+                    )
 
         gate_path_raw = self.state.last_autonomy_gates
         if gate_path_raw:
@@ -2223,14 +2236,22 @@ class TradingPipeline:
             else:
                 if isinstance(payload, Mapping):
                     gate_map = cast(Mapping[str, Any], payload)
+                    has_gate_action = "uncertainty_gate_action" in gate_map
                     gate_action = _coerce_runtime_uncertainty_gate_action(
                         gate_map.get("uncertainty_gate_action")
                     )
                     if gate_action is not None:
+                        source = "autonomy_gate_report"
+                        if (
+                            gate_action == "pass"
+                            and self._autonomy_gate_report_pass_payload_invalid(gate_map)
+                        ):
+                            gate_action = "abstain"
+                            source = "autonomy_gate_report_invalid_payload"
                         candidates.append(
                             RuntimeUncertaintyGate(
                                 action=gate_action,
-                                source="autonomy_gate_report",
+                                source=source,
                                 coverage_error=_optional_decimal(
                                     gate_map.get("coverage_error")
                                 ),
@@ -2240,6 +2261,13 @@ class TradingPipeline:
                                 conformal_interval_width=_optional_decimal(
                                     gate_map.get("conformal_interval_width")
                                 ),
+                            )
+                        )
+                    elif has_gate_action:
+                        candidates.append(
+                            RuntimeUncertaintyGate(
+                                action="abstain",
+                                source="autonomy_gate_report_invalid_action",
                             )
                         )
                     else:
@@ -2257,8 +2285,36 @@ class TradingPipeline:
                         )
                     )
         if not candidates:
+            if self.state.last_autonomy_gates:
+                return RuntimeUncertaintyGate(
+                    action="abstain",
+                    source="runtime_uncertainty_gate_missing",
+                )
             return RuntimeUncertaintyGate(action="pass", source="default_pass")
         return _select_strictest_runtime_uncertainty_gate(candidates)
+
+    @staticmethod
+    def _autonomy_gate_report_pass_payload_invalid(
+        gate_map: Mapping[str, Any]
+    ) -> bool:
+        coverage_error = _optional_decimal(gate_map.get("coverage_error"))
+        shift_score = _optional_decimal(gate_map.get("shift_score"))
+        conformal_interval_width = _optional_decimal(
+            gate_map.get("conformal_interval_width")
+        )
+        if (
+            coverage_error is None
+            or shift_score is None
+            or conformal_interval_width is None
+        ):
+            return True
+        if coverage_error < 0 or coverage_error > 1:
+            return True
+        if shift_score < 0 or shift_score > 1:
+            return True
+        if conformal_interval_width < 0:
+            return True
+        return False
 
     def _apply_runtime_uncertainty_gate(
         self,
