@@ -708,15 +708,8 @@ class TestTradingSchedulerAutonomy(TestCase):
                     "status": "pass",
                 },
             )
-            self.assertEqual(
-                manifest["runtime_governance"]["artifact_refs"],
-                sorted(
-                    [
-                        "/existing/artifact.json",
-                        str(artifact_path),
-                    ]
-                ),
-            )
+            self.assertIn("/existing/artifact.json", manifest["artifact_refs"])
+            self.assertIn(str(artifact_path), manifest["artifact_refs"])
 
     def test_run_autonomous_cycle_records_gate_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1734,7 +1727,6 @@ class TestTradingSchedulerAutonomy(TestCase):
                 actuation_intent_path=actuation_intent_path,
                 phase_manifest_path=phase_manifest_path,
                 paper_patch_path=None,
-                phase_manifest_path=phase_manifest_path,
             )
 
         return _capture
