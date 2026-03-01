@@ -769,12 +769,12 @@ def _normalize_migrations_command(command: str) -> str:
         normalized = f'{uv_path} run --frozen {alembic_path} upgrade heads'
     elif normalized.startswith('uv '):
         if normalized.startswith('uv run --frozen alembic upgrade'):
-            normalized = normalized.replace(
-                f'{uv_path} run --frozen {alembic_path} upgrade',
-                1,
-            )
+            normalized = (
+                f'{uv_path} run --frozen {alembic_path} '
+                f'{normalized[len("uv run --frozen alembic upgrade"):].lstrip()}'
+            ).strip()
         else:
-            normalized = f'{uv_path} {normalized[3:]}'
+            normalized = f'{uv_path} {normalized[len("uv "):]}'
     elif normalized.startswith('alembic '):
         normalized = f'{alembic_path} {normalized[len("alembic "):]}'
     return re.sub(
