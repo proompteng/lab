@@ -888,15 +888,11 @@ def run_autonomous_lane(
         gate_report_path.write_text(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
-        actuation_allowed = (
-            bool(recommendation_trace_id)
-            and rollback_check.ready
-            and (
-                promotion_recommendation.action == "promote"
-                or (
-                    promotion_recommendation.action == "deny"
-                    and promotion_target == "paper"
-                )
+        actuation_allowed = rollback_check.ready and (
+            promotion_recommendation.action == "promote"
+            or (
+                promotion_recommendation.action == "deny"
+                and promotion_target == "paper"
             )
         )
         actuation_intent_path = output_dir / _ACTUATION_INTENT_PATH
