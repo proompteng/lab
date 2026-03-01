@@ -406,11 +406,17 @@ spec:
           envFrom:
             {{- range .Values.envFromSecretRefs }}
             - secretRef:
-                name: {{ . }}
+                name: {{ .name | default . }}
+                {{- if and (kindIs "map" .) (hasKey . "optional") }}
+                optional: {{ .optional }}
+                {{- end }}
             {{- end }}
             {{- range .Values.envFromConfigMapRefs }}
             - configMapRef:
-                name: {{ . }}
+                name: {{ .name | default . }}
+                {{- if and (kindIs "map" .) (hasKey . "optional") }}
+                optional: {{ .optional }}
+                {{- end }}
             {{- end }}
           {{- end }}
           ports:

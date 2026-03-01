@@ -1,190 +1,78 @@
 # Chart gRPC Enabled: Single Source of Truth
 
-Status: Draft (2026-02-07)
+Status: Current (2026-03-01)
 
 Docs index: [README](../README.md)
 
 ## Overview
 
-The chart has `grpc.enabled` (controls Service + container port) while runtime can also be toggled with `JANGAR_GRPC_ENABLED` (via `env.vars`). When these disagree, the deployment can become confusing: a Service may exist without the server listening, or the server may listen without a Service/port.
+The chart now treats gRPC behavior for the control plane as chart-driven and deterministic:
 
-This doc defines a single-source-of-truth contract.
+- `grpc.enabled` controls both service exposure and container listener configuration.
+- When `grpc.manageEnvVar=true` (default), the chart owns and writes:
+  - `JANGAR_GRPC_ENABLED`
+  - `JANGAR_GRPC_HOST`
+  - `JANGAR_GRPC_PORT`
 
-## Goals
+## Scope
 
-- Ensure `grpc.enabled` and `JANGAR_GRPC_ENABLED` cannot drift.
-- Provide a safe migration path for existing installs.
+- Control-plane deployment: `charts/agents/templates/deployment.yaml`
+- Controllers deployment: `charts/agents/templates/deployment-controllers.yaml`
+- gRPC service: `charts/agents/templates/service-grpc.yaml`
 
-## Non-Goals
+## Contract
 
-- Changing the gRPC API surface area.
+- `grpc.enabled` is the source-of-truth for whether control-plane gRPC is enabled.
+- `grpc.manageEnvVar` (default `true`) controls whether chart-generated env vars for
+  `JANGAR_GRPC_ENABLED`, `JANGAR_GRPC_HOST`, and `JANGAR_GRPC_PORT` are written.
+- `JANGAR_GRPC_ENABLED` in `env.vars` / `controlPlane.env.vars` is not interpreted as an override
+  when `grpc.manageEnvVar=true`; it must match the managed value or rendering fails.
+- `grpc.manageEnvVar=false` restores manual env-var ownership for the three keys above.
 
-## Current State
+## Migration guidance
 
-- Chart:
-  - Service template: `charts/agents/templates/service-grpc.yaml` gated on `grpc.enabled`.
-  - Container port for gRPC is gated on `grpc.enabled`: `charts/agents/templates/deployment.yaml`.
-  - Controllers deployment defaults `JANGAR_GRPC_ENABLED=0`: `charts/agents/templates/deployment-controllers.yaml`.
-- GitOps:
-  - `argocd/applications/agents/values.yaml` sets `grpc.enabled: true` and also sets `JANGAR_GRPC_ENABLED: \"true\"` under `env.vars`.
+1. Set:
 
-## Design
+   ```yaml
+   grpc:
+     enabled: true
+     manageEnvVar: true
+   ```
 
-### Contract
+2. Remove manual gRPC keys from values overrides once migrated:
 
-- `grpc.enabled` MUST be the only control-plane switch.
-- The chart MUST render `JANGAR_GRPC_ENABLED` for the control plane based on `grpc.enabled` (and ignore user-provided overrides unless explicitly allowed).
-- Controllers deployment MUST continue to default-disable gRPC unless there is a concrete use-case.
+   - `env.vars.JANGAR_GRPC_ENABLED`
+   - `env.vars.JANGAR_GRPC_HOST` (if present)
+   - `env.vars.JANGAR_GRPC_PORT` (if present)
 
-### Migration
+3. For exceptions, set `grpc.manageEnvVar: false` and continue managing these keys explicitly.
 
-- Introduce `grpc.manageEnvVar` (default `true`):
-  - When `true`, template sets `JANGAR_GRPC_ENABLED` from `grpc.enabled`.
-  - When `false`, chart does not set it and operators can manage it manually.
+## Runtime mapping
 
-## Config Mapping
-
-| Helm value           | Rendered env var / object                                               | Intended behavior                            |
-| -------------------- | ----------------------------------------------------------------------- | -------------------------------------------- |
-| `grpc.enabled=true`  | `Service/agents-grpc` + `containerPort: grpc` + `JANGAR_GRPC_ENABLED=1` | Server listens and is reachable via Service. |
-| `grpc.enabled=false` | no gRPC Service/port + `JANGAR_GRPC_ENABLED=0`                          | Server does not expose/listen.               |
-
-## Rollout Plan
-
-1. Add `grpc.manageEnvVar` default `true`, but accept existing `env.vars.JANGAR_GRPC_ENABLED` with a warning (no failure).
-2. Update GitOps values to remove redundant `JANGAR_GRPC_ENABLED`.
-3. After a canary, enforce: render fails if `grpc.manageEnvVar=true` and user sets `JANGAR_GRPC_ENABLED`.
-
-Rollback:
-
-- Set `grpc.manageEnvVar=false` and restore explicit env var management.
+| Values                               | Rendered object(s)                                                       | Effect |
+| ------------------------------------ | ------------------------------------------------------------------------ | ------ |
+| `grpc.enabled=true`, `manageEnvVar=true` | `Service/agents-grpc`, `containerPort: grpc`, `JANGAR_GRPC_ENABLED=true`   | Server exposes and listens on gRPC port. |
+| `grpc.enabled=false`, `manageEnvVar=true` | no gRPC service/port, `JANGAR_GRPC_ENABLED=false`                       | Server does not expose/listen. |
+| `manageEnvVar=false` | no chart-managed `JANGAR_GRPC_*` env vars are injected | Explicit env-var management must be complete. |
 
 ## Validation
 
-```bash
-mise exec helm@3 -- helm template agents charts/agents -f argocd/applications/agents/values.yaml | rg -n \"agents-grpc|containerPort: grpc|JANGAR_GRPC_ENABLED\"
-kubectl -n agents get svc agents-grpc
-kubectl -n agents get endpointslice -l app.kubernetes.io/name=agents
-```
-
-## Failure Modes and Mitigations
-
-- gRPC Service exists but server not listening: mitigate by having chart manage the env var.
-- Server listens but no Service/port: mitigate by coupling the env var to `grpc.enabled`.
-
-## Acceptance Criteria
-
-- `grpc.enabled` reliably predicts whether gRPC is reachable.
-- GitOps values do not need to set `JANGAR_GRPC_ENABLED` manually for the control plane.
-
-## References
-
-- Kubernetes Services: https://kubernetes.io/docs/concepts/services-networking/service/
-
-## Handoff Appendix (Repo + Chart + Cluster)
-
-### Source of truth
-
-- Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
-- GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
-- Product appset enablement: `argocd/applicationsets/product.yaml`
-- CRD Go types and codegen: `services/jangar/api/agents/v1alpha1/types.go`, `scripts/agents/validate-agents.sh`
-- Control plane + controllers code:
-  - Server entrypoints: `services/jangar/src/server/index.ts`, `services/jangar/src/server/app.ts`
-  - Agents/AgentRuns controller: `services/jangar/src/server/agents-controller.ts`
-  - Orchestrations: `services/jangar/src/server/orchestration-controller.ts`, `services/jangar/src/server/orchestration-submit.ts`
-  - Supporting primitives: `services/jangar/src/server/supporting-primitives-controller.ts`
-  - Policy checks (budgets/approval/etc): `services/jangar/src/server/primitives-policy.ts`
-- Codex runners (when applicable): `services/jangar/scripts/codex/codex-implement.ts`, `packages/codex/src/runner.ts`
-- Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
-
-### Current cluster state (GitOps desired + live API server)
-
-As of 2026-02-07 (repo `main`):
-
-- Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
-- Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
-- Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
-- Images pinned by GitOps (see `argocd/applications/agents/values.yaml`):
-  - Control plane (`Deployment/agents`): `registry.ide-newton.ts.net/lab/jangar-control-plane:5436c9d2@sha256:b511d73a2622ea3a4f81f5507899bca1970a0e7b6a9742b42568362f1d682b9a`
-  - Controllers (`Deployment/agents-controllers`): `registry.ide-newton.ts.net/lab/jangar:5436c9d2@sha256:d673055eb54af663963dedfee69e63de46059254b830eca2a52e97e641f00349`
-- Namespaced reconciliation: `controller.namespaces: [agents]` and `rbac.clusterScoped: false`. See `argocd/applications/agents/values.yaml`.
-- Database connectivity: `database.secretRef.name: jangar-db-app` / `key: uri`. See `argocd/applications/agents/values.yaml`.
-- gRPC enabled: `grpc.enabled: true` on port `50051`. See `argocd/applications/agents/values.yaml`.
-- Repo allowlist: `env.vars.JANGAR_GITHUB_REPOS_ALLOWED: proompteng/lab`. See `argocd/applications/agents/values.yaml`.
-- Runner auth (GitHub token): `envFromSecretRefs: [agents-github-token-env]`. See `argocd/applications/agents/values.yaml`.
-
-Note: This repo’s GitOps manifests are the desired state. Live verification requires a kubectl context/SA with list/get access in `agents` (and cluster-scoped access for CRDs).
-
-To verify live cluster state (requires sufficient RBAC), run:
+- Helm validation fails when `grpc.manageEnvVar=true` and explicit `JANGAR_GRPC_*` env-vars disagree
+  with the managed values.
 
 ```bash
-kubectl version --short
-kubectl get --raw /version
-
-kubectl -n agents auth can-i list deploy
-kubectl -n agents get deploy
-kubectl -n agents get pods
-
-kubectl get application -n argocd agents
-kubectl get crd | rg 'proompteng\.ai'
-
-kubectl rollout status -n agents deploy/agents
-kubectl rollout status -n agents deploy/agents-controllers
+helm template charts/agents \
+  --set grpc.enabled=true \
+  --set grpc.manageEnvVar=true \
+  --set controlPlane.env.vars.JANGAR_GRPC_ENABLED=true
 ```
 
-### Values → env var mapping (chart)
+## Related checklist
 
-Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) and `charts/agents/templates/deployment-controllers.yaml` (controllers).
+- `docs/agents/designs/chart-env-vars-merge-precedence.md`
+- `docs/agents/designs/chart-envfrom-conflict-resolution.md`
 
-Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
+## Failure modes and mitigations
 
-- Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
-- Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
-
-Common mappings:
-
-- `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
-- `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
-- `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
-- `controller.rate.*` → `JANGAR_AGENTS_CONTROLLER_RATE_{WINDOW_SECONDS,NAMESPACE,REPO,CLUSTER}`
-- `controller.agentRunRetentionSeconds` → `JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`
-- `controller.admissionPolicy.*` → `JANGAR_AGENTS_CONTROLLER_{LABELS_REQUIRED,LABELS_ALLOWED,LABELS_DENIED,IMAGES_ALLOWED,IMAGES_DENIED,BLOCKED_SECRETS}`
-- `controller.vcsProviders.*` → `JANGAR_AGENTS_CONTROLLER_VCS_{PROVIDERS_ENABLED,DEPRECATED_TOKEN_TYPES,PR_RATE_LIMITS}`
-- `controller.authSecret.*` → `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
-- `orchestrationController.*` → `JANGAR_ORCHESTRATION_CONTROLLER_{ENABLED,NAMESPACES}`
-- `supportingController.*` → `JANGAR_SUPPORTING_CONTROLLER_{ENABLED,NAMESPACES}`
-- `grpc.*` → `JANGAR_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
-- `controller.jobTtlSecondsAfterFinished` → `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS`
-- `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
-
-### Rollout plan (GitOps)
-
-1. Update code + chart + CRDs in one PR when changing APIs:
-   - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
-2. Validate locally:
-   - `scripts/agents/validate-agents.sh`
-   - `scripts/argo-lint.sh`
-   - `scripts/kubeconform.sh argocd`
-   - Render the app: `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
-3. Update the GitOps overlay if rollout requires new values:
-   - `argocd/applications/agents/values.yaml`
-4. Merge to `main`; Argo CD reconciles the `agents` application.
-
-### Validation (smoke)
-
-- Render the full install (Helm via kustomize): `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
-- Schema + example validation: `scripts/agents/validate-agents.sh`
-- In-cluster (requires sufficient RBAC):
-  - `kubectl -n agents get pods`
-  - `kubectl -n agents logs deploy/agents-controllers --tail=200`
-  - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
-
-## Diagram
-
-```mermaid
-flowchart LR
-  Values["Helm values"] --> Render["Chart templates"]
-  Render --> Manifest["Rendered manifests"]
-  Manifest --> Live["Live objects"]
-```
+- Service and env-var drift: managed mode ensures `grpc.enabled`, port, and gRPC env-vars remain aligned.
+- Contradictory overrides: validation fails in chart render, preventing silent drift.

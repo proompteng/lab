@@ -32,6 +32,13 @@ When documents disagree, use this precedence order:
 
 If you are changing behavior, update 1-3 first, then ensure 4-5 describe the resulting system accurately.
 
+For env and gRPC source-of-truth changes in this branch:
+- Update chart contracts in `charts/agents/templates/validation.yaml`.
+- Configure precedence and migration details in:
+  - `designs/chart-env-vars-merge-precedence.md`
+  - `designs/chart-envfrom-conflict-resolution.md`
+  - `designs/chart-grpc-enabled-source-of-truth.md`
+
 ## How The Docs Compose
 
 - Platform requirements and guardrails:

@@ -1,6 +1,7 @@
 {{- $controlPlaneImage := .Values.controlPlane.image | default dict -}}
 {{- $controlPlaneEnvVars := .Values.controlPlane.env.vars | default dict -}}
 {{- $envVars := merge (deepCopy (.Values.env.vars | default dict)) (deepCopy $controlPlaneEnvVars) -}}
+{{- $grpcManagedByChart := .Values.grpc.manageEnvVar | default true -}}
 {{- $imageRepo := $controlPlaneImage.repository | default .Values.image.repository -}}
 {{- $imageTag := $controlPlaneImage.tag | default .Values.image.tag -}}
 {{- $imageDigest := $controlPlaneImage.digest | default .Values.image.digest -}}
@@ -9,6 +10,15 @@
 {{- $replicas := .Values.controlPlane.replicaCount | default .Values.replicaCount -}}
 {{- $resources := .Values.controlPlane.resources | default .Values.resources -}}
 {{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- if $grpcManagedByChart -}}
+{{- if .Values.grpc.enabled -}}
+{{- $_ := set $envVars "JANGAR_GRPC_ENABLED" "true" -}}
+{{- else -}}
+{{- $_ := set $envVars "JANGAR_GRPC_ENABLED" "false" -}}
+{{- end -}}
+{{- $_ := set $envVars "JANGAR_GRPC_HOST" "0.0.0.0" -}}
+{{- $_ := set $envVars "JANGAR_GRPC_PORT" (toString .Values.grpc.port) -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -361,20 +371,6 @@ spec:
             - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED
               value: "0"
             {{- end }}
-            {{- if .Values.grpc.enabled }}
-            {{- if not (hasKey $envVars "JANGAR_GRPC_ENABLED") }}
-            - name: JANGAR_GRPC_ENABLED
-              value: "true"
-            {{- end }}
-            {{- if not (hasKey $envVars "JANGAR_GRPC_HOST") }}
-            - name: JANGAR_GRPC_HOST
-              value: "0.0.0.0"
-            {{- end }}
-            {{- if not (hasKey $envVars "JANGAR_GRPC_PORT") }}
-            - name: JANGAR_GRPC_PORT
-              value: {{ .Values.grpc.port | quote }}
-            {{- end }}
-            {{- end }}
             {{- if .Values.controllers.enabled }}
             - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED
               value: "true"
@@ -434,11 +430,17 @@ spec:
           envFrom:
             {{- range .Values.envFromSecretRefs }}
             - secretRef:
-                name: {{ . }}
+                name: {{ .name | default . }}
+                {{- if and (kindIs "map" .) (hasKey . "optional") }}
+                optional: {{ .optional }}
+                {{- end }}
             {{- end }}
             {{- range .Values.envFromConfigMapRefs }}
             - configMapRef:
-                name: {{ . }}
+                name: {{ .name | default . }}
+                {{- if and (kindIs "map" .) (hasKey . "optional") }}
+                optional: {{ .optional }}
+                {{- end }}
             {{- end }}
           {{- end }}
           ports:
