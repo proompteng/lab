@@ -510,7 +510,7 @@ const resolveStageApiVersion = (kind: string) => {
   return ''
 }
 
-const stageScheduleName = (swarmName: string, stage: StageName) => makeName(`${swarmName}-${stage}`, 'sched')
+const stageScheduleName = (swarmName: string, stage: StageName) => makeName(swarmName, `${stage}-sched`)
 
 const getRunTimestamp = (resource: Record<string, unknown>) => {
   return (

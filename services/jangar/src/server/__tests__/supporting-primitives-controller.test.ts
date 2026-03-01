@@ -5,6 +5,7 @@ vi.mock('~/server/feature-flags', () => ({
 }))
 
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
+import { asString } from '~/server/primitives-http'
 import type { KubernetesClient } from '~/server/primitives-kube'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
 import { __test__ } from '~/server/supporting-primitives-controller'
@@ -192,6 +193,61 @@ describe('supporting primitives controller', () => {
       expect(normalizedLabel).toBe('a'.repeat(62))
       expect(normalizedLabel).toMatch(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/)
     }
+  })
+
+  it('creates unique schedules for each stage even when swarm name is long', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun || resource === RESOURCE_MAP.OrchestrationRun) {
+        return { items: [] }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const longName = `${'a'.repeat(90)}`
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: longName, namespace: 'agents', generation: 1, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'OrchestrationRun', name: 'orchestrationrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    expect(apply).toHaveBeenCalledTimes(4)
+    const scheduleNames = apply.mock.calls.map((call) => {
+      const payload = call[0] as Record<string, unknown>
+      return asString(payload?.metadata ? (payload.metadata as Record<string, unknown>).name : undefined)
+    })
+    const uniqueNames = new Set(scheduleNames)
+    expect(scheduleNames.filter((name): name is string => typeof name === 'string')).toHaveLength(4)
+    expect(uniqueNames.size).toBe(4)
   })
 
   it('freezes swarm when implement stage has consecutive failures over threshold', async () => {
