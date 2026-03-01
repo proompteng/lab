@@ -384,13 +384,11 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
                 and idx < len(realized_shortfall_bps_values)
                 else Decimal("0")
             )
-            realized_shortfall_for_fill_bps = (
-                realized_shortfall_bps
-                if realized_shortfall_bps is not None
-                else Decimal("0")
-            )
+            realized_shortfall_bps_for_fill = realized_shortfall_bps
+            if realized_shortfall_bps_for_fill is None:
+                realized_shortfall_bps_for_fill = Decimal("0")
             avg_fill_price = Decimal("100") * (
-                Decimal("1") + realized_shortfall_for_fill_bps / Decimal("10000")
+                Decimal("1") + realized_shortfall_bps_for_fill / Decimal("10000")
             )
             execution = Execution(
                 trade_decision_id=decision.id,
@@ -509,14 +507,22 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
             self._insert_observations(
                 session,
                 strategy,
-                symbol='AAPL',
-                regime='trend',
-                slippages=[Decimal('8'), Decimal('12'), Decimal('4')],
-                shortfalls=[Decimal('2'), Decimal('3'), Decimal('1')],
-                expected_shortfall_p50_values=[Decimal('4'), Decimal('4'), Decimal('4')],
-                expected_shortfall_p95_values=[Decimal('9'), Decimal('11'), Decimal('10')],
+                symbol="AAPL",
+                regime="trend",
+                slippages=[Decimal("8"), Decimal("12"), Decimal("4")],
+                shortfalls=[Decimal("2"), Decimal("3"), Decimal("1")],
+                expected_shortfall_p50_values=[
+                    Decimal("4"),
+                    Decimal("4"),
+                    Decimal("4"),
+                ],
+                expected_shortfall_p95_values=[
+                    Decimal("9"),
+                    Decimal("11"),
+                    Decimal("10"),
+                ],
                 realized_shortfall_bps_values=[None, None, None],
-                divergence_bps_values=[Decimal('1'), Decimal('1'), Decimal('1')],
+                divergence_bps_values=[Decimal("1"), Decimal("1"), Decimal("1")],
                 adaptive_applied=False,
             )
 

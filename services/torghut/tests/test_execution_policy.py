@@ -678,8 +678,8 @@ class TestExecutionPolicy(TestCase):
         self.assertEqual(outcome.decision.order_type, "limit")
         self.assertTrue(outcome.microstructure_metadata["applied"])
         self.assertEqual(
-            outcome.microstructure_metadata["execution_seconds_scale"],
-            "1.694",
+            Decimal(outcome.microstructure_metadata["execution_seconds_scale"]),
+            Decimal("1.694"),
         )
         self.assertEqual(
             outcome.impact_assumptions["inputs"].get("execution_seconds"),
