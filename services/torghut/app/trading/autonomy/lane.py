@@ -1513,6 +1513,8 @@ def run_autonomous_lane(
             strategy_configmap_path=strategy_configmap_path,
             runtime_strategies=runtime_strategies,
             candidate_id=candidate_id,
+            promotion_target=str(promotion_target),
+            force_pre_prerequisite=promotion_target == "paper",
             paper_dir=paper_dir,
             promotion_target=promotion_target,
         )
@@ -2884,9 +2886,11 @@ def _resolve_paper_patch_path(
     promotion_target: str,
     paper_dir: Path,
 ) -> Path | None:
-    if not gate_report.promotion_allowed:
-        return None
-    if gate_report.recommended_mode != "paper":
+    requested_target = str(promotion_target or "").strip().lower()
+    if force_pre_prerequisite:
+        if requested_target != "paper":
+            return None
+    elif gate_report.recommended_mode != "paper":
         return None
     resolved_configmap = strategy_configmap_path or _default_strategy_configmap_path()
     return _write_paper_candidate_patch(

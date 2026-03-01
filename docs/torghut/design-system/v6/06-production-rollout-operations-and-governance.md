@@ -13,7 +13,7 @@
 
 ## Objective
 
-Provide a practical rollout plan from current live posture to fully operational intraday regime-adaptive and DSPy-governed decisioning.
+Deliver a reproducible, evidence-backed rollout control plane where gate outcomes, canary checks, and rollback proof are persisted in one canonical manifest and traced end-to-end.
 
 ## Autonomous rollout contract (authoritative)
 
@@ -135,81 +135,67 @@ Notes are append-only per cycle and must remain uncommitted in source control.
 
 ## Rollout Phases
 
-### Phase 0: Baseline capture
+Autonomy and runtime promotion now emit one manifest contract in fixed phase order:
 
-- Snapshot current decision quality, drawdown profile, fallback rates, and market-context freshness.
-- Freeze baseline artifact references for comparison.
+1. `gate-evaluation`
+2. `promotion-prerequisites`
+3. `rollback-readiness`
+4. `drift-gate`
+5. `paper-canary`
+6. `runtime-governance`
+7. `rollback-proof`
 
-### Phase 1: Evaluation and data integrity hardening
+All phase artifacts and manifests must include:
 
-- Enable contamination-safe eval pipeline as promotion prerequisite.
-- Validate benchmark reproducibility and lineage capture.
+- `phases`: ordered list of all contract phases (missing phases are filled with `skip`).
+- `phase_transitions`: computed transitions between adjacent phases, where each transition carries destination status.
+- `status`: manifest-wide status derived from the phase list.
+- `artifact_refs`: canonical evidence list.
+- `slo_contract_version`: expected `governance-slo-v1`.
 
-### Phase 2: Regime router shadow mode
+Phase-level SLO gates are defined by contract and must exist in each relevant phase payload:
 
-- Deploy router and expert-weight outputs in shadow.
-- Record path decisions without altering execution.
-- Validate entropy triggers and defensive fallbacks.
+- `slo_signal_count_minimum`
+- `slo_decision_count_minimum`
+- `slo_required_artifacts_present`
+- `slo_required_rollback_checks_present`
+- `slo_drift_gate_allowed`
+- `slo_paper_canary_patch_present`
+- `slo_runtime_rollback_not_triggered`
+- `slo_rollback_evidence_required_when_triggered`
 
-### Phase 3: DSPy serving cutover over Jangar
+## Controlled canary and rollback proof pipeline
 
-- Run DSPy as active decision reasoning path using Jangar OpenAI endpoint.
-- Remove legacy runtime network LLM path.
-- Keep deterministic fallback and strict timeout budget.
+- `run_autonomous_lane` builds the base manifest with lane artifacts and phase skeletons.
+- Scheduler calls `_append_runtime_governance_to_phase_manifest` after lane completion.
+- Scheduler appends runtime-governance and rollback proof outcomes into the same manifest (single source of truth).
+- The scheduler updates:
+  - runtime-governance status/evidence,
+  - rollback-proof status/evidence,
+  - phase list and transitions,
+  - manifest-wide status,
+  - and root artifact references.
+- Rollback is treated as evidence-driven: when `rollback_triggered` is true, manifest and phase status is fail unless rollback evidence path is recorded.
+- Canary promotion path and rollback-proof evidence are now carried in the same phase lineage and artifact graph for replay.
 
-### Phase 4: Controlled live routing activation
+## Runtime controls
 
-- Start with low notional impact and high oversight.
-- Increase exposure only on passing SLO windows.
-- Keep immediate rollback switches available.
+- `requested_promotion_target` controls canary phase behavior (`paper` vs `live`).
+- Runtime drift state (`drift_status`, `rollback_triggered`, detection/action reason paths) is attached to manifest and phases.
+- Per-iteration evidence bundle path is written to `phase-manifest.json` under the autonomy artifact root.
 
-### Phase 5: Alpha-discovery loop activation
+## Per-iteration note artifacts
 
-- Start offline generation/eval/promote cadence.
-- Promote only candidates that pass all evidence gates.
+Scheduler writes evidence notes to:
 
-## Runtime SLO Targets
+- `artifactPath/notes/iteration-<n>.md`
 
-- `>= 99.9%` decision-loop availability.
-- Fast-path p95 latency within configured budget.
-- DSPy timeout plus fallback rate within policy threshold.
-- Market-context freshness target by domain (news and fundamentals).
-- Router fallback rate below configured ceiling.
-
-## Alerting and Incident Response
-
-Required alert families:
-
-1. DSPy transport/auth/schema failures.
-2. Router feature staleness or high fallback state.
-3. Deterministic gate anomaly spikes.
-4. Eval drift and promotion-gate failures.
-5. Market-context freshness degradation.
-
-Every alert class must map to a runbook action and owner.
-
-## Rollback Controls
-
-Hard rollback switches:
-
-1. disable DSPy path and force deterministic-only advisory fallback,
-2. disable regime-adaptive routing and use defensive/static expert weights,
-3. revert to prior promoted artifacts for router and DSPy runtime,
-4. roll Knative traffic back to last stable revision.
-
-## Governance and Audit
-
-Each rollout stage must produce:
-
-- commit SHA and image digest map,
-- active artifact hashes,
-- SLO and gate compliance summary,
-- unresolved risks and owner assignments.
+These are operational artifacts and must not be committed.
 
 ## Full Operational Exit Criteria
 
-1. Regime-adaptive router is live with verified fallback safety.
-2. DSPy over Jangar is the active LLM decision path with lineage and fallback controls.
-3. Contamination-safe eval pipeline gates all promotions.
-4. Alpha-discovery loop is running through controlled AgentRun lanes.
-5. GitOps manifests and deployed state are converged with no unmanaged drift.
+1. Deterministic phase contract is authoritative for every autonomy decision cycle.
+2. Promotion only advances when canary + evidence gates indicate pass.
+3. Rollback proof evidence is attached whenever rollback is triggered.
+4. Manifest transitions are complete and reproducible for audit and replay.
+5. Stage actions are auditable through a single manifest, with rollback paths available and tested.
