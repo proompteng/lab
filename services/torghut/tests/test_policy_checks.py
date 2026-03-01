@@ -388,7 +388,11 @@ class TestPolicyChecks(TestCase):
             )
 
             promotion = evaluate_promotion_prerequisites(
-                policy_payload={"gate6_require_profitability_evidence": False},
+                policy_payload={
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                },
                 gate_report_payload=_gate_report(),
                 candidate_state_payload=_candidate_state(),
                 promotion_target="paper",
