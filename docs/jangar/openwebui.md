@@ -1,6 +1,6 @@
 # OpenWebUI deployment (separate host)
 
-OpenWebUI is installed via the upstream Helm chart (`open-webui` v8.19.0, app v0.7.2) in the `jangar` namespace. The chart creates a StatefulSet and `open-webui` ClusterIP Service; a dedicated Tailscale LoadBalancer `openwebui-tailscale` (hostname `openwebui`) fronts it. Websocket support is enabled and backed by a Redis instance `jangar-openwebui-redis` managed by the OTCK Redis operator. Postgres comes from the existing CNPG cluster `jangar-db` (`jangar-db-app` + `jangar-db-ca`). Jangar no longer proxies or iframes OpenWebUI; users open the Tailscale host directly.
+OpenWebUI is installed via the upstream Helm chart (`open-webui` v8.19.0, app v0.8.5) in the `jangar` namespace. The chart creates a StatefulSet and `open-webui` ClusterIP Service; a dedicated Tailscale LoadBalancer `openwebui-tailscale` (hostname `openwebui`) fronts it. Websocket support is enabled and backed by a Redis instance `jangar-openwebui-redis` managed by the OTCK Redis operator. Postgres comes from the existing CNPG cluster `jangar-db` (`jangar-db-app` + `jangar-db-ca`). Jangar no longer proxies or iframes OpenWebUI; users open the Tailscale host directly.
 
 OpenWebUI forwards the chat identifier in the `x-openwebui-chat-id` header (enabled via the chart values). Jangar consumes this header to map conversations to Codex thread ids and to increment turn numbers, persisting the mapping in Redis (`redis://jangar-openwebui-redis:6379/1`) with a 7-day TTL so subsequent turns stay on the same thread.
 
@@ -26,7 +26,7 @@ OpenWebUI forwards the chat identifier in the `x-openwebui-chat-id` header (enab
 
 ## Image pin
 
-- `ghcr.io/open-webui/open-webui:v0.7.2` (managed by the Helm chart)
+- `ghcr.io/open-webui/open-webui:v0.8.5` (managed by the Helm chart)
 
 ## Dev notes
 
