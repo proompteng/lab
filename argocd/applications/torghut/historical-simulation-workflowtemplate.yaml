@@ -27,99 +27,125 @@ spec:
       - name: outputRoot
         value: /tmp/torghut-simulations
   templates:
-    - name: run
-      inputs:
-        parameters:
-          - name: runId
-          - name: mode
-          - name: datasetManifestB64
-          - name: confirmPhrase
-          - name: forceReplay
-          - name: forceDump
-          - name: allowMissingState
-          - name: outputRoot
-      container:
-        image: registry.ide-newton.ts.net/lab/torghut:latest
-        command:
-          - /bin/bash
-          - -lc
-        resources:
-          requests:
-            cpu: 500m
-            memory: 2Gi
-          limits:
-            cpu: 2
-            memory: 4Gi
-        args:
-          - |
-            set -euo pipefail
+  - name: run
+    inputs:
+      parameters:
+        - name: runId
+        - name: mode
+        - name: datasetManifestB64
+        - name: confirmPhrase
+        - name: forceReplay
+        - name: forceDump
+        - name: allowMissingState
+        - name: outputRoot
+    container:
+      image: registry.ide-newton.ts.net/lab/torghut:sim-run-fix-2026-03-01-02
+      imagePullPolicy: Always
+      env:
+        - name: TORGHUT_SIM_KAFKA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: kafka-codex-credentials
+              key: password
+        - name: TORGHUT_CLICKHOUSE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: torghut-clickhouse-auth
+              key: torghut_password
+        - name: TORGHUT_POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: torghut-db-app
+              key: password
+      command:
+        - /bin/bash
+        - -lc
+      resources:
+        requests:
+          cpu: 500m
+          memory: 2Gi
+        limits:
+          cpu: 2
+          memory: 4Gi
+      args:
+        - |
+          set -euo pipefail
+          echo "RUN_LOG workflow_entrypoint_start mode={{inputs.parameters.mode}} runId={{inputs.parameters.runId}} outputRoot={{inputs.parameters.outputRoot}}"
 
-            WORKFLOW_DIR=/tmp/torghut-historical-simulation
-            MANIFEST_PATH="${WORKFLOW_DIR}/dataset-manifest.yaml"
-            OUTPUT_ROOT="{{inputs.parameters.outputRoot}}"
-            export MANIFEST_PATH OUTPUT_ROOT
+          WORKFLOW_DIR=/tmp/torghut-historical-simulation
+          MANIFEST_PATH="${WORKFLOW_DIR}/dataset-manifest.yaml"
+          OUTPUT_ROOT="{{inputs.parameters.outputRoot}}"
+          export MANIFEST_PATH OUTPUT_ROOT
 
-            mkdir -p "${WORKFLOW_DIR}"
+          mkdir -p "${WORKFLOW_DIR}"
+          echo "RUN_LOG created_workflow_dir path=${WORKFLOW_DIR}"
 
-            if [ -z "{{inputs.parameters.datasetManifestB64}}" ]; then
-              echo "datasetManifestB64 must be supplied" >&2
+          if [ -z "{{inputs.parameters.datasetManifestB64}}" ]; then
+            echo "datasetManifestB64 must be supplied" >&2
+            echo "RUN_LOG missing_dataset_manifest_b64"
+            exit 1
+          fi
+
+          printf '%s' "{{inputs.parameters.datasetManifestB64}}" | base64 -d > "${MANIFEST_PATH}"
+          echo "RUN_LOG manifest_written path=${MANIFEST_PATH}"
+          echo "RUN_LOG runtime_secret_present name=TORGHUT_SIM_KAFKA_PASSWORD present=${TORGHUT_SIM_KAFKA_PASSWORD:+1}"
+          /opt/venv/bin/python - <<'PY'
+          import os
+          import yaml
+
+          manifest_path = os.environ["MANIFEST_PATH"]
+          output_root = os.environ["OUTPUT_ROOT"]
+
+          with open(manifest_path, encoding='utf-8') as handle:
+            payload = yaml.safe_load(handle) or {}
+          if not isinstance(payload, dict):
+            raise RuntimeError("manifest must be a YAML mapping")
+
+          runtime = payload.get("runtime")
+          if not isinstance(runtime, dict):
+            runtime = {}
+          runtime["output_root"] = output_root
+          payload["runtime"] = runtime
+
+          with open(manifest_path, 'w', encoding='utf-8') as handle:
+            yaml.safe_dump(payload, handle, default_flow_style=False, sort_keys=False)
+          PY
+          echo "RUN_LOG manifest_output_root_injected outputRoot=${OUTPUT_ROOT}"
+
+          RUN_ID='{{inputs.parameters.runId}}'
+          MODE='{{inputs.parameters.mode}}'
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+          fi
+
+          case "$MODE" in
+            plan|apply|run|report|teardown) ;;
+            *)
+              echo "invalid mode: $MODE" >&2
+              echo "RUN_LOG invalid_mode mode=${MODE}"
               exit 1
-            fi
+              ;;
+          esac
 
-            printf '%s' "{{inputs.parameters.datasetManifestB64}}" | base64 -d > "${MANIFEST_PATH}"
-            /opt/venv/bin/python - <<'PY'
-            import os
-            import yaml
+          SCRIPT_ARGS=(--mode "$MODE" --run-id "$RUN_ID" --dataset-manifest "$MANIFEST_PATH" --json)
+          if [ "$MODE" = "apply" ] || [ "$MODE" = "run" ]; then
+            SCRIPT_ARGS+=(--confirm '{{inputs.parameters.confirmPhrase}}')
+          fi
+          if [ '{{inputs.parameters.forceReplay}}' = 'true' ]; then
+            SCRIPT_ARGS+=(--force-replay)
+          fi
+          if [ '{{inputs.parameters.forceDump}}' = 'true' ]; then
+            SCRIPT_ARGS+=(--force-dump)
+          fi
+          if [ '{{inputs.parameters.allowMissingState}}' = 'true' ]; then
+            SCRIPT_ARGS+=(--allow-missing-state)
+          fi
+          echo "RUN_LOG launch_script mode=${MODE} run_id=${RUN_ID} manifest=${MANIFEST_PATH}"
 
-            manifest_path = os.environ["MANIFEST_PATH"]
-            output_root = os.environ["OUTPUT_ROOT"]
-
-            with open(manifest_path, encoding='utf-8') as handle:
-                payload = yaml.safe_load(handle) or {}
-            if not isinstance(payload, dict):
-                raise RuntimeError("manifest must be a YAML mapping")
-
-            runtime = payload.get("runtime")
-            if not isinstance(runtime, dict):
-                runtime = {}
-            runtime["output_root"] = output_root
-            payload["runtime"] = runtime
-
-            with open(manifest_path, 'w', encoding='utf-8') as handle:
-                yaml.safe_dump(payload, handle, default_flow_style=False, sort_keys=False)
-            PY
-
-            RUN_ID='{{inputs.parameters.runId}}'
-            MODE='{{inputs.parameters.mode}}'
-            if [ -z "$RUN_ID" ]; then
-              RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
-            fi
-
-            case "$MODE" in
-              plan|apply|run|report|teardown) ;;
-              *)
-                echo "invalid mode: $MODE" >&2
-                exit 1
-                ;;
-            esac
-
-            SCRIPT_ARGS=(--mode "$MODE" --run-id "$RUN_ID" --dataset-manifest "$MANIFEST_PATH" --json)
-            if [ "$MODE" = "apply" ] || [ "$MODE" = "run" ]; then
-              SCRIPT_ARGS+=(--confirm '{{inputs.parameters.confirmPhrase}}')
-            fi
-            if [ '{{inputs.parameters.forceReplay}}' = 'true' ]; then
-              SCRIPT_ARGS+=(--force-replay)
-            fi
-            if [ '{{inputs.parameters.forceDump}}' = 'true' ]; then
-              SCRIPT_ARGS+=(--force-dump)
-            fi
-            if [ '{{inputs.parameters.allowMissingState}}' = 'true' ]; then
-              SCRIPT_ARGS+=(--allow-missing-state)
-            fi
-
-            mkdir -p "$OUTPUT_ROOT"
-            /opt/venv/bin/python /app/scripts/start_historical_simulation.py "${SCRIPT_ARGS[@]}"
-      outputs:
-        artifacts:
-          - name: simulation-output
-            path: "{{inputs.parameters.outputRoot}}"
+          mkdir -p "$OUTPUT_ROOT"
+          echo "RUN_LOG invoking_python"
+          /opt/venv/bin/python -u /app/scripts/start_historical_simulation.py "${SCRIPT_ARGS[@]}"
+    outputs:
+      artifacts:
+        - name: simulation-output
+          path: "{{inputs.parameters.outputRoot}}"
