@@ -71,6 +71,30 @@ class HMMRegimeContext:
     def has_regime(self) -> bool:
         return self.regime_id != HMM_UNKNOWN_REGIME_ID
 
+    @property
+    def is_authoritative(self) -> bool:
+        return (
+            self.has_regime
+            and not self.guardrail.stale
+            and not self.guardrail.fallback_to_defensive
+            and not self.transition_shock
+            and _REGIME_ID_RE.match(self.regime_id) is not None
+        )
+
+    @property
+    def authority_reason(self) -> str | None:
+        if self.has_regime and not _REGIME_ID_RE.match(self.regime_id):
+            return "invalid_regime_id"
+        if self.transition_shock:
+            return "transition_shock"
+        if self.guardrail.stale:
+            return "stale"
+        if self.guardrail.fallback_to_defensive:
+            return "fallback_to_defensive"
+        if not self.has_regime:
+            return "missing_regime"
+        return None
+
     def to_payload(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
@@ -116,7 +140,7 @@ def resolve_hmm_context(raw_payload: Mapping[str, Any] | None) -> HMMRegimeConte
     payload = dict(cast(dict[str, Any], raw_payload))
     direct_payload = _extract_context_payload(payload)
     if direct_payload is None:
-        if not _has_hmm_split_fields(payload):
+        if not _has_hmm_split_fields(payload) and not _has_any_context_field(payload):
             return HMMRegimeContext.unknown()
         return _parse_context_map(payload)
 
@@ -129,15 +153,25 @@ def resolve_regime_route_label(
     macd: Decimal | None,
     macd_signal: Decimal | None,
 ) -> str:
+    route_regime_label = payload.get("route_regime_label")
+    if isinstance(route_regime_label, str):
+        route_label = route_regime_label.strip()
+        if route_label:
+            return route_label.lower()
+
     context = resolve_hmm_context(payload)
-    if context.has_regime:
-        return context.regime_id
+    if context.is_authoritative:
+        return context.regime_id.lower()
 
     explicit = payload.get("regime_label")
     if isinstance(explicit, str):
         explicit_value = explicit.strip()
         if explicit_value:
             return explicit_value.lower()
+
+    legacy_label = resolve_legacy_regime_label(payload)
+    if legacy_label is not None:
+        return legacy_label
 
     if macd is None or macd_signal is None:
         return "unknown"
@@ -147,6 +181,19 @@ def resolve_regime_route_label(
     if spread <= Decimal("-0.02"):
         return "mean_revert"
     return "range"
+
+
+def resolve_regime_context_authority_reason(context: HMMRegimeContext) -> str | None:
+    if context.is_authoritative:
+        return None
+    reason = context.authority_reason
+    if reason in {"invalid_regime_id", "missing_regime"}:
+        return "hmm_unknown"
+    if reason in {"transition_shock", "stale", "fallback_to_defensive"}:
+        return reason
+    if reason is not None:
+        return reason
+    return "hmm_non_authoritative"
 
 
 def resolve_legacy_regime_label(payload: Mapping[str, Any]) -> str | None:
@@ -443,6 +490,7 @@ __all__ = [
     "HMM_CONTEXT_SCHEMA_VERSION",
     "HMM_UNKNOWN_REGIME_ID",
     "HMM_UNKNOWN_SCHEMA_VERSION",
+    "resolve_regime_context_authority_reason",
     "resolve_hmm_context",
     "resolve_legacy_regime_label",
     "resolve_regime_route_label",

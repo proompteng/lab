@@ -21,7 +21,11 @@ from .features import (
 )
 from .forecasting import ForecastRoutingTelemetry, build_default_forecast_router
 from .models import SignalEnvelope, StrategyDecision
-from .regime_hmm import resolve_hmm_context, resolve_regime_route_label
+from .regime_hmm import (
+    HMM_UNKNOWN_REGIME_ID,
+    resolve_hmm_context,
+    resolve_regime_route_label,
+)
 from .prices import MarketSnapshot, PriceFetcher
 from .quantity_rules import (
     fractional_equities_enabled_for_trade,
@@ -442,8 +446,11 @@ def _build_params(
         params["forecast"] = forecast_contract
     if forecast_audit is not None:
         params["forecast_audit"] = forecast_audit
-    regime_context_payload, regime_route_label = _resolve_regime_context(signal, macd=macd, macd_signal=macd_signal)
-    params["regime_hmm"] = regime_context_payload
+    regime_context_payload, regime_route_label = _resolve_regime_context(
+        signal, macd=macd, macd_signal=macd_signal
+    )
+    if regime_context_payload:
+        params["regime_hmm"] = regime_context_payload
     if regime_route_label is not None:
         params["regime_label"] = regime_route_label
         params["route_regime_label"] = regime_route_label
@@ -461,6 +468,45 @@ def _build_params(
     return params
 
 
+def _has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
+    def _is_explicit_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, Mapping):
+            return any(_is_explicit_value(v) for v in value.values())
+        if isinstance(value, str):
+            return bool(value.strip())
+        return True
+
+    for key in (
+        "regime_hmm",
+        "hmm_regime_context",
+        "hmm_context",
+        "regime_context",
+        "hmm_state_posterior",
+        "hmm_entropy",
+        "hmm_entropy_band",
+        "hmm_regime_id",
+        "hmm_predicted_next",
+        "hmm_transition_shock",
+        "hmm_duration_ms",
+        "hmm_artifact",
+        "hmm_guardrail",
+        "regime_id",
+        "posterior",
+        "entropy",
+        "entropy_band",
+        "predicted_next",
+        "transition_shock",
+        "duration_ms",
+        "artifact",
+        "guardrail",
+    ):
+        if _is_explicit_value(payload.get(key)):
+            return True
+    return False
+
+
 def _resolve_regime_context(
     signal: SignalEnvelope,
     macd: Decimal | None,
@@ -468,12 +514,22 @@ def _resolve_regime_context(
 ) -> tuple[dict[str, Any], str | None]:
     payload = signal.payload
     regime_context = resolve_hmm_context(payload)
+    if not _has_explicit_regime_context(payload):
+        regime_payload = regime_context.to_payload()
+        if regime_payload.get("regime_id") == HMM_UNKNOWN_REGIME_ID:
+            normalized_route_label = resolve_regime_route_label(
+                payload,
+                macd=macd,
+                macd_signal=macd_signal,
+            )
+            return {}, normalized_route_label
+
     route_regime_label = resolve_regime_route_label(
         cast(Mapping[str, Any], payload),
         macd=macd,
         macd_signal=macd_signal,
     )
-    normalized_route_label = route_regime_label.strip().lower() if route_regime_label else None
+    normalized_route_label = route_regime_label.strip().lower()
     return regime_context.to_payload(), normalized_route_label
 
 

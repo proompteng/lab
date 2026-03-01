@@ -195,6 +195,16 @@ class TestConfig(TestCase):
         self.assertFalse(allowed)
         self.assertIn("dspy_bootstrap_artifact_forbidden", reasons)
 
+    def test_strategy_runtime_defaults_move_to_scheduler_v3(self) -> None:
+        settings = Settings(
+            TRADING_ENABLED=False,
+            TRADING_UNIVERSE_SOURCE="static",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(settings.trading_strategy_runtime_mode, "scheduler_v3")
+        self.assertFalse(settings.trading_strategy_scheduler_enabled)
+        self.assertTrue(settings.trading_strategy_runtime_fallback_legacy)
+
     def test_allocator_regime_maps_are_normalized(self) -> None:
         settings = Settings(
             TRADING_UNIVERSE_SOURCE="static",

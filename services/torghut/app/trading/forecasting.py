@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from .features import FeatureVectorV3, optional_decimal
-from .regime_hmm import resolve_hmm_context
+from .regime_hmm import resolve_hmm_context, resolve_regime_route_label
 
 
 def _empty_dict() -> dict[str, Any]:
@@ -592,21 +592,19 @@ class ForecastRouterV5:
         return ForecastRouterResult(contract=contract, audit=audit, telemetry=telemetry)
 
     def _resolve_regime(self, feature_vector: FeatureVectorV3) -> str:
-        context = resolve_hmm_context(feature_vector.values)
-        if context.has_regime:
-            return context.regime_id.lower()
-
-        explicit = feature_vector.values.get('route_regime_label')
-        if isinstance(explicit, str) and explicit.strip():
-            return explicit.strip().lower()
-        macd = optional_decimal(feature_vector.values.get('macd')) or Decimal('0')
-        signal = optional_decimal(feature_vector.values.get('macd_signal')) or Decimal('0')
-        spread = macd - signal
-        if spread >= Decimal('0.02'):
-            return 'trend'
-        if spread <= Decimal('-0.02'):
-            return 'mean_revert'
-        return 'range'
+        route_regime_label = feature_vector.values.get('route_regime_label')
+        if isinstance(route_regime_label, str):
+            normalized = route_regime_label.strip().lower()
+            if normalized:
+                return normalized
+        resolved_regime: str = resolve_regime_route_label(
+            feature_vector.values,
+            macd=optional_decimal(feature_vector.values.get('macd')),
+            macd_signal=optional_decimal(feature_vector.values.get('macd_signal')),
+        )
+        if resolved_regime == "unknown":
+            return "range"
+        return resolved_regime
 
     def _fallback_output(
         self,

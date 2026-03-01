@@ -145,6 +145,171 @@ class TestForecastRouterV5(TestCase):
         self.assertEqual(first.audit.to_payload(), second.audit.to_payload())
         self.assertEqual(first.telemetry.to_payload(), second.telemetry.to_payload())
 
+    def test_router_ignores_stale_hmm_regime_for_route_matching(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / 'router-policy.json'
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        'routes': [
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': 'R2',
+                                'preferred_model_family': 'chronos',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': 'mean_revert',
+                                'preferred_model_family': 'moment',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            router = build_default_forecast_router(
+                policy_path=str(policy_path), refinement_enabled=False
+            )
+
+        signal = _signal()
+        signal.payload['macd']['macd'] = '-0.40'
+        signal.payload['macd']['signal'] = '-0.30'
+        signal.payload['hmm_regime_id'] = 'R2'
+        signal.payload['hmm_guardrail'] = {
+            'stale': True,
+            'fallback_to_defensive': False,
+            'reason': 'aging_model_output',
+        }
+        signal.payload['hmm_artifact'] = {
+            'model_id': 'hmm-regime-v1',
+            'feature_schema': 'hmm-v1',
+            'training_run_id': 'trn-v1',
+        }
+        result = router.route_and_forecast(
+            feature_vector=normalize_feature_vector_v3(signal),
+            horizon='1Min',
+            event_ts=signal.event_ts,
+        )
+
+        self.assertEqual(result.contract.route_key.split('|')[-1], 'mean_revert')
+        self.assertEqual(result.contract.model_family, 'moment')
+
+    def test_router_ignores_invalid_regime_id_and_falls_back_to_explicit_label(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / 'router-policy.json'
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        'routes': [
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': 'trend',
+                                'preferred_model_family': 'financial_tsfm',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': '*',
+                                'preferred_model_family': 'chronos',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            router = build_default_forecast_router(
+                policy_path=str(policy_path), refinement_enabled=False
+            )
+
+        signal = _signal()
+        signal.payload['regime_label'] = 'TREND'
+        signal.payload['hmm_regime_id'] = 'not-a-regime-id'
+        signal.payload['hmm_artifact'] = {
+            'model_id': 'hmm-regime-v1',
+            'feature_schema': 'hmm-v1',
+            'training_run_id': 'trn-v1',
+        }
+        result = router.route_and_forecast(
+            feature_vector=normalize_feature_vector_v3(signal),
+            horizon='1Min',
+            event_ts=signal.event_ts,
+        )
+
+        self.assertEqual(result.contract.route_key.split('|')[-1], 'trend')
+        self.assertEqual(result.contract.model_family, 'financial_tsfm')
+
+    def test_router_uses_legacy_regime_block_for_fallback_when_hmm_regime_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / 'router-policy.json'
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        'routes': [
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': 'trend',
+                                'preferred_model_family': 'financial_tsfm',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': '*',
+                                'preferred_model_family': 'chronos',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            router = build_default_forecast_router(
+                policy_path=str(policy_path), refinement_enabled=False
+            )
+
+        signal = _signal()
+        signal.payload['regime'] = {'label': 'TREND'}
+        signal.payload['hmm_regime_id'] = 'not-a-regime-id'
+        signal.payload['hmm_artifact'] = {
+            'model_id': 'hmm-regime-v1',
+            'feature_schema': 'hmm-v1',
+            'training_run_id': 'trn-v1',
+        }
+        result = router.route_and_forecast(
+            feature_vector=normalize_feature_vector_v3(signal),
+            horizon='1Min',
+            event_ts=signal.event_ts,
+        )
+
+        self.assertEqual(result.contract.route_key.split('|')[-1], 'trend')
+        self.assertEqual(result.contract.model_family, 'financial_tsfm')
+
     def test_router_normalizes_explicit_regime_label_for_route_matching(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             policy_path = Path(tmpdir) / 'router-policy.json'
@@ -229,6 +394,7 @@ class TestForecastRouterV5(TestCase):
             )
 
         signal = _signal()
+        signal.payload['macd']['macd'] = '1.2'
         signal.payload['hmm_regime_id'] = 'R2'
         signal.payload['regime_label'] = 'trend'
         result = router.route_and_forecast(
@@ -238,4 +404,137 @@ class TestForecastRouterV5(TestCase):
         )
 
         self.assertEqual(result.contract.route_key.split('|')[-1], 'r2')
+        self.assertEqual(result.contract.model_family, 'financial_tsfm')
+
+    def test_router_ignores_transition_shock_hmm_regime_for_route_matching(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / 'router-policy.json'
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        'routes': [
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': 'R2',
+                                'preferred_model_family': 'financial_tsfm',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': 'mean_revert',
+                                'preferred_model_family': 'moment',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': '*',
+                                'preferred_model_family': 'chronos',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            router = build_default_forecast_router(
+                policy_path=str(policy_path), refinement_enabled=False
+            )
+
+        signal = _signal()
+        signal.payload['macd']['macd'] = '0.40'
+        signal.payload['macd']['signal'] = '0.55'
+        signal.payload['hmm_regime_id'] = 'R2'
+        signal.payload['hmm_transition_shock'] = True
+        signal.payload['hmm_guardrail'] = {'stale': False, 'fallback_to_defensive': False}
+        signal.payload['hmm_artifact'] = {
+            'model_id': 'hmm-regime-v1',
+            'feature_schema': 'hmm-v1',
+            'training_run_id': 'trn-v1',
+        }
+        result = router.route_and_forecast(
+            feature_vector=normalize_feature_vector_v3(signal),
+            horizon='1Min',
+            event_ts=signal.event_ts,
+        )
+
+        self.assertEqual(result.contract.route_key.split('|')[-1], 'mean_revert')
+        self.assertEqual(result.contract.model_family, 'moment')
+
+    def test_router_prefers_normalized_route_regime_label_hint(self) -> None:
+        signal = _signal()
+        signal.payload['macd']['macd'] = '0.40'
+        signal.payload['macd']['signal'] = '0.55'
+        signal.payload['hmm_regime_id'] = 'R2'
+        signal.payload['hmm_transition_shock'] = True
+        signal.payload['hmm_guardrail'] = {'stale': False, 'fallback_to_defensive': False}
+        signal.payload['hmm_artifact'] = {
+            'model_id': 'hmm-regime-v1',
+            'feature_schema': 'hmm-v1',
+            'training_run_id': 'trn-v1',
+        }
+        feature_vector = normalize_feature_vector_v3(signal)
+
+        self.assertNotIn('hmm_transition_shock', feature_vector.values)
+        self.assertEqual(feature_vector.values.get('route_regime_label'), 'mean_revert')
+
+    def test_router_prefers_explicit_route_regime_label_hint_when_hmm_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / 'router-policy.json'
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        'routes': [
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': 'trend',
+                                'preferred_model_family': 'financial_tsfm',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': 'mean_revert',
+                                'preferred_model_family': 'moment',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            router = build_default_forecast_router(
+                policy_path=str(policy_path), refinement_enabled=False
+            )
+
+        signal = _signal()
+        signal.payload['route_regime_label'] = 'TREND'
+        signal.payload['hmm_regime_id'] = 'not-a-regime-id'
+        signal.payload['macd']['macd'] = '0.40'
+        signal.payload['macd']['signal'] = '0.55'
+        result = router.route_and_forecast(
+            feature_vector=normalize_feature_vector_v3(signal),
+            horizon='1Min',
+            event_ts=signal.event_ts,
+        )
+
+        self.assertEqual(result.contract.route_key.split('|')[-1], 'trend')
         self.assertEqual(result.contract.model_family, 'financial_tsfm')

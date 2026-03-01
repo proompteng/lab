@@ -1141,6 +1141,193 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "decision_regime_gate_invalid_action")
         self.assertEqual(gate.reason, "decision_regime_gate_invalid_action")
 
+    def test_pipeline_runtime_regime_gate_unknown_regime_without_label_fails_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "regime_id": "unknown",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "stable"},
+                },
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_unknown_regime")
+        self.assertEqual(gate.reason, "hmm_unknown")
+
+    def test_pipeline_runtime_regime_gate_invalid_regime_id_without_label_fails_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "regime_id": "R2-ish",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "legacy_bridge"},
+                },
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_unknown_regime")
+        self.assertEqual(gate.reason, "hmm_unknown")
+
+    def test_pipeline_runtime_regime_gate_stale_hmm_is_fail_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "regime_id": "R2",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "aging_output", "stale": True},
+                },
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_stale")
+        self.assertEqual(gate.reason, "aging_output")
+
+    def test_pipeline_runtime_regime_gate_fallback_to_defensive_is_fail_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "regime_id": "R2",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"fallback_to_defensive": True},
+                },
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_stale")
+        self.assertEqual(gate.regime_label, "R2")
+        self.assertEqual(gate.reason, "fallback_to_defensive")
+
+    def test_pipeline_runtime_regime_gate_non_authoritative_regime_with_legacy_label_fails_closed(
+        self,
+    ) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "regime_id": "not-a-regime-id",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "transitioning"},
+                },
+                "regime_label": "trend",
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_unknown_regime")
+        self.assertEqual(gate.reason, "hmm_unknown")
+
     def test_pipeline_runtime_uncertainty_gate_report_parse_error_fails_closed(self) -> None:
         from app import config
 
