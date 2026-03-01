@@ -1768,18 +1768,31 @@ class TradingPipeline:
         gate_payload: Mapping[str, Any],
         gate_rejection: str | None,
     ) -> None:
-        combined_gate = str(gate_payload.get("action") or "pass").strip().lower()
+        uncertainty_gate_payload = gate_payload.get("uncertainty_gate")
+        uncertainty_action = "pass"
+        if isinstance(uncertainty_gate_payload, Mapping):
+            uncertainty_gate_map = cast(Mapping[str, Any], uncertainty_gate_payload)
+            uncertainty_action = str(
+                uncertainty_gate_map.get("action") or "pass"
+            ).strip().lower()
+        elif str(gate_payload.get("action") or "pass").strip().lower() in {
+            "pass",
+            "degrade",
+            "abstain",
+            "fail",
+        }:
+            uncertainty_action = str(gate_payload.get("action") or "pass").strip().lower()
         regime_gate_payload = gate_payload.get("regime_gate")
         regime_action = "pass"
         if isinstance(regime_gate_payload, Mapping):
             regime_gate_map = cast(Mapping[str, Any], regime_gate_payload)
             regime_action = str(regime_gate_map.get("action") or "pass").strip().lower()
-        if combined_gate in {"pass", "degrade", "abstain", "fail"}:
+        if uncertainty_action in {"pass", "degrade", "abstain", "fail"}:
             self.state.metrics.record_runtime_uncertainty_gate(
-                cast(RuntimeUncertaintyGateAction, combined_gate),
+                cast(RuntimeUncertaintyGateAction, uncertainty_action),
                 blocked=gate_rejection is not None,
             )
-            self.state.last_runtime_uncertainty_gate_action = combined_gate
+            self.state.last_runtime_uncertainty_gate_action = uncertainty_action
         else:
             self.state.last_runtime_uncertainty_gate_action = None
 
@@ -2599,8 +2612,16 @@ class TradingPipeline:
                 )
                 payload["entry_blocked"] = True
                 payload["block_reason"] = reason
-                payload["regime_action_blocked"] = gate.source
-                payload["uncertainty_action_blocked"] = gate.source
+                payload["regime_action_blocked"] = (
+                    regime_gate.source
+                    if regime_gate.action in {"abstain", "fail"}
+                    else None
+                )
+                payload["uncertainty_action_blocked"] = (
+                    uncertainty_gate.source
+                    if uncertainty_gate.action in {"abstain", "fail"}
+                    else None
+                )
                 return decision, payload, reason
             return decision, payload, None
 

@@ -2015,6 +2015,84 @@ class TestTradingPipeline(TestCase):
                 "llm_adjustment_approved"
             ]
 
+    def test_runtime_uncertainty_gate_records_uncertainty_sub_gate_action(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        gate_payload = {
+            "action": "fail",
+            "source": "regime_hmm_transition_shock",
+            "uncertainty_gate": {"action": "pass", "source": "autonomy_gate_report"},
+            "regime_gate": {"action": "fail", "source": "regime_hmm_transition_shock"},
+        }
+
+        pipeline._record_runtime_uncertainty_gate_result(
+            gate_payload=gate_payload,
+            gate_rejection="runtime_uncertainty_gate_fail_block_new_entries",
+        )
+
+        self.assertEqual(
+            pipeline.state.metrics.runtime_uncertainty_gate_action_total.get("pass"),
+            1,
+        )
+        self.assertEqual(
+            pipeline.state.metrics.runtime_uncertainty_gate_action_total.get("fail"),
+            None,
+        )
+        self.assertEqual(pipeline.state.last_runtime_uncertainty_gate_action, "pass")
+
+    def test_runtime_uncertainty_gate_blocks_source_is_component_scoped(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            params={
+                "uncertainty_gate_action": "pass",
+                "regime_gate": {
+                    "action": "fail",
+                    "source": "decision_regime_gate",
+                    "reason": "regime_context_transition_shock",
+                },
+            },
+        )
+
+        _, payload, reason = pipeline._apply_runtime_uncertainty_gate(
+            decision,
+            positions=[],
+        )
+
+        self.assertEqual(reason, "runtime_uncertainty_gate_fail_block_new_entries")
+        self.assertEqual(payload.get("regime_action_blocked"), "decision_regime_gate")
+        self.assertIsNone(payload.get("uncertainty_action_blocked"))
+
     def test_runtime_uncertainty_gate_does_not_bypass_kill_switch_precedence(self) -> None:
         from app import config
 
