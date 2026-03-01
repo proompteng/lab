@@ -29,6 +29,12 @@ def parse_args() -> argparse.Namespace:
         help="Priority identifier for candidate generation cycle.",
     )
     parser.add_argument(
+        "--artifact-path",
+        type=Path,
+        default=None,
+        help="Optional artifact root for execution-context notes.",
+    )
+    parser.add_argument(
         "--gate-policy",
         type=Path,
         default=None,
@@ -104,6 +110,9 @@ def main() -> int:
         base=args.base,
         head=args.head,
         priority_id=args.priority_id,
+        notes_artifact_path=str(args.artifact_path)
+        if args.artifact_path
+        else None,
         lookback_days=_parse_ints(args.lookbacks),
         vol_lookback_days=_parse_ints(args.vol_lookbacks),
         target_daily_vols=_parse_floats(args.target_vols),
