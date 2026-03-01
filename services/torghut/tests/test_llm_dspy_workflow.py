@@ -672,7 +672,7 @@ class TestLLMDSPyWorkflow(TestCase):
             self.assertNotIn("schemaValidRate", promote_parameters)
             self.assertNotIn("deterministicCompatibility", promote_parameters)
             self.assertNotIn("fallbackRate", promote_parameters)
-            self.assertNotIn("evalReportRef", promote_parameters)
+            self.assertIn("evalReportRef", promote_parameters)
 
     def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_override_is_internal_but_not_canonical(
         self,

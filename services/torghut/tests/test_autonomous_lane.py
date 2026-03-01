@@ -347,11 +347,60 @@ class TestAutonomousLane(TestCase):
                 recommendation_manifest["stage_trace_id"],
             )
 
-            notes = sorted((output_dir / "notes").glob("iteration-*.md"))
-            self.assertEqual(len(notes), 1)
-            note_text = notes[0].read_text(encoding="utf-8")
-            self.assertIn("Autonomous lane iteration 1", note_text)
-            self.assertIn("candidate-generation", note_text)
+        notes = sorted((output_dir / "notes").glob("iteration-*.md"))
+        self.assertEqual(len(notes), 1)
+        note_text = notes[0].read_text(encoding="utf-8")
+        self.assertIn("Autonomous lane iteration 1", note_text)
+        self.assertIn("candidate-generation", note_text)
+
+    def test_lane_reads_runtime_strategy_file_for_runbook_validation(self) -> None:
+        fixture_path = (
+            Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        )
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-runtime-runbook"
+            strategy_configmap_path = Path(tmpdir) / "strategies.yaml"
+            strategy_configmap_path.write_text(
+                json.dumps(
+                    {
+                        "strategies": [
+                            {
+                                "strategy_id": "runtime-macd-rsi",
+                                "strategy_type": "legacy_macd_rsi",
+                                "version": "1.0.0",
+                                "enabled": True,
+                            }
+                        ]
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                strategy_configmap_path=strategy_configmap_path,
+            )
+
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+            )
+            self.assertNotIn(
+                "runbook_not_validated",
+                actuation_payload["gates"]["recommendation_reasons"],
+            )
 
     def test_lane_progression_and_iteration_notes_respect_execution_artifact_path(
         self,
