@@ -88,6 +88,7 @@ class GatePolicyMatrix:
     gate2_max_tca_churn_ratio: Decimal = Decimal("0.75")
     gate2_max_tca_realized_shortfall_bps: Decimal = Decimal("25")
     gate2_max_tca_divergence_bps: Decimal = Decimal("12")
+    gate2_max_tca_calibration_error_bps: Decimal = Decimal("12")
     gate2_min_tca_expected_shortfall_coverage: Decimal = Decimal("0")
     gate2_max_fragility_score: Decimal = Decimal("0.85")
     gate2_max_fragility_state_rank: int = 2
@@ -169,6 +170,10 @@ class GatePolicyMatrix:
             ),
             gate2_max_tca_divergence_bps=_decimal_or_default(
                 payload.get("gate2_max_tca_divergence_bps"), Decimal("12")
+            ),
+            gate2_max_tca_calibration_error_bps=_decimal_or_default(
+                payload.get("gate2_max_tca_calibration_error_bps"),
+                Decimal("12"),
             ),
             gate2_min_tca_expected_shortfall_coverage=_decimal_or_default(
                 payload.get("gate2_min_tca_expected_shortfall_coverage"), Decimal("0")
@@ -294,6 +299,9 @@ class GatePolicyMatrix:
                 self.gate2_max_tca_realized_shortfall_bps
             ),
             "gate2_max_tca_divergence_bps": str(self.gate2_max_tca_divergence_bps),
+            "gate2_max_tca_calibration_error_bps": str(
+                self.gate2_max_tca_calibration_error_bps
+            ),
             "gate2_min_tca_expected_shortfall_coverage": str(
                 self.gate2_min_tca_expected_shortfall_coverage
             ),
@@ -776,6 +784,13 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
     expected_shortfall_sample_count = int(
         inputs.tca_metrics.get("expected_shortfall_sample_count", 0)
     )
+    avg_tca_calibration_error = _decimal(inputs.tca_metrics.get("avg_calibration_error_bps"))
+    if avg_tca_calibration_error is None:
+        if expected_shortfall_sample_count > 0:
+            reasons.append("tca_calibration_error_missing")
+    elif avg_tca_calibration_error > policy.gate2_max_tca_calibration_error_bps:
+        reasons.append("tca_calibration_error_exceeds_maximum")
+
     if expected_shortfall_coverage is None:
         reasons.append("tca_expected_shortfall_calibration_coverage_missing")
     elif (

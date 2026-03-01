@@ -646,6 +646,7 @@ def _render_tca_summary_map(values: Mapping[str, object]) -> list[str]:
         ("avg_shortfall_notional", "torghut_trading_tca_avg_shortfall_notional"),
         ("avg_churn_ratio", "torghut_trading_tca_avg_churn_ratio"),
         ("avg_divergence_bps", "torghut_trading_tca_avg_divergence_bps"),
+        ("avg_calibration_error_bps", "torghut_trading_tca_avg_calibration_error_bps"),
         ("avg_realized_shortfall_bps", "torghut_trading_tca_avg_realized_shortfall_bps"),
         ("avg_expected_shortfall_bps_p50", "torghut_trading_tca_avg_expected_shortfall_bps_p50"),
         ("avg_expected_shortfall_bps_p95", "torghut_trading_tca_avg_expected_shortfall_bps_p95"),
