@@ -5946,12 +5946,14 @@ class TradingScheduler:
         manifest["phase_count"] = len(ordered_phases)
         manifest["updated_at"] = now.isoformat()
 
+        existing_artifact_refs = _coerce_strs(manifest.get("artifact_refs", []))
         artifact_refs = [
             str(item)
             for phase in ordered_phases
             for item in _coerce_strs(phase.get("artifact_refs", []))
         ]
         artifact_refs.extend(evidence_refs)
+        artifact_refs.extend(existing_artifact_refs)
         manifest["artifact_refs"] = sorted(
             {
                 artifact_ref

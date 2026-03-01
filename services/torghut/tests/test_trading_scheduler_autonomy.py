@@ -1136,6 +1136,9 @@ class TestTradingSchedulerAutonomy(TestCase):
 
             manifest_path = Path(tmpdir) / "rollout" / "phase-manifest.json"
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            preexisting_top_level_ref = str(
+                Path(tmpdir) / "backtest" / "walkforward-results.json"
+            )
             manifest_payload = {
                 "schema_version": "autonomy-phase-manifest-v1",
                 "run_id": "run-1",
@@ -1161,6 +1164,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                     },
                     {"name": "rollback-proof", "status": "pass", "artifact_refs": []},
                 ],
+                "artifact_refs": [preexisting_top_level_ref],
             }
             manifest_path.write_text(
                 json.dumps(manifest_payload, indent=2), encoding="utf-8"
@@ -1220,6 +1224,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 str(scheduler.state.rollback_incident_evidence_path),
                 updated_manifest["artifact_refs"],
             )
+            self.assertIn(preexisting_top_level_ref, updated_manifest["artifact_refs"])
             self.assertIn(
                 {"from": "drift-gate", "to": "paper-canary", "status": "pass"},
                 updated_manifest["phase_transitions"],
