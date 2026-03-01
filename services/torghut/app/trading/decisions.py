@@ -469,6 +469,15 @@ def _build_params(
 
 
 def _has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
+    def _is_explicit_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, Mapping):
+            return any(_is_explicit_value(v) for v in value.values())
+        if isinstance(value, str):
+            return bool(value.strip())
+        return True
+
     for key in (
         "regime_hmm",
         "hmm_regime_context",
@@ -493,7 +502,7 @@ def _has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
         "artifact",
         "guardrail",
     ):
-        if key in payload:
+        if _is_explicit_value(payload.get(key)):
             return True
     return False
 
