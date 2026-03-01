@@ -21,6 +21,7 @@ from app.trading.llm.schema import (
     LLMReviewRequest,
     PortfolioSnapshot,
 )
+from app.trading.llm.dspy_programs.signatures import DSPyTradeReviewOutput
 
 
 class TestLLMDSPyRuntime(TestCase):
@@ -159,6 +160,51 @@ class TestLLMDSPyRuntime(TestCase):
         finally:
             settings.jangar_base_url = original_base
             settings.jangar_api_key = original_api_key
+
+    def test_active_runtime_review_uses_dspy_live_program(self) -> None:
+        original_base = settings.jangar_base_url
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        manifest = DSPyArtifactManifest(
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            executor="dspy_live",
+            compiled_prompt={},
+            source="database",
+        )
+        expected_output = DSPyTradeReviewOutput.model_validate(
+            {
+                "verdict": "approve",
+                "confidence": 0.88,
+                "rationale": "dspy_live_approved",
+                "requiredChecks": ["risk_engine"],
+                "riskFlags": [],
+                "uncertaintyBand": "low",
+            }
+        )
+
+        fake_program = SimpleNamespace(run=lambda _payload: expected_output)
+
+        try:
+            settings.jangar_base_url = "https://jangar.openai.local/openai/v1"
+            with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
+                with patch.object(
+                    runtime, "_resolve_program", return_value=fake_program
+                ):
+                    response, metadata = runtime.review(self._request())
+
+            self.assertEqual(response.verdict, "approve")
+            self.assertEqual(metadata.executor, "dspy_live")
+            self.assertEqual(metadata.artifact_source, "database")
+            self.assertEqual(metadata.program_name, "trade-review-committee-v1")
+        finally:
+            settings.jangar_base_url = original_base
 
     def test_disabled_runtime_mode_is_blocking(self) -> None:
         runtime = DSPyReviewRuntime(

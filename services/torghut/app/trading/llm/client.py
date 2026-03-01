@@ -25,6 +25,10 @@ class LLMClientResponse:
     usage: Optional[dict[str, int]]
 
 
+_DSPY_OPENAI_BASE_PATH = "/openai/v1"
+_DSPY_OPENAI_CHAT_COMPLETION_SUFFIX = "/chat/completions"
+
+
 class _HttpRequest:
     def __init__(
         self,
@@ -189,10 +193,7 @@ class LLMClient:
         temperature: float,
         max_tokens: int,
     ) -> LLMClientResponse:
-        base_url = settings.jangar_base_url
-        if not base_url:
-            raise RuntimeError("Jangar LLM provider selected but JANGAR_BASE_URL is not set")
-        url = f"{base_url}/openai/v1/chat/completions"
+        url = _resolve_dspy_jangar_completion_url()
 
         payload: dict[str, Any] = {
             "model": self._model,
@@ -234,6 +235,39 @@ class LLMClient:
         except OSError as exc:
             raise RuntimeError(f"jangar completion request failed (network): {exc}") from exc
         raise RuntimeError("jangar completion request failed (no response)")
+
+
+def _resolve_dspy_jangar_completion_url() -> str:
+    base_url = (settings.jangar_base_url or "").strip()
+    if not base_url:
+        raise RuntimeError(
+            "Jangar LLM provider selected but JANGAR_BASE_URL is not set"
+        )
+
+    parsed_base_url = urlsplit(base_url)
+    if (
+        not parsed_base_url.scheme
+        or parsed_base_url.scheme not in {"http", "https"}
+        or not parsed_base_url.netloc
+    ):
+        raise RuntimeError("jangar completion request failed (invalid base URL)")
+    if parsed_base_url.query or parsed_base_url.fragment:
+        raise RuntimeError("jangar completion request failed (invalid base URL)")
+
+    normalized_path = parsed_base_url.path.rstrip("/")
+    if normalized_path in ("", "/"):
+        completion_base_path = _DSPY_OPENAI_BASE_PATH
+    elif normalized_path == _DSPY_OPENAI_BASE_PATH:
+        completion_base_path = _DSPY_OPENAI_BASE_PATH
+    elif normalized_path == _DSPY_OPENAI_BASE_PATH + _DSPY_OPENAI_CHAT_COMPLETION_SUFFIX:
+        completion_base_path = _DSPY_OPENAI_BASE_PATH
+    else:
+        raise RuntimeError("jangar completion request failed (invalid base URL)")
+
+    return (
+        f"{parsed_base_url.scheme}://{parsed_base_url.netloc}"
+        f"{completion_base_path}{_DSPY_OPENAI_CHAT_COMPLETION_SUFFIX}"
+    )
 
 
 def _coerce_int(value: Any) -> Optional[int]:
