@@ -448,6 +448,83 @@ class TestAutonomousLane(TestCase):
             self.assertFalse(actuation_payload["actuation_allowed"])
             self.assertIsNone(result.paper_patch_path)
 
+    @patch(
+        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+    )
+    @patch(
+        "app.trading.autonomy.lane._resolve_paper_patch_path",
+    )
+    def test_resolve_paper_patch_path_before_promotion_prerequisites(
+        self,
+        mock_resolve_patch: object,
+        mock_promotion_prerequisites: object,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+        strategy_configmap_path = (
+            Path(__file__).parent.parent.parent.parent
+            / "argocd"
+            / "applications"
+            / "torghut"
+            / "strategy-configmap.yaml"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-order"
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            patch_path = output_dir / "paper-candidate" / "strategy-configmap-patch.yaml"
+            patch_path.parent.mkdir(parents=True, exist_ok=True)
+
+            def _mock_resolve_patch(*_args, **_kwargs) -> Path:
+                patch_path.write_text(
+                    "apiVersion: v1\\nkind: ConfigMap", encoding="utf-8"
+                )
+                return patch_path
+
+            def _mock_promotion_prerequisites(
+                *,
+                policy_payload: dict[str, Any],
+                gate_report_payload: dict[str, Any],
+                candidate_state_payload: dict[str, Any],
+                promotion_target: str,
+                artifact_root: Path,
+            ) -> PromotionPrerequisiteResult:
+                self.assertTrue(
+                    (artifact_root / "paper-candidate" / "strategy-configmap-patch.yaml").exists()
+                )
+                return PromotionPrerequisiteResult(
+                    allowed=False,
+                    reasons=[],
+                    required_artifacts=[],
+                    missing_artifacts=[],
+                    reason_details=[],
+                    artifact_refs=[],
+                    required_throughput={"signal_count": 1, "decision_count": 1},
+                    observed_throughput={"signal_count": 1, "decision_count": 1},
+                )
+
+            mock_resolve_patch.side_effect = _mock_resolve_patch
+            mock_promotion_prerequisites.side_effect = _mock_promotion_prerequisites
+
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                strategy_configmap_path=strategy_configmap_path,
+                code_version="test-sha",
+            )
+
+            self.assertIsNotNone(result.paper_patch_path)
+            self.assertTrue(patch_path.exists())
+
     def test_resolve_paper_patch_path_respects_recommendation_mode(
         self,
     ) -> None:
@@ -477,6 +554,37 @@ class TestAutonomousLane(TestCase):
                 paper_dir=Path(tmpdir) / "paper-candidate",
             )
             self.assertIsNone(patch_path)
+
+    def test_resolve_paper_patch_path_resolves_for_live_target_when_recommended(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            strategy_config_path = Path(tmpdir) / "strategy-configmap.yaml"
+            strategy_config_path.write_text("{}", encoding="utf-8")
+            paper_candidate_dir = Path(tmpdir) / "paper-candidate"
+            paper_candidate_dir.mkdir(parents=True, exist_ok=True)
+            patch_path = _resolve_paper_patch_path(
+                gate_report=GateEvaluationReport(
+                    policy_version="v3-gates-1",
+                    promotion_target="live",
+                    promotion_allowed=True,
+                    recommended_mode="paper",
+                    gates=[GateResult(gate_id="gate0_data_integrity", status="pass")],
+                    reasons=[],
+                    uncertainty_gate_action="pass",
+                    coverage_error="0.01",
+                    conformal_interval_width="1.0",
+                    shift_score="0.1",
+                    recalibration_run_id=None,
+                    evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    code_version="test-sha",
+                ),
+                strategy_configmap_path=strategy_config_path,
+                runtime_strategies=[],
+                candidate_id="cand-live-patch",
+                promotion_target="live",
+                paper_dir=paper_candidate_dir,
+            )
+            self.assertIsNotNone(patch_path)
+            self.assertTrue(patch_path.exists())
 
     @patch(
         "app.trading.autonomy.lane.evaluate_rollback_readiness",
