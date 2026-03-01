@@ -89,11 +89,6 @@ spec:
                       type: string
                     verifyEvery:
                       type: string
-                  required:
-                    - discoverEvery
-                    - planEvery
-                    - implementEvery
-                    - verifyEvery
                 discovery:
                   type: object
                   properties:
@@ -204,8 +199,6 @@ spec:
                           required:
                             - kind
                             - name
-                      required:
-                        - targetRef
                     plan:
                       type: object
                       properties:
@@ -228,8 +221,6 @@ spec:
                           required:
                             - kind
                             - name
-                      required:
-                        - targetRef
                     implement:
                       type: object
                       properties:
@@ -252,8 +243,6 @@ spec:
                           required:
                             - kind
                             - name
-                      required:
-                        - targetRef
                     verify:
                       type: object
                       properties:
@@ -276,8 +265,6 @@ spec:
                           required:
                             - kind
                             - name
-                      required:
-                        - targetRef
                   required:
                     - discover
                     - plan
@@ -288,7 +275,6 @@ spec:
                 - domains
                 - objectives
                 - mode
-                - cadence
                 - discovery
                 - delivery
                 - execution
