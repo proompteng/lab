@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: codex-spark-review-workspace
+  namespace: agents
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: codex-spark-review
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-spark-review
+  implementationSpecRef:
+    name: codex-spark-review-step-v1
+  ttlSecondsAfterFinished: 3600
+  runtime:
+    type: workflow
+  workflow:
+    steps:
+      - name: review
+        implementationSpecRef:
+          name: codex-spark-review-step-v1
+        parameters:
+          base: main
+  workload:
+    image: registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+    volumes:
+      - name: review-workspace
+        type: pvc
+        claimName: codex-spark-review-workspace
+        mountPath: /workspace
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: false
+    mode: read-only
+  secrets:
+    - github-token
+  parameters:
+    repository: proompteng/lab
+    base: main

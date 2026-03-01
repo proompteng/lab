@@ -3,6 +3,8 @@ kind: Kustomization
 namespace: agents
 resources:
   - codex-secretbinding.yaml
+  - codex-spark-review-agent.yaml
+  - codex-spark-review-implspecs.yaml
   - codex-agent.yaml
   - codex-spark-agent.yaml
   - codex-whitepaper-secretbinding.yaml

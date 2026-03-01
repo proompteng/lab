@@ -1,0 +1,7 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: codex-spark-review
+spec:
+  providerRef:
+    name: codex-spark
