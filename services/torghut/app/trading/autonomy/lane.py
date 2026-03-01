@@ -711,7 +711,7 @@ def run_autonomous_lane(
             rollback_readiness_passed=_resolve_rollback_readiness(
                 runtime_errors=runtime_errors,
             ),
-            human_approved=approval_token is not None,
+            human_approved=(promotion_target != "live") or (approval_token is not None),
         )
         promotion_check = evaluate_promotion_prerequisites(
             policy_payload=raw_gate_policy,
