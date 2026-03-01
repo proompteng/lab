@@ -27,6 +27,7 @@ describe('control plane summary route', () => {
       [RESOURCE_MAP.Tool]: buildList([{}]),
       [RESOURCE_MAP.Signal]: buildList([{}, {}]),
       [RESOURCE_MAP.Schedule]: buildList([]),
+      [RESOURCE_MAP.Swarm]: buildList([{}]),
       [RESOURCE_MAP.Artifact]: buildList([{}]),
       [RESOURCE_MAP.Workspace]: buildList([{}, {}]),
     }
@@ -51,6 +52,7 @@ describe('control plane summary route', () => {
     expect(resources.AgentRun.total).toBe(4)
     expect(resources.Orchestration.total).toBe(0)
     expect(resources.OrchestrationRun.total).toBe(3)
+    expect(resources.Swarm.total).toBe(1)
 
     const agentRunPhases = resources.AgentRun.phases as Record<string, number>
     expect(agentRunPhases.Pending).toBe(1)

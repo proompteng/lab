@@ -1,0 +1,70 @@
+apiVersion: swarm.proompteng.ai/v1alpha1
+kind: Swarm
+metadata:
+  name: torghut-quant
+  namespace: agents
+spec:
+  owner:
+    id: trading-owner
+    channel: swarm://owner/trading
+  domains:
+    - quant-research
+    - autonomous-trading
+  objectives:
+    - continuously discover and implement alpha/risk improvements
+    - optimize risk-adjusted outcomes under strict drawdown policy
+  mode: lights-out
+  timezone: UTC
+  cadence:
+    discoverEvery: 1m
+    planEvery: 5m
+    implementEvery: 15m
+    verifyEvery: 1m
+  discovery:
+    minCitations: 2
+    minConfidence: 0.8
+    sources:
+      - name: market-regime-feed
+      - name: runtime-alerts
+  delivery:
+    repoAllowlist:
+      - proompteng/lab
+    requiredChecks:
+      - lint
+      - pyright
+      - unit-tests
+    mergePolicy: merge-queue
+    deploymentTargets:
+      - torghut
+    rollout:
+      strategy: canary
+      steps:
+        - setWeight: 10
+          pause: 5m
+        - setWeight: 30
+          pause: 10m
+        - setWeight: 100
+          pause: 0m
+      analysisTemplateRef: default-canary-analysis
+  risk:
+    budgetRef: default-budget
+    approvalPolicyRef: default-approval
+    freezeAfterFailures: 2
+    freezeDuration: 60m
+  execution:
+    discover:
+      targetRef:
+        kind: AgentRun
+        name: agentrun-sample
+    plan:
+      targetRef:
+        kind: AgentRun
+        name: agentrun-sample
+    implement:
+      targetRef:
+        kind: OrchestrationRun
+        name: orchestrationrun-sample
+    verify:
+      targetRef:
+        kind: AgentRun
+        name: agentrun-sample

@@ -92,6 +92,7 @@ python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/signals.
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/tools.proompteng.ai_tools.yaml" tools.proompteng.ai v1alpha1 Tool
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/tools.proompteng.ai_toolruns.yaml" tools.proompteng.ai v1alpha1 ToolRun
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/schedules.proompteng.ai_schedules.yaml" schedules.proompteng.ai v1alpha1 Schedule
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/swarm.proompteng.ai_swarms.yaml" swarm.proompteng.ai v1alpha1 Swarm
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/artifacts.proompteng.ai_artifacts.yaml" artifacts.proompteng.ai v1alpha1 Artifact
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/workspaces.proompteng.ai_workspaces.yaml" workspaces.proompteng.ai v1alpha1 Workspace
 

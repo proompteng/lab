@@ -52,6 +52,7 @@ import { Route as GithubPullsIndexRouteImport } from './routes/github/pulls/inde
 import { Route as ControlPlaneWorkspacesIndexRouteImport } from './routes/control-plane/workspaces/index'
 import { Route as ControlPlaneToolsIndexRouteImport } from './routes/control-plane/tools/index'
 import { Route as ControlPlaneToolRunsIndexRouteImport } from './routes/control-plane/tool-runs/index'
+import { Route as ControlPlaneSwarmsIndexRouteImport } from './routes/control-plane/swarms/index'
 import { Route as ControlPlaneSignalsIndexRouteImport } from './routes/control-plane/signals/index'
 import { Route as ControlPlaneSignalDeliveriesIndexRouteImport } from './routes/control-plane/signal-deliveries/index'
 import { Route as ControlPlaneSecretBindingsIndexRouteImport } from './routes/control-plane/secret-bindings/index'
@@ -82,6 +83,7 @@ import { Route as LibraryWhitepapersRunIdRouteImport } from './routes/library/wh
 import { Route as ControlPlaneWorkspacesNameRouteImport } from './routes/control-plane/workspaces/$name'
 import { Route as ControlPlaneToolsNameRouteImport } from './routes/control-plane/tools/$name'
 import { Route as ControlPlaneToolRunsNameRouteImport } from './routes/control-plane/tool-runs/$name'
+import { Route as ControlPlaneSwarmsNameRouteImport } from './routes/control-plane/swarms/$name'
 import { Route as ControlPlaneSignalsNameRouteImport } from './routes/control-plane/signals/$name'
 import { Route as ControlPlaneSignalDeliveriesNameRouteImport } from './routes/control-plane/signal-deliveries/$name'
 import { Route as ControlPlaneSecretBindingsNameRouteImport } from './routes/control-plane/secret-bindings/$name'
@@ -391,6 +393,11 @@ const ControlPlaneToolRunsIndexRoute =
     path: '/control-plane/tool-runs/',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ControlPlaneSwarmsIndexRoute = ControlPlaneSwarmsIndexRouteImport.update({
+  id: '/control-plane/swarms/',
+  path: '/control-plane/swarms/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ControlPlaneSignalsIndexRoute =
   ControlPlaneSignalsIndexRouteImport.update({
     id: '/control-plane/signals/',
@@ -559,6 +566,11 @@ const ControlPlaneToolRunsNameRoute =
     path: '/control-plane/tool-runs/$name',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ControlPlaneSwarmsNameRoute = ControlPlaneSwarmsNameRouteImport.update({
+  id: '/control-plane/swarms/$name',
+  path: '/control-plane/swarms/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ControlPlaneSignalsNameRoute = ControlPlaneSignalsNameRouteImport.update({
   id: '/control-plane/signals/$name',
   path: '/control-plane/signals/$name',
@@ -1148,6 +1160,7 @@ export interface FileRoutesByFullPath {
   '/control-plane/secret-bindings/$name': typeof ControlPlaneSecretBindingsNameRoute
   '/control-plane/signal-deliveries/$name': typeof ControlPlaneSignalDeliveriesNameRoute
   '/control-plane/signals/$name': typeof ControlPlaneSignalsNameRoute
+  '/control-plane/swarms/$name': typeof ControlPlaneSwarmsNameRoute
   '/control-plane/tool-runs/$name': typeof ControlPlaneToolRunsNameRoute
   '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
   '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
@@ -1178,6 +1191,7 @@ export interface FileRoutesByFullPath {
   '/control-plane/secret-bindings/': typeof ControlPlaneSecretBindingsIndexRoute
   '/control-plane/signal-deliveries/': typeof ControlPlaneSignalDeliveriesIndexRoute
   '/control-plane/signals/': typeof ControlPlaneSignalsIndexRoute
+  '/control-plane/swarms/': typeof ControlPlaneSwarmsIndexRoute
   '/control-plane/tool-runs/': typeof ControlPlaneToolRunsIndexRoute
   '/control-plane/tools/': typeof ControlPlaneToolsIndexRoute
   '/control-plane/workspaces/': typeof ControlPlaneWorkspacesIndexRoute
@@ -1312,6 +1326,7 @@ export interface FileRoutesByTo {
   '/control-plane/secret-bindings/$name': typeof ControlPlaneSecretBindingsNameRoute
   '/control-plane/signal-deliveries/$name': typeof ControlPlaneSignalDeliveriesNameRoute
   '/control-plane/signals/$name': typeof ControlPlaneSignalsNameRoute
+  '/control-plane/swarms/$name': typeof ControlPlaneSwarmsNameRoute
   '/control-plane/tool-runs/$name': typeof ControlPlaneToolRunsNameRoute
   '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
   '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
@@ -1342,6 +1357,7 @@ export interface FileRoutesByTo {
   '/control-plane/secret-bindings': typeof ControlPlaneSecretBindingsIndexRoute
   '/control-plane/signal-deliveries': typeof ControlPlaneSignalDeliveriesIndexRoute
   '/control-plane/signals': typeof ControlPlaneSignalsIndexRoute
+  '/control-plane/swarms': typeof ControlPlaneSwarmsIndexRoute
   '/control-plane/tool-runs': typeof ControlPlaneToolRunsIndexRoute
   '/control-plane/tools': typeof ControlPlaneToolsIndexRoute
   '/control-plane/workspaces': typeof ControlPlaneWorkspacesIndexRoute
@@ -1479,6 +1495,7 @@ export interface FileRoutesById {
   '/control-plane/secret-bindings/$name': typeof ControlPlaneSecretBindingsNameRoute
   '/control-plane/signal-deliveries/$name': typeof ControlPlaneSignalDeliveriesNameRoute
   '/control-plane/signals/$name': typeof ControlPlaneSignalsNameRoute
+  '/control-plane/swarms/$name': typeof ControlPlaneSwarmsNameRoute
   '/control-plane/tool-runs/$name': typeof ControlPlaneToolRunsNameRoute
   '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
   '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
@@ -1509,6 +1526,7 @@ export interface FileRoutesById {
   '/control-plane/secret-bindings/': typeof ControlPlaneSecretBindingsIndexRoute
   '/control-plane/signal-deliveries/': typeof ControlPlaneSignalDeliveriesIndexRoute
   '/control-plane/signals/': typeof ControlPlaneSignalsIndexRoute
+  '/control-plane/swarms/': typeof ControlPlaneSwarmsIndexRoute
   '/control-plane/tool-runs/': typeof ControlPlaneToolRunsIndexRoute
   '/control-plane/tools/': typeof ControlPlaneToolsIndexRoute
   '/control-plane/workspaces/': typeof ControlPlaneWorkspacesIndexRoute
@@ -1647,6 +1665,7 @@ export interface FileRouteTypes {
     | '/control-plane/secret-bindings/$name'
     | '/control-plane/signal-deliveries/$name'
     | '/control-plane/signals/$name'
+    | '/control-plane/swarms/$name'
     | '/control-plane/tool-runs/$name'
     | '/control-plane/tools/$name'
     | '/control-plane/workspaces/$name'
@@ -1677,6 +1696,7 @@ export interface FileRouteTypes {
     | '/control-plane/secret-bindings/'
     | '/control-plane/signal-deliveries/'
     | '/control-plane/signals/'
+    | '/control-plane/swarms/'
     | '/control-plane/tool-runs/'
     | '/control-plane/tools/'
     | '/control-plane/workspaces/'
@@ -1811,6 +1831,7 @@ export interface FileRouteTypes {
     | '/control-plane/secret-bindings/$name'
     | '/control-plane/signal-deliveries/$name'
     | '/control-plane/signals/$name'
+    | '/control-plane/swarms/$name'
     | '/control-plane/tool-runs/$name'
     | '/control-plane/tools/$name'
     | '/control-plane/workspaces/$name'
@@ -1841,6 +1862,7 @@ export interface FileRouteTypes {
     | '/control-plane/secret-bindings'
     | '/control-plane/signal-deliveries'
     | '/control-plane/signals'
+    | '/control-plane/swarms'
     | '/control-plane/tool-runs'
     | '/control-plane/tools'
     | '/control-plane/workspaces'
@@ -1977,6 +1999,7 @@ export interface FileRouteTypes {
     | '/control-plane/secret-bindings/$name'
     | '/control-plane/signal-deliveries/$name'
     | '/control-plane/signals/$name'
+    | '/control-plane/swarms/$name'
     | '/control-plane/tool-runs/$name'
     | '/control-plane/tools/$name'
     | '/control-plane/workspaces/$name'
@@ -2007,6 +2030,7 @@ export interface FileRouteTypes {
     | '/control-plane/secret-bindings/'
     | '/control-plane/signal-deliveries/'
     | '/control-plane/signals/'
+    | '/control-plane/swarms/'
     | '/control-plane/tool-runs/'
     | '/control-plane/tools/'
     | '/control-plane/workspaces/'
@@ -2141,6 +2165,7 @@ export interface RootRouteChildren {
   ControlPlaneSecretBindingsNameRoute: typeof ControlPlaneSecretBindingsNameRoute
   ControlPlaneSignalDeliveriesNameRoute: typeof ControlPlaneSignalDeliveriesNameRoute
   ControlPlaneSignalsNameRoute: typeof ControlPlaneSignalsNameRoute
+  ControlPlaneSwarmsNameRoute: typeof ControlPlaneSwarmsNameRoute
   ControlPlaneToolRunsNameRoute: typeof ControlPlaneToolRunsNameRoute
   ControlPlaneToolsNameRoute: typeof ControlPlaneToolsNameRoute
   ControlPlaneWorkspacesNameRoute: typeof ControlPlaneWorkspacesNameRoute
@@ -2165,6 +2190,7 @@ export interface RootRouteChildren {
   ControlPlaneSecretBindingsIndexRoute: typeof ControlPlaneSecretBindingsIndexRoute
   ControlPlaneSignalDeliveriesIndexRoute: typeof ControlPlaneSignalDeliveriesIndexRoute
   ControlPlaneSignalsIndexRoute: typeof ControlPlaneSignalsIndexRoute
+  ControlPlaneSwarmsIndexRoute: typeof ControlPlaneSwarmsIndexRoute
   ControlPlaneToolRunsIndexRoute: typeof ControlPlaneToolRunsIndexRoute
   ControlPlaneToolsIndexRoute: typeof ControlPlaneToolsIndexRoute
   ControlPlaneWorkspacesIndexRoute: typeof ControlPlaneWorkspacesIndexRoute
@@ -2511,6 +2537,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ControlPlaneToolRunsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/control-plane/swarms/': {
+      id: '/control-plane/swarms/'
+      path: '/control-plane/swarms'
+      fullPath: '/control-plane/swarms/'
+      preLoaderRoute: typeof ControlPlaneSwarmsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/control-plane/signals/': {
       id: '/control-plane/signals/'
       path: '/control-plane/signals'
@@ -2719,6 +2752,13 @@ declare module '@tanstack/react-router' {
       path: '/control-plane/tool-runs/$name'
       fullPath: '/control-plane/tool-runs/$name'
       preLoaderRoute: typeof ControlPlaneToolRunsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/swarms/$name': {
+      id: '/control-plane/swarms/$name'
+      path: '/control-plane/swarms/$name'
+      fullPath: '/control-plane/swarms/$name'
+      preLoaderRoute: typeof ControlPlaneSwarmsNameRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/control-plane/signals/$name': {
@@ -3668,6 +3708,7 @@ const rootRouteChildren: RootRouteChildren = {
   ControlPlaneSecretBindingsNameRoute: ControlPlaneSecretBindingsNameRoute,
   ControlPlaneSignalDeliveriesNameRoute: ControlPlaneSignalDeliveriesNameRoute,
   ControlPlaneSignalsNameRoute: ControlPlaneSignalsNameRoute,
+  ControlPlaneSwarmsNameRoute: ControlPlaneSwarmsNameRoute,
   ControlPlaneToolRunsNameRoute: ControlPlaneToolRunsNameRoute,
   ControlPlaneToolsNameRoute: ControlPlaneToolsNameRoute,
   ControlPlaneWorkspacesNameRoute: ControlPlaneWorkspacesNameRoute,
@@ -3696,6 +3737,7 @@ const rootRouteChildren: RootRouteChildren = {
   ControlPlaneSignalDeliveriesIndexRoute:
     ControlPlaneSignalDeliveriesIndexRoute,
   ControlPlaneSignalsIndexRoute: ControlPlaneSignalsIndexRoute,
+  ControlPlaneSwarmsIndexRoute: ControlPlaneSwarmsIndexRoute,
   ControlPlaneToolRunsIndexRoute: ControlPlaneToolRunsIndexRoute,
   ControlPlaneToolsIndexRoute: ControlPlaneToolsIndexRoute,
   ControlPlaneWorkspacesIndexRoute: ControlPlaneWorkspacesIndexRoute,

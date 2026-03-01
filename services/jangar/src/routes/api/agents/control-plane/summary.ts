@@ -22,6 +22,7 @@ const SUMMARY_KINDS: AgentPrimitiveKind[] = [
   'Tool',
   'Signal',
   'Schedule',
+  'Swarm',
   'Artifact',
   'Workspace',
 ]
