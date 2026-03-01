@@ -626,7 +626,7 @@ def run_autonomous_lane(
             "stress_metrics": {
                 "count": len(stress_evidence),
                 "items": stress_evidence,
-                "artifact_ref": "db:research_stress_metrics",
+                "artifact_ref": str(evaluation_report_path),
             },
             "janus_q": {
                 "event_car": {
@@ -854,7 +854,7 @@ def run_autonomous_lane(
             "stress_metrics": {
                 "count": len(stress_evidence),
                 "items": stress_evidence,
-                "artifact_ref": "db:research_stress_metrics",
+                "artifact_ref": str(evaluation_report_path),
             },
             "janus_q": {
                 "event_car": {
