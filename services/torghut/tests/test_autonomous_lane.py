@@ -34,6 +34,15 @@ from app.models import (
 
 
 class TestAutonomousLane(TestCase):
+    def _empty_session_factory(self) -> sessionmaker:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+        return sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
     def test_gate_forecast_metrics_are_derived_from_signals(self) -> None:
         signals = [
             SignalEnvelope(
@@ -129,6 +138,7 @@ class TestAutonomousLane(TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "lane"
+            session_factory = self._empty_session_factory()
             result = run_autonomous_lane(
                 signals_path=fixture_path,
                 strategy_config_path=strategy_config_path,
@@ -136,6 +146,7 @@ class TestAutonomousLane(TestCase):
                 output_dir=output_dir,
                 promotion_target="paper",
                 strategy_configmap_path=strategy_configmap_path,
+                session_factory=session_factory,
                 code_version="test-sha",
             )
 
@@ -217,12 +228,14 @@ class TestAutonomousLane(TestCase):
             os.chdir(Path(__file__).parent.parent)
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_dir = Path(tmpdir) / "lane-default-path"
+                session_factory = self._empty_session_factory()
                 result = run_autonomous_lane(
                     signals_path=fixture_path,
                     strategy_config_path=strategy_config_path,
                     gate_policy_path=gate_policy_path,
                     output_dir=output_dir,
                     promotion_target="paper",
+                    session_factory=session_factory,
                     code_version="test-sha",
                 )
                 self.assertIsNotNone(result.paper_patch_path)
@@ -650,12 +663,14 @@ class TestAutonomousLane(TestCase):
             )
 
             output_dir = Path(tmpdir) / "lane-tsmom"
+            session_factory = self._empty_session_factory()
             result = run_autonomous_lane(
                 signals_path=signals_path,
                 strategy_config_path=strategy_config_path,
                 gate_policy_path=gate_policy_path,
                 output_dir=output_dir,
                 promotion_target="paper",
+                session_factory=session_factory,
                 code_version="test-sha",
             )
             self.assertIsNotNone(result.paper_patch_path)

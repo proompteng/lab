@@ -240,7 +240,7 @@ class TestLLMDSPyWorkflow(TestCase):
             artifact_root = Path(tmpdir) / "artifacts" / "dspy" / "run-1"
             _write_dspy_promotion_eval_snapshot(
                 artifact_root=artifact_root,
-                created_at=datetime(2026, 2, 27, 7, 45, tzinfo=timezone.utc),
+                created_at=datetime.now(timezone.utc),
             )
             lane_overrides = _build_dspy_lane_overrides(
                 artifact_root=artifact_root,
@@ -511,7 +511,7 @@ class TestLLMDSPyWorkflow(TestCase):
             artifact_root = Path(tmpdir) / "artifacts" / "dspy" / "run-4"
             _write_dspy_promotion_eval_snapshot(
                 artifact_root=artifact_root,
-                created_at=datetime(2026, 2, 27, 7, 45, tzinfo=timezone.utc),
+                created_at=datetime.now(timezone.utc),
                 gate_compatibility="fail",
                 schema_valid_rate=0.91,
                 deterministic_compatibility=False,
@@ -858,8 +858,9 @@ def _write_dspy_promotion_eval_snapshot(
     schema_valid_rate: float = 0.999,
     deterministic_compatibility: bool = True,
     fallback_rate: float = 0.01,
-    created_at: datetime,
+    created_at: datetime | None = None,
 ) -> None:
+    actual_created_at = created_at or datetime.now(timezone.utc)
     compile_result = build_compile_result(
         program_name="trade-review-committee-v1",
         signature_versions={"trade_review": "v1"},
@@ -869,7 +870,7 @@ def _write_dspy_promotion_eval_snapshot(
         compiled_prompt_payload={"prompt": "json-only advisory policy"},
         compiled_artifact_uri="s3://torghut-dspy/compile/result.json",
         seed="seed-42",
-        created_at=created_at,
+        created_at=actual_created_at,
     )
     eval_report = build_eval_report(
         compile_result=compile_result,
@@ -883,7 +884,7 @@ def _write_dspy_promotion_eval_snapshot(
             "deterministicCompatibility": {"passed": deterministic_compatibility},
             "observed": {"fallbackRate": fallback_rate},
         },
-        created_at=created_at,
+        created_at=actual_created_at,
     )
     payload = eval_report.model_dump(mode="json", by_alias=True)
     output_path = artifact_root / "eval" / "dspy-eval-report.json"
