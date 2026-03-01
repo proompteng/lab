@@ -1,12 +1,13 @@
 # Chart Termination Grace + preStop Hook
 
-Status: Draft (2026-02-07)
+Status: Implemented (2026-03-01)
 
 Docs index: [README](../README.md)
 
 ## Overview
 
-The control plane and controllers handle active requests and ongoing reconciliations. During rollout or node drain, pods should stop accepting new work and drain in-flight tasks before termination. The chart currently does not expose termination grace or preStop hooks.
+The control plane and controllers handle active requests and ongoing reconciliations. During rollout or node drain, pods should stop accepting new work and drain in-flight tasks before termination.
+The chart now exposes termination grace-period and lifecycle hook controls at global and per-component levels.
 
 ## Goals
 
@@ -20,16 +21,18 @@ The control plane and controllers handle active requests and ongoing reconciliat
 ## Current State
 
 - Templates:
-  - `charts/agents/templates/deployment.yaml` and `deployment-controllers.yaml` do not set `terminationGracePeriodSeconds` or lifecycle hooks.
+- `charts/agents/templates/deployment.yaml` and `deployment-controllers.yaml` now set these values when configured:
+  - `terminationGracePeriodSeconds`
+  - `lifecycle` (`preStop`, etc.)
 - Runtime shutdown behavior is code-defined and may be abrupt if SIGTERM is not handled carefully:
   - Controllers: `services/jangar/src/server/agents-controller.ts` (shutdown path)
   - Control plane: server entrypoints under `services/jangar/src/server/*`
 
 ## Design
 
-### Proposed values
+### Implemented values
 
-Add:
+Added keys:
 
 - `terminationGracePeriodSeconds` (global default)
 - `controlPlane.terminationGracePeriodSeconds`
@@ -42,6 +45,8 @@ Add:
 - Control plane: 30s
 - Controllers: 60s (to finish reconcile loops)
 
+The default control-plane grace period is inherited from global defaults (30s) and can be overridden via `controlPlane.terminationGracePeriodSeconds`.
+
 ## Config Mapping
 
 | Helm value                                  | Rendered field                                                               | Intended behavior                          |
@@ -51,13 +56,17 @@ Add:
 
 ## Rollout Plan
 
-1. Ship values with conservative defaults.
-2. Add controller/control plane logs on SIGTERM (“draining”).
-3. Tune grace periods based on observed shutdown times.
+1. Ship values with explicit lifecycle/shutdown defaults:
+   - global termination grace period is set in `values.yaml`
+   - controllers keep a longer default (`60`) for reconcile-heavy workloads
+   - hooks remain unset until a rollout proves shutdown paths are safe
+2. Add controller/control plane logs on SIGTERM (“draining”) in application code as needed.
+3. Tune grace periods and hooks based on observed shutdown times.
 
 Rollback:
 
-- Remove lifecycle settings; Kubernetes defaults apply.
+- Remove `terminationGracePeriodSeconds` and lifecycle blocks to fall back to Kubernetes defaults.
+- Keep `lifecycle` empty (`{}`) if only graceful shutdown is being phased out before removing keys.
 
 ## Validation
 

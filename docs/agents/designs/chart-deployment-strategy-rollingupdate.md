@@ -1,12 +1,12 @@
 # Chart Deployment Strategy: RollingUpdate Tuning
 
-Status: Draft (2026-02-07)
+Status: Implemented (2026-03-01)
 
 Docs index: [README](../README.md)
 
 ## Overview
 
-The chart currently relies on Kubernetes default `RollingUpdate` behavior for Deployments. For production, we should explicitly control surge/unavailable and optionally support safer strategies (e.g. `Recreate` for DB-migration-sensitive components).
+The chart now supports explicit Deployment strategy configuration at both component levels, while preserving Kubernetes defaults when strategies are unset.
 
 ## Goals
 
@@ -28,15 +28,19 @@ The chart currently relies on Kubernetes default `RollingUpdate` behavior for De
 
 ## Design
 
-### Proposed values
+### Implemented values
 
-Add:
+Control:
 
 - `controlPlane.deploymentStrategy`
 - `controllers.deploymentStrategy`
 - `deploymentStrategy` (global default)
 
-Each can accept:
+Each accepts the same object structure as Kubernetes `spec.strategy`, and is merged with:
+
+- component override first, then global fallback.
+
+Example:
 
 ```yaml
 type: RollingUpdate
@@ -45,12 +49,24 @@ rollingUpdate:
   maxUnavailable: 0
 ```
 
-### Defaults
+### Migration-safe defaults
 
-- Control plane:
-  - `maxUnavailable: 0` (prefer availability)
-- Controllers:
-  - `maxUnavailable: 1` (prefer continuity but allow roll)
+When left unset, behavior remains unchanged from chart defaults:
+
+- `spec.strategy` is not rendered, so Kubernetes uses its default rollout behavior.
+- Existing clusters that rely on chart defaults continue operating as before.
+
+For production hardening, a recommended starting point is:
+
+```yaml
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 25%
+    maxUnavailable: 0
+```
+
+and then override per component as needed (for example controllers using `maxUnavailable: 1`).
 
 ## Config Mapping
 
@@ -62,13 +78,13 @@ rollingUpdate:
 
 ## Rollout Plan
 
-1. Add new values with conservative defaults matching Kubernetes defaults (no behavior change).
-2. In production, set explicit `maxUnavailable`/`maxSurge` values.
-3. Validate rollout behavior during a canary image bump.
+1. Add strategy objects in values only where upgrade behavior needs tightening.
+2. Verify rollout with a canary image change.
+3. Tune per-component overrides over two releases (global first, then component-specific).
 
 Rollback:
 
-- Remove values; cluster falls back to defaults.
+- Remove `deploymentStrategy`, `controlPlane.deploymentStrategy`, and `controllers.deploymentStrategy` to return to chart-default rendering.
 
 ## Validation
 
