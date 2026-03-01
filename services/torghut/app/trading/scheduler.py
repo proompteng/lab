@@ -60,7 +60,6 @@ from .regime_hmm import (
     resolve_hmm_context,
     resolve_legacy_regime_label,
     resolve_regime_route_label,
-    HMM_UNKNOWN_REGIME_ID,
 )
 from .autonomy import (
     DriftThresholds,
