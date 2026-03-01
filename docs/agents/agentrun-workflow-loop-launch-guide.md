@@ -20,6 +20,7 @@ This guide covers:
 - The target `Agent`, `AgentProvider`, and `ImplementationSpec` must already exist.
 - At least one loop state volume must be PVC-backed (`type: pvc`) when `loop.state.required: true`.
 - Use a unique writable `spec.parameters.head` branch (repo convention: `codex/...`).
+- Prefer omitting `spec.workload.image` so runs inherit the controller-managed runner image.
 
 ## Verify Loop Feature Flags
 
@@ -102,7 +103,6 @@ spec:
     head: codex/torghut-v5-uncertainty-gates-loop5-20260301
     artifactPath: /workspace/.agentrun/torghut-v5-02
   workload:
-    image: registry.ide-newton.ts.net/lab/jangar:<tag-or-digest>
     resources:
       requests:
         cpu: 500m
@@ -113,6 +113,15 @@ spec:
         claimName: torghut-loop-workspace
         mountPath: /workspace
 ```
+
+Runner image safety:
+
+- Default: do not set `spec.workload.image` in AgentRun manifests.
+- The controller resolves runner image in this order:
+  1. `AgentRun.spec.workload.image`
+  2. `JANGAR_AGENT_RUNNER_IMAGE`
+  3. `JANGAR_AGENT_IMAGE`
+- Set `spec.workload.image` only when intentionally pinning a known-good image for a controlled rollout.
 
 ## Conditional Loop
 
@@ -236,6 +245,8 @@ Loop stop reasons to expect:
 - Run fails with provider/auth/model errors:
   - check `spec.secrets` includes required auth secrets (`codex-auth`, VCS token),
   - inspect job logs: `kubectl -n agents logs job/<job-name>`.
+- Run exits immediately with usage/entrypoint errors:
+  - first remove `spec.workload.image` from the AgentRun and retry so the run uses controller defaults.
 
 ## Related References
 

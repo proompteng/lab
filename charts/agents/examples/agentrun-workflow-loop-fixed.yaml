@@ -25,7 +25,7 @@ spec:
             volumeNames:
               - workspace
   workload:
-    image: registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
+    # Intentionally omit workload.image by default so the controller-managed runner image is used.
     resources:
       requests:
         cpu: 250m
