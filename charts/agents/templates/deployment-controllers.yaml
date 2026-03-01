@@ -405,18 +405,28 @@ spec:
           {{- if or (gt (len .Values.envFromSecretRefs) 0) (gt (len .Values.envFromConfigMapRefs) 0) }}
           envFrom:
             {{- range .Values.envFromSecretRefs }}
+            {{- if kindIs "map" . }}
             - secretRef:
-                name: {{ .name | default . }}
+                name: {{ .name | default "anonymous" }}
                 {{- if and (kindIs "map" .) (hasKey . "optional") }}
                 optional: {{ .optional }}
                 {{- end }}
+            {{- else if kindIs "string" . }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
             {{- end }}
             {{- range .Values.envFromConfigMapRefs }}
+            {{- if kindIs "map" . }}
             - configMapRef:
-                name: {{ .name | default . }}
+                name: {{ .name | default "anonymous" }}
                 {{- if and (kindIs "map" .) (hasKey . "optional") }}
                 optional: {{ .optional }}
                 {{- end }}
+            {{- else if kindIs "string" . }}
+            - configMapRef:
+                name: {{ . }}
+            {{- end }}
             {{- end }}
           {{- end }}
           ports:

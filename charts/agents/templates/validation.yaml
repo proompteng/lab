@@ -4,7 +4,7 @@
 {{- $orchestrationNamespaces := .Values.orchestrationController.namespaces | default (list) -}}
 {{- $supportingNamespaces := .Values.supportingController.namespaces | default (list) -}}
 {{- $controlPlaneEnvVars := merge (deepCopy (.Values.env.vars | default dict)) (deepCopy (.Values.controlPlane.env.vars | default dict)) -}}
-{{- $controllersEnvVars := merge (deepCopy (.Values.env.vars | default dict)) (deepCopy (.Values.controllers.env.vars | default dict)) -}}
+{{- $controllersExplicitEnvVars := .Values.controllers.env.vars | default dict -}}
 {{- $envFromSecretRefs := .Values.envFromSecretRefs | default (list) -}}
 {{- $envFromConfigMapRefs := .Values.envFromConfigMapRefs | default (list) -}}
 {{- $reservedEnvKeysEnforced := .Values.validation.reservedEnvKeysEnforced | default false -}}
@@ -20,6 +20,10 @@
   "JANGAR_AGENTRUN_ARTIFACTS_STRICT"
 }}
 {{- $grpcManagedByChart := .Values.grpc.manageEnvVar | default true -}}
+{{- $expectedGrpcEnabled := ternary "true" "false" .Values.grpc.enabled -}}
+{{- $expectedGrpcHost := "0.0.0.0" -}}
+{{- $expectedGrpcPort := toString .Values.grpc.port -}}
+{{- $expectedControllersGrpcEnabled := "0" -}}
 
 {{- if and (gt (len $controllerNamespaces) 1) (not $clusterScoped) }}
 {{- $errors = append $errors "rbac.clusterScoped must be true when controller.namespaces has multiple entries." -}}
@@ -43,16 +47,23 @@
 {{- end -}}
 
 {{- if $grpcManagedByChart }}
-{{- $expectedGrpcEnabled := ternary "true" "false" .Values.grpc.enabled -}}
-{{- $expectedGrpcPort := toString .Values.grpc.port -}}
 {{- if and (hasKey $controlPlaneEnvVars "JANGAR_GRPC_ENABLED") (ne (toString (index $controlPlaneEnvVars "JANGAR_GRPC_ENABLED")) $expectedGrpcEnabled) }}
-{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but controlPlane.env.vars and env.vars set JANGAR_GRPC_ENABLED=%s which does not match grpc.enabled=%s." (index $controlPlaneEnvVars "JANGAR_GRPC_ENABLED") .Values.grpc.enabled) -}}
+{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but control-plane env values (env.vars + controlPlane.env.vars) set JANGAR_GRPC_ENABLED=%s which does not match grpc.enabled=%s." (index $controlPlaneEnvVars "JANGAR_GRPC_ENABLED") .Values.grpc.enabled) -}}
 {{- end -}}
-{{- if and (hasKey $controlPlaneEnvVars "JANGAR_GRPC_HOST") (ne (toString (index $controlPlaneEnvVars "JANGAR_GRPC_HOST")) "0.0.0.0") }}
-{{- $errors = append $errors "grpc managed by chart is enabled (grpc.manageEnvVar=true), but controlPlane.env.vars and env.vars set JANGAR_GRPC_HOST to a non-default value. Remove the override or set grpc.manageEnvVar=false." -}}
+{{- if and (hasKey $controlPlaneEnvVars "JANGAR_GRPC_HOST") (ne (toString (index $controlPlaneEnvVars "JANGAR_GRPC_HOST")) $expectedGrpcHost) }}
+{{- $errors = append $errors "grpc managed by chart is enabled (grpc.manageEnvVar=true), but control-plane env values (env.vars + controlPlane.env.vars) override JANGAR_GRPC_HOST. Remove the override or set grpc.manageEnvVar=false." -}}
 {{- end -}}
 {{- if and (hasKey $controlPlaneEnvVars "JANGAR_GRPC_PORT") (ne (toString (index $controlPlaneEnvVars "JANGAR_GRPC_PORT")) $expectedGrpcPort) }}
-{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but controlPlane.env.vars and env.vars set JANGAR_GRPC_PORT=%s which does not match grpc.port=%s." (index $controlPlaneEnvVars "JANGAR_GRPC_PORT") .Values.grpc.port) -}}
+{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but control-plane env values (env.vars + controlPlane.env.vars) set JANGAR_GRPC_PORT=%s which does not match grpc.port=%s." (index $controlPlaneEnvVars "JANGAR_GRPC_PORT") .Values.grpc.port) -}}
+{{- end -}}
+{{- if and (hasKey $controllersExplicitEnvVars "JANGAR_GRPC_ENABLED") (ne (toString (index $controllersExplicitEnvVars "JANGAR_GRPC_ENABLED")) $expectedControllersGrpcEnabled) }}
+{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but controllers.env.vars sets JANGAR_GRPC_ENABLED=%s. Set it to %q or set grpc.manageEnvVar=false to own controller gRPC settings explicitly." (index $controllersExplicitEnvVars "JANGAR_GRPC_ENABLED") $expectedControllersGrpcEnabled) -}}
+{{- end -}}
+{{- if and (hasKey $controllersExplicitEnvVars "JANGAR_GRPC_HOST") (ne (toString (index $controllersExplicitEnvVars "JANGAR_GRPC_HOST")) $expectedGrpcHost) }}
+{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but controllers.env.vars sets JANGAR_GRPC_HOST=%s. Remove the override or set grpc.manageEnvVar=false to own controller gRPC settings explicitly." (index $controllersExplicitEnvVars "JANGAR_GRPC_HOST")) -}}
+{{- end -}}
+{{- if and (hasKey $controllersExplicitEnvVars "JANGAR_GRPC_PORT") (ne (toString (index $controllersExplicitEnvVars "JANGAR_GRPC_PORT")) $expectedGrpcPort) }}
+{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but controllers.env.vars sets JANGAR_GRPC_PORT=%s, which does not match grpc.port=%s. Remove the override or set grpc.manageEnvVar=false to own controller gRPC settings explicitly." (index $controllersExplicitEnvVars "JANGAR_GRPC_PORT") .Values.grpc.port) -}}
 {{- end -}}
 {{- end -}}
 
@@ -72,8 +83,8 @@
 {{- if not (hasKey $controlPlaneEnvVars .) }}
 {{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controlPlane.env.vars+env.vars does not explicitly set it; add it to controlPlane.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
 {{- end }}
-{{- if not (hasKey $controllersEnvVars .) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controllers.env.vars+env.vars does not explicitly set it; add it to controllers.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
+{{- if not (hasKey $controllersExplicitEnvVars .) }}
+{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controllers.env.vars does not explicitly set it; add it to controllers.env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -95,8 +106,8 @@
 {{- if not (hasKey $controlPlaneEnvVars .) }}
 {{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controlPlane.env.vars+env.vars does not explicitly set it; add it to controlPlane.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
 {{- end }}
-{{- if not (hasKey $controllersEnvVars .) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controllers.env.vars+env.vars does not explicitly set it; add it to controllers.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
+{{- if not (hasKey $controllersExplicitEnvVars .) }}
+{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controllers.env.vars does not explicitly set it; add it to controllers.env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
 {{- end }}
 {{- end }}
 {{- end }}

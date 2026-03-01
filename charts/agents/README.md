@@ -161,7 +161,13 @@ defaults for a single run.
 Enable gRPC for agentctl or in-cluster clients:
 
 - `grpc.enabled=true`
+- `grpc.manageEnvVar=true` (default) keeps control-plane `JANGAR_GRPC_*` values chart-owned and deterministic
+- `grpc.manageEnvVar=false` if you want manual ownership in values
 - Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token
+- For control-plane migration, remove manual `JANGAR_GRPC_*` settings from:
+  - `env.vars`
+  - `controlPlane.env.vars`
+- If validation fails, explicit control-plane values must match managed values when `grpc.manageEnvVar=true`.
 
 ### Observability (Prometheus + Grafana)
 
@@ -176,7 +182,8 @@ The chart ships a Prometheus scrape endpoint and an optional ServiceMonitor plus
 
 Automatic migrations are enabled by default. To skip:
 
-- `env.vars.JANGAR_MIGRATIONS=skip`
+- `env.vars.JANGAR_MIGRATIONS=skip` for the control plane
+- `controllers.env.vars.JANGAR_MIGRATIONS=skip` for controllers
 
 ### Codex auth secret (optional)
 

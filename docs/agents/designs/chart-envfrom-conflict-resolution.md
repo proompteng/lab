@@ -7,7 +7,7 @@ Docs index: [README](../README.md)
 ## Overview
 
 The chart supports both explicit `env:` entries and Kubernetes `envFrom` imports.
-`env:` always wins for duplicate keys at runtime. To make that explicit and safer,
+`env:` still wins for duplicate keys at runtime. To make that explicit and safer,
 the chart now supports guarded `envFrom` declarations with optional key hints and
 optional validation in chart rendering.
 
@@ -18,8 +18,9 @@ optional validation in chart rendering.
 - Reserved keys are defined by chart behavior and validated when
   `validation.reservedEnvKeysEnforced=true`.
 - If a reserved key is listed in a structured `envFrom` reference, it must also be
-  explicitly set in the matching env map (`env.vars` plus component-local map)
-  or rendering fails.
+  explicitly set in the env map for the component that consumes `envFrom`:
+  - control plane: `controlPlane.env.vars` or global `env.vars`
+  - controllers: `controllers.env.vars` only
 - `envFrom` can still be a string (legacy mode): `["existing-secret"]`.
 - New structured mode enables safer metadata:
 
@@ -43,16 +44,14 @@ validation:
 ```
 
 - If set and a structured `envFrom` entry declares a reserved key, chart render fails
-  unless the key is explicitly overridden for both scopes that consume `envFrom`:
-  control plane (`controlPlane.env.vars` + global `env.vars`) and controllers
-  (`controllers.env.vars` + global `env.vars`).
+  unless the key is explicitly overridden by the matching component map.
 
 ## Migration guidance
 
 1. Leave existing plain string `envFrom` arrays in place (fully backward compatible).
 2. For reserved key protection, migrate to structured entries and include `keys` for keys that matter.
 3. If validation blocks render, either:
-   - add the key to the relevant chart-managed env vars, or
+   - add the key to the relevant component env map, or
    - disable enforcement by setting `validation.reservedEnvKeysEnforced=false`.
 
 ## Reserved key set used by this chart
@@ -68,4 +67,5 @@ validation:
 ## Failure modes and mitigations
 
 - Reserved key declared in `envFrom` without explicit override: rendering fails in validation mode.
-- Secret/config drift via broad key imports: represent imports with explicit key lists and keep chart-managed values explicit.
+- Secret/config drift via broad key imports: represent imports with explicit key lists and keep
+  chart-managed values explicit.
