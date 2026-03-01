@@ -137,6 +137,20 @@ class TestLLMDSPyWorkflow(TestCase):
         )
         self.assertEqual(payload["parameters"]["issueNumber"], "2125")
 
+    def test_build_dspy_agentrun_payload_includes_priority_id(self) -> None:
+        payload = build_dspy_agentrun_payload(
+            lane="compile",
+            idempotency_key="torghut-dspy-compile-priority",
+            repository="proompteng/lab",
+            base="main",
+            head="codex/priority",
+            artifact_path="artifacts/dspy/run-priority/compile",
+            parameter_overrides={"datasetRef": "s3://dataset/path.json"},
+            issue_number="0",
+            priority_id="  priority-7 ",
+        )
+        self.assertEqual(payload["parameters"]["priorityId"], "priority-7")
+
     def test_sanitize_idempotency_key_replaces_invalid_chars(self) -> None:
         key = _sanitize_idempotency_key(" :torghut:dspy:run:2026-02-27T07:39:00Z: ")
         self.assertTrue(key)

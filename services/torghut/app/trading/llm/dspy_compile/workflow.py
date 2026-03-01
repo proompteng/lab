@@ -370,6 +370,7 @@ def build_dspy_agentrun_payload(
     artifact_path: str,
     parameter_overrides: Mapping[str, Any],
     issue_number: str = "0",
+    priority_id: str | None = None,
     namespace: str = "agents",
     agent_name: str = "codex-agent",
     vcs_ref_name: str = "github",
@@ -398,6 +399,11 @@ def build_dspy_agentrun_payload(
         parameters[normalized_key] = _normalize_string_parameter(
             key=normalized_key,
             value=value,
+        )
+    if priority_id is not None:
+        parameters["priorityId"] = _normalize_string_parameter(
+            key="priorityId",
+            value=priority_id,
         )
     if not parameters["repository"] or not parameters["base"] or not parameters["head"]:
         raise ValueError("repository_base_head_required")
@@ -778,6 +784,7 @@ def orchestrate_dspy_agentrun_workflow(
     run_prefix: str,
     auth_token: str | None,
     issue_number: str = "0",
+    priority_id: str | None = None,
     lane_parameter_overrides: Mapping[DSPyWorkflowLane, Mapping[str, Any]]
     | None = None,
     include_gepa_experiment: bool = False,
@@ -849,6 +856,7 @@ def orchestrate_dspy_agentrun_workflow(
                             "runPrefix": normalized_run_prefix,
                             "laneOrder": lane_index,
                             "blockedAt": datetime.now(timezone.utc).isoformat(),
+                            "priorityId": priority_id,
                             "lineageByLane": _json_copy(lineage_by_lane),
                             "gateSnapshot": gate_snapshot,
                             "gateFailures": gate_failures,
@@ -872,6 +880,7 @@ def orchestrate_dspy_agentrun_workflow(
             artifact_path=artifact_path,
             parameter_overrides=lane_overrides,
             issue_number=issue_number,
+            priority_id=priority_id,
             namespace=namespace,
             agent_name=agent_name,
             vcs_ref_name=vcs_ref_name,
@@ -912,6 +921,7 @@ def orchestrate_dspy_agentrun_workflow(
                         "runPrefix": normalized_run_prefix,
                         "laneOrder": lane_index,
                         "submittedAt": datetime.now(timezone.utc).isoformat(),
+                        "priorityId": priority_id,
                         "lineageByLane": _json_copy(lineage_by_lane),
                     }
                 },
@@ -947,6 +957,7 @@ def orchestrate_dspy_agentrun_workflow(
                         "laneOrder": lane_index,
                         "terminalPhase": terminal_phase,
                         "terminalObservedAt": datetime.now(timezone.utc).isoformat(),
+                        "priorityId": priority_id,
                         "lineageByLane": _json_copy(lineage_by_lane),
                     }
                 },
