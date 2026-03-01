@@ -726,7 +726,6 @@ def run_autonomous_lane(
             candidate_id=candidate_id,
             paper_dir=paper_dir,
             promotion_target=promotion_target,
-            rollback_ready=rollback_check.ready,
         )
         promotion_check_path.write_text(
             json.dumps(promotion_check.to_payload(), indent=2), encoding="utf-8"
@@ -903,7 +902,7 @@ def run_autonomous_lane(
         )
         actuation_allowed = (
             bool(recommendation_trace_id)
-            and (promotion_recommendation.eligible or patch_path is not None)
+            and promotion_recommendation.eligible
             and rollback_check.ready
         )
         actuation_intent_path = output_dir / _ACTUATION_INTENT_PATH
@@ -1691,18 +1690,15 @@ def _resolve_paper_patch_path(
     strategy_configmap_path: Path | None,
     runtime_strategies: list[StrategyRuntimeConfig],
     candidate_id: str,
-    paper_dir: Path,
     promotion_target: str,
-    rollback_ready: bool,
+    paper_dir: Path,
 ) -> Path | None:
     if promotion_target != "paper":
         return None
     if not gate_report.promotion_allowed:
-        if strategy_configmap_path is None and rollback_ready:
-            return None
+        return None
     if gate_report.recommended_mode != "paper":
-        if strategy_configmap_path is None and rollback_ready:
-            return None
+        return None
     resolved_configmap = strategy_configmap_path or _default_strategy_configmap_path()
     return _write_paper_candidate_patch(
         configmap_path=resolved_configmap,

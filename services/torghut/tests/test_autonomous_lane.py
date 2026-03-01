@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from app.trading.autonomy.lane import (
     _AUTONOMY_PHASE_ORDER,
     _build_phase_manifest,
+    _resolve_paper_patch_path,
     _resolve_gate_forecast_metrics,
     _resolve_gate_fragility_inputs,
     run_autonomous_lane,
@@ -384,18 +385,98 @@ class TestAutonomousLane(TestCase):
             )
             self.assertFalse(actuation_payload["actuation_allowed"])
             self.assertIsNone(result.paper_patch_path)
-        self.assertEqual(
-            actuation_payload["audit"]["rollback_evidence_missing_checks"],
-            ["killSwitchDryRunPassed"],
+            self.assertEqual(
+                actuation_payload["audit"]["rollback_evidence_missing_checks"],
+                ["killSwitchDryRunPassed"],
+            )
+            self.assertIn(
+                "rollback_checks_missing_or_failed",
+                actuation_payload["gates"]["recommendation_reasons"],
+            )
+            self.assertIn(
+                str(output_dir / "gates" / "rollback-readiness.json"),
+                actuation_payload["artifact_refs"],
+            )
+
+    @patch(
+        "app.trading.autonomy.lane._evaluate_drift_promotion_gate",
+        return_value={
+            "allowed": False,
+            "artifact_refs": [],
+            "eligible_for_live_promotion": False,
+            "reasons": ["drift_gate_rejected"],
+        },
+    )
+    @patch(
+        "app.trading.autonomy.lane.evaluate_rollback_readiness",
+        return_value=RollbackReadinessResult(
+            ready=True,
+            reasons=[],
+            required_checks=[],
+            missing_checks=[],
+        ),
+    )
+    def test_lane_marks_actuation_not_allowed_when_recommendation_ineligible_for_drift(
+        self,
+        _mock_rollback: object,
+        _mock_drift: object,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
         )
-        self.assertIn(
-            "rollback_checks_missing_or_failed",
-            actuation_payload["gates"]["recommendation_reasons"],
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
         )
-        self.assertIn(
-            str(output_dir / "gates" / "rollback-readiness.json"),
-            actuation_payload["artifact_refs"],
-        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-drift-ineligible"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+                if result.actuation_intent_path
+                else "{}"
+            )
+            self.assertFalse(actuation_payload["actuation_allowed"])
+            self.assertIsNone(result.paper_patch_path)
+
+    def test_resolve_paper_patch_path_respects_recommendation_mode(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            strategy_config_path = Path(tmpdir) / "strategy-configmap.yaml"
+            strategy_config_path.write_text("{}", encoding="utf-8")
+            patch_path = _resolve_paper_patch_path(
+                gate_report=GateEvaluationReport(
+                    policy_version="v3-gates-1",
+                    promotion_target="paper",
+                    promotion_allowed=True,
+                    recommended_mode="shadow",
+                    gates=[GateResult(gate_id="gate0_data_integrity", status="pass")],
+                    reasons=[],
+                    uncertainty_gate_action="pass",
+                    coverage_error="0.01",
+                    conformal_interval_width="1.0",
+                    shift_score="0.1",
+                    recalibration_run_id=None,
+                    evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    code_version="test-sha",
+                ),
+                strategy_configmap_path=strategy_config_path,
+                runtime_strategies=[],
+                candidate_id="cand-no-patch",
+                promotion_target="paper",
+                paper_dir=Path(tmpdir) / "paper-candidate",
+            )
+            self.assertIsNone(patch_path)
 
     @patch(
         "app.trading.autonomy.lane.evaluate_rollback_readiness",
