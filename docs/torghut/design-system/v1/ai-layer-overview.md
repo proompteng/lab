@@ -52,12 +52,22 @@ flowchart LR
 ## Safety invariants (v1)
 
 - Code default: `LLM_ENABLED=false` (`services/torghut/app/config.py`).
-- As deployed (see `argocd/applications/torghut/knative-service.yaml` as of 2026-02-09): `LLM_ENABLED=true` in **shadow mode**
+- As deployed (see `argocd/applications/torghut/knative-service.yaml`): `LLM_ENABLED=true` in **shadow mode**
   (`LLM_SHADOW_MODE=true`) with `LLM_FAIL_MODE=pass_through` while `TRADING_MODE=paper`.
-- AI never calls broker APIs.
-- AI outputs must parse as strict schema and pass policy guard.
-- Deterministic risk engine remains the final gate.
-- Live trading still requires explicit flags (`TRADING_MODE=live` + `TRADING_LIVE_ENABLED=true`).
+  - AI never calls broker APIs.
+  - AI outputs must parse as strict schema and pass policy guard.
+  - Deterministic risk engine remains the final gate.
+  - Live trading still requires explicit flags (`TRADING_MODE=live` + `TRADING_LIVE_ENABLED=true`).
+
+### Rollout/verification (paper-first + live-gate posture)
+
+- After any env/config change, confirm GitOps manifest values:
+  - `TRADING_MODE=paper`
+  - `TRADING_LIVE_ENABLED=false`
+  - `TRADING_KILL_SWITCH_ENABLED=false`
+  - `TRADING_EMERGENCY_STOP_ENABLED=true`
+  - `LLM_FAIL_OPEN_LIVE_APPROVED=false`
+- Verify `trading/status` shows `trading_mode=paper` and no live execution path is active.
 
 ## Configuration (selected env vars)
 
