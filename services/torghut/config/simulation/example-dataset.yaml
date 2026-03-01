@@ -46,9 +46,9 @@ runtime:
   output_root: artifacts/torghut/simulations
 
 replay:
-  pace_mode: accelerated
-  acceleration: 60
-  max_sleep_seconds: 5
+  pace_mode: max_throughput
+  acceleration: 1
+  max_sleep_seconds: 0
   auto_offset_reset: earliest
   flush_every_records: 50000
   flush_timeout_seconds: 60

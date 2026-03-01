@@ -9,7 +9,7 @@
 1. Capture active Argo workflows and stop all running entries in `argo-workflows` namespace.
 2. Clean Kafka simulation topics before run.
 3. Verify/prepare dataset manifest for Feb 27 trading day.
-4. Rebuild and push torghut image: `registry.ide-newton.ts.net/lab/torghut:sim-run-fix-2026-03-01-01` (replay log heartbeat, max-throughput defaults).
+4. Rebuild and push torghut image: `registry.ide-newton.ts.net/lab/torghut:sim-run-fix-2026-03-01-02` (replay log heartbeat, max-throughput defaults).
 5. Submit workflow in Argo with `mode=run`, `runId=sim-2026-02-27-01`, `confirmPhrase=START_HISTORICAL_SIMULATION`.
 6. Wait for workflow completion and capture failure/success details.
 7. Validate required evidence artifacts and runtime checks.
@@ -25,13 +25,13 @@
   - `services/torghut/config/simulation/example-dataset.yaml`
     - replay defaults now set to `pace_mode: max_throughput`, `acceleration: 1`, and `max_sleep_seconds: 0`.
   - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
-    - updated image tag to `sim-run-fix-2026-03-01-01` and python `-u` invocation for immediate stdout flush.
+    - updated image tag to `sim-run-fix-2026-03-01-02` and python `-u` invocation for immediate stdout flush.
 
 ## Commands executed
 - [x] Step 1: `argo list --running -n argo-workflows` (no active workflows found)
 - [x] Step 1b: `argo list --completed -n argo-workflows | grep torghut-historical-simulation`
 - [x] Step 2: list simulation topics matching `^torghut\.sim\.` and delete old simulation topics (none found)
-- [ ] Step 3: build/push torghut image (`registry.ide-newton.ts.net/lab/torghut:sim-run-fix-2026-03-01-01`)
+- [ ] Step 3: build/push torghut image (`registry.ide-newton.ts.net/lab/torghut:sim-run-fix-2026-03-01-02`)
 - [x] Step 4: template updated for max-throughput replay defaults and stdout state logging
 - [x] Step 5: submit `argo submit --from workflowtemplate/torghut-historical-simulation ... --parameter mode=run ...`
 - [x] Step 6: wait + capture logs: `argo wait`, `argo logs`
