@@ -87,6 +87,12 @@ Rollback:
 - `startupProbe` is additive: liveness/readiness defaults remain unchanged unless you also modify those blocks.
 - For rollback, disable component startup probes first and remove timing overrides second.
 
+Tradeoffs:
+
+- Enabling `startupProbe` reduces restart storms for slow startups, but too-high values can delay rollout completion and mask startup regressions.
+- `initialDelaySeconds`/`failureThreshold` on liveness/readiness trade off crash detection speed vs false-positive restarts.
+- Running startup and liveness/readiness probes simultaneously with aggressive settings can over-load endpoints during burst traffic.
+
 ### Per-component migration semantics
 
 - Probe contracts are rendered independently for `Deployment/agents` and `Deployment/agents-controllers`.

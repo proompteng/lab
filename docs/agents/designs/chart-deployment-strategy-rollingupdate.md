@@ -40,13 +40,11 @@ Control:
 - `controllers.deploymentStrategy`
 - `deploymentStrategy` (global default)
 
-Deployment strategy values accept the same object structure as Kubernetes `spec.strategy`, and are merged with:
+Deployment strategy values accept the same object structure as Kubernetes `spec.strategy`, and are merged as global defaults from `deploymentStrategy` overridden by component-specific fields (`controlPlane.deploymentStrategy` / `controllers.deploymentStrategy`).
 
-- component override first, then global fallback.
+Deployment lifecycle values also merge with the same precedence:
 
-Deployment lifecycle values also merge the same way:
-
-- component override first, then global fallback.
+- global `deploymentLifecycle` first, then component-level overrides.
 
 Example:
 
@@ -78,7 +76,6 @@ Component-specific override behavior:
 
 - To change control-plane rollout behavior without affecting controllers, set `controlPlane.deploymentStrategy`.
 - To change controller rollout behavior without affecting control plane, set `controllers.deploymentStrategy`.
-```
 
 #### Migration behavior
 
@@ -94,7 +91,7 @@ Component-specific override behavior:
 - Use component overrides only when operational intent differs:
   - `controlPlane.deploymentStrategy` for control-plane rollout semantics.
   - `controllers.deploymentStrategy` for controller rollout semantics.
-- For upgrade safety, control rollout lifecycle timing first and strategy second:
+- For upgrade safety, control rollout timing first and strategy second:
   1. Set global `deploymentStrategy` if needed.
   2. Set global `deploymentLifecycle` when rollout windows need explicit progress deadlines.
   3. Add component-specific overrides only for the component under migration.
@@ -104,6 +101,12 @@ Rollback order:
 - Remove per-component `deploymentStrategy`/`deploymentLifecycle` overrides first.
 - Revert global values second.
 - Then rollout a full rollback to restore previous behavior.
+
+Tradeoffs:
+- `maxUnavailable: 0` keeps control-plane availability high and is safer by default, but increases rollout duration.
+- `maxSurge: 1` speeds rollouts while usually staying within capacity; raise cautiously on constrained clusters.
+- Larger `progressDeadlineSeconds` helps long rollouts succeed but delays rollback signaling for stalled deployments.
+- Higher `revisionHistoryLimit` improves rollback/debug options but increases object history storage.
 
 Recommended staged order:
   1. Set/verify global `deploymentStrategy` first.
