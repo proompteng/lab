@@ -2036,12 +2036,23 @@ def _nearest_rank_percentile(values: list[int], percentile: int) -> int:
 
 def _load_tca_gate_inputs(
     session_factory: Callable[[], Session],
-) -> dict[str, Decimal | int]:
+) -> dict[str, object]:
     try:
         with session_factory() as session:
             return build_tca_gate_inputs(session)
     except Exception:
-        return {}
+        return {
+            "order_count": 0,
+            "avg_slippage_bps": Decimal("0"),
+            "avg_shortfall_notional": Decimal("0"),
+            "avg_churn_ratio": Decimal("0"),
+            "avg_divergence_bps": Decimal("0"),
+            "avg_realized_shortfall_bps": Decimal("0"),
+            "expected_shortfall_coverage": Decimal("0"),
+            "expected_shortfall_sample_count": 0,
+            "avg_expected_shortfall_bps_p50": Decimal("0"),
+            "avg_expected_shortfall_bps_p95": Decimal("0"),
+        }
 
 
 def _baseline_runtime_strategies() -> list[StrategyRuntimeConfig]:

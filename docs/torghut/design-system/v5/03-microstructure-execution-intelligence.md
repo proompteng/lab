@@ -107,6 +107,12 @@ continuous policy calibration.
 - execution approval still requires existing deterministic checks.
 - advisor cannot increase risk limits, only tighten or suggest less aggressive action.
 - if advisor data is stale/missing, fallback to baseline execution policy.
+- this implementation now writes deterministic microstructure provenance (`execution_microstructure`) and includes
+  TCA evidence fields (`avg_expected_shortfall_bps_p50`, `avg_expected_shortfall_bps_p95`,
+  `avg_realized_shortfall_bps`, `avg_divergence_bps`) in gate evaluation paths.
+- adaptive execution decisions now include deterministic calibration metadata (`expected_shortfall_coverage` and
+  `expected_shortfall_sample_count`) and will fail-safe to fallback mode when evidence coverage drops below the
+  configured adaptive threshold while remaining auditable via persisted `execution_policy.adaptive`.
 
 ## Metrics, SLOs, and Alerts
 

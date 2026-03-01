@@ -86,6 +86,9 @@ class GatePolicyMatrix:
     gate2_max_tca_slippage_bps: Decimal = Decimal("25")
     gate2_max_tca_shortfall_notional: Decimal = Decimal("25")
     gate2_max_tca_churn_ratio: Decimal = Decimal("0.75")
+    gate2_max_tca_realized_shortfall_bps: Decimal = Decimal("25")
+    gate2_max_tca_divergence_bps: Decimal = Decimal("12")
+    gate2_min_tca_expected_shortfall_coverage: Decimal = Decimal("0")
     gate2_max_fragility_score: Decimal = Decimal("0.85")
     gate2_max_fragility_state_rank: int = 2
     gate2_require_stability_mode_under_stress: bool = True
@@ -160,6 +163,15 @@ class GatePolicyMatrix:
             ),
             gate2_max_tca_churn_ratio=_decimal_or_default(
                 payload.get("gate2_max_tca_churn_ratio"), Decimal("0.75")
+            ),
+            gate2_max_tca_realized_shortfall_bps=_decimal_or_default(
+                payload.get("gate2_max_tca_realized_shortfall_bps"), Decimal("25")
+            ),
+            gate2_max_tca_divergence_bps=_decimal_or_default(
+                payload.get("gate2_max_tca_divergence_bps"), Decimal("12")
+            ),
+            gate2_min_tca_expected_shortfall_coverage=_decimal_or_default(
+                payload.get("gate2_min_tca_expected_shortfall_coverage"), Decimal("0")
             ),
             gate2_max_fragility_score=_decimal_or_default(
                 payload.get("gate2_max_fragility_score"), Decimal("0.85")
@@ -278,6 +290,13 @@ class GatePolicyMatrix:
                 self.gate2_max_tca_shortfall_notional
             ),
             "gate2_max_tca_churn_ratio": str(self.gate2_max_tca_churn_ratio),
+            "gate2_max_tca_realized_shortfall_bps": str(
+                self.gate2_max_tca_realized_shortfall_bps
+            ),
+            "gate2_max_tca_divergence_bps": str(self.gate2_max_tca_divergence_bps),
+            "gate2_min_tca_expected_shortfall_coverage": str(
+                self.gate2_min_tca_expected_shortfall_coverage
+            ),
             "gate2_max_fragility_score": str(self.gate2_max_fragility_score),
             "gate2_max_fragility_state_rank": self.gate2_max_fragility_state_rank,
             "gate2_require_stability_mode_under_stress": self.gate2_require_stability_mode_under_stress,
@@ -740,6 +759,29 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
         reasons.append("tca_shortfall_missing")
     elif avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
         reasons.append("tca_shortfall_exceeds_maximum")
+
+    avg_tca_realized_shortfall = _decimal(
+        inputs.tca_metrics.get("avg_realized_shortfall_bps")
+    ) or Decimal("0")
+    if avg_tca_realized_shortfall > policy.gate2_max_tca_realized_shortfall_bps:
+        reasons.append("tca_realized_shortfall_bps_exceeds_maximum")
+
+    avg_tca_divergence = _decimal(inputs.tca_metrics.get("avg_divergence_bps")) or Decimal(
+        "0"
+    )
+    if avg_tca_divergence > policy.gate2_max_tca_divergence_bps:
+        reasons.append("tca_divergence_bps_exceeds_maximum")
+
+    expected_shortfall_coverage = _decimal(
+        inputs.tca_metrics.get("expected_shortfall_coverage")
+    ) or Decimal("0")
+    expected_shortfall_sample_count = int(
+        inputs.tca_metrics.get("expected_shortfall_sample_count", 0)
+    )
+    if expected_shortfall_sample_count <= 0 and policy.gate2_min_tca_expected_shortfall_coverage > 0:
+        reasons.append("tca_expected_shortfall_calibration_coverage_missing")
+    elif expected_shortfall_coverage < policy.gate2_min_tca_expected_shortfall_coverage:
+        reasons.append("tca_expected_shortfall_calibration_coverage_below_threshold")
 
     avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get("avg_churn_ratio"))
     if avg_tca_churn_ratio is None:

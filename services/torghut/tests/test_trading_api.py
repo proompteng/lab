@@ -107,6 +107,10 @@ class TestTradingApi(TestCase):
                 signed_qty=Decimal("1"),
                 slippage_bps=Decimal("100"),
                 shortfall_notional=Decimal("1"),
+                expected_shortfall_bps_p50=Decimal("3.5"),
+                expected_shortfall_bps_p95=Decimal("5.0"),
+                realized_shortfall_bps=Decimal("1.2"),
+                divergence_bps=Decimal("0.7"),
                 churn_qty=Decimal("0"),
                 churn_ratio=Decimal("0"),
             )
@@ -190,8 +194,25 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["summary"]["order_count"], 1)
+        self.assertEqual(payload["summary"]["expected_shortfall_sample_count"], 1)
+        self.assertAlmostEqual(
+            float(payload["summary"]["expected_shortfall_coverage"]), 1.0
+        )
         self.assertEqual(len(payload["rows"]), 1)
         self.assertEqual(payload["rows"][0]["symbol"], "AAPL")
+
+    def test_trading_status_includes_tca_calibration_summary(self) -> None:
+        response = self.client.get("/trading/status")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        tca_summary = payload["tca"]
+        self.assertEqual(tca_summary["order_count"], 1)
+        self.assertEqual(tca_summary["expected_shortfall_sample_count"], 1)
+        self.assertEqual(float(tca_summary["expected_shortfall_coverage"]), 1.0)
+        self.assertEqual(float(tca_summary["avg_expected_shortfall_bps_p50"]), 3.5)
+        self.assertEqual(float(tca_summary["avg_expected_shortfall_bps_p95"]), 5.0)
+        self.assertEqual(float(tca_summary["avg_realized_shortfall_bps"]), 1.2)
+        self.assertEqual(float(tca_summary["avg_divergence_bps"]), 0.7)
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
