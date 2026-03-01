@@ -60,6 +60,13 @@ spec:
                 path: argocd/applications/huly
                 namespace: huly
                 renderWithLovely: false
+                syncOptions:
+                  - CreateNamespace=true
+                  - RespectIgnoreDifferences=true
+                  - ApplyOutOfSyncOnly=true
+                  - PruneLast=true
+                  - ServerSideApply=false
+                  - ClientSideApplyMigration=false
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
