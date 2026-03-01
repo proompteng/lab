@@ -937,6 +937,7 @@ def run_autonomous_lane(
             json.dumps(profitability_validation.to_payload(), indent=2),
             encoding="utf-8",
         )
+        metrics_payload = report.metrics.to_payload()
 
         gate_policy = GatePolicyMatrix.from_path(gate_policy_path)
         profitability_evidence_payload["validation"] = (
