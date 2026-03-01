@@ -4,6 +4,7 @@ namespace: agents
 resources:
   - codex-secretbinding.yaml
   - codex-agent.yaml
+  - codex-spark-agent.yaml
   - codex-whitepaper-secretbinding.yaml
   - codex-whitepaper-agent.yaml
   - codex-agentprovider.yaml

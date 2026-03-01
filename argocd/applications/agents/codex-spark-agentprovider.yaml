@@ -14,9 +14,8 @@ spec:
       content: |-
         model = "gpt-5.3-codex-spark"
         model_reasoning_summary = "none"
-        model_reasoning_effort = "high"
+        model_reasoning_effort = "xhigh"
         model_verbosity = "medium"
-        preferred_auth_method = "apikey"
         approval_policy = "never"
         sandbox_mode = "danger-full-access"
         web_search = "live"
@@ -48,7 +47,7 @@ spec:
           "binary": "/bin/bash",
           "argsTemplate": [
             "-lc",
-            "PROMPT_PATH='{{payloads.promptPath}}'; if [ -f \"$CODEX_AUTH\" ]; then AUTH_TMP=\"/tmp/codex-auth-apikey.json\"; jq -c 'if (.OPENAI_API_KEY // \"\") != \"\" then .auth_mode = \"apikey\" | del(.tokens, .last_refresh) else . end' \"$CODEX_AUTH\" > \"$AUTH_TMP\" && export CODEX_AUTH=\"$AUTH_TMP\"; fi; cat \"$PROMPT_PATH\" | /usr/local/bin/codex exec --skip-git-repo-check --cd /tmp -"
+            "PROMPT_PATH='{{payloads.promptPath}}'; cat \"$PROMPT_PATH\" | /usr/local/bin/codex exec --skip-git-repo-check --cd /tmp -"
           ]
         }
   outputArtifacts:
