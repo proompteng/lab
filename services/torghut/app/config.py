@@ -1921,12 +1921,19 @@ class Settings(BaseSettings):
             return [fallback]
 
         enabled_lanes: list[TradingAccountLane] = []
+        seen_labels: set[str] = set()
         for lane in lanes:
             if not lane.enabled:
                 continue
             resolved_label = lane.label.strip()
             if not resolved_label:
                 continue
+            if resolved_label in seen_labels:
+                logger.warning(
+                    "Duplicate TRADING_ACCOUNTS_JSON label dropped label=%s", resolved_label
+                )
+                continue
+            seen_labels.add(resolved_label)
             enabled_lanes.append(
                 lane.model_copy(
                     update={

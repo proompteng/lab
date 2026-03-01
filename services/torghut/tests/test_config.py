@@ -581,3 +581,33 @@ class TestConfig(TestCase):
         labels = [account.label for account in settings.trading_accounts]
         self.assertEqual(labels, ["paper-a", "paper-c"])
         self.assertEqual(settings.trading_accounts[1].api_key, "fallback-key")
+
+    def test_trading_accounts_registry_deduplicates_labels_in_order(self) -> None:
+        settings = Settings(
+            TRADING_MULTI_ACCOUNT_ENABLED=True,
+            TRADING_ACCOUNT_LABEL="paper-a",
+            TRADING_MODE="paper",
+            APCA_API_KEY_ID="fallback-key",
+            APCA_API_SECRET_KEY="fallback-secret",
+            TRADING_ACCOUNTS_JSON=json.dumps(
+                {
+                    "accounts": [
+                        {
+                            "label": "paper-b",
+                            "enabled": True,
+                            "api_key": "primary-key",
+                        },
+                        {"label": "  paper-b  ", "enabled": True, "api_key": "dupe-key"},
+                        {
+                            "label": "paper-c",
+                            "enabled": True,
+                            "api_key": "paper-c-key",
+                        },
+                    ]
+                }
+            ),
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        accounts = settings.trading_accounts
+        self.assertEqual([account.label for account in accounts], ["paper-b", "paper-c"])
+        self.assertEqual(accounts[0].api_key, "primary-key")

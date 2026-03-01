@@ -4147,7 +4147,9 @@ class TradingScheduler:
             account_label=lane.label,
             price_fetcher=price_fetcher,
             strategy_catalog=strategy_catalog,
-            order_feed_ingestor=OrderFeedIngestor(),
+            order_feed_ingestor=OrderFeedIngestor(
+                default_account_label=lane.label
+            ),
         )
 
     def _build_pipeline(self) -> TradingPipeline:

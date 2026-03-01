@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
 
-from app.config import settings
+from app.config import TradingAccountLane, settings
 from app.trading.ingest import SignalBatch
 from app.trading.models import SignalEnvelope
 from app.trading.scheduler import TradingScheduler, TradingState
@@ -137,6 +138,38 @@ class _PipelineStub:
                 active=True,
                 recovery_streak=0,
             )
+
+
+class _PipelineIterationStub:
+    def __init__(
+        self,
+        *,
+        account_label: str,
+        run_once_fail: bool = False,
+        reconcile_return: int = 0,
+        reconcile_fail: bool = False,
+    ) -> None:
+        self.account_label = account_label
+        self.run_once_fail = run_once_fail
+        self.reconcile_fail = reconcile_fail
+        self.reconcile_return = reconcile_return
+        self.run_once_calls = 0
+        self.reconcile_calls = 0
+        self.run_once_last_error: str | None = None
+        self.reconcile_last_error: str | None = None
+
+    def run_once(self) -> None:
+        self.run_once_calls += 1
+        if self.run_once_fail:
+            self.run_once_last_error = "run_once_failed"
+            raise RuntimeError("run_once_failed")
+
+    def reconcile(self) -> int:
+        self.reconcile_calls += 1
+        if self.reconcile_fail:
+            self.reconcile_last_error = "reconcile_failed"
+            raise RuntimeError("reconcile_failed")
+        return self.reconcile_return
 
 
 class _SchedulerDependencies:
@@ -853,6 +886,126 @@ class TestTradingSchedulerAutonomy(TestCase):
                 scheduler.state.emergency_stop_reason or "",
             )
             self.assertIsNotNone(scheduler.state.rollback_incident_evidence_path)
+
+    def test_run_trading_iteration_continues_with_partial_lane_failure(self) -> None:
+        scheduler = TradingScheduler()
+        failing_lane = _PipelineIterationStub(account_label="paper-a", run_once_fail=True)
+        healthy_lane = _PipelineIterationStub(account_label="paper-b")
+        scheduler._pipelines = [failing_lane, healthy_lane]
+        scheduler._pipeline = failing_lane
+
+        safety_calls = {"count": 0}
+
+        def _capture_safety() -> None:
+            safety_calls["count"] += 1
+
+        scheduler._evaluate_safety_controls = _capture_safety
+        asyncio.run(scheduler._run_trading_iteration())
+
+        self.assertEqual(failing_lane.run_once_calls, 1)
+        self.assertEqual(healthy_lane.run_once_calls, 1)
+        self.assertIsNone(scheduler.state.last_error)
+        self.assertEqual(safety_calls["count"], 1)
+        self.assertIsNotNone(scheduler.state.last_run_at)
+        self.assertEqual(failing_lane.run_once_last_error, "run_once_failed")
+        self.assertEqual(healthy_lane.run_once_last_error, None)
+
+    def test_run_reconcile_iteration_continues_with_partial_lane_failure(self) -> None:
+        scheduler = TradingScheduler()
+        failing_lane = _PipelineIterationStub(
+            account_label="paper-a",
+            reconcile_fail=True,
+        )
+        healthy_lane = _PipelineIterationStub(
+            account_label="paper-b",
+            reconcile_return=2,
+        )
+        scheduler._pipelines = [failing_lane, healthy_lane]
+        scheduler._pipeline = failing_lane
+
+        safety_calls = {"count": 0}
+
+        def _capture_safety() -> None:
+            safety_calls["count"] += 1
+
+        scheduler._evaluate_safety_controls = _capture_safety
+        asyncio.run(scheduler._run_reconcile_iteration())
+
+        self.assertEqual(failing_lane.reconcile_calls, 1)
+        self.assertEqual(healthy_lane.reconcile_calls, 1)
+        self.assertEqual(healthy_lane.reconcile_return, 2)
+        self.assertIsNone(scheduler.state.last_error)
+        self.assertEqual(safety_calls["count"], 1)
+        self.assertIsNotNone(scheduler.state.last_reconcile_at)
+        self.assertEqual(failing_lane.reconcile_last_error, "reconcile_failed")
+        self.assertEqual(healthy_lane.reconcile_last_error, None)
+
+    def test_run_autonomy_iteration_triggers_rollback_when_failure_streak_exceeds_limit(self) -> None:
+        original_emergency_stop = settings.trading_emergency_stop_enabled
+        original_autonomy_rollback_limit = (
+            settings.trading_rollback_autonomy_failure_streak_limit
+        )
+        original_critical_reasons = (
+            settings.trading_signal_staleness_alert_critical_reasons_raw
+        )
+
+        try:
+            settings.trading_emergency_stop_enabled = True
+            settings.trading_rollback_autonomy_failure_streak_limit = 1
+            settings.trading_signal_staleness_alert_critical_reasons_raw = ""
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                scheduler, _deps = self._build_scheduler_with_fixtures(
+                    tmpdir,
+                    allow_live=False,
+                    approval_token=None,
+                    no_signals=True,
+                    no_signal_reason=None,
+                )
+
+                with patch(
+                    "app.trading.scheduler.TradingScheduler._run_autonomous_cycle",
+                    side_effect=RuntimeError("autonomy-cycle-failed"),
+                ):
+                    asyncio.run(scheduler._run_autonomy_iteration())
+
+                self.assertEqual(
+                    scheduler.state.last_error,
+                    "emergency_stop_triggered reasons=autonomy_failure_streak_exceeded:1",
+                )
+                self.assertEqual(scheduler.state.last_autonomy_error, "autonomy-cycle-failed")
+                self.assertEqual(scheduler.state.autonomy_failure_streak, 1)
+                self.assertTrue(scheduler.state.emergency_stop_active)
+                self.assertIn(
+                    "autonomy_failure_streak_exceeded:1",
+                    scheduler.state.emergency_stop_reason or "",
+                )
+                self.assertIsNotNone(scheduler.state.rollback_incident_evidence_path)
+                self.assertEqual(scheduler.state.rollback_incidents_total, 1)
+        finally:
+            settings.trading_emergency_stop_enabled = original_emergency_stop
+            settings.trading_rollback_autonomy_failure_streak_limit = (
+                original_autonomy_rollback_limit
+            )
+            settings.trading_signal_staleness_alert_critical_reasons_raw = (
+                original_critical_reasons
+            )
+
+    def test_build_pipeline_for_account_scopes_order_feed_ingestor(self) -> None:
+        scheduler = TradingScheduler()
+        lane = TradingAccountLane(
+            label="paper-x",
+            api_key="k",
+            secret_key="s",
+            base_url="https://api.example.invalid",
+            enabled=True,
+        )
+        pipeline = scheduler._build_pipeline_for_account(lane)
+
+        self.assertEqual(
+            pipeline.order_feed_ingestor._default_account_label,  # type: ignore[attr-defined]
+            "paper-x",
+        )
 
     def _build_scheduler_with_fixtures(
         self,
