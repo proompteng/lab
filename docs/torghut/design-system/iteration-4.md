@@ -21,9 +21,9 @@
 
 ## Code evidence checked
 
-- `services/torghut/app/trading/circuit.py`
+- `services/torghut/app/trading/llm/circuit.py`
 - `services/torghut/tests/test_llm_guardrails.py`
-- `services/torghut/app/trading/review_engine.py`
+- `services/torghut/app/trading/llm/review_engine.py`
 - `services/torghut/tests/test_llm_review_engine.py`
 - `services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTechnicalAnalysisJob.kt`
 - `services/dorvud/technical-analysis-flink/src/test/kotlin/ai/proompteng/dorvud/ta/flink/ParseEnvelopeFlatMapTest.kt`
@@ -59,7 +59,7 @@
 - `services/torghut/app/trading/forecasting.py`
 - `services/torghut/app/trading/decisions.py`
 - `services/jangar/src/routes/torghut/trading.tsx`
-- `services/jangar/src/routes/api/torghut/market-context.ts`
+- `services/jangar/src/routes/api/torghut/market-context/index.ts`
 
 ## Status changes made
 
