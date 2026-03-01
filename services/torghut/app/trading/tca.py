@@ -19,6 +19,7 @@ ADAPTIVE_DEGRADE_FALLBACK_BPS = Decimal('4')
 ADAPTIVE_TARGET_SLIPPAGE_BPS = Decimal('12')
 ADAPTIVE_MAX_SLIPPAGE_BPS = Decimal('20')
 ADAPTIVE_MAX_SHORTFALL = Decimal('15')
+ADAPTIVE_MIN_EXPECTED_SHORTFALL_COVERAGE = Decimal('0.50')
 ADAPTIVE_PARTICIPATION_TIGHTEN = Decimal('0.75')
 ADAPTIVE_PARTICIPATION_RELAX = Decimal('1.0')
 ADAPTIVE_EXECUTION_SLOWDOWN = Decimal('1.40')
@@ -38,6 +39,8 @@ class AdaptiveExecutionPolicyDecision:
     recent_shortfall_notional: Decimal | None
     effect_size_bps: Decimal | None
     degradation_bps: Decimal | None
+    expected_shortfall_coverage: Decimal
+    expected_shortfall_sample_count: int
     fallback_active: bool
     fallback_reason: str | None
     prefer_limit: bool | None
@@ -63,6 +66,8 @@ class AdaptiveExecutionPolicyDecision:
             'recent_shortfall_notional': _decimal_str(self.recent_shortfall_notional),
             'effect_size_bps': _decimal_str(self.effect_size_bps),
             'degradation_bps': _decimal_str(self.degradation_bps),
+            'expected_shortfall_coverage': str(self.expected_shortfall_coverage),
+            'expected_shortfall_sample_count': self.expected_shortfall_sample_count,
             'fallback_active': self.fallback_active,
             'fallback_reason': self.fallback_reason,
             'prefer_limit': self.prefer_limit,
@@ -77,6 +82,8 @@ class AdaptiveExecutionPolicyDecision:
 class _AdaptiveWindowSummary:
     sample_size: int
     adaptive_samples: int
+    expected_shortfall_sample_count: int
+    expected_shortfall_coverage: Decimal
     slippages: list[Decimal]
     shortfalls: list[Decimal]
 
@@ -263,7 +270,9 @@ def derive_adaptive_execution_policy(
         recent_slippage=recent_slippage,
     )
     fallback_active, fallback_reason = _resolve_fallback_state(
+        sample_size=window_summary.sample_size,
         adaptive_samples=window_summary.adaptive_samples,
+        expected_shortfall_coverage=window_summary.expected_shortfall_coverage,
         degradation_bps=degradation_bps,
     )
     (
@@ -290,6 +299,8 @@ def derive_adaptive_execution_policy(
         recent_shortfall_notional=recent_shortfall,
         effect_size_bps=effect_size_bps,
         degradation_bps=degradation_bps,
+        expected_shortfall_coverage=window_summary.expected_shortfall_coverage,
+        expected_shortfall_sample_count=window_summary.expected_shortfall_sample_count,
         fallback_active=fallback_active,
         fallback_reason=fallback_reason,
         prefer_limit=prefer_limit,
@@ -313,6 +324,8 @@ def _empty_adaptive_execution_policy(
         regime_label=regime_label,
         sample_size=0,
         adaptive_samples=0,
+        expected_shortfall_coverage=Decimal('0'),
+        expected_shortfall_sample_count=0,
         baseline_slippage_bps=None,
         recent_slippage_bps=None,
         baseline_shortfall_notional=None,
@@ -331,6 +344,7 @@ def _empty_adaptive_execution_policy(
 
 def _collect_adaptive_windows(rows: list[dict[str, Any]]) -> _AdaptiveWindowSummary:
     adaptive_samples = 0
+    expected_shortfall_sample_count = 0
     slippages: list[Decimal] = []
     shortfalls: list[Decimal] = []
     for row in rows:
@@ -338,13 +352,23 @@ def _collect_adaptive_windows(rows: list[dict[str, Any]]) -> _AdaptiveWindowSumm
             adaptive_samples += 1
         slippage = row['slippage_bps']
         shortfall = row['shortfall_notional']
+        if row['expected_shortfall_bps_p50'] is not None:
+            expected_shortfall_sample_count += 1
         if slippage is not None:
             slippages.append(abs(slippage))
         if shortfall is not None:
             shortfalls.append(abs(shortfall))
+    sample_size = len(rows)
+    expected_shortfall_coverage = (
+        Decimal(expected_shortfall_sample_count) / Decimal(sample_size)
+        if sample_size > 0
+        else Decimal('0')
+    )
     return _AdaptiveWindowSummary(
-        sample_size=len(rows),
+        sample_size=sample_size,
         adaptive_samples=adaptive_samples,
+        expected_shortfall_sample_count=expected_shortfall_sample_count,
+        expected_shortfall_coverage=expected_shortfall_coverage,
         slippages=slippages,
         shortfalls=shortfalls,
     )
@@ -362,9 +386,18 @@ def _derive_effect_size(
 
 def _resolve_fallback_state(
     *,
+    sample_size: int,
     adaptive_samples: int,
+    expected_shortfall_coverage: Decimal,
     degradation_bps: Decimal | None,
 ) -> tuple[bool, str | None]:
+    if (
+        sample_size >= ADAPTIVE_MIN_SAMPLE_SIZE
+        and expected_shortfall_coverage < ADAPTIVE_MIN_EXPECTED_SHORTFALL_COVERAGE
+    ):
+        if expected_shortfall_coverage == Decimal('0'):
+            return True, 'adaptive_policy_expected_shortfall_coverage_missing'
+        return True, 'adaptive_policy_expected_shortfall_coverage_low'
     fallback_required = (
         adaptive_samples >= max(2, ADAPTIVE_MIN_SAMPLE_SIZE // 2)
         and degradation_bps is not None
@@ -554,6 +587,9 @@ def _load_recent_tca_rows(
             {
                 'slippage_bps': _decimal_or_none(metric.slippage_bps),
                 'shortfall_notional': _decimal_or_none(metric.shortfall_notional),
+                'expected_shortfall_bps_p50': _decimal_or_none(
+                    metric.expected_shortfall_bps_p50
+                ),
                 'adaptive_applied': bool(adaptive_map.get('applied', False)),
             }
         )

@@ -6,6 +6,7 @@ from unittest import TestCase
 
 from app import config
 from app.trading.execution_policy import ExecutionPolicy, ExecutionPolicyConfig
+from app.trading.tca import AdaptiveExecutionPolicyDecision
 from app.trading.models import StrategyDecision
 
 
@@ -673,3 +674,81 @@ class TestExecutionPolicy(TestCase):
             "microstructure_state_unavailable",
         )
         self.assertIn("execution_microstructure", outcome.params_update())
+
+    def test_adaptive_policy_fallback_is_respected_as_safe_default(self) -> None:
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.1")))
+        adaptive_policy = AdaptiveExecutionPolicyDecision(
+            key="AAPL:trend",
+            symbol="AAPL",
+            regime_label="trend",
+            sample_size=6,
+            adaptive_samples=6,
+            baseline_slippage_bps=Decimal("8"),
+            recent_slippage_bps=Decimal("16"),
+            baseline_shortfall_notional=Decimal("1"),
+            recent_shortfall_notional=Decimal("4"),
+            effect_size_bps=Decimal("-8"),
+            degradation_bps=Decimal("9"),
+            expected_shortfall_coverage=Decimal("0.2"),
+            expected_shortfall_sample_count=2,
+            fallback_active=True,
+            fallback_reason="adaptive_policy_expected_shortfall_coverage_low",
+            prefer_limit=True,
+            participation_rate_scale=Decimal("0.75"),
+            execution_seconds_scale=Decimal("1.4"),
+            aggressiveness="defensive",
+            generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+
+        outcome = policy.evaluate(
+            _decision(qty=Decimal("1"), price=Decimal("100"), order_type="market"),
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+            adaptive_policy=adaptive_policy,
+        )
+
+        self.assertFalse(outcome.adaptive.applied)
+        self.assertEqual(outcome.adaptive.decision.fallback_reason, "adaptive_policy_expected_shortfall_coverage_low")
+        self.assertEqual(outcome.decision.order_type, "market")
+        self.assertEqual(outcome.adaptive.decision.prefer_limit, True)
+
+    def test_adaptive_policy_shortfall_pressure_switches_to_defensive_limit(self) -> None:
+        policy = ExecutionPolicy(
+            config=_config(max_participation_rate=Decimal("0.2"), prefer_limit=False)
+        )
+        adaptive_policy = AdaptiveExecutionPolicyDecision(
+            key="AAPL:trend",
+            symbol="AAPL",
+            regime_label="trend",
+            sample_size=6,
+            adaptive_samples=6,
+            baseline_slippage_bps=Decimal("3"),
+            recent_slippage_bps=Decimal("2"),
+            baseline_shortfall_notional=Decimal("1"),
+            recent_shortfall_notional=Decimal("18"),
+            effect_size_bps=Decimal("1"),
+            degradation_bps=Decimal("1"),
+            expected_shortfall_coverage=Decimal("1"),
+            expected_shortfall_sample_count=6,
+            fallback_active=False,
+            fallback_reason=None,
+            prefer_limit=True,
+            participation_rate_scale=Decimal("0.75"),
+            execution_seconds_scale=Decimal("1.4"),
+            aggressiveness="defensive",
+            generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+
+        outcome = policy.evaluate(
+            _decision(qty=Decimal("1"), price=Decimal("100"), order_type="market"),
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+            adaptive_policy=adaptive_policy,
+        )
+
+        self.assertTrue(outcome.adaptive.applied)
+        self.assertEqual(outcome.decision.order_type, "limit")
+        self.assertTrue(outcome.adaptive.decision.prefer_limit)
+        self.assertEqual(outcome.adaptive.decision.aggressiveness, "defensive")

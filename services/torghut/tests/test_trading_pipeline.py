@@ -2288,6 +2288,8 @@ class TestTradingPipeline(TestCase):
                 recent_shortfall_notional=Decimal("4"),
                 effect_size_bps=Decimal("-8"),
                 degradation_bps=Decimal("8"),
+                expected_shortfall_coverage=Decimal("1"),
+                expected_shortfall_sample_count=12,
                 fallback_active=True,
                 fallback_reason="adaptive_policy_degraded",
                 prefer_limit=True,

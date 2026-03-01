@@ -41,6 +41,14 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
                     Decimal('20'),
                     Decimal('20'),
                 ],
+                expected_shortfall_p50_values=[
+                    Decimal('5'),
+                    Decimal('5'),
+                    Decimal('5'),
+                    Decimal('5'),
+                    Decimal('5'),
+                    Decimal('5'),
+                ],
                 adaptive_applied=False,
             )
 
@@ -55,6 +63,131 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         self.assertFalse(decision.fallback_active)
         self.assertEqual(decision.sample_size, 6)
         self.assertEqual(decision.regime_label, 'trend')
+
+    def test_derivation_builds_defensive_override_for_high_shortfall_only(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            self._insert_observations(
+                session,
+                strategy,
+                symbol='AAPL',
+                regime='trend',
+                slippages=[
+                    Decimal('8'),
+                    Decimal('9'),
+                    Decimal('10'),
+                    Decimal('10'),
+                    Decimal('10'),
+                    Decimal('10'),
+                ],
+                shortfalls=[
+                    Decimal('1'),
+                    Decimal('1'),
+                    Decimal('1'),
+                    Decimal('18'),
+                    Decimal('18'),
+                    Decimal('18'),
+                ],
+                expected_shortfall_p50_values=[
+                    Decimal('4'),
+                    Decimal('4'),
+                    Decimal('4'),
+                    Decimal('4'),
+                    Decimal('4'),
+                    Decimal('4'),
+                ],
+                adaptive_applied=False,
+            )
+
+            decision = derive_adaptive_execution_policy(
+                session,
+                symbol='AAPL',
+                regime_label='trend',
+            )
+
+        self.assertEqual(decision.aggressiveness, 'defensive')
+        self.assertEqual(decision.prefer_limit, True)
+        self.assertFalse(decision.fallback_active)
+        self.assertGreater(decision.recent_shortfall_notional or Decimal('0'), Decimal('15'))
+
+    def test_derivation_fallback_when_expected_shortfall_coverage_is_insufficient(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            self._insert_observations(
+                session,
+                strategy,
+                symbol='AAPL',
+                regime='trend',
+                slippages=[
+                    Decimal('8'),
+                    Decimal('8'),
+                    Decimal('8'),
+                    Decimal('8'),
+                    Decimal('8'),
+                    Decimal('8'),
+                ],
+                shortfalls=[
+                    Decimal('2'),
+                    Decimal('2'),
+                    Decimal('2'),
+                    Decimal('2'),
+                    Decimal('2'),
+                    Decimal('2'),
+                ],
+                expected_shortfall_p50_values=[Decimal('4'), Decimal('4')],
+                adaptive_applied=False,
+            )
+
+            decision = derive_adaptive_execution_policy(
+                session,
+                symbol='AAPL',
+                regime_label='trend',
+            )
+
+        self.assertTrue(decision.fallback_active)
+        self.assertEqual(decision.fallback_reason, 'adaptive_policy_expected_shortfall_coverage_low')
+        self.assertEqual(decision.expected_shortfall_sample_count, 2)
+        self.assertEqual(decision.expected_shortfall_coverage, Decimal(2) / Decimal(6))
+
+    def test_derivation_fallback_when_expected_shortfall_calibration_is_missing(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            self._insert_observations(
+                session,
+                strategy,
+                symbol='AAPL',
+                regime='trend',
+                slippages=[
+                    Decimal('8'),
+                    Decimal('9'),
+                    Decimal('10'),
+                    Decimal('11'),
+                    Decimal('12'),
+                    Decimal('13'),
+                ],
+                shortfalls=[
+                    Decimal('1'),
+                    Decimal('2'),
+                    Decimal('3'),
+                    Decimal('4'),
+                    Decimal('5'),
+                    Decimal('6'),
+                ],
+                adaptive_applied=False,
+            )
+
+            decision = derive_adaptive_execution_policy(
+                session,
+                symbol='AAPL',
+                regime_label='trend',
+            )
+
+        self.assertTrue(decision.fallback_active)
+        self.assertEqual(
+            decision.fallback_reason,
+            'adaptive_policy_expected_shortfall_coverage_missing',
+        )
+        self.assertEqual(decision.expected_shortfall_sample_count, 0)
 
     def test_derivation_triggers_fallback_when_adaptive_degrades(self) -> None:
         with self.session_local() as session:
@@ -79,6 +212,14 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
                     Decimal('9'),
                     Decimal('9'),
                     Decimal('9'),
+                ],
+                expected_shortfall_p50_values=[
+                    Decimal('5'),
+                    Decimal('5'),
+                    Decimal('5'),
+                    Decimal('5'),
+                    Decimal('5'),
+                    Decimal('5'),
                 ],
                 adaptive_applied=True,
             )
