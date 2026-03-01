@@ -132,6 +132,31 @@ class DSPyReviewRuntime:
             )
         )
 
+    def evaluate_live_readiness(self) -> tuple[bool, tuple[str, ...]]:
+        reasons: list[str] = []
+
+        if self.mode != "active":
+            reasons.append("dspy_live_runtime_mode_not_active")
+        if self.artifact_hash is None:
+            reasons.append("dspy_artifact_hash_missing")
+        elif self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH:
+            reasons.append("dspy_bootstrap_artifact_forbidden")
+        if reasons:
+            return False, tuple(reasons)
+
+        try:
+            manifest = self._resolve_artifact_manifest()
+            self._validate_manifest(manifest)
+        except DSPyRuntimeUnsupportedStateError as exc:
+            return False, (str(exc),)
+        except Exception as exc:
+            return False, (f"dspy_live_readiness_error:{type(exc).__name__}",)
+
+        if manifest.executor != "dspy_live":
+            return False, ("dspy_active_mode_requires_dspy_live_executor",)
+
+        return True, ()
+
     def review(
         self, request: LLMReviewRequest
     ) -> tuple[LLMReviewResponse, DSPyRuntimeMetadata]:
@@ -144,6 +169,12 @@ class DSPyReviewRuntime:
             and self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH
         ):
             raise DSPyRuntimeUnsupportedStateError("dspy_bootstrap_artifact_forbidden")
+
+        if self.mode == "active":
+            live_ready, live_reasons = self.evaluate_live_readiness()
+            if not live_ready:
+                reason = live_reasons[0] if live_reasons else "dspy_live_runtime_not_ready"
+                raise DSPyRuntimeUnsupportedStateError(reason)
 
         manifest = self._resolve_artifact_manifest()
         self._validate_manifest(manifest)

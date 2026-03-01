@@ -121,6 +121,10 @@ class LLMClient:
             try:
                 return self._request_review_via_jangar(messages, temperature=temperature, max_tokens=max_tokens)
             except Exception as primary_exc:
+                if settings.trading_mode == "live":
+                    raise RuntimeError(
+                        "jangar completion request failed before fallback in live mode"
+                    ) from primary_exc
                 try:
                     return self._request_review_via_self_hosted(messages, temperature=temperature, max_tokens=max_tokens)
                 except Exception as fallback_exc:

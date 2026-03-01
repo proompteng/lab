@@ -37,7 +37,10 @@ from .feature_quality import FeatureQualityThresholds, evaluate_feature_batch_qu
 from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor, SignalBatch
 from .llm import LLMReviewEngine, apply_policy
-from .llm.dspy_programs.runtime import DSPyRuntimeUnsupportedStateError
+from .llm.dspy_programs.runtime import (
+    DSPyReviewRuntime,
+    DSPyRuntimeUnsupportedStateError,
+)
 from .llm.guardrails import evaluate_llm_guardrails
 from .lean_lanes import LeanLaneManager
 from .market_context import (
@@ -2800,6 +2803,7 @@ class TradingPipeline:
             guardrail_reasons=guardrails.reasons,
         )
         self._record_llm_policy_resolution_metrics(policy_resolution)
+        engine = self.llm_review_engine or LLMReviewEngine()
 
         if settings.llm_dspy_runtime_mode == "active":
             dspy_gate_allowed, dspy_gate_reasons = (
@@ -2821,6 +2825,32 @@ class TradingPipeline:
                         + tuple(dspy_gate_reasons),
                     ),
                 )
+            dspy_runtime = getattr(engine, "dspy_runtime", None)
+            if isinstance(dspy_runtime, DSPyReviewRuntime):
+                dspy_live_ready, dspy_live_readiness_reasons = (
+                    dspy_runtime.evaluate_live_readiness()
+                )
+            else:
+                dspy_live_ready, dspy_live_readiness_reasons = (
+                    DSPyReviewRuntime.from_settings().evaluate_live_readiness()
+                )
+
+            if not dspy_live_ready:
+                return self._handle_llm_dspy_live_runtime_block(
+                    session=session,
+                    decision=decision,
+                    decision_row=decision_row,
+                    account=account,
+                    positions=positions,
+                    reason="llm_dspy_live_runtime_gate_blocked",
+                    risk_flags=list(dspy_live_readiness_reasons),
+                    policy_resolution=_build_llm_policy_resolution(
+                        rollout_stage=guardrails.rollout_stage,
+                        effective_fail_mode="veto",
+                        guardrail_reasons=tuple(guardrails.reasons)
+                        + tuple(dspy_live_readiness_reasons),
+                    ),
+                )
 
         guardrail_block = self._handle_llm_guardrail_block(
             session=session,
@@ -2834,7 +2864,6 @@ class TradingPipeline:
         if guardrail_block is not None:
             return guardrail_block
 
-        engine = self.llm_review_engine or LLMReviewEngine()
         circuit_open = self._handle_llm_circuit_open(
             session=session,
             decision=decision,
