@@ -59,6 +59,7 @@ from .regime_hmm import (
     resolve_hmm_context,
     resolve_legacy_regime_label,
     resolve_regime_route_label,
+    HMM_UNKNOWN_REGIME_ID,
 )
 from .autonomy import (
     DriftThresholds,
@@ -85,6 +86,7 @@ _RECOVERABLE_EMERGENCY_STOP_PREFIXES: tuple[str, ...] = (
 _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
 _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
 _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
+_RUNTIME_UNCERTAINTY_GATE_MAX_STALENESS_SECONDS = 15 * 60
 RuntimeUncertaintyGateAction = Literal["pass", "degrade", "abstain", "fail"]
 
 
@@ -95,6 +97,31 @@ class RuntimeUncertaintyGate:
     coverage_error: Decimal | None = None
     shift_score: Decimal | None = None
     conformal_interval_width: Decimal | None = None
+    regime_action_source: str | None = None
+    regime_label: str | None = None
+    regime_stale: bool | None = None
+    reason: str | None = None
+
+    def to_payload(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "action": self.action,
+            "source": self.source,
+        }
+        if self.coverage_error is not None:
+            payload["coverage_error"] = str(self.coverage_error)
+        if self.shift_score is not None:
+            payload["shift_score"] = str(self.shift_score)
+        if self.conformal_interval_width is not None:
+            payload["conformal_interval_width"] = str(self.conformal_interval_width)
+        if self.regime_action_source is not None:
+            payload["regime_action_source"] = self.regime_action_source
+        if self.regime_label is not None:
+            payload["regime_label"] = self.regime_label
+        if self.regime_stale is not None:
+            payload["regime_stale"] = self.regime_stale
+        if self.reason is not None:
+            payload["reason"] = self.reason
+        return payload
 
 
 def _runtime_uncertainty_gate_rank(action: RuntimeUncertaintyGateAction) -> int:
@@ -501,6 +528,12 @@ class TradingMetrics:
         default_factory=lambda: cast(dict[str, int], {})
     )
     runtime_uncertainty_gate_blocked_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    runtime_regime_gate_action_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    runtime_regime_gate_blocked_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
     recalibration_runs_total: dict[str, int] = field(
@@ -910,6 +943,17 @@ class TradingMetrics:
                 self.runtime_uncertainty_gate_blocked_total.get(action, 0) + 1
             )
 
+    def record_runtime_regime_gate(
+        self, action: RuntimeUncertaintyGateAction, *, blocked: bool
+    ) -> None:
+        self.runtime_regime_gate_action_total[action] = (
+            self.runtime_regime_gate_action_total.get(action, 0) + 1
+        )
+        if blocked:
+            self.runtime_regime_gate_blocked_total[action] = (
+                self.runtime_regime_gate_blocked_total.get(action, 0) + 1
+            )
+
 
 @dataclass
 class TradingState:
@@ -979,6 +1023,9 @@ class TradingState:
     last_runtime_uncertainty_gate_action: str | None = None
     last_runtime_uncertainty_gate_source: str | None = None
     last_runtime_uncertainty_gate_reason: str | None = None
+    last_runtime_regime_gate_action: str | None = None
+    last_runtime_regime_gate_source: str | None = None
+    last_runtime_regime_gate_reason: str | None = None
     metrics: TradingMetrics = field(default_factory=TradingMetrics)
 
 
@@ -1664,7 +1711,7 @@ class TradingPipeline:
                 decision_row=decision_row,
                 reasons=[gate_rejection],
                 log_template=(
-                    "Decision rejected by runtime uncertainty gate strategy_id=%s symbol=%s reason=%s"
+                    "Decision rejected by execution gate strategy_id=%s symbol=%s reason=%s"
                 ),
             )
             return None
@@ -1704,7 +1751,7 @@ class TradingPipeline:
                 decision_row=decision_row,
                 reasons=[gate_rejection],
                 log_template=(
-                    "Decision rejected by runtime uncertainty gate strategy_id=%s symbol=%s reason=%s"
+                    "Decision rejected by execution gate strategy_id=%s symbol=%s reason=%s"
                 ),
             )
             return None
@@ -1721,19 +1768,82 @@ class TradingPipeline:
         gate_payload: Mapping[str, Any],
         gate_rejection: str | None,
     ) -> None:
-        gate_action = str(gate_payload.get("action") or "pass").strip().lower()
-        if gate_action in {"pass", "degrade", "abstain", "fail"}:
+        uncertainty_gate_payload = gate_payload.get("uncertainty_gate")
+        uncertainty_action = "pass"
+        if isinstance(uncertainty_gate_payload, Mapping):
+            uncertainty_gate_map = cast(Mapping[str, Any], uncertainty_gate_payload)
+            uncertainty_action = str(
+                uncertainty_gate_map.get("action") or "pass"
+            ).strip().lower()
+        elif str(gate_payload.get("action") or "pass").strip().lower() in {
+            "pass",
+            "degrade",
+            "abstain",
+            "fail",
+        }:
+            uncertainty_action = str(gate_payload.get("action") or "pass").strip().lower()
+        regime_gate_payload = gate_payload.get("regime_gate")
+        regime_action = "pass"
+        if isinstance(regime_gate_payload, Mapping):
+            regime_gate_map = cast(Mapping[str, Any], regime_gate_payload)
+            regime_action = str(regime_gate_map.get("action") or "pass").strip().lower()
+        if uncertainty_action in {"pass", "degrade", "abstain", "fail"}:
             self.state.metrics.record_runtime_uncertainty_gate(
-                cast(RuntimeUncertaintyGateAction, gate_action),
+                cast(RuntimeUncertaintyGateAction, uncertainty_action),
                 blocked=gate_rejection is not None,
             )
-            self.state.last_runtime_uncertainty_gate_action = gate_action
+            self.state.last_runtime_uncertainty_gate_action = uncertainty_action
         else:
             self.state.last_runtime_uncertainty_gate_action = None
+
+        if regime_action in {"pass", "degrade", "abstain", "fail"}:
+            self.state.metrics.record_runtime_regime_gate(
+                cast(RuntimeUncertaintyGateAction, regime_action),
+                blocked=(
+                    gate_rejection is not None
+                    and regime_action in {"abstain", "fail"}
+                ),
+            )
+            self.state.last_runtime_regime_gate_action = regime_action
+        else:
+            self.state.last_runtime_regime_gate_action = None
+
         self.state.last_runtime_uncertainty_gate_source = (
             str(gate_payload.get("source") or "").strip() or None
         )
         self.state.last_runtime_uncertainty_gate_reason = gate_rejection
+        uncertainty_gate = gate_payload.get("uncertainty_gate")
+        regime_gate = gate_payload.get("regime_gate")
+        if isinstance(uncertainty_gate, Mapping):
+            uncertainty_gate_map = cast(Mapping[str, Any], uncertainty_gate)
+            self.state.last_runtime_uncertainty_gate_source = (
+                str(
+                    uncertainty_gate_map.get("source")
+                    or gate_payload.get("source")
+                    or ""
+                )
+                .strip()
+                or None
+            )
+            uncertainty_reason = str(uncertainty_gate_map.get("reason") or "").strip()
+            if uncertainty_reason:
+                self.state.last_runtime_uncertainty_gate_reason = (
+                    f"{self.state.last_runtime_uncertainty_gate_reason}|{uncertainty_reason}"
+                    if self.state.last_runtime_uncertainty_gate_reason
+                    else uncertainty_reason
+                )
+        if isinstance(regime_gate, Mapping):
+            regime_gate_map = cast(Mapping[str, Any], regime_gate)
+            self.state.last_runtime_regime_gate_source = (
+                str(regime_gate_map.get("source") or "regime").strip() or None
+            )
+            reason = str(regime_gate_map.get("reason") or "").strip()
+            self.state.last_runtime_regime_gate_reason = reason or None
+        elif self.state.last_runtime_regime_gate_action is None:
+            self.state.last_runtime_regime_gate_action = regime_action
+            self.state.last_runtime_regime_gate_source = (
+                str(gate_payload.get("source") or "").strip() or None
+            )
 
     def _persist_runtime_uncertainty_gate_payload(
         self,
@@ -2163,7 +2273,23 @@ class TradingPipeline:
             failure_taxonomy=failure_taxonomy,
         )
 
+    def _resolve_runtime_uncertainty_gate_components(
+        self, decision: StrategyDecision
+    ) -> tuple[RuntimeUncertaintyGate, RuntimeUncertaintyGate, RuntimeUncertaintyGate]:
+        uncertainty_gate = self._resolve_runtime_uncertainty_gate_from_inputs(decision)
+        regime_gate = self._resolve_runtime_regime_gate(decision)
+        combined_gate = _select_strictest_runtime_uncertainty_gate(
+            [uncertainty_gate, regime_gate]
+        )
+        return uncertainty_gate, regime_gate, combined_gate
+
     def _resolve_runtime_uncertainty_gate(
+        self, decision: StrategyDecision
+    ) -> RuntimeUncertaintyGate:
+        _, _, gate = self._resolve_runtime_uncertainty_gate_components(decision)
+        return gate
+
+    def _resolve_runtime_uncertainty_gate_from_inputs(
         self, decision: StrategyDecision
     ) -> RuntimeUncertaintyGate:
         params = decision.params
@@ -2179,30 +2305,54 @@ class TradingPipeline:
         runtime_payload = params.get("runtime_uncertainty_gate")
         if isinstance(runtime_payload, Mapping):
             runtime_map = cast(Mapping[str, Any], runtime_payload)
-            runtime_action = _coerce_runtime_uncertainty_gate_action(
-                runtime_map.get("action")
+            runtime_staleness_reason = _uncertainty_gate_staleness_reason(
+                "decision_runtime_payload", runtime_map
             )
-            if runtime_action is not None:
+            if runtime_staleness_reason is not None:
                 candidates.append(
                     RuntimeUncertaintyGate(
-                        action=runtime_action,
-                        source="decision_runtime_payload",
+                        action="abstain",
+                        source="decision_runtime_payload_stale",
+                        reason=runtime_staleness_reason,
                     )
                 )
+            else:
+                runtime_action = _coerce_runtime_uncertainty_gate_action(
+                    runtime_map.get("action")
+                )
+                if runtime_action is not None:
+                    candidates.append(
+                        RuntimeUncertaintyGate(
+                            action=runtime_action,
+                            source="decision_runtime_payload",
+                        )
+                    )
 
         forecast_audit = params.get("forecast_audit")
         if isinstance(forecast_audit, Mapping):
             audit_map = cast(Mapping[str, Any], forecast_audit)
-            audit_action = _coerce_runtime_uncertainty_gate_action(
-                audit_map.get("uncertainty_gate_action")
+            forecast_staleness_reason = _uncertainty_gate_staleness_reason(
+                "forecast_audit", audit_map
             )
-            if audit_action is not None:
+            if forecast_staleness_reason is not None:
                 candidates.append(
                     RuntimeUncertaintyGate(
-                        action=audit_action,
-                        source="forecast_audit",
+                        action="abstain",
+                        source="forecast_audit_stale",
+                        reason=forecast_staleness_reason,
                     )
                 )
+            else:
+                audit_action = _coerce_runtime_uncertainty_gate_action(
+                    audit_map.get("uncertainty_gate_action")
+                )
+                if audit_action is not None:
+                    candidates.append(
+                        RuntimeUncertaintyGate(
+                            action=audit_action,
+                            source="forecast_audit",
+                        )
+                    )
 
         gate_path_raw = self.state.last_autonomy_gates
         if gate_path_raw:
@@ -2218,11 +2368,24 @@ class TradingPipeline:
                     RuntimeUncertaintyGate(
                         action="abstain",
                         source="autonomy_gate_report_read_error",
+                        reason="autonomy_gate_report_read_error",
                     )
                 )
             else:
                 if isinstance(payload, Mapping):
                     gate_map = cast(Mapping[str, Any], payload)
+                    staleness_reason = _uncertainty_gate_staleness_reason(
+                        "autonomy_gate_report", gate_map
+                    )
+                    if staleness_reason is not None:
+                        candidates.append(
+                            RuntimeUncertaintyGate(
+                                action="abstain",
+                                source="autonomy_gate_report_stale",
+                                reason=staleness_reason,
+                            )
+                        )
+                        return _select_strictest_runtime_uncertainty_gate(candidates)
                     gate_action = _coerce_runtime_uncertainty_gate_action(
                         gate_map.get("uncertainty_gate_action")
                     )
@@ -2247,6 +2410,7 @@ class TradingPipeline:
                             RuntimeUncertaintyGate(
                                 action="abstain",
                                 source="autonomy_gate_report_missing_action",
+                                reason="autonomy_gate_report_missing_action",
                             )
                         )
                 else:
@@ -2254,11 +2418,151 @@ class TradingPipeline:
                         RuntimeUncertaintyGate(
                             action="abstain",
                             source="autonomy_gate_report_invalid_payload",
+                            reason="autonomy_gate_report_invalid_payload",
                         )
                     )
         if not candidates:
-            return RuntimeUncertaintyGate(action="pass", source="default_pass")
+            candidates.append(
+                RuntimeUncertaintyGate(action="degrade", source="uncertainty_input_missing")
+            )
         return _select_strictest_runtime_uncertainty_gate(candidates)
+
+    def _resolve_runtime_regime_gate(self, decision: StrategyDecision) -> RuntimeUncertaintyGate:
+        params = decision.params
+
+        regime_gate = params.get("regime_gate")
+        if regime_gate is not None:
+            if isinstance(regime_gate, Mapping):
+                gate_map = cast(Mapping[str, Any], regime_gate)
+                gate_action = _coerce_runtime_uncertainty_gate_action(
+                    gate_map.get("action")
+                )
+                if gate_action is not None:
+                    return RuntimeUncertaintyGate(
+                        action=gate_action,
+                        source="decision_regime_gate",
+                        regime_action_source="decision_regime_gate",
+                        regime_label=(
+                            str(gate_map.get("regime_label")).strip()
+                            if gate_map.get("regime_label") is not None
+                            else None
+                        ),
+                        regime_stale=_coerce_bool(gate_map.get("regime_stale")),
+                        reason=(
+                            str(gate_map.get("reason")).strip()
+                            if gate_map.get("reason") is not None
+                            else None
+                        ),
+                    )
+                return RuntimeUncertaintyGate(
+                    action="abstain",
+                    source="decision_regime_gate_invalid_action",
+                    regime_action_source="decision_regime_gate",
+                    reason="decision_regime_gate_invalid_action",
+                )
+            return RuntimeUncertaintyGate(
+                action="abstain",
+                source="decision_regime_gate_unparseable",
+                regime_action_source="decision_regime_gate",
+                reason="decision_regime_gate_unparseable",
+            )
+
+        raw_regime_hmm = params.get("regime_hmm")
+        if raw_regime_hmm is None:
+            regime_label, regime_source, regime_fallback = (
+                _resolve_decision_regime_label_with_source(decision)
+            )
+            if regime_label:
+                return RuntimeUncertaintyGate(
+                    action="pass",
+                    source=regime_source or "decision_params",
+                    regime_action_source=regime_source or "decision_params",
+                    regime_label=regime_label,
+                    reason=regime_fallback,
+                )
+            return RuntimeUncertaintyGate(
+                action="degrade",
+                source=regime_fallback or "regime_input_missing",
+                regime_action_source=regime_fallback or "regime_input_missing",
+                reason=regime_fallback or "regime_input_missing",
+            )
+
+        if not isinstance(raw_regime_hmm, Mapping):
+            return RuntimeUncertaintyGate(
+                action="abstain",
+                source="regime_hmm_unparseable",
+                regime_action_source="regime_hmm_unparseable",
+                reason="regime_hmm_unparseable_payload",
+            )
+
+        try:
+            regime_context = resolve_hmm_context(cast(Mapping[str, Any], raw_regime_hmm))
+        except Exception as exc:
+            logger.warning(
+                "Failed to parse decision regime_hmm payload source=%s error=%s",
+                params.get("strategy_id") or "strategy",
+                exc,
+            )
+            return RuntimeUncertaintyGate(
+                action="abstain",
+                source="regime_hmm_parse_error",
+                regime_action_source="regime_hmm_parse_error",
+                reason="regime_hmm_parse_error",
+            )
+
+        regime_label, _, regime_fallback = _resolve_decision_regime_label_with_source(
+            decision
+        )
+        if regime_label is None and regime_context.regime_id != HMM_UNKNOWN_REGIME_ID:
+            regime_label = regime_context.regime_id
+        regime_stale = bool(
+            regime_context.guardrail.stale or regime_context.guardrail.fallback_to_defensive
+        )
+        if regime_context.transition_shock:
+            return RuntimeUncertaintyGate(
+                action="abstain",
+                source="regime_hmm_transition_shock",
+                regime_action_source="regime_hmm",
+                regime_label=regime_label,
+                regime_stale=regime_stale,
+                reason="regime_context_transition_shock",
+            )
+        if regime_stale:
+            return RuntimeUncertaintyGate(
+                action="abstain",
+                source="regime_hmm_stale",
+                regime_action_source="regime_hmm",
+                regime_label=regime_label,
+                regime_stale=True,
+                reason=(
+                    regime_context.guardrail_reason
+                    or "regime_context_guardrail_stale"
+                ),
+            )
+        if regime_context.regime_id == HMM_UNKNOWN_REGIME_ID and regime_label is None:
+            return RuntimeUncertaintyGate(
+                action="degrade",
+                source="regime_hmm_unknown_regime",
+                regime_action_source="regime_hmm",
+                regime_stale=regime_stale,
+                reason="regime_label_missing",
+            )
+        if regime_context.regime_id == HMM_UNKNOWN_REGIME_ID and regime_fallback == "missing":
+            return RuntimeUncertaintyGate(
+                action="degrade",
+                source="regime_hmm_unknown_label",
+                regime_action_source="regime_hmm",
+                regime_label=regime_label,
+                regime_stale=regime_stale,
+                reason="regime_label_missing",
+            )
+        return RuntimeUncertaintyGate(
+            action="pass",
+            source="regime_hmm",
+            regime_action_source="regime_hmm",
+            regime_label=regime_label or regime_context.regime_id,
+            regime_stale=regime_stale,
+        )
 
     def _apply_runtime_uncertainty_gate(
         self,
@@ -2266,11 +2570,15 @@ class TradingPipeline:
         *,
         positions: list[dict[str, Any]],
     ) -> tuple[StrategyDecision, dict[str, Any], str | None]:
-        gate = self._resolve_runtime_uncertainty_gate(decision)
+        uncertainty_gate, regime_gate, gate = (
+            self._resolve_runtime_uncertainty_gate_components(decision)
+        )
         risk_increasing_entry = _is_runtime_risk_increasing_entry(decision, positions)
         payload: dict[str, Any] = {
             "action": gate.action,
             "source": gate.source,
+            "uncertainty_gate": uncertainty_gate.to_payload(),
+            "regime_gate": regime_gate.to_payload(),
             "risk_increasing_entry": risk_increasing_entry,
             "entry_blocked": False,
             "block_reason": None,
@@ -2278,20 +2586,23 @@ class TradingPipeline:
             "max_participation_rate_override": None,
             "min_execution_seconds": None,
             "coverage_error": (
-                str(gate.coverage_error) if gate.coverage_error is not None else None
+                str(uncertainty_gate.coverage_error)
+                if uncertainty_gate.coverage_error is not None
+                else None
             ),
             "shift_score": (
-                str(gate.shift_score) if gate.shift_score is not None else None
+                str(uncertainty_gate.shift_score)
+                if uncertainty_gate.shift_score is not None
+                else None
             ),
             "conformal_interval_width": (
-                str(gate.conformal_interval_width)
-                if gate.conformal_interval_width is not None
+                str(uncertainty_gate.conformal_interval_width)
+                if uncertainty_gate.conformal_interval_width is not None
                 else None
             ),
         }
         if gate.action == "pass":
             return decision, payload, None
-
         if gate.action in {"abstain", "fail"}:
             if risk_increasing_entry:
                 reason = (
@@ -2301,6 +2612,16 @@ class TradingPipeline:
                 )
                 payload["entry_blocked"] = True
                 payload["block_reason"] = reason
+                payload["regime_action_blocked"] = (
+                    regime_gate.source
+                    if regime_gate.action in {"abstain", "fail"}
+                    else None
+                )
+                payload["uncertainty_action_blocked"] = (
+                    uncertainty_gate.source
+                    if uncertainty_gate.action in {"abstain", "fail"}
+                    else None
+                )
                 return decision, payload, reason
             return decision, payload, None
 
@@ -3408,6 +3729,20 @@ def _optional_int(value: Any) -> Optional[int]:
         return None
 
 
+def _coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "t", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "f", "0", "no", "off"}:
+            return False
+    return None
+
+
 def _coerce_runtime_uncertainty_gate_action(
     value: Any,
 ) -> RuntimeUncertaintyGateAction | None:
@@ -3416,6 +3751,42 @@ def _coerce_runtime_uncertainty_gate_action(
     normalized = value.strip().lower()
     if normalized in {"pass", "degrade", "abstain", "fail"}:
         return cast(RuntimeUncertaintyGateAction, normalized)
+    return None
+
+
+def _coerce_gateway_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if not isinstance(value, str):
+        return None
+    raw_value = value.strip()
+    if not raw_value:
+        return None
+    normalized = raw_value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _uncertainty_gate_staleness_reason(
+    source: str,
+    payload: Mapping[str, Any],
+) -> str | None:
+    if "generated_at" not in payload:
+        return None
+    timestamp = _coerce_gateway_timestamp(payload.get("generated_at"))
+    if timestamp is None:
+        return f"{source}_generated_at_unparseable"
+    age_seconds = int((datetime.now(timezone.utc) - timestamp).total_seconds())
+    if age_seconds > _RUNTIME_UNCERTAINTY_GATE_MAX_STALENESS_SECONDS:
+        return f"{source}_generated_at_stale"
     return None
 
 

@@ -159,6 +159,63 @@ Add to autonomy gate payload:
 - set `UNCERTAINTY_GATE_MODE=observe` to stop blocking promotions while keeping telemetry.
 - set `UNCERTAINTY_GATE_ENABLED=false` only as emergency fallback with explicit incident record.
 
+## Material Completion Evidence (2026-03-01)
+
+- Runtime uncertainty + regime enforcement is implemented in
+  `services/torghut/app/trading/scheduler.py` with deterministic strictest-action resolution:
+  - uncertainty input resolves pass/degrade/abstain/fail with fail-closed defaults for
+    missing/unparseable/invalid payloads and stale `generated_at` payloads with deterministic abstain mapping;
+  - regime input resolves pass/degrade/abstain/fail with explicit sources and reason fields
+    (`decision_regime_gate`, `regime_hmm_transition_shock`, `regime_hmm_stale`,
+    `regime_hmm_unknown_regime`, parse/format failures);
+  - combined gate action is deterministic and replayable from ranked action mapping.
+- Structured runtime gate evidence is persisted on each decision via
+  `decision.params.runtime_uncertainty_gate` with fields:
+  `action`, `source`, `uncertainty_gate`, `regime_gate`, `risk_increasing_entry`,
+  `entry_blocked`, `block_reason`, `degrade_qty_multiplier`, and
+  `max_participation_rate_override`.
+- Runtime gate signals are exported in `services/torghut/app/metrics.py` as:
+  `runtime_uncertainty_gate_*` and `runtime_regime_gate_*`.
+- Regression coverage includes:
+  - `services/torghut/tests/test_trading_pipeline.py`:
+    `test_pipeline_runtime_regime_gate_transition_shock_blocks_risk_increasing_entry`,
+    `test_pipeline_runtime_regime_gate_invalid_regime_gate_action_fails_closed`,
+    `test_pipeline_runtime_regime_gate_unparseable_payload_fails_closed`,
+    `test_pipeline_runtime_uncertainty_gate_report_parse_error_fails_closed`,
+    `test_pipeline_runtime_uncertainty_gate_stale_decision_payload_abstains`,
+    `test_pipeline_runtime_uncertainty_gate_report_stale_in_autonomy_path_abstains`,
+    `test_pipeline_runtime_uncertainty_gate_defaults_degrade_when_inputs_missing`;
+  - `services/torghut/tests/test_metrics.py`:
+    assertions for both runtime uncertainty and runtime regime counter/export behavior.
+
+## Runbook: verification and operator debug
+
+- To verify gate behavior during rollout:
+  - confirm recent decisions contain `runtime_uncertainty_gate.action` and nested
+    `runtime_uncertainty_gate.regime_gate.action` values,
+  - confirm `risk_increasing_entry` + `entry_blocked` align with risk policy for buys/sells.
+- To debug block reasons:
+  - inspect persisted `runtime_uncertainty_gate` payloads for `source`, `block_reason`,
+    and `reason` fields,
+  - expected fail-closed reasons include:
+    `autonomy_gate_report_read_error`, `autonomy_gate_report_missing_action`,
+    `autonomy_gate_report_invalid_payload`, `autonomy_gate_report_stale`,
+    `autonomy_gate_report_generated_at_stale`, `autonomy_gate_report_generated_at_unparseable`,
+    `decision_runtime_payload_stale`, `decision_runtime_payload_generated_at_stale`,
+    `decision_runtime_payload_generated_at_unparseable`,
+    `forecast_audit_stale`, `forecast_audit_generated_at_stale`,
+    `forecast_audit_generated_at_unparseable`,
+    `regime_hmm_parse_error`,
+    `regime_hmm_unparseable_payload`, `regime_hmm_stale`,
+    `regime_context_transition_shock`, `regime_label_missing`.
+- Confirm gating and containment metrics are stable before enabling larger risk budgets:
+  - `torghut_trading_runtime_uncertainty_gate_action_total`,
+  - `torghut_trading_runtime_uncertainty_gate_blocked_total`,
+  - `torghut_trading_runtime_regime_gate_action_total`,
+  - `torghut_trading_runtime_regime_gate_blocked_total`.
+- Keep existing kill-switch precedence unchanged; kill-switch blocks decisions before or after
+  any gate decision in emergency flow depending on runtime state.
+
 ## AgentRun Handoff Bundle
 
 - `ImplementationSpec`: `torghut-v5-conformal-uncertainty-gates-v1`

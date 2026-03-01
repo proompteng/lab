@@ -213,6 +213,20 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "action",
         "int",
     ),
+    "runtime_regime_gate_action_total": (
+        "torghut_trading_runtime_regime_gate_action_total",
+        "Count of runtime regime gate actions by action.",
+        "counter",
+        "action",
+        "int",
+    ),
+    "runtime_regime_gate_blocked_total": (
+        "torghut_trading_runtime_regime_gate_blocked_total",
+        "Count of runtime regime gate entry blocks by action.",
+        "counter",
+        "action",
+        "int",
+    ),
     "llm_committee_latency_ms": (
         "torghut_trading_llm_committee_latency_ms",
         "Last observed LLM committee role latency in milliseconds.",
