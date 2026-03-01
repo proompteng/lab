@@ -147,6 +147,7 @@ class _SchedulerDependencies:
         self.actuation_intent_path: Path | None = None
         self.phase_manifest_path: Path | None = None
         self.actuation_payload: dict[str, Any] | None = None
+        self.phase_manifest_path: Path | None = None
 
 
 class _OrderFirewallStub:
@@ -475,6 +476,10 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertEqual(
                 scheduler.state.last_autonomy_actuation_intent,
                 str(deps.actuation_intent_path),
+            )
+            self.assertEqual(
+                scheduler.state.last_autonomy_phase_manifest,
+                str(deps.phase_manifest_path),
             )
             self.assertIn("drift_promotion_evidence", deps.call_kwargs)
 
@@ -979,7 +984,22 @@ class TestTradingSchedulerAutonomy(TestCase):
                 ),
                 encoding="utf-8",
             )
+            actuation_intent_path = Path(tmpdir) / "actuation-intent.json"
+            actuation_intent_path.write_text("{}", encoding="utf-8")
+            phase_manifest_path = Path(tmpdir) / "phase-manifest.json"
+            phase_manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.autonomy.phase-manifest.v1",
+                        "manifest_hash": "phase-hash",
+                        "phase_lineage": {"stage_ids": ["stage-1", "stage-2"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
             scheduler.state.last_autonomy_gates = str(gate_path)
+            scheduler.state.last_autonomy_actuation_intent = str(actuation_intent_path)
+            scheduler.state.last_autonomy_phase_manifest = str(phase_manifest_path)
             scheduler.state.metrics.no_signal_reason_streak = {
                 "cursor_ahead_of_stream": 3
             }
@@ -1001,6 +1021,14 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertEqual(
                 payload["provenance"]["recommendation_trace_id"], "rec-trace-1"
+            )
+            self.assertEqual(
+                set(payload["rollback_artifacts"]),
+                {
+                    str(gate_path),
+                    str(actuation_intent_path),
+                    str(phase_manifest_path),
+                },
             )
             self.assertTrue(payload["rollback_hooks"]["order_submission_blocked"])
             self.assertTrue(payload["verification"]["incident_evidence_complete"])
@@ -1441,6 +1469,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 output_dir=output_dir,
                 gate_report_path=gate_report_path,
                 actuation_intent_path=actuation_intent_path,
+                phase_manifest_path=phase_manifest_path,
                 paper_patch_path=None,
                 phase_manifest_path=phase_manifest_path,
             )

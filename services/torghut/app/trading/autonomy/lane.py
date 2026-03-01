@@ -97,6 +97,11 @@ _PROFITABILITY_STAGE_MANIFEST_PATH = "profitability/profitability-stage-manifest
 _STAGE_CANDIDATE_GENERATION = "candidate-generation"
 _STAGE_EVALUATION = "evaluation"
 _STAGE_RECOMMENDATION = "promotion-recommendation"
+_AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION = "torghut.autonomy.phase-manifest.v1"
+_AUTONOMY_PHASE_MANIFEST_PATH = "phase-manifest.json"
+_AUTONOMY_NOTES_DIR = "notes"
+_AUTONOMY_NOTE_PREFIX_PATTERN = re.compile(r"^iteration-(\d+)\.md$")
+_AUTONOMY_NOTES_PREFIX = "iteration-"
 _STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
 _STAGE_PROFITABILITY = "profitability_stage_manifest"
@@ -1989,9 +1994,13 @@ def run_autonomous_lane(
             promotion_gate_path=promotion_gate_path,
             promotion_recommendation=promotion_recommendation,
             recommendations=promotion_reasons,
+            phase_manifest_path=phase_manifest_path,
             governance_repository=cast(str, resolved_governance_repository),
             governance_base=cast(str, resolved_governance_base),
-            governance_head=cast(str, resolved_governance_head),
+            governance_head=cast(
+                str,
+                resolved_governance_head,
+            ),
             governance_artifact_path=(
                 notes_artifact_root if notes_artifact_root else str(output_dir)
             ),
@@ -2700,6 +2709,7 @@ def _build_actuation_intent_payload(
     promotion_gate_path: Path,
     promotion_recommendation: PromotionRecommendation,
     recommendations: list[str],
+    phase_manifest_path: Path,
     governance_repository: str,
     governance_base: str,
     governance_head: str,
@@ -2741,6 +2751,8 @@ def _build_actuation_intent_payload(
     )
     if paper_patch_path is not None:
         rollback_evidence_links.append(str(paper_patch_path))
+    if phase_manifest_path.exists():
+        rollback_evidence_links.append(str(phase_manifest_path))
     rollback_evidence_links.extend(
         [str(item) for item in promotion_check.get("artifact_refs", [])]
     )
@@ -2812,6 +2824,8 @@ def _build_actuation_intent_payload(
             "rollback_evidence_missing_checks": rollback_missing_checks,
         },
     }
+
+
 
 
 def _collect_walk_decisions_for_runtime(
