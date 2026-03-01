@@ -659,7 +659,10 @@ class TestLLMDSPyWorkflow(TestCase):
             self.assertNotIn("schemaValidRate", promote_parameters)
             self.assertNotIn("deterministicCompatibility", promote_parameters)
             self.assertNotIn("fallbackRate", promote_parameters)
-            self.assertNotIn("evalReportRef", promote_parameters)
+            self.assertEqual(
+                promote_parameters["evalReportRef"],
+                f"{artifact_root}/eval/dspy-eval-report.json",
+            )
 
             with Session(self.engine) as session:
                 promote_row = session.execute(
