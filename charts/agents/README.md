@@ -145,7 +145,7 @@ rolloutChecksums:
   secrets:
     - name: agents-github-token-env
       namespace: agents # optional when same as release namespace
-      checksum: "d34db33f..." # checksum from external secret source of truth
+      checksum: "d34db33f..." # 64-char sha256 hex from external source of truth
   configMaps:
     - name: agents-runtime-config
       namespace: agents # optional when same as release namespace
@@ -165,7 +165,7 @@ Example (external Secret payload hash):
 
 ```bash
 kubectl -n agents get secret agents-github-token-env -o json |
-  jq -cS '.data' |
+  jq -cS '{data: .data, binaryData: .binaryData}' |
   sha256sum
 ```
 
@@ -173,15 +173,23 @@ Example (external ConfigMap payload hash):
 
 ```bash
 kubectl -n agents get configmap agents-runtime-config -o json |
-  jq -cS '.data' |
+  jq -cS '{data: .data, binaryData: .binaryData}' |
   sha256sum
 ```
+
+Source-payload hashing guidance:
+
+- Include keys in a stable JSON order (`jq -cS`) and include both `data` and `binaryData`
+  so the checksum reflects everything that can affect runtime behavior.
+- For key-by-key checksums, include only the same keys the pod reads; avoid hashing unrelated metadata.
+- In GitOps/ExternalSecrets flows, calculate the hash from the source-of-truth manifest committed in your secrets repo.
 
 Limitations:
 
 - For external secret/configmap managers (ESO/ExternalSecrets, external controllers, etc.), Helm cannot safely read live object payloads during template rendering, so checksum updates must be supplied explicitly.
 - Include every secret/configmap that affects container runtime behavior; unmanaged edits to referenced values without matching checksums will not trigger rollout.
-- Empty or non-sha256 checksum values are rejected by values schema/validation.
+- Empty or invalid checksum values are rejected by values schema/validation.
+- Duplicate `namespace/name` entries in the same object type (`secrets` or `configMaps`) are rejected.
 
 ### Controller scope
 

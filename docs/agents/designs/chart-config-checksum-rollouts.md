@@ -45,7 +45,9 @@ Each checksum entry is an object:
 For chart-owned inputs (`database.createSecret.enabled=true`), checksum values are computed from
 `.Values.database.url` and merged automatically.
 
-All manually provided checksums must be SHA-256 hex values (64 characters).
+All manually provided checksums must be SHA-256 hex values (64 characters). `namespace`
+and `name` values must match Kubernetes DNS-1123 syntax, and `namespace/name` pairs are
+deduplicated within each list.
 
 When enabled, annotate pod templates with:
 
@@ -73,6 +75,12 @@ When enabled, annotate pod templates with:
 
 The explicit checksum list is therefore your contract boundary for restart behavior.
 
+For GitOps-managed objects (ESO/External Secrets, sealed-secrets, or similar), this means:
+
+- the manifest generator is the source of truth, not Helm rendering;
+- the checksum values must be computed from the external source payload and copied into Helm values;
+- omitted resources will not trigger rollouts when changed.
+
 ### Operator usage
 
 1. Enable rollout checksums:
@@ -91,12 +99,17 @@ rolloutChecksums:
   enabled: true
   secrets:
     - name: agents-github-token-env
-      checksum: 9f2c...
+      checksum: 9f2c... # sha256 of the external payload, 64 hex chars
       namespace: agents
   configMaps:
     - name: agents-runtime-config
-      checksum: 4a1b...
+      checksum: 4a1b... # sha256 of the external payload, 64 hex chars
+      namespace: agents
 ```
+
+For reliable hashes, include the payload bytes that the workload consumes (for example, both
+`data` and `binaryData` for Secrets/ConfigMaps), and sort keys before hashing (`jq -cS`) so
+identical logical values produce stable hashes.
 
 ## Config Mapping
 
@@ -132,13 +145,28 @@ Example checksum capture from a live ConfigMap/Secret payload:
 
 ```bash
 kubectl -n agents get configmap agents-runtime-config -o json |
-  jq -cS '.data' |
+  jq -cS '{data: .data, binaryData: .binaryData}' |
   sha256sum
 
 kubectl -n agents get secret agents-github-token-env -o json |
-  jq -cS '.data' |
+  jq -cS '{data: .data, binaryData: .binaryData}' |
   sha256sum
 ```
+
+If you only consume specific keys, use a stable projection that mirrors runtime usage:
+
+```bash
+kubectl -n agents get configmap agents-runtime-config -o json |
+  jq -cS '{data: {WORKLOAD_TIMEOUT: .data.WORKLOAD_TIMEOUT}}' |
+  sha256sum
+```
+
+### External manager limitations
+
+- The chart validates input shape and checksum format but does not inspect live cluster objects at render time.
+- Every externally managed Secret/ConfigMap affecting container behavior must be included in this list.
+- Changing any listed value without updating the corresponding checksum entry will keep the existing pod template
+  unchanged after GitOps reconcile.
 
 ## Failure Modes and Mitigations
 
