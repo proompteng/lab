@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 import json
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import TestCase
 
@@ -850,6 +851,181 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(promotion.allowed)
         self.assertIn("fold_metrics_evidence_insufficient", promotion.reasons)
 
+    def test_promotion_prerequisites_fail_when_stress_artifact_reference_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "profitability-evidence-v4.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "profitability-benchmark-v4.json").write_text(
+                "{}", encoding="utf-8",
+            )
+            (root / "gates" / "profitability-evidence-validation.json").write_text(
+                json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "recalibration-report.json").write_text(
+                json.dumps({"status": "not_required"}),
+                encoding="utf-8",
+            )
+            _write_janus_artifacts(root)
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            gate_report = _gate_report()
+            evidence = gate_report.get("promotion_evidence", {})
+            if isinstance(evidence, dict):
+                stress_metrics = evidence.get("stress_metrics")
+                if isinstance(stress_metrics, dict):
+                    stress_metrics["artifact_ref"] = "gates/missing-stress-evidence.json"
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_stress_evidence": True,
+                    "promotion_require_patch_targets": [],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_stress_max_age_hours": 1,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("stress_metrics_evidence_artifact_missing", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_stress_artifact_reference_untrusted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "profitability-evidence-v4.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "profitability-benchmark-v4.json").write_text(
+                "{}", encoding="utf-8",
+            )
+            (root / "gates" / "profitability-evidence-validation.json").write_text(
+                json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "recalibration-report.json").write_text(
+                json.dumps({"status": "not_required"}),
+                encoding="utf-8",
+            )
+            _write_janus_artifacts(root)
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            gate_report = _gate_report()
+            evidence = gate_report.get("promotion_evidence", {})
+            if isinstance(evidence, dict):
+                stress_metrics = evidence.get("stress_metrics")
+                if isinstance(stress_metrics, dict):
+                    stress_metrics["artifact_ref"] = "s3://bucket/stress-metrics.json"
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_stress_evidence": True,
+                    "promotion_require_patch_targets": [],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("stress_metrics_evidence_ref_not_trusted", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_stress_evidence_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "profitability-evidence-v4.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "profitability-benchmark-v4.json").write_text(
+                "{}", encoding="utf-8",
+            )
+            (root / "gates" / "profitability-evidence-validation.json").write_text(
+                json.dumps({"passed": True, "reasons": []}),
+                encoding="utf-8",
+            )
+            (root / "gates" / "recalibration-report.json").write_text(
+                json.dumps({"status": "not_required"}),
+                encoding="utf-8",
+            )
+            _write_janus_artifacts(root)
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            gate_report = _gate_report()
+            stress_path = root / "backtest" / "stale-evaluation-report.json"
+            stress_path.write_text("{}", encoding="utf-8")
+            evidence = gate_report.get("promotion_evidence", {})
+            if isinstance(evidence, dict):
+                stress_metrics = evidence.get("stress_metrics")
+                if isinstance(stress_metrics, dict):
+                    stress_metrics["artifact_ref"] = "backtest/stale-evaluation-report.json"
+            stale_now = datetime(2026, 2, 25, 12, 0, 0, tzinfo=timezone.utc)
+            stale_epoch = (
+                stale_now - timedelta(hours=5)
+            ).timestamp()
+            os.utime(stress_path, (stale_epoch, stale_epoch))
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_stress_evidence": True,
+                    "promotion_require_patch_targets": [],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_stress_max_age_hours": 1,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+                now=stale_now,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("stress_metrics_evidence_stale", promotion.reasons)
+
     def test_promotion_prerequisites_fail_when_rationale_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1144,7 +1320,7 @@ def _gate_report() -> dict[str, object]:
             "fold_metrics": {
                 "count": 1,
                 "items": [{"fold_name": "fold-1"}],
-                "artifact_ref": "backtest/evaluation-report.json",
+                "artifact_ref": "gates/stress-metrics-v1.json",
             },
             "stress_metrics": {
                 "count": 4,

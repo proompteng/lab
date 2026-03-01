@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
+import os
 import math
 from pathlib import Path
 from typing import Any, cast
@@ -62,6 +63,8 @@ def evaluate_promotion_prerequisites(
     evaluation_at = now or datetime.now(timezone.utc)
     reasons: list[str] = []
     reason_details: list[dict[str, object]] = []
+    if now is None:
+        now = datetime.now(timezone.utc)
     profitability_required = _requires_profitability_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
@@ -143,7 +146,7 @@ def evaluate_promotion_prerequisites(
         gate_report_payload=gate_report_payload,
         promotion_target=promotion_target,
         artifact_root=artifact_root,
-        now=evaluation_at,
+        now=now,
     )
     if evidence_reasons:
         reasons.extend(evidence_reasons)
@@ -787,7 +790,7 @@ def _evaluate_promotion_evidence(
     gate_report_payload: dict[str, Any],
     promotion_target: str,
     artifact_root: Path,
-    now: datetime,
+    now: datetime | None = None,
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
     reasons: list[str] = []
     details: list[dict[str, object]] = []
@@ -802,6 +805,8 @@ def _evaluate_promotion_evidence(
     fold_reasons, fold_details, fold_refs = _evaluate_fold_metrics_evidence(
         policy_payload=policy_payload,
         evidence=evidence,
+        artifact_root=artifact_root,
+        now=now,
     )
     reasons.extend(fold_reasons)
     details.extend(fold_details)
@@ -822,6 +827,8 @@ def _evaluate_promotion_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
         evidence=evidence,
+        artifact_root=artifact_root,
+        now=now,
     )
     reasons.extend(janus_reasons)
     details.extend(janus_details)
@@ -844,6 +851,8 @@ def _evaluate_janus_evidence(
     policy_payload: dict[str, Any],
     promotion_target: str,
     evidence: dict[str, Any],
+    artifact_root: Path,
+    now: datetime | None = None,
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
     if not _requires_janus_evidence(
         policy_payload=policy_payload,
@@ -864,6 +873,16 @@ def _evaluate_janus_evidence(
 
     event_raw = janus.get("event_car")
     event_car = cast(dict[str, Any], event_raw) if isinstance(event_raw, dict) else {}
+    event_ref = str(event_car.get("artifact_ref") or "").strip()
+    _append_evidence_artifact_reasons(
+        reasons=reasons,
+        reason_details=details,
+        evidence_name="janus_event_car",
+        artifact_root=artifact_root,
+        raw_ref=event_ref,
+        policy_payload=policy_payload,
+        now=now,
+    )
     event_count = _int_or_default(event_car.get("count"), 0)
     min_event_count = max(
         1, _int_or_default(policy_payload.get("promotion_min_janus_event_count"), 1)
@@ -877,13 +896,22 @@ def _evaluate_janus_evidence(
                 "minimum_event_count": min_event_count,
             }
         )
-    event_ref = str(event_car.get("artifact_ref") or "").strip()
     if event_ref:
         refs.append(event_ref)
 
     reward_raw = janus.get("hgrm_reward")
     hgrm_reward = (
         cast(dict[str, Any], reward_raw) if isinstance(reward_raw, dict) else {}
+    )
+    reward_ref = str(hgrm_reward.get("artifact_ref") or "").strip()
+    _append_evidence_artifact_reasons(
+        reasons=reasons,
+        reason_details=details,
+        evidence_name="janus_hgrm_reward",
+        artifact_root=artifact_root,
+        raw_ref=reward_ref,
+        policy_payload=policy_payload,
+        now=now,
     )
     reward_count = _int_or_default(hgrm_reward.get("count"), 0)
     min_reward_count = max(
@@ -898,7 +926,6 @@ def _evaluate_janus_evidence(
                 "minimum_reward_count": min_reward_count,
             }
         )
-    reward_ref = str(hgrm_reward.get("artifact_ref") or "").strip()
     if reward_ref:
         refs.append(reward_ref)
 
@@ -917,12 +944,24 @@ def _evaluate_fold_metrics_evidence(
     *,
     policy_payload: dict[str, Any],
     evidence: dict[str, Any],
+    artifact_root: Path,
+    now: datetime | None = None,
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
     reasons: list[str] = []
     details: list[dict[str, object]] = []
     refs: list[str] = []
     fold_raw = evidence.get("fold_metrics")
     fold_metrics = cast(dict[str, Any], fold_raw) if isinstance(fold_raw, dict) else {}
+    fold_ref = str(fold_metrics.get("artifact_ref") or "").strip()
+    _append_evidence_artifact_reasons(
+        reasons=reasons,
+        reason_details=details,
+        evidence_name="fold_metrics",
+        artifact_root=artifact_root,
+        raw_ref=fold_ref,
+        policy_payload=policy_payload,
+        now=now,
+    )
     fold_count = _int_or_default(fold_metrics.get("count"), 0)
     min_fold_count = max(
         1,
@@ -937,7 +976,6 @@ def _evaluate_fold_metrics_evidence(
                 "minimum_fold_count": min_fold_count,
             }
         )
-    fold_ref = str(fold_metrics.get("artifact_ref") or "").strip()
     if fold_ref:
         refs.append(fold_ref)
     return reasons, details, refs
@@ -948,21 +986,24 @@ def _evaluate_stress_metrics_evidence(
     policy_payload: dict[str, Any],
     evidence: dict[str, Any],
     artifact_root: Path,
-    now: datetime,
-    promotion_target: str,
+    now: datetime | None = None,
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
     reasons: list[str] = []
     details: list[dict[str, object]] = []
     refs: list[str] = []
-    if not _requires_stress_evidence(
-        policy_payload=policy_payload,
-        promotion_target=promotion_target,
-    ):
-        return reasons, details, refs
-
     stress_raw = evidence.get("stress_metrics")
     stress_metrics = (
         cast(dict[str, Any], stress_raw) if isinstance(stress_raw, dict) else {}
+    )
+    stress_ref = str(stress_metrics.get("artifact_ref") or "").strip()
+    _append_evidence_artifact_reasons(
+        reasons=reasons,
+        reason_details=details,
+        evidence_name="stress_metrics",
+        artifact_root=artifact_root,
+        raw_ref=stress_ref,
+        policy_payload=policy_payload,
+        now=now,
     )
     stress_count = _int_or_default(stress_metrics.get("count"), 0)
     min_stress_count = max(
@@ -1064,10 +1105,124 @@ def _evaluate_stress_metrics_evidence(
                 "minimum_stress_case_count": min_stress_count,
             }
         )
-    stress_ref = str(stress_metrics.get("artifact_ref") or "").strip()
     if stress_ref:
         refs.append(stress_ref)
     return reasons, details, refs
+
+
+def _append_evidence_artifact_reasons(
+    *,
+    reasons: list[str],
+    reason_details: list[dict[str, object]],
+    evidence_name: str,
+    artifact_root: Path,
+    raw_ref: str,
+    policy_payload: dict[str, Any],
+    now: datetime | None = None,
+) -> None:
+    artifact_ref = str(raw_ref or "").strip()
+    if not artifact_ref:
+        reasons.append(f"{evidence_name}_artifact_ref_missing")
+        reason_details.append(
+            {
+                "reason": f"{evidence_name}_artifact_ref_missing",
+                "artifact_name": evidence_name,
+            }
+        )
+        return
+
+    if artifact_ref.startswith("db:") or "://" in artifact_ref:
+        reasons.append(f"{evidence_name}_artifact_ref_untrusted")
+        reason_details.append(
+            {
+                "reason": f"{evidence_name}_artifact_ref_untrusted",
+                "artifact_name": evidence_name,
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return
+
+    candidate_path = Path(artifact_ref)
+    if not candidate_path.is_absolute():
+        candidate_path = artifact_root / candidate_path
+    try:
+        artifact_path = candidate_path.resolve()
+    except (OSError, ValueError):
+        reasons.append(f"{evidence_name}_artifact_ref_invalid")
+        reason_details.append(
+            {
+                "reason": f"{evidence_name}_artifact_ref_invalid",
+                "artifact_name": evidence_name,
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return
+
+    try:
+        artifact_root_path = artifact_root.resolve()
+    except OSError:
+        reasons.append(f"{evidence_name}_artifact_ref_invalid")
+        reason_details.append(
+            {
+                "reason": f"{evidence_name}_artifact_ref_invalid",
+                "artifact_name": evidence_name,
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return
+
+    if not artifact_path.is_relative_to(artifact_root_path):
+        reasons.append(f"{evidence_name}_artifact_ref_outside_artifact_root")
+        reason_details.append(
+            {
+                "reason": f"{evidence_name}_artifact_ref_outside_artifact_root",
+                "artifact_name": evidence_name,
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return
+
+    if not artifact_path.is_file():
+        reasons.append(f"{evidence_name}_artifact_missing")
+        reason_details.append(
+            {
+                "reason": f"{evidence_name}_artifact_missing",
+                "artifact_name": evidence_name,
+                "artifact_ref": artifact_ref,
+                "artifact_path": str(artifact_path),
+            }
+        )
+        return
+
+    if _load_json_if_exists(artifact_path) is None:
+        reasons.append(f"{evidence_name}_artifact_payload_invalid")
+        reason_details.append(
+            {
+                "reason": f"{evidence_name}_artifact_payload_invalid",
+                "artifact_name": evidence_name,
+                "artifact_path": str(artifact_path),
+            }
+        )
+        return
+
+    max_age_seconds = int(policy_payload.get("promotion_evidence_max_age_seconds", 0))
+    if max_age_seconds > 0 and now is not None:
+        artifact_mtime = datetime.fromtimestamp(
+            os.path.getmtime(artifact_path),
+            tz=timezone.utc,
+        )
+        age_seconds = (now - artifact_mtime).total_seconds()
+        if age_seconds > max_age_seconds:
+            reasons.append(f"{evidence_name}_artifact_stale")
+            reason_details.append(
+                {
+                    "reason": f"{evidence_name}_artifact_stale",
+                    "artifact_name": evidence_name,
+                    "artifact_path": str(artifact_path),
+                    "artifact_mtime": artifact_mtime.isoformat(),
+                    "max_age_seconds": max_age_seconds,
+                }
+            )
 
 
 def _evaluate_rationale_evidence(
