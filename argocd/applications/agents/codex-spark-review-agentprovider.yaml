@@ -44,8 +44,8 @@ spec:
     CODEX_LOG_LEVEL: info
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
     AGENT_PROVIDER_PATH: /root/.codex/provider-codex-spark.json
-    WORKFLOW_STAGE: "{{parameters.stage}}"
-    CODEX_STAGE: "{{parameters.stage}}"
+    WORKFLOW_STAGE: "{{inputs.stage}}"
+    CODEX_STAGE: "{{inputs.stage}}"
     CODEX_CONFIG: /root/.codex/config.toml
     HOME: /root
   inputFiles:
