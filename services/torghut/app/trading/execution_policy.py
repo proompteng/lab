@@ -27,24 +27,24 @@ from .quantity_rules import (
 from .tca import AdaptiveExecutionPolicyDecision
 
 DEFAULT_EXECUTION_SECONDS = 60
-ADAPTIVE_PARTICIPATION_RATE_FLOOR = Decimal('0.05')
+ADAPTIVE_PARTICIPATION_RATE_FLOOR = Decimal("0.05")
 ADAPTIVE_EXECUTION_SECONDS_MIN = 10
 ADAPTIVE_EXECUTION_SECONDS_MAX = 600
-MICROSTRUCTURE_PARTICIPATION_FLOOR = Decimal('0.05')
-MICROSTRUCTURE_EXECUTION_SCALE_MIN = Decimal('1.0')
-MICROSTRUCTURE_EXECUTION_SCALE_MAX = Decimal('3.0')
-MICROSTRUCTURE_SPREAD_BPS_PRESSURE = Decimal('8')
-MICROSTRUCTURE_DEPTH_USD_PRESSURE = Decimal('800000')
-MICROSTRUCTURE_HAZARD_PRESSURE = Decimal('0.8')
+MICROSTRUCTURE_PARTICIPATION_FLOOR = Decimal("0.05")
+MICROSTRUCTURE_EXECUTION_SCALE_MIN = Decimal("1.0")
+MICROSTRUCTURE_EXECUTION_SCALE_MAX = Decimal("3.0")
+MICROSTRUCTURE_SPREAD_BPS_PRESSURE = Decimal("8")
+MICROSTRUCTURE_DEPTH_USD_PRESSURE = Decimal("800000")
+MICROSTRUCTURE_HAZARD_PRESSURE = Decimal("0.8")
 MICROSTRUCTURE_LATENCY_PRESSURE_MS = 250
-MICROSTRUCTURE_STRESSED_RATE_SCALE = Decimal('0.40')
-MICROSTRUCTURE_COMPRESSED_RATE_SCALE = Decimal('0.65')
-MICROSTRUCTURE_HIGH_SPREAD_RATE_SCALE = Decimal('0.70')
-MICROSTRUCTURE_HAZARD_RATE_SCALE = Decimal('0.75')
-MICROSTRUCTURE_LOW_DEPTH_RATE_SCALE = Decimal('0.75')
-MICROSTRUCTURE_STRESS_EXECUTION_SCALE = Decimal('1.40')
-MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE = Decimal('1.10')
-MICROSTRUCTURE_EXECUTION_SCALE_EPSILON = Decimal('0.01')
+MICROSTRUCTURE_STRESSED_RATE_SCALE = Decimal("0.40")
+MICROSTRUCTURE_COMPRESSED_RATE_SCALE = Decimal("0.65")
+MICROSTRUCTURE_HIGH_SPREAD_RATE_SCALE = Decimal("0.70")
+MICROSTRUCTURE_HAZARD_RATE_SCALE = Decimal("0.75")
+MICROSTRUCTURE_LOW_DEPTH_RATE_SCALE = Decimal("0.75")
+MICROSTRUCTURE_STRESS_EXECUTION_SCALE = Decimal("1.40")
+MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE = Decimal("1.10")
+MICROSTRUCTURE_EXECUTION_SCALE_EPSILON = Decimal("0.01")
 
 
 @dataclass(frozen=True)
@@ -69,8 +69,8 @@ class AdaptiveExecutionApplication:
 
     def as_payload(self) -> dict[str, Any]:
         payload = self.decision.as_payload()
-        payload['applied'] = self.applied
-        payload['reason'] = self.reason
+        payload["applied"] = self.applied
+        payload["reason"] = self.reason
         return payload
 
 
@@ -90,20 +90,20 @@ class ExecutionPolicyOutcome:
 
     def params_update(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            'execution_policy': {
-                'approved': self.approved,
-                'reasons': list(self.reasons),
-                'notional': _stringify_decimal(self.notional),
-                'participation_rate': _stringify_decimal(self.participation_rate),
-                'selected_order_type': self.selected_order_type,
-                'retry_delays': self.retry_delays,
+            "execution_policy": {
+                "approved": self.approved,
+                "reasons": list(self.reasons),
+                "notional": _stringify_decimal(self.notional),
+                "participation_rate": _stringify_decimal(self.participation_rate),
+                "selected_order_type": self.selected_order_type,
+                "retry_delays": self.retry_delays,
             },
             "impact_assumptions": self.impact_assumptions,
             "execution_advisor": self.advisor_metadata,
             "execution_microstructure": self.microstructure_metadata,
         }
         if self.adaptive is not None:
-            payload['execution_policy']['adaptive'] = self.adaptive.as_payload()
+            payload["execution_policy"]["adaptive"] = self.adaptive.as_payload()
         return payload
 
 
@@ -137,20 +137,20 @@ class ExecutionPolicy:
             decision.params.get("microstructure_state"),
             expected_symbol=decision.symbol,
         )
-        microstructure_metadata, microstructure_participation_scale, microstructure_execution_scale = (
-            self._evaluate_microstructure_state(
-                decision=decision,
-                state=microstructure_state,
-            )
+        (
+            microstructure_metadata,
+            microstructure_participation_scale,
+            microstructure_execution_scale,
+        ) = self._evaluate_microstructure_state(
+            decision=decision,
+            state=microstructure_state,
         )
         reasons: list[str] = []
         config = self._apply_allocator_participation_override(config, decision)
         config = self._apply_microstructure_config(
             config=config,
             participation_scale=microstructure_participation_scale,
-            micro_prefer_limit=bool(
-                microstructure_metadata.get("prefer_limit")
-            ),
+            micro_prefer_limit=bool(microstructure_metadata.get("prefer_limit")),
         )
         advisor_metadata, advisor_max_participation = self._evaluate_advisor(
             decision=decision,
@@ -159,7 +159,7 @@ class ExecutionPolicy:
         )
 
         if config.kill_switch_enabled:
-            reasons.append('kill_switch_enabled')
+            reasons.append("kill_switch_enabled")
 
         adaptive_application = self._resolve_adaptive_application(adaptive_policy)
         if adaptive_application is not None and adaptive_application.applied:
@@ -212,7 +212,7 @@ class ExecutionPolicy:
             reasons.append("max_notional_exceeded")
 
         if short_increasing and not config.allow_shorts:
-            reasons.append('shorts_not_allowed')
+            reasons.append("shorts_not_allowed")
 
         impact_inputs = _build_impact_inputs(
             decision,
@@ -224,7 +224,7 @@ class ExecutionPolicy:
                 )
             ),
         )
-        execution_seconds = impact_inputs['execution_seconds']
+        execution_seconds = impact_inputs["execution_seconds"]
         estimate = self._estimate_execution_costs(
             decision=decision,
             qty=qty,
@@ -235,7 +235,7 @@ class ExecutionPolicy:
         max_participation = advisor_max_participation or config.max_participation_rate
         participation_rate = estimate.participation_rate
         if participation_rate is not None and participation_rate > max_participation:
-            reasons.append('participation_exceeds_max')
+            reasons.append("participation_exceeds_max")
 
         retry_delays = _build_retry_delays(config)
         impact_assumptions = _build_impact_assumptions(
@@ -292,13 +292,16 @@ class ExecutionPolicy:
         reasons: list[str],
     ) -> tuple[Decimal, Decimal | None]:
         qty = _optional_decimal(decision.qty)
-        fractional_equities_enabled = fractional_equities_enabled_for_trade(
-            action=decision.action,
-            global_enabled=settings.trading_fractional_equities_enabled,
-            allow_shorts=allow_shorts,
-            position_qty=position_qty,
-            requested_qty=qty,
-        ) and not short_increasing
+        fractional_equities_enabled = (
+            fractional_equities_enabled_for_trade(
+                action=decision.action,
+                global_enabled=settings.trading_fractional_equities_enabled,
+                allow_shorts=allow_shorts,
+                position_qty=position_qty,
+                requested_qty=qty,
+            )
+            and not short_increasing
+        )
         min_qty = min_qty_for_symbol(
             decision.symbol, fractional_equities_enabled=fractional_equities_enabled
         )
@@ -331,18 +334,18 @@ class ExecutionPolicy:
         execution_seconds: int,
     ) -> Any:
         cost_inputs = CostModelInputs(
-            price=impact_inputs['price'],
-            spread=impact_inputs.get('spread'),
-            volatility=impact_inputs.get('volatility'),
-            adv=impact_inputs.get('adv'),
+            price=impact_inputs["price"],
+            spread=impact_inputs.get("spread"),
+            volatility=impact_inputs.get("volatility"),
+            adv=impact_inputs.get("adv"),
             execution_seconds=execution_seconds,
         )
         return self.cost_model.estimate_costs(
             OrderIntent(
                 symbol=decision.symbol,
-                side='buy' if decision.action == 'buy' else 'sell',
+                side="buy" if decision.action == "buy" else "sell",
                 qty=qty,
-                price=impact_inputs['price'],
+                price=impact_inputs["price"],
                 order_type=decision.order_type,
                 time_in_force=decision.time_in_force,
             ),
@@ -356,7 +359,7 @@ class ExecutionPolicy:
         if adaptive_policy is None:
             return None
         if adaptive_policy.fallback_active:
-            reason = adaptive_policy.fallback_reason or 'adaptive_policy_fallback'
+            reason = adaptive_policy.fallback_reason or "adaptive_policy_fallback"
             return AdaptiveExecutionApplication(
                 decision=adaptive_policy,
                 applied=False,
@@ -366,12 +369,12 @@ class ExecutionPolicy:
             return AdaptiveExecutionApplication(
                 decision=adaptive_policy,
                 applied=False,
-                reason='insufficient_signal',
+                reason="insufficient_signal",
             )
         return AdaptiveExecutionApplication(
             decision=adaptive_policy,
             applied=True,
-            reason='applied',
+            reason="applied",
         )
 
     def _evaluate_microstructure_state(
@@ -398,7 +401,7 @@ class ExecutionPolicy:
         }
         if state is None:
             metadata["fallback_reason"] = "microstructure_state_unavailable"
-            return metadata, Decimal('1'), Decimal('1')
+            return metadata, Decimal("1"), Decimal("1")
 
         metadata.update(
             {
@@ -418,10 +421,10 @@ class ExecutionPolicy:
             max_staleness_seconds=settings.trading_execution_advisor_max_staleness_seconds,
         ):
             metadata["fallback_reason"] = "microstructure_state_stale"
-            return metadata, Decimal('1'), Decimal('1')
+            return metadata, Decimal("1"), Decimal("1")
 
-        participation_rate_scale = Decimal('1')
-        execution_seconds_scale = Decimal('1')
+        participation_rate_scale = Decimal("1")
+        execution_seconds_scale = Decimal("1")
 
         if state.liquidity_regime == "stressed":
             participation_rate_scale *= MICROSTRUCTURE_STRESSED_RATE_SCALE
@@ -474,7 +477,9 @@ class ExecutionPolicy:
             min(MICROSTRUCTURE_EXECUTION_SCALE_MAX, execution_seconds_scale),
         )
 
-        if participation_rate_scale < Decimal("1") or execution_seconds_scale > Decimal("1"):
+        if participation_rate_scale < Decimal("1") or execution_seconds_scale > Decimal(
+            "1"
+        ):
             metadata["applied"] = True
         metadata["participation_rate_scale"] = str(participation_rate_scale)
         metadata["execution_seconds_scale"] = str(execution_seconds_scale)
@@ -551,7 +556,7 @@ class ExecutionPolicy:
     ) -> ExecutionPolicyConfig:
         participation_scale = adaptive_policy.participation_rate_scale
         if participation_scale <= 0:
-            participation_scale = Decimal('1')
+            participation_scale = Decimal("1")
         adjusted_participation = config.max_participation_rate * participation_scale
         if adjusted_participation < ADAPTIVE_PARTICIPATION_RATE_FLOOR:
             adjusted_participation = ADAPTIVE_PARTICIPATION_RATE_FLOOR
@@ -709,7 +714,7 @@ class ExecutionPolicy:
         if max_participation_rate <= 0:
             max_participation_rate = self.cost_model.config.max_participation_rate
         if max_participation_rate > 1:
-            max_participation_rate = Decimal('1')
+            max_participation_rate = Decimal("1")
 
         max_retries = max(config.max_retries, 0)
         backoff_base_seconds = (
@@ -776,7 +781,7 @@ class ExecutionPolicy:
         prefer_limit: bool,
     ) -> tuple[StrategyDecision, str]:
         price = _resolve_price(decision, market_snapshot)
-        spread = _optional_decimal(decision.params.get('spread'))
+        spread = _optional_decimal(decision.params.get("spread"))
         if spread is None and market_snapshot is not None:
             spread = market_snapshot.spread
 
@@ -784,8 +789,8 @@ class ExecutionPolicy:
         limit_price = decision.limit_price
         stop_price = decision.stop_price
 
-        if decision.order_type == 'market' and prefer_limit and price is not None:
-            selected_order_type = 'limit'
+        if decision.order_type == "market" and prefer_limit and price is not None:
+            selected_order_type = "limit"
             limit_price = _near_touch_limit_price(price, spread, decision.action)
 
         if (
@@ -808,9 +813,9 @@ class ExecutionPolicy:
 
         updated = decision.model_copy(
             update={
-                'order_type': selected_order_type,
-                'limit_price': limit_price,
-                'stop_price': stop_price,
+                "order_type": selected_order_type,
+                "limit_price": limit_price,
+                "stop_price": stop_price,
             }
         )
         return updated, selected_order_type
@@ -821,8 +826,8 @@ def _near_touch_limit_price(
 ) -> Decimal:
     if spread is None or spread <= 0:
         return _normalize_price_for_trading(price)
-    half_spread = spread / Decimal('2')
-    if action == 'buy':
+    half_spread = spread / Decimal("2")
+    if action == "buy":
         return _normalize_price_for_trading(price + half_spread)
     return _normalize_price_for_trading(price - half_spread)
 
@@ -839,9 +844,9 @@ def _normalize_price_for_trading(price: Decimal) -> Decimal:
 
 
 def _tick_size_for_price(price: Decimal) -> Decimal:
-    if price.copy_abs() < Decimal('1'):
-        return Decimal('0.0001')
-    return Decimal('0.01')
+    if price.copy_abs() < Decimal("1"):
+        return Decimal("0.0001")
+    return Decimal("0.01")
 
 
 def _build_retry_delays(config: ExecutionPolicyConfig) -> list[float]:
@@ -857,7 +862,7 @@ def _build_retry_delays(config: ExecutionPolicyConfig) -> list[float]:
 
 def should_retry_order_error(error: Exception) -> bool:
     name = type(error).__name__.lower()
-    if 'timeout' in name or 'connection' in name:
+    if "timeout" in name or "connection" in name:
         return True
     message = str(error).lower()
     retryable_tokens = (
@@ -887,18 +892,18 @@ def _build_impact_inputs(
     execution_seconds_scale: Decimal | None = None,
 ) -> dict[str, Any]:
     resolved_price = _resolve_price(decision, market_snapshot)
-    price = resolved_price if resolved_price is not None else Decimal('0')
-    spread = _optional_decimal(decision.params.get('spread'))
+    price = resolved_price if resolved_price is not None else Decimal("0")
+    spread = _optional_decimal(decision.params.get("spread"))
     if spread is None and market_snapshot is not None:
         spread = market_snapshot.spread
-    volatility = _optional_decimal(decision.params.get('volatility'))
+    volatility = _optional_decimal(decision.params.get("volatility"))
     adv = _optional_decimal(
-        decision.params.get('adv')
-        or decision.params.get('avg_dollar_volume')
-        or decision.params.get('avg_daily_dollar_volume')
-        or decision.params.get('average_daily_volume')
+        decision.params.get("adv")
+        or decision.params.get("avg_dollar_volume")
+        or decision.params.get("avg_daily_dollar_volume")
+        or decision.params.get("average_daily_volume")
     )
-    execution_seconds = decision.params.get('execution_seconds')
+    execution_seconds = decision.params.get("execution_seconds")
     if execution_seconds is None:
         execution_seconds = DEFAULT_EXECUTION_SECONDS
     try:
@@ -908,15 +913,17 @@ def _build_impact_inputs(
 
     if execution_seconds_scale is not None and execution_seconds_scale > 0:
         scaled = int(round(float(execution_seconds) * float(execution_seconds_scale)))
-        execution_seconds = min(ADAPTIVE_EXECUTION_SECONDS_MAX, max(ADAPTIVE_EXECUTION_SECONDS_MIN, scaled))
+        execution_seconds = min(
+            ADAPTIVE_EXECUTION_SECONDS_MAX, max(ADAPTIVE_EXECUTION_SECONDS_MIN, scaled)
+        )
 
     return {
-        'price': price,
-        'price_present': resolved_price is not None,
-        'spread': spread,
-        'volatility': volatility,
-        'adv': adv,
-        'execution_seconds': execution_seconds,
+        "price": price,
+        "price_present": resolved_price is not None,
+        "spread": spread,
+        "volatility": volatility,
+        "adv": adv,
+        "execution_seconds": execution_seconds,
     }
 
 
@@ -947,18 +954,18 @@ def _build_impact_assumptions(
     execution_seconds: int,
     impact_inputs: dict[str, Any],
 ) -> dict[str, Any]:
-    price = impact_inputs.get('price')
-    price_present = impact_inputs.get('price_present')
-    adv = impact_inputs.get('adv')
-    spread = impact_inputs.get('spread')
-    volatility = impact_inputs.get('volatility')
+    price = impact_inputs.get("price")
+    price_present = impact_inputs.get("price_present")
+    adv = impact_inputs.get("adv")
+    spread = impact_inputs.get("spread")
+    volatility = impact_inputs.get("volatility")
     return {
-        'inputs': {
-            'price': _stringify_decimal(price) if price_present else None,
-            'spread': _stringify_decimal(spread),
-            'volatility': _stringify_decimal(volatility),
-            'adv': _stringify_decimal(adv),
-            'execution_seconds': execution_seconds,
+        "inputs": {
+            "price": _stringify_decimal(price) if price_present else None,
+            "spread": _stringify_decimal(spread),
+            "volatility": _stringify_decimal(volatility),
+            "adv": _stringify_decimal(adv),
+            "execution_seconds": execution_seconds,
         },
         "model": {
             "commission_bps": str(config.commission_bps),
@@ -969,16 +976,16 @@ def _build_impact_assumptions(
                 config.impact_bps_at_full_participation
             ),
         },
-        'estimate': {
-            'notional': str(estimate.notional),
-            'spread_cost_bps': str(estimate.spread_cost_bps),
-            'volatility_cost_bps': str(estimate.volatility_cost_bps),
-            'impact_cost_bps': str(estimate.impact_cost_bps),
-            'commission_cost_bps': str(estimate.commission_cost_bps),
-            'total_cost_bps': str(estimate.total_cost_bps),
-            'participation_rate': _stringify_decimal(estimate.participation_rate),
-            'capacity_ok': estimate.capacity_ok,
-            'warnings': list(estimate.warnings),
+        "estimate": {
+            "notional": str(estimate.notional),
+            "spread_cost_bps": str(estimate.spread_cost_bps),
+            "volatility_cost_bps": str(estimate.volatility_cost_bps),
+            "impact_cost_bps": str(estimate.impact_cost_bps),
+            "commission_cost_bps": str(estimate.commission_cost_bps),
+            "total_cost_bps": str(estimate.total_cost_bps),
+            "participation_rate": _stringify_decimal(estimate.participation_rate),
+            "capacity_ok": estimate.capacity_ok,
+            "warnings": list(estimate.warnings),
         },
     }
 
@@ -997,9 +1004,9 @@ def _resolve_price(
 
 
 def _position_summary(symbol: str, positions: Iterable[dict[str, Any]]) -> Decimal:
-    total_qty = Decimal('0')
+    total_qty = Decimal("0")
     for position in positions:
-        if position.get('symbol') != symbol:
+        if position.get("symbol") != symbol:
             continue
         qty = _optional_decimal(position.get("qty")) or _optional_decimal(
             position.get("quantity")

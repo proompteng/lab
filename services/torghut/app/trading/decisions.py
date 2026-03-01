@@ -14,11 +14,11 @@ from ..models import Strategy
 from .features import (
     FeatureNormalizationError,
     SignalFeatures,
-    extract_microstructure_features_v1,
     extract_signal_features,
     normalize_feature_vector_v3,
     optional_decimal,
 )
+from .microstructure import parse_microstructure_state
 from .forecasting import ForecastRoutingTelemetry, build_default_forecast_router
 from .models import SignalEnvelope, StrategyDecision
 from .regime_hmm import (
@@ -473,7 +473,8 @@ def _has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
         if value is None:
             return False
         if isinstance(value, Mapping):
-            return any(_is_explicit_value(v) for v in value.values())
+            typed_mapping = cast(Mapping[Any, Any], value)
+            return any(_is_explicit_value(v) for v in typed_mapping.values())
         if isinstance(value, str):
             return bool(value.strip())
         return True
@@ -538,22 +539,10 @@ def _resolve_microstructure_state_payload(
 ) -> dict[str, Any] | None:
     payload = signal.payload
     raw_state = payload.get("microstructure_state")
-    if isinstance(raw_state, dict):
-        state = dict(cast(dict[str, Any], raw_state))
-    else:
-        extracted = extract_microstructure_features_v1(signal)
-        state = {
-            "schema_version": extracted.schema_version,
-            "symbol": extracted.symbol,
-            "event_ts": extracted.event_ts.isoformat(),
-            "spread_bps": str(extracted.spread_bps),
-            "depth_top5_usd": str(extracted.depth_top5_usd),
-            "order_flow_imbalance": str(extracted.order_flow_imbalance),
-            "latency_ms_estimate": extracted.latency_ms_estimate,
-            "fill_hazard": str(extracted.fill_hazard),
-            "liquidity_regime": extracted.liquidity_regime,
-        }
+    if not isinstance(raw_state, dict):
+        return None
 
+    state = dict(cast(dict[str, Any], raw_state))
     state["schema_version"] = "microstructure_state_v1"
     state["symbol"] = str(state.get("symbol") or signal.symbol).strip().upper()
     if not state["symbol"]:
@@ -561,6 +550,11 @@ def _resolve_microstructure_state_payload(
     event_ts = state.get("event_ts")
     if event_ts is None:
         state["event_ts"] = signal.event_ts.isoformat()
+
+    parsed = parse_microstructure_state(state, expected_symbol=signal.symbol)
+    if parsed is None:
+        return None
+
     return state
 
 

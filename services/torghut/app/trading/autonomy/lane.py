@@ -222,7 +222,9 @@ def _as_object_dict(value: object) -> dict[str, object]:
     return {str(key): item for key, item in value.items()}
 
 
-def _extract_janus_q_metrics(summary: dict[str, object]) -> tuple[int, int, bool, list[str]]:
+def _extract_janus_q_metrics(
+    summary: dict[str, object],
+) -> tuple[int, int, bool, list[str]]:
     event_car = _as_object_dict(summary.get("event_car"))
     hgrm_reward = _as_object_dict(summary.get("hgrm_reward"))
     reasons_raw = summary.get("reasons")
@@ -500,10 +502,8 @@ def run_autonomous_lane(
             fragility_score,
             stability_mode_active,
             fragility_inputs_valid,
-        ) = (
-            _resolve_gate_fragility_inputs(
-                metrics_payload=metrics_payload, decisions=walk_decisions
-            )
+        ) = _resolve_gate_fragility_inputs(
+            metrics_payload=metrics_payload, decisions=walk_decisions
         )
         forecast_gate_metrics = _resolve_gate_forecast_metrics(signals=ordered_signals)
         confidence_calibration, uncertainty_action, recalibration_run_id = (
@@ -782,7 +782,9 @@ def run_autonomous_lane(
         promotion_reasons = promotion_recommendation.reasons
         recommended_mode = promotion_recommendation.recommended_mode
         recommendation_trace_id = promotion_recommendation.trace_id
-        research_spec["promotion_recommendation"] = promotion_recommendation.to_payload()
+        research_spec["promotion_recommendation"] = (
+            promotion_recommendation.to_payload()
+        )
         research_spec["promotion_evidence_requirements"] = {
             "fold_metrics_count": len(fold_evidence),
             "stress_case_count": len(stress_evidence),
@@ -1595,9 +1597,7 @@ def _build_actuation_intent_payload(
         "actuation_allowed": actuation_allowed,
         "confirmation_phrase_required": promotion_target == "live",
         "confirmation_phrase": (
-            _ACTUATION_CONFIRMATION_PHRASE
-            if promotion_target == "live"
-            else None
+            _ACTUATION_CONFIRMATION_PHRASE if promotion_target == "live" else None
         ),
         "gates": {
             "recommendation_trace_id": recommendation_trace_id,
@@ -1625,9 +1625,7 @@ def _build_actuation_intent_payload(
                 "strategy_disable_dry_run_passed": bool(
                     candidate_state_readiness.get("strategyDisableDryRunPassed")
                 ),
-                "human_approved": bool(
-                    candidate_state_readiness.get("humanApproved")
-                ),
+                "human_approved": bool(candidate_state_readiness.get("humanApproved")),
                 "rollback_target": str(
                     candidate_state_readiness.get("rollbackTarget") or ""
                 ),
@@ -2550,7 +2548,7 @@ def _coerce_fragility_score(value: object) -> Decimal | None:
 
 
 def _coerce_fragility_measurement(
-    payload: dict[str, object]
+    payload: dict[str, object],
 ) -> tuple[str, Decimal, bool] | None:
     state = _coerce_fragility_state(payload.get("fragility_state"))
     score = _coerce_fragility_score(payload.get("fragility_score"))
@@ -2581,9 +2579,7 @@ def _resolve_gate_fragility_inputs(
         {
             "fragility_state": metrics_payload.get("fragility_state"),
             "fragility_score": metrics_payload.get("fragility_score"),
-            "stability_mode_active": metrics_payload.get(
-                "stability_mode_active"
-            ),
+            "stability_mode_active": metrics_payload.get("stability_mode_active"),
         }
     )
 
@@ -2676,7 +2672,10 @@ def _resolve_gate_forecast_metrics(
         calibration_scores.append(route_result.contract.calibration_score)
 
     expected_samples = len(signals)
-    if len(latency_samples_ms) != expected_samples or len(calibration_scores) != expected_samples:
+    if (
+        len(latency_samples_ms) != expected_samples
+        or len(calibration_scores) != expected_samples
+    ):
         return {}
 
     fallback_rate = (Decimal(fallback_total) / Decimal(expected_samples)).quantize(
@@ -2772,10 +2771,15 @@ def _load_tca_gate_inputs(
         return {
             "order_count": 0,
             "avg_slippage_bps": Decimal("0"),
+            "avg_abs_slippage_bps": Decimal("0"),
             "avg_shortfall_notional": Decimal("0"),
+            "avg_shortfall_notional_abs": Decimal("0"),
             "avg_churn_ratio": Decimal("0"),
             "avg_divergence_bps": Decimal("0"),
+            "avg_divergence_bps_abs": Decimal("0"),
             "avg_realized_shortfall_bps": Decimal("0"),
+            "avg_realized_shortfall_bps_abs": Decimal("0"),
+            "avg_calibration_error_bps": Decimal("0"),
             "expected_shortfall_coverage": Decimal("0"),
             "expected_shortfall_sample_count": 0,
             "avg_expected_shortfall_bps_p50": Decimal("0"),
