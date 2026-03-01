@@ -85,9 +85,6 @@ from .phase_manifest_contract import (
 )
 
 
-_AUTONOMY_PHASE_ORDER: tuple[str, ...] = AUTONOMY_PHASE_ORDER
-
-
 _ACTUATION_INTENT_SCHEMA_VERSION = "torghut.autonomy.actuation-intent.v1"
 _ACTUATION_CONFIRMATION_PHRASE = "ACTUATE_TORGHUT"
 _ACTUATION_INTENT_PATH = "gates/actuation-intent.json"
@@ -2045,13 +2042,6 @@ def run_autonomous_lane(
         phase_manifest_path.write_text(
             json.dumps(phase_manifest_payload, indent=2), encoding="utf-8"
         )
-        _write_autonomy_iteration_notes(
-            artifact_root=output_dir,
-            run_id=run_id,
-            candidate_id=candidate_id,
-            phase_manifest_payload=phase_manifest_payload,
-        )
-
         _persist_run_outputs_if_requested(
             persist_results=persist_results,
             session_factory=factory,
