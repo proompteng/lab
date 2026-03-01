@@ -147,6 +147,10 @@ class DSPyReviewRuntime:
 
         manifest = self._resolve_artifact_manifest()
         self._validate_manifest(manifest)
+        if self.mode == "active" and manifest.executor != "dspy_live":
+            raise DSPyRuntimeUnsupportedStateError(
+                "dspy_active_mode_requires_dspy_live_executor"
+            )
         program = self._resolve_program(manifest)
 
         payload = review_request_to_dspy_input(

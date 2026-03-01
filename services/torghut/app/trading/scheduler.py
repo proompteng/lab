@@ -2791,6 +2791,27 @@ class TradingPipeline:
         )
         self._record_llm_policy_resolution_metrics(policy_resolution)
 
+        if settings.llm_dspy_runtime_mode == "active":
+            dspy_gate_allowed, dspy_gate_reasons = (
+                settings.llm_dspy_live_runtime_gate()
+            )
+            if not dspy_gate_allowed:
+                return self._handle_llm_dspy_live_runtime_block(
+                    session=session,
+                    decision=decision,
+                    decision_row=decision_row,
+                    account=account,
+                    positions=positions,
+                    reason="llm_dspy_live_runtime_gate_blocked",
+                    risk_flags=list(dspy_gate_reasons),
+                    policy_resolution=_build_llm_policy_resolution(
+                        rollout_stage=guardrails.rollout_stage,
+                        effective_fail_mode="veto",
+                        guardrail_reasons=tuple(guardrails.reasons)
+                        + tuple(dspy_gate_reasons),
+                    ),
+                )
+
         guardrail_block = self._handle_llm_guardrail_block(
             session=session,
             decision=decision,
@@ -2908,6 +2929,32 @@ class TradingPipeline:
             reason="llm_circuit_open",
             shadow_mode=guardrails.shadow_mode,
             effective_fail_mode=guardrails.effective_fail_mode,
+            market_context=None,
+            policy_resolution=policy_resolution,
+        )
+
+    def _handle_llm_dspy_live_runtime_block(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        reason: str,
+        risk_flags: list[str],
+        policy_resolution: Optional[dict[str, Any]] = None,
+    ) -> tuple[StrategyDecision, Optional[str]]:
+        return self._handle_llm_unavailable(
+            session,
+            decision,
+            decision_row,
+            account,
+            positions,
+            reason=reason,
+            shadow_mode=False,
+            effective_fail_mode="veto",
+            risk_flags=risk_flags,
             market_context=None,
             policy_resolution=policy_resolution,
         )

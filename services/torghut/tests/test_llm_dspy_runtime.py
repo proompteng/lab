@@ -6,6 +6,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app.trading.llm.dspy_programs.runtime import (
+    DSPyArtifactManifest,
     DSPyReviewRuntime,
     DSPyRuntimeUnsupportedStateError,
 )
@@ -142,3 +143,31 @@ class TestLLMDSPyRuntime(TestCase):
             runtime.review(self._request())
 
         self.assertIn("dspy_artifact_hash_missing", str(exc.exception))
+
+    def test_active_runtime_rejects_heuristic_executor(self) -> None:
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        manifest = DSPyArtifactManifest(
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            executor="heuristic",
+            compiled_prompt={},
+            source="database",
+        )
+
+        with patch.object(
+            runtime, "_load_manifest_from_db", return_value=manifest
+        ):
+            with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
+                runtime.review(self._request())
+
+        self.assertIn(
+            "dspy_active_mode_requires_dspy_live_executor",
+            str(exc.exception),
+        )
