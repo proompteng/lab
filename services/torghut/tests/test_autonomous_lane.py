@@ -492,6 +492,61 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(governance_payload["artifact_path"], str(artifact_path))
             self.assertEqual(governance_payload["priority_id"], "P-2002")
 
+    def test_lane_supports_camelcase_artifact_and_priority_inputs(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-top-level-camelcase"
+            artifact_path = Path(tmpdir) / "camel-notes-root"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                repository="override/repo",
+                base="feature/base",
+                head="run/head",
+                artifactPath=str(artifact_path),
+                priorityId="P-2003",
+            )
+
+            notes_dir = artifact_path / "notes"
+            notes = sorted(notes_dir.glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            self.assertIn(
+                "Autonomous lane iteration 1",
+                notes[0].read_text(encoding="utf-8"),
+            )
+            self.assertFalse(
+                any((output_dir / "notes").glob("iteration-*.md")),
+                "iteration notes should be written under explicit artifactPath",
+            )
+            phase_manifest = json.loads(
+                result.phase_manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                phase_manifest["execution_context"]["artifactPath"],
+                str(artifact_path),
+            )
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+                if result.actuation_intent_path
+                else "{}"
+            )
+            self.assertEqual(
+                actuation_payload["governance"]["artifact_path"],
+                str(artifact_path),
+            )
+            self.assertEqual(actuation_payload["governance"]["priority_id"], "P-2003")
+
     def test_lane_prefers_governance_artifact_override_over_execution_context_artifact(
         self,
     ) -> None:

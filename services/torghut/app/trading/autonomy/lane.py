@@ -451,7 +451,9 @@ def run_autonomous_lane(
     governance_head: str | None = None,
     governance_artifact_path: str | None = None,
     artifact_path: str | None = None,
+    artifactPath: str | None = None,
     priority_id: str | None = None,
+    priorityId: str | None = None,
     governance_change: str = "autonomous-promotion",
     governance_reason: str | None = None,
 ) -> AutonomousLaneResult:
@@ -498,13 +500,18 @@ def run_autonomous_lane(
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     phase_manifest_path = rollout_dir / "phase-manifest.json"
     run_row = None
+    resolved_priority_id = (
+        priority_id if priority_id is not None else _coerce_str(priorityId)
+    )
     governance_context = _coalesce_governance_context(
         governance_inputs=governance_inputs,
         governance_repository=governance_repository or repository,
         governance_base=governance_base or base,
         governance_head=governance_head or head,
-        governance_artifact_path=governance_artifact_path or artifact_path,
-        priority_id=priority_id,
+        governance_artifact_path=(
+            governance_artifact_path or artifact_path or artifactPath
+        ),
+        priority_id=resolved_priority_id,
         now=now,
     )
     governance_context = _normalize_governance_inputs(governance_context)
