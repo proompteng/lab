@@ -268,7 +268,7 @@ def _coerce_dspy_api_base(
 
     normalized_path = parsed.path.rstrip("/")
     if normalized_path in ("", "/"):
-        base_path = ""
+        base_path = "/openai/v1"
     elif normalized_path == _DSPY_OPENAI_BASE_PATH:
         base_path = _DSPY_OPENAI_BASE_PATH
     elif normalized_path == _DSPY_OPENAI_BASE_PATH + _DSPY_OPENAI_CHAT_COMPLETION_SUFFIX:
