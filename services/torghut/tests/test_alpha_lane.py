@@ -176,7 +176,7 @@ class TestAlphaLane(TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "alpha-notes"
-            result = run_alpha_discovery_lane(
+            _result = run_alpha_discovery_lane(
                 artifact_path=output_dir,
                 train_prices=train,
                 test_prices=test,
