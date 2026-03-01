@@ -133,7 +133,7 @@ class TestAutonomousLane(TestCase):
         state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
             decisions=[]
         )
-        self.assertEqual(state, "not_measured")
+        self.assertEqual(state, "normal")
         self.assertEqual(score, Decimal("0"))
         self.assertFalse(stability)
         self.assertFalse(inputs_valid)
@@ -168,7 +168,7 @@ class TestAutonomousLane(TestCase):
                 )
             ],
         )
-        self.assertEqual(state, "not_measured")
+        self.assertEqual(state, "normal")
         self.assertEqual(score, Decimal("0"))
         self.assertFalse(stability)
         self.assertFalse(inputs_valid)

@@ -3386,7 +3386,8 @@ def _resolve_gate_fragility_inputs(
             selected_measurement = candidate
 
     if selected_measurement is None:
-        return ("not_measured", Decimal("0"), False, False)
+        return ("normal", Decimal("0"), False, False)
+
     selected_state, selected_score, selected_stability = selected_measurement
     return selected_state, selected_score, selected_stability, True
 
