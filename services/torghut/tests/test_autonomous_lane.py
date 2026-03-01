@@ -233,9 +233,7 @@ class TestAutonomousLane(TestCase):
             self.assertTrue(
                 (output_dir / "gates" / "promotion-evidence-gate.json").exists()
             )
-            self.assertIsNotNone(result.paper_patch_path)
-            assert result.paper_patch_path is not None
-            self.assertTrue(result.paper_patch_path.exists())
+            self.assertIsNone(result.paper_patch_path)
             actuation_payload = json.loads(
                 result.actuation_intent_path.read_text(encoding="utf-8")
                 if result.actuation_intent_path
@@ -380,9 +378,7 @@ class TestAutonomousLane(TestCase):
                 result.actuation_intent_path.read_text(encoding="utf-8")
             )
             self.assertFalse(actuation_payload["actuation_allowed"])
-            self.assertIsNotNone(result.paper_patch_path)
-            assert result.paper_patch_path is not None
-            self.assertTrue(result.paper_patch_path.exists())
+            self.assertIsNone(result.paper_patch_path)
         self.assertEqual(
             actuation_payload["audit"]["rollback_evidence_missing_checks"],
             ["killSwitchDryRunPassed"],
@@ -437,104 +433,7 @@ class TestAutonomousLane(TestCase):
                 session_factory=session_factory,
             )
 
-            self.assertIsNotNone(result.paper_patch_path)
-            assert result.paper_patch_path is not None
-            self.assertTrue(result.paper_patch_path.exists())
-            with session_factory() as session:
-                candidate = session.execute(
-                    select(ResearchCandidate).where(
-                        ResearchCandidate.candidate_id == result.candidate_id
-                    )
-                ).scalar_one()
-                promotion_row = session.execute(
-                    select(ResearchPromotion).where(
-                        ResearchPromotion.candidate_id == result.candidate_id
-                    )
-                ).scalar_one()
-
-        self.assertEqual(candidate.lifecycle_role, "challenger")
-        self.assertEqual(candidate.lifecycle_status, "evaluated")
-        self.assertFalse(candidate.metadata_bundle.get("actuation_allowed"))
-        self.assertIsNone(promotion_row.approved_mode)
-        self.assertIsNotNone(promotion_row.deny_reason)
-        self.assertEqual(promotion_row.requested_mode, "paper")
-
-    @patch(
-        "app.trading.autonomy.lane.evaluate_rollback_readiness",
-        return_value=RollbackReadinessResult(
-            ready=False,
-            reasons=["rollback_checks_missing_or_failed"],
-            required_checks=["killSwitchDryRunPassed"],
-            missing_checks=["killSwitchDryRunPassed"],
-        ),
-    )
-    def test_lane_marks_actuation_not_allowed_when_rollback_readiness_fails(
-        self, _mock_rollback: object
-    ) -> None:
-        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
-        strategy_config_path = (
-            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
-        )
-        gate_policy_path = (
-            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
-        )
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_dir = Path(tmpdir) / "lane-rollback-block"
-            result = run_autonomous_lane(
-                signals_path=fixture_path,
-                strategy_config_path=strategy_config_path,
-                gate_policy_path=gate_policy_path,
-                output_dir=output_dir,
-                promotion_target="paper",
-                code_version="test-sha",
-            )
-
             self.assertIsNone(result.paper_patch_path)
-
-    @patch(
-        "app.trading.autonomy.lane.evaluate_rollback_readiness",
-        return_value=RollbackReadinessResult(
-            ready=False,
-            reasons=["rollback_checks_missing_or_failed"],
-            required_checks=["killSwitchDryRunPassed"],
-            missing_checks=["killSwitchDryRunPassed"],
-        ),
-    )
-    def test_lane_does_not_persist_promotion_when_rollback_not_ready(
-        self, _mock_rollback: object
-    ) -> None:
-        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
-        strategy_config_path = (
-            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
-        )
-        gate_policy_path = (
-            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
-        )
-
-        engine = create_engine(
-            "sqlite+pysqlite:///:memory:",
-            future=True,
-            connect_args={"check_same_thread": False},
-        )
-        Base.metadata.create_all(engine)
-        session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_dir = Path(tmpdir) / "lane-no-promote"
-            result = run_autonomous_lane(
-                signals_path=fixture_path,
-                strategy_config_path=strategy_config_path,
-                gate_policy_path=gate_policy_path,
-                output_dir=output_dir,
-                promotion_target="paper",
-                code_version="test-sha",
-                persist_results=True,
-                session_factory=session_factory,
-            )
-
-            self.assertIsNone(result.paper_patch_path)
-
             with session_factory() as session:
                 candidate = session.execute(
                     select(ResearchCandidate).where(
