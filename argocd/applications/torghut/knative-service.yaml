@@ -100,8 +100,6 @@ spec:
                 [{"label":"PA3SX7FYNUTF","mode":"live","enabled":true}]
             - name: TRADING_LIVE_ENABLED
               value: "true"
-            - name: LLM_FAIL_OPEN_LIVE_APPROVED
-              value: "true"
             - name: TRADING_SIGNAL_SOURCE
               value: clickhouse
             - name: TRADING_SIGNAL_TABLE
