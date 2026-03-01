@@ -339,7 +339,7 @@ spec:
             - name: LLM_FAIL_MODE_ENFORCEMENT
               value: configured
             - name: LLM_FAIL_OPEN_LIVE_APPROVED
-              value: "false"
+              value: "true"
             - name: LLM_ADJUSTMENT_ALLOWED
               value: "false"
             - name: LLM_TOKEN_BUDGET_MAX
