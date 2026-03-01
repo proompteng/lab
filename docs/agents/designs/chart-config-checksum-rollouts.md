@@ -42,6 +42,11 @@ Each checksum entry is an object:
   checksum: <sha256 value>
 ```
 
+For chart-owned inputs (`database.createSecret.enabled=true`), checksum values are computed from
+`.Values.database.url` and merged automatically.
+
+All manually provided checksums must be SHA-256 hex values (64 characters).
+
 When enabled, annotate pod templates with:
 
 - `checksum/secret/<namespace>/<name>: <sha256>`
@@ -58,6 +63,15 @@ When enabled, annotate pod templates with:
   - `charts/agents/values.schema.json`
 - Validation hook:
   - `charts/agents/templates/validation.yaml`
+
+### Source-of-truth and ownership model
+
+- `database.createSecret.enabled=true`: source of truth is chart values (`database.url`). This
+  checksum is automatically generated and owned by the chart.
+- Externally managed resources: source of truth is the GitOps/Secrets controller manifest and any
+  backing data store. The chart does not perform live lookups of Secret/ConfigMap payloads.
+
+The explicit checksum list is therefore your contract boundary for restart behavior.
 
 ### Operator usage
 
@@ -104,8 +118,26 @@ Rollback:
 ## Validation
 
 ```bash
-helm template charts/agents --set rolloutChecksums.enabled=true --set rolloutChecksums.secrets[0].name=agents-github-token-env --set rolloutChecksums.secrets[0].checksum=9f2c | rg -n "checksum/secret/"
+helm template charts/agents \
+  --set rolloutChecksums.enabled=true \
+  --set rolloutChecksums.secrets[0].name=agents-github-token-env \
+  --set-string rolloutChecksums.secrets[0].checksum=9f2c... \
+  --set rolloutChecksums.configMaps[0].name=agents-runtime-config \
+  --set-string rolloutChecksums.configMaps[0].checksum=a1b2c3... |
+  rg -n "checksum/(secret|configmap)"
 kubectl -n agents get deploy agents -o jsonpath='{.spec.template.metadata.annotations}'; echo
+```
+
+Example checksum capture from a live ConfigMap/Secret payload:
+
+```bash
+kubectl -n agents get configmap agents-runtime-config -o json |
+  jq -cS '.data' |
+  sha256sum
+
+kubectl -n agents get secret agents-github-token-env -o json |
+  jq -cS '.data' |
+  sha256sum
 ```
 
 ## Failure Modes and Mitigations

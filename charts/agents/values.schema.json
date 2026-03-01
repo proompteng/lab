@@ -266,7 +266,7 @@
             "properties": {
               "name": { "type": "string", "minLength": 1 },
               "namespace": { "type": "string", "minLength": 1 },
-              "checksum": { "type": "string", "minLength": 1 }
+              "checksum": { "type": "string", "minLength": 64, "pattern": "^[A-Fa-f0-9]{64}$" }
             },
             "additionalProperties": false
           }
@@ -279,7 +279,7 @@
             "properties": {
               "name": { "type": "string", "minLength": 1 },
               "namespace": { "type": "string", "minLength": 1 },
-              "checksum": { "type": "string", "minLength": 1 }
+              "checksum": { "type": "string", "minLength": 64, "pattern": "^[A-Fa-f0-9]{64}$" }
             },
             "additionalProperties": false
           }
