@@ -32,11 +32,15 @@ spec:
                   key: STORAGE_CONFIG
             - name: MODEL_ENABLED
               value: '*'
-            - name: DB_URL
+            - name: COCKROACH_DB_URL
               valueFrom:
                 secretKeyRef:
                   name: huly-secret
                   key: CR_DB_URL
+            - name: ACCOUNTS_DB_URL
+              value: "$(COCKROACH_DB_URL)?sslmode=require"
+            - name: DB_URL
+              value: "$(COCKROACH_DB_URL)?sslmode=require"
             - name: MONGO_URL
               valueFrom:
                 configMapKeyRef:
