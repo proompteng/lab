@@ -2079,6 +2079,27 @@ class Settings(BaseSettings):
             reasons.append("dspy_live_runtime_mode_not_active")
         if normalized_stage != "stage3":
             reasons.append("dspy_live_rollout_stage_not_stage3")
+        if not self.jangar_base_url:
+            reasons.append("dspy_jangar_base_url_missing")
+        else:
+            parsed_base_url = urlsplit(self.jangar_base_url)
+            normalized_base_path = parsed_base_url.path.rstrip("/")
+            if not parsed_base_url.scheme:
+                reasons.append("dspy_jangar_base_url_invalid")
+            elif parsed_base_url.scheme not in {"http", "https"}:
+                reasons.append("dspy_jangar_base_url_invalid")
+            elif not parsed_base_url.netloc:
+                reasons.append("dspy_jangar_base_url_invalid")
+            elif (parsed_base_url.query or parsed_base_url.fragment):
+                reasons.append("dspy_jangar_base_url_invalid")
+            elif (
+                normalized_base_path
+                and normalized_base_path not in (
+                    "/openai/v1",
+                    "/openai/v1/chat/completions",
+                )
+            ):
+                reasons.append("dspy_jangar_base_url_invalid")
 
         if not self.llm_dspy_artifact_hash:
             reasons.append("dspy_artifact_hash_missing")

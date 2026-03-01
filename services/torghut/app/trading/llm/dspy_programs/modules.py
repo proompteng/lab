@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from json import JSONDecodeError
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 from typing import Any, Protocol, cast
 
 from .signatures import (
@@ -21,6 +23,8 @@ except Exception:  # pragma: no cover - optional runtime dependency in local tes
 dspy: Any = _dspy
 
 _SAFE_DEFAULT_CHECKS = ["risk_engine", "order_firewall", "execution_policy"]
+_DSPY_OPENAI_BASE_PATH = "/openai/v1"
+_DSPY_OPENAI_CHAT_COMPLETION_SUFFIX = "/chat/completions"
 
 
 class DSPyCommitteeProgram(Protocol):
@@ -87,6 +91,7 @@ class LiveDSPyCommitteeProgram:
 
     model_name: str
     api_base: str | None = None
+    api_completion_url: str | None = None
     api_key: str | None = None
     _predictor: Any = field(default=None, init=False, repr=False)
     _lm: Any = field(default=None, init=False, repr=False)
@@ -119,8 +124,20 @@ class LiveDSPyCommitteeProgram:
             raise RuntimeError("dspy_response_missing")
 
         parsed: Any = response_json
-        if isinstance(response_json, str):
-            parsed = json.loads(response_json)
+        if isinstance(response_json, (bytes, bytearray)):
+            try:
+                parsed = json.loads(response_json.decode("utf-8"))
+            except JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"dspy_response_json_decode_error:{exc.msg}"
+                ) from exc
+        elif isinstance(response_json, str):
+            try:
+                parsed = json.loads(response_json)
+            except JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"dspy_response_json_decode_error:{exc.msg}"
+                ) from exc
         if not isinstance(parsed, dict):
             raise RuntimeError("dspy_response_not_object")
         return DSPyTradeReviewOutput.model_validate(parsed)
@@ -139,8 +156,13 @@ class LiveDSPyCommitteeProgram:
             "temperature": 0.0,
             "max_tokens": 900,
         }
-        if self.api_base:
-            lm_kwargs["api_base"] = self.api_base
+        api_base = _coerce_dspy_api_base(
+            api_base=self.api_base,
+            api_completion_url=self.api_completion_url,
+        )
+        if not api_base:
+            raise RuntimeError("dspy_api_base_missing")
+        lm_kwargs["api_base"] = api_base
         if self.api_key:
             lm_kwargs["api_key"] = self.api_key
         self._lm = dspy.LM(**lm_kwargs)
@@ -224,6 +246,39 @@ def _build_committee(risk_flags: list[str]) -> list[DSPyCommitteeMemberOutput]:
             )
         )
     return out
+
+
+def _coerce_dspy_api_base(
+    *, api_base: str | None, api_completion_url: str | None
+) -> str:
+    candidate = api_completion_url if api_completion_url is not None else api_base
+    normalized = (candidate or "").strip()
+    if not normalized:
+        return ""
+
+    parsed = urlsplit(normalized)
+    if (
+        not parsed.scheme
+        or parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+    ):
+        raise RuntimeError("dspy_api_base_invalid")
+    if parsed.query or parsed.fragment:
+        raise RuntimeError("dspy_api_base_invalid")
+
+    normalized_path = parsed.path.rstrip("/")
+    if normalized_path in ("", "/"):
+        base_path = "/openai/v1"
+    elif normalized_path == _DSPY_OPENAI_BASE_PATH:
+        base_path = _DSPY_OPENAI_BASE_PATH
+    elif normalized_path == _DSPY_OPENAI_BASE_PATH + _DSPY_OPENAI_CHAT_COMPLETION_SUFFIX:
+        base_path = _DSPY_OPENAI_BASE_PATH
+    else:
+        raise RuntimeError("dspy_api_base_invalid")
+
+    return (
+        f"{parsed.scheme}://{parsed.netloc}{base_path}"
+    )
 
 
 __all__ = [
