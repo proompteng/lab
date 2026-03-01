@@ -435,15 +435,45 @@ class TestTradingApi(TestCase):
         with TemporaryDirectory() as tmpdir:
             actuation_path = Path(tmpdir) / "actuation-intent.json"
             actuation_path.write_text(json.dumps({}), encoding="utf-8")
+            phase_manifest_path = Path(tmpdir) / "phase-manifest.json"
+            phase_manifest_path.write_text(
+                json.dumps(
+                    {
+                        "manifest_hash": "status-hash",
+                        "phase_lineage": {
+                            "stage_ids": ["status-stage-1", "status-stage-2"],
+                            "stage_count": 2,
+                            "lineage_root": "status-root",
+                            "lineage_tail": "status-tail",
+                        },
+                        "artifact_hashes": {"x": "1"},
+                    }
+                ),
+                encoding="utf-8",
+            )
             try:
                 scheduler = TradingScheduler()
                 scheduler.state.last_autonomy_actuation_intent = str(actuation_path)
+                scheduler.state.last_autonomy_phase_manifest = str(phase_manifest_path)
                 app.state.trading_scheduler = scheduler
                 response = self.client.get("/trading/status")
                 self.assertEqual(response.status_code, 200)
+                payload = response.json()
                 self.assertEqual(
                     response.json()["autonomy"]["last_actuation_intent"],
                     str(actuation_path),
+                )
+                self.assertEqual(
+                    payload["autonomy"]["last_phase_manifest"], str(phase_manifest_path)
+                )
+                autonomy_contract = payload["control_plane_contract"][
+                    "autonomy_phase_manifest"
+                ]
+                self.assertEqual(autonomy_contract["manifest_path"], str(phase_manifest_path))
+                self.assertEqual(autonomy_contract["manifest_hash"], "status-hash")
+                self.assertEqual(
+                    autonomy_contract["stage_ids"],
+                    ["status-stage-1", "status-stage-2"],
                 )
             finally:
                 if original_scheduler is None:
@@ -458,6 +488,7 @@ class TestTradingApi(TestCase):
             scheduler = TradingScheduler()
             scheduler.state.autonomy_no_signal_streak = 7
             scheduler.state.last_autonomy_reason = "cursor_ahead_of_stream"
+            scheduler.state.last_autonomy_phase_manifest = "/tmp/phase-manifest.json"
             app.state.trading_scheduler = scheduler
 
             response = self.client.get("/trading/autonomy")
@@ -466,6 +497,7 @@ class TestTradingApi(TestCase):
             self.assertEqual(payload["no_signal_streak"], 7)
             self.assertEqual(payload["last_reason"], "cursor_ahead_of_stream")
             self.assertIsNone(payload["last_actuation_intent"])
+            self.assertEqual(payload["last_phase_manifest"], "/tmp/phase-manifest.json")
         finally:
             if original_scheduler is None:
                 del app.state.trading_scheduler
@@ -705,6 +737,24 @@ class TestTradingApi(TestCase):
                 ),
                 encoding="utf-8",
             )
+            phase_manifest_path = root / "phase-manifest.json"
+            phase_manifest_path.write_text(
+                json.dumps(
+                    {
+                        "manifest_hash": "runtime-phase-hash",
+                        "phase_lineage": {
+                            "stage_count": 3,
+                            "stage_ids": ["r1", "r2", "r3"],
+                            "lineage_root": "runtime-root",
+                            "lineage_tail": "runtime-tail",
+                        },
+                        "artifact_hashes": {
+                            "gate_report": "x",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
             rollback_path.write_text(
                 json.dumps(
                     {
@@ -724,6 +774,7 @@ class TestTradingApi(TestCase):
                 scheduler.state.emergency_stop_reason = "signal_lag_exceeded:900"
                 scheduler.state.metrics.signal_continuity_promotion_block_total = 2
                 scheduler.state.last_autonomy_actuation_intent = str(actuation_path)
+                scheduler.state.last_autonomy_phase_manifest = str(phase_manifest_path)
                 app.state.trading_scheduler = scheduler
 
                 response = self.client.get("/trading/profitability/runtime")
@@ -774,6 +825,21 @@ class TestTradingApi(TestCase):
                         "rollback_readiness"
                     ]["missing_checks"],
                     ["strategy_disable_dry_run_failed"],
+                )
+                self.assertEqual(
+                    payload["phase_manifest"]["path"], str(phase_manifest_path)
+                )
+                self.assertEqual(
+                    payload["phase_manifest"]["manifest_hash"], "runtime-phase-hash"
+                )
+                self.assertEqual(
+                    payload["phase_manifest"]["lineage_root"], "runtime-root"
+                )
+                self.assertEqual(
+                    payload["phase_manifest"]["lineage_tail"], "runtime-tail"
+                )
+                self.assertEqual(
+                    payload["phase_manifest"]["stage_ids"], ["r1", "r2", "r3"]
                 )
             finally:
                 if original_scheduler is None:

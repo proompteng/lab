@@ -782,6 +782,71 @@ class TestAutonomousLane(TestCase):
                 promotion_row.approve_reason or promotion_row.deny_reason
             )
 
+    def test_lane_writes_phase_manifest_and_iteration_notes(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-manifest"
+            first = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+            phase_payload = json.loads(
+                first.phase_manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                phase_payload["schema_version"],
+                "torghut.autonomy.phase-manifest.v1",
+            )
+            self.assertIn("manifest_hash", phase_payload)
+            self.assertIn("phase_lineage", phase_payload)
+            self.assertEqual(phase_payload["phase_lineage"]["stage_count"], 5)
+            self.assertIn("stage_ids", phase_payload["phase_lineage"])
+            self.assertTrue(phase_payload["phase_lineage"]["stage_ids"])
+            self.assertIn("artifacts", phase_payload)
+            self.assertIn("artifact_hashes", phase_payload)
+            self.assertTrue(phase_payload["artifact_hashes"])
+            self.assertEqual(
+                first.phase_manifest_path,
+                output_dir / "phase-manifest.json",
+            )
+
+            notes = sorted((output_dir / "notes").glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            first_note_contents = notes[0].read_text(encoding="utf-8")
+            self.assertIn("Autonomy phase iteration 1", first_note_contents)
+            self.assertIn("candidate-spec", first_note_contents)
+
+            second = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+            self.assertEqual(
+                second.phase_manifest_path,
+                output_dir / "phase-manifest.json",
+            )
+
+            notes = sorted((output_dir / "notes").glob("iteration-*.md"))
+            self.assertEqual(len(notes), 2)
+            self.assertEqual(notes[1].name, "iteration-2.md")
+            second_note_contents = notes[1].read_text(encoding="utf-8")
+            self.assertIn("Autonomy phase iteration 2", second_note_contents)
+
     def test_upsert_no_signal_run_records_skipped_research_run(self) -> None:
         strategy_config_path = (
             Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"

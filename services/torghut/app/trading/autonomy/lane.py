@@ -84,6 +84,48 @@ _AUTONOMY_PHASE_ORDER: tuple[str, ...] = AUTONOMY_PHASE_ORDER
 _ACTUATION_INTENT_SCHEMA_VERSION = "torghut.autonomy.actuation-intent.v1"
 _ACTUATION_CONFIRMATION_PHRASE = "ACTUATE_TORGHUT"
 _ACTUATION_INTENT_PATH = "gates/actuation-intent.json"
+_AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION = "torghut.autonomy.phase-manifest.v1"
+_AUTONOMY_PHASE_MANIFEST_PATH = "phase-manifest.json"
+_AUTONOMY_NOTES_DIR = "notes"
+_AUTONOMY_NOTES_PREFIX = "iteration-"
+_AUTONOMY_NOTE_PREFIX_PATTERN = re.compile(r"^iteration-(\d+)\.md$")
+
+
+def _stable_hash(payload: object) -> str:
+    payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+
+
+def _artifact_hashes(artifacts: Mapping[str, Path | None]) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for key, artifact_path in artifacts.items():
+        if artifact_path is None:
+            continue
+        if not artifact_path.exists():
+            continue
+        hashes[key] = _sha256_path(artifact_path)
+    return hashes
+
+
+def _as_mapping(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return cast(dict[str, Any], dict(value))
+
+
+def _readable_iteration_number(notes_dir: Path) -> int:
+    iteration = 0
+    for item in notes_dir.glob(f"{_AUTONOMY_NOTES_PREFIX}*.md"):
+        match = _AUTONOMY_NOTE_PREFIX_PATTERN.match(item.name)
+        if not match:
+            continue
+        try:
+            raw = int(match.group(1))
+        except (TypeError, ValueError):
+            continue
+        if raw > iteration:
+            iteration = raw
+    return iteration + 1
 
 
 @dataclass(frozen=True)
@@ -97,6 +139,7 @@ class AutonomousLaneResult:
     phase_manifest_path: Path
     gate_report_trace_id: str
     recommendation_trace_id: str
+    phase_manifest_path: Path | None
 
 
 def upsert_autonomy_no_signal_run(
@@ -291,6 +334,7 @@ def run_autonomous_lane(
     gate_report_path = gates_dir / "gate-evaluation.json"
     promotion_check_path = gates_dir / "promotion-prerequisites.json"
     rollback_check_path = gates_dir / "rollback-readiness.json"
+    phase_manifest_path = output_dir / _AUTONOMY_PHASE_MANIFEST_PATH
     baseline_report_path = backtest_dir / "baseline-evaluation-report.json"
     profitability_benchmark_path = gates_dir / "profitability-benchmark-v4.json"
     profitability_evidence_path = gates_dir / "profitability-evidence-v4.json"
@@ -937,6 +981,7 @@ def run_autonomous_lane(
             promotion_gate_path=promotion_gate_path,
             promotion_recommendation=promotion_recommendation,
             recommendations=promotion_reasons,
+            phase_manifest_path=phase_manifest_path,
             governance_repository=governance_repository,
             governance_base=governance_base,
             governance_head=governance_head
@@ -1026,6 +1071,7 @@ def run_autonomous_lane(
             phase_manifest_path=phase_manifest_path,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
+            phase_manifest_path=phase_manifest_path,
         )
     except Exception as exc:
         _mark_run_failed_if_requested(
@@ -1538,6 +1584,7 @@ def _build_actuation_intent_payload(
     promotion_gate_path: Path,
     promotion_recommendation: PromotionRecommendation,
     recommendations: list[str],
+    phase_manifest_path: Path,
     governance_repository: str,
     governance_base: str,
     governance_head: str,
@@ -1571,6 +1618,8 @@ def _build_actuation_intent_payload(
     )
     if paper_patch_path is not None:
         rollback_evidence_links.append(str(paper_patch_path))
+    if phase_manifest_path.exists():
+        rollback_evidence_links.append(str(phase_manifest_path))
     rollback_evidence_links.extend(
         [str(item) for item in promotion_check.get("artifact_refs", [])]
     )
@@ -1638,6 +1687,415 @@ def _build_actuation_intent_payload(
             "rollback_evidence_missing_checks": rollback_missing_checks,
         },
     }
+
+
+def _build_phase_stage_payload(
+    *,
+    stage: str,
+    stage_index: int,
+    run_id: str,
+    candidate_id: str,
+    stage_status: str,
+    stage_reasons: Sequence[str],
+    stage_gate_refs: Sequence[dict[str, Any]],
+    input_artifacts: Mapping[str, Path | None],
+    output_artifacts: Mapping[str, Path | None],
+    parent_lineage_hash: str | None,
+    parent_stage: str | None,
+    created_at: datetime,
+    extra_inputs: Mapping[str, str] | None = None,
+) -> tuple[dict[str, Any], str]:
+    stage_payload: dict[str, Any] = {
+        "stage": stage,
+        "stage_index": stage_index,
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "status": stage_status,
+        "status_reasons": list(stage_reasons),
+        "gates": [dict(gate) for gate in stage_gate_refs],
+        "created_at": created_at.isoformat(),
+        "inputs": dict(extra_inputs or {}),
+        "input_artifacts": {
+            name: {
+                "path": str(path),
+                "sha256": _sha256_path(path),
+            }
+            for name, path in input_artifacts.items()
+            if path is not None and path.exists()
+        },
+        "output_artifacts": {
+            name: {
+                "path": str(path),
+                "sha256": _sha256_path(path),
+            }
+            for name, path in output_artifacts.items()
+            if path is not None and path.exists()
+        },
+        "parent_lineage_hash": parent_lineage_hash,
+        "parent_stage": parent_stage,
+    }
+    stage_payload_hash = _stable_hash(stage_payload)
+    stage_trace_id = stage_payload_hash[:24]
+    artifact_hashes = _artifact_hashes(output_artifacts)
+    stage_payload["stage_trace_id"] = stage_trace_id
+    stage_payload["lineage_hash"] = stage_payload_hash
+    stage_payload["artifact_hashes"] = artifact_hashes
+    stage_payload["artifact_count"] = len(artifact_hashes)
+    return stage_payload, stage_payload_hash
+
+
+def _build_phase_manifest(
+    *,
+    run_id: str,
+    candidate_id: str,
+    generated_at: datetime,
+    output_dir: Path,
+    gate_report_path: Path,
+    candidate_spec_path: Path,
+    evaluation_report_path: Path,
+    paper_patch_path: Path | None,
+    promotion_check_path: Path,
+    rollback_check_path: Path,
+    promotion_gate_path: Path,
+    profitability_benchmark_path: Path,
+    profitability_evidence_path: Path,
+    profitability_validation_path: Path,
+    janus_event_car_path: Path,
+    janus_hgrm_reward_path: Path,
+    recalibration_report_path: Path,
+    actuation_intent_path: Path,
+    governance_repository: str,
+    governance_base: str,
+    governance_head: str,
+    priority_id: str | None,
+    promotion_target: str,
+    recommended_mode: str,
+    actuation_allowed: bool,
+    recommendation_trace_id: str,
+    gate_report_trace_id: str,
+    gate_report_payload: Mapping[str, Any],
+    promotion_check: Mapping[str, Any],
+    rollback_check: Mapping[str, Any],
+    actuation_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    gate_payload = gate_report_payload.get("gates")
+    gates = gate_payload if isinstance(gate_payload, list) else []
+    gate_stage_status = (
+        "pass"
+        if all(
+            _as_mapping(item).get("status") == "pass"
+            for item in gates
+            if isinstance(item, Mapping)
+        )
+        and bool(gates)
+        else "fail"
+    )
+    promotion_check_allowed = bool(promotion_check.get("allowed"))
+    rollback_ready = bool(rollback_check.get("ready"))
+
+    actuation_allowed_payload = bool(actuation_payload.get("actuation_allowed"))
+
+    stage_records: list[dict[str, Any]] = []
+    parent_hash: str | None = None
+    parent_stage: str | None = None
+
+    candidate_stage, candidate_lineage_hash = _build_phase_stage_payload(
+        stage="candidate-spec",
+        stage_index=1,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        stage_status="pass",
+        stage_reasons=["candidate_spec_generated"],
+        stage_gate_refs=[],
+        input_artifacts={
+            "strategy_config": None,
+            "gate_policy": None,
+        },
+        output_artifacts={"candidate_spec": candidate_spec_path},
+        parent_lineage_hash=parent_hash,
+        parent_stage=parent_stage,
+        created_at=generated_at,
+        extra_inputs={"output_dir": str(output_dir)},
+    )
+    stage_records.append(candidate_stage)
+    parent_hash = candidate_lineage_hash
+    parent_stage = "candidate-spec"
+
+    gate_stage, gate_lineage_hash = _build_phase_stage_payload(
+        stage="gate-evaluation",
+        stage_index=2,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        stage_status=gate_stage_status,
+        stage_reasons=[
+            gate.get("reason", "gate_status_unknown")
+            for gate in gates
+            if isinstance(gate, Mapping)
+        ]
+        or [f"status:{gate_stage_status}"],
+        stage_gate_refs=[
+            {
+                "gate_id": str(gate.get("gate_id") or ""),
+                "status": str(gate.get("status") or ""),
+                "artifact_refs": [
+                    str(item)
+                    for item in (
+                        cast(list[object], gate.get("artifact_refs"))
+                        if isinstance(gate.get("artifact_refs"), list)
+                        else []
+                    )
+                    if str(item).strip()
+                ],
+            }
+            for gate in gates
+            if isinstance(gate, Mapping)
+        ],
+        input_artifacts={"gate_definition": None},
+        output_artifacts={
+            "gate_report": gate_report_path,
+            "evaluation_report": evaluation_report_path,
+            "profitability_benchmark": profitability_benchmark_path,
+            "profitability_evidence": profitability_evidence_path,
+            "profitability_validation": profitability_validation_path,
+            "janus_event_car": janus_event_car_path,
+            "janus_hgrm_reward": janus_hgrm_reward_path,
+            "recalibration_report": recalibration_report_path,
+            "promotion_gate": promotion_gate_path,
+        },
+        parent_lineage_hash=parent_hash,
+        parent_stage=parent_stage,
+        created_at=generated_at,
+        extra_inputs={
+            "recommendation_trace_id": recommendation_trace_id,
+            "gate_report_trace_id": gate_report_trace_id,
+        },
+    )
+    stage_records.append(gate_stage)
+    parent_hash = gate_lineage_hash
+    parent_stage = "gate-evaluation"
+
+    promotion_stage, promotion_lineage_hash = _build_phase_stage_payload(
+        stage="promotion-prerequisites",
+        stage_index=3,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        stage_status="pass" if promotion_check_allowed else "fail",
+        stage_reasons=(
+            [*map(str, _as_mapping(promotion_check).get("reasons", []))]
+            if isinstance(promotion_check.get("reasons"), list)
+            else []
+        )
+        or ["missing_promotion_check"],
+        stage_gate_refs=[_as_mapping(promotion_check)],
+        input_artifacts={"gate_evaluation": gate_report_path},
+        output_artifacts={"promotion_check": promotion_check_path},
+        parent_lineage_hash=parent_hash,
+        parent_stage=parent_stage,
+        created_at=generated_at,
+        extra_inputs={
+            "promotion_target": promotion_target,
+            "recommended_mode": recommended_mode,
+        },
+    )
+    stage_records.append(promotion_stage)
+    parent_hash = promotion_lineage_hash
+    parent_stage = "promotion-prerequisites"
+
+    rollback_stage, rollback_lineage_hash = _build_phase_stage_payload(
+        stage="rollback-readiness",
+        stage_index=4,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        stage_status="pass" if rollback_ready else "fail",
+        stage_reasons=(
+            [str(item) for item in _as_mapping(rollback_check).get("reasons", [])]
+            if isinstance(rollback_check.get("reasons"), list)
+            else []
+        )
+        or ["missing_rollback_readiness"],
+        stage_gate_refs=[_as_mapping(rollback_check)],
+        input_artifacts={"promotion_check": promotion_check_path},
+        output_artifacts={"rollback_check": rollback_check_path},
+        parent_lineage_hash=parent_hash,
+        parent_stage=parent_stage,
+        created_at=generated_at,
+    )
+    stage_records.append(rollback_stage)
+    parent_hash = rollback_lineage_hash
+    parent_stage = "rollback-readiness"
+
+    actuation_stage, actuation_lineage_hash = _build_phase_stage_payload(
+        stage="actuation-intent",
+        stage_index=5,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        stage_status="pass" if actuation_allowed_payload else "fail",
+        stage_reasons=(
+            [str(item) for item in _as_mapping(actuation_payload).get("artifact_refs", [])]
+            if isinstance(actuation_payload.get("artifact_refs"), list)
+            else []
+        )
+        or ["actuation_artifact_recorded"],
+        stage_gate_refs=[
+            _as_mapping(actuation_payload.get("gates")),
+            _as_mapping(actuation_payload.get("audit")),
+        ],
+        input_artifacts={"rollback_check": rollback_check_path},
+        output_artifacts={"actuation_intent": actuation_intent_path},
+        parent_lineage_hash=parent_hash,
+        parent_stage=parent_stage,
+        created_at=generated_at,
+    )
+    stage_records.append(actuation_stage)
+    parent_hash = actuation_lineage_hash
+    parent_stage = "actuation-intent"
+
+    if paper_patch_path is not None:
+        patch_stage, patch_lineage_hash = _build_phase_stage_payload(
+            stage="paper-patch",
+            stage_index=6,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            stage_status="pass",
+            stage_reasons=["patch_artifact_emitted"],
+            stage_gate_refs=[],
+            input_artifacts={"actuation_intent": actuation_intent_path},
+            output_artifacts={"paper_patch": paper_patch_path},
+            parent_lineage_hash=parent_hash,
+            parent_stage=parent_stage,
+            created_at=generated_at,
+        )
+        stage_records.append(patch_stage)
+        parent_hash = patch_lineage_hash
+
+    stage_lineage_payload = {
+        record["stage"]: {
+            "stage_index": record["stage_index"],
+            "stage_trace_id": record["stage_trace_id"],
+            "lineage_hash": record["lineage_hash"],
+            "status": record["status"],
+            "parent_stage": record["parent_stage"],
+            "parent_lineage_hash": record["parent_lineage_hash"],
+            "artifact_count": record["artifact_count"],
+            "status_reasons": record["status_reasons"],
+        }
+        for record in stage_records
+    }
+    replay_artifacts = _artifact_hashes(
+        {
+            "candidate_spec": candidate_spec_path,
+            "evaluation_report": evaluation_report_path,
+            "gate_report": gate_report_path,
+            "promotion_check": promotion_check_path,
+            "rollback_check": rollback_check_path,
+            "promotion_gate": promotion_gate_path,
+            "profitability_benchmark": profitability_benchmark_path,
+            "profitability_evidence": profitability_evidence_path,
+            "profitability_validation": profitability_validation_path,
+            "janus_event_car": janus_event_car_path,
+            "janus_hgrm_reward": janus_hgrm_reward_path,
+            "recalibration_report": recalibration_report_path,
+            "actuation_intent": actuation_intent_path,
+        }
+    )
+    if paper_patch_path is not None:
+        replay_artifacts["paper_patch"] = _sha256_path(paper_patch_path)
+
+    stage_ids = [record["stage_trace_id"] for record in stage_records]
+    lineage_root = stage_records[0]["lineage_hash"] if stage_records else None
+    lineage_tail = stage_records[-1]["lineage_hash"] if stage_records else None
+    manifest_payload: dict[str, Any] = {
+        "schema_version": _AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "generated_at": generated_at.isoformat(),
+        "output_dir": str(output_dir),
+        "promotion": {
+            "target": promotion_target,
+            "recommended_mode": recommended_mode,
+            "actuation_allowed": actuation_allowed,
+        },
+        "governance": {
+            "repository": governance_repository,
+            "base": governance_base,
+            "head": governance_head,
+            "priority_id": priority_id,
+        },
+        "provenance": {
+            "recommendation_trace_id": recommendation_trace_id,
+            "gate_report_trace_id": gate_report_trace_id,
+        },
+        "phase_lineage": {
+            "stage_count": len(stage_records),
+            "stage_ids": stage_ids,
+            "lineage_root": lineage_root,
+            "lineage_tail": lineage_tail,
+            "lineage_stages": stage_lineage_payload,
+        },
+        "artifacts": {
+            "candidate_spec": str(candidate_spec_path),
+            "evaluation_report": str(evaluation_report_path),
+            "gate_report": str(gate_report_path),
+            "promotion_check": str(promotion_check_path),
+            "rollback_check": str(rollback_check_path),
+            "promotion_gate": str(promotion_gate_path),
+            "profitability_benchmark": str(profitability_benchmark_path),
+            "profitability_evidence": str(profitability_evidence_path),
+            "profitability_validation": str(profitability_validation_path),
+            "janus_event_car": str(janus_event_car_path),
+            "janus_hgrm_reward": str(janus_hgrm_reward_path),
+            "recalibration_report": str(recalibration_report_path),
+            "actuation_intent": str(actuation_intent_path),
+        },
+        "artifact_hashes": replay_artifacts,
+    }
+    manifest_payload["manifest_hash"] = _stable_hash(manifest_payload)
+    return manifest_payload
+
+
+def _write_autonomy_iteration_notes(
+    *,
+    artifact_root: Path,
+    run_id: str,
+    candidate_id: str,
+    phase_manifest_payload: Mapping[str, Any],
+) -> Path:
+    notes_dir = artifact_root / _AUTONOMY_NOTES_DIR
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    iteration = _readable_iteration_number(notes_dir)
+    notes_path = notes_dir / f"{_AUTONOMY_NOTES_PREFIX}{iteration}.md"
+    phase_lineage = phase_manifest_payload.get("phase_lineage", {})
+    phase_lineage_map = _as_mapping(phase_lineage)
+
+    lines = [
+        f"# Autonomy phase iteration {iteration}",
+        "",
+        f"- run_id: {run_id}",
+        f"- candidate_id: {candidate_id}",
+        f"- generated_at: {phase_manifest_payload.get('generated_at', '')}",
+        f"- manifest_schema: {phase_manifest_payload.get('schema_version', '')}",
+        f"- artifact_hash_count: {len(_as_mapping(phase_manifest_payload.get('artifact_hashes')).keys())}",
+        "",
+        "## Stage lineage",
+        f"- head: {phase_lineage_map.get('lineage_tail')}",
+        f"- root: {phase_lineage_map.get('lineage_root')}",
+    ]
+    for stage in phase_lineage_map.get("lineage_stages", {}):
+        stage_payload = phase_lineage_map["lineage_stages"].get(stage, {})
+        if not isinstance(stage_payload, Mapping):
+            continue
+        lines.extend(
+            [
+                "",
+                f"### {stage}",
+                f"- index: {cast(dict[str, object], stage_payload).get('stage_index')}",
+                f"- status: {cast(dict[str, object], stage_payload).get('status')}",
+                f"- trace: {cast(dict[str, object], stage_payload).get('stage_trace_id')}",
+                f"- parent: {cast(dict[str, object], stage_payload).get('parent_stage')}",
+            ]
+        )
+    notes_path.write_text("\\n".join(lines), encoding="utf-8")
+    return notes_path
 
 
 def _collect_walk_decisions_for_runtime(

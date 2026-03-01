@@ -24,6 +24,9 @@ stages:
     mutableAction: false
     requirePreviousArtifact: true
     requirePreviousGatePass: true
+    stageSloGates:
+      - gate_id: gate6_profitability_evidence
+        requiredStatus: pass
   - stage: promotion-prerequisites
     lane: lane-e
     mutableAction: false

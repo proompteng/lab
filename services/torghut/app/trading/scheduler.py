@@ -978,6 +978,7 @@ class TradingState:
     last_autonomy_run_id: Optional[str] = None
     last_autonomy_candidate_id: Optional[str] = None
     last_autonomy_gates: Optional[str] = None
+    last_autonomy_phase_manifest: Optional[str] = None
     last_autonomy_actuation_intent: Optional[str] = None
     last_autonomy_phase_manifest: Optional[str] = None
     last_autonomy_patch: Optional[str] = None
@@ -4639,6 +4640,16 @@ class TradingScheduler:
             cancelled_count = 0
 
         gate_provenance = self._load_last_gate_provenance()
+        rollback_artifact_paths = [
+            self.state.last_autonomy_gates,
+            self.state.last_autonomy_actuation_intent,
+            gate_provenance.get("phase_manifest_path"),
+        ]
+        unique_rollback_artifact_paths = [
+            path
+            for index, path in enumerate(rollback_artifact_paths)
+            if path and path not in rollback_artifact_paths[:index]
+        ]
         artifact_root = _resolve_autonomy_artifact_root(
             Path(settings.trading_autonomy_artifact_dir)
         )
@@ -4674,6 +4685,9 @@ class TradingScheduler:
                 "order_submission_blocked": True,
                 "cancel_open_orders_attempted": True,
             },
+            "rollback_artifacts": [
+                item for item in unique_rollback_artifact_paths if item is not None
+            ],
             "provenance": gate_provenance,
             "cancelled_open_orders": cancelled_count,
         }
@@ -4692,13 +4706,18 @@ class TradingScheduler:
             incident_path,
         )
 
-    def _load_last_gate_provenance(self) -> dict[str, str | None]:
+    def _load_last_gate_provenance(self) -> dict[str, object | None]:
         gate_path_raw = self.state.last_autonomy_gates
         actuation_path_raw = (
             str(self.state.last_autonomy_actuation_intent or "").strip()
         )
+        phase_manifest_path_raw = str(
+            self.state.last_autonomy_phase_manifest or ""
+        ).strip()
         payload: dict[str, Any] = {}
+        phase_lineage: dict[str, Any] = {}
         actuation_payload: dict[str, Any] = {}
+        phase_payload: dict[str, Any] = {}
         if gate_path_raw:
             try:
                 parsed = json.loads(Path(gate_path_raw).read_text(encoding="utf-8"))
@@ -4715,12 +4734,30 @@ class TradingScheduler:
                     actuation_payload = cast(dict[str, Any], actuation_raw)
             except Exception:
                 actuation_payload = {}
+        if phase_manifest_path_raw:
+            try:
+                manifest_raw = json.loads(
+                    Path(phase_manifest_path_raw).read_text(encoding="utf-8")
+                )
+                if isinstance(manifest_raw, dict):
+                    phase_payload = cast(dict[str, Any], manifest_raw)
+            except Exception:
+                phase_payload = {}
         actuation_gates_raw = actuation_payload.get("gates")
         actuation_gates = (
             cast(dict[str, Any], actuation_gates_raw)
             if isinstance(actuation_gates_raw, dict)
             else {}
         )
+        if isinstance(phase_payload.get("phase_lineage"), dict):
+            phase_lineage = cast(dict[str, Any], phase_payload.get("phase_lineage"))
+        raw_phase_trace = phase_lineage.get("stage_ids")
+        if isinstance(raw_phase_trace, list):
+            phase_manifest_trace = [
+                str(item).strip() for item in raw_phase_trace if str(item).strip()
+            ]
+        else:
+            phase_manifest_trace = []
         provenance_raw = payload.get("provenance")
         provenance: dict[str, Any] = (
             cast(dict[str, Any], provenance_raw)
@@ -4731,7 +4768,7 @@ class TradingScheduler:
             "run_id": str(payload.get("run_id")).strip() or None,
             "actuation_intent_path": actuation_path_raw or None,
             "gate_report_trace_id": str(provenance.get("gate_report_trace_id")).strip()
-            or None,
+                or None,
             "recommendation_trace_id": str(
                 provenance.get("recommendation_trace_id")
             ).strip()
@@ -4744,6 +4781,18 @@ class TradingScheduler:
                 actuation_gates.get("recommendation_trace_id")
             ).strip()
             or None,
+            "phase_manifest_path": phase_manifest_path_raw or None,
+            "phase_manifest_hash": str(phase_payload.get("manifest_hash")).strip()
+                or None,
+            "phase_manifest_lineage_root": str(
+                phase_lineage.get("lineage_root")
+            ).strip()
+                or None,
+            "phase_manifest_lineage_tail": str(
+                phase_lineage.get("lineage_tail")
+            ).strip()
+                or None,
+            "phase_manifest_trace": phase_manifest_trace,
         }
 
     async def start(self) -> None:
@@ -5229,6 +5278,7 @@ class TradingScheduler:
         self.state.last_autonomy_run_id = None
         self.state.last_autonomy_candidate_id = None
         self.state.last_autonomy_gates = str(no_signal_path)
+        self.state.last_autonomy_phase_manifest = None
         self.state.last_autonomy_actuation_intent = None
         self.state.last_autonomy_phase_manifest = None
         self.state.last_autonomy_patch = None
@@ -5513,6 +5563,7 @@ class TradingScheduler:
         self.state.last_autonomy_run_id = None
         self.state.last_autonomy_candidate_id = None
         self.state.last_autonomy_gates = None
+        self.state.last_autonomy_phase_manifest = None
         self.state.last_autonomy_actuation_intent = None
         self.state.last_autonomy_phase_manifest = None
         self.state.last_autonomy_patch = None
@@ -5537,6 +5588,9 @@ class TradingScheduler:
         self.state.last_autonomy_run_id = result.run_id
         self.state.last_autonomy_candidate_id = result.candidate_id
         self.state.last_autonomy_gates = str(result.gate_report_path)
+        self.state.last_autonomy_phase_manifest = (
+            str(result.phase_manifest_path) if result.phase_manifest_path else None
+        )
         self.state.last_autonomy_actuation_intent = (
             str(result.actuation_intent_path)
             if result.actuation_intent_path
