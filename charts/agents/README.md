@@ -120,17 +120,19 @@ Source-of-truth model:
   time. You must supply checksum values from your external source of truth.
 
 The external inputs should be the exact same contract inputs that drive pod behavior. In practice,
-that means entries from:
+that means entries from values:
 
-- `database.secretRef`
-- `envFromSecretRefs`
-- `envFromConfigMapRefs`
-- `.Values.env.secrets` and `.Values.env.config`
-- Any manually mounted or referenced Secret/ConfigMap inputs
+- `database.secretRef` / `database.createSecret` (database source of truth)
+- `envFromSecretRefs` (Secret names injected via `envFrom`)
+- `envFromConfigMapRefs` (ConfigMap names injected via `envFrom`)
+- `env.secrets` (Secret key refs in `env.secrets`)
+- `env.config` (ConfigMap key refs in `env.config`)
+- Any explicit Secret/ConfigMap mounts or references used as env values
 
 Example:
 
-The chart always derives a checksum from an inline DB secret when `database.createSecret.enabled=true` because that secret content is chart-owned and deterministic.
+The chart always derives a checksum from an inline DB secret when `database.createSecret.enabled=true`
+because that secret content is chart-owned and deterministic.
 
 For other inputs, list the exact resources and checksums in values:
 
@@ -166,7 +168,7 @@ Example (external Secret payload hash):
 ```bash
 kubectl -n agents get secret agents-github-token-env -o json |
   jq -cS '{data: .data, binaryData: .binaryData}' |
-  sha256sum
+  sha256sum | awk '{print $1}'
 ```
 
 Example (external ConfigMap payload hash):
@@ -174,7 +176,7 @@ Example (external ConfigMap payload hash):
 ```bash
 kubectl -n agents get configmap agents-runtime-config -o json |
   jq -cS '{data: .data, binaryData: .binaryData}' |
-  sha256sum
+  sha256sum | awk '{print $1}'
 ```
 
 Source-payload hashing guidance:
@@ -182,6 +184,8 @@ Source-payload hashing guidance:
 - Include keys in a stable JSON order (`jq -cS`) and include both `data` and `binaryData`
   so the checksum reflects everything that can affect runtime behavior.
 - For key-by-key checksums, include only the same keys the pod reads; avoid hashing unrelated metadata.
+- If your source of truth is a declarative manifest (for example, ExternalSecret or Sealed Secret),
+  hash the source manifest object (not the rendered Kubernetes object) before applying.
 - In GitOps/ExternalSecrets flows, calculate the hash from the source-of-truth manifest committed in your secrets repo.
 
 Limitations:

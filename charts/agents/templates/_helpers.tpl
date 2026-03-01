@@ -49,7 +49,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- if and .Values.database.createSecret.enabled .Values.database.url -}}
 {{- $dbSecretName := include "agents.databaseSecretName" . }}
-{{- $annotations = set $annotations (printf "checksum/secret/%s/%s" $namespace $dbSecretName) (sha256sum .Values.database.url) -}}
+{{- $annotations = set $annotations (printf "checksum/secret/%s/%s" $namespace $dbSecretName) (sha256sum (trim .Values.database.url)) -}}
 {{- end -}}
 
 {{- range .Values.rolloutChecksums.secrets -}}

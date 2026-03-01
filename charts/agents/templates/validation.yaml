@@ -33,6 +33,9 @@
 {{- $checksumResourceNamePattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$" -}}
 {{- $seenSecretRefs := dict -}}
 {{- $seenConfigMapRefs := dict -}}
+{{- if and .Values.database.createSecret.enabled (not .Values.database.url) -}}
+{{- $errors = append $errors "rolloutChecksums.enabled=true requires database.url when database.createSecret.enabled=true." -}}
+{{- end -}}
 {{- if and (not .Values.database.createSecret.enabled) (and (eq (len $rolloutChecksums.secrets) 0) (eq (len $rolloutChecksums.configMaps) 0)) -}}
 {{- $errors = append $errors "rolloutChecksums.enabled=true requires at least one checksum entry or database.createSecret.enabled=true." -}}
 {{- end -}}
