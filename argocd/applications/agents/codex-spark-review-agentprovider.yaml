@@ -27,14 +27,19 @@ spec:
       fi
 
       if [ -n "${VCS_HEAD_BRANCH:-}" ]; then
-        git fetch origin "$VCS_HEAD_BRANCH"
-        git checkout "$VCS_HEAD_BRANCH" || git checkout -b "$VCS_HEAD_BRANCH" "origin/$VCS_HEAD_BRANCH"
+        if ! git fetch origin "$VCS_HEAD_BRANCH"; then
+          git checkout -B "$VCS_HEAD_BRANCH" "origin/$BASE"
+        elif git rev-parse --verify --quiet "origin/$VCS_HEAD_BRANCH"; then
+          git checkout "$VCS_HEAD_BRANCH" || git checkout -B "$VCS_HEAD_BRANCH" "origin/$VCS_HEAD_BRANCH"
+        else
+          git checkout -B "$VCS_HEAD_BRANCH" "origin/$BASE"
+        fi
       else
         git checkout "$BASE"
       fi
 
       if [ "$STAGE" = "fix" ]; then
-        exec /usr/local/bin/agent-runner /workspace/run.json
+        exec /usr/local/bin/agent-runner --spec /workspace/agent-runner.json
       fi
 
       mkdir -p /agentworkspace/.agentrun/codex-spark-review
