@@ -54,7 +54,7 @@ flowchart TD
 ### Rollout/verification (paper-default + emergency-stop posture)
 
 - Keep `TRADING_MODE=paper` and `TRADING_LIVE_ENABLED=false` as the default deployment posture.
-- Keep `TRADING_KILL_SWITCH_ENABLED=false` until an operational policy change authorizes alternate behavior.
+- Keep `TRADING_KILL_SWITCH_ENABLED=true` so hard order blocking remains enabled by default until an approved GitOps change disables it.
 - Keep `TRADING_EMERGENCY_STOP_ENABLED=true` so emergency stop remains ready.
 - Verify by checking:
   - `/trading/status` shows `kill_switches`/`emergency_stop` are active and paper-gated.

@@ -64,7 +64,7 @@ flowchart LR
 - After any env/config change, confirm GitOps manifest values:
   - `TRADING_MODE=paper`
   - `TRADING_LIVE_ENABLED=false`
-  - `TRADING_KILL_SWITCH_ENABLED=false`
+  - `TRADING_KILL_SWITCH_ENABLED=true`
   - `TRADING_EMERGENCY_STOP_ENABLED=true`
   - `LLM_FAIL_OPEN_LIVE_APPROVED=false`
 - Verify `trading/status` shows `trading_mode=paper` and no live execution path is active.

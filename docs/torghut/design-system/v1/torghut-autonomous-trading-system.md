@@ -223,6 +223,7 @@ Controls (from `services/torghut/app/config.py`):
   - `TRADING_MODE=paper`
   - `TRADING_LIVE_ENABLED=false`
   - `TRADING_LIVE_CANARY_ENABLED=true` (observation-only, unless explicitly approved)
+  - `TRADING_KILL_SWITCH_ENABLED=true`
   - `LLM_FAIL_OPEN_LIVE_APPROVED=false`
   - `TRADING_EMERGENCY_STOP_ENABLED=true`
 - Post-change verification:

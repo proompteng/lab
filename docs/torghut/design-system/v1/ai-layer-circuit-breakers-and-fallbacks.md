@@ -73,6 +73,8 @@ Current deployed paper configuration (2026-02-09) sets `LLM_FAIL_MODE=pass_throu
 - Keep GitOps defaults aligned with live guardrails:
   - `TRADING_MODE=paper`
   - `TRADING_LIVE_ENABLED=false`
+  - `TRADING_KILL_SWITCH_ENABLED=true`
+  - `TRADING_EMERGENCY_STOP_ENABLED=true`
   - `LLM_FAIL_OPEN_LIVE_APPROVED=false`
   - `LLM_FAIL_MODE_ENFORCEMENT=configured` (or `strict_veto` when enforcing hard fail-closed)
 - Verify after any config change:

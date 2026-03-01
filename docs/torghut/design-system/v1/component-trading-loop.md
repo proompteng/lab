@@ -114,6 +114,8 @@ Orders must be idempotent across retries (see `v1/component-order-execution-and-
   - `TRADING_LIVE_ENABLED=false`
   - `TRADING_ACCOUNTS_JSON` account entries in paper mode
   - `LLM_FAIL_OPEN_LIVE_APPROVED=false`
+  - `TRADING_KILL_SWITCH_ENABLED=true`
+  - `TRADING_EMERGENCY_STOP_ENABLED=true`
 - Verification:
   - `/trading/status` reports `trading_mode=paper` and no live execution path is active.
   - confirm new `/trading/executions` records are paper-labeled.
