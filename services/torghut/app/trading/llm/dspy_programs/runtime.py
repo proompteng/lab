@@ -21,6 +21,8 @@ from .modules import (
 _HASH_LENGTH = 64
 _BOOTSTRAP_PROGRAM_NAME = "trade-review-committee-v1"
 _BOOTSTRAP_SIGNATURE_VERSION = "v1"
+_DSPY_OPENAI_BASE_PATH = "/openai/v1"
+_DSPY_OPENAI_CHAT_COMPLETIONS_PATH = "/chat/completions"
 
 _BOOTSTRAP_ARTIFACT_BODY = {
     "schema_version": "torghut.dspy.runtime-artifact.v1",
@@ -138,6 +140,10 @@ class DSPyReviewRuntime:
 
         if self.mode != "active":
             reasons.append("dspy_live_runtime_mode_not_active")
+        elif settings.trading_mode == "live":
+            gate_allowed, gate_reasons = settings.llm_dspy_live_runtime_gate()
+            if not gate_allowed:
+                reasons.extend(gate_reasons)
         if self.artifact_hash is None:
             reasons.append("dspy_artifact_hash_missing")
         elif self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH:
@@ -446,31 +452,35 @@ def _resolve_dspy_api_base() -> str:
         raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
 
     parsed = urlsplit(raw_base_url)
+    if not parsed.hostname:
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
     if parsed.scheme not in {"http", "https"}:
         raise DSPyRuntimeUnsupportedStateError(
             "dspy_jangar_base_url_invalid_scheme"
         )
-    if not parsed.netloc:
-        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
     if parsed.query or parsed.fragment:
         raise DSPyRuntimeUnsupportedStateError(
             "dspy_jangar_base_url_invalid_path"
         )
 
-    base_path = parsed.path.rstrip("/").strip()
-    if base_path.endswith("/openai/v1"):
-        base_path = base_path[: -len("/openai/v1")]
-    if base_path == "/":
+    base_path = (parsed.path or "/").rstrip("/")
+    for suffix in (_DSPY_OPENAI_CHAT_COMPLETIONS_PATH,):
+        if base_path.endswith(suffix):
+            base_path = base_path[: -len(suffix)]
+            break
+
+    if base_path == "":
         base_path = ""
 
-    normalized_base = f"{parsed.scheme}://{parsed.netloc}{base_path}"
-    normalized_base = normalized_base.rstrip("/")
+    if not base_path.endswith(_DSPY_OPENAI_BASE_PATH):
+        base_path = f"{base_path}{_DSPY_OPENAI_BASE_PATH}"
 
-    return f"{normalized_base}/openai/v1"
+    normalized_base = f"{parsed.scheme}://{parsed.netloc}{base_path}"
+    return normalized_base
 
 
 def _resolve_dspy_completion_url() -> str:
-    return f"{_resolve_dspy_api_base()}/chat/completions"
+    return f"{_resolve_dspy_api_base()}{_DSPY_OPENAI_CHAT_COMPLETIONS_PATH}"
 
 
 __all__ = [
