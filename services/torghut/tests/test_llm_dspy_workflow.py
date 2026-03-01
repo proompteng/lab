@@ -653,7 +653,7 @@ class TestLLMDSPyWorkflow(TestCase):
             promote_parameters = promote_payload["parameters"]
             self.assertEqual(promote_parameters["approvalRef"], "risk-committee")
             self.assertEqual(promote_parameters["promotionTarget"], "constrained_live")
-            self.assertNotIn("artifactHash", promote_parameters)
+            self.assertEqual(promote_parameters["artifactHash"], "override-hash")
             self.assertNotIn("gateCompatibility", promote_parameters)
             self.assertNotIn("schemaValidRate", promote_parameters)
             self.assertNotIn("deterministicCompatibility", promote_parameters)
