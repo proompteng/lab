@@ -54,7 +54,7 @@ const ChatRequestSchema = S.Struct({
 })
 
 type ChatRequest = S.Schema.Type<typeof ChatRequestSchema>
-type ChatClientKind = 'openwebui' | 'discord' | 'trade-execution' | 'unknown'
+type ChatClientKind = 'openwebui' | 'discord' | 'trade-execution' | 'internal' | 'unknown'
 
 class RequestError extends Error {
   readonly status: number
@@ -128,7 +128,7 @@ const parseRequest = async (request: Request): Promise<ChatRequest> => {
   return parsed
 }
 
-const resolveChatClientKind = (request: Request): ChatClientKind => {
+const resolveChatClientKind = (request: Request, hasOpenWebUIChatId: boolean): ChatClientKind => {
   const tradeExecutionHeader = request.headers.get('x-trade-execution')
   if (tradeExecutionHeader !== null) {
     const normalized = tradeExecutionHeader.trim().toLowerCase()
@@ -153,8 +153,9 @@ const resolveChatClientKind = (request: Request): ChatClientKind => {
   }
   if (normalized === 'discord') return 'discord'
   if (normalized === 'openwebui') return 'openwebui'
+  if (normalized === 'internal') return 'internal'
   if (normalized.length > 0) return 'unknown'
-  return 'openwebui'
+  return hasOpenWebUIChatId ? 'openwebui' : 'unknown'
 }
 
 const WORKTREE_DIR_NAME = '.worktrees'
@@ -711,7 +712,7 @@ export const handleChatCompletionEffect = (request: Request) =>
         const chatIdHeader = request.headers.get('x-openwebui-chat-id')
         const chatId = typeof chatIdHeader === 'string' && chatIdHeader.trim().length > 0 ? chatIdHeader.trim() : null
         const chatClientKind = yield* Effect.try({
-          try: () => resolveChatClientKind(request),
+          try: () => resolveChatClientKind(request, chatId !== null),
           catch: (error) =>
             error instanceof RequestError
               ? error
@@ -720,6 +721,7 @@ export const handleChatCompletionEffect = (request: Request) =>
         const tradeExecutionRequest = chatClientKind === 'trade-execution'
         const statefulTranscriptEnabled =
           process.env.JANGAR_STATEFUL_CHAT_MODE === '1' && chatClientKind === 'openwebui'
+        const shouldTrackConversationState = chatClientKind === 'openwebui' || chatClientKind === 'discord'
 
         const { config, client, toolRenderer, encoder } = yield* Effect.all({
           config: loadConfig,
@@ -745,7 +747,7 @@ export const handleChatCompletionEffect = (request: Request) =>
           })
         }
 
-        if (chatId && !tradeExecutionRequest) {
+        if (chatId && shouldTrackConversationState) {
           const resolved = yield* pipe(
             Effect.gen(function* () {
               const threadState = yield* ThreadState
@@ -886,8 +888,11 @@ export const handleChatCompletionEffect = (request: Request) =>
             })
           }
         }
-        if (chatId && tradeExecutionRequest) {
-          console.info('[chat] skipping stateful chat for trade-execution request', { chatId })
+        if (chatId && (tradeExecutionRequest || chatClientKind === 'internal')) {
+          console.info('[chat] skipping thread state for stateless client request', {
+            chatId,
+            clientKind: chatClientKind,
+          })
         }
 
         if (tradeExecutionRequest && !parsed.model) {
