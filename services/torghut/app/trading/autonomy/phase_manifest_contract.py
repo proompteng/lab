@@ -19,7 +19,7 @@ AUTONOMY_MANIFEST_STATUSES: tuple[str, ...] = (
 )
 
 
-def coerce_phase_status(raw: Any, *, default: str = "skip") -> str:
+def coerce_phase_status(raw: Any, *, default: str = "fail") -> str:
     if raw is None:
         return default
     status = str(raw).strip().lower()

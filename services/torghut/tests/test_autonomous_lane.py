@@ -25,6 +25,7 @@ from app.trading.autonomy.policy_checks import (
     PromotionPrerequisiteResult,
     RollbackReadinessResult,
 )
+from app.trading.autonomy.phase_manifest_contract import coerce_phase_status
 from app.trading.autonomy.gates import GateEvaluationReport, GateResult
 from app.trading.evaluation import WalkForwardDecision
 from app.trading.features import SignalFeatures
@@ -1851,3 +1852,10 @@ class TestAutonomousLane(TestCase):
                 str(rollback_evidence),
             )
             self.assertIn(str(rollback_evidence), manifest["artifact_refs"])
+
+    def test_coerce_phase_status_unknown_status_fails(self) -> None:
+        self.assertEqual(coerce_phase_status("blocked"), "fail")
+        self.assertEqual(
+            coerce_phase_status("blocked", default="skip"),
+            "skip",
+        )
