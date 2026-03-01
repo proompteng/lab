@@ -15,15 +15,15 @@ from ..models import Execution, ExecutionTCAMetric, TradeDecision
 
 ADAPTIVE_LOOKBACK_WINDOW = 24
 ADAPTIVE_MIN_SAMPLE_SIZE = 6
-ADAPTIVE_DEGRADE_FALLBACK_BPS = Decimal('4')
-ADAPTIVE_TARGET_SLIPPAGE_BPS = Decimal('12')
-ADAPTIVE_MAX_SLIPPAGE_BPS = Decimal('20')
-ADAPTIVE_MAX_SHORTFALL = Decimal('15')
-ADAPTIVE_MIN_EXPECTED_SHORTFALL_COVERAGE = Decimal('0.50')
-ADAPTIVE_PARTICIPATION_TIGHTEN = Decimal('0.75')
-ADAPTIVE_PARTICIPATION_RELAX = Decimal('1.0')
-ADAPTIVE_EXECUTION_SLOWDOWN = Decimal('1.40')
-ADAPTIVE_EXECUTION_SPEEDUP = Decimal('0.85')
+ADAPTIVE_DEGRADE_FALLBACK_BPS = Decimal("4")
+ADAPTIVE_TARGET_SLIPPAGE_BPS = Decimal("12")
+ADAPTIVE_MAX_SLIPPAGE_BPS = Decimal("20")
+ADAPTIVE_MAX_SHORTFALL = Decimal("15")
+ADAPTIVE_MIN_EXPECTED_SHORTFALL_COVERAGE = Decimal("0.50")
+ADAPTIVE_PARTICIPATION_TIGHTEN = Decimal("0.75")
+ADAPTIVE_PARTICIPATION_RELAX = Decimal("1.0")
+ADAPTIVE_EXECUTION_SLOWDOWN = Decimal("1.40")
+ADAPTIVE_EXECUTION_SPEEDUP = Decimal("0.85")
 
 
 @dataclass(frozen=True)
@@ -55,26 +55,28 @@ class AdaptiveExecutionPolicyDecision:
 
     def as_payload(self) -> dict[str, Any]:
         return {
-            'key': self.key,
-            'symbol': self.symbol,
-            'regime_label': self.regime_label,
-            'sample_size': self.sample_size,
-            'adaptive_samples': self.adaptive_samples,
-            'baseline_slippage_bps': _decimal_str(self.baseline_slippage_bps),
-            'recent_slippage_bps': _decimal_str(self.recent_slippage_bps),
-            'baseline_shortfall_notional': _decimal_str(self.baseline_shortfall_notional),
-            'recent_shortfall_notional': _decimal_str(self.recent_shortfall_notional),
-            'effect_size_bps': _decimal_str(self.effect_size_bps),
-            'degradation_bps': _decimal_str(self.degradation_bps),
-            'expected_shortfall_coverage': str(self.expected_shortfall_coverage),
-            'expected_shortfall_sample_count': self.expected_shortfall_sample_count,
-            'fallback_active': self.fallback_active,
-            'fallback_reason': self.fallback_reason,
-            'prefer_limit': self.prefer_limit,
-            'participation_rate_scale': _decimal_str(self.participation_rate_scale),
-            'execution_seconds_scale': _decimal_str(self.execution_seconds_scale),
-            'aggressiveness': self.aggressiveness,
-            'generated_at': self.generated_at.isoformat(),
+            "key": self.key,
+            "symbol": self.symbol,
+            "regime_label": self.regime_label,
+            "sample_size": self.sample_size,
+            "adaptive_samples": self.adaptive_samples,
+            "baseline_slippage_bps": _decimal_str(self.baseline_slippage_bps),
+            "recent_slippage_bps": _decimal_str(self.recent_slippage_bps),
+            "baseline_shortfall_notional": _decimal_str(
+                self.baseline_shortfall_notional
+            ),
+            "recent_shortfall_notional": _decimal_str(self.recent_shortfall_notional),
+            "effect_size_bps": _decimal_str(self.effect_size_bps),
+            "degradation_bps": _decimal_str(self.degradation_bps),
+            "expected_shortfall_coverage": str(self.expected_shortfall_coverage),
+            "expected_shortfall_sample_count": self.expected_shortfall_sample_count,
+            "fallback_active": self.fallback_active,
+            "fallback_reason": self.fallback_reason,
+            "prefer_limit": self.prefer_limit,
+            "participation_rate_scale": _decimal_str(self.participation_rate_scale),
+            "execution_seconds_scale": _decimal_str(self.execution_seconds_scale),
+            "aggressiveness": self.aggressiveness,
+            "generated_at": self.generated_at.isoformat(),
         }
 
 
@@ -99,7 +101,7 @@ def upsert_execution_tca_metric(
 
     arrival_price = _resolve_arrival_price(decision=decision, execution=execution)
     avg_fill_price = _positive_decimal(execution.avg_fill_price)
-    filled_qty = _positive_decimal(execution.filled_qty) or Decimal('0')
+    filled_qty = _positive_decimal(execution.filled_qty) or Decimal("0")
     signed_qty = _signed_qty(side=execution.side, qty=filled_qty)
 
     slippage_bps: Decimal | None = None
@@ -192,13 +194,17 @@ def build_tca_gate_inputs(
     stmt = select(
         func.count(ExecutionTCAMetric.id),
         func.avg(ExecutionTCAMetric.slippage_bps),
+        func.avg(func.abs(ExecutionTCAMetric.slippage_bps)),
         func.avg(ExecutionTCAMetric.shortfall_notional),
+        func.avg(func.abs(ExecutionTCAMetric.shortfall_notional)),
         func.avg(ExecutionTCAMetric.churn_ratio),
         func.avg(ExecutionTCAMetric.divergence_bps),
+        func.avg(func.abs(ExecutionTCAMetric.divergence_bps)),
         func.count(ExecutionTCAMetric.expected_shortfall_bps_p50),
         func.avg(ExecutionTCAMetric.expected_shortfall_bps_p50),
         func.avg(ExecutionTCAMetric.expected_shortfall_bps_p95),
         func.avg(ExecutionTCAMetric.realized_shortfall_bps),
+        func.avg(func.abs(ExecutionTCAMetric.realized_shortfall_bps)),
         func.avg(
             func.abs(
                 ExecutionTCAMetric.realized_shortfall_bps
@@ -213,15 +219,19 @@ def build_tca_gate_inputs(
     row = session.execute(stmt).one()
     order_count = int(row[0] or 0)
     avg_slippage = _decimal_or_none(row[1])
-    avg_shortfall = _decimal_or_none(row[2])
-    avg_churn = _decimal_or_none(row[3])
-    avg_divergence = _decimal_or_none(row[4])
-    expected_count = int(row[5] or 0)
-    avg_expected_shortfall_p50 = _decimal_or_none(row[6])
-    avg_expected_shortfall_p95 = _decimal_or_none(row[7])
-    avg_realized_shortfall_bps = _decimal_or_none(row[8])
-    avg_calibration_error_bps = _decimal_or_none(row[9])
-    last_computed_at = row[10]
+    avg_abs_slippage = _decimal_or_none(row[2])
+    avg_shortfall = _decimal_or_none(row[3])
+    avg_abs_shortfall = _decimal_or_none(row[4])
+    avg_churn = _decimal_or_none(row[5])
+    avg_divergence = _decimal_or_none(row[6])
+    avg_abs_divergence = _decimal_or_none(row[7])
+    expected_count = int(row[8] or 0)
+    avg_expected_shortfall_p50 = _decimal_or_none(row[9])
+    avg_expected_shortfall_p95 = _decimal_or_none(row[10])
+    avg_realized_shortfall_bps = _decimal_or_none(row[11])
+    avg_abs_realized_shortfall_bps = _decimal_or_none(row[12])
+    avg_calibration_error_bps = _decimal_or_none(row[13])
+    last_computed_at = row[14]
     expected_shortfall_coverage = (
         Decimal(expected_count) / Decimal(order_count)
         if order_count > 0
@@ -230,12 +240,21 @@ def build_tca_gate_inputs(
     return {
         "order_count": order_count,
         "avg_slippage_bps": avg_slippage if avg_slippage is not None else Decimal("0"),
+        "avg_abs_slippage_bps": avg_abs_slippage
+        if avg_abs_slippage is not None
+        else Decimal("0"),
         "avg_shortfall_notional": avg_shortfall
         if avg_shortfall is not None
+        else Decimal("0"),
+        "avg_shortfall_notional_abs": avg_abs_shortfall
+        if avg_abs_shortfall is not None
         else Decimal("0"),
         "avg_churn_ratio": avg_churn if avg_churn is not None else Decimal("0"),
         "avg_divergence_bps": avg_divergence
         if avg_divergence is not None
+        else Decimal("0"),
+        "avg_divergence_bps_abs": avg_abs_divergence
+        if avg_abs_divergence is not None
         else Decimal("0"),
         "expected_shortfall_sample_count": expected_count,
         "expected_shortfall_coverage": expected_shortfall_coverage,
@@ -247,6 +266,9 @@ def build_tca_gate_inputs(
         else Decimal("0"),
         "avg_realized_shortfall_bps": avg_realized_shortfall_bps
         if avg_realized_shortfall_bps is not None
+        else Decimal("0"),
+        "avg_realized_shortfall_bps_abs": avg_abs_realized_shortfall_bps
+        if avg_abs_realized_shortfall_bps is not None
         else Decimal("0"),
         "avg_calibration_error_bps": avg_calibration_error_bps
         if avg_calibration_error_bps is not None
@@ -263,7 +285,7 @@ def derive_adaptive_execution_policy(
 ) -> AdaptiveExecutionPolicyDecision:
     normalized_symbol = symbol.strip().upper()
     normalized_regime = _normalize_regime_label(regime_label)
-    key = f'{normalized_symbol}:{normalized_regime}'
+    key = f"{normalized_symbol}:{normalized_regime}"
     generated_at = datetime.now(timezone.utc)
 
     if not normalized_symbol:
@@ -274,10 +296,14 @@ def derive_adaptive_execution_policy(
             generated_at=generated_at,
         )
 
-    rows = _load_recent_tca_rows(session, symbol=normalized_symbol, regime_label=normalized_regime)
+    rows = _load_recent_tca_rows(
+        session, symbol=normalized_symbol, regime_label=normalized_regime
+    )
     window_summary = _collect_adaptive_windows(rows)
     baseline_slippage, recent_slippage = _split_window_average(window_summary.slippages)
-    baseline_shortfall, recent_shortfall = _split_window_average(window_summary.shortfalls)
+    baseline_shortfall, recent_shortfall = _split_window_average(
+        window_summary.shortfalls
+    )
     effect_size_bps, degradation_bps = _derive_effect_size(
         baseline_slippage=baseline_slippage,
         recent_slippage=recent_slippage,
@@ -337,7 +363,7 @@ def _empty_adaptive_execution_policy(
         regime_label=regime_label,
         sample_size=0,
         adaptive_samples=0,
-        expected_shortfall_coverage=Decimal('0'),
+        expected_shortfall_coverage=Decimal("0"),
         expected_shortfall_sample_count=0,
         baseline_slippage_bps=None,
         recent_slippage_bps=None,
@@ -348,9 +374,9 @@ def _empty_adaptive_execution_policy(
         fallback_active=False,
         fallback_reason=None,
         prefer_limit=None,
-        participation_rate_scale=Decimal('1'),
-        execution_seconds_scale=Decimal('1'),
-        aggressiveness='neutral',
+        participation_rate_scale=Decimal("1"),
+        execution_seconds_scale=Decimal("1"),
+        aggressiveness="neutral",
         generated_at=generated_at,
     )
 
@@ -361,11 +387,11 @@ def _collect_adaptive_windows(rows: list[dict[str, Any]]) -> _AdaptiveWindowSumm
     slippages: list[Decimal] = []
     shortfalls: list[Decimal] = []
     for row in rows:
-        if row['adaptive_applied']:
+        if row["adaptive_applied"]:
             adaptive_samples += 1
-        slippage = row['slippage_bps']
-        shortfall = row['shortfall_notional']
-        if row['expected_shortfall_bps_p50'] is not None:
+        slippage = row["slippage_bps"]
+        shortfall = row["shortfall_notional"]
+        if row["expected_shortfall_bps_p50"] is not None:
             expected_shortfall_sample_count += 1
         if slippage is not None:
             slippages.append(abs(slippage))
@@ -375,7 +401,7 @@ def _collect_adaptive_windows(rows: list[dict[str, Any]]) -> _AdaptiveWindowSumm
     expected_shortfall_coverage = (
         Decimal(expected_shortfall_sample_count) / Decimal(sample_size)
         if sample_size > 0
-        else Decimal('0')
+        else Decimal("0")
     )
     return _AdaptiveWindowSummary(
         sample_size=sample_size,
@@ -408,16 +434,16 @@ def _resolve_fallback_state(
         sample_size >= ADAPTIVE_MIN_SAMPLE_SIZE
         and expected_shortfall_coverage < ADAPTIVE_MIN_EXPECTED_SHORTFALL_COVERAGE
     ):
-        if expected_shortfall_coverage == Decimal('0'):
-            return True, 'adaptive_policy_expected_shortfall_coverage_missing'
-        return True, 'adaptive_policy_expected_shortfall_coverage_low'
+        if expected_shortfall_coverage == Decimal("0"):
+            return True, "adaptive_policy_expected_shortfall_coverage_missing"
+        return True, "adaptive_policy_expected_shortfall_coverage_low"
     fallback_required = (
         adaptive_samples >= max(2, ADAPTIVE_MIN_SAMPLE_SIZE // 2)
         and degradation_bps is not None
         and degradation_bps >= ADAPTIVE_DEGRADE_FALLBACK_BPS
     )
     if fallback_required:
-        return True, 'adaptive_policy_degraded'
+        return True, "adaptive_policy_degraded"
     return False, None
 
 
@@ -429,11 +455,16 @@ def _resolve_adaptive_controls(
     recent_shortfall: Decimal | None,
 ) -> tuple[bool | None, Decimal, Decimal, str]:
     prefer_limit: bool | None = None
-    participation_rate_scale = Decimal('1')
-    execution_seconds_scale = Decimal('1')
-    aggressiveness = 'neutral'
+    participation_rate_scale = Decimal("1")
+    execution_seconds_scale = Decimal("1")
+    aggressiveness = "neutral"
     if sample_size < ADAPTIVE_MIN_SAMPLE_SIZE or fallback_active:
-        return prefer_limit, participation_rate_scale, execution_seconds_scale, aggressiveness
+        return (
+            prefer_limit,
+            participation_rate_scale,
+            execution_seconds_scale,
+            aggressiveness,
+        )
     if (
         recent_slippage is not None
         and recent_shortfall is not None
@@ -446,7 +477,7 @@ def _resolve_adaptive_controls(
             True,
             ADAPTIVE_PARTICIPATION_TIGHTEN,
             ADAPTIVE_EXECUTION_SLOWDOWN,
-            'defensive',
+            "defensive",
         )
     if (
         recent_slippage is not None
@@ -458,9 +489,14 @@ def _resolve_adaptive_controls(
             False,
             ADAPTIVE_PARTICIPATION_RELAX,
             ADAPTIVE_EXECUTION_SPEEDUP,
-            'offensive',
+            "offensive",
         )
-    return prefer_limit, participation_rate_scale, execution_seconds_scale, aggressiveness
+    return (
+        prefer_limit,
+        participation_rate_scale,
+        execution_seconds_scale,
+        aggressiveness,
+    )
 
 
 def _derive_churn(
@@ -473,7 +509,7 @@ def _derive_churn(
     filled_qty: Decimal,
 ) -> tuple[Decimal, Optional[Decimal]]:
     if strategy_id is None or filled_qty <= 0 or signed_qty == 0:
-        return Decimal('0'), None
+        return Decimal("0"), None
 
     prior_where = [
         ExecutionTCAMetric.strategy_id == strategy_id,
@@ -496,9 +532,9 @@ def _derive_churn(
     ) or Decimal("0")
 
     if prior_signed == 0:
-        return Decimal('0'), Decimal('0')
+        return Decimal("0"), Decimal("0")
     if (prior_signed > 0 and signed_qty > 0) or (prior_signed < 0 and signed_qty < 0):
-        return Decimal('0'), Decimal('0')
+        return Decimal("0"), Decimal("0")
 
     churn_qty = min(abs(prior_signed), abs(signed_qty))
     churn_ratio = churn_qty / filled_qty if filled_qty > 0 else None
@@ -515,7 +551,7 @@ def _resolve_arrival_price(
             str(key): value
             for key, value in cast(Mapping[object, object], decision_json).items()
         }
-    params = decision_payload.get('params')
+    params = decision_payload.get("params")
     params_payload: dict[str, Any] = {}
     if isinstance(params, Mapping):
         params_payload = {
@@ -532,14 +568,14 @@ def _resolve_arrival_price(
         }
 
     for candidate in (
-        params_payload.get('arrival_price'),
-        params_payload.get('reference_price'),
-        params_payload.get('price'),
-        decision_payload.get('arrival_price'),
-        decision_payload.get('reference_price'),
-        raw_order_payload.get('arrival_price'),
-        raw_order_payload.get('reference_price'),
-        raw_order_payload.get('limit_price'),
+        params_payload.get("arrival_price"),
+        params_payload.get("reference_price"),
+        params_payload.get("price"),
+        decision_payload.get("arrival_price"),
+        decision_payload.get("reference_price"),
+        raw_order_payload.get("arrival_price"),
+        raw_order_payload.get("reference_price"),
+        raw_order_payload.get("limit_price"),
     ):
         resolved = _positive_decimal(candidate)
         if resolved is not None:
@@ -571,7 +607,9 @@ def _load_recent_tca_rows(
 ) -> list[dict[str, Any]]:
     stmt = (
         select(ExecutionTCAMetric, TradeDecision.decision_json)
-        .outerjoin(TradeDecision, TradeDecision.id == ExecutionTCAMetric.trade_decision_id)
+        .outerjoin(
+            TradeDecision, TradeDecision.id == ExecutionTCAMetric.trade_decision_id
+        )
         .where(ExecutionTCAMetric.symbol == symbol)
         .order_by(ExecutionTCAMetric.computed_at.desc())
         .limit(ADAPTIVE_LOOKBACK_WINDOW * 3)
@@ -582,28 +620,28 @@ def _load_recent_tca_rows(
     for metric, decision_json in rows:
         params = _decision_params(decision_json)
         row_regime = _normalize_regime_label(
-            params.get('regime_label') or params.get('regime')
+            params.get("regime_label") or params.get("regime")
         )
-        if regime_label != 'all' and row_regime != regime_label:
+        if regime_label != "all" and row_regime != regime_label:
             continue
-        execution_policy = params.get('execution_policy')
+        execution_policy = params.get("execution_policy")
         execution_policy_map: Mapping[str, Any] = (
             cast(Mapping[str, Any], execution_policy)
             if isinstance(execution_policy, Mapping)
             else {}
         )
-        adaptive = execution_policy_map.get('adaptive')
+        adaptive = execution_policy_map.get("adaptive")
         adaptive_map: Mapping[str, Any] = (
             cast(Mapping[str, Any], adaptive) if isinstance(adaptive, Mapping) else {}
         )
         filtered.append(
             {
-                'slippage_bps': _decimal_or_none(metric.slippage_bps),
-                'shortfall_notional': _decimal_or_none(metric.shortfall_notional),
-                'expected_shortfall_bps_p50': _decimal_or_none(
+                "slippage_bps": _decimal_or_none(metric.slippage_bps),
+                "shortfall_notional": _decimal_or_none(metric.shortfall_notional),
+                "expected_shortfall_bps_p50": _decimal_or_none(
                     metric.expected_shortfall_bps_p50
                 ),
-                'adaptive_applied': bool(adaptive_map.get('applied', False)),
+                "adaptive_applied": bool(adaptive_map.get("applied", False)),
             }
         )
         if len(filtered) >= ADAPTIVE_LOOKBACK_WINDOW:
@@ -615,14 +653,16 @@ def _decision_params(raw_decision_json: Any) -> dict[str, Any]:
     if not isinstance(raw_decision_json, Mapping):
         return {}
     decision_map = cast(Mapping[str, Any], raw_decision_json)
-    raw_params = decision_map.get('params')
+    raw_params = decision_map.get("params")
     if not isinstance(raw_params, Mapping):
         return {}
     params = cast(Mapping[str, Any], raw_params)
     return {str(key): value for key, value in params.items()}
 
 
-def _split_window_average(values: list[Decimal]) -> tuple[Decimal | None, Decimal | None]:
+def _split_window_average(
+    values: list[Decimal],
+) -> tuple[Decimal | None, Decimal | None]:
     if len(values) < ADAPTIVE_MIN_SAMPLE_SIZE:
         return None, None
     midpoint = len(values) // 2
@@ -638,13 +678,13 @@ def _split_window_average(values: list[Decimal]) -> tuple[Decimal | None, Decima
 def _mean(values: list[Decimal]) -> Decimal | None:
     if not values:
         return None
-    total = sum(values, start=Decimal('0'))
+    total = sum(values, start=Decimal("0"))
     return total / Decimal(len(values))
 
 
 def _normalize_regime_label(value: Any) -> str:
-    text = str(value).strip().lower() if value is not None else ''
-    return text or 'all'
+    text = str(value).strip().lower() if value is not None else ""
+    return text or "all"
 
 
 def _resolve_simulator_expectations(
@@ -684,12 +724,12 @@ def _resolve_simulator_expectations(
 
 
 def _signed_qty(*, side: str, qty: Decimal) -> Decimal:
-    normalized = (side or '').strip().lower()
-    if normalized == 'buy':
+    normalized = (side or "").strip().lower()
+    if normalized == "buy":
         return qty
-    if normalized == 'sell':
+    if normalized == "sell":
         return -qty
-    return Decimal('0')
+    return Decimal("0")
 
 
 def _positive_decimal(value: Any) -> Decimal | None:
@@ -717,8 +757,8 @@ def _decimal_str(value: Decimal | None) -> str | None:
 
 
 __all__ = [
-    'AdaptiveExecutionPolicyDecision',
-    'build_tca_gate_inputs',
-    'derive_adaptive_execution_policy',
-    'upsert_execution_tca_metric',
+    "AdaptiveExecutionPolicyDecision",
+    "build_tca_gate_inputs",
+    "derive_adaptive_execution_policy",
+    "upsert_execution_tca_metric",
 ]
