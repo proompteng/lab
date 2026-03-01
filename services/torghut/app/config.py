@@ -6,6 +6,7 @@ import tempfile
 from functools import lru_cache
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
+import string
 from typing import Any, List, Literal, Optional, cast
 from urllib.parse import urlsplit
 
@@ -70,6 +71,18 @@ class TradingAccountLane(BaseModel):
     secret_key: Optional[str] = None
     base_url: Optional[str] = None
     enabled: bool = True
+
+
+@lru_cache(maxsize=1)
+def _dspy_bootstrap_artifact_hash() -> str | None:
+    try:
+        from .trading.llm.dspy_programs.runtime import DSPyReviewRuntime
+    except Exception:
+        return None
+    try:
+        return DSPyReviewRuntime.bootstrap_artifact_hash()
+    except Exception:
+        return None
 
 
 def _http_connection_for_url(
@@ -2052,6 +2065,16 @@ class Settings(BaseSettings):
 
         if not self.llm_dspy_artifact_hash:
             reasons.append("dspy_artifact_hash_missing")
+        else:
+            normalized_hash = self.llm_dspy_artifact_hash.strip().lower()
+            if len(normalized_hash) != 64:
+                reasons.append("dspy_artifact_hash_invalid_length")
+            elif any(ch not in string.hexdigits for ch in normalized_hash):
+                reasons.append("dspy_artifact_hash_not_hex")
+            elif normalized_hash == (
+                _dspy_bootstrap_artifact_hash() or ""
+            ) and self.llm_dspy_runtime_mode == "active":
+                reasons.append("dspy_bootstrap_artifact_forbidden")
 
         if not self.llm_allowed_models:
             reasons.append("llm_model_inventory_missing")
