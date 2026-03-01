@@ -1106,6 +1106,10 @@ def _build_phase_manifest(
     phase_timestamp = evaluated_at.isoformat()
     governance = _normalize_governance_inputs(governance_inputs)
     execution_context = governance["execution_context"]
+    artifact_path = _coerce_str(
+        execution_context.get("artifactPath"),
+        default=str(output_dir),
+    )
     runtime_governance = governance["runtime_governance"]
     rollback_proof = governance["rollback_proof"]
     gate_status = "pass" if gate_report.promotion_allowed else "fail"
@@ -1115,6 +1119,9 @@ def _build_phase_manifest(
         "pass" if bool(drift_gate_check.get("allowed", False)) else "fail"
     )
     canary_status = "pass" if patch_path is not None else (
+        "fail" if requested_promotion_target == "paper" else "skipped"
+    )
+    canary_slo_status = "pass" if patch_path is not None else (
         "fail" if requested_promotion_target == "paper" else "skipped"
     )
     gate_payload_gates = gate_report_payload.get("gates")
@@ -1280,7 +1287,7 @@ def _build_phase_manifest(
             "slo_gates": [
                 {
                     "id": "slo_paper_canary_patch_present",
-                    "status": "pass" if patch_path is not None else "fail",
+                    "status": canary_slo_status,
                     "threshold": "patch exists for paper target",
                     "value": str(patch_path) if patch_path else None,
                 }
@@ -1417,10 +1424,7 @@ def _build_phase_manifest(
             "repository": execution_context.get("repository", "unknown"),
             "base": execution_context.get("base", "unknown"),
             "head": execution_context.get("head", "unknown"),
-            "artifactPath": execution_context.get(
-                "artifactPath",
-                str(output_dir),
-            ),
+            "artifactPath": artifact_path,
             "priorityId": execution_context.get("priorityId", ""),
         },
         "requested_promotion_target": requested_promotion_target,
