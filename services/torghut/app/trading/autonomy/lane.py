@@ -479,6 +479,28 @@ def run_autonomous_lane(
             encoding="utf-8",
         )
 
+        candidate_state_payload = {
+            "candidateId": candidate_id,
+            "runId": run_id,
+            "activeStage": "gate-evaluation",
+            "paused": False,
+            "datasetSnapshotRef": "signals_window",
+            "noSignalReason": None,
+            "rollbackReadiness": {
+                "killSwitchDryRunPassed": True,
+                "gitopsRevertDryRunPassed": (
+                    promotion_target != "live" or bool(approval_token)
+                ),
+                "strategyDisableDryRunPassed": bool(runtime_strategies),
+                "dryRunCompletedAt": now.isoformat(),
+                "humanApproved": promotion_target != "live" or bool(approval_token),
+                "rollbackTarget": f"{code_version or 'unknown'}",
+            },
+        }
+        candidate_state_readiness = cast(
+            dict[str, Any], candidate_state_payload.get("rollbackReadiness", {})
+        )
+
         gate_policy = GatePolicyMatrix.from_path(gate_policy_path)
         profitability_evidence_payload["validation"] = (
             profitability_validation.to_payload()
@@ -528,7 +550,7 @@ def run_autonomous_lane(
             encoding="utf-8",
         )
         gate_inputs = GateInputs(
-            feature_schema_version="3.0.0",
+            feature_schema_version=settings.trading_feature_schema_version,
             required_feature_null_rate=_required_feature_null_rate(signals),
             staleness_ms_p95=_resolve_gate_staleness_ms_p95(
                 signals=ordered_signals,
@@ -547,10 +569,18 @@ def run_autonomous_lane(
             fragility_score=fragility_score,
             stability_mode_active=stability_mode_active,
             fragility_inputs_valid=fragility_inputs_valid,
-            operational_ready=True,
-            runbook_validated=True,
-            kill_switch_dry_run_passed=True,
-            rollback_dry_run_passed=True,
+            operational_ready=not bool(candidate_state_payload.get("paused", False)),
+            runbook_validated=bool(
+                strategy_configmap_path is not None
+                and strategy_configmap_path.is_file()
+            ),
+            kill_switch_dry_run_passed=bool(
+                candidate_state_readiness.get("killSwitchDryRunPassed")
+            ),
+            rollback_dry_run_passed=bool(
+                candidate_state_readiness.get("gitopsRevertDryRunPassed")
+                and candidate_state_readiness.get("strategyDisableDryRunPassed")
+            ),
             approval_token=approval_token,
         )
         gate_report = evaluate_gate_matrix(
@@ -678,24 +708,6 @@ def run_autonomous_lane(
         patch_path: Path | None = None
 
         raw_gate_policy = gate_policy_payload
-        candidate_state_payload = {
-            "candidateId": candidate_id,
-            "runId": run_id,
-            "activeStage": "gate-evaluation",
-            "paused": False,
-            "datasetSnapshotRef": "signals_window",
-            "noSignalReason": None,
-            "rollbackReadiness": {
-                "killSwitchDryRunPassed": True,
-                "gitopsRevertDryRunPassed": (
-                    promotion_target != "live" or bool(approval_token)
-                ),
-                "strategyDisableDryRunPassed": bool(runtime_strategies),
-                "dryRunCompletedAt": now.isoformat(),
-                "humanApproved": promotion_target != "live" or bool(approval_token),
-                "rollbackTarget": f"{code_version or 'unknown'}",
-            },
-        }
         patch_path = _resolve_paper_patch_path(
             gate_report=gate_report,
             strategy_configmap_path=strategy_configmap_path,
