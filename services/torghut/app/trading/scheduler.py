@@ -37,8 +37,12 @@ from .feature_quality import FeatureQualityThresholds, evaluate_feature_batch_qu
 from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor, SignalBatch
 from .llm import LLMReviewEngine, apply_policy
-from .llm.dspy_programs.runtime import DSPyRuntimeUnsupportedStateError
+from .llm.dspy_programs.runtime import (
+    DSPyReviewRuntime,
+    DSPyRuntimeUnsupportedStateError,
+)
 from .llm.guardrails import evaluate_llm_guardrails
+from .llm.policy import allowed_order_types
 from .lean_lanes import LeanLaneManager
 from .market_context import (
     MarketContextClient,
@@ -1084,12 +1088,7 @@ class TradingPipeline:
         self.order_feed_ingestor = order_feed_ingestor or OrderFeedIngestor()
         self.market_context_client = MarketContextClient()
         self.lean_lane_manager = LeanLaneManager()
-        if llm_review_engine is not None:
-            self.llm_review_engine = llm_review_engine
-        elif settings.llm_enabled:
-            self.llm_review_engine = LLMReviewEngine()
-        else:
-            self.llm_review_engine = None
+        self.llm_review_engine = llm_review_engine
 
     def run_once(self) -> None:
         with self.session_factory() as session:
@@ -2800,12 +2799,11 @@ class TradingPipeline:
             guardrail_reasons=guardrails.reasons,
         )
         self._record_llm_policy_resolution_metrics(policy_resolution)
+        engine: LLMReviewEngine | None = None
 
         if settings.llm_dspy_runtime_mode == "active":
-            dspy_gate_allowed, dspy_gate_reasons = (
-                settings.llm_dspy_live_runtime_gate()
-            )
-            if not dspy_gate_allowed:
+            gate_allowed, dspy_live_gate_reasons = settings.llm_dspy_live_runtime_gate()
+            if not gate_allowed:
                 return self._handle_llm_dspy_live_runtime_block(
                     session=session,
                     decision=decision,
@@ -2813,12 +2811,41 @@ class TradingPipeline:
                     account=account,
                     positions=positions,
                     reason="llm_dspy_live_runtime_gate_blocked",
-                    risk_flags=list(dspy_gate_reasons),
+                    risk_flags=list(dspy_live_gate_reasons),
                     policy_resolution=_build_llm_policy_resolution(
                         rollout_stage=guardrails.rollout_stage,
                         effective_fail_mode="veto",
                         guardrail_reasons=tuple(guardrails.reasons)
-                        + tuple(dspy_gate_reasons),
+                        + tuple(dspy_live_gate_reasons),
+                    ),
+                )
+
+            engine = self.llm_review_engine or LLMReviewEngine()
+
+            dspy_runtime = getattr(engine, "dspy_runtime", None)
+            if isinstance(dspy_runtime, DSPyReviewRuntime):
+                dspy_live_ready, dspy_live_readiness_reasons = (
+                    dspy_runtime.evaluate_live_readiness()
+                )
+            else:
+                dspy_live_ready, dspy_live_readiness_reasons = (
+                    DSPyReviewRuntime.from_settings().evaluate_live_readiness()
+                )
+
+            if not dspy_live_ready:
+                return self._handle_llm_dspy_live_runtime_block(
+                    session=session,
+                    decision=decision,
+                    decision_row=decision_row,
+                    account=account,
+                    positions=positions,
+                    reason="llm_dspy_live_runtime_gate_blocked",
+                    risk_flags=list(dspy_live_readiness_reasons),
+                    policy_resolution=_build_llm_policy_resolution(
+                        rollout_stage=guardrails.rollout_stage,
+                        effective_fail_mode="veto",
+                        guardrail_reasons=tuple(guardrails.reasons)
+                        + tuple(dspy_live_readiness_reasons),
                     ),
                 )
 
@@ -2834,7 +2861,9 @@ class TradingPipeline:
         if guardrail_block is not None:
             return guardrail_block
 
-        engine = self.llm_review_engine or LLMReviewEngine()
+        if engine is None:
+            engine = self.llm_review_engine or LLMReviewEngine()
+
         circuit_open = self._handle_llm_circuit_open(
             session=session,
             decision=decision,
@@ -3336,16 +3365,40 @@ class TradingPipeline:
             decision.strategy_id,
             decision.symbol,
         )
-        engine = self.llm_review_engine or LLMReviewEngine()
-        request_payload = engine.build_request(
-            decision=decision,
-            account=account,
-            positions=positions,
-            portfolio=portfolio_snapshot,
-            market=market_snapshot,
-            market_context=market_context,
-            recent_decisions=recent_decisions,
-        ).model_dump(mode="json")
+        if self.llm_review_engine is not None:
+            request_payload = self.llm_review_engine.build_request(
+                decision=decision,
+                account=account,
+                positions=positions,
+                portfolio=portfolio_snapshot,
+                market=market_snapshot,
+                market_context=market_context,
+                recent_decisions=recent_decisions,
+            ).model_dump(mode="json")
+        else:
+            request_payload = {
+                "decision": decision.model_dump(mode="json"),
+                "portfolio": portfolio_snapshot.model_dump(mode="json"),
+                "market": market_snapshot.model_dump(mode="json")
+                if market_snapshot is not None
+                else None,
+                "market_context": market_context.model_dump(mode="json")
+                if market_context is not None
+                else None,
+                "recent_decisions": [
+                    summary.model_dump(mode="json") for summary in recent_decisions
+                ],
+                "account": account,
+                "positions": positions,
+                "policy": {
+                    "adjustment_allowed": settings.llm_adjustment_allowed,
+                    "min_qty_multiplier": str(settings.llm_min_qty_multiplier),
+                    "max_qty_multiplier": str(settings.llm_max_qty_multiplier),
+                    "allowed_order_types": sorted(allowed_order_types(decision.order_type)),
+                },
+                "trading_mode": settings.trading_mode,
+                "prompt_version": f"dspy:{settings.llm_dspy_signature_version}",
+            }
         response_payload = {
             "error": reason,
             "fallback": fallback,

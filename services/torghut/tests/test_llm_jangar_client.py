@@ -94,10 +94,16 @@ class TestJangarFallbackChain(unittest.TestCase):
 
         client = LLMClient(model="gpt-test", timeout_seconds=1)
 
-        with patch.object(LLMClient, "_request_review_via_jangar", side_effect=RuntimeError("nope")):
-            with patch.object(LLMClient, "_request_review_via_self_hosted", side_effect=RuntimeError("nope2")):
+        with patch.object(
+            LLMClient, "_request_review_via_jangar", side_effect=RuntimeError("nope")
+        ) as primary:
+            with patch.object(
+                LLMClient, "_request_review_via_self_hosted", side_effect=RuntimeError("nope2")
+            ) as fallback:
                 with self.assertRaises(RuntimeError):
                     client.request_review(messages=[], temperature=0.2, max_tokens=10)
+                self.assertTrue(primary.called)
+                self.assertFalse(fallback.called)
 
 
 class TestJangarRequestHeaders(unittest.TestCase):
@@ -117,6 +123,7 @@ class TestJangarRequestHeaders(unittest.TestCase):
         settings.jangar_api_key = "jangar-token"
 
         captured_headers: dict[str, str] = {}
+        captured_url: str | None = None
 
         class _FakeResponse:
             status = 200
@@ -132,6 +139,8 @@ class TestJangarRequestHeaders(unittest.TestCase):
 
         def _fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
             nonlocal captured_headers
+            nonlocal captured_url
+            captured_url = request.full_url
             captured_headers = {name.lower(): value for name, value in request.header_items()}
             return _FakeResponse()
 
@@ -147,6 +156,57 @@ class TestJangarRequestHeaders(unittest.TestCase):
         self.assertIn('"verdict":"approve"', response.content)
         self.assertEqual(captured_headers.get("x-trade-execution"), "torghut")
         self.assertEqual(captured_headers.get("authorization"), "Bearer jangar-token")
+        self.assertEqual(captured_url, "http://jangar/openai/v1/chat/completions")
+
+    def test_completion_request_normalizes_openai_path_suffixes(self) -> None:
+        settings.llm_provider = "jangar"
+        settings.jangar_base_url = "http://jangar/openai/v1/chat/completions"
+        settings.jangar_api_key = None
+
+        captured_url: str | None = None
+
+        class _FakeResponse:
+            status = 200
+
+            def __enter__(self) -> "_FakeResponse":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                return b""
+
+        def _fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+            nonlocal captured_url
+            captured_url = request.full_url
+            return _FakeResponse()
+
+        client = LLMClient(model="gpt-test", timeout_seconds=1)
+
+        with patch("app.trading.llm.client.urlopen", side_effect=_fake_urlopen):
+            with patch(
+                "app.trading.llm.client._parse_jangar_sse",
+                return_value=(
+                    '{"verdict":"approve","confidence":1,"rationale":"ok","risk_flags":[]}',
+                    None,
+                ),
+            ):
+                response = client._request_review_via_jangar(messages=[], temperature=0.2, max_tokens=16)
+
+        self.assertIn('"verdict":"approve"', response.content)
+        self.assertEqual(captured_url, "http://jangar/openai/v1/chat/completions")
+
+    def test_completion_request_rejects_invalid_jangar_base_url_query(self) -> None:
+        settings.llm_provider = "jangar"
+        settings.jangar_base_url = "http://jangar/openai/v1?mode=bad"
+
+        client = LLMClient(model="gpt-test", timeout_seconds=1)
+
+        with self.assertRaises(RuntimeError) as exc:
+            client._request_review_via_jangar(messages=[], temperature=0.2, max_tokens=16)
+
+        self.assertIn("jangar completion request failed (path): invalid", str(exc.exception))
 
 
 if __name__ == "__main__":

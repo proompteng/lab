@@ -5,6 +5,7 @@ from __future__ import annotations
 import string
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 from typing import Any, Literal, Mapping, cast
 
 from ....config import settings
@@ -20,6 +21,8 @@ from .modules import (
 _HASH_LENGTH = 64
 _BOOTSTRAP_PROGRAM_NAME = "trade-review-committee-v1"
 _BOOTSTRAP_SIGNATURE_VERSION = "v1"
+_DSPY_OPENAI_BASE_PATH = "/openai/v1"
+_DSPY_OPENAI_CHAT_COMPLETIONS_PATH = "/chat/completions"
 
 _BOOTSTRAP_ARTIFACT_BODY = {
     "schema_version": "torghut.dspy.runtime-artifact.v1",
@@ -132,6 +135,40 @@ class DSPyReviewRuntime:
             )
         )
 
+    def evaluate_live_readiness(self) -> tuple[bool, tuple[str, ...]]:
+        reasons: list[str] = []
+
+        if self.mode != "active":
+            reasons.append("dspy_live_runtime_mode_not_active")
+        elif settings.trading_mode == "live":
+            gate_allowed, gate_reasons = settings.llm_dspy_live_runtime_gate()
+            if not gate_allowed:
+                reasons.extend(gate_reasons)
+        if self.artifact_hash is None:
+            reasons.append("dspy_artifact_hash_missing")
+        elif self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH:
+            reasons.append("dspy_bootstrap_artifact_forbidden")
+        try:
+            _resolve_dspy_model_name()
+            _resolve_dspy_completion_url()
+        except DSPyRuntimeUnsupportedStateError as exc:
+            reasons.append(str(exc))
+        if reasons:
+            return False, tuple(reasons)
+
+        try:
+            manifest = self._resolve_artifact_manifest()
+            self._validate_manifest(manifest)
+        except DSPyRuntimeUnsupportedStateError as exc:
+            return False, (str(exc),)
+        except Exception as exc:
+            return False, (f"dspy_live_readiness_error:{type(exc).__name__}",)
+
+        if manifest.executor != "dspy_live":
+            return False, ("dspy_active_mode_requires_dspy_live_executor",)
+
+        return True, ()
+
     def review(
         self, request: LLMReviewRequest
     ) -> tuple[LLMReviewResponse, DSPyRuntimeMetadata]:
@@ -144,6 +181,12 @@ class DSPyReviewRuntime:
             and self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH
         ):
             raise DSPyRuntimeUnsupportedStateError("dspy_bootstrap_artifact_forbidden")
+
+        if self.mode == "active":
+            live_ready, live_reasons = self.evaluate_live_readiness()
+            if not live_ready:
+                reason = live_reasons[0] if live_reasons else "dspy_live_runtime_not_ready"
+                raise DSPyRuntimeUnsupportedStateError(reason)
 
         manifest = self._resolve_artifact_manifest()
         self._validate_manifest(manifest)
@@ -295,7 +338,14 @@ class DSPyReviewRuntime:
             metadata_items = cast(dict[Any, Any], metadata_raw)
             metadata = {str(key): value for key, value in metadata_items.items()}
 
-        executor_raw = str(metadata.get("executor") or "heuristic").strip().lower()
+        executor_value = metadata.get("executor")
+        if not isinstance(executor_value, str):
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_executor_missing")
+
+        executor_raw = executor_value.strip().lower()
+        if not executor_raw:
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_executor_missing")
+
         if executor_raw in {"dspy", "dspy_live", "live"}:
             executor: Literal["heuristic", "dspy_live"] = "dspy_live"
         elif executor_raw == "heuristic":
@@ -403,11 +453,41 @@ def _resolve_dspy_model_name() -> str:
     return f"openai/{raw}"
 
 
-def _resolve_dspy_api_base() -> str | None:
-    base_url = (settings.jangar_base_url or "").strip().rstrip("/")
-    if not base_url:
+def _resolve_dspy_api_base() -> str:
+    raw_base_url = (settings.jangar_base_url or "").strip()
+    if not raw_base_url:
         raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
-    return f"{base_url}/openai/v1"
+
+    parsed = urlsplit(raw_base_url)
+    if not parsed.hostname:
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
+    if parsed.scheme not in {"http", "https"}:
+        raise DSPyRuntimeUnsupportedStateError(
+            "dspy_jangar_base_url_invalid_scheme"
+        )
+    if parsed.query or parsed.fragment:
+        raise DSPyRuntimeUnsupportedStateError(
+            "dspy_jangar_base_url_invalid_path"
+        )
+
+    base_path = (parsed.path or "/").rstrip("/")
+    for suffix in (_DSPY_OPENAI_CHAT_COMPLETIONS_PATH,):
+        if base_path.endswith(suffix):
+            base_path = base_path[: -len(suffix)]
+            break
+
+    if base_path == "":
+        base_path = ""
+
+    if not base_path.endswith(_DSPY_OPENAI_BASE_PATH):
+        base_path = f"{base_path}{_DSPY_OPENAI_BASE_PATH}"
+
+    normalized_base = f"{parsed.scheme}://{parsed.netloc}{base_path}"
+    return normalized_base
+
+
+def _resolve_dspy_completion_url() -> str:
+    return f"{_resolve_dspy_api_base()}{_DSPY_OPENAI_CHAT_COMPLETIONS_PATH}"
 
 
 __all__ = [

@@ -18,6 +18,9 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from ...config import settings
 
+_JANGAR_OPENAI_BASE_PATH = "/openai/v1"
+_JANGAR_OPENAI_CHAT_COMPLETIONS_PATH = "/chat/completions"
+
 
 @dataclass
 class LLMClientResponse:
@@ -102,6 +105,38 @@ def urlopen(request: _HttpRequest, timeout: int) -> _HttpResponseHandle:
     return _HttpResponseHandle(connection, response)
 
 
+def _resolve_jangar_completion_url() -> str:
+    raw_base_url = (settings.jangar_base_url or "").strip()
+    if not raw_base_url:
+        raise RuntimeError(
+            "Jangar LLM provider selected but JANGAR_BASE_URL is not set"
+        )
+
+    parsed = urlsplit(raw_base_url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise RuntimeError(f"jangar completion request failed (scheme): {scheme or 'missing'}")
+    if not parsed.hostname:
+        raise RuntimeError("jangar completion request failed (host): missing")
+    if parsed.query or parsed.fragment:
+        raise RuntimeError("jangar completion request failed (path): invalid")
+
+    base_path = (parsed.path or "/").rstrip("/")
+    for suffix in (_JANGAR_OPENAI_CHAT_COMPLETIONS_PATH,):
+        if base_path.endswith(suffix):
+            base_path = base_path[: -len(suffix)]
+            break
+
+    if base_path == "":
+        base_path = ""
+
+    if not base_path.endswith(_JANGAR_OPENAI_BASE_PATH):
+        base_path = f"{base_path}{_JANGAR_OPENAI_BASE_PATH}"
+
+    normalized_base = f"{parsed.scheme}://{parsed.netloc}{base_path}"
+    return f"{normalized_base}{_JANGAR_OPENAI_CHAT_COMPLETIONS_PATH}"
+
+
 class LLMClient:
     """Thin wrapper around the OpenAI client to keep it mockable."""
 
@@ -121,6 +156,10 @@ class LLMClient:
             try:
                 return self._request_review_via_jangar(messages, temperature=temperature, max_tokens=max_tokens)
             except Exception as primary_exc:
+                if settings.trading_mode == "live":
+                    raise RuntimeError(
+                        "jangar completion request failed before fallback in live mode"
+                    ) from primary_exc
                 try:
                     return self._request_review_via_self_hosted(messages, temperature=temperature, max_tokens=max_tokens)
                 except Exception as fallback_exc:
@@ -189,10 +228,7 @@ class LLMClient:
         temperature: float,
         max_tokens: int,
     ) -> LLMClientResponse:
-        base_url = settings.jangar_base_url
-        if not base_url:
-            raise RuntimeError("Jangar LLM provider selected but JANGAR_BASE_URL is not set")
-        url = f"{base_url}/openai/v1/chat/completions"
+        url = _resolve_jangar_completion_url()
 
         payload: dict[str, Any] = {
             "model": self._model,
