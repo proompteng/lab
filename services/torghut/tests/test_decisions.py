@@ -755,6 +755,35 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(params.get('route_regime_label'), 'trend')
         self.assertEqual(params.get('regime_label'), 'trend')
 
+    def test_decision_context_omits_regime_hmm_payload_without_explicit_hmm_input(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='regime-hmm-omitted',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+            },
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        params = decisions[0].params
+        self.assertNotIn('regime_hmm', params)
+        self.assertEqual(params.get('route_regime_label'), 'trend')
+
     def test_decision_regime_route_label_prefers_explicit_route_label_hint(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
