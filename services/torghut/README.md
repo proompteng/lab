@@ -252,7 +252,12 @@ uv run python scripts/run_autonomous_lane.py \
   --signals tests/fixtures/walkforward_signals.json \
   --strategy-config config/autonomous-strategy-sample.yaml \
   --gate-policy config/autonomous-gate-policy.json \
-  --output-dir artifacts/autonomy-lane
+  --output-dir artifacts/autonomy-lane \
+  --repository proompteng/lab \
+  --base main \
+  --head agentruns/torghut-autonomy \
+  --artifact-path artifacts/autonomy-lane \
+  --priority-id ARC-2000
 ```
 
 Outputs:
@@ -279,6 +284,7 @@ uv run python scripts/run_alpha_discovery_lane.py \
   --train-csv /path/to/train-prices.csv \
   --test-csv /path/to/test-prices.csv \
   --output-dir artifacts/alpha-lane \
+  --artifact-path artifacts/alpha-lane \
   --repository proompteng/lab \
   --base main \
   --head feature/alpha-discovery \

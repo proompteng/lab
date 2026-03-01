@@ -48,7 +48,7 @@ The v1 documents are written to stay consistent with:
 - v3: total=37 (Implemented=4, Partial=29, Planned=4)
 - v4: total=11 (Implemented=0, Partial=1, Planned=10)
 - v5: total=15 (Implemented=0, Partial=7, Planned=8)
-- v6: total=8 (Implemented=0, Partial=5, Planned=3)
+- v6: total=12 (Implemented=0, Partial=5, Planned=7)
 
 - Evidence-sync checkpoint: `implementation-audit.md`
 
@@ -67,8 +67,8 @@ The v1 documents are written to stay consistent with:
   with comprehensive design docs and per-paper technique synthesis.
   - Entry point: `docs/torghut/design-system/v5/index.md`
 
-- `v6/` - beyond-TSMOM intraday autonomy pack translating fresh multi-agent, regime-routing, and contamination-safe
-  evaluation research into production implementation and rollout docs (2026-02-27).
+- `v6/` - beyond-TSMOM intraday autonomy pack translating fresh multi-agent, regime-routing, contamination-safe
+  evaluation, benchmark parity, and profitability operating-system research into production implementation docs (2026-03-01).
   - Entry point: `docs/torghut/design-system/v6/index.md`
 
 - `v1/` - first cohesive design-system pass aligned to production reality as of **2026-02-08**.
