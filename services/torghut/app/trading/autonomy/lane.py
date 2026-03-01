@@ -2250,9 +2250,9 @@ def _resolve_runbook_validated(
 ) -> bool:
     if not strategy_config_path.exists():
         return False
-    required_feature_schema_version = str(
-        gate_policy_payload.get("required_feature_schema_version", "")
-    ).strip()
+    required_feature_schema_version = _resolve_feature_schema_version(
+        gate_policy_payload=gate_policy_payload
+    )
     return bool(required_feature_schema_version)
 
 

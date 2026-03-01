@@ -666,7 +666,7 @@ class TestLLMDSPyWorkflow(TestCase):
             self.assertNotIn("deterministicCompatibility", promote_parameters)
             self.assertNotIn("fallbackRate", promote_parameters)
 
-    def test_orchestrate_dspy_agentrun_workflow_allows_promotion_when_eval_report_missing_locally(
+    def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_missing_locally(
         self,
     ) -> None:
         responses = [
@@ -712,24 +712,28 @@ class TestLLMDSPyWorkflow(TestCase):
                     "app.trading.llm.dspy_compile.workflow.wait_for_jangar_agentrun_terminal_status",
                     side_effect=["succeeded", "succeeded", "succeeded", "succeeded"],
                 ) as wait_mock:
-                    with Session(self.engine) as session:
-                        orchestrate_dspy_agentrun_workflow(
-                            session,
-                            base_url="http://jangar.test",
-                            repository="proompteng/lab",
-                            base="main",
-                            head="codex/dspy-rollout",
-                            artifact_root=str(artifact_root),
-                            run_prefix="torghut-dspy-run-missing",
-                            auth_token="token-123",
-                            lane_parameter_overrides=lane_overrides,
-                            include_gepa_experiment=False,
-                            secret_binding_ref="codex-whitepaper-github-token",
-                            ttl_seconds_after_finished=3600,
-                        )
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "dspy_promotion_gate_blocked:eval_report_not_found",
+                    ):
+                        with Session(self.engine) as session:
+                            orchestrate_dspy_agentrun_workflow(
+                                session,
+                                base_url="http://jangar.test",
+                                repository="proompteng/lab",
+                                base="main",
+                                head="codex/dspy-rollout",
+                                artifact_root=str(artifact_root),
+                                run_prefix="torghut-dspy-run-missing",
+                                auth_token="token-123",
+                                lane_parameter_overrides=lane_overrides,
+                                include_gepa_experiment=False,
+                                secret_binding_ref="codex-whitepaper-github-token",
+                                ttl_seconds_after_finished=3600,
+                            )
 
-            self.assertEqual(submit_mock.call_count, 4)
-            self.assertEqual(wait_mock.call_count, 4)
+            self.assertEqual(submit_mock.call_count, 3)
+            self.assertEqual(wait_mock.call_count, 3)
 
         with Session(self.engine) as session:
             row = session.execute(
@@ -737,7 +741,7 @@ class TestLLMDSPyWorkflow(TestCase):
                     LLMDSPyWorkflowArtifact.run_key == "torghut-dspy-run-missing:promote"
                 )
             ).scalar_one()
-            self.assertEqual(row.status, "succeeded")
+            self.assertEqual(row.status, "blocked")
 
     def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_stale(
         self,

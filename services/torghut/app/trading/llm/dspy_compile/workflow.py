@@ -728,7 +728,7 @@ def _promotion_gate_failures(
         elif trust_reason == "reference_override_disallowed":
             failures.append("eval_report_reference_override_disallowed")
         elif trust_reason == "missing_artifact":
-            return failures
+            failures.append("eval_report_not_found")
         elif trust_reason == "invalid_artifact":
             failures.append("eval_report_invalid_payload")
         else:
