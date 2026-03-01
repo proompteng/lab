@@ -1,0 +1,13 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: codex-spark-review
+spec:
+  binary: /bin/bash
+  argsTemplate:
+    - -lc
+    - >
+      set -o pipefail
+      mkdir -p /workspace/.agentrun/codex-spark-review
+      codex review --base "{{parameters.base}}" 2>&1 |
+      tee /workspace/.agentrun/codex-spark-review/review-notes.md

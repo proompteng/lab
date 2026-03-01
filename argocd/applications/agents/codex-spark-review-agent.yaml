@@ -4,4 +4,4 @@ metadata:
   name: codex-spark-review
 spec:
   providerRef:
-    name: codex-spark
+    name: codex-spark-review
