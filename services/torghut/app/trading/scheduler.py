@@ -5074,6 +5074,12 @@ class TradingScheduler:
         promotion_target, approval_token = self._resolve_autonomy_promotion_target(
             drift_gate_evidence
         )
+        resolved_governance_repository = governance_repository or "proompteng/lab"
+        resolved_governance_base = governance_base or "main"
+        resolved_governance_head = (
+            governance_head
+            or f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
+        )
         result = self._execute_autonomous_lane(
             signals_path=signals_path,
             strategy_config_path=strategy_config_path,
@@ -5082,12 +5088,9 @@ class TradingScheduler:
             promotion_target=promotion_target,
             approval_token=approval_token,
             drift_gate_evidence=drift_gate_evidence,
-            governance_repository=governance_repository or "proompteng/lab",
-            governance_base=governance_base or "main",
-            governance_head=(
-                governance_head
-                or f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
-            ),
+            governance_repository=resolved_governance_repository,
+            governance_base=resolved_governance_base,
+            governance_head=resolved_governance_head,
             governance_artifact_path=str(run_output_dir),
             priority_id=priority_id,
             artifact_root=artifact_root,
