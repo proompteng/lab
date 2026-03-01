@@ -6,6 +6,9 @@
 - Date: `2026-02-27`
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
+- Implementation status: `Planned`
+- Evidence: design index and roadmap pack for `v6` (not a direct implementation target).
+- Rollout gap: child documents marked partial/planned in this pack are not yet represented by one closed phase in runtime.
 
 ## Purpose
 

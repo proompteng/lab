@@ -2,7 +2,7 @@
 
 ## Status
 
-- Implementation status: `N/A` (snapshot baseline document; not a direct implementation target)
+- Implementation status: `Planned` (snapshot baseline document; not a direct implementation target)
 
 ## Objective
 

@@ -4,7 +4,7 @@
 
 - Completed: `implemented` (2026-02-13)
 - Verification source: implemented in `services/torghut/app/trading/ingest.py`, `services/torghut/app/trading/scheduler.py`, and `services/torghut/app/trading/autonomy/lane.py`.
-- Implementation status: `Completed (strict)` (verified with code + tests + runtime/config on 2026-02-21)
+- Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
 ## Objective
 

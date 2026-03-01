@@ -6,6 +6,15 @@
 - Date: `2026-02-27`
 - Maturity: `production design`
 - Scope: mandatory evaluation standard for all regime-router, DSPy, and alpha-discovery artifacts
+- Implementation status: `Partial`
+- Evidence:
+  - `services/torghut/app/trading/autonomy/gates.py`
+  - `services/torghut/app/trading/autonomy/policy_checks.py`
+  - `services/torghut/app/trading/evaluation.py`
+  - `services/torghut/tests/test_profitability_evidence_v4.py`
+  - `services/torghut/tests/test_trading_pipeline.py`
+  - `services/torghut/tests/test_governance_policy_dry_run.py`
+- Rollout gap: repo does not yet enforce a complete contamination-safe promotion artifact registry across all strategy and LLM families.
 
 ## Objective
 

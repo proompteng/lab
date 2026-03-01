@@ -6,6 +6,10 @@
 - Date: `2026-02-27`
 - Maturity: `production design`
 - Scope: phased rollout plan for Beyond-TSMOM architecture with explicit SLO, rollback, and governance controls
+- Implementation status: `Planned`
+- Evidence:
+  - `docs/torghut/design-system/v6/06-production-rollout-operations-and-governance.md` (rollout plan)
+- Rollout gap: canonical phase manifest, canary gates, and rollback proof artifacts are not yet integrated into a single automated cutover pipeline.
 
 ## Objective
 

@@ -6,6 +6,17 @@
 - Date: `2026-02-28`
 - Maturity: `production design`
 - Scope: end-to-end market-state inference, routing, and LLM advisory orchestration for Torghut autonomous trading
+- Implementation status: `Partial`
+- Evidence:
+  - `services/torghut/app/trading/features.py`
+  - `services/torghut/app/trading/forecasting.py`
+  - `services/torghut/app/trading/scheduler.py`
+  - `services/torghut/app/trading/decisions.py`
+  - `services/torghut/app/trading/portfolio.py`
+  - `services/torghut/app/trading/execution_policy.py`
+  - `services/torghut/app/trading/tca.py`
+  - `services/torghut/app/trading/regime.py`
+- Rollout gap: HMM posterior inference service and state artifact lineage persistence (`hmm_state_posterior`, entropy, transition shock) are still unimplemented in production runtime.
 
 ## Objective
 
@@ -45,7 +56,7 @@ This design extends the current Torghut architecture with a dedicated market-sta
 - `_resolve_signal_regime(signal)` in `services/torghut/app/trading/scheduler.py` reads:
   - `payload["regime_label"]`,
   - `payload["regime"]["label"]`,
-  and passes the result into allocator allocation calls.
+    and passes the result into allocator allocation calls.
 
 ### 2) Forecast routing already regime-keyed
 
@@ -300,13 +311,13 @@ Fallback order:
 
 ### Stage-specific failure policy matrix
 
-| Condition | Shadow | Paper | Live |
-|---|---|---|---|
+| Condition                  | Shadow                           | Paper                                           | Live                                                                        |
+| -------------------------- | -------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------- |
 | Regime service unavailable | Continue, mark `hmm_unavailable` | Continue with deterministic conservative limits | Fail closed for new risk-increasing entries; allow only risk-reducing exits |
-| HMM payload schema invalid | Continue, record schema error | Continue deterministic fallback | Deterministic fallback + page on-call; block autonomous promotion |
-| `guardrail.stale=true` | Advisory degrade only | Degrade allocations and participation | Degrade + disable aggressive actions for affected symbol set |
-| `entropy_band=high` | Advisory `degrade` | Degrade and cap budgets | Defensive posture; no aggressive entries |
-| Transition shock trigger | Advisory only | Defensive policy overlay | Defensive overlay + execution throttling |
+| HMM payload schema invalid | Continue, record schema error    | Continue deterministic fallback                 | Deterministic fallback + page on-call; block autonomous promotion           |
+| `guardrail.stale=true`     | Advisory degrade only            | Degrade allocations and participation           | Degrade + disable aggressive actions for affected symbol set                |
+| `entropy_band=high`        | Advisory `degrade`               | Degrade and cap budgets                         | Defensive posture; no aggressive entries                                    |
+| Transition shock trigger   | Advisory only                    | Defensive policy overlay                        | Defensive overlay + execution throttling                                    |
 
 Mandatory policy behavior:
 
@@ -472,13 +483,13 @@ Dashboard slices:
 
 ### Ownership and alert actions
 
-| Signal | Owner | Warn | Page | Automatic action |
-|---|---|---|---|---|
-| `torghut_regime_inference_latency_ms` p95 | Trading platform on-call | >40ms for 10m | >80ms for 5m | Switch to deterministic conservative routing |
-| `torghut_regime_service_stale_ratio` | Market-state service on-call | >0.5% for 15m | >1.0% for 10m | Force `guardrail.fallback_to_defensive=true` |
-| `torghut_router_fallback_rate` | Strategy runtime on-call | >5% for 30m | >10% for 15m | Freeze promotions; keep current production artifact |
-| `torghut_llm_schema_invalid_ratio` | LLM control-plane on-call | >0.2% for 15m | >0.5% for 10m | Force deterministic veto/degrade path |
-| `torghut_promotion_gate_fail_rate` | Autonomy governance on-call | any critical fail in 24h | repeated critical fail | Auto-deny promotion + require manual review |
+| Signal                                    | Owner                        | Warn                     | Page                   | Automatic action                                    |
+| ----------------------------------------- | ---------------------------- | ------------------------ | ---------------------- | --------------------------------------------------- |
+| `torghut_regime_inference_latency_ms` p95 | Trading platform on-call     | >40ms for 10m            | >80ms for 5m           | Switch to deterministic conservative routing        |
+| `torghut_regime_service_stale_ratio`      | Market-state service on-call | >0.5% for 15m            | >1.0% for 10m          | Force `guardrail.fallback_to_defensive=true`        |
+| `torghut_router_fallback_rate`            | Strategy runtime on-call     | >5% for 30m              | >10% for 15m           | Freeze promotions; keep current production artifact |
+| `torghut_llm_schema_invalid_ratio`        | LLM control-plane on-call    | >0.2% for 15m            | >0.5% for 10m          | Force deterministic veto/degrade path               |
+| `torghut_promotion_gate_fail_rate`        | Autonomy governance on-call  | any critical fail in 24h | repeated critical fail | Auto-deny promotion + require manual review         |
 
 ## Rollout plan
 
@@ -583,13 +594,13 @@ Dashboard slices:
 
 ## Compliance control map (implementation binding)
 
-| Obligation | Control | Evidence artifact | Retention | Owner |
-|---|---|---|---|---|
-| Traceability of automated decision support | Persist request/response + regime context + hashes | Decision audit row + evidence ledger bundle | 7 years | Torghut platform |
-| Model risk governance | Gate-based artifact promotion with signed approvals | Promotion gate report + approver identity + artifact manifest | 7 years | Quant research + risk |
-| Runtime safety and fallback proof | Drill-tested failover/kill-switch playbooks | Incident drill logs + runbook checklist results | 3 years | SRE + trading ops |
-| Policy-bounded AI behavior | Strict schema validation and deterministic post-validation | LLM validation logs + policy resolution payloads | 3 years | LLM control-plane |
-| Override accountability | Time-limited explicit overrides only | Override ticket + actor + expiration + reason | 7 years | Trading governance |
+| Obligation                                 | Control                                                    | Evidence artifact                                             | Retention | Owner                 |
+| ------------------------------------------ | ---------------------------------------------------------- | ------------------------------------------------------------- | --------- | --------------------- |
+| Traceability of automated decision support | Persist request/response + regime context + hashes         | Decision audit row + evidence ledger bundle                   | 7 years   | Torghut platform      |
+| Model risk governance                      | Gate-based artifact promotion with signed approvals        | Promotion gate report + approver identity + artifact manifest | 7 years   | Quant research + risk |
+| Runtime safety and fallback proof          | Drill-tested failover/kill-switch playbooks                | Incident drill logs + runbook checklist results               | 3 years   | SRE + trading ops     |
+| Policy-bounded AI behavior                 | Strict schema validation and deterministic post-validation | LLM validation logs + policy resolution payloads              | 3 years   | LLM control-plane     |
+| Override accountability                    | Time-limited explicit overrides only                       | Override ticket + actor + expiration + reason                 | 7 years   | Trading governance    |
 
 ## Mapping to existing production docs
 

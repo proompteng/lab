@@ -4,7 +4,8 @@
 
 - Version: `v1`
 - Last updated: **2026-02-10**
-- Implemented (partial): PR #2958 (merged **2026-02-10**) delivered `/torghut/trading` with
+- Implementation status: `Partial`
+- Implemented footprint: PR #2958 (merged **2026-02-10**) delivered `/torghut/trading` with
   `strategies/summary/executions/decisions` APIs; additional endpoint expansions remain planned.
 - Source of truth (Torghut config): `argocd/applications/torghut/**`
 - Source of truth (Torghut audit data): Torghut Postgres (`strategies`, `trade_decisions`, `executions`, `position_snapshots`, `llm_decision_reviews`)

@@ -6,6 +6,13 @@
 - Date: `2026-02-28`
 - Scope: automation strategy and runbook for recurring trading-day replay simulations
 - Source of truth (runtime): `start_historical_simulation.py` and live cluster config
+- Implementation status: `Planned`
+- Implementation evidence: `services/torghut/scripts/start_historical_simulation.py`, `services/torghut/scripts/analyze_historical_simulation.py`, `docs/torghut/rollouts/historical-simulation-playbook.md`
+- Implementation gaps: no dedicated `automate_trading_day_simulation.py` orchestrator, no production CronJob/Temporal workflow for batch-day simulation windows, and no persisted day-run registry schema.
+- Rollout and verification:
+  - ship and version `services/torghut/scripts/automate_trading_day_simulation.py`,
+  - run at least one dry-run day from a staging manifest repository,
+  - enforce pre/post contamination query checks and archive day artifacts under `artifacts/torghut/simulations/<run_token>/`.
 
 ## Purpose
 
@@ -77,8 +84,8 @@ For each run, generate a temporary or committed manifest with:
 ```yaml
 dataset_id: torghut-trades-2026-02-28
 window:
-  start: "2026-02-28T14:00:00Z"
-  end: "2026-02-28T21:30:00Z"
+  start: '2026-02-28T14:00:00Z'
+  end: '2026-02-28T21:30:00Z'
 
 kafka:
   bootstrap_servers: kafka-kafka-bootstrap.kafka:9092
@@ -90,7 +97,7 @@ kafka:
 clickhouse:
   http_url: http://torghut-clickhouse.torghut.svc.cluster.local:8123
   username: torghut
-  password: ""
+  password: ''
   simulation_database: torghut_sim_2026_02_28
 
 postgres:
@@ -105,8 +112,8 @@ replay:
   auto_offset_reset: earliest
 
 torghut_env_overrides:
-  TRADING_FEATURE_QUALITY_ENABLED: "true"
-  TRADING_FEATURE_MAX_STALENESS_MS: "43200000"
+  TRADING_FEATURE_QUALITY_ENABLED: 'true'
+  TRADING_FEATURE_MAX_STALENESS_MS: '43200000'
 ```
 
 The orchestrator may persist these manifests under:
@@ -168,14 +175,14 @@ Each run follows this sequence:
 
 ## Failure model and controls
 
-| Failure | Detection | Automation behavior |
-|---|---|---|
-| Argo self-heal reverting config | config drift checks after apply | run enters `blocked_config_drift` and skips simulation; optional temporary `manual` automation mode toggle included in runner |
-| Isolation guard failure | preflight check exception | do not apply; emit no side-effects |
-| Kafka replay zero rows for all source topics | dump summary counters = 0 | mark run `empty_day`, teardown immediately, store artifact as advisory only |
-| Cluster patch failure | kubectl command failure | teardown best-effort (if state captured), fail with `patch_fail` |
-| simulation loop crash before teardown | missing completion marker | orchestrator attempts teardown with bounded retries, then marks `manual_cleanup_required` |
-| data leakage into production DB/topics | pre/post contamination query | hard fail + immediate cleanup request |
+| Failure                                      | Detection                       | Automation behavior                                                                                                           |
+| -------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Argo self-heal reverting config              | config drift checks after apply | run enters `blocked_config_drift` and skips simulation; optional temporary `manual` automation mode toggle included in runner |
+| Isolation guard failure                      | preflight check exception       | do not apply; emit no side-effects                                                                                            |
+| Kafka replay zero rows for all source topics | dump summary counters = 0       | mark run `empty_day`, teardown immediately, store artifact as advisory only                                                   |
+| Cluster patch failure                        | kubectl command failure         | teardown best-effort (if state captured), fail with `patch_fail`                                                              |
+| simulation loop crash before teardown        | missing completion marker       | orchestrator attempts teardown with bounded retries, then marks `manual_cleanup_required`                                     |
+| data leakage into production DB/topics       | pre/post contamination query    | hard fail + immediate cleanup request                                                                                         |
 
 ## Evidence outputs
 
