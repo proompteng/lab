@@ -124,7 +124,7 @@ def _readable_iteration_number(artifact_root: Path) -> int:
     return highest + 1
 
 
-def _write_iteration_notes(
+def _write_stage_iteration_notes(
     *,
     artifact_root: Path,
     run_id: str,
@@ -1567,7 +1567,6 @@ def run_autonomous_lane(
             governance_repository=cast(str, resolved_governance_repository),
             governance_base=cast(str, resolved_governance_base),
             governance_head=cast(str, resolved_governance_head),
-            governance_head=cast(str, resolved_governance_head),
             governance_artifact_path=(
                 notes_artifact_root if notes_artifact_root else str(output_dir)
             ),
@@ -1651,7 +1650,7 @@ def run_autonomous_lane(
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
         )
-        _write_iteration_notes(
+        _write_stage_iteration_notes(
             artifact_root=output_dir,
             run_id=run_id,
             candidate_id=candidate_id,
@@ -1661,9 +1660,9 @@ def run_autonomous_lane(
             recommendation_action=promotion_recommendation.action,
             recommendation_reason_count=len(promotion_reasons),
             promotion_reasons=promotion_reasons,
-            repository=governance_repository,
-            base=governance_base,
-            head=effective_head,
+            repository=cast(str, resolved_governance_repository),
+            base=cast(str, resolved_governance_base),
+            head=cast(str, resolved_governance_head),
             priority_id=priority_id,
         )
 

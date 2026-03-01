@@ -347,11 +347,11 @@ class TestAutonomousLane(TestCase):
                 recommendation_manifest["stage_trace_id"],
             )
 
-        notes = sorted((output_dir / "notes").glob("iteration-*.md"))
-        self.assertEqual(len(notes), 1)
-        note_text = notes[0].read_text(encoding="utf-8")
-        self.assertIn("Autonomous lane iteration 1", note_text)
-        self.assertIn("candidate-generation", note_text)
+            notes = sorted((output_dir / "notes").glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            note_text = notes[0].read_text(encoding="utf-8")
+            self.assertIn("Autonomous lane iteration 1", note_text)
+            self.assertIn("candidate-generation", note_text)
 
     def test_lane_reads_runtime_strategy_file_for_runbook_validation(self) -> None:
         fixture_path = (
