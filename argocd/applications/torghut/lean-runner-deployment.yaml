@@ -39,9 +39,9 @@ spec:
             - name: APP_ENV
               value: prod
             - name: TRADING_MODE
-              value: paper
+              value: live
             - name: TRADING_LIVE_ENABLED
-              value: "false"
+              value: "true"
             - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
               value: "false"
             - name: TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED

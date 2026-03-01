@@ -90,16 +90,16 @@ spec:
             - name: TRADING_MULTI_ACCOUNT_ENABLED
               value: "false"
             - name: TRADING_MODE
-              value: paper
+              value: live
             - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
               value: "false"
             - name: TRADING_ACCOUNT_LABEL
               value: PA3SX7FYNUTF
             - name: TRADING_ACCOUNTS_JSON
               value: >
-                [{"label":"PA3SX7FYNUTF","mode":"paper","enabled":true}]
+                [{"label":"PA3SX7FYNUTF","mode":"live","enabled":true}]
             - name: TRADING_LIVE_ENABLED
-              value: "false"
+              value: "true"
             - name: TRADING_SIGNAL_SOURCE
               value: clickhouse
             - name: TRADING_SIGNAL_TABLE
