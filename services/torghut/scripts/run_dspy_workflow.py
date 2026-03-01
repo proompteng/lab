@@ -26,7 +26,6 @@ def _build_lane_overrides(args: argparse.Namespace) -> dict[str, dict[str, str]]
     eval_report_ref = (
         args.eval_report_ref or f"{artifact_root}/eval/dspy-eval-report.json"
     )
-    artifact_hash = args.artifact_hash or f"{compile_result_ref}#artifactHash"
 
     overrides: dict[str, dict[str, str]] = {
         "dataset-build": {
@@ -44,15 +43,8 @@ def _build_lane_overrides(args: argparse.Namespace) -> dict[str, dict[str, str]]
         },
         "promote": {
             "evalReportRef": eval_report_ref,
-            "artifactHash": artifact_hash,
             "promotionTarget": args.promotion_target,
             "approvalRef": args.approval_ref,
-            "gateCompatibility": args.eval_gate_compatibility,
-            "schemaValidRate": f"{args.eval_schema_valid_rate:.6f}",
-            "deterministicCompatibility": (
-                "pass" if args.eval_deterministic_compatibility else "fail"
-            ),
-            "fallbackRate": f"{args.eval_fallback_rate:.6f}",
         },
     }
 
@@ -128,38 +120,11 @@ def parse_args() -> argparse.Namespace:
         "--eval-report-ref", default="", help="Optional eval report artifact reference"
     )
     parser.add_argument(
-        "--artifact-hash", default="", help="Approved artifact hash (or hash reference)"
-    )
-    parser.add_argument(
         "--promotion-target",
         default="constrained_live",
         choices=["paper", "shadow", "constrained_live", "scaled_live"],
     )
     parser.add_argument("--approval-ref", default="risk-committee")
-    parser.add_argument(
-        "--eval-gate-compatibility",
-        default="pass",
-        choices=["pass", "fail"],
-        help="Eval gate compatibility evidence passed into promote lane.",
-    )
-    parser.add_argument(
-        "--eval-schema-valid-rate",
-        type=float,
-        default=0.995,
-        help="Eval schema valid rate evidence used for promotion gate enforcement.",
-    )
-    parser.add_argument(
-        "--eval-deterministic-compatibility",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Eval deterministic compatibility evidence used for promotion gate enforcement.",
-    )
-    parser.add_argument(
-        "--eval-fallback-rate",
-        type=float,
-        default=0.05,
-        help="Observed fallback rate evidence used for promotion gate enforcement.",
-    )
 
     parser.add_argument("--include-gepa-experiment", action="store_true")
     parser.add_argument("--gepa-baseline-ref", default="")

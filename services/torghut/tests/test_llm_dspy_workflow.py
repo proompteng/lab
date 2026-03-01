@@ -574,6 +574,91 @@ class TestLLMDSPyWorkflow(TestCase):
                 gate_failures,
             )
 
+    def test_orchestrate_dspy_agentrun_workflow_ignores_promotion_gate_overrides(
+        self,
+    ) -> None:
+        responses = [
+            {
+                "agentRun": {"id": "record-dataset"},
+                "resource": {
+                    "metadata": {"name": "run-dataset", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-compile"},
+                "resource": {
+                    "metadata": {"name": "run-compile", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-eval"},
+                "resource": {"metadata": {"name": "run-eval", "namespace": "agents"}},
+            },
+            {
+                "agentRun": {"id": "record-promote"},
+                "resource": {"metadata": {"name": "run-promote", "namespace": "agents"}},
+            },
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir) / "artifacts" / "dspy" / "run-immutable"
+            _write_dspy_promotion_eval_snapshot(
+                artifact_root=artifact_root,
+                created_at=datetime.now(timezone.utc),
+                gate_compatibility="pass",
+                schema_valid_rate=0.999,
+                deterministic_compatibility=True,
+                fallback_rate=0.01,
+            )
+            lane_overrides = _build_dspy_lane_overrides(
+                artifact_root=artifact_root,
+                promote_overrides={
+                    "artifactHash": "override-hash",
+                    "approvalRef": "risk-committee",
+                    "promotionTarget": "constrained_live",
+                    "gateCompatibility": "fail",
+                    "schemaValidRate": "0.001",
+                    "deterministicCompatibility": "fail",
+                    "fallbackRate": "0.99",
+                },
+            )
+
+            with patch(
+                "app.trading.llm.dspy_compile.workflow.submit_jangar_agentrun",
+                side_effect=responses,
+            ) as submit_mock:
+                with patch(
+                    "app.trading.llm.dspy_compile.workflow.wait_for_jangar_agentrun_terminal_status",
+                    side_effect=["succeeded", "succeeded", "succeeded", "succeeded"],
+                ) as wait_mock:
+                    with Session(self.engine) as session:
+                        orchestrate_dspy_agentrun_workflow(
+                            session,
+                            base_url="http://jangar.test",
+                            repository="proompteng/lab",
+                            base="main",
+                            head="codex/dspy-rollout",
+                            artifact_root=str(artifact_root),
+                            run_prefix="torghut-dspy-run-immutable",
+                            auth_token="token-123",
+                            lane_parameter_overrides=lane_overrides,
+                            include_gepa_experiment=False,
+                            secret_binding_ref="codex-whitepaper-github-token",
+                            ttl_seconds_after_finished=3600,
+                        )
+
+            self.assertEqual(submit_mock.call_count, 4)
+            self.assertEqual(wait_mock.call_count, 4)
+            promote_payload = submit_mock.call_args_list[3].kwargs["payload"]
+            promote_parameters = promote_payload["parameters"]
+            self.assertEqual(promote_parameters["approvalRef"], "risk-committee")
+            self.assertEqual(promote_parameters["promotionTarget"], "constrained_live")
+            self.assertNotIn("artifactHash", promote_parameters)
+            self.assertNotIn("gateCompatibility", promote_parameters)
+            self.assertNotIn("schemaValidRate", promote_parameters)
+            self.assertNotIn("deterministicCompatibility", promote_parameters)
+            self.assertNotIn("fallbackRate", promote_parameters)
+
     def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_missing(
         self,
     ) -> None:

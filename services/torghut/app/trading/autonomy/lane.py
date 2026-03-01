@@ -1773,11 +1773,11 @@ def _required_feature_null_rate(signals: list[SignalEnvelope]) -> Decimal:
 
 def _coerce_fragility_state(value: object) -> str:
     if not isinstance(value, str):
-        return "elevated"
+        return "crisis"
     normalized = value.strip().lower()
     if normalized in {"normal", "elevated", "stress", "crisis"}:
         return normalized
-    return "elevated"
+    return "crisis"
 
 
 def _fragility_state_rank(state: str) -> int:
@@ -1812,7 +1812,7 @@ def _resolve_gate_fragility_inputs(
 ) -> tuple[str, Decimal, bool]:
     fallback_state = _coerce_fragility_state(metrics_payload.get("fragility_state"))
     fallback_score = _decimal_or_default(
-        metrics_payload.get("fragility_score"), Decimal("0.5")
+        metrics_payload.get("fragility_score"), Decimal("1")
     )
     fallback_stability = _coerce_bool(
         metrics_payload.get("stability_mode_active"), default=False

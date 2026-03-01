@@ -119,6 +119,50 @@ class TestAutonomousLane(TestCase):
         self.assertEqual(score, Decimal("0.92"))
         self.assertTrue(stability)
 
+    def test_gate_fragility_inputs_fail_closed_on_missing_or_invalid_values(self) -> None:
+        state, score, stability = _resolve_gate_fragility_inputs(
+            metrics_payload={},
+            decisions=[],
+        )
+        self.assertEqual(state, "crisis")
+        self.assertEqual(score, Decimal("1"))
+        self.assertFalse(stability)
+
+        state, score, stability = _resolve_gate_fragility_inputs(
+            metrics_payload={},
+            decisions=[
+                WalkForwardDecision(
+                    decision=StrategyDecision(
+                        strategy_id="s1",
+                        symbol="AAPL",
+                        event_ts=datetime.now(timezone.utc),
+                        timeframe="1Min",
+                        action="buy",
+                        qty=Decimal("1"),
+                        order_type="market",
+                        time_in_force="day",
+                        params={
+                            "allocator": {
+                                "fragility_state": "not-a-state",
+                                "fragility_score": "maybe",
+                                "stability_mode_active": "n/a",
+                            }
+                        },
+                    ),
+                    features=SignalFeatures(
+                        macd=None,
+                        macd_signal=None,
+                        rsi=None,
+                        price=None,
+                        volatility=None,
+                    ),
+                )
+            ],
+        )
+        self.assertEqual(state, "crisis")
+        self.assertEqual(score, Decimal("1"))
+        self.assertFalse(stability)
+
     def test_lane_emits_gate_report_and_paper_patch(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
         strategy_config_path = (
