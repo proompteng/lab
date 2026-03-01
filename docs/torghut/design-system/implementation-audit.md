@@ -3,6 +3,12 @@
 - Scope: `docs/torghut/design-system/**` (all markdown design documents)
 - Source of record: `implementation-status-matrix-2026-02-21.md`
 
+## Iteration audit trail
+
+- Last synchronized iteration: `iteration-3.md` (`2026-03-01`).
+- Prior iterations retained for continuity: `iteration-1.md`, `iteration-2.md`.
+- Scope coverage in the last iteration: all status-bearing docs under `docs/torghut/design-system/**` plus index/audit evidence checks.
+
 ## Audit Decisions
 
 | Document                                                                                                | Version | Status      | Evidence / Missing Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
