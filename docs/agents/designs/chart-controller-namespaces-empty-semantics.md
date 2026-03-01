@@ -6,11 +6,11 @@ Docs index: [README](../README.md)
 
 ## Overview
 
-Controllers reconcile CRDs in a set of namespaces. The chart exposes `controller.namespaces`, but it is not documented what an empty list means (disabled? all namespaces? release namespace only?). Ambiguity here creates production risk.
+Controllers reconcile CRDs in a set of namespaces. The chart exposes `controller.namespaces`; an explicit empty list is now treated as invalid configuration.
 
 ## Goals
 
-- Define an explicit meaning for `controller.namespaces: []`.
+- Define an explicit meaning for `controller.namespaces` when explicitly set.
 - Prevent accidental cluster-wide reconciliation in namespaced installs.
 - Make namespace scope observable and testable.
 
@@ -20,7 +20,7 @@ Controllers reconcile CRDs in a set of namespaces. The chart exposes `controller
 
 ## Current State
 
-- Values: `charts/agents/values.yaml` exposes `controller.namespaces: []`.
+- Values: `charts/agents/values.yaml` no longer sets `controller.namespaces` explicitly.
 - Template renders namespaces into env vars:
   - `JANGAR_AGENTS_CONTROLLER_NAMESPACES`: `charts/agents/templates/deployment-controllers.yaml`
   - helper: `charts/agents/templates/_helpers.tpl` (`agents.controllerNamespaces`)
@@ -33,17 +33,17 @@ Controllers reconcile CRDs in a set of namespaces. The chart exposes `controller
 
 ### Semantics
 
-- `controller.namespaces` MUST be required when `rbac.clusterScoped=false`.
-- Empty list MUST mean “no namespaces configured” and controllers SHOULD refuse to start (fail-fast) to avoid a false sense of safety.
-- For `rbac.clusterScoped=true`, introduce an explicit value:
-  - `controller.namespaces: [\"*\"]` to mean “all namespaces”, rather than interpreting empty as all.
+- `controller.namespaces` is optional. When omitted, templates default to the release namespace.
+- When set, `controller.namespaces` must be a non-empty list.
+- Empty list (`[]`) is rejected at Helm render-time.
+- For `rbac.clusterScoped=true`, explicit `controller.namespaces: ["*"]` means all namespaces.
 
 ## Config Mapping
 
 | Helm value                            | Env var                                             | Intended behavior                                                          |
 | ------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------- |
 | `controller.namespaces: [\"agents\"]` | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"agents\"]`  | Reconcile only `agents` namespace resources.                               |
-| `controller.namespaces: []`           | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[]` (or unset) | Fail-fast at startup unless clusterScoped=true and explicit wildcard used. |
+| omitted                              | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"agents\"]` (templated fallback) | Reconcile the release namespace resources. |
 | `controller.namespaces: [\"*\"]`      | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"*\"]`       | (When clusterScoped=true) reconcile all namespaces.                        |
 
 ## Rollout Plan
@@ -51,7 +51,7 @@ Controllers reconcile CRDs in a set of namespaces. The chart exposes `controller
 1. Document semantics and recommend non-empty namespaces for prod.
 2. Add controller startup validation in `services/jangar/src/server/*`:
    - If env var is empty/unset: exit with clear error.
-3. Add chart schema rule: when `controller.enabled=true`, require at least one namespace unless clusterScoped=true and wildcard is used.
+3. Add chart schema and render-time validation: when `controller.namespaces` is explicitly set, require a non-empty, valid list and reject empty arrays.
 
 Rollback:
 
@@ -66,9 +66,9 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"NAMESPACES|namespace\
 
 ## Failure Modes and Mitigations
 
-- Empty list interpreted as “all namespaces” unexpectedly: mitigate by banning that interpretation.
-- Controllers start but do nothing due to empty scope: mitigate with fail-fast.
-- Wildcard scope used with namespaced RBAC: mitigate by schema validation and startup checks.
+- Empty list interpreted as all namespaces: blocked at render-time by explicit validation.
+- Controllers start with empty scope: blocked at render-time before startup.
+- Wildcard scope used with namespaced RBAC: blocked by schema and render-time validation.
 
 ## Acceptance Criteria
 
