@@ -21,11 +21,13 @@ spec:
                 secretKeyRef:
                   name: huly-secret
                   key: SERVER_SECRET
-            - name: COCKROACH_DB_URL
+            - name: COCKROACH_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: huly-secret
-                  key: CR_DB_URL
+                  key: COCKROACH_PASSWORD
+            - name: COCKROACH_DB_URL
+              value: "postgres://selfhost:$(COCKROACH_PASSWORD)@cockroach-public:26257/defaultdb"
             - name: DB_URL
               value: "$(COCKROACH_DB_URL)?sslmode=require"
             - name: FULLTEXT_DB_URL
