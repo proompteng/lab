@@ -19,6 +19,7 @@ spec:
         approval_policy = "never"
         sandbox_mode = "danger-full-access"
         web_search = "live"
+        suppress_unstable_features_warning = true
 
         [features]
         undo = true
@@ -44,11 +45,14 @@ spec:
       content: |-
         {
           "name": "codex-spark",
-          "binary": "/bin/bash",
+          "binary": "/usr/local/bin/codex-implement",
           "argsTemplate": [
-            "-lc",
-            "PROMPT_PATH='{{payloads.promptPath}}'; cat \"$PROMPT_PATH\" | /usr/local/bin/codex exec --skip-git-repo-check --cd /tmp -"
-          ]
+            "{{payloads.eventFilePath}}"
+          ],
+          "envTemplate": {
+            "WORKFLOW_STAGE": "{{inputs.stage}}",
+            "CODEX_STAGE": "{{inputs.stage}}"
+          }
         }
   outputArtifacts:
     - name: runner-log

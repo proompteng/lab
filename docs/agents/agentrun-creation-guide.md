@@ -102,6 +102,32 @@ If `run.json.prompt` contains your ImplementationSpec `text`, you did not overri
 
 If `run.json.prompt` contains your `parameters.prompt`, you did override it.
 
+## Verify System Prompt Is Actually Enforced
+
+If the Agent relies on `defaults.systemPromptRef` or run-level `systemPromptRef`, validate the runtime pod before
+trusting results:
+
+```bash
+RUN=leader-election-implementation-20260207-run
+JOB=$(kubectl -n agents get jobs -l agents.proompteng.ai/agent-run="$RUN" -o jsonpath='{.items[0].metadata.name}')
+POD=$(kubectl -n agents get pod -l job-name="$JOB" -o jsonpath='{.items[0].metadata.name}')
+
+kubectl -n agents get pod "$POD" \
+  -o jsonpath='{range .spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+  | rg 'CODEX_SYSTEM_PROMPT_PATH|CODEX_SYSTEM_PROMPT_EXPECTED_HASH|CODEX_SYSTEM_PROMPT_REQUIRED'
+
+kubectl -n agents exec "$POD" -- /bin/bash -lc \
+  'test -f /workspace/.codex/system-prompt.txt && sha256sum /workspace/.codex/system-prompt.txt | awk "{print \$1}"'
+
+kubectl -n agents get agentrun "$RUN" -o jsonpath='statusSystemPromptHash={.status.systemPromptHash}{"\n"}'
+```
+
+Required:
+
+- `CODEX_SYSTEM_PROMPT_PATH` present and points to mounted prompt file.
+- `CODEX_SYSTEM_PROMPT_REQUIRED=true`.
+- `CODEX_SYSTEM_PROMPT_EXPECTED_HASH` matches mounted file hash and `status.systemPromptHash`.
+
 ## Parameter Wiring (Avoid Shell-Env Assumptions)
 
 AgentRun parameters are recorded in generated payload files (`run.json.parameters` and `agent-runner.json.inputs`).
@@ -129,6 +155,7 @@ If you want one step to run multiple iterations while reusing the same workspace
 
 - `charts/agents/examples/agentrun-workflow-loop-fixed.yaml`
 - `charts/agents/examples/agentrun-workflow-loop-conditional.yaml`
+- `docs/agents/agentrun-workflow-loop-launch-guide.md` (operational launch checklist, verification, troubleshooting)
 
 Notes:
 
