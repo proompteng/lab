@@ -1265,57 +1265,58 @@ class TestAutonomousLane(TestCase):
                         ResearchPromotion.candidate_id == result.candidate_id
                     )
                 ).scalar_one()
-
-        self.assertEqual(candidate.lifecycle_role, "champion")
-        self.assertEqual(candidate.lifecycle_status, "active")
-        self.assertIsNotNone(candidate.candidate_hash)
-        self.assertIn("stage_lineage", candidate.metadata_bundle)
-        self.assertIn("stage_manifest_refs", candidate.metadata_bundle)
-        self.assertIn("replay_artifact_hashes", candidate.metadata_bundle)
-        self.assertIn("stage_trace_ids", candidate.metadata_bundle)
-        self.assertEqual(
-            candidate.metadata_bundle["stage_lineage"]["root_lineage_hash"],
-            result.stage_lineage_root,
-        )
-        self.assertEqual(
-            candidate.metadata_bundle["stage_lineage"]["root_lineage_hash"],
-            candidate_spec["stage_lineage"]["root_lineage_hash"],
-        )
-        self.assertEqual(
-            candidate.metadata_bundle["stage_manifest_refs"],
-            candidate_spec["stage_manifest_refs"],
-        )
-        self.assertEqual(
-            candidate.metadata_bundle["stage_trace_ids"],
-            candidate_spec["stage_trace_ids"],
-        )
-        self.assertEqual(
-            candidate.metadata_bundle["replay_artifact_hashes"],
-            candidate_spec["replay_artifact_hashes"],
-        )
-        self.assertEqual(promotion_row.approved_mode, "paper")
-        self.assertEqual(promotion_row.decision_action, "promote")
-        self.assertIsNotNone(promotion_row.approve_reason)
-        self.assertEqual(
-            promotion_row.evidence_bundle["stage_lineage"]["root_lineage_hash"],
-            result.stage_lineage_root,
-        )
-        self.assertEqual(
-            promotion_row.evidence_bundle["replay_artifact_hashes"],
-            candidate.metadata_bundle["replay_artifact_hashes"],
-        )
-
-        for artifact_key, expected_hash in candidate_spec["replay_artifact_hashes"].items():
-            artifact_path = candidate_spec["artifacts"].get(artifact_key)
-            self.assertIsNotNone(
-                artifact_path,
-                f"artifact {artifact_key} should be included in candidate spec artifacts",
+            self.assertEqual(candidate.lifecycle_role, "champion")
+            self.assertEqual(candidate.lifecycle_status, "active")
+            self.assertIsNotNone(candidate.candidate_hash)
+            self.assertIn("stage_lineage", candidate.metadata_bundle)
+            self.assertIn("stage_manifest_refs", candidate.metadata_bundle)
+            self.assertIn("replay_artifact_hashes", candidate.metadata_bundle)
+            self.assertIn("stage_trace_ids", candidate.metadata_bundle)
+            self.assertEqual(
+                candidate.metadata_bundle["stage_lineage"]["root_lineage_hash"],
+                result.stage_lineage_root,
             )
             self.assertEqual(
-                expected_hash,
-                self._artifact_sha256(Path(artifact_path)),
-                f"artifact hash for {artifact_key} should be immutable",
+                candidate.metadata_bundle["stage_lineage"]["root_lineage_hash"],
+                candidate_spec["stage_lineage"]["root_lineage_hash"],
             )
+            self.assertEqual(
+                candidate.metadata_bundle["stage_manifest_refs"],
+                candidate_spec["stage_manifest_refs"],
+            )
+            self.assertEqual(
+                candidate.metadata_bundle["stage_trace_ids"],
+                candidate_spec["stage_trace_ids"],
+            )
+            self.assertEqual(
+                candidate.metadata_bundle["replay_artifact_hashes"],
+                candidate_spec["replay_artifact_hashes"],
+            )
+            self.assertEqual(promotion_row.approved_mode, "paper")
+            self.assertEqual(promotion_row.decision_action, "promote")
+            self.assertIsNotNone(promotion_row.approve_reason)
+            self.assertEqual(
+                promotion_row.evidence_bundle["stage_lineage"]["root_lineage_hash"],
+                result.stage_lineage_root,
+            )
+            self.assertEqual(
+                promotion_row.evidence_bundle["replay_artifact_hashes"],
+                candidate.metadata_bundle["replay_artifact_hashes"],
+            )
+
+            for artifact_key, expected_hash in candidate_spec[
+                "replay_artifact_hashes"
+            ].items():
+                artifact_path = candidate_spec["artifacts"].get(artifact_key)
+                self.assertIsNotNone(
+                    artifact_path,
+                    f"artifact {artifact_key} should be included in candidate spec artifacts",
+                )
+                self.assertEqual(
+                    expected_hash,
+                    self._artifact_sha256(Path(artifact_path)),
+                    f"artifact hash for {artifact_key} should be immutable",
+                )
 
     def test_lane_fails_closed_when_required_stage_artifact_is_missing(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
