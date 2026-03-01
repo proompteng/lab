@@ -204,7 +204,7 @@ const upsertWorkflowLoopIteration = (
   compactWorkflowLoopIterations(loopStatus)
 }
 
-const parseLoopControlPayload = (job: Record<string, unknown>) => {
+const parseLoopControlPayload = (job: Record<string, unknown>, loopControlPath: string) => {
   const raw = asString(readNested(job, ['metadata', 'annotations', LOOP_CONTROL_ANNOTATION]))
   if (!raw) {
     return { kind: 'missing' as const }
@@ -219,6 +219,14 @@ const parseLoopControlPayload = (job: Record<string, unknown>) => {
       const control = asRecord(parsed)
       if (!control) {
         return yield* Effect.fail(new Error('loop control annotation must be a JSON object'))
+      }
+      const hasPathControl = Object.prototype.hasOwnProperty.call(control, loopControlPath)
+      if (hasPathControl) {
+        const pathControl = asRecord(control[loopControlPath])
+        if (!pathControl) {
+          return yield* Effect.fail(new Error(`loop control payload at ${loopControlPath} must be a JSON object`))
+        }
+        return { kind: 'ok' as const, control: pathControl }
       }
       return { kind: 'ok' as const, control }
     }).pipe(
@@ -847,7 +855,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
               shouldContinue = true
               stopReason = ''
             } else {
-              const controlResult = parseLoopControlPayload(job)
+              const controlResult = parseLoopControlPayload(job, loopSpec.condition.source.path)
               let control: Record<string, unknown> = {}
               if (controlResult.kind === 'missing') {
                 if (loopSpec.condition.source.onMissing === 'fail') {
