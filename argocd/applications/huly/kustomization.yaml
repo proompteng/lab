@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: huly
 resources:
+  - huly-cert-tls.yaml
   - account/account-deployment.yaml
   - account/account-ingress.yaml
   - account/account-service.yaml
