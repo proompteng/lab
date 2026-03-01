@@ -179,8 +179,10 @@ Add to autonomy gate payload:
 - Regression coverage includes:
   - `services/torghut/tests/test_trading_pipeline.py`:
     `test_pipeline_runtime_regime_gate_transition_shock_blocks_risk_increasing_entry`,
+    `test_pipeline_runtime_regime_gate_invalid_regime_gate_action_fails_closed`,
     `test_pipeline_runtime_regime_gate_unparseable_payload_fails_closed`,
     `test_pipeline_runtime_uncertainty_gate_report_parse_error_fails_closed`;
+    `test_pipeline_runtime_uncertainty_gate_defaults_degrade_when_inputs_missing`;
   - `services/torghut/tests/test_metrics.py`:
     assertions for both runtime uncertainty and runtime regime counter/export behavior.
 
