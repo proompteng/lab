@@ -116,10 +116,11 @@ def _normalize_prices(values: pd.DataFrame, *, label: str) -> pd.DataFrame:
 
     if isinstance(prices.index, pd.RangeIndex) and len(prices.columns) > 0:
         date_like = prices.iloc[:, 0]
-        parsed_dates = pd.to_datetime(date_like, errors="coerce", utc=True)
-        if parsed_dates.notna().sum() >= max(1, int(len(parsed_dates) * 0.8)):
-            prices = prices.iloc[:, 1:]
-            prices.index = parsed_dates
+        if not pd.api.types.is_numeric_dtype(date_like.dtype):
+            parsed_dates = pd.to_datetime(date_like, errors="coerce", utc=True)
+            if parsed_dates.notna().sum() >= max(1, int(len(parsed_dates) * 0.8)):
+                prices = prices.iloc[:, 1:]
+                prices.index = parsed_dates
 
     numeric_prices = prices.apply(pd.to_numeric, errors="coerce")
     numeric_prices = numeric_prices.dropna(axis=1, how="all").dropna(how="all")
@@ -500,7 +501,7 @@ def _write_iteration_notes(
                 f"  - parent: {record.parent_stage} (hash={record.parent_lineage_hash})"
             )
 
-    notes_path.write_text("\\n".join(lines), encoding="utf-8")
+    notes_path.write_text("\n".join(lines), encoding="utf-8")
     return notes_path
 
 

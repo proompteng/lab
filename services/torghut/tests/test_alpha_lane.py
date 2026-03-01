@@ -7,7 +7,7 @@ from unittest import TestCase
 
 import pandas as pd
 
-from app.trading.alpha.lane import run_alpha_discovery_lane
+from app.trading.alpha.lane import run_alpha_discovery_lane, _normalize_prices
 
 
 class TestAlphaLane(TestCase):
@@ -156,3 +156,34 @@ class TestAlphaLane(TestCase):
             self.assertFalse(recommendation["eligible"])
             self.assertEqual(recommendation["action"], "deny")
             self.assertIn("test_total_return_below_threshold", recommendation["reasons"])
+
+    def test_normalize_prices_does_not_drop_numeric_first_column(self) -> None:
+        prices = pd.DataFrame(
+            {
+                "A": [101.0, 102.0, 103.0, 104.0],
+                "B": [201.0, 202.0, 203.0, 204.0],
+            }
+        )
+        normalized = _normalize_prices(prices, label="train")
+
+        self.assertEqual(normalized.shape, (4, 2))
+        self.assertIn("A", normalized.columns)
+        self.assertIn("B", normalized.columns)
+        self.assertTrue(normalized.index.equals(prices.index))
+
+    def test_iteration_notes_use_real_newlines(self) -> None:
+        train, test = self._trend_frames()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "alpha-notes"
+            result = run_alpha_discovery_lane(
+                artifact_path=output_dir,
+                train_prices=train,
+                test_prices=test,
+            )
+
+            notes = sorted((output_dir / "notes").glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            note_contents = notes[0].read_text(encoding="utf-8")
+            self.assertIn("\n", note_contents)
+            self.assertNotIn("\\n", note_contents)
