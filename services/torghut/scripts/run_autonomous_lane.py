@@ -64,6 +64,25 @@ def main() -> int:
         "--output-dir", type=Path, required=True, help="Artifact output directory."
     )
     parser.add_argument(
+        "--repository", type=str, default=None, help="Repository context for this run."
+    )
+    parser.add_argument("--base", type=str, default=None, help="Base reference.")
+    parser.add_argument(
+        "--head", type=str, default=None, help="Head reference."
+    )
+    parser.add_argument(
+        "--artifact-path",
+        type=Path,
+        default=None,
+        help="Optional artifact root for execution-context notes and governance artifact path.",
+    )
+    parser.add_argument(
+        "--priority-id",
+        type=str,
+        default=None,
+        help="Priority identifier for lane execution and governance output.",
+    )
+    parser.add_argument(
         "--promotion-target", choices=("shadow", "paper", "live"), default="paper"
     )
     parser.add_argument(
@@ -84,6 +103,13 @@ def main() -> int:
         strategy_config_path=args.strategy_config,
         gate_policy_path=args.gate_policy,
         output_dir=args.output_dir,
+        repository=args.repository,
+        base=args.base,
+        head=args.head,
+        artifact_path=str(args.artifact_path)
+        if args.artifact_path is not None
+        else None,
+        priority_id=args.priority_id,
         promotion_target=args.promotion_target,
         strategy_configmap_path=args.strategy_configmap,
         code_version=_resolve_git_sha(),

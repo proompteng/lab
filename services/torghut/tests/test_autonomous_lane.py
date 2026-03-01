@@ -428,6 +428,70 @@ class TestAutonomousLane(TestCase):
                 "P-1001",
             )
 
+    def test_lane_top_level_execution_context_args_are_honored(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-top-level"
+            artifact_path = Path(tmpdir) / "top-level-notes-root"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                repository="override/repo",
+                base="feature/base",
+                head="run/head",
+                artifact_path=str(artifact_path),
+                priority_id="P-2002",
+            )
+
+            notes_dir = artifact_path / "notes"
+            notes = sorted(notes_dir.glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            self.assertIn(
+                "Autonomous lane iteration 1",
+                notes[0].read_text(encoding="utf-8"),
+            )
+            self.assertFalse(
+                any((output_dir / "notes").glob("iteration-*.md")),
+                "iteration notes should be written under explicit artifactPath",
+            )
+
+            phase_manifest = json.loads(
+                result.phase_manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                phase_manifest["execution_context"]["artifactPath"],
+                str(artifact_path),
+            )
+            self.assertEqual(
+                phase_manifest["execution_context"]["repository"],
+                "override/repo",
+            )
+            self.assertEqual(phase_manifest["execution_context"]["base"], "feature/base")
+            self.assertEqual(phase_manifest["execution_context"]["head"], "run/head")
+
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+                if result.actuation_intent_path
+                else "{}"
+            )
+            governance_payload = actuation_payload["governance"]
+            self.assertEqual(governance_payload["repository"], "override/repo")
+            self.assertEqual(governance_payload["base"], "feature/base")
+            self.assertEqual(governance_payload["head"], "run/head")
+            self.assertEqual(governance_payload["artifact_path"], str(artifact_path))
+            self.assertEqual(governance_payload["priority_id"], "P-2002")
+
     def test_lane_prefers_governance_artifact_override_over_execution_context_artifact(
         self,
     ) -> None:

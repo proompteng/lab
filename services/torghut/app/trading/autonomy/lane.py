@@ -435,6 +435,9 @@ def run_autonomous_lane(
     gate_policy_path: Path,
     output_dir: Path,
     promotion_target: PromotionTarget = "paper",
+    repository: str | None = None,
+    base: str | None = None,
+    head: str | None = None,
     strategy_configmap_path: Path | None = None,
     code_version: str = "local",
     approval_token: str | None = None,
@@ -447,6 +450,7 @@ def run_autonomous_lane(
     governance_base: str | None = None,
     governance_head: str | None = None,
     governance_artifact_path: str | None = None,
+    artifact_path: str | None = None,
     priority_id: str | None = None,
     governance_change: str = "autonomous-promotion",
     governance_reason: str | None = None,
@@ -496,10 +500,10 @@ def run_autonomous_lane(
     run_row = None
     governance_context = _coalesce_governance_context(
         governance_inputs=governance_inputs,
-        governance_repository=governance_repository,
-        governance_base=governance_base,
-        governance_head=governance_head,
-        governance_artifact_path=governance_artifact_path,
+        governance_repository=governance_repository or repository,
+        governance_base=governance_base or base,
+        governance_head=governance_head or head,
+        governance_artifact_path=governance_artifact_path or artifact_path,
         priority_id=priority_id,
         now=now,
     )
