@@ -115,7 +115,7 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('vol=mid|trend=up|liq=liquid', 'legacy', 'hmm_unknown'),
+            ('vol=mid|trend=up|liq=liquid', 'legacy', 'stale'),
         )
 
     def test_regime_resolution_falls_back_to_legacy_when_hmm_unknown(self) -> None:
