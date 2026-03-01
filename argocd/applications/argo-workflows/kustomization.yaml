@@ -30,7 +30,7 @@ images:
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm
-    version: 0.47.3
+    version: 0.47.4
     releaseName: argo-workflows
     namespace: argo-workflows
     valuesInline:
@@ -48,7 +48,6 @@ helmCharts:
         secure: false
         authModes:
           - sso
-          - server
         sso:
           enabled: true
           issuer: https://argocd.proompteng.ai/api/dex
