@@ -1,14 +1,12 @@
 # Chart Probes Configuration Contract
 
-Status: Draft (2026-02-07)
+Status: Implemented (2026-03-01)
 
 Docs index: [README](../README.md)
 
 ## Overview
 
-The chart exposes HTTP liveness/readiness probe settings for the control plane, but probes may not be appropriate for controllers (which may not expose HTTP) and there is no startup probe for long initialization (e.g., cache warmup).
-
-This doc defines probe semantics per component and proposes adding startup probes and per-component overrides.
+The chart exposes HTTP liveness/readiness probes for both components and now supports startup probe configuration, including per-component overrides for control plane and controller deployments.
 
 ## Goals
 
@@ -22,46 +20,59 @@ This doc defines probe semantics per component and proposes adding startup probe
 
 ## Current State
 
-- Values: `charts/agents/values.yaml` has `livenessProbe` and `readinessProbe`.
+- Values: `charts/agents/values.yaml` has:
+  - global `livenessProbe`, `readinessProbe`, and optional `startupProbe`
+  - per-component `controlPlane.*Probe` and `controllers.*Probe` overrides
 - Templates:
-  - Control plane probes: `charts/agents/templates/deployment.yaml` (HTTP GET to `.Values.*Probe.path` on `port: http`).
-  - Controllers probes: currently inherited similarly (if present) depending on the template structure in `deployment-controllers.yaml` (needs explicit review when adding).
-- No startupProbe values exist.
+  - Control plane probes: `charts/agents/templates/deployment.yaml`
+  - Controllers probes: `charts/agents/templates/deployment-controllers.yaml`
+- Existing global defaults are preserved by default when component overrides are empty.
 
 ## Design
 
 ### Component-specific probes
 
-Add:
+The effective values are merged as:
 
-- `controlPlane.livenessProbe`, `controlPlane.readinessProbe`, `controlPlane.startupProbe`
-- `controllers.livenessProbe`, `controllers.readinessProbe`, `controllers.startupProbe`
+- `globalProbe = merge(deepCopy(.Values.<Probe>), deepCopy(.Values.<component>.<Probe>))`
+- Each component uses its merged probe contract (`livenessProbe`, `readinessProbe`, `startupProbe`).
 
 ### Defaults
 
-- Control plane:
-  - readiness: `/health` (existing)
-  - liveness: `/health` (existing)
-  - startup: enabled with higher thresholds to tolerate migrations/cold start
-- Controllers:
-  - Prefer a simple HTTP `/health` endpoint if available; otherwise allow exec-based probe or disable probes explicitly.
+Defaults in `charts/agents/values.yaml`:
+
+- control plane:
+  - liveness/readiness inherit global values
+  - startup probe inherits global defaults (disabled by default)
+- controllers:
+  - liveness/readiness inherit global values
+  - startup probe inherits global defaults (disabled by default)
+
+If a component does not expose HTTP health, set component `livenessProbe.enabled` and/or `readinessProbe.enabled` to `false`.
 
 ## Config Mapping
 
-| Helm value                         | Rendered probe              | Intended behavior                                            |
-| ---------------------------------- | --------------------------- | ------------------------------------------------------------ |
-| `controlPlane.readinessProbe.path` | readinessProbe.httpGet.path | Control plane only.                                          |
-| `controllers.startupProbe.*`       | startupProbe (http/exec)    | Prevent premature restarts during controller initialization. |
+| Helm value                                          | Rendered probe                                                      | Intended behavior                                      |
+| --------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------ |
+| `controlPlane.livenessProbe.*`                      | `deployment.spec.template.containers[0].livenessProbe`              | Control plane liveness semantics.                      |
+| `controlPlane.readinessProbe.*`                     | `deployment.spec.template.containers[0].readinessProbe`             | Control plane readiness semantics.                     |
+| `controlPlane.startupProbe.*`                       | `deployment.spec.template.containers[0].startupProbe`               | Delay liveness/readiness during cold start.            |
+| `controllers.livenessProbe.*`                       | `deployment-controllers.spec.template.containers[0].livenessProbe`  | Controllers liveness semantics.                        |
+| `controllers.readinessProbe.*`                      | `deployment-controllers.spec.template.containers[0].readinessProbe` | Controllers readiness semantics.                       |
+| `controllers.startupProbe.*`                        | `deployment-controllers.spec.template.containers[0].startupProbe`   | Delay liveness/readiness during controller cold start. |
+| `livenessProbe` / `readinessProbe` / `startupProbe` | merge defaults                                                      | Shared defaults when component overrides are omitted.  |
 
 ## Rollout Plan
 
-1. Add new component probe keys; default them to current global values for control plane.
-2. Verify controllers have a stable health endpoint (or disable probes explicitly).
-3. Tune thresholds based on observed rollout behavior.
+1. For rollback compatibility, keep component override objects empty unless customization is required.
+2. Verify controller HTTP probe behavior before enabling probes in environments that serve non-HTTP workloads.
+3. Enable component startup probes only when startup/recoverability data indicates a clear benefit.
+4. Tune thresholds based on observed rollout behavior.
 
 Rollback:
 
 - Remove component overrides and rely on existing global probes.
+- If startup probes were introduced during rollout hardening, set both startup probes back to `enabled: false`.
 
 ## Validation
 
