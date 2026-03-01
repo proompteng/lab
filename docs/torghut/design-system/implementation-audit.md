@@ -5,8 +5,8 @@
 
 ## Iteration audit trail
 
-- Last synchronized iteration: `iteration-6.md` (`2026-03-01`).
-- Prior iterations retained for continuity: `iteration-1.md`, `iteration-2.md`, `iteration-3.md`, `iteration-4.md`.
+- Last synchronized iteration: `iteration-7.md` (`2026-03-01`).
+- Prior iterations retained for continuity: `iteration-1.md`, `iteration-2.md`, `iteration-3.md`, `iteration-4.md`, `iteration-5.md`, `iteration-6.md`.
 - Scope coverage in the last iteration: all status-bearing docs under `docs/torghut/design-system/**` plus index/audit evidence checks.
 
 ## Audit Decisions
@@ -15,6 +15,7 @@
 | ------------------------------------------------------------------------------------------------------- | ------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | docs/torghut/design-system/README.md                                                                    | root    | Planned     | index/meta/snapshot                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | docs/torghut/design-system/implementation-status-matrix-2026-02-21.md                                   | root    | Planned     | index/meta/snapshot                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| docs/torghut/design-system/v1/index.md                                                                  | v1      | Planned     | index/meta/snapshot                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | docs/torghut/design-system/v1/agentruns-handoff.md                                                      | v1      | Partial     | v1 production-facing docs, strict verification incomplete for full scope                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | docs/torghut/design-system/v1/ai-layer-circuit-breakers-and-fallbacks.md                                | v1      | Implemented | code: services/torghut/app/trading/llm/circuit.py; test: services/torghut/tests/test_llm_guardrails.py; runtime: argocd/applications/torghut/knative-service.yaml                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | docs/torghut/design-system/v1/ai-layer-evaluation-and-benchmarks.md                                     | v1      | Partial     | v1 production-facing docs, strict verification incomplete for full scope                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -173,15 +174,15 @@
 
 ## Totals
 
-- Total design documents: 157
+- Total design documents: 158
 - Implemented: 15
 - Partial: 103
-- Planned: 39
+- Planned: 40
 
 ## Totals by Version
 
 - root: total=2 (Implemented=0, Partial=0, Planned=2)
-- v1: total=59 (Implemented=11, Partial=44, Planned=4)
+- v1: total=60 (Implemented=11, Partial=44, Planned=5)
 - v2: total=25 (Implemented=0, Partial=17, Planned=8)
 - v3: total=37 (Implemented=4, Partial=29, Planned=4)
 - v4: total=11 (Implemented=0, Partial=1, Planned=10)
