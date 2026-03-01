@@ -390,6 +390,19 @@ const makeName = (base: string, suffix: string) => {
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
+  const maxBaseLength = 45
+  if (sanitized.length <= maxBaseLength) {
+    return `${sanitized}-${suffix}`
+  }
+  const trimmed = sanitized.slice(0, maxBaseLength)
+  return `${trimmed}-${suffix}`
+}
+
+const makeHashedName = (base: string, suffix: string) => {
+  const sanitized = base
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
   const maxBaseLength = 63 - 1 - suffix.length
   if (sanitized.length <= maxBaseLength) {
     return `${sanitized}-${suffix}`
@@ -525,7 +538,7 @@ const resolveStageApiVersion = (kind: string) => {
   return ''
 }
 
-const stageScheduleName = (swarmName: string, stage: StageName) => makeName(swarmName, `${stage}-sched`)
+const stageScheduleName = (swarmName: string, stage: StageName) => makeHashedName(swarmName, `${stage}-sched`)
 
 const getRunTimestamp = (resource: Record<string, unknown>) => {
   return (
@@ -932,6 +945,7 @@ const reconcileSwarm = async (
   const conditionsBase = normalizeConditions(status.conditions)
   const swarmName = asString(metadata.name) ?? 'swarm'
   const swarmNamespace = asString(metadata.namespace) ?? namespace
+  const swarmUid = asString(metadata.uid)
   const owner = asRecord(spec.owner) ?? {}
   const mode = asString(spec.mode) ?? ''
   const timezone = asString(spec.timezone) ?? 'UTC'
@@ -1017,7 +1031,9 @@ const reconcileSwarm = async (
   }
 
   const swarmLabel = normalizeLabelValue(swarmName)
-  const swarmSelector = `swarm.proompteng.ai/name=${swarmLabel}`
+  const swarmSelector = swarmUid
+    ? `swarm.proompteng.ai/name=${swarmLabel},swarm.proompteng.ai/uid=${swarmUid}`
+    : `swarm.proompteng.ai/name=${swarmLabel}`
   const runNamespaces = Array.from(
     new Set(
       stageConfigs
@@ -1035,7 +1051,17 @@ const reconcileSwarm = async (
       kube.list(RESOURCE_MAP.OrchestrationRun, targetNamespace, swarmSelector),
     ]),
   )
-  const allRuns = runPayloads.flatMap(listItems)
+  const runSeen = new Set<string>()
+  const allRuns = runPayloads.flatMap(listItems).filter((run) => {
+    const runMetadata = asRecord(run.metadata) ?? {}
+    const runNamespace = asString(runMetadata.namespace) ?? ''
+    const runName = asString(runMetadata.name)
+    if (!runName) return false
+    const runKey = `${runNamespace}/${runName}`
+    if (runSeen.has(runKey)) return false
+    runSeen.add(runKey)
+    return true
+  })
   const implementRuns = allRuns.filter(
     (run) => asString(readNested(run, ['metadata', 'labels', 'swarm.proompteng.ai/stage'])) === 'implement',
   )
@@ -1095,6 +1121,7 @@ const reconcileSwarm = async (
           'swarm.proompteng.ai/name': swarmLabel,
           'swarm.proompteng.ai/stage': stageLabel,
           'swarm.proompteng.ai/mode': mode,
+          ...(swarmUid ? { 'swarm.proompteng.ai/uid': swarmUid } : {}),
         },
         ...(ownerReferences ? { ownerReferences } : {}),
       },

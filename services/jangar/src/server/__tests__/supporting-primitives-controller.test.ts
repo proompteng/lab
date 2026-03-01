@@ -123,6 +123,14 @@ describe('supporting primitives controller', () => {
       const payload = call[0] as Record<string, unknown>
       expect(payload.kind).toBe('Schedule')
       expect(payload.apiVersion).toBe('schedules.schedules.proompteng.ai/v1alpha1')
+      const labels =
+        payload?.metadata && typeof payload.metadata === 'object'
+          ? (payload.metadata as Record<string, unknown>).labels
+          : undefined
+      expect(labels).toBeTruthy()
+      expect(labels).toMatchObject({
+        'swarm.proompteng.ai/uid': 'swarm-uid',
+      })
     }
     expect(deleteFn).not.toHaveBeenCalled()
     expect(applyStatus).toHaveBeenCalledTimes(1)
@@ -186,6 +194,9 @@ describe('supporting primitives controller', () => {
           ? (payload.metadata as Record<string, unknown>).labels
           : undefined
       expect(labels).toBeTruthy()
+      expect(labels).toMatchObject({
+        'swarm.proompteng.ai/uid': 'swarm-uid',
+      })
       const swarmLabel = labels?.['swarm.proompteng.ai/name']
       expect(typeof swarmLabel).toBe('string')
       const normalizedLabel = String(swarmLabel)
@@ -400,12 +411,12 @@ describe('supporting primitives controller', () => {
     expect(list).toHaveBeenCalledWith(
       RESOURCE_MAP.AgentRun,
       'agents-implement',
-      'swarm.proompteng.ai/name=torghut-quant',
+      'swarm.proompteng.ai/name=torghut-quant,swarm.proompteng.ai/uid=swarm-uid',
     )
     expect(list).toHaveBeenCalledWith(
       RESOURCE_MAP.OrchestrationRun,
       'agents-implement',
-      'swarm.proompteng.ai/name=torghut-quant',
+      'swarm.proompteng.ai/name=torghut-quant,swarm.proompteng.ai/uid=swarm-uid',
     )
     expect(apply).not.toHaveBeenCalled()
     expect(deleteFn).toHaveBeenCalledTimes(4)
