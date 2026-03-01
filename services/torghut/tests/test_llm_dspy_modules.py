@@ -157,7 +157,7 @@ class TestDSPyTransportHardening(TestCase):
                 api_base="https://jangar.openai.local",
                 api_completion_url=None,
             ),
-            "https://jangar.openai.local",
+            "https://jangar.openai.local/openai/v1",
         )
         self.assertEqual(
             _coerce_dspy_api_base(
