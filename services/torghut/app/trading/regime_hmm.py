@@ -71,6 +71,15 @@ class HMMRegimeContext:
     def has_regime(self) -> bool:
         return self.regime_id != HMM_UNKNOWN_REGIME_ID
 
+    @property
+    def is_authoritative(self) -> bool:
+        return (
+            self.has_regime
+            and not self.guardrail.stale
+            and not self.guardrail.fallback_to_defensive
+            and _REGIME_ID_RE.match(self.regime_id) is not None
+        )
+
     def to_payload(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
@@ -130,7 +139,7 @@ def resolve_regime_route_label(
     macd_signal: Decimal | None,
 ) -> str:
     context = resolve_hmm_context(payload)
-    if context.has_regime:
+    if context.is_authoritative:
         return context.regime_id
 
     explicit = payload.get("regime_label")

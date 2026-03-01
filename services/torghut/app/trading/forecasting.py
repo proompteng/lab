@@ -593,7 +593,7 @@ class ForecastRouterV5:
 
     def _resolve_regime(self, feature_vector: FeatureVectorV3) -> str:
         context = resolve_hmm_context(feature_vector.values)
-        if context.has_regime:
+        if context.is_authoritative:
             return context.regime_id.lower()
 
         explicit = feature_vector.values.get('route_regime_label')

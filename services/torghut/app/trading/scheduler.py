@@ -2514,8 +2514,6 @@ class TradingPipeline:
         regime_label, _, regime_fallback = _resolve_decision_regime_label_with_source(
             decision
         )
-        if regime_label is None and regime_context.regime_id != HMM_UNKNOWN_REGIME_ID:
-            regime_label = regime_context.regime_id
         regime_stale = bool(
             regime_context.guardrail.stale or regime_context.guardrail.fallback_to_defensive
         )
@@ -2540,22 +2538,15 @@ class TradingPipeline:
                     or "regime_context_guardrail_stale"
                 ),
             )
-        if regime_context.regime_id == HMM_UNKNOWN_REGIME_ID and regime_label is None:
+        if not regime_context.is_authoritative and regime_label is None:
             return RuntimeUncertaintyGate(
-                action="degrade",
+                action="abstain",
                 source="regime_hmm_unknown_regime",
                 regime_action_source="regime_hmm",
                 regime_stale=regime_stale,
-                reason="regime_label_missing",
-            )
-        if regime_context.regime_id == HMM_UNKNOWN_REGIME_ID and regime_fallback == "missing":
-            return RuntimeUncertaintyGate(
-                action="degrade",
-                source="regime_hmm_unknown_label",
-                regime_action_source="regime_hmm",
-                regime_label=regime_label,
-                regime_stale=regime_stale,
-                reason="regime_label_missing",
+                reason=(
+                    regime_fallback or "regime_label_missing"
+                ),
             )
         return RuntimeUncertaintyGate(
             action="pass",
@@ -3678,11 +3669,8 @@ def _resolve_decision_regime_label_with_source(
 
     raw_regime_hmm = params.get("regime_hmm")
     if isinstance(raw_regime_hmm, Mapping):
-        regime_id = _resolve_regime_hmm_id(cast(Mapping[str, Any], raw_regime_hmm))
-        if regime_id is not None and regime_id.lower() != "unknown":
-            return regime_id.lower(), "hmm", None
         regime_context = resolve_hmm_context(cast(Mapping[str, Any], raw_regime_hmm))
-        if regime_context.has_regime:
+        if regime_context.is_authoritative:
             return regime_context.regime_id.lower(), "hmm", None
         regime_label = resolve_legacy_regime_label(params)
         if regime_label is not None:
@@ -3702,16 +3690,6 @@ def _resolve_decision_regime_label(decision: StrategyDecision) -> Optional[str]:
     # kept for backwards compatibility with existing tests and callers
     regime_label, _, _ = _resolve_decision_regime_label_with_source(decision)
     return regime_label
-
-
-def _resolve_regime_hmm_id(raw_regime_hmm: Mapping[str, Any]) -> str | None:
-    raw_value = raw_regime_hmm.get("regime_id") or raw_regime_hmm.get("regimeId")
-    if not isinstance(raw_value, str):
-        return None
-    text = raw_value.strip()
-    if not text:
-        return None
-    return text
 
 
 def _allocator_rejection_reasons(decision: StrategyDecision) -> list[str]:

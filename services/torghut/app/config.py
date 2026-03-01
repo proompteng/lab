@@ -445,10 +445,10 @@ class Settings(BaseSettings):
     )
     trading_strategy_runtime_mode: Literal["legacy", "plugin_v3", "scheduler_v3"] = (
         Field(
-            default="legacy",
+            default="plugin_v3",
             alias="TRADING_STRATEGY_RUNTIME_MODE",
             description=(
-                "Strategy runtime mode. legacy keeps current behavior; plugin_v3 enables plugin scaffolding; "
+                "Strategy runtime mode. plugin_v3 enables plugin scaffolding; legacy keeps current behavior; "
                 "scheduler_v3 enables scheduler integration behind migration flag."
             ),
         )
