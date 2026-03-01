@@ -4573,6 +4573,7 @@ class TradingScheduler:
     def _clear_emergency_stop(self, *, reason: str) -> None:
         if not self.state.emergency_stop_active:
             self.state.emergency_stop_recovery_streak = 0
+            self.state.rollback_incident_evidence_path = None
             return
         now = datetime.now(timezone.utc)
         self.state.emergency_stop_active = False
@@ -4580,6 +4581,7 @@ class TradingScheduler:
         self.state.emergency_stop_triggered_at = None
         self.state.emergency_stop_resolved_at = now
         self.state.emergency_stop_recovery_streak = 0
+        self.state.rollback_incident_evidence_path = None
         logger.info(
             "Emergency stop cleared reason=%s resolved_at=%s", reason, now.isoformat()
         )
