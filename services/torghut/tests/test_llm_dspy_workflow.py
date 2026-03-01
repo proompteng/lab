@@ -616,6 +616,7 @@ class TestLLMDSPyWorkflow(TestCase):
                     "artifactHash": "override-hash",
                     "approvalRef": "risk-committee",
                     "promotionTarget": "constrained_live",
+                    "evalReportRef": f"{artifact_root}/eval/dspy-eval-report.json",
                     "gateCompatibility": "fail",
                     "schemaValidRate": "0.001",
                     "deterministicCompatibility": "fail",
@@ -658,6 +659,126 @@ class TestLLMDSPyWorkflow(TestCase):
             self.assertNotIn("schemaValidRate", promote_parameters)
             self.assertNotIn("deterministicCompatibility", promote_parameters)
             self.assertNotIn("fallbackRate", promote_parameters)
+            self.assertNotIn("evalReportRef", promote_parameters)
+
+            with Session(self.engine) as session:
+                promote_row = session.execute(
+                    select(LLMDSPyWorkflowArtifact).where(
+                        LLMDSPyWorkflowArtifact.run_key
+                        == "torghut-dspy-run-immutable:promote"
+                    )
+                ).scalar_one()
+                self.assertEqual(promote_row.status, "succeeded")
+                metadata = promote_row.metadata_json or {}
+                self.assertIsInstance(metadata, dict)
+                orchestration = metadata.get("orchestration")
+                self.assertIsInstance(orchestration, dict)
+                lineage = orchestration.get("lineageByLane")
+                self.assertIsInstance(lineage, dict)
+                promote_lineage = lineage.get("promote")
+                self.assertIsInstance(promote_lineage, dict)
+                gate_snapshot = promote_lineage.get("gateSnapshot")
+                self.assertIsInstance(gate_snapshot, dict)
+                self.assertEqual(
+                    gate_snapshot["requested_eval_report_ref"],
+                    f"{artifact_root}/eval/dspy-eval-report.json",
+                )
+                self.assertEqual(
+                    gate_snapshot["eval_report_ref"],
+                    f"{artifact_root}/eval/dspy-eval-report.json",
+                )
+
+    def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_is_symlinked_outside_artifact_root(
+        self,
+    ) -> None:
+        responses = [
+            {
+                "agentRun": {"id": "record-dataset"},
+                "resource": {
+                    "metadata": {"name": "run-dataset", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-compile"},
+                "resource": {
+                    "metadata": {
+                        "name": "run-compile",
+                        "namespace": "agents",
+                    }
+                },
+            },
+            {
+                "agentRun": {"id": "record-eval"},
+                "resource": {"metadata": {"name": "run-eval", "namespace": "agents"}},
+            },
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir) / "artifacts" / "dspy" / "run-symlink"
+            _write_dspy_promotion_eval_snapshot(
+                artifact_root=artifact_root,
+                created_at=datetime.now(timezone.utc),
+            )
+            external_root = Path(tmpdir) / "external"
+            external_root.mkdir(parents=True, exist_ok=True)
+            canonical_eval = artifact_root / "eval" / "dspy-eval-report.json"
+            untrusted_eval = external_root / "dspy-eval-report.json"
+            untrusted_eval.write_text(
+                canonical_eval.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            canonical_eval.unlink()
+            canonical_eval.symlink_to(untrusted_eval)
+
+            with patch(
+                "app.trading.llm.dspy_compile.workflow.submit_jangar_agentrun",
+                side_effect=responses,
+            ) as submit_mock:
+                with patch(
+                    "app.trading.llm.dspy_compile.workflow.wait_for_jangar_agentrun_terminal_status",
+                    side_effect=["succeeded", "succeeded", "succeeded"],
+                ) as wait_mock:
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "dspy_promotion_gate_blocked:eval_report_outside_artifact_root",
+                    ):
+                        with Session(self.engine) as session:
+                            orchestrate_dspy_agentrun_workflow(
+                                session,
+                                base_url="http://jangar.test",
+                                repository="proompteng/lab",
+                                base="main",
+                                head="codex/dspy-rollout",
+                                artifact_root=str(artifact_root),
+                                run_prefix="torghut-dspy-run-symlink",
+                                auth_token="token-123",
+                                lane_parameter_overrides=_build_dspy_lane_overrides(
+                                    artifact_root=artifact_root,
+                                    promote_overrides={
+                                        "approvalRef": "risk-committee",
+                                        "promotionTarget": "constrained_live",
+                                    },
+                                ),
+                                include_gepa_experiment=False,
+                                secret_binding_ref="codex-whitepaper-github-token",
+                                ttl_seconds_after_finished=3600,
+                            )
+
+            self.assertEqual(submit_mock.call_count, 3)
+            self.assertEqual(wait_mock.call_count, 3)
+
+        with Session(self.engine) as session:
+            row = session.execute(
+                select(LLMDSPyWorkflowArtifact).where(
+                    LLMDSPyWorkflowArtifact.run_key == "torghut-dspy-run-symlink:promote"
+                )
+            ).scalar_one()
+            metadata = row.metadata_json or {}
+            self.assertIsInstance(metadata, dict)
+            orchestration = metadata.get("orchestration")
+            self.assertIsInstance(orchestration, dict)
+            gate_failures = orchestration.get("gateFailures") or []
+            self.assertIn("eval_report_outside_artifact_root", gate_failures)
 
     def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_missing(
         self,

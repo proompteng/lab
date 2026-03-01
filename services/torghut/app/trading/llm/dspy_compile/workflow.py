@@ -46,6 +46,7 @@ _PROMOTION_EVIDENCE_OVERRIDE_KEYS = {
     "schemaValidRate",
     "deterministicCompatibility",
     "fallbackRate",
+    "evalReportRef",
 }
 
 
@@ -545,9 +546,11 @@ def _lane_overrides_with_defaults(
     lane: DSPyWorkflowLane,
     lane_overrides: Mapping[str, Any],
     artifact_root: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], str]:
     normalized = dict(lane_overrides)
+    requested_eval_report_ref = ""
     if lane == "promote":
+        requested_eval_report_ref = str(normalized.get("evalReportRef", "")).strip()
         for key in _PROMOTION_EVIDENCE_OVERRIDE_KEYS:
             normalized.pop(key, None)
     if lane == "compile":
@@ -565,7 +568,7 @@ def _lane_overrides_with_defaults(
             "evalReportRef",
             f"{artifact_root}/eval/dspy-eval-report.json",
         )
-    return normalized
+    return normalized, requested_eval_report_ref
 
 
 def _to_float(value: Any) -> float | None:
@@ -630,11 +633,11 @@ def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
 
 def _resolve_promotion_gate_snapshot(
     lane_overrides: Mapping[str, Any],
+    requested_eval_report_ref: str,
     *,
     artifact_root: str,
 ) -> dict[str, Any]:
     expected_eval_report_ref = f"{artifact_root.rstrip('/')}/eval/dspy-eval-report.json"
-    requested_eval_report_ref = str(lane_overrides.get("evalReportRef") or "").strip()
     snapshot = _load_eval_snapshot_for_promotion(
         expected_eval_report_ref,
         artifact_root=artifact_root,
@@ -814,7 +817,7 @@ def orchestrate_dspy_agentrun_workflow(
     lineage_by_lane: dict[str, dict[str, Any]] = {}
 
     for lane_index, lane in enumerate(lanes):
-        lane_overrides = _lane_overrides_with_defaults(
+        lane_overrides, requested_eval_report_ref = _lane_overrides_with_defaults(
             lane=lane,
             lane_overrides=overrides_by_lane.get(lane, {}),
             artifact_root=artifact_root_normalized,
@@ -824,6 +827,7 @@ def orchestrate_dspy_agentrun_workflow(
         if lane == "promote":
             gate_snapshot = _resolve_promotion_gate_snapshot(
                 lane_overrides,
+                requested_eval_report_ref=requested_eval_report_ref,
                 artifact_root=artifact_root_normalized,
             )
             gate_failures = _promotion_gate_failures(
