@@ -11,6 +11,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from datetime import datetime, timezone
+from decimal import Decimal
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, cast
 
 from sqlalchemy import delete, select
@@ -104,6 +107,191 @@ class _StageManifestRecord:
     parent_lineage_hash: str | None = None
     parent_stage: str | None = None
     inputs: dict[str, str] = field(default_factory=dict)
+
+
+def _readable_iteration_number(artifact_root: Path) -> int:
+    pattern = re.compile(r"^iteration-(\d+)\.md$")
+    highest = 0
+    for item in artifact_root.glob("iteration-*.md"):
+        match = pattern.match(item.name)
+        if not match:
+            continue
+        try:
+            candidate = int(match.group(1))
+        except (TypeError, ValueError):
+            continue
+        if candidate > highest:
+            highest = candidate
+    return highest + 1
+
+
+def _write_iteration_notes(
+    *,
+    artifact_root: Path,
+    run_id: str,
+    candidate_id: str,
+    promotion_target: PromotionTarget,
+    promotion_recommended_mode: PromotionTarget,
+    gate_allowed: bool,
+    recommendation_action: str,
+    recommendation_reason_count: int,
+    promotion_reasons: list[str],
+    repository: str,
+    base: str,
+    head: str,
+    priority_id: str | None,
+) -> Path:
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    iteration = _readable_iteration_number(artifact_root)
+    notes_path = artifact_root / f"iteration-{iteration}.md"
+
+    lines = [
+        f"# Autonomy lane iteration {iteration}",
+        "",
+        f"- run_id: {run_id}",
+        f"- candidate_id: {candidate_id}",
+        f"- promotion_target: {promotion_target}",
+        f"- recommendation_mode: {promotion_recommended_mode}",
+        f"- recommendation_action: {recommendation_action}",
+        f"- gate_allowed: {str(gate_allowed).lower()}",
+        f"- recommendation_reason_count: {recommendation_reason_count}",
+        "- repository: {0}".format(repository),
+        "- base: {0}".format(base),
+        "- head: {0}".format(head),
+    ]
+    if priority_id:
+        lines.append(f"- priority_id: {priority_id}")
+
+    lines.append("")
+    lines.append("## Gate and evidence summary")
+    lines.extend(f"- {reason}" for reason in promotion_reasons)
+
+    notes_path.write_text("\n".join(lines), encoding="utf-8")
+    return notes_path
+
+
+def _coerce_evidence_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        if not math.isfinite(value):
+            return None
+        return value != 0
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off", ""}:
+        return False
+    return None
+
+
+def _normalize_strategy_artifacts(value: object) -> object | None:
+    if not isinstance(value, dict):
+        return value
+
+    kind = str(value.get("kind", "")).strip().lower()
+    if kind == "configmap":
+        data = value.get("data")
+        if not isinstance(data, dict):
+            return None
+        strategies_yaml = data.get("strategies.yaml")
+        if not isinstance(strategies_yaml, str):
+            return None
+        try:
+            nested_payload = yaml.safe_load(strategies_yaml)
+        except Exception:
+            return None
+        return _normalize_strategy_artifacts(nested_payload)
+
+    return value
+
+
+def _is_runbook_valid(strategy_configmap_path: Path | None) -> bool:
+    resolved_path = strategy_configmap_path or _default_strategy_configmap_path()
+    if not resolved_path.exists() or not resolved_path.is_file():
+        return False
+
+    try:
+        raw_payload = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+
+    normalized_payload = _normalize_strategy_artifacts(raw_payload)
+
+    if normalized_payload is None:
+        return False
+
+    if isinstance(normalized_payload, dict):
+        strategies = normalized_payload.get("strategies")
+    elif isinstance(normalized_payload, list):
+        strategies = normalized_payload
+    else:
+        return False
+
+    if not isinstance(strategies, list):
+        return False
+
+    return bool(strategies) and all(isinstance(item, dict) for item in strategies)
+
+
+def _build_candidate_state_payload(
+    *,
+    candidate_id: str,
+    run_id: str,
+    promotion_target: PromotionTarget,
+    approval_token: str | None,
+    runtime_strategies: list[StrategyRuntimeConfig],
+    now: datetime,
+    code_version: str,
+    runbook_validated: bool,
+) -> dict[str, Any]:
+    return {
+        "candidateId": candidate_id,
+        "runId": run_id,
+        "activeStage": "gate-evaluation",
+        "paused": False,
+        "datasetSnapshotRef": "signals_window",
+        "noSignalReason": None,
+        "runbookValidated": runbook_validated,
+        "rollbackReadiness": {
+            "killSwitchDryRunPassed": bool(runtime_strategies),
+            "gitopsRevertDryRunPassed": (
+                promotion_target != "live" or bool(approval_token)
+            ),
+            "strategyDisableDryRunPassed": bool(runtime_strategies),
+            "dryRunCompletedAt": now.isoformat(),
+            "humanApproved": promotion_target != "live" or bool(approval_token),
+            "rollbackTarget": f"{code_version or 'unknown'}",
+        },
+    }
+
+
+def _build_gate_readiness_inputs(candidate_state_payload: Mapping[str, Any]) -> dict[str, bool]:
+    rollback_readiness = candidate_state_payload.get("rollbackReadiness")
+    if isinstance(rollback_readiness, dict):
+        rollback_readiness_raw = cast(dict[str, Any], rollback_readiness)
+    else:
+        rollback_readiness_raw = {}
+
+    operational_ready = bool(
+        _coerce_evidence_bool(rollback_readiness_raw.get("strategyDisableDryRunPassed"))
+    )
+    runbook_validated = bool(_coerce_evidence_bool(candidate_state_payload.get("runbookValidated")))
+    kill_switch_dry_run_passed = bool(
+        _coerce_evidence_bool(rollback_readiness_raw.get("killSwitchDryRunPassed"))
+    )
+    rollback_dry_run_passed = bool(
+        _coerce_evidence_bool(rollback_readiness_raw.get("gitopsRevertDryRunPassed"))
+    )
+
+    return {
+        "operational_ready": operational_ready,
+        "runbook_validated": runbook_validated,
+        "kill_switch_dry_run_passed": kill_switch_dry_run_passed,
+        "rollback_dry_run_passed": rollback_dry_run_passed,
+    }
 
 
 @dataclass(frozen=True)
@@ -538,6 +726,11 @@ def run_autonomous_lane(
             code_version=code_version,
             now=now,
         )
+    effective_head = (
+        governance_head
+        if governance_head
+        else f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
+    )
 
     try:
         ordered_signals = sorted(
@@ -793,8 +986,19 @@ def run_autonomous_lane(
             ),
             encoding="utf-8",
         )
+        candidate_state_payload = _build_candidate_state_payload(
+            candidate_id=candidate_id,
+            run_id=run_id,
+            promotion_target=promotion_target,
+            approval_token=approval_token,
+            runtime_strategies=runtime_strategies,
+            now=now,
+            code_version=code_version,
+            runbook_validated=_is_runbook_valid(strategy_configmap_path),
+        )
+        gate_readiness_inputs = _build_gate_readiness_inputs(candidate_state_payload)
         gate_inputs = GateInputs(
-            feature_schema_version="3.0.0",
+            feature_schema_version=settings.trading_feature_schema_version,
             required_feature_null_rate=_required_feature_null_rate(signals),
             staleness_ms_p95=_resolve_gate_staleness_ms_p95(
                 signals=ordered_signals,
@@ -813,10 +1017,10 @@ def run_autonomous_lane(
             fragility_score=fragility_score,
             stability_mode_active=stability_mode_active,
             fragility_inputs_valid=fragility_inputs_valid,
-            operational_ready=True,
-            runbook_validated=True,
-            kill_switch_dry_run_passed=True,
-            rollback_dry_run_passed=True,
+            operational_ready=gate_readiness_inputs["operational_ready"],
+            runbook_validated=gate_readiness_inputs["runbook_validated"],
+            kill_switch_dry_run_passed=gate_readiness_inputs["kill_switch_dry_run_passed"],
+            rollback_dry_run_passed=gate_readiness_inputs["rollback_dry_run_passed"],
             approval_token=approval_token,
         )
         gate_report = evaluate_gate_matrix(
@@ -932,24 +1136,6 @@ def run_autonomous_lane(
         patch_path: Path | None = None
 
         raw_gate_policy = gate_policy_payload
-        candidate_state_payload = {
-            "candidateId": candidate_id,
-            "runId": run_id,
-            "activeStage": "gate-evaluation",
-            "paused": False,
-            "datasetSnapshotRef": "signals_window",
-            "noSignalReason": None,
-            "rollbackReadiness": {
-                "killSwitchDryRunPassed": True,
-                "gitopsRevertDryRunPassed": (
-                    promotion_target != "live" or bool(approval_token)
-                ),
-                "strategyDisableDryRunPassed": bool(runtime_strategies),
-                "dryRunCompletedAt": now.isoformat(),
-                "humanApproved": promotion_target != "live" or bool(approval_token),
-                "rollbackTarget": f"{code_version or 'unknown'}",
-            },
-        }
         patch_path = _resolve_paper_patch_path(
             gate_report=gate_report,
             strategy_configmap_path=strategy_configmap_path,
@@ -1368,6 +1554,7 @@ def run_autonomous_lane(
             governance_repository=cast(str, resolved_governance_repository),
             governance_base=cast(str, resolved_governance_base),
             governance_head=cast(str, resolved_governance_head),
+            governance_head=cast(str, resolved_governance_head),
             governance_artifact_path=(
                 notes_artifact_root if notes_artifact_root else str(output_dir)
             ),
@@ -1450,6 +1637,21 @@ def run_autonomous_lane(
             now=now,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
+        )
+        _write_iteration_notes(
+            artifact_root=output_dir,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            promotion_target=promotion_target,
+            promotion_recommended_mode=recommended_mode,
+            gate_allowed=promotion_allowed,
+            recommendation_action=promotion_recommendation.action,
+            recommendation_reason_count=len(promotion_reasons),
+            promotion_reasons=promotion_reasons,
+            repository=governance_repository,
+            base=governance_base,
+            head=effective_head,
+            priority_id=priority_id,
         )
 
         return AutonomousLaneResult(

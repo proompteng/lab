@@ -70,6 +70,17 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(result.ready)
         self.assertIn("rollback_dry_run_stale", result.reasons)
 
+    def test_rollback_readiness_fails_when_readiness_checks_are_missing(self) -> None:
+        result = evaluate_rollback_readiness(
+            policy_payload={},
+            candidate_state_payload={},
+            now=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        )
+
+        self.assertFalse(result.ready)
+        self.assertIn("rollback_checks_missing_or_failed", result.reasons)
+        self.assertIn("rollback_dry_run_timestamp_missing", result.reasons)
+
     def test_promotion_prerequisites_fail_when_janus_artifacts_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

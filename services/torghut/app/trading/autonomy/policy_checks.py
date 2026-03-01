@@ -561,7 +561,9 @@ def evaluate_rollback_readiness(
         rollback = {}
 
     missing_checks = [
-        name for name in required_checks if not bool(rollback.get(name, False))
+        name
+        for name in required_checks
+        if _coerce_evidence_bool(rollback.get(name)) is not True
     ]
     if missing_checks:
         reasons.append("rollback_checks_missing_or_failed")
@@ -577,8 +579,8 @@ def evaluate_rollback_readiness(
         if current - dry_run_completed_at > timedelta(hours=max_age_hours):
             reasons.append("rollback_dry_run_stale")
 
-    if policy_payload.get("rollback_require_human_approval", True) and not bool(
-        rollback.get("humanApproved", False)
+    if policy_payload.get("rollback_require_human_approval", True) and (
+        _coerce_evidence_bool(rollback.get("humanApproved")) is not True
     ):
         reasons.append("rollback_human_approval_missing")
 
@@ -1063,6 +1065,23 @@ def _int_or_default(value: Any, default: int) -> int:
             except ValueError:
                 return default
     return default
+
+
+def _coerce_evidence_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            return None
+        return value != 0
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off", ""}:
+        return False
+    return None
 
 
 def _float_or_default(value: Any, default: float) -> float:
