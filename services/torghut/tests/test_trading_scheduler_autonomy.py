@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -1356,6 +1357,62 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertEqual(execution_context.get("priorityId"), "42")
 
+    def test_run_autonomous_cycle_merges_governance_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            overrides = {
+                "execution_context": {
+                    "repository": "caller/repo",
+                    "base": "caller-base",
+                    "head": "caller-head",
+                    "artifactPath": "/caller/artifacts",
+                    "priorityId": "priority-caller",
+                },
+                "runtime_governance": {
+                    "governance_status": "fail",
+                    "drift_status": "caller_detected",
+                    "rollback_triggered": False,
+                    "notes": "caller override",
+                },
+                "rollback_proof": {
+                    "rollback_triggered": True,
+                    "rollback_incident_evidence_path": "/caller/evidence.json",
+                    "reasons": ["caller-reason"],
+                },
+                "custom_meta": {"scope": "unit-test"},
+            }
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
+                scheduler._run_autonomous_cycle(governance_inputs=overrides)
+
+            governance_inputs = deps.call_kwargs.get("governance_inputs")
+            self.assertIsInstance(governance_inputs, dict)
+            execution_context = governance_inputs.get("execution_context")
+            self.assertIsInstance(execution_context, dict)
+            self.assertEqual(execution_context.get("repository"), "caller/repo")
+            self.assertEqual(execution_context.get("base"), "caller-base")
+            self.assertEqual(execution_context.get("head"), "caller-head")
+            self.assertEqual(execution_context.get("artifactPath"), "/caller/artifacts")
+            self.assertEqual(execution_context.get("priorityId"), "priority-caller")
+            runtime_governance = governance_inputs.get("runtime_governance", {})
+            self.assertEqual(runtime_governance.get("governance_status"), "fail")
+            self.assertEqual(runtime_governance.get("drift_status"), "caller_detected")
+            self.assertEqual(runtime_governance.get("notes"), "caller override")
+            rollback_proof = governance_inputs.get("rollback_proof", {})
+            self.assertTrue(rollback_proof.get("rollback_triggered"))
+            self.assertEqual(
+                rollback_proof.get("rollback_incident_evidence_path"),
+                "/caller/evidence.json",
+            )
+            self.assertEqual(rollback_proof.get("reasons"), ["caller-reason"])
+            self.assertEqual(governance_inputs.get("custom_meta"), {"scope": "unit-test"})
+
     def test_run_autonomous_cycle_writes_iteration_notes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, _deps = self._build_scheduler_with_fixtures(
@@ -1473,6 +1530,15 @@ class TestTradingSchedulerAutonomy(TestCase):
             updated_manifest = json.loads(
                 manifest_path.read_text(encoding="utf-8")
             )
+            manifest_payload_without_hash = dict(updated_manifest)
+            manifest_payload_without_hash.pop("manifest_hash", None)
+            expected_hash = hashlib.sha256(
+                json.dumps(
+                    manifest_payload_without_hash,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
             phases = updated_manifest["phases"]
             self.assertEqual(
                 [phase["name"] for phase in phases],
@@ -1486,6 +1552,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                     "rollback-proof",
                 ],
             )
+            self.assertEqual(updated_manifest.get("manifest_hash"), expected_hash)
             self.assertEqual(
                 phases[5]["status"],
                 "fail",
