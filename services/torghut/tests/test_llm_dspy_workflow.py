@@ -630,6 +630,7 @@ class TestLLMDSPyWorkflow(TestCase):
                     "artifactHash": "override-hash",
                     "approvalRef": "risk-committee",
                     "promotionTarget": "constrained_live",
+                    "evalReportRef": f"{artifact_root}/eval/dspy-eval-report.json",
                     "gateCompatibility": "fail",
                     "schemaValidRate": "0.001",
                     "deterministicCompatibility": "fail",
@@ -728,6 +729,7 @@ class TestLLMDSPyWorkflow(TestCase):
                     with self.assertRaisesRegex(
                         RuntimeError,
                         "dspy_promotion_gate_blocked:eval_report_reference_override_disallowed",
+                        "dspy_promotion_gate_blocked:eval_report_reference_override_disallowed",
                     ):
                         with Session(self.engine) as session:
                             orchestrate_dspy_agentrun_workflow(
@@ -753,6 +755,7 @@ class TestLLMDSPyWorkflow(TestCase):
                 select(LLMDSPyWorkflowArtifact).where(
                     LLMDSPyWorkflowArtifact.run_key
                     == "torghut-dspy-run-override-internal:promote"
+                    == "torghut-dspy-run-override-internal:promote"
                 )
             ).scalar_one()
             metadata = row.metadata_json or {}
@@ -761,7 +764,6 @@ class TestLLMDSPyWorkflow(TestCase):
             self.assertIsInstance(orchestration, dict)
             gate_failures = orchestration.get("gateFailures") or []
             self.assertIn("eval_report_reference_override_disallowed", gate_failures)
-
 
     def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_missing(
         self,
