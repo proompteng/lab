@@ -1587,7 +1587,7 @@ def _coalesce_governance_context(
             ),
             "priorityId": (
                 priority_id
-                if priority_id is not None
+                if priority_id
                 else _coerce_str(execution_context.get("priorityId"))
             ),
         },
