@@ -61,7 +61,7 @@ class TestGovernancePolicyDryRun(TestCase):
                         {'case': 'liquidity'},
                         {'case': 'halt'},
                     ],
-                    'artifact_ref': 'db:research_stress_metrics',
+                    'artifact_ref': 'backtest/evaluation-report.json',
                 },
                 'janus_q': {
                     'event_car': {

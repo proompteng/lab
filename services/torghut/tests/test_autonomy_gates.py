@@ -26,6 +26,10 @@ class TestAutonomyGates(TestCase):
                 "avg_slippage_bps": "18",
                 "avg_shortfall_notional": "7",
                 "avg_churn_ratio": "0.45",
+                "avg_realized_shortfall_bps": "7",
+                "avg_divergence_bps": "1",
+                "expected_shortfall_coverage": "0.50",
+                "expected_shortfall_sample_count": 12,
             },
             llm_metrics={"error_ratio": "0.00"},
             metrics={

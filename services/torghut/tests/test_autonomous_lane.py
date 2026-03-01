@@ -134,8 +134,8 @@ class TestAutonomousLane(TestCase):
             metrics_payload={},
             decisions=[],
         )
-        self.assertEqual(state, "crisis")
-        self.assertEqual(score, Decimal("1"))
+        self.assertEqual(state, "normal")
+        self.assertEqual(score, Decimal("0"))
         self.assertFalse(stability)
         self.assertFalse(inputs_valid)
 
@@ -170,8 +170,8 @@ class TestAutonomousLane(TestCase):
                 )
             ],
         )
-        self.assertEqual(state, "crisis")
-        self.assertEqual(score, Decimal("1"))
+        self.assertEqual(state, "normal")
+        self.assertEqual(score, Decimal("0"))
         self.assertFalse(stability)
         self.assertFalse(inputs_valid)
 
@@ -314,6 +314,72 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(governance_payload["change"], "manual-review")
             self.assertEqual(governance_payload["priority_id"], "priority-123")
             self.assertEqual(governance_payload["reason"], "manual override")
+
+    def test_lane_blocks_promotion_when_runbook_evidence_is_missing(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-missing-runbook"
+            missing_strategy_configmap = Path(tmpdir) / "missing-strategy-configmap.yaml"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                strategy_configmap_path=missing_strategy_configmap,
+            )
+
+            gate_payload = json.loads(
+                result.gate_report_path.read_text(encoding="utf-8")
+            )
+            self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
+            self.assertIn(
+                "runbook_not_validated",
+                gate_payload["promotion_decision"]["reason_codes"],
+            )
+            self.assertIsNone(result.paper_patch_path)
+
+    def test_lane_blocks_promotion_when_runbook_evidence_is_invalid(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invalid_strategy_configmap = Path(tmpdir) / "strategy-configmap.yaml"
+            invalid_strategy_configmap.write_text(
+                "{kind: [", encoding="utf-8"
+            )
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=Path(tmpdir) / "lane-invalid-runbook",
+                promotion_target="paper",
+                code_version="test-sha",
+                strategy_configmap_path=invalid_strategy_configmap,
+            )
+
+            gate_payload = json.loads(
+                result.gate_report_path.read_text(encoding="utf-8")
+            )
+            self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
+            self.assertIn(
+                "runbook_not_validated",
+                gate_payload["promotion_decision"]["reason_codes"],
+            )
+            self.assertIsNone(result.paper_patch_path)
 
     def test_lane_blocks_live_without_policy_enablement(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"

@@ -710,7 +710,7 @@ def _gate7_uncertainty_calibration(
 def _gate2_base_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
     reasons: list[str] = []
     if not inputs.fragility_inputs_valid:
-        reasons.append("fragility_inputs_invalid")
+        return ["fragility_inputs_invalid"]
     max_drawdown = _decimal(inputs.metrics.get("max_drawdown")) or Decimal("0")
     turnover_ratio = _decimal(inputs.metrics.get("turnover_ratio")) or Decimal("0")
     cost_bps = _decimal(inputs.metrics.get("cost_bps")) or Decimal("0")
@@ -760,25 +760,28 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
     elif avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
         reasons.append("tca_shortfall_exceeds_maximum")
 
-    avg_tca_realized_shortfall = _decimal(
-        inputs.tca_metrics.get("avg_realized_shortfall_bps")
-    ) or Decimal("0")
-    if avg_tca_realized_shortfall > policy.gate2_max_tca_realized_shortfall_bps:
+    avg_tca_realized_shortfall = _decimal(inputs.tca_metrics.get("avg_realized_shortfall_bps"))
+    if avg_tca_realized_shortfall is None:
+        reasons.append("tca_realized_shortfall_bps_missing")
+    elif avg_tca_realized_shortfall > policy.gate2_max_tca_realized_shortfall_bps:
         reasons.append("tca_realized_shortfall_bps_exceeds_maximum")
 
-    avg_tca_divergence = _decimal(inputs.tca_metrics.get("avg_divergence_bps")) or Decimal(
-        "0"
-    )
-    if avg_tca_divergence > policy.gate2_max_tca_divergence_bps:
+    avg_tca_divergence = _decimal(inputs.tca_metrics.get("avg_divergence_bps"))
+    if avg_tca_divergence is None:
+        reasons.append("tca_divergence_bps_missing")
+    elif avg_tca_divergence > policy.gate2_max_tca_divergence_bps:
         reasons.append("tca_divergence_bps_exceeds_maximum")
 
-    expected_shortfall_coverage = _decimal(
-        inputs.tca_metrics.get("expected_shortfall_coverage")
-    ) or Decimal("0")
+    expected_shortfall_coverage = _decimal(inputs.tca_metrics.get("expected_shortfall_coverage"))
     expected_shortfall_sample_count = int(
         inputs.tca_metrics.get("expected_shortfall_sample_count", 0)
     )
-    if expected_shortfall_sample_count <= 0 and policy.gate2_min_tca_expected_shortfall_coverage > 0:
+    if expected_shortfall_coverage is None:
+        reasons.append("tca_expected_shortfall_calibration_coverage_missing")
+    elif (
+        expected_shortfall_sample_count <= 0
+        and policy.gate2_min_tca_expected_shortfall_coverage > 0
+    ):
         reasons.append("tca_expected_shortfall_calibration_coverage_missing")
     elif expected_shortfall_coverage < policy.gate2_min_tca_expected_shortfall_coverage:
         reasons.append("tca_expected_shortfall_calibration_coverage_below_threshold")
