@@ -891,42 +891,6 @@ def run_autonomous_lane(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
 
-        evaluation_stage_record = _write_stage_manifest(
-            stage=_STAGE_EVALUATION,
-            stage_index=2,
-            stage_output_dir=stages_dir,
-            run_id=run_id,
-            candidate_id=candidate_id,
-            lineage_parent_hash=candidate_generation_stage_record.lineage_hash,
-            lineage_parent_stage=candidate_generation_stage_record.stage,
-            inputs={
-                "run_id": run_id,
-                "candidate_id": candidate_id,
-                "recommendation_trace_id": "",
-            },
-            input_artifacts={
-                "walkforward_results": walk_results_path,
-                "baseline_evaluation_report": baseline_report_path,
-                "signals": signals_path,
-            },
-            output_artifacts={
-                "evaluation_report": evaluation_report_path,
-                "gate_evaluation": gate_report_path,
-                "profitability_benchmark": profitability_benchmark_path,
-                "profitability_evidence": profitability_evidence_path,
-                "profitability_validation": profitability_validation_path,
-                "janus_event_car": janus_event_car_path,
-                "janus_hgrm_reward": janus_hgrm_reward_path,
-                "recalibration_report": recalibration_report_path,
-            },
-            created_at=now,
-        )
-        stage_records.append(evaluation_stage_record)
-        manifest_paths[_STAGE_EVALUATION] = (
-            stages_dir / f"{_STAGE_EVALUATION}-manifest.json"
-        )
-        stage_trace_ids[_STAGE_EVALUATION] = evaluation_stage_record.stage_trace_id
-
         candidate_hash = _compute_candidate_hash(
             run_id=run_id,
             runtime_strategies=runtime_strategies,
@@ -973,6 +937,9 @@ def run_autonomous_lane(
             },
         }
         candidate_spec_path = research_dir / "candidate-spec.json"
+        candidate_spec_path.write_text(
+            json.dumps(research_spec, indent=2), encoding="utf-8"
+        )
 
         patch_path: Path | None = None
 
@@ -1187,6 +1154,43 @@ def run_autonomous_lane(
         gate_report_path.write_text(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
+
+        evaluation_stage_record = _write_stage_manifest(
+            stage=_STAGE_EVALUATION,
+            stage_index=2,
+            stage_output_dir=stages_dir,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            lineage_parent_hash=candidate_generation_stage_record.lineage_hash,
+            lineage_parent_stage=candidate_generation_stage_record.stage,
+            inputs={
+                "run_id": run_id,
+                "candidate_id": candidate_id,
+                "recommendation_trace_id": "",
+            },
+            input_artifacts={
+                "walkforward_results": walk_results_path,
+                "baseline_evaluation_report": baseline_report_path,
+                "signals": signals_path,
+            },
+            output_artifacts={
+                "evaluation_report": evaluation_report_path,
+                "gate_evaluation": gate_report_path,
+                "profitability_benchmark": profitability_benchmark_path,
+                "profitability_evidence": profitability_evidence_path,
+                "profitability_validation": profitability_validation_path,
+                "janus_event_car": janus_event_car_path,
+                "janus_hgrm_reward": janus_hgrm_reward_path,
+                "recalibration_report": recalibration_report_path,
+            },
+            created_at=now,
+        )
+        stage_records.append(evaluation_stage_record)
+        manifest_paths[_STAGE_EVALUATION] = (
+            stages_dir / f"{_STAGE_EVALUATION}-manifest.json"
+        )
+        stage_trace_ids[_STAGE_EVALUATION] = evaluation_stage_record.stage_trace_id
+
         promotion_recommendation_payload = {
             "schema_version": "torghut-autonomy-promotion-recommendation-v1",
             "run_id": run_id,
