@@ -727,14 +727,15 @@ def _promotion_gate_failures(
             failures.append("eval_report_reference_not_local")
         elif trust_reason == "reference_override_disallowed":
             failures.append("eval_report_reference_override_disallowed")
-        elif trust_reason == "missing_artifact":
-            failures.append("eval_report_not_found")
         elif trust_reason == "invalid_artifact":
             failures.append("eval_report_invalid_payload")
         else:
             failures.append("eval_report_not_trusted")
     elif not gate_snapshot.get("eval_report_loaded", False):
         failures.append("eval_report_not_found")
+
+    if not gate_snapshot.get("eval_report_loaded", False):
+        return failures
 
     created_at = gate_snapshot.get("created_at")
     if created_at is None:
