@@ -3228,6 +3228,12 @@ class TradingPipeline:
         unsupported_state_error = isinstance(
             error, DSPyRuntimeUnsupportedStateError
         )
+        if unsupported_state_error:
+            policy_resolution = _build_llm_policy_resolution(
+                rollout_stage=guardrails.rollout_stage,
+                effective_fail_mode="veto",
+                guardrail_reasons=guardrails.reasons,
+            )
         error_label = _classify_llm_error(error)
         if error_label == "llm_response_not_json":
             self.state.metrics.llm_parse_error_total += 1
@@ -3270,6 +3276,13 @@ class TradingPipeline:
             tokens_prompt=None,
             tokens_completion=None,
         )
+        if unsupported_state_error:
+            logger.warning(
+                "Unsupported DSPy runtime state; vetoing decision_id=%s error=%s",
+                decision_row.id,
+                error,
+            )
+            return decision, "llm_error"
         if guardrails.shadow_mode:
             self.state.metrics.llm_shadow_total += 1
             if not settings.llm_shadow_mode:
