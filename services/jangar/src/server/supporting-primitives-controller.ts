@@ -582,6 +582,14 @@ const countConsecutiveFailures = (resources: Record<string, unknown>[]) => {
   return failures
 }
 
+const filterRunsAfterTime = (resources: Record<string, unknown>[], timestampMs: number | null) => {
+  if (timestampMs === null) return resources
+  return resources.filter((resource) => {
+    const runTimestamp = parseTimeOrNull(getRunTimestamp(resource))
+    return runTimestamp !== null && runTimestamp > timestampMs
+  })
+}
+
 const reconcileTool = async (kube: ReturnType<typeof createKubernetesClient>, tool: Record<string, unknown>) => {
   const spec = asRecord(tool.spec) ?? {}
   const image = asString(spec.image)
@@ -1073,9 +1081,11 @@ const reconcileSwarm = async (
   let freezeActive = existingFreezeAt !== null && existingFreezeAt > nowMs
   let freezeReason = existingFreezeReason ?? 'FreezeActive'
   let freezeUntil = existingFreezeUntil ?? undefined
+  const failureWindowStartMs = existingFreezeAt !== null && existingFreezeAt <= nowMs ? existingFreezeAt : null
 
   if (!freezeActive) {
-    const consecutiveFailures = countConsecutiveFailures(implementRuns)
+    const recentImplementRuns = filterRunsAfterTime(implementRuns, failureWindowStartMs)
+    const consecutiveFailures = countConsecutiveFailures(recentImplementRuns)
     if (consecutiveFailures >= freezeAfterFailures) {
       freezeActive = true
       freezeReason = 'ConsecutiveFailures'

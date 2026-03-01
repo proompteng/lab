@@ -187,6 +187,7 @@ rules:
       - create
       - update
       - patch
+      - delete
   - apiGroups:
       - schedules.proompteng.ai
     resources:

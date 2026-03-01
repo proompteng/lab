@@ -197,7 +197,8 @@ describe('supporting primitives controller', () => {
       expect(labels).toMatchObject({
         'swarm.proompteng.ai/uid': 'swarm-uid',
       })
-      const swarmLabel = labels?.['swarm.proompteng.ai/name']
+      const labelsRecord = (labels ?? {}) as Record<string, unknown>
+      const swarmLabel = labelsRecord['swarm.proompteng.ai/name']
       expect(typeof swarmLabel).toBe('string')
       const normalizedLabel = String(swarmLabel)
       expect(normalizedLabel.length).toBeLessThanOrEqual(63)
@@ -426,6 +427,92 @@ describe('supporting primitives controller', () => {
     expect(status.freeze).toBeTruthy()
   })
 
+  it('does not immediately re-freeze from failures that occurred before freeze expiry', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'old-run-2',
+                creationTimestamp: '2026-01-19T22:59:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: { phase: 'Failed' },
+            },
+            {
+              metadata: {
+                name: 'old-run-1',
+                creationTimestamp: '2026-01-19T22:58:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: { phase: 'Failed' },
+            },
+          ],
+        }
+      }
+      if (resource === RESOURCE_MAP.OrchestrationRun) {
+        return { items: [] }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'torghut-quant', namespace: 'agents', generation: 1, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'trading-owner', channel: 'swarm://owner/trading' },
+        domains: ['autonomous-trading'],
+        objectives: ['improve risk-adjusted return'],
+        mode: 'lights-out',
+        cadence: {
+          discoverEvery: '1m',
+          planEvery: '5m',
+          implementEvery: '15m',
+          verifyEvery: '1m',
+        },
+        discovery: { sources: [{ name: 'market-feed' }] },
+        delivery: { deploymentTargets: ['torghut'] },
+        risk: { freezeAfterFailures: 2, freezeDuration: '60m' },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'OrchestrationRun', name: 'orchestrationrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+      status: {
+        freeze: {
+          reason: 'ConsecutiveFailures',
+          until: '2026-01-19T23:00:00Z',
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    expect(apply).toHaveBeenCalledTimes(4)
+    expect(deleteFn).not.toHaveBeenCalled()
+    const firstStatusCall = applyStatus.mock.calls[0]
+    const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('Active')
+    expect(status.freeze).toBeUndefined()
+  })
+
   it('uses different schedule names for long swarms with identical prefixes', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
@@ -509,7 +596,8 @@ describe('supporting primitives controller', () => {
 
     expect(apply).not.toHaveBeenCalled()
     expect(deleteFn).toHaveBeenCalledTimes(4)
-    const status = (applyStatus.mock.calls[0]?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const firstStatusCall = applyStatus.mock.calls[0]
+    const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(status.phase).toBe('Invalid')
     const conditions = Array.isArray(status.conditions) ? status.conditions : []
     const ready = conditions.find((condition) => condition.type === 'Ready')
