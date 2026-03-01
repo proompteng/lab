@@ -1,12 +1,13 @@
 # Chart Probes Configuration Contract
 
-Status: Implemented (2026-03-01)
+Status: Current (2026-03-01)
 
 Docs index: [README](../README.md)
 
 ## Overview
 
 The chart exposes HTTP liveness/readiness probes for both components and now supports startup probe configuration, including per-component overrides for control plane and controller deployments.
+Each component uses an independent probe contract, so rollout behavior for one Deployment can be changed without affecting the other.
 
 ## Goals
 
@@ -26,7 +27,7 @@ The chart exposes HTTP liveness/readiness probes for both components and now sup
 - Templates:
   - Control plane probes: `charts/agents/templates/deployment.yaml`
   - Controllers probes: `charts/agents/templates/deployment-controllers.yaml`
-- Existing global defaults are preserved by default when component overrides are empty.
+- Existing global defaults are merged with per-component values; component overrides only replace configured fields.
 
 ## Design
 
@@ -43,10 +44,10 @@ Defaults in `charts/agents/values.yaml`:
 
 - control plane:
   - liveness/readiness inherit global values
-  - startup probe inherits global defaults (disabled by default)
+  - startup probe inherits global defaults and remains opt-in per component
 - controllers:
   - liveness/readiness inherit global values
-  - startup probe inherits global defaults (disabled by default)
+  - startup probe inherits global defaults and remains opt-in per component
 
 If a component does not expose HTTP health, set component `livenessProbe.enabled` and/or `readinessProbe.enabled` to `false`.
 
@@ -73,6 +74,21 @@ Rollback:
 
 - Remove component overrides and rely on existing global probes.
 - If startup probes were introduced during rollout hardening, set both startup probes back to `enabled: false`.
+
+### Migration behavior
+
+- Roll out startup probes one component at a time to avoid simultaneous probe-contract changes.
+- `startupProbe` is additive: liveness/readiness defaults remain unchanged unless you also modify those blocks.
+- For rollback, disable component startup probes first and remove timing overrides second.
+
+### Per-component migration semantics
+
+- Probe contracts are rendered independently for `Deployment/agents` and `Deployment/agents-controllers`.
+- Prefer staged rollout when changing probe timing:
+  1. Enable a startup probe on only one component first.
+  2. Observe rollout behavior and restart duration.
+  3. Apply the same change to the second component only if the first remains healthy.
+- On rollback, disable startup probes on the first modified component before changing global or second-component settings.
 
 ## Validation
 
