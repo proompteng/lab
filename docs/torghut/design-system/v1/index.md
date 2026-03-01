@@ -5,7 +5,7 @@
 - Version: `v1`
 - Date: `2026-02-08`
 - Source-of-truth implementation status: `implementation-status-matrix-2026-02-21.md`
-- Evidence sync: `iteration-9.md`
+- Evidence sync: `iteration-10.md`
 - Status: `Planned` (index/meta/snapshot)
 - Implementation status (strict): `Implemented=11`, `Partial=44`, `Planned=5` of 60
 

@@ -6,7 +6,7 @@
 - Last updated: **2026-02-10**
 - Relationship to v1: `docs/torghut/design-system/v1/` remains the production-facing source of truth.
 - Source-of-truth implementation status: `implementation-status-matrix-2026-02-21.md`
-- Evidence sync: `iteration-9.md`
+- Evidence sync: `iteration-10.md`
 - Implementation status (strict): `Implemented=0`, `Partial=17`, `Planned=8` of 25
 
 ## Purpose
