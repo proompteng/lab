@@ -146,6 +146,23 @@ limitRange:
 podAnnotations: {}
 podLabels: {}
 
+rolloutChecksums:
+  enabled: false
+  # When enabled, pod template annotations include deterministic checksum keys.
+  # For chart-owned resources:
+  # - database secret checksum is derived automatically from values.database.url.
+  # For externally-managed resources:
+  # - provide explicit entries with 64-char sha256 hex checksums.
+  # - include every externally-managed Secret/ConfigMap that affects pod env or volume inputs.
+  #   Required sources include (when configured):
+  #   - database.secretRef / database.caSecret
+  #   - envFromSecretRefs / env.secrets
+  #   - envFromConfigMapRefs / env.config
+  #   - agentComms.nats.userSecret
+  # Optional namespace lets you track cross-namespace resources.
+  secrets: []
+  configMaps: []
+
 securityContext: {}
 containerSecurityContext: {}
 

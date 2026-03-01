@@ -108,6 +108,96 @@ Provide one of:
 
 Agent memory backends are configured separately via the `Memory` CRD.
 
+### Deterministic rollout on config/secret changes
+
+Control plane and controllers pods include rollout annotations only when `rolloutChecksums.enabled=true`.
+
+Source-of-truth model:
+
+- Chart-owned DB secret path: when `database.createSecret.enabled=true`, the chart computes
+  `checksum/secret/<namespace>/<name>` from the literal `database.url` value.
+- Externally managed Secret/ConfigMap inputs: the chart does **not** read live resources at render
+  time. You must supply checksum values from your external source of truth.
+
+The external inputs should be the exact same contract inputs that drive pod behavior. When
+`rolloutChecksums.enabled=true`, each source below that is in use becomes required in
+`rolloutChecksums.secrets` / `rolloutChecksums.configMaps`.
+
+- `database.secretRef` / `database.createSecret` (database source of truth)
+- `database.caSecret` (Postgres CA certificate Secret)
+- `envFromSecretRefs` (Secret names injected via `envFrom`)
+- `envFromConfigMapRefs` (ConfigMap names injected via `envFrom`)
+- `env.secrets` (Secret key refs in `env.secrets`)
+- `env.config` (ConfigMap key refs in `env.config`)
+- `agentComms.nats.userSecret` (NATS credentials secret)
+
+Example:
+
+The chart always derives a checksum from an inline DB secret when `database.createSecret.enabled=true`
+because that secret content is chart-owned and deterministic.
+
+For other inputs, list the exact resources and checksums in values:
+
+- `rolloutChecksums.secrets`
+- `rolloutChecksums.configMaps`
+
+Example:
+
+```yaml
+rolloutChecksums:
+  enabled: true
+  secrets:
+    - name: agents-github-token-env
+      namespace: agents # optional when same as release namespace
+      checksum: 'd34db33f...' # 64-char sha256 hex from external source of truth
+  configMaps:
+    - name: agents-runtime-config
+      namespace: agents # optional when same as release namespace
+      checksum: 'a1b2c3d4...'
+```
+
+The chart merges these entries into pod annotations for both `Deployment/agents` and
+`Deployment/agents-controllers`.
+
+Operator workflow:
+
+1. Apply/update the external Secret/ConfigMap source in your GitOps-managed system.
+2. Compute a deterministic SHA-256 over the exact source payload your deployment depends on.
+3. Update `rolloutChecksums.secrets[]` or `.configMaps[]` and deploy via GitOps (helm/Argo CD).
+
+Example (external Secret payload hash):
+
+```bash
+kubectl -n agents get secret agents-github-token-env -o json |
+  jq -cS '{data: .data, binaryData: .binaryData}' |
+  sha256sum | awk '{print $1}'
+```
+
+Example (external ConfigMap payload hash):
+
+```bash
+kubectl -n agents get configmap agents-runtime-config -o json |
+  jq -cS '{data: .data, binaryData: .binaryData}' |
+  sha256sum | awk '{print $1}'
+```
+
+Source-payload hashing guidance:
+
+- Include keys in a stable JSON order (`jq -cS`) and include both `data` and `binaryData`
+  so the checksum reflects everything that can affect runtime behavior.
+- For key-by-key checksums, include only the same keys the pod reads; avoid hashing unrelated metadata.
+- If your source of truth is a declarative manifest (for example, ExternalSecret or Sealed Secret),
+  hash the source manifest object (not the rendered Kubernetes object) before applying.
+- In GitOps/ExternalSecrets flows, calculate the hash from the source-of-truth manifest committed in your secrets repo.
+
+Limitations:
+
+- For external secret/configmap managers (ESO/ExternalSecrets, external controllers, etc.), Helm cannot safely read live object payloads during template rendering, so checksum updates must be supplied explicitly.
+- Include every secret/configmap that affects container runtime behavior; unmanaged edits to referenced values without matching checksums will not trigger rollout.
+- Chart rendering fails when required external Secret/ConfigMap inputs used by this chart are not listed in `rolloutChecksums`.
+- Empty or invalid checksum values are rejected by values schema/validation.
+- Duplicate `namespace/name` entries in the same object type (`secrets` or `configMaps`) are rejected.
+
 ### Controller scope
 
 - Single namespace: default

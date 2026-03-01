@@ -254,6 +254,57 @@
       "additionalProperties": false
     },
     "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+    "rolloutChecksums": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "secrets": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["name", "checksum"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+              },
+              "checksum": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[A-Fa-f0-9]{64}$" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "configMaps": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["name", "checksum"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+              },
+              "checksum": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[A-Fa-f0-9]{64}$" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },
     "securityContext": { "type": "object" },
     "containerSecurityContext": { "type": "object" },
@@ -337,7 +388,7 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
+              "name": { "type": "string", "minLength": 1 },
               "value": { "type": "string" }
             },
             "required": ["name", "value"],
@@ -349,8 +400,12 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
-              "secretName": { "type": "string" },
+              "name": { "type": "string", "minLength": 1 },
+              "secretName": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+              },
               "key": { "type": "string" }
             },
             "required": ["name", "secretName"],
@@ -362,8 +417,12 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
-              "configMapName": { "type": "string" },
+              "name": { "type": "string", "minLength": 1 },
+              "configMapName": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+              },
               "key": { "type": "string" }
             },
             "required": ["name", "configMapName"],
@@ -400,8 +459,22 @@
       },
       "additionalProperties": false
     },
-    "envFromSecretRefs": { "type": "array", "items": { "type": "string" } },
-    "envFromConfigMapRefs": { "type": "array", "items": { "type": "string" } },
+    "envFromSecretRefs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+      }
+    },
+    "envFromConfigMapRefs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+      }
+    },
     "controller": {
       "type": "object",
       "properties": {
@@ -722,7 +795,10 @@
             "userSecret": {
               "type": "object",
               "properties": {
-                "name": { "type": "string" },
+                "name": {
+                  "type": "string",
+                  "pattern": "^$|^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+                },
                 "usernameKey": { "type": "string" },
                 "passwordKey": { "type": "string" }
               },
@@ -741,7 +817,10 @@
         "secretRef": {
           "type": "object",
           "properties": {
-            "name": { "type": "string" },
+            "name": {
+              "type": "string",
+              "pattern": "^$|^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+            },
             "key": { "type": "string" }
           },
           "additionalProperties": false
@@ -750,7 +829,10 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
-            "name": { "type": "string" },
+            "name": {
+              "type": "string",
+              "pattern": "^$|^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+            },
             "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
           },
           "additionalProperties": false
@@ -758,7 +840,10 @@
         "caSecret": {
           "type": "object",
           "properties": {
-            "name": { "type": "string" },
+            "name": {
+              "type": "string",
+              "pattern": "^$|^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+            },
             "key": { "type": "string" }
           },
           "additionalProperties": false
