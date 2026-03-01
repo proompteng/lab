@@ -188,6 +188,10 @@ def build_tca_gate_inputs(
         func.avg(ExecutionTCAMetric.shortfall_notional),
         func.avg(ExecutionTCAMetric.churn_ratio),
         func.avg(ExecutionTCAMetric.divergence_bps),
+        func.count(ExecutionTCAMetric.expected_shortfall_bps_p50),
+        func.avg(ExecutionTCAMetric.expected_shortfall_bps_p50),
+        func.avg(ExecutionTCAMetric.expected_shortfall_bps_p95),
+        func.avg(ExecutionTCAMetric.realized_shortfall_bps),
     )
     if strategy_id:
         stmt = stmt.where(ExecutionTCAMetric.strategy_id == strategy_id)
@@ -198,6 +202,15 @@ def build_tca_gate_inputs(
     avg_shortfall = _decimal_or_none(row[2])
     avg_churn = _decimal_or_none(row[3])
     avg_divergence = _decimal_or_none(row[4])
+    expected_count = int(row[5] or 0)
+    avg_expected_shortfall_p50 = _decimal_or_none(row[6])
+    avg_expected_shortfall_p95 = _decimal_or_none(row[7])
+    avg_realized_shortfall_bps = _decimal_or_none(row[8])
+    expected_shortfall_coverage = (
+        Decimal(expected_count) / Decimal(order_count)
+        if order_count > 0
+        else Decimal("0")
+    )
     return {
         "order_count": order_count,
         "avg_slippage_bps": avg_slippage if avg_slippage is not None else Decimal("0"),
@@ -207,6 +220,17 @@ def build_tca_gate_inputs(
         "avg_churn_ratio": avg_churn if avg_churn is not None else Decimal("0"),
         "avg_divergence_bps": avg_divergence
         if avg_divergence is not None
+        else Decimal("0"),
+        "expected_shortfall_sample_count": expected_count,
+        "expected_shortfall_coverage": expected_shortfall_coverage,
+        "avg_expected_shortfall_bps_p50": avg_expected_shortfall_p50
+        if avg_expected_shortfall_p50 is not None
+        else Decimal("0"),
+        "avg_expected_shortfall_bps_p95": avg_expected_shortfall_p95
+        if avg_expected_shortfall_p95 is not None
+        else Decimal("0"),
+        "avg_realized_shortfall_bps": avg_realized_shortfall_bps
+        if avg_realized_shortfall_bps is not None
         else Decimal("0"),
     }
 

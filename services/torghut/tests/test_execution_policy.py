@@ -470,22 +470,22 @@ class TestExecutionPolicy(TestCase):
                 "params": {
                     "price": Decimal("100"),
                     "adv": Decimal("100000"),
-                    "microstructure_state": {
-                        "schema_version": "microstructure_state_v1",
-                        "symbol": "AAPL",
-                        "event_ts": "2026-01-01T00:00:00Z",
-                        "spread_bps": "3.2",
-                        "depth_top5_usd": "1500000",
-                        "order_flow_imbalance": "0.10",
-                        "latency_ms_estimate": 20,
-                        "fill_hazard": "0.8",
-                        "liquidity_regime": "normal",
-                    },
                     "execution_advice": {
                         "urgency_tier": "normal",
                         "max_participation_rate": "0.05",
                         "preferred_order_type": "limit",
                         "adverse_selection_risk": "0.95",
+                    },
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "1.8",
+                        "depth_top5_usd": "1500000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 20,
+                        "fill_hazard": "0.20",
+                        "liquidity_regime": "normal",
                     },
                 }
             }
@@ -587,17 +587,6 @@ class TestExecutionPolicy(TestCase):
             update={
                 "params": {
                     "price": Decimal("100"),
-                    "microstructure_state": {
-                        "schema_version": "microstructure_state_v1",
-                        "symbol": "AAPL",
-                        "event_ts": "2026-01-01T00:00:00Z",
-                        "spread_bps": "3.2",
-                        "depth_top5_usd": "1500000",
-                        "order_flow_imbalance": "0.10",
-                        "latency_ms_estimate": 20,
-                        "fill_hazard": "0.8",
-                        "liquidity_regime": "normal",
-                    },
                     "execution_advice": {
                         "urgency_tier": "normal",
                         "max_participation_rate": "0.01",
@@ -615,3 +604,72 @@ class TestExecutionPolicy(TestCase):
         self.assertEqual(
             outcome.advisor_metadata["fallback_reason"], "advisor_disabled"
         )
+
+    def test_microstructure_controls_apply_limit_preference_when_stressed(self) -> None:
+        config.settings.trading_execution_advisor_enabled = False
+        policy = ExecutionPolicy(
+            config=_config(max_participation_rate=Decimal("0.25"), prefer_limit=False)
+        )
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "18",
+                        "depth_top5_usd": "200000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 320,
+                        "fill_hazard": "0.95",
+                        "liquidity_regime": "stressed",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertEqual(outcome.decision.order_type, "limit")
+        self.assertTrue(outcome.microstructure_metadata["applied"])
+        self.assertIn(
+            "microstructure_regime_stressed",
+            outcome.microstructure_metadata["tightening_reasons"],
+        )
+
+    def test_microstructure_missing_state_falls_back_to_baseline_safely(self) -> None:
+        config.settings.trading_execution_advisor_enabled = False
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "18",
+                        "depth_top5_usd": "not-a-number",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 320,
+                        "fill_hazard": "0.95",
+                        "liquidity_regime": "stressed",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertEqual(
+            outcome.microstructure_metadata["fallback_reason"],
+            "microstructure_state_unavailable",
+        )
+        self.assertIn("execution_microstructure", outcome.params_update())
