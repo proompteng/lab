@@ -444,7 +444,7 @@ def submit_jangar_agentrun(
             "Idempotency-Key": idempotency_key,
             **({"Authorization": f"Bearer {auth_token}"} if auth_token else {}),
         },
-        body=json.dumps(dict(payload), sort_keys=True).encode("utf-8"),
+        body=json.dumps(dict(payload), sort_keys=True, default=str).encode("utf-8"),
         timeout_seconds=timeout_seconds,
     )
     if status < 200 or status >= 300:
