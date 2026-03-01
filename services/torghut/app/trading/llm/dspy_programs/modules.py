@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from json import JSONDecodeError
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
@@ -87,6 +88,7 @@ class LiveDSPyCommitteeProgram:
 
     model_name: str
     api_base: str | None = None
+    api_completion_url: str | None = None
     api_key: str | None = None
     _predictor: Any = field(default=None, init=False, repr=False)
     _lm: Any = field(default=None, init=False, repr=False)
@@ -119,8 +121,20 @@ class LiveDSPyCommitteeProgram:
             raise RuntimeError("dspy_response_missing")
 
         parsed: Any = response_json
-        if isinstance(response_json, str):
-            parsed = json.loads(response_json)
+        if isinstance(response_json, (bytes, bytearray)):
+            try:
+                parsed = json.loads(response_json.decode("utf-8"))
+            except JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"dspy_response_json_decode_error:{exc.msg}"
+                ) from exc
+        elif isinstance(response_json, str):
+            try:
+                parsed = json.loads(response_json)
+            except JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"dspy_response_json_decode_error:{exc.msg}"
+                ) from exc
         if not isinstance(parsed, dict):
             raise RuntimeError("dspy_response_not_object")
         return DSPyTradeReviewOutput.model_validate(parsed)
@@ -139,8 +153,13 @@ class LiveDSPyCommitteeProgram:
             "temperature": 0.0,
             "max_tokens": 900,
         }
-        if self.api_base:
-            lm_kwargs["api_base"] = self.api_base
+        api_base = _coerce_dspy_api_base(
+            api_base=self.api_base,
+            api_completion_url=self.api_completion_url,
+        )
+        if not api_base:
+            raise RuntimeError("dspy_api_base_missing")
+        lm_kwargs["api_base"] = api_base
         if self.api_key:
             lm_kwargs["api_key"] = self.api_key
         self._lm = dspy.LM(**lm_kwargs)
@@ -224,6 +243,18 @@ def _build_committee(risk_flags: list[str]) -> list[DSPyCommitteeMemberOutput]:
             )
         )
     return out
+
+
+def _coerce_dspy_api_base(
+    *, api_base: str | None, api_completion_url: str | None
+) -> str:
+    candidate = api_completion_url if api_completion_url is not None else api_base
+    normalized = (candidate or "").strip().rstrip("/")
+    if not normalized:
+        return ""
+    if normalized.endswith("/chat/completions"):
+        return normalized[: -len("/chat/completions")] or normalized
+    return normalized
 
 
 __all__ = [

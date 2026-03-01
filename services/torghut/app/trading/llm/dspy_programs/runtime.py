@@ -32,6 +32,7 @@ _BOOTSTRAP_ARTIFACT_BODY = {
     },
 }
 _BOOTSTRAP_ARTIFACT_HASH = hash_payload(_BOOTSTRAP_ARTIFACT_BODY)
+_DSPY_OPENAI_CHAT_COMPLETION_SUFFIX = "/chat/completions"
 
 
 class DSPyRuntimeError(RuntimeError):
@@ -403,11 +404,11 @@ def _resolve_dspy_model_name() -> str:
     return f"openai/{raw}"
 
 
-def _resolve_dspy_api_base() -> str | None:
+def _resolve_dspy_api_base() -> str:
     base_url = (settings.jangar_base_url or "").strip().rstrip("/")
     if not base_url:
         raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
-    return f"{base_url}/openai/v1"
+    return f"{base_url}/openai/v1{_DSPY_OPENAI_CHAT_COMPLETION_SUFFIX}"
 
 
 __all__ = [

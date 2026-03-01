@@ -7,11 +7,14 @@ from typing import cast
 from unittest import TestCase
 from unittest.mock import patch
 
+from app.config import settings
 from app.trading.llm.dspy_programs.runtime import (
     DSPyArtifactManifest,
     DSPyReviewRuntime,
     DSPyRuntimeUnsupportedStateError,
+    _resolve_dspy_api_base,
 )
+from app.trading.llm.dspy_programs.modules import LiveDSPyCommitteeProgram
 from app.trading.llm.schema import (
     LLMDecisionContext,
     LLMPolicyContext,
@@ -74,6 +77,66 @@ class TestLLMDSPyRuntime(TestCase):
         )
         self.assertEqual(metadata.artifact_source, "bootstrap")
         self.assertEqual(metadata.executor, "heuristic")
+
+    def test_resolves_live_jangar_completion_endpoint(self) -> None:
+        original_base = settings.jangar_base_url
+        try:
+            settings.jangar_base_url = "http://jangar.example"
+
+            self.assertEqual(
+                _resolve_dspy_api_base(),
+                "http://jangar.example/openai/v1/chat/completions",
+            )
+            settings.jangar_base_url = "http://jangar.example/"
+            self.assertEqual(
+                _resolve_dspy_api_base(),
+                "http://jangar.example/openai/v1/chat/completions",
+            )
+        finally:
+            settings.jangar_base_url = original_base
+
+    def test_resolve_dspy_api_base_requires_jangar_base_url(self) -> None:
+        original_base = settings.jangar_base_url
+        try:
+            settings.jangar_base_url = None
+            with self.assertRaises(DSPyRuntimeUnsupportedStateError):
+                _resolve_dspy_api_base()
+        finally:
+            settings.jangar_base_url = original_base
+
+    def test_live_artifact_resolves_dspy_live_program(self) -> None:
+        original_base = settings.jangar_base_url
+        original_api_key = settings.jangar_api_key
+        try:
+            settings.jangar_base_url = "https://jangar.openai.local"
+            settings.jangar_api_key = "test-key"
+            runtime = DSPyReviewRuntime(
+                mode="active",
+                artifact_hash="a" * 64,
+                program_name="trade-review-committee-v1",
+                signature_version="v1",
+                timeout_seconds=8,
+            )
+            manifest = DSPyArtifactManifest(
+                artifact_hash="a" * 64,
+                program_name="trade-review-committee-v1",
+                signature_version="v1",
+                executor="dspy_live",
+                compiled_prompt={},
+                source="database",
+            )
+
+            program = runtime._resolve_program(manifest)
+            self.assertIsInstance(program, LiveDSPyCommitteeProgram)
+            self.assertEqual(
+                program.api_base,
+                "https://jangar.openai.local/openai/v1/chat/completions",
+            )
+            self.assertEqual(program.api_key, "test-key")
+            self.assertEqual(program.model_name, settings.llm_model)
+        finally:
+            settings.jangar_base_url = original_base
+            settings.jangar_api_key = original_api_key
 
     def test_disabled_runtime_mode_is_blocking(self) -> None:
         runtime = DSPyReviewRuntime(
