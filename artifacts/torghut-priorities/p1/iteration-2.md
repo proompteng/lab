@@ -19,9 +19,15 @@
 - `services/torghut/tests/test_autonomous_lane.py`
   - Updated `test_gate_fragility_inputs_fail_closed_on_missing_or_invalid_values` to assert failure flagging semantics after this change.
   - Kept regression coverage around invalid/missing fragility paths while dropping assertions that encoded synthetic crisis defaults.
+- `services/torghut/tests/test_autonomy_gates.py`
+  - Added missing TCA keys to `test_gate_matrix_passes_paper_with_safe_metrics` so the "healthy" fixture now exercises complete evidence and remains pass-closed under strict gate checks.
+- `services/torghut/tests/test_llm_dspy_workflow.py`
+  - Added `test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_override_changes_path` to prove promotion gating is immutable to non-canonical `evalReportRef` overrides.
 
 ## Verification
 
 - `pytest services/torghut/tests/test_autonomous_lane.py::TestAutonomousLane::test_gate_fragility_inputs_fail_closed_on_missing_or_invalid_values`
 - `pytest services/torghut/tests/test_autonomy_gates.py::TestAutonomyGates::test_gate_matrix_fails_when_fragility_inputs_are_invalid`
+- `pytest services/torghut/tests/test_autonomy_gates.py::TestAutonomyGates::test_gate_matrix_passes_paper_with_safe_metrics`
+- `pytest services/torghut/tests/test_llm_dspy_workflow.py::TestLLMDSPyWorkflow::test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_override_changes_path`
 - `pytest services/torghut/tests/test_llm_dspy_workflow.py`
