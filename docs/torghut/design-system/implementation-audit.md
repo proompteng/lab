@@ -5,7 +5,7 @@
 
 ## Iteration audit trail
 
-- Last synchronized iteration: `iteration-5.md` (`2026-03-01`).
+- Last synchronized iteration: `iteration-6.md` (`2026-03-01`).
 - Prior iterations retained for continuity: `iteration-1.md`, `iteration-2.md`, `iteration-3.md`, `iteration-4.md`.
 - Scope coverage in the last iteration: all status-bearing docs under `docs/torghut/design-system/**` plus index/audit evidence checks.
 
