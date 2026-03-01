@@ -47,6 +47,7 @@ _PROMOTION_EVIDENCE_OVERRIDE_KEYS = {
     "deterministicCompatibility",
     "fallbackRate",
 }
+_PROMOTION_REFERENCE_OVERRIDE_KEYS = {"evalReportRef"}
 
 
 def _normalize_local_path(candidate_ref: str) -> Path | None:
@@ -548,9 +549,13 @@ def _lane_overrides_with_defaults(
 ) -> dict[str, Any]:
     normalized = dict(lane_overrides)
     if lane == "promote":
-        for key in _PROMOTION_EVIDENCE_OVERRIDE_KEYS:
+        for key in _PROMOTION_EVIDENCE_OVERRIDE_KEYS | _PROMOTION_REFERENCE_OVERRIDE_KEYS:
             normalized.pop(key, None)
-    if lane == "compile":
+        normalized.setdefault(
+            "evalReportRef",
+            f"{artifact_root}/eval/dspy-eval-report.json",
+        )
+    elif lane == "compile":
         normalized.setdefault(
             "datasetRef",
             f"{artifact_root}/dataset-build/dspy-dataset.json",
@@ -559,11 +564,6 @@ def _lane_overrides_with_defaults(
         normalized.setdefault(
             "compileResultRef",
             f"{artifact_root}/compile/dspy-compile-result.json",
-        )
-    elif lane == "promote":
-        normalized.setdefault(
-            "evalReportRef",
-            f"{artifact_root}/eval/dspy-eval-report.json",
         )
     return normalized
 
@@ -814,16 +814,17 @@ def orchestrate_dspy_agentrun_workflow(
     lineage_by_lane: dict[str, dict[str, Any]] = {}
 
     for lane_index, lane in enumerate(lanes):
+        raw_lane_overrides = dict(overrides_by_lane.get(lane, {}))
         lane_overrides = _lane_overrides_with_defaults(
             lane=lane,
-            lane_overrides=overrides_by_lane.get(lane, {}),
+            lane_overrides=raw_lane_overrides,
             artifact_root=artifact_root_normalized,
         )
         gate_snapshot: dict[str, Any] | None = None
 
         if lane == "promote":
             gate_snapshot = _resolve_promotion_gate_snapshot(
-                lane_overrides,
+                raw_lane_overrides,
                 artifact_root=artifact_root_normalized,
             )
             gate_failures = _promotion_gate_failures(

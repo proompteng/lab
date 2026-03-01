@@ -528,7 +528,9 @@ def run_autonomous_lane(
             encoding="utf-8",
         )
         gate_inputs = GateInputs(
-            feature_schema_version="3.0.0",
+            feature_schema_version=_resolve_feature_schema_version(
+                gate_policy_payload=gate_policy_payload
+            ),
             required_feature_null_rate=_required_feature_null_rate(signals),
             staleness_ms_p95=_resolve_gate_staleness_ms_p95(
                 signals=ordered_signals,
@@ -547,10 +549,21 @@ def run_autonomous_lane(
             fragility_score=fragility_score,
             stability_mode_active=stability_mode_active,
             fragility_inputs_valid=fragility_inputs_valid,
-            operational_ready=True,
-            runbook_validated=True,
-            kill_switch_dry_run_passed=True,
-            rollback_dry_run_passed=True,
+            operational_ready=_resolve_operational_readiness(
+                strategy_configs=runtime_strategies,
+                signals=ordered_signals,
+                runtime_errors=runtime_errors,
+            ),
+            runbook_validated=_resolve_runbook_validated(
+                strategy_config_path=strategy_config_path,
+                gate_policy_payload=gate_policy_payload,
+            ),
+            kill_switch_dry_run_passed=_resolve_kill_switch_readiness(
+                runtime_errors=runtime_errors,
+            ),
+            rollback_dry_run_passed=_resolve_rollback_readiness(
+                runtime_errors=runtime_errors,
+            ),
             approval_token=approval_token,
         )
         gate_report = evaluate_gate_matrix(
@@ -678,30 +691,19 @@ def run_autonomous_lane(
         patch_path: Path | None = None
 
         raw_gate_policy = gate_policy_payload
-        candidate_state_payload = {
-            "candidateId": candidate_id,
-            "runId": run_id,
-            "activeStage": "gate-evaluation",
-            "paused": False,
-            "datasetSnapshotRef": "signals_window",
-            "noSignalReason": None,
-            "rollbackReadiness": {
-                "killSwitchDryRunPassed": True,
-                "gitopsRevertDryRunPassed": (
-                    promotion_target != "live" or bool(approval_token)
-                ),
-                "strategyDisableDryRunPassed": bool(runtime_strategies),
-                "dryRunCompletedAt": now.isoformat(),
-                "humanApproved": promotion_target != "live" or bool(approval_token),
-                "rollbackTarget": f"{code_version or 'unknown'}",
-            },
-        }
-        patch_path = _resolve_paper_patch_path(
-            gate_report=gate_report,
-            strategy_configmap_path=strategy_configmap_path,
-            runtime_strategies=runtime_strategies,
+        candidate_state_payload = _build_candidate_state_payload(
             candidate_id=candidate_id,
-            paper_dir=paper_dir,
+            run_id=run_id,
+            dataset_snapshot_ref=str(signals_path),
+            now=now,
+            code_version=code_version,
+            kill_switch_dry_run_passed=_resolve_kill_switch_readiness(
+                runtime_errors=runtime_errors,
+            ),
+            rollback_readiness_passed=_resolve_rollback_readiness(
+                runtime_errors=runtime_errors,
+            ),
+            human_approved=approval_token is not None,
         )
         promotion_check = evaluate_promotion_prerequisites(
             policy_payload=raw_gate_policy,
@@ -2203,6 +2205,78 @@ def _resolve_gate_staleness_ms_p95(
             age_ms = 0
         staleness_values_ms.append(age_ms)
     return _nearest_rank_percentile(staleness_values_ms, 95)
+
+
+def _resolve_feature_schema_version(*, gate_policy_payload: dict[str, Any]) -> str:
+    configured_version = str(
+        gate_policy_payload.get("required_feature_schema_version", "")
+    ).strip()
+    if configured_version:
+        return configured_version
+    configured_version = str(settings.trading_feature_schema_version).strip()
+    return configured_version if configured_version else "0.0.0"
+
+
+def _resolve_operational_readiness(
+    *,
+    strategy_configs: list[StrategyRuntimeConfig],
+    signals: list[SignalEnvelope],
+    runtime_errors: list[str],
+) -> bool:
+    if not strategy_configs or not signals:
+        return False
+    return not runtime_errors
+
+
+def _resolve_runbook_validated(
+    *,
+    strategy_config_path: Path,
+    gate_policy_payload: dict[str, Any],
+) -> bool:
+    if not strategy_config_path.exists():
+        return False
+    required_feature_schema_version = str(
+        gate_policy_payload.get("required_feature_schema_version", "")
+    ).strip()
+    return bool(required_feature_schema_version)
+
+
+def _resolve_kill_switch_readiness(*, runtime_errors: list[str]) -> bool:
+    return not bool(runtime_errors)
+
+
+def _resolve_rollback_readiness(*, runtime_errors: list[str]) -> bool:
+    return not bool(runtime_errors)
+
+
+def _build_candidate_state_payload(
+    *,
+    candidate_id: str,
+    run_id: str,
+    dataset_snapshot_ref: str,
+    now: datetime,
+    code_version: str,
+    kill_switch_dry_run_passed: bool,
+    rollback_readiness_passed: bool,
+    human_approved: bool,
+) -> dict[str, Any]:
+    rollback_readiness = {
+        "killSwitchDryRunPassed": kill_switch_dry_run_passed,
+        "gitopsRevertDryRunPassed": rollback_readiness_passed,
+        "strategyDisableDryRunPassed": rollback_readiness_passed,
+        "dryRunCompletedAt": now.isoformat(),
+        "humanApproved": human_approved,
+        "rollbackTarget": f"{code_version or 'unknown'}",
+    }
+    return {
+        "candidateId": candidate_id,
+        "runId": run_id,
+        "activeStage": "gate-evaluation",
+        "paused": False,
+        "datasetSnapshotRef": dataset_snapshot_ref,
+        "noSignalReason": None,
+        "rollbackReadiness": rollback_readiness,
+    }
 
 
 def _to_finite_float(value: object) -> float | None:

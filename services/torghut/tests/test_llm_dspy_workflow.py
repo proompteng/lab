@@ -616,6 +616,9 @@ class TestLLMDSPyWorkflow(TestCase):
                     "artifactHash": "override-hash",
                     "approvalRef": "risk-committee",
                     "promotionTarget": "constrained_live",
+                    "evalReportRef": str(
+                        artifact_root / "eval" / ".." / "eval" / "dspy-eval-report.json"
+                    ),
                     "gateCompatibility": "fail",
                     "schemaValidRate": "0.001",
                     "deterministicCompatibility": "fail",
@@ -653,7 +656,11 @@ class TestLLMDSPyWorkflow(TestCase):
             promote_parameters = promote_payload["parameters"]
             self.assertEqual(promote_parameters["approvalRef"], "risk-committee")
             self.assertEqual(promote_parameters["promotionTarget"], "constrained_live")
-            self.assertEqual(promote_parameters["artifactHash"], "override-hash")
+            self.assertEqual(
+                promote_parameters["evalReportRef"],
+                str(artifact_root / "eval" / "dspy-eval-report.json"),
+            )
+            self.assertNotIn("artifactHash", promote_parameters)
             self.assertNotIn("gateCompatibility", promote_parameters)
             self.assertNotIn("schemaValidRate", promote_parameters)
             self.assertNotIn("deterministicCompatibility", promote_parameters)
