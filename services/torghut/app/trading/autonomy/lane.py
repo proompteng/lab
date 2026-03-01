@@ -2133,7 +2133,7 @@ def _resolve_gate_fragility_inputs(
 
     if selected_measurement is None:
         if fallback_measurement is None:
-            return ("crisis", Decimal("1"), False, False)
+            return ("normal", Decimal("0"), False, False)
         selected_measurement = fallback_measurement
 
     selected_state, selected_score, selected_stability = selected_measurement
