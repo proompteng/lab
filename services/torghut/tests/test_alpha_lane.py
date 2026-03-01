@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -11,6 +12,9 @@ from app.trading.alpha.lane import run_alpha_discovery_lane, _normalize_prices
 
 
 class TestAlphaLane(TestCase):
+    def _artifact_sha256(self, path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
     def _trend_frames(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         index = pd.date_range("2022-01-01", periods=420, freq="B", tz="UTC")
         trend = pd.Series(range(100, 100 + len(index)), index=index, dtype="float64")
@@ -156,6 +160,45 @@ class TestAlphaLane(TestCase):
             self.assertFalse(recommendation["eligible"])
             self.assertEqual(recommendation["action"], "deny")
             self.assertIn("test_total_return_below_threshold", recommendation["reasons"])
+
+    def test_lane_replay_artifacts_are_immutable(self) -> None:
+        train, test = self._trend_frames()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "alpha-immutable"
+            result = run_alpha_discovery_lane(
+                artifact_path=output_dir,
+                train_prices=train,
+                test_prices=test,
+            )
+
+            candidate_spec = json.loads(
+                result.candidate_spec_path.read_text(encoding="utf-8")
+            )
+            stage_lineage = candidate_spec["stage_lineage"]
+            self.assertEqual(
+                stage_lineage["root_lineage_hash"],
+                result.stage_lineage_root,
+                "candidate spec should persist root lineage hash",
+            )
+            self.assertEqual(
+                stage_lineage["stages"]["evaluation"]["parent_stage"],
+                "candidate-generation",
+            )
+            self.assertEqual(
+                stage_lineage["stages"]["promotion-recommendation"]["parent_stage"],
+                "evaluation",
+            )
+
+            for artifact_key, expected_hash in candidate_spec[
+                "replay_artifact_hashes"
+            ].items():
+                artifact_path = candidate_spec["artifacts"][artifact_key]
+                self.assertEqual(
+                    expected_hash,
+                    self._artifact_sha256(Path(artifact_path)),
+                    f"artifact hash for {artifact_key} should match file content",
+                )
 
     def test_normalize_prices_does_not_drop_numeric_first_column(self) -> None:
         prices = pd.DataFrame(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -42,6 +43,9 @@ from app.models import (
 
 
 class TestAutonomousLane(TestCase):
+    def _artifact_sha256(self, path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
     def _empty_session_factory(self) -> sessionmaker:
         engine = create_engine(
             "sqlite+pysqlite:///:memory:",
@@ -341,6 +345,46 @@ class TestAutonomousLane(TestCase):
             note_text = notes[0].read_text(encoding="utf-8")
             self.assertIn("Autonomous lane iteration 1", note_text)
             self.assertIn("candidate-generation", note_text)
+
+    def test_lane_progression_and_iteration_notes_respect_execution_artifact_path(
+        self,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-default-notes"
+            artifact_path = Path(tmpdir) / "external-notes-root"
+            run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                governance_inputs={
+                    "execution_context": {
+                        "artifactPath": str(artifact_path),
+                    }
+                },
+            )
+
+            notes_dir = artifact_path / "notes"
+            notes = sorted(notes_dir.glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            self.assertIn(
+                "Autonomous lane iteration 1",
+                notes[0].read_text(encoding="utf-8"),
+            )
+            self.assertFalse(
+                any((output_dir / "notes").glob("iteration-*.md")),
+                "iteration notes should be written under execution artifactPath",
+            )
 
     def test_lane_supports_governance_override_for_actuation_intent(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
@@ -878,6 +922,18 @@ class TestAutonomousLane(TestCase):
                 result.stage_trace_ids,
             )
             self.assertIn("replay_artifact_hashes", candidate_spec)
+            for artifact_key, expected_hash in candidate_spec[
+                "replay_artifact_hashes"
+            ].items():
+                artifact_path = candidate_spec["artifacts"].get(artifact_key)
+                self.assertIsNotNone(
+                    artifact_path, f"artifact {artifact_key} should be present"
+                )
+                self.assertEqual(
+                    expected_hash,
+                    self._artifact_sha256(Path(artifact_path)),
+                    f"artifact hash for {artifact_key} should match replay payload",
+                )
             for key in (
                 "candidate_generation_manifest",
                 "evaluation_manifest",

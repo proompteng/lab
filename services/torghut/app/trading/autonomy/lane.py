@@ -499,6 +499,10 @@ def run_autonomous_lane(
     phase_manifest_path = rollout_dir / "phase-manifest.json"
     run_row = None
     governance_context = _normalize_governance_inputs(governance_inputs)
+    notes_artifact_root = _coerce_str(
+        governance_context["execution_context"].get("artifactPath")
+    )
+    notes_root = Path(notes_artifact_root) if notes_artifact_root else output_dir
     promotion_recommendation_path = gates_dir / "promotion-recommendation.json"
     stage_records: list[_StageManifestRecord] = []
     manifest_paths: dict[str, Path] = {}
@@ -1252,7 +1256,7 @@ def run_autonomous_lane(
                 "recalibration_report": recalibration_report_path,
                 "promotion_gate": promotion_gate_path,
                 "promotion_recommendation": promotion_recommendation_path,
-                "promotion_gate_manifest": manifest_paths.get(_STAGE_RECOMMENDATION),
+                "recommendation_manifest": manifest_paths.get(_STAGE_RECOMMENDATION),
                 "evaluation_manifest": manifest_paths.get(_STAGE_EVALUATION),
                 "candidate_generation_manifest": manifest_paths.get(
                     _STAGE_CANDIDATE_GENERATION
@@ -1281,7 +1285,7 @@ def run_autonomous_lane(
             json.dumps(research_spec, indent=2), encoding="utf-8"
         )
         _write_iteration_notes(
-            artifact_root=output_dir,
+            artifact_root=notes_root,
             run_id=run_id,
             candidate_id=candidate_id,
             stage_records=stage_records,
