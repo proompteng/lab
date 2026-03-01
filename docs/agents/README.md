@@ -175,6 +175,7 @@ If you are changing behavior, update 1-3 first, then ensure 4-5 describe the res
 - [designs/implementation-contract-enforcement.md](designs/implementation-contract-enforcement.md)
 - [designs/integration-test-harness.md](designs/integration-test-harness.md)
 - [designs/jangar-quant-performance-control-plane.md](designs/jangar-quant-performance-control-plane.md)
+- [designs/jangar-swarm-intelligence-owner-serving.md](designs/jangar-swarm-intelligence-owner-serving.md)
 - [designs/jangar-trading-control-plan.md](designs/jangar-trading-control-plan.md)
 - [designs/jangar-torghut-live-analysis-playbook.md](designs/jangar-torghut-live-analysis-playbook.md)
 - [designs/job-gc-visibility.md](designs/job-gc-visibility.md)
