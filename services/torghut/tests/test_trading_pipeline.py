@@ -17,6 +17,7 @@ from app.trading.decisions import DecisionEngine
 from app.trading.execution import OrderExecutor
 from app.trading.firewall import OrderFirewall
 from app.trading.llm.review_engine import LLMReviewOutcome
+from app.trading.llm.dspy_programs.runtime import DSPyRuntimeUnsupportedStateError
 from app.trading.llm.schema import (
     LLMDecisionContext,
     LLMPolicyContext,
@@ -3129,7 +3130,7 @@ class TestTradingPipeline(TestCase):
                 "llm_adjustment_approved"
             ]
 
-    def test_pipeline_llm_shadow_mode(self) -> None:
+    def test_pipeline_llm_unsupported_runtime_state_vetoes_decision(self) -> None:
         from app import config
 
         original = {
@@ -3139,18 +3140,25 @@ class TestTradingPipeline(TestCase):
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
-            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
         }
         config.settings.trading_enabled = True
-        config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
-        config.settings.llm_shadow_mode = True
+        config.settings.llm_fail_mode = "pass_through"
+        config.settings.llm_fail_mode_enforcement = "configured"
+        config.settings.llm_shadow_mode = False
         config.settings.llm_min_confidence = 0.0
+        _set_llm_guardrails(config)
 
         try:
             with self.session_local() as session:
@@ -3177,33 +3185,38 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
-            alpaca_client = FakeAlpacaClient()
+            config.settings.trading_mode = "paper"
+            config.settings.trading_live_enabled = False
             pipeline = TradingPipeline(
-                alpaca_client=alpaca_client,
-                order_firewall=OrderFirewall(alpaca_client),
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
                 executor=OrderExecutor(),
-                execution_adapter=alpaca_client,
+                execution_adapter=FakeAlpacaClient(),
                 reconciler=Reconciler(),
                 universe_resolver=UniverseResolver(),
                 state=TradingState(),
                 account_label="paper",
                 session_factory=self.session_local,
-                llm_review_engine=FakeLLMReviewEngine(verdict="veto"),
+                llm_review_engine=FakeLLMReviewEngine(
+                    error=DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled")
+                ),
             )
 
             pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
-                decisions = session.execute(select(TradeDecision)).scalars().all()
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
-                self.assertEqual(reviews[0].verdict, "veto")
-                self.assertEqual(decisions[0].status, "submitted")
-                self.assertEqual(len(executions), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
+                self.assertEqual(
+                    reviews[0].response_json.get("effective_verdict"), "veto"
+                )
+                self.assertEqual(len(executions), 0)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -3215,11 +3228,23 @@ class TestTradingPipeline(TestCase):
                 "trading_static_symbols_raw"
             ]
             config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
             config.settings.llm_fail_mode_enforcement = original[
                 "llm_fail_mode_enforcement"
             ]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
 
     def test_pipeline_llm_guardrails_force_shadow(self) -> None:
         from app import config

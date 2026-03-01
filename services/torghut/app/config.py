@@ -1300,7 +1300,7 @@ class Settings(BaseSettings):
         default="veto",
         alias="LLM_COMMITTEE_FAIL_CLOSED_VERDICT",
     )
-    # Deprecated runtime toggle; DSPy runtime path is always used by review engine.
+    # Runtime mode controls whether DSPy is used for review and what fallback contract applies.
     llm_dspy_runtime_mode: Literal["disabled", "shadow", "active"] = Field(
         default="disabled",
         alias="LLM_DSPY_RUNTIME_MODE",

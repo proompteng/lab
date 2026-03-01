@@ -36,6 +36,7 @@ from .feature_quality import FeatureQualityThresholds, evaluate_feature_batch_qu
 from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor, SignalBatch
 from .llm import LLMReviewEngine, apply_policy
+from .llm.dspy_programs.runtime import DSPyRuntimeUnsupportedStateError
 from .llm.guardrails import evaluate_llm_guardrails
 from .lean_lanes import LeanLaneManager
 from .market_context import (
@@ -3177,13 +3178,20 @@ class TradingPipeline:
     ) -> tuple[StrategyDecision, Optional[str]]:
         engine.circuit_breaker.record_error()
         self.state.metrics.llm_error_total += 1
+        unsupported_state_error = isinstance(
+            error, DSPyRuntimeUnsupportedStateError
+        )
         error_label = _classify_llm_error(error)
         if error_label == "llm_response_not_json":
             self.state.metrics.llm_parse_error_total += 1
         elif error_label == "llm_response_invalid":
             self.state.metrics.llm_validation_error_total += 1
 
-        fallback = self._resolve_llm_fallback(guardrails.effective_fail_mode)
+        fallback = (
+            "veto"
+            if unsupported_state_error
+            else self._resolve_llm_fallback(guardrails.effective_fail_mode)
+        )
         effective_verdict = "veto" if fallback == "veto" else "approve"
         if not request_json:
             request_json = {"decision": decision.model_dump(mode="json")}

@@ -4,7 +4,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
 
-from app.trading.llm.dspy_programs.runtime import DSPyRuntimeError
+from app.trading.llm.dspy_programs.runtime import (
+    DSPyRuntimeError,
+    DSPyRuntimeUnsupportedStateError,
+)
 from app.trading.llm.review_engine import LLMReviewEngine
 from app.trading.llm.schema import (
     LLMReviewResponse,
@@ -19,9 +22,10 @@ class FakeDSPyRuntime:
         self,
         *,
         response_payload: dict[str, object] | None = None,
-        error: str | None = None,
+        error: str | Exception | None = None,
+        mode: str = "active",
     ) -> None:
-        self.mode = "active"
+        self.mode = mode
         self.program_name = "trade-review-committee-v1"
         self.signature_version = "v1"
         self.artifact_hash = "a" * 64
@@ -30,9 +34,12 @@ class FakeDSPyRuntime:
 
     def review(self, _request):  # noqa: ANN001
         if self._error is not None:
+            if isinstance(self._error, Exception):
+                raise self._error
             raise DSPyRuntimeError(self._error)
         assert self._response_payload is not None
         response = LLMReviewResponse.model_validate(self._response_payload)
+        runtime_mode = self.mode
         metadata = type(
             "_Meta",
             (),
@@ -40,7 +47,7 @@ class FakeDSPyRuntime:
                 "program_name": self.program_name,
                 "signature_version": self.signature_version,
                 "to_payload": lambda self: {  # noqa: ANN001
-                    "mode": "active",
+                    "mode": runtime_mode,
                     "program_name": "trade-review-committee-v1",
                     "signature_version": "v1",
                     "artifact_hash": "a" * 64,
@@ -394,3 +401,25 @@ class TestLLMReviewEngine(TestCase):
         self.assertEqual(dspy_payload.get("artifact_source"), "runtime_fallback")
         self.assertEqual(outcome.tokens_prompt, None)
         self.assertEqual(outcome.tokens_completion, None)
+
+    def test_review_reraises_unsupported_runtime_state(self) -> None:
+        engine = LLMReviewEngine(
+            dspy_runtime=FakeDSPyRuntime(
+                mode="disabled",
+                error=DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled"),
+            )
+        )
+        decision, account, positions, portfolio = self._build_inputs()
+
+        with self.assertRaises(DSPyRuntimeUnsupportedStateError):
+            engine.review(
+                decision=decision,
+                account=account,
+                positions=positions,
+                request=engine.build_request(
+                    decision, account, positions, portfolio, None, None, []
+                ),
+                portfolio=portfolio,
+                market=None,
+                recent_decisions=[],
+            )

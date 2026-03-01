@@ -5,7 +5,10 @@ from decimal import Decimal
 from unittest import TestCase
 from unittest.mock import patch
 
-from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime, DSPyRuntimeError
+from app.trading.llm.dspy_programs.runtime import (
+    DSPyReviewRuntime,
+    DSPyRuntimeUnsupportedStateError,
+)
 from app.trading.llm.schema import (
     LLMDecisionContext,
     LLMPolicyContext,
@@ -54,6 +57,7 @@ class TestLLMDSPyRuntime(TestCase):
 
     def test_bootstrap_artifact_executes_and_emits_metadata(self) -> None:
         runtime = DSPyReviewRuntime(
+            mode="shadow",
             artifact_hash=DSPyReviewRuntime.bootstrap_artifact_hash(),
             program_name="trade-review-committee-v1",
             signature_version="v1",
@@ -68,21 +72,51 @@ class TestLLMDSPyRuntime(TestCase):
         self.assertEqual(metadata.artifact_source, "bootstrap")
         self.assertEqual(metadata.executor, "heuristic")
 
+    def test_disabled_runtime_mode_is_blocking(self) -> None:
+        runtime = DSPyReviewRuntime(
+            mode="disabled",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+
+        with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
+            runtime.review(self._request())
+
+        self.assertIn("dspy_runtime_disabled", str(exc.exception))
+
+    def test_active_runtime_rejects_bootstrap_artifact_hash(self) -> None:
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash=DSPyReviewRuntime.bootstrap_artifact_hash(),
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+
+        with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
+            runtime.review(self._request())
+
+        self.assertIn("dspy_bootstrap_artifact_forbidden", str(exc.exception))
+
     def test_program_name_mismatch_is_blocking(self) -> None:
         runtime = DSPyReviewRuntime(
+            mode="shadow",
             artifact_hash=DSPyReviewRuntime.bootstrap_artifact_hash(),
             program_name="trade-review-committee-v2",
             signature_version="v1",
             timeout_seconds=8,
         )
 
-        with self.assertRaises(DSPyRuntimeError) as exc:
+        with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
             runtime.review(self._request())
 
         self.assertIn("dspy_program_name_mismatch", str(exc.exception))
 
     def test_unknown_artifact_hash_is_rejected(self) -> None:
         runtime = DSPyReviewRuntime(
+            mode="active",
             artifact_hash="a" * 64,
             program_name="trade-review-committee-v1",
             signature_version="v1",
@@ -90,20 +124,21 @@ class TestLLMDSPyRuntime(TestCase):
         )
 
         with patch.object(runtime, "_load_manifest_from_db", return_value=None):
-            with self.assertRaises(DSPyRuntimeError) as exc:
+            with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
                 runtime.review(self._request())
 
         self.assertIn("dspy_artifact_manifest_not_found", str(exc.exception))
 
     def test_runtime_requires_artifact_hash(self) -> None:
         runtime = DSPyReviewRuntime(
+            mode="active",
             artifact_hash=None,
             program_name="trade-review-committee-v1",
             signature_version="v1",
             timeout_seconds=8,
         )
 
-        with self.assertRaises(DSPyRuntimeError) as exc:
+        with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
             runtime.review(self._request())
 
         self.assertIn("dspy_artifact_hash_missing", str(exc.exception))
