@@ -20,7 +20,8 @@ import { cn } from '@/lib/utils'
 type TopMenuItem = {
   id: string
   label: string
-  action?: 'minimize' | 'restore' | 'toggle-fullscreen'
+  href?: string
+  action?: 'minimize' | 'restore' | 'toggle-fullscreen' | 'show-about'
   shortcut?: string
   separatorBefore?: boolean
   destructive?: boolean
@@ -37,7 +38,7 @@ const topMenus: TopMenuSection[] = [
     id: 'terminal',
     label: 'proompteng',
     items: [
-      { id: 'about', label: 'About proompteng' },
+      { id: 'about', label: 'About proompteng', action: 'show-about' },
       { id: 'about-window', label: 'About This Mac' },
       { id: 'preferences', label: 'Preferences…' },
       { id: 'services', label: 'Services' },
@@ -93,18 +94,18 @@ const topMenus: TopMenuSection[] = [
     id: 'help',
     label: 'Help',
     items: [
-      { id: 'help', label: 'Proompteng Help' },
-      { id: 'release-notes', label: 'Release Notes' },
-      { id: 'report', label: 'Report Issue…' },
+      { id: 'docs', label: 'Docs', href: 'https://docs.proompteng.ai' },
+      { id: 'release-notes', label: 'Release Notes', href: 'https://github.com/proompteng/lab/releases' },
+      { id: 'report', label: 'Report Issue…', href: 'https://github.com/proompteng/lab/issues' },
     ],
   },
 ]
 
 const DOCK_ITEMS = [
-  { id: 'docs', label: 'Docs', emoji: '📘', terminal: false },
+  { id: 'docs', label: 'Docs', emoji: '📘', terminal: false, href: 'https://docs.proompteng.ai' },
   { id: 'terminal', label: 'proompteng', terminal: true },
-  { id: 'mail', label: 'Mail', emoji: '✉️', terminal: false },
-  { id: 'settings', label: 'Settings', emoji: '⚙️', terminal: false },
+  { id: 'mail', label: 'Mail', emoji: '✉️', terminal: false, href: 'mailto:greg@proompteng.ai' },
+  { id: 'settings', label: 'Settings', emoji: '⚙️', terminal: false, href: 'https://artifacthub.io/packages/helm/agents/agents' },
 ] as const
 
 export default function DesktopHero() {
@@ -115,14 +116,11 @@ export default function DesktopHero() {
   const [currentTime, setCurrentTime] = useState('--:--')
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
   const [isTerminalClosed, setIsTerminalClosed] = useState(false)
+  const [isAboutDialogOpen, setIsAboutDialogOpen] = useState(false)
 
   const restoreWindow = useCallback(() => {
     terminalWindowRef.current?.restore()
   }, [])
-
-  const handleDockClick = useCallback(() => {
-    restoreWindow()
-  }, [restoreWindow])
 
   const closeTopMenu = useCallback(() => {
     setActiveMenu(null)
@@ -149,6 +147,17 @@ export default function DesktopHero() {
 
   const runTopMenuAction = useCallback(
     (item: TopMenuItem) => {
+      if (item.href) {
+        window.open(item.href, '_blank', 'noopener,noreferrer')
+        closeTopMenu()
+        return
+      }
+      if (item.action === 'show-about') {
+        setIsAboutDialogOpen(true)
+        closeTopMenu()
+        return
+      }
+
       if (item.action === 'minimize') {
         terminalWindowRef.current?.minimize()
       } else if (item.action === 'restore') {
@@ -192,6 +201,7 @@ export default function DesktopHero() {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         closeTopMenu()
+        setIsAboutDialogOpen(false)
       }
     }
 
@@ -203,6 +213,25 @@ export default function DesktopHero() {
       document.removeEventListener('keydown', handleEscape)
     }
   }, [closeTopMenu])
+
+  const handleDockItemClick = useCallback(
+    (dockItem: DockItem) => {
+      if (dockItem.id === 'terminal') {
+        restoreWindow()
+        return
+      }
+
+      if (!dockItem.href) return
+
+      if (dockItem.href.startsWith('mailto:')) {
+        window.location.href = dockItem.href
+        return
+      }
+
+      window.open(dockItem.href, '_blank', 'noopener,noreferrer')
+    },
+    [restoreWindow],
+  )
 
   return (
     <main className="relative min-h-[100svh] overflow-hidden bg-[radial-gradient(circle_at_18%_0%,rgba(122,162,247,0.26)_0%,rgba(36,40,59,0)_42%),radial-gradient(circle_at_82%_74%,rgba(187,154,247,0.18)_0%,rgba(36,40,59,0)_58%),radial-gradient(circle_at_48%_34%,rgba(125,207,255,0.13)_0%,rgba(36,40,59,0)_56%),linear-gradient(180deg,#24283b_0%,#1f2335_56%,#1b1e2d_100%)]">
@@ -300,14 +329,51 @@ export default function DesktopHero() {
             onClosedStateChange={setIsTerminalClosed}
           />
 
-          <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-[90] flex justify-center px-3 pb-4">
-            <Dock
-              items={DOCK_ITEMS}
-              menuBarButtonRef={menuBarButtonRef}
-              onTerminalClick={handleDockClick}
-              isTerminalClosed={isTerminalClosed}
-            />
+        <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-[90] flex justify-center px-3 pb-4">
+              <Dock
+                items={DOCK_ITEMS}
+                menuBarButtonRef={menuBarButtonRef}
+                onDockItemClick={handleDockItemClick}
+                isTerminalClosed={isTerminalClosed}
+              />
           </footer>
+          {isAboutDialogOpen ? (
+            <div
+              className="fixed inset-0 z-[120] flex items-center justify-center bg-[rgba(9,11,20,0.72)] px-4"
+              onMouseDown={() => {
+                setIsAboutDialogOpen(false)
+              }}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="about-proompteng-title"
+                className="w-full max-w-md rounded-2xl border border-[rgb(84_92_126/0.5)] bg-[rgba(31,35,53,0.97)] p-5 shadow-[0_24px_55px_rgba(0,0,0,0.45)] backdrop-blur"
+                onMouseDown={(event) => {
+                  event.stopPropagation()
+                }}
+              >
+                <h2 id="about-proompteng-title" className="text-lg font-semibold text-[rgb(192_202_245)]">
+                  About proompteng
+                </h2>
+                <p className="mt-3 text-sm leading-relaxed text-[rgb(182_190_227)]">
+                  proompteng helps teams ship reliable AI agents faster with guardrails, observability, and model
+                  routing in one platform.
+                </p>
+                <div className="mt-5 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAboutDialogOpen(false)
+                    }}
+                    className="rounded-md bg-[rgb(66_77_125/0.9)] px-3 py-2 text-sm text-[rgb(230_235_255)] transition hover:bg-[rgb(82_97_164/0.96)]"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </main>
@@ -319,6 +385,7 @@ type DockItem = {
   label: string
   emoji?: string
   terminal: boolean
+  href?: string
 }
 
 const DOCK_BASE_SIZE_PX = 48
@@ -375,12 +442,12 @@ function createDockTooltipPath(
 const Dock = memo(function Dock({
   items,
   menuBarButtonRef,
-  onTerminalClick,
+  onDockItemClick,
   isTerminalClosed,
 }: {
   items: readonly DockItem[]
   menuBarButtonRef: RefObject<HTMLButtonElement | null>
-  onTerminalClick: () => void
+  onDockItemClick: (dockItem: DockItem) => void
   isTerminalClosed: boolean
 }) {
   const hoverIntentRef = useRef<number | null>(null)
@@ -424,7 +491,7 @@ const Dock = memo(function Dock({
             dockItem={dockItem}
             menuBarButtonRef={menuBarButtonRef}
             pointerX={pointerX}
-            onTerminalClick={onTerminalClick}
+            onDockItemClick={onDockItemClick}
             showTooltip={hoveredIndex === index}
             showRunningDot={dockItem.terminal && isTerminalClosed}
             onHoverStart={() => {
@@ -538,7 +605,7 @@ function DockButton({
   dockItem,
   menuBarButtonRef,
   pointerX,
-  onTerminalClick,
+  onDockItemClick,
   showTooltip,
   showRunningDot,
   onHoverStart,
@@ -547,7 +614,7 @@ function DockButton({
   dockItem: DockItem
   menuBarButtonRef: RefObject<HTMLButtonElement | null>
   pointerX: ReturnType<typeof useMotionValue<number>>
-  onTerminalClick: () => void
+  onDockItemClick: (dockItem: DockItem) => void
   showTooltip: boolean
   showRunningDot: boolean
   onHoverStart: () => void
@@ -604,11 +671,13 @@ function DockButton({
       <motion.button
         type="button"
         ref={assignButtonRef}
-        onClick={onTerminalClick}
+        onClick={() => {
+          onDockItemClick(dockItem)
+        }}
         onKeyDown={(event) => {
           if (event.key !== ' ' && event.key !== 'Enter') return
           event.preventDefault()
-          onTerminalClick()
+          onDockItemClick(dockItem)
         }}
         onPointerEnter={onHoverStart}
         onPointerLeave={onHoverEnd}
@@ -646,12 +715,20 @@ function DockButton({
   }
 
   return (
-    <motion.button
-      type="button"
-      ref={assignButtonRef}
-      onPointerEnter={onHoverStart}
-      onPointerLeave={onHoverEnd}
-      className={cn(
+      <motion.button
+        type="button"
+        ref={assignButtonRef}
+        onPointerEnter={onHoverStart}
+        onPointerLeave={onHoverEnd}
+        onClick={() => {
+          onDockItemClick(dockItem)
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== ' ' && event.key !== 'Enter') return
+          event.preventDefault()
+          onDockItemClick(dockItem)
+        }}
+        className={cn(
         'relative isolate inline-flex shrink-0 items-center justify-center overflow-visible p-0 leading-none text-zinc-100',
         'transform-gpu will-change-transform',
         showTooltip ? 'z-50' : 'z-10',
