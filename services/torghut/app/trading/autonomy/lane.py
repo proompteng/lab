@@ -689,6 +689,13 @@ def run_autonomous_lane(
                 "rollbackTarget": f"{code_version or 'unknown'}",
             },
         }
+        patch_path = _resolve_paper_patch_path(
+            gate_report=gate_report,
+            strategy_configmap_path=strategy_configmap_path,
+            runtime_strategies=runtime_strategies,
+            candidate_id=candidate_id,
+            paper_dir=paper_dir,
+        )
         promotion_check = evaluate_promotion_prerequisites(
             policy_payload=raw_gate_policy,
             gate_report_payload=gate_report_payload,
@@ -868,14 +875,6 @@ def run_autonomous_lane(
             bool(recommendation_trace_id)
             and promotion_recommendation.eligible
             and rollback_check.ready
-        )
-        patch_path = _resolve_paper_patch_path(
-            gate_report=gate_report,
-            strategy_configmap_path=strategy_configmap_path,
-            runtime_strategies=runtime_strategies,
-            candidate_id=candidate_id,
-            paper_dir=paper_dir,
-            actuation_allowed=actuation_allowed,
         )
         actuation_intent_path = output_dir / _ACTUATION_INTENT_PATH
         actuation_intent_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1152,10 +1151,7 @@ def _resolve_paper_patch_path(
     runtime_strategies: list[StrategyRuntimeConfig],
     candidate_id: str,
     paper_dir: Path,
-    actuation_allowed: bool,
 ) -> Path | None:
-    if not actuation_allowed:
-        return None
     if not gate_report.promotion_allowed:
         return None
     if gate_report.recommended_mode != "paper":

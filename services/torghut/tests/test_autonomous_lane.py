@@ -320,7 +320,9 @@ class TestAutonomousLane(TestCase):
                 result.actuation_intent_path.read_text(encoding="utf-8")
             )
             self.assertFalse(actuation_payload["actuation_allowed"])
-            self.assertIsNone(result.paper_patch_path)
+            self.assertIsNotNone(result.paper_patch_path)
+            assert result.paper_patch_path is not None
+            self.assertTrue(result.paper_patch_path.exists())
         self.assertEqual(
             actuation_payload["audit"]["rollback_evidence_missing_checks"],
             ["killSwitchDryRunPassed"],
@@ -375,7 +377,9 @@ class TestAutonomousLane(TestCase):
                 session_factory=session_factory,
             )
 
-            self.assertIsNone(result.paper_patch_path)
+            self.assertIsNotNone(result.paper_patch_path)
+            assert result.paper_patch_path is not None
+            self.assertTrue(result.paper_patch_path.exists())
             with session_factory() as session:
                 candidate = session.execute(
                     select(ResearchCandidate).where(

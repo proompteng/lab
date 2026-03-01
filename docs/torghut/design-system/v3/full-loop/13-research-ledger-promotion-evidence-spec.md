@@ -100,7 +100,7 @@ Create an immutable promotion evidence contract so every candidate can be replay
 - `profitability-evidence-validation.json` (machine-readable pass/fail + reason codes)
 - `promotion-evidence-gate.json` (final promotion gate aggregation + artifact pointers)
 - `actuation-intent.json` (governed actuation decision payload with confirmation and rollback-readiness evidence links)
-- `paper-candidate/strategy-configmap-patch.yaml` only when the final actuation gate is open (`promotion_allowed` and `actuation_allowed` are true)
+- `paper-candidate/strategy-configmap-patch.yaml` when paper is the recommended mode and patch preconditions are satisfied
 
 ## Acceptance Criteria
 
