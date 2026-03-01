@@ -689,6 +689,13 @@ def run_autonomous_lane(
         )
 
         patch_path: Path | None = None
+        patch_path = _resolve_paper_patch_path(
+            gate_report=gate_report,
+            strategy_configmap_path=strategy_configmap_path,
+            runtime_strategies=runtime_strategies,
+            candidate_id=candidate_id,
+            paper_dir=paper_dir,
+        )
 
         raw_gate_policy = gate_policy_payload
         candidate_state_payload = _build_candidate_state_payload(
