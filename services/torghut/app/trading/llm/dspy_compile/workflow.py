@@ -699,6 +699,7 @@ def _load_eval_snapshot_for_promotion(
         return snapshot
 
     if not resolved_ref_path.exists() or not resolved_ref_path.is_file():
+        snapshot["eval_report_trusted"] = False
         snapshot["eval_report_loaded"] = False
         snapshot["eval_report_path"] = str(resolved_ref_path)
         snapshot["eval_report_trust_reason"] = "missing_artifact"
@@ -727,6 +728,8 @@ def _promotion_gate_failures(
             failures.append("eval_report_reference_not_local")
         elif trust_reason == "reference_override_disallowed":
             failures.append("eval_report_reference_override_disallowed")
+        elif trust_reason == "missing_artifact":
+            return failures
         elif trust_reason == "invalid_artifact":
             failures.append("eval_report_invalid_payload")
         else:
