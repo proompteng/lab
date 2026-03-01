@@ -13,6 +13,8 @@ helmCharts:
     includeCRDs: true
     valuesInline:
       installCRDs: true
+      startupapicheck:
+        enabled: false
       crds:
         enabled: true
         keep: false

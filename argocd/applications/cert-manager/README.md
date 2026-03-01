@@ -14,4 +14,15 @@
 global:
   leaderElection:
     namespace: cert-manager
+
+### Startup API Check Hook Duplication
+
+**Issue:** ArgoCD sync loops can happen when the cert-manager `startupapicheck` Helm hook attempts to re-create RBAC resources that already exist with Argo hook finalizers.
+
+**Fix:** Disable the startup API check hook in this environment:
+
+```yaml
+startupapicheck:
+  enabled: false
+```
 ```
