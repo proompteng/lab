@@ -1763,13 +1763,20 @@ def _load_runtime_profitability_gate_rollback_attribution(
     actuation_readiness = _to_str_map(
         actuation_audit.get("rollback_readiness_readout")
     )
-    actuation_trace = str(
-        actuation_gates.get("gate_report_trace_id") or provenance.get("gate_report_trace_id")
-    ).strip()
-    actuation_recommendation_trace = str(
+    def _optional_trace_id(value: object) -> str | None:
+        if value is None:
+            return None
+        trace_id = str(value).strip()
+        return trace_id or None
+
+    actuation_trace = _optional_trace_id(
+        actuation_gates.get("gate_report_trace_id")
+        or provenance.get("gate_report_trace_id")
+    )
+    actuation_recommendation_trace = _optional_trace_id(
         actuation_gates.get("recommendation_trace_id")
         or provenance.get("recommendation_trace_id")
-    ).strip()
+    )
 
     actuation_artifact_refs_raw = actuation_payload.get("artifact_refs")
     actuation_artifact_refs = (
@@ -1803,14 +1810,14 @@ def _load_runtime_profitability_gate_rollback_attribution(
             or None
         ),
         "gate_report_trace_id": (
-            str(actuation_trace).strip()
+            actuation_trace
             if actuation_trace
-            else str(provenance.get("gate_report_trace_id") or "").strip() or None
+            else _optional_trace_id(provenance.get("gate_report_trace_id"))
         ),
         "recommendation_trace_id": (
-            str(actuation_recommendation_trace).strip()
+            actuation_recommendation_trace
             if actuation_recommendation_trace
-            else str(provenance.get("recommendation_trace_id") or "").strip() or None
+            else _optional_trace_id(provenance.get("recommendation_trace_id"))
         ),
         "gate6_profitability_evidence": gate6,
         "promotion_decision": {
