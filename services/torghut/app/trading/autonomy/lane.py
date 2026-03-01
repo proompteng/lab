@@ -3524,18 +3524,7 @@ def _load_tca_gate_inputs(
         with session_factory() as session:
             return build_tca_gate_inputs(session)
     except Exception:
-        return {
-            "order_count": 0,
-            "avg_slippage_bps": None,
-            "avg_shortfall_notional": None,
-            "avg_churn_ratio": None,
-            "avg_divergence_bps": None,
-            "avg_realized_shortfall_bps": None,
-            "expected_shortfall_coverage": None,
-            "expected_shortfall_sample_count": 0,
-            "avg_expected_shortfall_bps_p50": None,
-            "avg_expected_shortfall_bps_p95": None,
-        }
+        return {}
 
 
 def _baseline_runtime_strategies() -> list[StrategyRuntimeConfig]:
