@@ -53,7 +53,7 @@ flowchart LR
 
 - Workloads should not need cluster-admin.
 - Most workloads should need only:
-  - read Pods/logs for diagnostics (`get`, `list`, `watch`),
+  - read Pods/logs for diagnostics (`get`),
   - access only required namespace services and DNS.
 
 ## Network principles (v1)
@@ -61,6 +61,7 @@ flowchart LR
 - Keep ClickHouse and Postgres internal to the cluster network.
 - Restrict Kafka access to only the required ports/namespaces.
 - Allow egress to Alpaca endpoints only from forwarder and trading service.
+- Keep Alloy scrape ingress on runtime metrics ports (`ws/9090`, `ta/9249`) constrained to Alloy endpoints.
 
 ## Failure modes and recovery
 
@@ -85,11 +86,15 @@ Apply and validate in a controlled order:
 
 2. After GitOps sync, run runtime checks for policy/RBAC behavior.
    - `kubectl -n torghut auth can-i get pods --as=system:serviceaccount:torghut:torghut-runtime`
+   - `kubectl -n torghut auth can-i get pods/log --as=system:serviceaccount:torghut:torghut-runtime`
    - `kubectl -n torghut auth can-i create pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
+   - `kubectl -n torghut auth can-i list pods --as=system:serviceaccount:torghut:torghut-runtime` (must be denied)
    - `kubectl -n torghut get networkpolicy`
    - `kubectl -n torghut rollout status deploy/torghut-ws`
    - `kubectl -n torghut rollout status deploy/torghut-lean-runner`
    - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut`
+   - `kubectl -n torghut get pods -l app=torghut-ws -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status`
+   - `kubectl -n torghut get pods -l serving.knative.dev/service=torghut`
 
 3. Confirm dependent service health paths after rollout.
    - `kubectl -n torghut get pods -l app.kubernetes.io/name=torghut -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status`

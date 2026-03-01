@@ -8,7 +8,9 @@ resources:
   - autonomy-gate-policy-configmap.yaml
   - networkpolicy-common-dns-egress.yaml
   - networkpolicy-ta-egress.yaml
+  - networkpolicy-ta-ingress-metrics.yaml
   - networkpolicy-ws-egress.yaml
+  - networkpolicy-ws-ingress-metrics.yaml
   - networkpolicy-lean-runner-egress.yaml
   - networkpolicy-service-egress.yaml
   - db-migrations-job.yaml

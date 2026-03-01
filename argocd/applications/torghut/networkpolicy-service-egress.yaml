@@ -15,6 +15,16 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: torghut
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: torghut-lean-runner
+      ports:
+        - protocol: TCP
+          port: 8088
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: torghut
       ports:
         - protocol: TCP
           port: 5432
@@ -64,3 +74,12 @@ spec:
       ports:
         - protocol: TCP
           port: 11434
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rook-ceph
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
