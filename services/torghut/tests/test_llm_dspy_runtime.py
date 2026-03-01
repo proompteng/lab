@@ -92,6 +92,16 @@ class TestLLMDSPyRuntime(TestCase):
                 _resolve_dspy_api_base(),
                 "http://jangar.example/openai/v1/chat/completions",
             )
+            settings.jangar_base_url = "http://jangar.example/openai/v1"
+            self.assertEqual(
+                _resolve_dspy_api_base(),
+                "http://jangar.example/openai/v1/chat/completions",
+            )
+            settings.jangar_base_url = "http://jangar.example/openai/v1/chat/completions"
+            self.assertEqual(
+                _resolve_dspy_api_base(),
+                "http://jangar.example/openai/v1/chat/completions",
+            )
         finally:
             settings.jangar_base_url = original_base
 
