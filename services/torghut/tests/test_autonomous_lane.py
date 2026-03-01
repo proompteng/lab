@@ -306,7 +306,6 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(governance_payload["change"], "manual-review")
             self.assertEqual(governance_payload["priority_id"], "priority-123")
             self.assertEqual(governance_payload["reason"], "manual override")
-
     def test_lane_blocks_live_without_policy_enablement(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
         strategy_config_path = (
