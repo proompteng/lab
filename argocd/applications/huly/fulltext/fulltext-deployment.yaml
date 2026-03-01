@@ -52,7 +52,7 @@ spec:
             - name: STATS_URL
               value: http://stats
             - name: QUEUE_CONFIG
-              value: kafka-kafka-bootstrap.kafka:9092
+              value: kafka-kafka-bootstrap.kafka:9093
           image: hardcoreeng/fulltext:v0.7.375
           name: fulltext
           ports:

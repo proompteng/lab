@@ -54,7 +54,7 @@ spec:
                   name: huly-secret
                   key: SERVER_SECRET
             - name: QUEUE_CONFIG
-              value: kafka-kafka-bootstrap.kafka:9092
+              value: kafka-kafka-bootstrap.kafka:9093
           image: hardcoreeng/workspace:v0.7.375
           name: workspace
           resources:
