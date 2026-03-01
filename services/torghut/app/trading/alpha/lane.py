@@ -288,7 +288,7 @@ def _evaluate_candidate(
             }
         )
 
-    if (best.train.sharpe or float("-inf")) < float(min_train_sharpe):
+    if best.train.sharpe is None or float(best.train.sharpe) < float(min_train_sharpe):
         reason = "train_sharpe_below_threshold"
         checks.append(
             {
@@ -307,7 +307,7 @@ def _evaluate_candidate(
             }
         )
 
-    if (best.test.sharpe or float("-inf")) < float(min_test_sharpe):
+    if best.test.sharpe is None or float(best.test.sharpe) < float(min_test_sharpe):
         reason = "test_sharpe_below_threshold"
         checks.append(
             {
