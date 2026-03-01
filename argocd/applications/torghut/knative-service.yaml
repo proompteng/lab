@@ -76,7 +76,7 @@ spec:
             - name: TRADING_ENABLED
               value: "true"
             - name: TRADING_KILL_SWITCH_ENABLED
-              value: "false"
+              value: "true"
             - name: TRADING_FEATURE_FLAGS_ENABLED
               value: "true"
             - name: TRADING_FEATURE_FLAGS_URL
@@ -90,14 +90,16 @@ spec:
             - name: TRADING_MULTI_ACCOUNT_ENABLED
               value: "false"
             - name: TRADING_MODE
-              value: live
+              value: paper
+            - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
+              value: "false"
             - name: TRADING_ACCOUNT_LABEL
               value: PA3SX7FYNUTF
             - name: TRADING_ACCOUNTS_JSON
               value: >
-                [{"label":"PA3SX7FYNUTF","mode":"live","enabled":true}]
+                [{"label":"PA3SX7FYNUTF","mode":"paper","enabled":true}]
             - name: TRADING_LIVE_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_SIGNAL_SOURCE
               value: clickhouse
             - name: TRADING_SIGNAL_TABLE
@@ -128,6 +130,8 @@ spec:
               value: alpaca
             - name: TRADING_EXECUTION_ADAPTER_POLICY
               value: all
+            - name: TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED
+              value: "false"
             - name: TRADING_CRYPTO_ENABLED
               value: "false"
             - name: TRADING_CRYPTO_LIVE_ENABLED
@@ -301,7 +305,7 @@ spec:
             - name: TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: "300"
             - name: TRADING_EMERGENCY_STOP_ENABLED
-              value: "false"
+              value: "true"
             - name: TRADING_ROLLBACK_SIGNAL_LAG_SECONDS_LIMIT
               value: "600"
             - name: TRADING_ROLLBACK_AUTONOMY_FAILURE_STREAK_LIMIT
@@ -333,7 +337,9 @@ spec:
             - name: LLM_FAIL_MODE_ENFORCEMENT
               value: configured
             - name: LLM_FAIL_OPEN_LIVE_APPROVED
-              value: "true"
+              value: "false"
+            - name: LLM_ADJUSTMENT_ALLOWED
+              value: "false"
             - name: LLM_TOKEN_BUDGET_MAX
               value: "1200"
             - name: LLM_TIMEOUT_SECONDS

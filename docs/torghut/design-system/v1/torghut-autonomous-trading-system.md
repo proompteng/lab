@@ -217,6 +217,20 @@ Controls (from `services/torghut/app/config.py`):
 - Stage progression throughput guard: promotion prerequisites require real signal/decision/trade throughput and reject
   no-signal windows (`no_signal_window_detected`) so rollout cannot advance on empty evidence windows.
 
+### Rollout/verification (paper-first + kill-switch readiness)
+
+- Deployed safety posture for production drift control:
+  - `TRADING_MODE=paper`
+  - `TRADING_LIVE_ENABLED=false`
+  - `TRADING_LEAN_LIVE_CANARY_ENABLED=true` (observation-only, unless explicitly approved)
+  - `TRADING_KILL_SWITCH_ENABLED=true`
+  - `LLM_FAIL_OPEN_LIVE_APPROVED=false`
+  - `TRADING_EMERGENCY_STOP_ENABLED=true`
+- Post-change verification:
+  - `/trading/status` reports `trading_mode=paper`, `live_enabled=false`, and `emergency_stop=true`.
+  - confirm live canary policy telemetry remains disabled or non-consequential unless explicitly approved.
+  - run `services/torghut/tests/test_live_config_manifest_contract.py` before applying any post-change rollout.
+
 ## Operations as design (automation-ready procedures)
 
 These are part of the production design because they define how the system is safely operated under failure.

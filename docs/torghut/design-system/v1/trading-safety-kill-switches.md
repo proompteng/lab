@@ -51,6 +51,16 @@ flowchart TD
 | `LLM_ENABLED=false`          | disables AI advisory calls         | LLM outages, cost spikes, or suspicious behavior         |
 | `LLM_SHADOW_MODE=true`       | log reviews but do not veto/adjust | evaluation without impact                                |
 
+### Rollout/verification (paper-default + emergency-stop posture)
+
+- Keep `TRADING_MODE=paper` and `TRADING_LIVE_ENABLED=false` as the default deployment posture.
+- Keep `TRADING_KILL_SWITCH_ENABLED=true` so hard order blocking remains enabled by default until an approved GitOps change disables it.
+- Keep `TRADING_EMERGENCY_STOP_ENABLED=true` so emergency stop remains ready.
+- Verify by checking:
+  - `kubectl -n torghut get ksvc torghut -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name==\"TRADING_KILL_SWITCH_ENABLED\")].value}{"\\n"}{.spec.template.spec.containers[0].env[?(@.name==\"TRADING_EMERGENCY_STOP_ENABLED\")].value}{"\\n"}'` shows `true`.
+  - `/trading/status` shows `kill_switches`/`emergency_stop` are active and paper-gated.
+  - audit log and executions do not contain live broker transitions.
+
 ## Operational workflow (GitOps)
 
 1. Make kill-switch changes via PR (preferred) or emergency GitOps procedure.
