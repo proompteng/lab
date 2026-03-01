@@ -408,12 +408,15 @@ class TestTradingPipeline(TestCase):
         )
         from app import config
 
+        self._original_llm_enabled = config.settings.llm_enabled
         self._original_kill_switch = config.settings.trading_kill_switch_enabled
+        config.settings.llm_enabled = False
         config.settings.trading_kill_switch_enabled = False
 
     def tearDown(self) -> None:
         from app import config
 
+        config.settings.llm_enabled = self._original_llm_enabled
         config.settings.trading_kill_switch_enabled = self._original_kill_switch
 
     def test_pipeline_empty_signal_batch_commits_cursor(self) -> None:
