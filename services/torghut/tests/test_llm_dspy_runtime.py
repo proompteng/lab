@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -12,6 +12,7 @@ from app.trading.llm.dspy_programs.runtime import (
     DSPyArtifactManifest,
     DSPyReviewRuntime,
     DSPyRuntimeUnsupportedStateError,
+    _resolve_dspy_completion_url,
     _resolve_dspy_api_base,
 )
 from app.trading.llm.schema import (
@@ -20,6 +21,7 @@ from app.trading.llm.schema import (
     LLMReviewRequest,
     PortfolioSnapshot,
 )
+from app.trading.llm.dspy_programs.signatures import DSPyTradeReviewOutput
 
 
 class TestLLMDSPyRuntime(TestCase):
@@ -120,6 +122,8 @@ class TestLLMDSPyRuntime(TestCase):
         self.assertIn("dspy_program_name_mismatch", str(exc.exception))
 
     def test_unknown_artifact_hash_is_rejected(self) -> None:
+        original_base = settings.jangar_base_url
+        settings.jangar_base_url = "https://jangar.local/"
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,
@@ -133,6 +137,7 @@ class TestLLMDSPyRuntime(TestCase):
                 runtime.review(self._request())
 
         self.assertIn("dspy_artifact_manifest_not_found", str(exc.exception))
+        settings.jangar_base_url = original_base
 
     def test_runtime_requires_artifact_hash(self) -> None:
         runtime = DSPyReviewRuntime(
@@ -149,6 +154,8 @@ class TestLLMDSPyRuntime(TestCase):
         self.assertIn("dspy_artifact_hash_missing", str(exc.exception))
 
     def test_active_runtime_rejects_heuristic_executor(self) -> None:
+        original_base = settings.jangar_base_url
+        settings.jangar_base_url = "https://jangar.local/"
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,
@@ -175,8 +182,11 @@ class TestLLMDSPyRuntime(TestCase):
             "dspy_active_mode_requires_dspy_live_executor",
             str(exc.exception),
         )
+        settings.jangar_base_url = original_base
 
     def test_unknown_artifact_executor_is_blocking(self) -> None:
+        original_base = settings.jangar_base_url
+        settings.jangar_base_url = "https://jangar.local/"
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,
@@ -204,8 +214,11 @@ class TestLLMDSPyRuntime(TestCase):
             "dspy_active_mode_requires_dspy_live_executor",
             str(exc.exception),
         )
+        settings.jangar_base_url = original_base
 
     def test_active_readiness_rejects_heuristic_executor(self) -> None:
+        original_base = settings.jangar_base_url
+        settings.jangar_base_url = "https://jangar.local/"
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,
@@ -230,8 +243,67 @@ class TestLLMDSPyRuntime(TestCase):
             "dspy_active_mode_requires_dspy_live_executor",
             reasons,
         )
+        settings.jangar_base_url = original_base
+
+    def test_active_readiness_blocks_invalid_jangar_base_url(self) -> None:
+        original_base = settings.jangar_base_url
+        settings.jangar_base_url = "https://jangar.example/openai/v1?x=1"
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        manifest = DSPyArtifactManifest(
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            executor="dspy_live",
+            compiled_prompt={},
+            source="database",
+        )
+
+        try:
+            with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
+                is_ready, reasons = runtime.evaluate_live_readiness()
+
+            self.assertFalse(is_ready)
+            self.assertIn("dspy_jangar_base_url_invalid_path", reasons)
+        finally:
+            settings.jangar_base_url = original_base
+
+    def test_active_readiness_blocks_unsupported_jangar_base_scheme(self) -> None:
+        original_base = settings.jangar_base_url
+        settings.jangar_base_url = "ftp://jangar.example/"
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        manifest = DSPyArtifactManifest(
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            executor="dspy_live",
+            compiled_prompt={},
+            source="database",
+        )
+
+        try:
+            with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
+                is_ready, reasons = runtime.evaluate_live_readiness()
+
+            self.assertFalse(is_ready)
+            self.assertIn("dspy_jangar_base_url_invalid_scheme", reasons)
+        finally:
+            settings.jangar_base_url = original_base
 
     def test_active_readiness_accepts_dspy_live_executor(self) -> None:
+        original_base = settings.jangar_base_url
+        settings.jangar_base_url = "https://jangar.local/"
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,
@@ -253,6 +325,7 @@ class TestLLMDSPyRuntime(TestCase):
 
         self.assertTrue(is_ready)
         self.assertEqual(reasons, ())
+        settings.jangar_base_url = original_base
 
     def test_resolve_dspy_api_base_uses_jangar_openai_endpoint(self) -> None:
         original_base = settings.jangar_base_url
@@ -279,6 +352,102 @@ class TestLLMDSPyRuntime(TestCase):
                 _, reasons = runtime.evaluate_live_readiness()
                 self.assertEqual(reasons, ())
 
-            self.assertEqual(_resolve_dspy_api_base(), "https://jangar.example/openai/v1")
+            self.assertEqual(
+                _resolve_dspy_api_base(), "https://jangar.example/openai/v1"
+            )
+            self.assertEqual(
+                _resolve_dspy_completion_url(),
+                "https://jangar.example/openai/v1/chat/completions",
+            )
+            settings.jangar_base_url = "https://jangar.example/openai/v1/"
+            self.assertEqual(
+                _resolve_dspy_api_base(),
+                "https://jangar.example/openai/v1",
+            )
+        finally:
+            settings.jangar_base_url = original_base
+
+    def test_evaluate_live_readiness_blocks_without_jangar_api_base(self) -> None:
+        original_base = settings.jangar_base_url
+        settings.jangar_base_url = None
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        manifest = DSPyArtifactManifest(
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            executor="dspy_live",
+            compiled_prompt={},
+            source="database",
+        )
+        try:
+            with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
+                is_ready, reasons = runtime.evaluate_live_readiness()
+
+            self.assertFalse(is_ready)
+            self.assertIn("dspy_jangar_base_url_missing", reasons)
+        finally:
+            settings.jangar_base_url = original_base
+
+    def test_live_runtime_uses_jangar_openai_base_in_program_init(self) -> None:
+        original_base = settings.jangar_base_url
+        settings.jangar_base_url = "https://jangar.example/"
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        manifest = DSPyArtifactManifest(
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            executor="dspy_live",
+            compiled_prompt={},
+            source="database",
+        )
+
+        init_calls: dict[str, str] = {}
+
+        class _ProbeDSPyProgram:
+            def __init__(
+                self,
+                model_name: str,
+                api_base: str | None = None,
+                api_key: str | None = None,
+            ) -> None:
+                init_calls["model_name"] = model_name
+                init_calls["api_base"] = api_base or ""
+                init_calls["api_key"] = api_key or ""
+
+            def run(self, _payload: Any) -> DSPyTradeReviewOutput:
+                return DSPyTradeReviewOutput.model_validate(
+                    {
+                        "verdict": "approve",
+                        "confidence": 0.91,
+                        "rationale": "dspy_live_committee",
+                        "requiredChecks": ["risk_engine"],
+                        "riskFlags": [],
+                    }
+                )
+
+        try:
+            with patch.object(runtime, "_load_manifest_from_db", return_value=manifest), patch(
+                "app.trading.llm.dspy_programs.runtime.LiveDSPyCommitteeProgram",
+                _ProbeDSPyProgram,
+            ):
+                response, _metadata = runtime.review(self._request())
+
+            self.assertEqual(response.verdict, "approve")
+            self.assertEqual(
+                init_calls.get("api_base"), "https://jangar.example/openai/v1"
+            )
+            self.assertEqual(init_calls.get("model_name"), "openai/gpt-5.3-codex-spark")
         finally:
             settings.jangar_base_url = original_base
