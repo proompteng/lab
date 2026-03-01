@@ -890,7 +890,6 @@ def run_autonomous_lane(
         )
         actuation_allowed = (
             bool(recommendation_trace_id)
-            and promotion_recommendation.eligible
             and rollback_check.ready
             and (
                 promotion_recommendation.action == "promote"
@@ -1201,21 +1200,21 @@ def _resolve_confidence_calibration(
 
 def _resolve_paper_patch_path(
     *,
+    promotion_target: PromotionTarget,
     gate_report: GateEvaluationReport,
     strategy_configmap_path: Path | None,
-    promotion_target: str,
     runtime_strategies: list[StrategyRuntimeConfig],
     candidate_id: str,
     paper_dir: Path,
 ) -> Path | None:
     if promotion_target != "paper":
         return None
-    resolved_configmap = strategy_configmap_path or _default_strategy_configmap_path()
     if strategy_configmap_path is None:
         if not gate_report.promotion_allowed:
             return None
         if gate_report.recommended_mode != "paper":
             return None
+    resolved_configmap = strategy_configmap_path or _default_strategy_configmap_path()
     if not resolved_configmap.exists():
         return None
     return _write_paper_candidate_patch(
