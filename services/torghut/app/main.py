@@ -24,6 +24,7 @@ from urllib.parse import urlencode, urlsplit
 from .alpaca_client import TorghutAlpacaClient
 from .config import settings
 from .db import SessionLocal, check_schema_current, ensure_schema, get_session, ping
+from .db import check_account_scope_invariants
 from .metrics import render_trading_metrics
 from .models import (
     Execution,
@@ -261,6 +262,7 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
 
     try:
         schema_status = check_schema_current(session)
+        account_scope_status = check_account_scope_invariants(session)
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="database unavailable") from exc
     except RuntimeError as exc:
@@ -273,10 +275,26 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
                 **schema_status,
             },
         )
+    if settings.trading_multi_account_enabled and not bool(
+        account_scope_status.get("account_scope_ready")
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "database account scope schema mismatch",
+                **account_scope_status,
+            },
+        )
+    if not settings.trading_multi_account_enabled:
+        account_scope_status = dict(account_scope_status)
+        account_scope_status["account_scope_ready"] = True
+        account_scope_status["account_scope_errors"] = []
 
     return {
         "ok": True,
         **schema_status,
+        "account_scope_ready": bool(account_scope_status.get("account_scope_ready")),
+        "account_scope_checks": account_scope_status,
     }
 
 

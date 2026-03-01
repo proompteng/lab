@@ -150,13 +150,22 @@ class TestTradingApi(TestCase):
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
         },
     )
-    def test_db_check_reports_schema_heads(self, _mock_check: object) -> None:
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True},
+    )
+    def test_db_check_reports_schema_heads(
+        self,
+        _mock_account_scope: object,
+        _mock_schema: object,
+    ) -> None:
         response = self.client.get("/db-check")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["schema_current"])
         self.assertEqual(payload["current_heads"], payload["expected_heads"])
+        self.assertTrue(payload["account_scope_ready"])
 
     @patch(
         "app.main.check_schema_current",
@@ -169,12 +178,86 @@ class TestTradingApi(TestCase):
             ],
         },
     )
-    def test_db_check_schema_mismatch_returns_503(self, _mock_check: object) -> None:
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True},
+    )
+    def test_db_check_schema_mismatch_returns_503(
+        self,
+        _mock_account_scope: object,
+        _mock_schema: object,
+    ) -> None:
         response = self.client.get("/db-check")
         self.assertEqual(response.status_code, 503)
         payload = response.json()
         self.assertEqual(payload["detail"]["error"], "database schema mismatch")
         self.assertFalse(payload["detail"]["schema_current"])
+
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+        },
+    )
+    def test_db_check_enforces_account_scope_when_multi_account_enabled(
+        self,
+        _mock_check: object,
+    ) -> None:
+        original_multi = settings.trading_multi_account_enabled
+        settings.trading_multi_account_enabled = True
+        try:
+            with patch(
+                "app.main.check_account_scope_invariants",
+                return_value={
+                    "account_scope_ready": False,
+                    "account_scope_errors": [
+                        "legacy unique constraint/index detected for executions.alpaca_order_id",
+                    ],
+                },
+            ):
+                response = self.client.get("/db-check")
+        finally:
+            settings.trading_multi_account_enabled = original_multi
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(
+            payload["detail"]["error"], "database account scope schema mismatch"
+        )
+        self.assertIn("account_scope_errors", payload["detail"])
+
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+        },
+    )
+    def test_db_check_allows_account_scope_issues_when_multi_account_disabled(
+        self,
+        _mock_check: object,
+    ) -> None:
+        original_multi = settings.trading_multi_account_enabled
+        settings.trading_multi_account_enabled = False
+        try:
+            with patch(
+                "app.main.check_account_scope_invariants",
+                return_value={
+                    "account_scope_ready": False,
+                    "account_scope_errors": ["legacy unique constraint/index detected"],
+                },
+            ):
+                response = self.client.get("/db-check")
+        finally:
+            settings.trading_multi_account_enabled = original_multi
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["account_scope_ready"], True)
 
     def test_trading_executions_endpoint(self) -> None:
         response = self.client.get("/trading/executions?symbol=AAPL")
