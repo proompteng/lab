@@ -45,15 +45,16 @@ def _load_torghut_knative_env() -> dict[str, object]:
 
 
 class TestLiveConfigManifestContract(TestCase):
-    def test_knative_env_wiring_is_safe_paper_defaults(self) -> None:
+    def test_knative_env_wiring_is_safe_live_defaults(self) -> None:
         env = _load_torghut_knative_env()
         settings = Settings(**env)
 
-        self.assertEqual(settings.trading_mode, "paper")
+        self.assertEqual(settings.trading_mode, "live")
         self.assertEqual(settings.llm_rollout_stage, "stage1")
         self.assertEqual(settings.llm_fail_mode, "pass_through")
         self.assertEqual(settings.llm_fail_mode_enforcement, "configured")
-        self.assertFalse(settings.llm_live_fail_open_requested_for_stage("stage1"))
+        self.assertTrue(settings.llm_live_fail_open_requested_for_stage("stage1"))
+        self.assertTrue(settings.llm_fail_open_live_approved)
         self.assertEqual(
             settings.llm_effective_fail_mode_for_current_rollout(), "pass_through"
         )

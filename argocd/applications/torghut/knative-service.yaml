@@ -90,16 +90,18 @@ spec:
             - name: TRADING_MULTI_ACCOUNT_ENABLED
               value: "false"
             - name: TRADING_MODE
-              value: paper
+              value: live
             - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
               value: "false"
             - name: TRADING_ACCOUNT_LABEL
               value: PA3SX7FYNUTF
             - name: TRADING_ACCOUNTS_JSON
               value: >
-                [{"label":"PA3SX7FYNUTF","mode":"paper","enabled":true}]
+                [{"label":"PA3SX7FYNUTF","mode":"live","enabled":true}]
             - name: TRADING_LIVE_ENABLED
-              value: "false"
+              value: "true"
+            - name: LLM_FAIL_OPEN_LIVE_APPROVED
+              value: "true"
             - name: TRADING_SIGNAL_SOURCE
               value: clickhouse
             - name: TRADING_SIGNAL_TABLE
@@ -337,7 +339,7 @@ spec:
             - name: LLM_FAIL_MODE_ENFORCEMENT
               value: configured
             - name: LLM_FAIL_OPEN_LIVE_APPROVED
-              value: "false"
+              value: "true"
             - name: LLM_ADJUSTMENT_ALLOWED
               value: "false"
             - name: LLM_TOKEN_BUDGET_MAX
