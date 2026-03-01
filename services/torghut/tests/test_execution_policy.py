@@ -644,6 +644,48 @@ class TestExecutionPolicy(TestCase):
             outcome.microstructure_metadata["tightening_reasons"],
         )
 
+    def test_microstructure_pressure_extends_execution_seconds_and_prefers_limit(self) -> None:
+        config.settings.trading_execution_advisor_enabled = False
+        policy = ExecutionPolicy(
+            config=_config(max_participation_rate=Decimal("0.25"), prefer_limit=False)
+        )
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "12",
+                        "depth_top5_usd": "200000",
+                        "order_flow_imbalance": "0.60",
+                        "latency_ms_estimate": 320,
+                        "fill_hazard": "0.95",
+                        "liquidity_regime": "stressed",
+                    },
+                }
+            }
+        )
+
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+
+        self.assertEqual(outcome.decision.order_type, "limit")
+        self.assertTrue(outcome.microstructure_metadata["applied"])
+        self.assertEqual(
+            outcome.microstructure_metadata["execution_seconds_scale"],
+            "1.694",
+        )
+        self.assertEqual(
+            outcome.impact_assumptions["inputs"].get("execution_seconds"),
+            102,
+        )
+
     def test_microstructure_missing_state_falls_back_to_baseline_safely(self) -> None:
         config.settings.trading_execution_advisor_enabled = False
         policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
