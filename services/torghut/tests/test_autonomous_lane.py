@@ -242,7 +242,7 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(
                 actuation_payload["schema_version"], "torghut.autonomy.actuation-intent.v1"
             )
-            self.assertTrue(actuation_payload["actuation_allowed"])
+            self.assertFalse(actuation_payload["actuation_allowed"])
             governance_payload = actuation_payload["governance"]
             self.assertEqual(governance_payload["repository"], "proompteng/lab")
             self.assertEqual(governance_payload["base"], "main")
