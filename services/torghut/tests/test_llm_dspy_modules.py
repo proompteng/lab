@@ -74,3 +74,43 @@ class TestDSPyTransportHardening(TestCase):
             captured["lm_kwargs"]["api_base"],
             "http://jangar.openai.local/openai/v1",
         )
+
+    def test_live_program_rejects_invalid_dspy_api_base_path(self) -> None:
+        fake_dspy = SimpleNamespace(
+            Signature=type("Signature", (), {}),
+            LM=_FakeLM,
+            InputField=lambda *_args, **_kwargs: None,
+            OutputField=lambda *_args, **_kwargs: None,
+            Predict=lambda *_args, **_kwargs: _FakePredictor(),
+        )
+
+        with patch("app.trading.llm.dspy_programs.modules.dspy", fake_dspy):
+            program = LiveDSPyCommitteeProgram(
+                model_name="openai/gpt-test",
+                api_base="http://jangar.openai.local/openai/v1/foo",
+            )
+            with self.assertRaises(RuntimeError):
+                program._ensure_predictor()
+
+    def test_coerce_accepts_base_or_completion_paths(self) -> None:
+        self.assertEqual(
+            _coerce_dspy_api_base(
+                api_base="https://jangar.openai.local",
+                api_completion_url=None,
+            ),
+            "https://jangar.openai.local",
+        )
+        self.assertEqual(
+            _coerce_dspy_api_base(
+                api_base="https://jangar.openai.local/openai/v1",
+                api_completion_url=None,
+            ),
+            "https://jangar.openai.local/openai/v1",
+        )
+        self.assertEqual(
+            _coerce_dspy_api_base(
+                api_base="https://jangar.openai.local/openai/v1/chat/completions",
+                api_completion_url=None,
+            ),
+            "https://jangar.openai.local/openai/v1",
+        )

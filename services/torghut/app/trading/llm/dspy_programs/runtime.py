@@ -35,7 +35,6 @@ _BOOTSTRAP_ARTIFACT_BODY = {
     },
 }
 _BOOTSTRAP_ARTIFACT_HASH = hash_payload(_BOOTSTRAP_ARTIFACT_BODY)
-_DSPY_OPENAI_CHAT_COMPLETION_SUFFIX = "/chat/completions"
 
 
 class DSPyRuntimeError(RuntimeError):
