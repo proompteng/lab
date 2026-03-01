@@ -568,7 +568,7 @@ const controllers = [
     id: 'orchestration',
     title: 'Orchestration controller',
     description: 'Orchestrations, schedules, and runs.',
-    kinds: ['Orchestration', 'OrchestrationRun', 'Schedule'] as AgentPrimitiveKind[],
+    kinds: ['Orchestration', 'OrchestrationRun', 'Swarm', 'Schedule'] as AgentPrimitiveKind[],
   },
   {
     id: 'supporting',

@@ -435,7 +435,11 @@ const normalizeLabelValue = (value: string) => {
     .replace(/^-+/, '')
     .replace(/-+$/, '')
   if (!normalized) return 'swarm'
-  return normalized.slice(0, 63)
+  const trimmed = normalized
+    .slice(0, 63)
+    .replace(/^[.\-]+/, '')
+    .replace(/[.\-]+$/, '')
+  return trimmed || 'swarm'
 }
 
 const parseDurationToMs = (raw: string) => {
@@ -980,6 +984,14 @@ const reconcileSwarm = async (
   }
 
   if (errors.length > 0) {
+    for (const stageConfig of stageConfigs) {
+      try {
+        await kube.delete(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace, { wait: false })
+      } catch {
+        // best effort
+      }
+    }
+
     const conditions = upsertCondition(conditionsBase, buildReadyCondition(false, 'InvalidSpec', errors.join('; ')))
     await setStatus(kube, swarm, {
       observedGeneration: asRecord(swarm.metadata)?.generation ?? 0,

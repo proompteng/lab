@@ -132,6 +132,68 @@ describe('supporting primitives controller', () => {
     expect(status.stageStates).toBeTruthy()
   })
 
+  it('normalizes long swarm names into valid label values for schedules', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun || resource === RESOURCE_MAP.OrchestrationRun) {
+        return { items: [] }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const longName = `${'a'.repeat(62)}-b`
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: longName, namespace: 'agents', generation: 1, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'OrchestrationRun', name: 'orchestrationrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    expect(apply).toHaveBeenCalledTimes(4)
+    for (const call of apply.mock.calls) {
+      const payload = call[0] as Record<string, unknown>
+      const labels =
+        payload?.metadata && typeof payload.metadata === 'object'
+          ? (payload.metadata as Record<string, unknown>).labels
+          : undefined
+      expect(labels).toBeTruthy()
+      const swarmLabel = labels?.['swarm.proompteng.ai/name']
+      expect(typeof swarmLabel).toBe('string')
+      const normalizedLabel = String(swarmLabel)
+      expect(normalizedLabel.length).toBeLessThanOrEqual(63)
+      expect(normalizedLabel).toBe('a'.repeat(62))
+      expect(normalizedLabel).toMatch(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/)
+    }
+  })
+
   it('freezes swarm when implement stage has consecutive failures over threshold', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
@@ -208,5 +270,42 @@ describe('supporting primitives controller', () => {
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(status.phase).toBe('Frozen')
     expect(status.freeze).toBeTruthy()
+  })
+
+  it('deletes managed schedules when swarm spec is invalid', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue(null)
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'invalid-swarm', namespace: 'agents', generation: 1, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'OrchestrationRun', name: 'orchestrationrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    expect(apply).not.toHaveBeenCalled()
+    expect(deleteFn).toHaveBeenCalledTimes(4)
+    const status = (applyStatus.mock.calls[0]?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('Invalid')
+    const conditions = Array.isArray(status.conditions) ? status.conditions : []
+    const ready = conditions.find((condition) => condition.type === 'Ready')
+    expect(ready?.status).toBe('False')
+    expect((ready as { reason?: string } | undefined)?.reason).toBe('InvalidSpec')
   })
 })
