@@ -37,6 +37,8 @@ resources:
 controller:
   namespaces:
     - agents
+  concurrency:
+    perAgent: 10
   jobTtlSeconds: 86400
   jobTtlSecondsAfterFinished: 86400
   logRetentionSeconds: 604800
