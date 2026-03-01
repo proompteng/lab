@@ -166,7 +166,7 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('trend', 'legacy', 'hmm_unknown'),
+            ('trend', 'legacy', 'transition_shock'),
         )
 
     def test_regime_resolution_prefers_nested_legacy_label_when_hmm_transition_shock(self) -> None:
@@ -192,7 +192,7 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('trend', 'legacy', 'hmm_unknown'),
+            ('trend', 'legacy', 'transition_shock'),
         )
 
     def test_signal_regime_resolution_falls_back_to_legacy_regime(self) -> None:

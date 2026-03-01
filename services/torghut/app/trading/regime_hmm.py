@@ -153,6 +153,12 @@ def resolve_regime_route_label(
     macd: Decimal | None,
     macd_signal: Decimal | None,
 ) -> str:
+    route_regime_label = payload.get("route_regime_label")
+    if isinstance(route_regime_label, str):
+        route_label = route_regime_label.strip()
+        if route_label:
+            return route_label.lower()
+
     context = resolve_hmm_context(payload)
     if context.is_authoritative:
         return context.regime_id.lower()
@@ -175,6 +181,19 @@ def resolve_regime_route_label(
     if spread <= Decimal("-0.02"):
         return "mean_revert"
     return "range"
+
+
+def resolve_regime_context_authority_reason(context: HMMRegimeContext) -> str | None:
+    if context.is_authoritative:
+        return None
+    reason = context.authority_reason
+    if reason in {"invalid_regime_id", "missing_regime"}:
+        return "hmm_unknown"
+    if reason in {"transition_shock", "stale", "fallback_to_defensive"}:
+        return reason
+    if reason is not None:
+        return reason
+    return "hmm_non_authoritative"
 
 
 def resolve_legacy_regime_label(payload: Mapping[str, Any]) -> str | None:
@@ -471,6 +490,7 @@ __all__ = [
     "HMM_CONTEXT_SCHEMA_VERSION",
     "HMM_UNKNOWN_REGIME_ID",
     "HMM_UNKNOWN_SCHEMA_VERSION",
+    "resolve_regime_context_authority_reason",
     "resolve_hmm_context",
     "resolve_legacy_regime_label",
     "resolve_regime_route_label",

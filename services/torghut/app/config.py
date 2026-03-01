@@ -448,8 +448,9 @@ class Settings(BaseSettings):
             default="scheduler_v3",
             alias="TRADING_STRATEGY_RUNTIME_MODE",
             description=(
-                "Strategy runtime mode. plugin_v3 enables plugin scaffolding; legacy keeps current behavior; "
-                "scheduler_v3 uses scheduler integration with migration controls."
+                "Strategy runtime mode. plugin_v3 enables plugin scaffolding; "
+                "scheduler_v3 uses scheduler integration with migration controls; "
+                "legacy keeps current behavior."
             ),
         )
     )

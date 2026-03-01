@@ -488,3 +488,53 @@ class TestForecastRouterV5(TestCase):
 
         self.assertNotIn('hmm_transition_shock', feature_vector.values)
         self.assertEqual(feature_vector.values.get('route_regime_label'), 'mean_revert')
+
+    def test_router_prefers_explicit_route_regime_label_hint_when_hmm_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / 'router-policy.json'
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        'routes': [
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': 'trend',
+                                'preferred_model_family': 'financial_tsfm',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': 'mean_revert',
+                                'preferred_model_family': 'moment',
+                                'candidate_fallbacks': [],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            },
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            router = build_default_forecast_router(
+                policy_path=str(policy_path), refinement_enabled=False
+            )
+
+        signal = _signal()
+        signal.payload['route_regime_label'] = 'TREND'
+        signal.payload['hmm_regime_id'] = 'not-a-regime-id'
+        signal.payload['macd']['macd'] = '0.40'
+        signal.payload['macd']['signal'] = '0.55'
+        result = router.route_and_forecast(
+            feature_vector=normalize_feature_vector_v3(signal),
+            horizon='1Min',
+            event_ts=signal.event_ts,
+        )
+
+        self.assertEqual(result.contract.route_key.split('|')[-1], 'trend')
+        self.assertEqual(result.contract.model_family, 'financial_tsfm')

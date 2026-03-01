@@ -508,12 +508,11 @@ def _resolve_regime_context(
     if not _has_explicit_regime_context(payload):
         regime_payload = regime_context.to_payload()
         if regime_payload.get("regime_id") == HMM_UNKNOWN_REGIME_ID:
-            route_regime_label = resolve_regime_route_label(
+            normalized_route_label = resolve_regime_route_label(
                 payload,
                 macd=macd,
                 macd_signal=macd_signal,
             )
-            normalized_route_label = route_regime_label.strip().lower()
             return {}, normalized_route_label
 
     route_regime_label = resolve_regime_route_label(

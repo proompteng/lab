@@ -57,6 +57,7 @@ from .reconcile import Reconciler
 from .risk import RiskEngine
 from .tca import AdaptiveExecutionPolicyDecision, derive_adaptive_execution_policy
 from .regime_hmm import (
+    resolve_regime_context_authority_reason,
     resolve_hmm_context,
     resolve_legacy_regime_label,
     resolve_regime_route_label,
@@ -2516,6 +2517,7 @@ class TradingPipeline:
         regime_stale = bool(
             regime_context.guardrail.stale or regime_context.guardrail.fallback_to_defensive
         )
+        regime_label = regime_label or regime_context.regime_id
         if regime_context.transition_shock:
             return RuntimeUncertaintyGate(
                 action="abstain",
@@ -3676,12 +3678,22 @@ def _resolve_decision_regime_label_with_source(
     raw_regime_hmm = params.get("regime_hmm")
     if isinstance(raw_regime_hmm, Mapping):
         regime_context = resolve_hmm_context(cast(Mapping[str, Any], raw_regime_hmm))
+        regime_context_authority_reason = resolve_regime_context_authority_reason(
+            regime_context
+        )
         if regime_context.is_authoritative:
             return regime_context.regime_id.lower(), "hmm", None
+
+        if regime_context_authority_reason is None:
+            return (
+                None,
+                "hmm",
+                "hmm_non_authoritative",
+            )
         regime_label = resolve_legacy_regime_label(params)
         if regime_label is not None:
-            return regime_label, "legacy", "hmm_unknown"
-        return None, "none", "hmm_unknown"
+            return regime_label, "legacy", regime_context_authority_reason
+        return None, "none", regime_context_authority_reason
 
     direct = params.get("regime_label")
     if isinstance(direct, str) and direct.strip():
