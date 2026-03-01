@@ -38,12 +38,19 @@ class RetryPolicy:
 
 
 @dataclass(frozen=True)
+class StageSLOGate:
+    gate_id: str
+    required_status: str = "pass"
+
+
+@dataclass(frozen=True)
 class StageDefinition:
     stage: str
     lane: str
     mutable_action: bool
     require_previous_artifact: bool
     require_previous_gate_pass: bool
+    stage_slo_gates: tuple[StageSLOGate, ...] = ()
 
 
 class GuardError(ValueError):
@@ -55,6 +62,28 @@ def _parse_json_file(path: Path) -> JsonDict:
     if not isinstance(payload, dict):
         raise GuardError(f'Expected JSON object in {path}')
     return cast(JsonDict, payload)
+
+
+def _parse_slo_gates(raw: object) -> tuple[StageSLOGate, ...]:
+    if not isinstance(raw, list):
+        return ()
+    parsed: list[StageSLOGate] = []
+    for item in raw:
+        if isinstance(item, str):
+            parsed.append(StageSLOGate(gate_id=item.strip()))
+            continue
+        if not isinstance(item, dict):
+            continue
+        raw_gate_id = item.get("gate_id", item.get("gateId"))
+        if raw_gate_id is None:
+            continue
+        gate_id = str(raw_gate_id).strip()
+        if not gate_id:
+            continue
+        raw_required_status = item.get("required_status", item.get("requiredStatus", "pass"))
+        required_status = str(raw_required_status).strip() or "pass"
+        parsed.append(StageSLOGate(gate_id=gate_id, required_status=required_status))
+    return tuple(parsed)
 
 
 def _validate_identifier(name: str, value: str) -> None:
@@ -91,6 +120,7 @@ def _stage_definitions(policy: JsonDict) -> dict[str, StageDefinition]:
             mutable_action=bool(raw.get('mutableAction', False)),
             require_previous_artifact=bool(raw.get('requirePreviousArtifact', True)),
             require_previous_gate_pass=bool(raw.get('requirePreviousGatePass', True)),
+            stage_slo_gates=_parse_slo_gates(raw.get("stageSloGates")),
         )
     return parsed
 
@@ -206,6 +236,44 @@ def _validate_stage_controls(
     return None
 
 
+def _validate_stage_slo_gates(
+    *,
+    stage_policy: StageDefinition,
+    previous_artifact: Path | None,
+) -> JsonDict | None:
+    if not stage_policy.stage_slo_gates:
+        return None
+    if previous_artifact is None or not previous_artifact.exists():
+        return _deny('stage_slo_artifact_missing')
+
+    try:
+        raw_payload = _parse_json_file(previous_artifact)
+    except Exception:
+        return _deny('stage_slo_artifact_unparseable')
+
+    gates_raw = raw_payload.get("gates")
+    if not isinstance(gates_raw, list):
+        return _deny('stage_slo_artifact_missing_gates')
+    gate_status_by_id: dict[str, str] = {}
+    for raw_gate in gates_raw:
+        if not isinstance(raw_gate, dict):
+            continue
+        gate_id = str(raw_gate.get("gate_id") or "").strip()
+        status = str(raw_gate.get("status") or "").strip()
+        if gate_id:
+            gate_status_by_id[gate_id] = status
+
+    for rule in stage_policy.stage_slo_gates:
+        observed_status = gate_status_by_id.get(rule.gate_id)
+        if observed_status is None:
+            return _deny(f'stage_slo_gate_missing:{rule.gate_id}')
+        if observed_status != rule.required_status:
+            return _deny(
+                f'stage_slo_gate_failed:{rule.gate_id}:{observed_status}:{rule.required_status}'
+            )
+    return None
+
+
 def _validate_mutable_action(
     *,
     stage_policy: StageDefinition,
@@ -258,8 +326,12 @@ def evaluate_transition(
     )
     if transition_error:
         return transition_error
+    source_stage = from_stage or active_stage
 
     stage_policy = stage_definitions[to_stage]
+    source_stage_policy = (
+        stage_definitions[source_stage] if source_stage is not None else None
+    )
     controls_error = _validate_stage_controls(
         stage_policy=stage_policy,
         previous_artifact=previous_artifact,
@@ -269,6 +341,14 @@ def evaluate_transition(
     )
     if controls_error:
         return controls_error
+    slo_error = _validate_stage_slo_gates(
+        stage_policy=source_stage_policy
+        if source_stage_policy is not None
+        else stage_policy,
+        previous_artifact=previous_artifact,
+    )
+    if slo_error:
+        return slo_error
 
     mutable_error = _validate_mutable_action(
         stage_policy=stage_policy,

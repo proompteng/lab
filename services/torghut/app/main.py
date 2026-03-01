@@ -682,6 +682,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "last_run_at": state.last_autonomy_run_at,
             "last_run_id": state.last_autonomy_run_id,
             "last_gates": state.last_autonomy_gates,
+            "last_phase_manifest": state.last_autonomy_phase_manifest,
             "last_actuation_intent": state.last_autonomy_actuation_intent,
             "last_patch": state.last_autonomy_patch,
             "last_recommendation": state.last_autonomy_recommendation,
@@ -855,6 +856,7 @@ def trading_autonomy() -> dict[str, object]:
         "last_run_at": state.last_autonomy_run_at,
         "last_run_id": state.last_autonomy_run_id,
         "last_gates": state.last_autonomy_gates,
+        "last_phase_manifest": state.last_autonomy_phase_manifest,
         "last_actuation_intent": state.last_autonomy_actuation_intent,
         "last_patch": state.last_autonomy_patch,
         "last_recommendation": state.last_autonomy_recommendation,
@@ -1125,6 +1127,7 @@ def trading_runtime_profitability(
         },
         "realized_pnl_summary": realized_pnl_summary,
         "gate_rollback_attribution": gate_rollback_attribution,
+        "phase_manifest": gate_rollback_attribution.get("phase_manifest"),
         "caveats": caveats,
     }
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
@@ -1293,6 +1296,7 @@ def _build_control_plane_contract(state: object) -> dict[str, object]:
         "universe_fail_safe_block_reason": getattr(
             state, "universe_fail_safe_block_reason", None
         ),
+        "autonomy_phase_manifest": _load_autonomy_phase_manifest_summary(state),
         "running": bool(getattr(state, "running", False)),
         "last_run_at": last_run_at,
         "last_reconcile_at": last_reconcile_at,
@@ -1802,6 +1806,17 @@ def _load_runtime_profitability_gate_rollback_attribution(
     )
     rollback_verification = _to_str_map(rollback_payload.get("verification"))
     metrics = getattr(state, "metrics", None)
+    phase_manifest_path = str(
+        getattr(state, "last_autonomy_phase_manifest", "") or ""
+    ).strip()
+    phase_manifest_payload = _load_json_artifact_payload(phase_manifest_path)
+    phase_manifest_lineage = _to_str_map(phase_manifest_payload.get("phase_lineage"))
+    phase_lineage_ids_raw = phase_manifest_lineage.get("stage_ids")
+    phase_lineage_ids = (
+        [str(item).strip() for item in cast(list[object], phase_lineage_ids_raw) if str(item).strip()]
+        if isinstance(phase_lineage_ids_raw, list)
+        else []
+    )
     return {
         "gate_report_artifact": gate_artifact_path or None,
         "gate_report_run_id": (
@@ -1834,6 +1849,22 @@ def _load_runtime_profitability_gate_rollback_attribution(
             "benchmark": provenance.get("profitability_benchmark_artifact"),
             "evidence": provenance.get("profitability_evidence_artifact"),
             "validation": provenance.get("profitability_validation_artifact"),
+        },
+        "phase_manifest": {
+            "path": phase_manifest_path or None,
+            "manifest_hash": (
+                str(phase_manifest_payload.get("manifest_hash")).strip() or None
+            ),
+            "lineage_root": (
+                str(phase_manifest_lineage.get("lineage_root")).strip() or None
+            ),
+            "lineage_tail": (
+                str(phase_manifest_lineage.get("lineage_tail")).strip() or None
+            ),
+            "stage_ids": phase_lineage_ids,
+            "artifact_hash_count": len(
+                _to_str_map(phase_manifest_payload.get("artifact_hashes")).keys()
+            ),
         },
         "actuation_intent": {
             "artifact_path": actuation_artifact_path or None,
@@ -1901,6 +1932,41 @@ def _load_json_artifact_payload(path: str) -> dict[str, object]:
     if isinstance(payload, dict):
         return cast(dict[str, object], payload)
     return {}
+
+
+def _load_autonomy_phase_manifest_summary(
+    state: object,
+) -> dict[str, object | None]:
+    phase_manifest_path = str(getattr(state, "last_autonomy_phase_manifest", "") or "").strip()
+    if not phase_manifest_path:
+        return {
+            "manifest_path": None,
+            "manifest_hash": None,
+            "lineage_root": None,
+            "lineage_tail": None,
+            "stage_ids": [],
+            "artifact_hash_count": 0,
+        }
+    payload = _load_json_artifact_payload(phase_manifest_path)
+    phase_lineage = _to_str_map(payload.get("phase_lineage"))
+    stage_ids_raw = phase_lineage.get("stage_ids")
+    stage_ids = (
+        [str(item).strip() for item in cast(list[object], stage_ids_raw) if str(item).strip()]
+        if isinstance(stage_ids_raw, list)
+        else []
+    )
+    return {
+        "manifest_path": phase_manifest_path,
+        "manifest_hash": str(payload.get("manifest_hash")).strip() or None,
+        "lineage_root": str(phase_lineage.get("lineage_root")).strip() or None,
+        "lineage_tail": str(phase_lineage.get("lineage_tail")).strip() or None,
+        "stage_ids": stage_ids,
+        "artifact_hash_count": (
+            len(_to_str_map(payload.get("artifact_hashes")).keys())
+            if isinstance(payload.get("artifact_hashes"), dict)
+            else 0
+        ),
+    }
 
 
 def _extract_gate_result(gates: list[object], *, gate_id: str) -> dict[str, object]:

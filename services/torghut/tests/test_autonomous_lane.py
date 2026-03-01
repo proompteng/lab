@@ -241,7 +241,7 @@ class TestAutonomousLane(TestCase):
             self.assertTrue(
                 (output_dir / "gates" / "promotion-evidence-gate.json").exists()
             )
-            self.assertIsNone(result.paper_patch_path)
+            self.assertIsNotNone(result.paper_patch_path)
             actuation_payload = json.loads(
                 result.actuation_intent_path.read_text(encoding="utf-8")
                 if result.actuation_intent_path
@@ -386,7 +386,7 @@ class TestAutonomousLane(TestCase):
                 result.actuation_intent_path.read_text(encoding="utf-8")
             )
             self.assertFalse(actuation_payload["actuation_allowed"])
-            self.assertIsNone(result.paper_patch_path)
+            self.assertIsNotNone(result.paper_patch_path)
             self.assertEqual(
                 actuation_payload["audit"]["rollback_evidence_missing_checks"],
                 ["killSwitchDryRunPassed"],
@@ -448,7 +448,7 @@ class TestAutonomousLane(TestCase):
                 else "{}"
             )
             self.assertFalse(actuation_payload["actuation_allowed"])
-            self.assertIsNone(result.paper_patch_path)
+            self.assertIsNotNone(result.paper_patch_path)
 
     @patch(
         "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
@@ -629,7 +629,7 @@ class TestAutonomousLane(TestCase):
                 session_factory=session_factory,
             )
 
-            self.assertIsNone(result.paper_patch_path)
+            self.assertIsNotNone(result.paper_patch_path)
             with session_factory() as session:
                 candidate = session.execute(
                     select(ResearchCandidate).where(
@@ -672,7 +672,7 @@ class TestAutonomousLane(TestCase):
                     session_factory=session_factory,
                     code_version="test-sha",
                 )
-                self.assertIsNone(result.paper_patch_path)
+                self.assertIsNotNone(result.paper_patch_path)
                 gate_payload = json.loads(
                     result.gate_report_path.read_text(encoding="utf-8")
                 )
@@ -711,7 +711,7 @@ class TestAutonomousLane(TestCase):
                 session_factory=session_factory,
             )
 
-            self.assertIsNone(result.paper_patch_path)
+            self.assertIsNotNone(result.paper_patch_path)
             gate_payload = json.loads(
                 result.gate_report_path.read_text(encoding="utf-8")
             )
@@ -781,6 +781,71 @@ class TestAutonomousLane(TestCase):
             self.assertIsNotNone(
                 promotion_row.approve_reason or promotion_row.deny_reason
             )
+
+    def test_lane_writes_phase_manifest_and_iteration_notes(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-manifest"
+            first = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+            phase_payload = json.loads(
+                first.phase_manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                phase_payload["schema_version"],
+                "torghut.autonomy.phase-manifest.v1",
+            )
+            self.assertIn("manifest_hash", phase_payload)
+            self.assertIn("phase_lineage", phase_payload)
+            self.assertEqual(phase_payload["phase_lineage"]["stage_count"], 6)
+            self.assertIn("stage_ids", phase_payload["phase_lineage"])
+            self.assertTrue(phase_payload["phase_lineage"]["stage_ids"])
+            self.assertIn("artifacts", phase_payload)
+            self.assertIn("artifact_hashes", phase_payload)
+            self.assertTrue(phase_payload["artifact_hashes"])
+            self.assertEqual(
+                first.phase_manifest_path,
+                output_dir / "rollout" / "phase-manifest.json",
+            )
+
+            notes = sorted((output_dir / "notes").glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            first_note_contents = notes[0].read_text(encoding="utf-8")
+            self.assertIn("Autonomy phase iteration 1", first_note_contents)
+            self.assertIn("candidate-spec", first_note_contents)
+
+            second = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+            self.assertEqual(
+                second.phase_manifest_path,
+                output_dir / "rollout" / "phase-manifest.json",
+            )
+
+            notes = sorted((output_dir / "notes").glob("iteration-*.md"))
+            self.assertEqual(len(notes), 2)
+            self.assertEqual(notes[1].name, "iteration-2.md")
+            second_note_contents = notes[1].read_text(encoding="utf-8")
+            self.assertIn("Autonomy phase iteration 2", second_note_contents)
 
     def test_upsert_no_signal_run_records_skipped_research_run(self) -> None:
         strategy_config_path = (
@@ -1108,7 +1173,7 @@ class TestAutonomousLane(TestCase):
                 session_factory=session_factory,
                 code_version="test-sha",
             )
-            self.assertIsNone(result.paper_patch_path)
+            self.assertIsNotNone(result.paper_patch_path)
             gate_payload = json.loads(
                 result.gate_report_path.read_text(encoding="utf-8")
             )
@@ -1172,7 +1237,7 @@ class TestAutonomousLane(TestCase):
             self.assertIn(
                 "profitability_evidence_validation_failed", gate_payload["reasons"]
             )
-            self.assertIsNone(result.paper_patch_path)
+            self.assertIsNotNone(result.paper_patch_path)
 
     def test_lane_promotion_demotes_previous_champion_with_audit(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"

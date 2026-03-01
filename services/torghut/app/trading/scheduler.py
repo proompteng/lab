@@ -978,6 +978,7 @@ class TradingState:
     last_autonomy_run_id: Optional[str] = None
     last_autonomy_candidate_id: Optional[str] = None
     last_autonomy_gates: Optional[str] = None
+    last_autonomy_phase_manifest: Optional[str] = None
     last_autonomy_actuation_intent: Optional[str] = None
     last_autonomy_phase_manifest: Optional[str] = None
     last_autonomy_patch: Optional[str] = None
@@ -4639,6 +4640,16 @@ class TradingScheduler:
             cancelled_count = 0
 
         gate_provenance = self._load_last_gate_provenance()
+        rollback_artifact_paths = [
+            self.state.last_autonomy_gates,
+            self.state.last_autonomy_actuation_intent,
+            gate_provenance.get("phase_manifest_path"),
+        ]
+        unique_rollback_artifact_paths = [
+            path
+            for index, path in enumerate(rollback_artifact_paths)
+            if path and path not in rollback_artifact_paths[:index]
+        ]
         artifact_root = _resolve_autonomy_artifact_root(
             Path(settings.trading_autonomy_artifact_dir)
         )
@@ -4674,6 +4685,9 @@ class TradingScheduler:
                 "order_submission_blocked": True,
                 "cancel_open_orders_attempted": True,
             },
+            "rollback_artifacts": [
+                item for item in unique_rollback_artifact_paths if item is not None
+            ],
             "provenance": gate_provenance,
             "cancelled_open_orders": cancelled_count,
         }
@@ -4692,13 +4706,18 @@ class TradingScheduler:
             incident_path,
         )
 
-    def _load_last_gate_provenance(self) -> dict[str, str | None]:
+    def _load_last_gate_provenance(self) -> dict[str, object | None]:
         gate_path_raw = self.state.last_autonomy_gates
         actuation_path_raw = (
             str(self.state.last_autonomy_actuation_intent or "").strip()
         )
+        phase_manifest_path_raw = str(
+            self.state.last_autonomy_phase_manifest or ""
+        ).strip()
         payload: dict[str, Any] = {}
+        phase_lineage: dict[str, Any] = {}
         actuation_payload: dict[str, Any] = {}
+        phase_payload: dict[str, Any] = {}
         if gate_path_raw:
             try:
                 parsed = json.loads(Path(gate_path_raw).read_text(encoding="utf-8"))
@@ -4715,12 +4734,30 @@ class TradingScheduler:
                     actuation_payload = cast(dict[str, Any], actuation_raw)
             except Exception:
                 actuation_payload = {}
+        if phase_manifest_path_raw:
+            try:
+                manifest_raw = json.loads(
+                    Path(phase_manifest_path_raw).read_text(encoding="utf-8")
+                )
+                if isinstance(manifest_raw, dict):
+                    phase_payload = cast(dict[str, Any], manifest_raw)
+            except Exception:
+                phase_payload = {}
         actuation_gates_raw = actuation_payload.get("gates")
         actuation_gates = (
             cast(dict[str, Any], actuation_gates_raw)
             if isinstance(actuation_gates_raw, dict)
             else {}
         )
+        if isinstance(phase_payload.get("phase_lineage"), dict):
+            phase_lineage = cast(dict[str, Any], phase_payload.get("phase_lineage"))
+        raw_phase_trace = phase_lineage.get("stage_ids")
+        if isinstance(raw_phase_trace, list):
+            phase_manifest_trace = [
+                str(item).strip() for item in raw_phase_trace if str(item).strip()
+            ]
+        else:
+            phase_manifest_trace = []
         provenance_raw = payload.get("provenance")
         provenance: dict[str, Any] = (
             cast(dict[str, Any], provenance_raw)
@@ -4731,7 +4768,7 @@ class TradingScheduler:
             "run_id": str(payload.get("run_id")).strip() or None,
             "actuation_intent_path": actuation_path_raw or None,
             "gate_report_trace_id": str(provenance.get("gate_report_trace_id")).strip()
-            or None,
+                or None,
             "recommendation_trace_id": str(
                 provenance.get("recommendation_trace_id")
             ).strip()
@@ -4744,6 +4781,18 @@ class TradingScheduler:
                 actuation_gates.get("recommendation_trace_id")
             ).strip()
             or None,
+            "phase_manifest_path": phase_manifest_path_raw or None,
+            "phase_manifest_hash": str(phase_payload.get("manifest_hash")).strip()
+                or None,
+            "phase_manifest_lineage_root": str(
+                phase_lineage.get("lineage_root")
+            ).strip()
+                or None,
+            "phase_manifest_lineage_tail": str(
+                phase_lineage.get("lineage_tail")
+            ).strip()
+                or None,
+            "phase_manifest_trace": phase_manifest_trace,
         }
 
     async def start(self) -> None:
@@ -4920,11 +4969,12 @@ class TradingScheduler:
     def _run_autonomous_cycle(
         self,
         *,
-        governance_repository: str = "proompteng/lab",
-        governance_base: str = "main",
+        governance_repository: str | None = None,
+        governance_base: str | None = None,
         governance_head: str | None = None,
         governance_artifact_root: str | None = None,
         priority_id: str | None = None,
+        governance_inputs: Mapping[str, Any] | None = None,
     ) -> None:
         if self._pipeline is None:
             raise RuntimeError("trading_pipeline_not_initialized")
@@ -5032,8 +5082,8 @@ class TradingScheduler:
             promotion_target=promotion_target,
             approval_token=approval_token,
             drift_gate_evidence=drift_gate_evidence,
-            governance_repository=governance_repository,
-            governance_base=governance_base,
+            governance_repository=governance_repository or "proompteng/lab",
+            governance_base=governance_base or "main",
             governance_head=(
                 governance_head
                 or f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
@@ -5041,9 +5091,14 @@ class TradingScheduler:
             governance_artifact_path=str(run_output_dir),
             priority_id=priority_id,
             artifact_root=artifact_root,
-            execution_context=self._build_autonomy_execution_context(
+            governance_inputs=self._build_autonomy_governance_inputs(
+                governance_inputs=governance_inputs,
                 artifact_root=artifact_root,
                 promotion_target=promotion_target,
+                governance_repository=governance_repository,
+                governance_base=governance_base,
+                governance_head=governance_head,
+                priority_id=priority_id,
             ),
         )
         if result is None:
@@ -5096,17 +5151,33 @@ class TradingScheduler:
         *,
         artifact_root: Path,
         promotion_target: str,
+        governance_repository: str | None = None,
+        governance_base: str | None = None,
+        governance_head: str | None = None,
+        priority_id: str | None = None,
     ) -> dict[str, str]:
-        repository = (os.getenv("GITHUB_REPOSITORY") or "unknown").strip() or "unknown"
-        base_ref = os.getenv("GITHUB_BASE_REF") or os.getenv("GITHUB_REF") or "unknown"
+        repository = (
+            governance_repository
+            or (os.getenv("GITHUB_REPOSITORY") or "unknown")
+            or "unknown"
+        ).strip() or "unknown"
+        base_ref = (
+            governance_base
+            or os.getenv("GITHUB_BASE_REF")
+            or os.getenv("GITHUB_REF")
+            or "unknown"
+        )
         if base_ref.startswith("refs/heads/"):
             base_ref = base_ref.removeprefix("refs/heads/")
         head_ref = (
-            os.getenv("GITHUB_HEAD_REF")
+            governance_head
+            or os.getenv("GITHUB_HEAD_REF")
             or os.getenv("GITHUB_REF_NAME")
             or ("live" if promotion_target == "live" else "unknown")
         )
-        priority_id = os.getenv("PRIORITY_ID") or os.getenv("CODEX_PRIORITY_ID") or ""
+        priority_id = (
+            priority_id or os.getenv("PRIORITY_ID") or os.getenv("CODEX_PRIORITY_ID") or ""
+        )
         return {
             "repository": repository,
             "base": base_ref,
@@ -5114,6 +5185,67 @@ class TradingScheduler:
             "artifactPath": str(artifact_root),
             "priorityId": priority_id,
         }
+
+    def _build_autonomy_governance_inputs(
+        self,
+        *,
+        governance_inputs: Mapping[str, Any] | None = None,
+        artifact_root: Path,
+        promotion_target: str,
+        governance_repository: str | None,
+        governance_base: str | None,
+        governance_head: str | None,
+        priority_id: str | None,
+    ) -> dict[str, Any]:
+        merged_governance_inputs: dict[str, Any] = {}
+        if governance_inputs is not None:
+            merged_governance_inputs = dict(governance_inputs)
+
+        caller_execution_context = merged_governance_inputs.get(
+            "execution_context",
+            {},
+        )
+        caller_runtime_governance = merged_governance_inputs.get(
+            "runtime_governance",
+            {},
+        )
+        caller_rollback_proof = merged_governance_inputs.get("rollback_proof", {})
+
+        execution_context = self._build_autonomy_execution_context(
+            artifact_root=artifact_root,
+            promotion_target=promotion_target,
+            governance_repository=governance_repository,
+            governance_base=governance_base,
+            governance_head=governance_head,
+            priority_id=priority_id,
+        )
+        if isinstance(caller_execution_context, Mapping):
+            execution_context.update(
+                cast(Mapping[str, Any], caller_execution_context)
+            )
+        runtime_governance: dict[str, Any] = {
+            "governance_status": "pass",
+            "drift_status": "queued",
+            "artifact_refs": [],
+            "rollback_triggered": False,
+            "reasons": ["autonomy_runtime_governance_pending"],
+        }
+        if isinstance(caller_runtime_governance, Mapping):
+            runtime_governance.update(
+                cast(Mapping[str, Any], caller_runtime_governance)
+            )
+        rollback_proof: dict[str, Any] = {
+            "rollback_triggered": False,
+            "rollback_incident_evidence_path": "",
+            "reasons": [],
+        }
+        if isinstance(caller_rollback_proof, Mapping):
+            rollback_proof.update(cast(Mapping[str, Any], caller_rollback_proof))
+
+        merged_governance_inputs["execution_context"] = execution_context
+        merged_governance_inputs["runtime_governance"] = runtime_governance
+        merged_governance_inputs["rollback_proof"] = rollback_proof
+        return merged_governance_inputs
 
     def _record_autonomy_batch_state(
         self,
@@ -5229,6 +5361,7 @@ class TradingScheduler:
         self.state.last_autonomy_run_id = None
         self.state.last_autonomy_candidate_id = None
         self.state.last_autonomy_gates = str(no_signal_path)
+        self.state.last_autonomy_phase_manifest = None
         self.state.last_autonomy_actuation_intent = None
         self.state.last_autonomy_phase_manifest = None
         self.state.last_autonomy_patch = None
@@ -5437,9 +5570,31 @@ class TradingScheduler:
         priority_id: str | None = None,
         artifact_root: Path | None = None,
         execution_context: Mapping[str, str] | None = None,
+        governance_inputs: Mapping[str, Any] | None = None,
     ) -> Any | None:
         if self._pipeline is None:
             raise RuntimeError("trading_pipeline_not_initialized")
+        governance_payload: dict[str, Any] | None = None
+        if governance_inputs is not None:
+            governance_payload = dict(governance_inputs)
+        elif execution_context is not None:
+            governance_payload = {
+                "execution_context": dict(execution_context),
+                "runtime_governance": {
+                    "governance_status": "pass",
+                    "drift_status": "queued",
+                    "artifact_refs": [],
+                    "rollback_triggered": False,
+                    "reasons": [
+                        "autonomy_runtime_governance_pending",
+                    ],
+                },
+                "rollback_proof": {
+                    "rollback_triggered": False,
+                    "rollback_incident_evidence_path": "",
+                    "reasons": [],
+                },
+            }
         try:
             return run_autonomous_lane(
                 signals_path=signals_path,
@@ -5466,36 +5621,7 @@ class TradingScheduler:
                 governance_reason=(
                     f"Autonomous recommendation for {promotion_target} target."
                 ),
-                governance_inputs=(
-                    {
-                        "execution_context": dict(
-                            execution_context
-                            or self._build_autonomy_execution_context(
-                                artifact_root=(
-                                    artifact_root
-                                    or run_output_dir.parent
-                                ),
-                                promotion_target=promotion_target,
-                            )
-                        ),
-                        "runtime_governance": {
-                            "governance_status": "pass",
-                            "drift_status": "queued",
-                            "artifact_refs": [],
-                            "rollback_triggered": False,
-                            "reasons": [
-                                "autonomy_runtime_governance_pending",
-                            ],
-                        },
-                        "rollback_proof": {
-                            "rollback_triggered": False,
-                            "rollback_incident_evidence_path": "",
-                            "reasons": [],
-                        },
-                    }
-                    if execution_context is not None
-                    else None
-                ),
+                governance_inputs=cast(Mapping[str, Any] | None, governance_payload),
                 persist_results=True,
                 session_factory=self._pipeline.session_factory,
             )
@@ -5513,6 +5639,7 @@ class TradingScheduler:
         self.state.last_autonomy_run_id = None
         self.state.last_autonomy_candidate_id = None
         self.state.last_autonomy_gates = None
+        self.state.last_autonomy_phase_manifest = None
         self.state.last_autonomy_actuation_intent = None
         self.state.last_autonomy_phase_manifest = None
         self.state.last_autonomy_patch = None
@@ -5537,6 +5664,9 @@ class TradingScheduler:
         self.state.last_autonomy_run_id = result.run_id
         self.state.last_autonomy_candidate_id = result.candidate_id
         self.state.last_autonomy_gates = str(result.gate_report_path)
+        self.state.last_autonomy_phase_manifest = (
+            str(result.phase_manifest_path) if result.phase_manifest_path else None
+        )
         self.state.last_autonomy_actuation_intent = (
             str(result.actuation_intent_path)
             if result.actuation_intent_path
@@ -5958,6 +6088,15 @@ class TradingScheduler:
             }
         )
         manifest["phase_transitions"] = normalize_phase_transitions(ordered_phases)
+        manifest_payload_without_hash = dict(manifest)
+        manifest_payload_without_hash.pop("manifest_hash", None)
+        manifest["manifest_hash"] = hashlib.sha256(
+            json.dumps(
+                manifest_payload_without_hash,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8"),
+        ).hexdigest()
 
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
