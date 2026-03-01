@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -73,12 +73,18 @@ from .policy_checks import evaluate_promotion_prerequisites, evaluate_rollback_r
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 
 
+_ACTUATION_INTENT_SCHEMA_VERSION = "torghut.autonomy.actuation-intent.v1"
+_ACTUATION_CONFIRMATION_PHRASE = "ACTUATE_TORGHUT"
+_ACTUATION_INTENT_PATH = "gates/actuation-intent.json"
+
+
 @dataclass(frozen=True)
 class AutonomousLaneResult:
     run_id: str
     candidate_id: str
     output_dir: Path
     gate_report_path: Path
+    actuation_intent_path: Path | None
     paper_patch_path: Path | None
     gate_report_trace_id: str
     recommendation_trace_id: str
@@ -680,10 +686,12 @@ def run_autonomous_lane(
             "noSignalReason": None,
             "rollbackReadiness": {
                 "killSwitchDryRunPassed": True,
-                "gitopsRevertDryRunPassed": True,
-                "strategyDisableDryRunPassed": True,
+                "gitopsRevertDryRunPassed": (
+                    promotion_target != "live" or bool(approval_token)
+                ),
+                "strategyDisableDryRunPassed": bool(runtime_strategies),
                 "dryRunCompletedAt": now.isoformat(),
-                "humanApproved": True,
+                "humanApproved": promotion_target != "live" or bool(approval_token),
                 "rollbackTarget": f"{code_version or 'unknown'}",
             },
         }
@@ -862,6 +870,47 @@ def run_autonomous_lane(
         gate_report_path.write_text(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
+        actuation_intent_path = output_dir / _ACTUATION_INTENT_PATH
+        actuation_intent_path.parent.mkdir(parents=True, exist_ok=True)
+        actuation_intent_payload = _build_actuation_intent_payload(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            generated_at=now,
+            recommendation_trace_id=recommendation_trace_id,
+            gate_report_trace_id=gate_report_trace_id,
+            promotion_target=promotion_target,
+            recommended_mode=recommended_mode,
+            actuation_allowed=(
+                bool(recommendation_trace_id)
+                and promotion_recommendation.eligible
+                and rollback_check.ready
+            ),
+            promotion_check=promotion_check.to_payload(),
+            rollback_check=rollback_check.to_payload(),
+            candidate_state_payload=candidate_state_payload,
+            gate_report_path=gate_report_path,
+            rollback_check_path=rollback_check_path,
+            candidate_spec_path=candidate_spec_path,
+            evaluation_report_path=evaluation_report_path,
+            walk_results_path=walk_results_path,
+            paper_patch_path=patch_path,
+            patch_required=bool(
+                promotion_target in {"paper", "live"}
+                and gate_report.recommended_mode == "paper"
+            ),
+            profitability_benchmark_path=profitability_benchmark_path,
+            profitability_evidence_path=profitability_evidence_path,
+            profitability_validation_path=profitability_validation_path,
+            janus_event_car_path=janus_event_car_path,
+            janus_hgrm_reward_path=janus_hgrm_reward_path,
+            recalibration_report_path=recalibration_report_path,
+            promotion_gate_path=promotion_gate_path,
+            promotion_recommendation=promotion_recommendation,
+            recommendations=promotion_reasons,
+        )
+        actuation_intent_path.write_text(
+            json.dumps(actuation_intent_payload, indent=2), encoding="utf-8"
+        )
         if not promotion_allowed:
             patch_path = None
 
@@ -878,6 +927,7 @@ def run_autonomous_lane(
             candidate_spec_path=candidate_spec_path,
             evaluation_report_path=evaluation_report_path,
             gate_report_path=gate_report_path,
+            actuation_intent_path=actuation_intent_path,
             patch_path=patch_path,
             now=now,
             promotion_target=promotion_target,
@@ -904,6 +954,7 @@ def run_autonomous_lane(
             candidate_id=candidate_id,
             output_dir=output_dir,
             gate_report_path=gate_report_path,
+            actuation_intent_path=actuation_intent_path,
             paper_patch_path=patch_path,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
@@ -928,6 +979,121 @@ def _prepare_lane_output_dirs(output_dir: Path) -> tuple[Path, Path, Path, Path]
     for path in (research_dir, backtest_dir, gates_dir, paper_dir):
         path.mkdir(parents=True, exist_ok=True)
     return research_dir, backtest_dir, gates_dir, paper_dir
+
+
+def _build_actuation_intent_payload(
+    *,
+    run_id: str,
+    candidate_id: str,
+    generated_at: datetime,
+    recommendation_trace_id: str,
+    gate_report_trace_id: str,
+    promotion_target: str,
+    recommended_mode: str,
+    actuation_allowed: bool,
+    promotion_check: dict[str, Any],
+    rollback_check: dict[str, object],
+    candidate_state_payload: dict[str, Any],
+    gate_report_path: Path,
+    rollback_check_path: Path,
+    candidate_spec_path: Path,
+    evaluation_report_path: Path,
+    walk_results_path: Path,
+    paper_patch_path: Path | None,
+    patch_required: bool,
+    profitability_benchmark_path: Path,
+    profitability_evidence_path: Path,
+    profitability_validation_path: Path,
+    janus_event_car_path: Path,
+    janus_hgrm_reward_path: Path,
+    recalibration_report_path: Path,
+    promotion_gate_path: Path,
+    promotion_recommendation: PromotionRecommendation,
+    recommendations: list[str],
+) -> dict[str, Any]:
+    raw_missing_checks = cast(object, rollback_check.get("missing_checks"))
+    rollback_missing_checks = (
+        list(cast(list[object], raw_missing_checks))
+        if isinstance(raw_missing_checks, list)
+        else []
+    )
+    rollback_evidence_links: list[str] = []
+    rollback_evidence_links.extend(
+        [
+            str(candidate_spec_path),
+            str(gate_report_path),
+            str(evaluation_report_path),
+            str(walk_results_path),
+            str(promotion_gate_path),
+            str(profitability_benchmark_path),
+            str(profitability_evidence_path),
+            str(profitability_validation_path),
+            str(janus_event_car_path),
+            str(janus_hgrm_reward_path),
+            str(recalibration_report_path),
+            str(rollback_check_path),
+        ]
+    )
+    if paper_patch_path is not None:
+        rollback_evidence_links.append(str(paper_patch_path))
+    rollback_evidence_links.extend(
+        [str(item) for item in promotion_check.get("artifact_refs", [])]
+    )
+    candidate_state_readiness = candidate_state_payload.get("rollbackReadiness", {})
+    return {
+        "schema_version": _ACTUATION_INTENT_SCHEMA_VERSION,
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "generated_at": generated_at.isoformat(),
+        "generated_for": "autonomous-lane",
+        "promotion_target": promotion_target,
+        "recommended_mode": recommended_mode,
+        "actuation_allowed": actuation_allowed,
+        "confirmation_phrase_required": promotion_target == "live",
+        "confirmation_phrase": (
+            _ACTUATION_CONFIRMATION_PHRASE
+            if promotion_target == "live"
+            else None
+        ),
+        "gates": {
+            "recommendation_trace_id": recommendation_trace_id,
+            "gate_report_trace_id": gate_report_trace_id,
+            "promotion_allowed": promotion_recommendation.eligible,
+            "promotion_action": promotion_recommendation.action,
+            "recommendation_reasons": recommendations,
+        },
+        "artifact_refs": sorted(
+            {item for item in rollback_evidence_links if item.strip()}
+        ),
+        "audit": {
+            "candidate_state_payload": candidate_state_payload,
+            "promotion_check": promotion_check,
+            "rollback_check": rollback_check,
+            "patch_required": patch_required,
+            "patch_available": paper_patch_path is not None,
+            "rollback_readiness_readout": {
+                "kill_switch_dry_run_passed": bool(
+                    candidate_state_readiness.get("killSwitchDryRunPassed")
+                ),
+                "gitops_revert_dry_run_passed": bool(
+                    candidate_state_readiness.get("gitopsRevertDryRunPassed")
+                ),
+                "strategy_disable_dry_run_passed": bool(
+                    candidate_state_readiness.get("strategyDisableDryRunPassed")
+                ),
+                "human_approved": bool(
+                    candidate_state_readiness.get("humanApproved")
+                ),
+                "rollback_target": str(
+                    candidate_state_readiness.get("rollbackTarget") or ""
+                ),
+                "dry_run_completed_at": str(
+                    candidate_state_readiness.get("dryRunCompletedAt") or ""
+                ),
+            },
+            "rollback_evidence_missing_checks": rollback_missing_checks,
+        },
+    }
 
 
 def _collect_walk_decisions_for_runtime(
@@ -1012,6 +1178,7 @@ def _persist_run_outputs_if_requested(
     candidate_spec_path: Path,
     evaluation_report_path: Path,
     gate_report_path: Path,
+    actuation_intent_path: Path | None,
     patch_path: Path | None,
     now: datetime,
     promotion_target: str,
@@ -1037,6 +1204,7 @@ def _persist_run_outputs_if_requested(
         candidate_spec_path=candidate_spec_path,
         evaluation_report_path=evaluation_report_path,
         gate_report_path=gate_report_path,
+        actuation_intent_path=actuation_intent_path,
         patch_path=patch_path,
         now=now,
         promotion_target=promotion_target,
@@ -1240,6 +1408,7 @@ def _persist_run_outputs(
     candidate_spec_path: Path,
     evaluation_report_path: Path,
     gate_report_path: Path,
+    actuation_intent_path: Path | None,
     patch_path: Path | None,
     now: datetime,
     promotion_target: str,
@@ -1304,6 +1473,9 @@ def _persist_run_outputs(
                     existing_champion.candidate_id
                     if existing_champion is not None
                     else None
+                ),
+                "actuation_intent_artifact": (
+                    str(actuation_intent_path) if actuation_intent_path else None
                 ),
             }
             recommended_mode = promotion_recommendation.recommended_mode
@@ -1411,6 +1583,9 @@ def _persist_run_outputs(
                 "rationale_present": bool(promotion_recommendation.rationale),
                 "evidence_complete": promotion_recommendation.evidence.evidence_complete,
                 "reasons": list(promotion_recommendation.evidence.reasons),
+                "actuation_intent_artifact": (
+                    str(actuation_intent_path) if actuation_intent_path else None
+                ),
             }
             challenger_decision = {
                 "decision_type": "promotion",

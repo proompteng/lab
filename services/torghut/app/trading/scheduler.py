@@ -971,6 +971,7 @@ class TradingState:
     last_autonomy_run_id: Optional[str] = None
     last_autonomy_candidate_id: Optional[str] = None
     last_autonomy_gates: Optional[str] = None
+    last_autonomy_actuation_intent: Optional[str] = None
     last_autonomy_patch: Optional[str] = None
     last_autonomy_recommendation: Optional[str] = None
     last_autonomy_promotion_action: Optional[str] = None
@@ -4685,7 +4686,11 @@ class TradingScheduler:
 
     def _load_last_gate_provenance(self) -> dict[str, str | None]:
         gate_path_raw = self.state.last_autonomy_gates
+        actuation_path_raw = (
+            str(self.state.last_autonomy_actuation_intent or "").strip()
+        )
         payload: dict[str, Any] = {}
+        actuation_payload: dict[str, Any] = {}
         if gate_path_raw:
             try:
                 parsed = json.loads(Path(gate_path_raw).read_text(encoding="utf-8"))
@@ -4693,6 +4698,21 @@ class TradingScheduler:
                     payload = cast(dict[str, Any], parsed)
             except Exception:
                 payload = {}
+        if actuation_path_raw:
+            try:
+                actuation_raw = json.loads(
+                    Path(actuation_path_raw).read_text(encoding="utf-8")
+                )
+                if isinstance(actuation_raw, dict):
+                    actuation_payload = cast(dict[str, Any], actuation_raw)
+            except Exception:
+                actuation_payload = {}
+        actuation_gates_raw = actuation_payload.get("gates")
+        actuation_gates = (
+            cast(dict[str, Any], actuation_gates_raw)
+            if isinstance(actuation_gates_raw, dict)
+            else {}
+        )
         provenance_raw = payload.get("provenance")
         provenance: dict[str, Any] = (
             cast(dict[str, Any], provenance_raw)
@@ -4701,10 +4721,19 @@ class TradingScheduler:
         )
         return {
             "run_id": str(payload.get("run_id")).strip() or None,
+            "actuation_intent_path": actuation_path_raw or None,
             "gate_report_trace_id": str(provenance.get("gate_report_trace_id")).strip()
             or None,
             "recommendation_trace_id": str(
                 provenance.get("recommendation_trace_id")
+            ).strip()
+            or None,
+            "actuation_gate_report_trace_id": str(
+                actuation_gates.get("gate_report_trace_id")
+            ).strip()
+            or None,
+            "actuation_recommendation_trace_id": str(
+                actuation_gates.get("recommendation_trace_id")
             ).strip()
             or None,
         }
@@ -4838,6 +4867,7 @@ class TradingScheduler:
             self.state.last_error = str(exc)
             self.state.last_autonomy_error = str(exc)
             self.state.autonomy_failure_streak += 1
+            self._clear_autonomy_result_state()
         finally:
             self._evaluate_safety_controls()
 
@@ -5088,6 +5118,7 @@ class TradingScheduler:
         self.state.last_autonomy_run_id = None
         self.state.last_autonomy_candidate_id = None
         self.state.last_autonomy_gates = str(no_signal_path)
+        self.state.last_autonomy_actuation_intent = None
         self.state.last_autonomy_patch = None
         self.state.last_autonomy_recommendation = None
         self.state.last_autonomy_promotion_action = "hold"
@@ -5254,9 +5285,22 @@ class TradingScheduler:
             self.state.autonomy_failure_streak += 1
             self.state.last_autonomy_error = str(exc)
             self.state.last_autonomy_reason = "lane_execution_failed"
+            self._clear_autonomy_result_state()
             logger.exception("Autonomous lane execution failed: %s", exc)
             self._evaluate_safety_controls()
             return None
+
+    def _clear_autonomy_result_state(self) -> None:
+        self.state.last_autonomy_run_id = None
+        self.state.last_autonomy_candidate_id = None
+        self.state.last_autonomy_gates = None
+        self.state.last_autonomy_actuation_intent = None
+        self.state.last_autonomy_patch = None
+        self.state.last_autonomy_recommendation = None
+        self.state.last_autonomy_promotion_action = None
+        self.state.last_autonomy_promotion_eligible = None
+        self.state.last_autonomy_recommendation_trace_id = None
+        self.state.last_autonomy_throughput = None
 
     def _apply_autonomy_lane_result(
         self,
@@ -5272,6 +5316,11 @@ class TradingScheduler:
         self.state.last_autonomy_run_id = result.run_id
         self.state.last_autonomy_candidate_id = result.candidate_id
         self.state.last_autonomy_gates = str(result.gate_report_path)
+        self.state.last_autonomy_actuation_intent = (
+            str(result.actuation_intent_path)
+            if result.actuation_intent_path
+            else None
+        )
         self.state.last_autonomy_reason = None
 
         gate_report_raw = json.loads(

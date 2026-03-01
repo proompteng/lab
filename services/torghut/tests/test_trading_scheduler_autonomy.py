@@ -143,6 +143,7 @@ class _SchedulerDependencies:
     def __init__(self) -> None:
         self.call_kwargs: dict[str, Any] = {}
         self.gate_payload: dict[str, Any] = {"recommended_mode": "paper", "gates": []}
+        self.actuation_intent_path: Path | None = None
 
 
 class _OrderFirewallStub:
@@ -410,6 +411,10 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertEqual(scheduler.state.last_autonomy_run_id, "test-run-id")
             self.assertEqual(scheduler.state.last_autonomy_recommendation, "paper")
+            self.assertEqual(
+                scheduler.state.last_autonomy_actuation_intent,
+                str(deps.actuation_intent_path),
+            )
             self.assertIn("drift_promotion_evidence", deps.call_kwargs)
 
     def test_run_autonomous_cycle_tracks_promotion_and_throughput_metrics(self) -> None:
@@ -516,6 +521,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertEqual(scheduler.state.last_autonomy_run_id, "no-signal-run-id")
             self.assertIn("no-signals.json", scheduler.state.last_autonomy_gates or "")
+            self.assertIsNone(scheduler.state.last_autonomy_actuation_intent)
             self.assertEqual(
                 scheduler.state.metrics.autonomy_promotion_blocked_total,
                 1,
@@ -673,11 +679,22 @@ class TestTradingSchedulerAutonomy(TestCase):
 
     def test_run_autonomous_cycle_records_error_on_lane_exception(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            scheduler, _deps = self._build_scheduler_with_fixtures(
+            scheduler, deps = self._build_scheduler_with_fixtures(
                 tmpdir,
                 allow_live=False,
                 approval_token=None,
             )
+            scheduler.state.last_autonomy_run_id = "stale-run-id"
+            scheduler.state.last_autonomy_candidate_id = "stale-candidate-id"
+            scheduler.state.last_autonomy_gates = str(Path(tmpdir) / "stale-gates.json")
+            scheduler.state.last_autonomy_actuation_intent = (
+                str(Path(tmpdir) / "stale-actuation-intent.json")
+            )
+            scheduler.state.last_autonomy_patch = str(Path(tmpdir) / "stale-patch.yaml")
+            scheduler.state.last_autonomy_recommendation = "paper"
+            scheduler.state.last_autonomy_recommendation_trace_id = "stale-rec-trace"
+            scheduler.state.last_autonomy_promotion_action = "promote"
+            scheduler.state.last_autonomy_promotion_eligible = True
             with patch(
                 "app.trading.scheduler.run_autonomous_lane",
                 side_effect=RuntimeError("lane_failed"),
@@ -689,6 +706,15 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertEqual(scheduler.state.last_autonomy_error, "lane_failed")
             self.assertIsNone(scheduler.state.last_autonomy_run_id)
+            self.assertIsNone(scheduler.state.last_autonomy_candidate_id)
+            self.assertIsNone(scheduler.state.last_autonomy_gates)
+            self.assertIsNone(scheduler.state.last_autonomy_actuation_intent)
+            self.assertIsNone(scheduler.state.last_autonomy_patch)
+            self.assertIsNone(scheduler.state.last_autonomy_recommendation)
+            self.assertIsNone(scheduler.state.last_autonomy_promotion_action)
+            self.assertIsNone(scheduler.state.last_autonomy_promotion_eligible)
+            self.assertIsNone(scheduler.state.last_autonomy_recommendation_trace_id)
+            self.assertIsNone(scheduler.state.last_autonomy_throughput)
 
     def test_run_evidence_continuity_check_updates_scheduler_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -977,12 +1003,45 @@ class TestTradingSchedulerAutonomy(TestCase):
             }
             gate_report_path.write_text(json.dumps(gate_payload), encoding="utf-8")
             deps.gate_report_path = gate_report_path
+            gates_dir = output_dir / "gates"
+            gates_dir.mkdir(parents=True, exist_ok=True)
+            actuation_intent_path = gates_dir / "actuation-intent.json"
+            actuation_payload = {
+                "schema_version": "torghut.autonomy.actuation-intent.v1",
+                "run_id": "test-run-id",
+                "candidate_id": "cand-test",
+                "gates": {
+                    "recommendation_trace_id": "rec-trace-test",
+                    "gate_report_trace_id": "gate-trace-test",
+                    "recommendation_reasons": ["unit_test"],
+                    "promotion_allowed": bool(
+                        gate_payload.get("promotion_recommendation", {}).get("eligible", True)
+                    ),
+                },
+                "artifact_refs": [str(gate_report_path)],
+                "audit": {
+                    "rollback_evidence_missing_checks": [],
+                    "rollback_readiness_readout": {
+                        "kill_switch_dry_run_passed": True,
+                        "gitops_revert_dry_run_passed": True,
+                        "strategy_disable_dry_run_passed": True,
+                        "human_approved": True,
+                        "rollback_target": "test",
+                        "dry_run_completed_at": "",
+                    },
+                },
+            }
+            actuation_intent_path.write_text(
+                json.dumps(actuation_payload), encoding="utf-8"
+            )
+            deps.actuation_intent_path = actuation_intent_path
 
             return SimpleNamespace(
                 run_id="test-run-id",
                 candidate_id="cand-test",
                 output_dir=output_dir,
                 gate_report_path=gate_report_path,
+                actuation_intent_path=actuation_intent_path,
                 paper_patch_path=None,
             )
 
