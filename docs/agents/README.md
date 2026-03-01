@@ -152,6 +152,7 @@ If you are changing behavior, update 1-3 first, then ensure 4-5 describe the res
 - [designs/crd-agent-config-schema.md](designs/crd-agent-config-schema.md)
 - [designs/crd-agentrun-artifacts-limits.md](designs/crd-agentrun-artifacts-limits.md)
 - [designs/crd-agentrun-idempotency.md](designs/crd-agentrun-idempotency.md)
+- [designs/crd-agentrun-workflow-loops.md](designs/crd-agentrun-workflow-loops.md)
 - [designs/crd-agentrun-spec-immutability.md](designs/crd-agentrun-spec-immutability.md)
 - [designs/crd-implementationsource-webhook-cel.md](designs/crd-implementationsource-webhook-cel.md)
 - [designs/crd-implementationspec-config-constraints.md](designs/crd-implementationspec-config-constraints.md)
