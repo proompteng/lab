@@ -5042,6 +5042,7 @@ class TradingScheduler:
             ),
             governance_artifact_path=str(run_output_dir),
             priority_id=priority_id,
+            artifact_root=artifact_root,
             execution_context=self._build_autonomy_execution_context(
                 artifact_root=artifact_root,
                 promotion_target=promotion_target,
@@ -5436,6 +5437,7 @@ class TradingScheduler:
         governance_head: str | None = None,
         governance_artifact_path: str | None = None,
         priority_id: str | None = None,
+        artifact_root: Path | None = None,
         execution_context: Mapping[str, str] | None = None,
     ) -> Any | None:
         if self._pipeline is None:
@@ -5471,7 +5473,10 @@ class TradingScheduler:
                         "execution_context": dict(
                             execution_context
                             or self._build_autonomy_execution_context(
-                                run_output_dir=run_output_dir,
+                                artifact_root=(
+                                    artifact_root
+                                    or run_output_dir.parent
+                                ),
                                 promotion_target=promotion_target,
                             )
                         ),
