@@ -216,6 +216,64 @@ class TestLLMDSPyRuntime(TestCase):
         )
         settings.jangar_base_url = original_base
 
+    def test_missing_artifact_executor_field_is_rejected(self) -> None:
+        artifact_hash = "a" * 64
+
+        class _FakeResult:
+            def __init__(self, row: SimpleNamespace) -> None:
+                self._row = row
+
+            def scalars(self) -> "_FakeResult":
+                return self
+
+            def first(self) -> SimpleNamespace:
+                return self._row
+
+        class _FakeSession:
+            def __init__(self, row: SimpleNamespace) -> None:
+                self._row = row
+
+            def execute(self, _query: Any) -> _FakeResult:
+                return _FakeResult(self._row)
+
+        class _FakeSessionContext:
+            def __init__(self, row: SimpleNamespace) -> None:
+                self._row = row
+
+            def __enter__(self) -> _FakeSession:
+                return _FakeSession(self._row)
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> bool | None:
+                return None
+
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash=artifact_hash,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        row = SimpleNamespace(
+            artifact_uri="http://artifact.local",
+            reproducibility_hash="repro",
+            optimizer="opt",
+            dataset_hash="dataset",
+            compiled_prompt_hash="compiled",
+            signature_version="trade_review:v1",
+            program_name="trade-review-committee-v1",
+            gate_compatibility="pass",
+            metadata_json={},
+        )
+
+        with patch("app.trading.llm.dspy_programs.runtime.SessionLocal", return_value=_FakeSessionContext(row)), patch(
+            "app.trading.llm.dspy_programs.runtime.hash_payload",
+            return_value=artifact_hash,
+        ):
+            with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
+                runtime._load_manifest_from_db(artifact_hash)
+
+        self.assertIn("dspy_artifact_executor_missing", str(exc.exception))
+
     def test_active_readiness_rejects_heuristic_executor(self) -> None:
         original_base = settings.jangar_base_url
         settings.jangar_base_url = "https://jangar.local/"
@@ -248,6 +306,34 @@ class TestLLMDSPyRuntime(TestCase):
     def test_active_readiness_blocks_invalid_jangar_base_url(self) -> None:
         original_base = settings.jangar_base_url
         settings.jangar_base_url = "https://jangar.example/openai/v1?x=1"
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        manifest = DSPyArtifactManifest(
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            executor="dspy_live",
+            compiled_prompt={},
+            source="database",
+        )
+
+        try:
+            with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
+                is_ready, reasons = runtime.evaluate_live_readiness()
+
+            self.assertFalse(is_ready)
+            self.assertIn("dspy_jangar_base_url_invalid_path", reasons)
+        finally:
+            settings.jangar_base_url = original_base
+
+    def test_active_readiness_blocks_jangar_base_url_fragment(self) -> None:
+        original_base = settings.jangar_base_url
+        settings.jangar_base_url = "https://jangar.example/openai/v1#x"
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,

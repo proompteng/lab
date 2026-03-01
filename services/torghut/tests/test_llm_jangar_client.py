@@ -197,6 +197,17 @@ class TestJangarRequestHeaders(unittest.TestCase):
         self.assertIn('"verdict":"approve"', response.content)
         self.assertEqual(captured_url, "http://jangar/openai/v1/chat/completions")
 
+    def test_completion_request_rejects_invalid_jangar_base_url_query(self) -> None:
+        settings.llm_provider = "jangar"
+        settings.jangar_base_url = "http://jangar/openai/v1?mode=bad"
+
+        client = LLMClient(model="gpt-test", timeout_seconds=1)
+
+        with self.assertRaises(RuntimeError) as exc:
+            client._request_review_via_jangar(messages=[], temperature=0.2, max_tokens=16)
+
+        self.assertIn("jangar completion request failed (path): invalid", str(exc.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

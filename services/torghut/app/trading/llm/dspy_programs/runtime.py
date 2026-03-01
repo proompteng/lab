@@ -338,7 +338,14 @@ class DSPyReviewRuntime:
             metadata_items = cast(dict[Any, Any], metadata_raw)
             metadata = {str(key): value for key, value in metadata_items.items()}
 
-        executor_raw = str(metadata.get("executor") or "heuristic").strip().lower()
+        executor_value = metadata.get("executor")
+        if not isinstance(executor_value, str):
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_executor_missing")
+
+        executor_raw = executor_value.strip().lower()
+        if not executor_raw:
+            raise DSPyRuntimeUnsupportedStateError("dspy_artifact_executor_missing")
+
         if executor_raw in {"dspy", "dspy_live", "live"}:
             executor: Literal["heuristic", "dspy_live"] = "dspy_live"
         elif executor_raw == "heuristic":
