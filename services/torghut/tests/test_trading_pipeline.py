@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -1005,6 +1006,43 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(_runtime_payload.action, "degrade")
         self.assertEqual(_runtime_payload.source, "uncertainty_input_missing")
 
+    def test_pipeline_runtime_uncertainty_gate_stale_decision_payload_abstains(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        stale = datetime.now(timezone.utc) - timedelta(minutes=45)
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "runtime_uncertainty_gate": {
+                    "action": "pass",
+                    "generated_at": stale.isoformat().replace("+00:00", "Z"),
+                    "coverage_error": "0.01",
+                }
+            },
+        )
+
+        gate = pipeline._resolve_runtime_uncertainty_gate_from_inputs(decision)
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "decision_runtime_payload_stale")
+        self.assertEqual(gate.reason, "decision_runtime_payload_generated_at_stale")
+
     def test_pipeline_runtime_regime_gate_defaults_degrade_when_inputs_missing(self) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
@@ -1166,6 +1204,48 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_static_symbols_raw = original[
                 "trading_static_symbols_raw"
             ]
+
+    def test_pipeline_runtime_uncertainty_gate_report_stale_in_autonomy_path_abstains(self) -> None:
+        stale_report = {
+            "uncertainty_gate_action": "pass",
+            "generated_at": (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat().replace(
+                "+00:00",
+                "Z",
+            ),
+            "coverage_error": "0.01",
+            "shift_score": "0.10",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gate_path = Path(tmpdir) / "gate-report.json"
+            gate_path.write_text(json.dumps(stale_report), encoding="utf-8")
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(last_autonomy_gates=str(gate_path)),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            decision = StrategyDecision(
+                strategy_id="strategy",
+                symbol="AAPL",
+                event_ts=datetime.now(timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                params={},
+            )
+
+            gate = pipeline._resolve_runtime_uncertainty_gate_from_inputs(decision)
+            self.assertEqual(gate.action, "abstain")
+            self.assertEqual(gate.source, "autonomy_gate_report_stale")
+            self.assertEqual(gate.reason, "autonomy_gate_report_generated_at_stale")
 
     def test_pipeline_runtime_regime_gate_transition_shock_blocks_risk_increasing_entry(
         self,

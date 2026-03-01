@@ -164,7 +164,7 @@ Add to autonomy gate payload:
 - Runtime uncertainty + regime enforcement is implemented in
   `services/torghut/app/trading/scheduler.py` with deterministic strictest-action resolution:
   - uncertainty input resolves pass/degrade/abstain/fail with fail-closed defaults for
-    missing/unparseable/invalid payloads;
+    missing/unparseable/invalid payloads and stale `generated_at` payloads with deterministic abstain mapping;
   - regime input resolves pass/degrade/abstain/fail with explicit sources and reason fields
     (`decision_regime_gate`, `regime_hmm_transition_shock`, `regime_hmm_stale`,
     `regime_hmm_unknown_regime`, parse/format failures);
@@ -181,7 +181,9 @@ Add to autonomy gate payload:
     `test_pipeline_runtime_regime_gate_transition_shock_blocks_risk_increasing_entry`,
     `test_pipeline_runtime_regime_gate_invalid_regime_gate_action_fails_closed`,
     `test_pipeline_runtime_regime_gate_unparseable_payload_fails_closed`,
-    `test_pipeline_runtime_uncertainty_gate_report_parse_error_fails_closed`;
+    `test_pipeline_runtime_uncertainty_gate_report_parse_error_fails_closed`,
+    `test_pipeline_runtime_uncertainty_gate_stale_decision_payload_abstains`,
+    `test_pipeline_runtime_uncertainty_gate_report_stale_in_autonomy_path_abstains`,
     `test_pipeline_runtime_uncertainty_gate_defaults_degrade_when_inputs_missing`;
   - `services/torghut/tests/test_metrics.py`:
     assertions for both runtime uncertainty and runtime regime counter/export behavior.
@@ -197,7 +199,13 @@ Add to autonomy gate payload:
     and `reason` fields,
   - expected fail-closed reasons include:
     `autonomy_gate_report_read_error`, `autonomy_gate_report_missing_action`,
-    `autonomy_gate_report_invalid_payload`, `regime_hmm_parse_error`,
+    `autonomy_gate_report_invalid_payload`, `autonomy_gate_report_stale`,
+    `autonomy_gate_report_generated_at_stale`, `autonomy_gate_report_generated_at_unparseable`,
+    `decision_runtime_payload_stale`, `decision_runtime_payload_generated_at_stale`,
+    `decision_runtime_payload_generated_at_unparseable`,
+    `forecast_audit_stale`, `forecast_audit_generated_at_stale`,
+    `forecast_audit_generated_at_unparseable`,
+    `regime_hmm_parse_error`,
     `regime_hmm_unparseable_payload`, `regime_hmm_stale`,
     `regime_context_transition_shock`, `regime_label_missing`.
 - Confirm gating and containment metrics are stable before enabling larger risk budgets:

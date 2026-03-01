@@ -86,6 +86,7 @@ _RECOVERABLE_EMERGENCY_STOP_PREFIXES: tuple[str, ...] = (
 _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
 _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
 _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
+_RUNTIME_UNCERTAINTY_GATE_MAX_STALENESS_SECONDS = 15 * 60
 RuntimeUncertaintyGateAction = Literal["pass", "degrade", "abstain", "fail"]
 
 
@@ -2291,30 +2292,54 @@ class TradingPipeline:
         runtime_payload = params.get("runtime_uncertainty_gate")
         if isinstance(runtime_payload, Mapping):
             runtime_map = cast(Mapping[str, Any], runtime_payload)
-            runtime_action = _coerce_runtime_uncertainty_gate_action(
-                runtime_map.get("action")
+            runtime_staleness_reason = _uncertainty_gate_staleness_reason(
+                "decision_runtime_payload", runtime_map
             )
-            if runtime_action is not None:
+            if runtime_staleness_reason is not None:
                 candidates.append(
                     RuntimeUncertaintyGate(
-                        action=runtime_action,
-                        source="decision_runtime_payload",
+                        action="abstain",
+                        source="decision_runtime_payload_stale",
+                        reason=runtime_staleness_reason,
                     )
                 )
+            else:
+                runtime_action = _coerce_runtime_uncertainty_gate_action(
+                    runtime_map.get("action")
+                )
+                if runtime_action is not None:
+                    candidates.append(
+                        RuntimeUncertaintyGate(
+                            action=runtime_action,
+                            source="decision_runtime_payload",
+                        )
+                    )
 
         forecast_audit = params.get("forecast_audit")
         if isinstance(forecast_audit, Mapping):
             audit_map = cast(Mapping[str, Any], forecast_audit)
-            audit_action = _coerce_runtime_uncertainty_gate_action(
-                audit_map.get("uncertainty_gate_action")
+            forecast_staleness_reason = _uncertainty_gate_staleness_reason(
+                "forecast_audit", audit_map
             )
-            if audit_action is not None:
+            if forecast_staleness_reason is not None:
                 candidates.append(
                     RuntimeUncertaintyGate(
-                        action=audit_action,
-                        source="forecast_audit",
+                        action="abstain",
+                        source="forecast_audit_stale",
+                        reason=forecast_staleness_reason,
                     )
                 )
+            else:
+                audit_action = _coerce_runtime_uncertainty_gate_action(
+                    audit_map.get("uncertainty_gate_action")
+                )
+                if audit_action is not None:
+                    candidates.append(
+                        RuntimeUncertaintyGate(
+                            action=audit_action,
+                            source="forecast_audit",
+                        )
+                    )
 
         gate_path_raw = self.state.last_autonomy_gates
         if gate_path_raw:
@@ -2336,6 +2361,18 @@ class TradingPipeline:
             else:
                 if isinstance(payload, Mapping):
                     gate_map = cast(Mapping[str, Any], payload)
+                    staleness_reason = _uncertainty_gate_staleness_reason(
+                        "autonomy_gate_report", gate_map
+                    )
+                    if staleness_reason is not None:
+                        candidates.append(
+                            RuntimeUncertaintyGate(
+                                action="abstain",
+                                source="autonomy_gate_report_stale",
+                                reason=staleness_reason,
+                            )
+                        )
+                        return _select_strictest_runtime_uncertainty_gate(candidates)
                     gate_action = _coerce_runtime_uncertainty_gate_action(
                         gate_map.get("uncertainty_gate_action")
                     )
@@ -3693,6 +3730,42 @@ def _coerce_runtime_uncertainty_gate_action(
     normalized = value.strip().lower()
     if normalized in {"pass", "degrade", "abstain", "fail"}:
         return cast(RuntimeUncertaintyGateAction, normalized)
+    return None
+
+
+def _coerce_gateway_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if not isinstance(value, str):
+        return None
+    raw_value = value.strip()
+    if not raw_value:
+        return None
+    normalized = raw_value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _uncertainty_gate_staleness_reason(
+    source: str,
+    payload: Mapping[str, Any],
+) -> str | None:
+    if "generated_at" not in payload:
+        return None
+    timestamp = _coerce_gateway_timestamp(payload.get("generated_at"))
+    if timestamp is None:
+        return f"{source}_generated_at_unparseable"
+    age_seconds = int((datetime.now(timezone.utc) - timestamp).total_seconds())
+    if age_seconds > _RUNTIME_UNCERTAINTY_GATE_MAX_STALENESS_SECONDS:
+        return f"{source}_generated_at_stale"
     return None
 
 
