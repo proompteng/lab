@@ -27,7 +27,6 @@ spec:
                   key: SERVER_SECRET
           ports:
             - containerPort: 4900
-              hostPort: 4900
               protocol: TCP
           resources:
             limits:
