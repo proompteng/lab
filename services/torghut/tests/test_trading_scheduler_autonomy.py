@@ -144,6 +144,7 @@ class _SchedulerDependencies:
         self.call_kwargs: dict[str, Any] = {}
         self.gate_payload: dict[str, Any] = {"recommended_mode": "paper", "gates": []}
         self.actuation_intent_path: Path | None = None
+        self.actuation_payload: dict[str, Any] | None = None
 
 
 class _OrderFirewallStub:
@@ -392,6 +393,32 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertTrue(deps.call_kwargs["persist_results"])
             self.assertIsNotNone(deps.call_kwargs["session_factory"])
             self.assertIsNotNone(deps.call_kwargs["session_factory"])
+            self.assertEqual(
+                deps.call_kwargs["governance_repository"], "proompteng/lab"
+            )
+            self.assertEqual(deps.call_kwargs["governance_base"], "main")
+            self.assertEqual(
+                deps.call_kwargs["governance_change"], "autonomous-promotion"
+            )
+            self.assertEqual(
+                deps.call_kwargs["governance_reason"],
+                "Autonomous recommendation for paper target.",
+            )
+            self.assertTrue(
+                str(deps.call_kwargs["governance_head"]).startswith(
+                    "agentruns/torghut-autonomy-"
+                )
+            )
+            run_output_dir = Path(deps.call_kwargs["output_dir"])
+            self.assertEqual(
+                deps.call_kwargs["governance_artifact_path"], str(run_output_dir)
+            )
+            self.assertTrue(
+                deps.call_kwargs["governance_artifact_path"].startswith(
+                    str(Path(tmpdir) / "autonomy-artifacts")
+                )
+            )
+            self.assertIsNone(deps.call_kwargs["priority_id"])
 
     def test_run_autonomous_cycle_records_gate_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -447,6 +474,25 @@ class TestTradingSchedulerAutonomy(TestCase):
                     "reason_codes": [],
                 },
             }
+            deps.actuation_payload = {
+                "schema_version": "torghut.autonomy.actuation-intent.v1",
+                "run_id": "test-run-id",
+                "candidate_id": "cand-test",
+                "actuation_allowed": True,
+                "gates": {
+                    "recommendation_trace_id": "rec-trace-123",
+                    "gate_report_trace_id": "gate-trace-test",
+                    "recommendation_reasons": ["unit_test"],
+                },
+                "artifact_refs": [],
+                "audit": {
+                    "rollback_readiness_readout": {
+                        "kill_switch_dry_run_passed": True,
+                        "gitops_revert_dry_run_passed": True,
+                        "strategy_disable_dry_run_passed": True,
+                    }
+                },
+            }
             with patch(
                 "app.trading.scheduler.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
@@ -486,6 +532,82 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertEqual(
                 scheduler.state.metrics.autonomy_outcome_total.get("promoted_paper"), 1
+            )
+
+    def test_run_autonomous_cycle_blocks_promotion_when_actuation_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            deps.actuation_payload = {
+                "schema_version": "torghut.autonomy.actuation-intent.v1",
+                "run_id": "test-run-id",
+                "candidate_id": "cand-test",
+                "actuation_allowed": False,
+                "gates": {
+                    "recommendation_trace_id": "blocked-trace",
+                    "gate_report_trace_id": "gate-trace-test",
+                    "recommendation_reasons": ["rollback_checks_missing"],
+                    "promotion_allowed": True,
+                },
+                "artifact_refs": [],
+                "audit": {
+                    "rollback_evidence_missing_checks": [
+                        "killSwitchDryRunFailed"
+                    ],
+                    "rollback_readiness_readout": {
+                        "kill_switch_dry_run_passed": False,
+                        "gitops_revert_dry_run_passed": False,
+                        "strategy_disable_dry_run_passed": False,
+                        "human_approved": False,
+                        "rollback_target": "live",
+                        "dry_run_completed_at": "",
+                    },
+                },
+            }
+            deps.gate_payload = {
+                "recommended_mode": "paper",
+                "gates": [],
+                "promotion_recommendation": {
+                    "action": "promote",
+                    "eligible": True,
+                    "trace_id": "rec-trace-blocked",
+                },
+                "throughput": {
+                    "signal_count": 9,
+                    "decision_count": 7,
+                    "trade_count": 3,
+                    "fold_metrics_count": 1,
+                    "stress_metrics_count": 4,
+                    "no_signal_window": False,
+                    "no_signal_reason": None,
+                },
+                "promotion_decision": {
+                    "promotion_allowed": True,
+                    "recommended_mode": "paper",
+                    "reason_codes": [],
+                },
+            }
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
+                scheduler._run_autonomous_cycle()
+
+            self.assertEqual(
+                scheduler.state.last_autonomy_promotion_action, "promote"
+            )
+            self.assertTrue(scheduler.state.last_autonomy_promotion_eligible)
+            self.assertEqual(
+                scheduler.state.last_autonomy_recommendation_trace_id, "blocked-trace"
+            )
+            self.assertEqual(scheduler.state.metrics.autonomy_promotions_total, 1)
+            self.assertEqual(scheduler.state.metrics.autonomy_promotion_allowed_total, 0)
+            self.assertEqual(scheduler.state.metrics.autonomy_promotion_blocked_total, 1)
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_outcome_total.get("blocked_paper"), 1
             )
 
     def test_run_autonomous_cycle_records_ingest_reason_when_no_signals(self) -> None:
@@ -975,6 +1097,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             deps.call_kwargs = kwargs
             deps.call_kwargs["strategy_config_path"] = strategy_config_path
             deps.call_kwargs["gate_policy_path"] = gate_policy_path
+            deps.call_kwargs["output_dir"] = output_dir
 
             deps.call_kwargs.update(
                 {
@@ -1006,10 +1129,11 @@ class TestTradingSchedulerAutonomy(TestCase):
             gates_dir = output_dir / "gates"
             gates_dir.mkdir(parents=True, exist_ok=True)
             actuation_intent_path = gates_dir / "actuation-intent.json"
-            actuation_payload = {
+            actuation_payload = deps.actuation_payload or {
                 "schema_version": "torghut.autonomy.actuation-intent.v1",
                 "run_id": "test-run-id",
                 "candidate_id": "cand-test",
+                "actuation_allowed": True,
                 "gates": {
                     "recommendation_trace_id": "rec-trace-test",
                     "gate_report_trace_id": "gate-trace-test",

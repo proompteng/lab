@@ -242,6 +242,13 @@ def run_autonomous_lane(
     evaluated_at: datetime | None = None,
     persist_results: bool = False,
     session_factory: Callable[[], Session] | None = None,
+    governance_repository: str = "proompteng/lab",
+    governance_base: str = "main",
+    governance_head: str | None = None,
+    governance_artifact_path: str | None = None,
+    priority_id: str | None = None,
+    governance_change: str = "autonomous-promotion",
+    governance_reason: str | None = None,
 ) -> AutonomousLaneResult:
     """Run deterministic phase-1/2 autonomous lane and emit artifacts."""
 
@@ -909,6 +916,21 @@ def run_autonomous_lane(
             promotion_gate_path=promotion_gate_path,
             promotion_recommendation=promotion_recommendation,
             recommendations=promotion_reasons,
+            governance_repository=governance_repository,
+            governance_base=governance_base,
+            governance_head=governance_head
+            if governance_head
+            else f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}",
+            governance_artifact_path=(
+                governance_artifact_path or str(output_dir)
+            ).strip()
+            or str(output_dir),
+            priority_id=priority_id,
+            governance_change=governance_change,
+            governance_reason=(
+                governance_reason
+                or f"Autonomous recommendation for {promotion_target} target."
+            ),
         )
         actuation_intent_path.write_text(
             json.dumps(actuation_intent_payload, indent=2), encoding="utf-8"
@@ -1011,6 +1033,13 @@ def _build_actuation_intent_payload(
     promotion_gate_path: Path,
     promotion_recommendation: PromotionRecommendation,
     recommendations: list[str],
+    governance_repository: str,
+    governance_base: str,
+    governance_head: str,
+    governance_artifact_path: str,
+    priority_id: str | None,
+    governance_change: str,
+    governance_reason: str,
 ) -> dict[str, Any]:
     raw_missing_checks = cast(object, rollback_check.get("missing_checks"))
     rollback_missing_checks = (
@@ -1049,6 +1078,15 @@ def _build_actuation_intent_payload(
         "generated_for": "autonomous-lane",
         "promotion_target": promotion_target,
         "recommended_mode": recommended_mode,
+        "governance": {
+            "repository": governance_repository,
+            "base": governance_base,
+            "head": governance_head,
+            "artifact_path": governance_artifact_path,
+            "change": governance_change,
+            "reason": governance_reason,
+            "priority_id": priority_id,
+        },
         "actuation_allowed": actuation_allowed,
         "confirmation_phrase_required": promotion_target == "live",
         "confirmation_phrase": (

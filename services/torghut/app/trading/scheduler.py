@@ -4983,6 +4983,8 @@ class TradingScheduler:
             promotion_target=promotion_target,
             approval_token=approval_token,
             drift_gate_evidence=drift_gate_evidence,
+            governance_head=f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}",
+            governance_artifact_path=str(run_output_dir),
         )
         if result is None:
             return
@@ -5264,6 +5266,11 @@ class TradingScheduler:
         promotion_target: Literal["paper", "live"],
         approval_token: str | None,
         drift_gate_evidence: Mapping[str, Any],
+        governance_repository: str = "proompteng/lab",
+        governance_base: str = "main",
+        governance_head: str | None = None,
+        governance_artifact_path: str | None = None,
+        priority_id: str | None = None,
     ) -> Any | None:
         if self._pipeline is None:
             raise RuntimeError("trading_pipeline_not_initialized")
@@ -5278,6 +5285,21 @@ class TradingScheduler:
                 code_version="live",
                 approval_token=approval_token,
                 drift_promotion_evidence=dict(drift_gate_evidence),
+                governance_repository=governance_repository,
+                governance_base=governance_base,
+                governance_head=(
+                    governance_head
+                    or f"agentruns/torghut-autonomy-{run_output_dir.name}"
+                ),
+                governance_artifact_path=(
+                    governance_artifact_path or str(run_output_dir)
+                ).strip()
+                or str(run_output_dir),
+                priority_id=priority_id,
+                governance_change="autonomous-promotion",
+                governance_reason=(
+                    f"Autonomous recommendation for {promotion_target} target."
+                ),
                 persist_results=True,
                 session_factory=self._pipeline.session_factory,
             )
@@ -5335,7 +5357,42 @@ class TradingScheduler:
             self.state.metrics.record_uncertainty_gate(
                 cast(Mapping[str, Any], gate_report)
             )
+        actuation_payload: dict[str, Any] = {}
+        actuation_gates_payload: Mapping[str, Any] = cast(
+            Mapping[str, Any], {}
+        )
+        actuation_allowed = False
+        if result.actuation_intent_path is not None:
+            try:
+                actuation_raw = json.loads(
+                    result.actuation_intent_path.read_text(encoding="utf-8")
+                )
+            except json.JSONDecodeError:
+                self.state.last_autonomy_reason = "actuation_intent_unparseable"
+            else:
+                if isinstance(actuation_raw, dict):
+                    actuation_payload = cast(dict[str, Any], actuation_raw)
+                    actuation_gates_raw = actuation_payload.get("gates")
+                    if isinstance(actuation_gates_raw, Mapping):
+                        actuation_gates_payload = cast(
+                            Mapping[str, Any], actuation_gates_raw
+                        )
+                    actuation_allowed = bool(
+                        actuation_payload.get("actuation_allowed", False)
+                    )
+                    gates_candidate_id = str(
+                        actuation_payload.get("candidate_id") or result.candidate_id
+                    ).strip()
+                    if gates_candidate_id:
+                        self.state.last_autonomy_candidate_id = gates_candidate_id
+                else:
+                    self.state.last_autonomy_reason = "actuation_intent_malformed"
+        else:
+            self.state.last_autonomy_reason = "actuation_intent_missing"
 
+        actuation_recommendation_trace_id = str(
+            actuation_gates_payload.get("recommendation_trace_id") or ""
+        ).strip()
         recommended_mode = str(gate_report.get("recommended_mode") or "shadow")
         self.state.last_autonomy_recommendation = recommended_mode
         throughput_raw = gate_report.get("throughput")
@@ -5356,22 +5413,34 @@ class TradingScheduler:
         if promotion_decision_candidate_id:
             self.state.last_autonomy_candidate_id = promotion_decision_candidate_id
         promotion_allowed = bool(promotion_decision.get("promotion_allowed", False))
+        effective_promotion_allowed = bool(promotion_allowed and actuation_allowed)
         self.state.metrics.record_autonomy_promotion_outcome(
             signal_count=_int_from_mapping(throughput, "signal_count"),
             decision_count=_int_from_mapping(throughput, "decision_count"),
             trade_count=_int_from_mapping(throughput, "trade_count"),
             recommendation=recommended_mode,
-            promotion_allowed=promotion_allowed,
+            promotion_allowed=effective_promotion_allowed,
             outcome=(
                 f"promoted_{recommended_mode}"
-                if promotion_allowed
+                if effective_promotion_allowed
                 else f"blocked_{recommended_mode}"
             ),
         )
+        if not actuation_allowed:
+            logger.info(
+                "Autonomy actuation blocked by actuation intent; run_id=%s candidate_id=%s",
+                result.run_id,
+                self.state.last_autonomy_candidate_id,
+            )
         self._update_autonomy_recommendation_state(
             recommendation_payload=gate_report.get("promotion_recommendation"),
             previous_candidate_id=previous_candidate_id,
             promotion_decision_candidate_id=promotion_decision_candidate_id,
+            recommendation_trace_id=(
+                actuation_recommendation_trace_id
+                if actuation_recommendation_trace_id
+                else None
+            ),
         )
         self._update_autonomy_throughput_state(
             throughput_payload=gate_report.get("throughput")
@@ -5405,6 +5474,7 @@ class TradingScheduler:
         recommendation_payload: Any,
         previous_candidate_id: str | None,
         promotion_decision_candidate_id: str,
+        recommendation_trace_id: str | None = None,
     ) -> None:
         if not isinstance(recommendation_payload, dict):
             self.state.last_autonomy_promotion_action = None
@@ -5422,7 +5492,9 @@ class TradingScheduler:
             recommendation.get("eligible", False)
         )
         self.state.last_autonomy_recommendation_trace_id = (
-            str(recommendation.get("trace_id", "")).strip() or None
+            recommendation_trace_id
+            or str(recommendation.get("trace_id", "")).strip()
+            or None
         )
         if action == "promote":
             self.state.metrics.autonomy_promotions_total += 1

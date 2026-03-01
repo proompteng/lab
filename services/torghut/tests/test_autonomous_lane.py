@@ -241,13 +241,73 @@ class TestAutonomousLane(TestCase):
                 if result.actuation_intent_path
                 else "{}"
             )
-            self.assertEqual(actuation_payload["schema_version"], "torghut.autonomy.actuation-intent.v1")
+            self.assertEqual(
+                actuation_payload["schema_version"], "torghut.autonomy.actuation-intent.v1"
+            )
             self.assertTrue(actuation_payload["actuation_allowed"])
+            governance_payload = actuation_payload["governance"]
+            self.assertEqual(governance_payload["repository"], "proompteng/lab")
+            self.assertEqual(governance_payload["base"], "main")
+            self.assertTrue(governance_payload["head"].startswith("agentruns/"))
+            self.assertEqual(governance_payload["artifact_path"], str(output_dir))
+            self.assertEqual(governance_payload["change"], "autonomous-promotion")
+            self.assertEqual(
+                governance_payload["reason"],
+                "Autonomous recommendation for paper target.",
+            )
+            self.assertIsNone(governance_payload["priority_id"])
             self.assertIn("artifact_refs", actuation_payload)
             self.assertTrue(
                 str(output_dir / "gates" / "profitability-evidence-v4.json")
                 in actuation_payload["artifact_refs"]
             )
+            self.assertIn(
+                str(output_dir / "gates" / "rollback-readiness.json"),
+                actuation_payload["artifact_refs"],
+            )
+
+    def test_lane_supports_governance_override_for_actuation_intent(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-overrides"
+            custom_artifact_dir = output_dir / "artifacts"
+            custom_head = "agentruns/torghut-autonomy-custom"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                governance_repository="alt-org/lab",
+                governance_base="release",
+                governance_head=custom_head,
+                governance_artifact_path=str(custom_artifact_dir),
+                priority_id="priority-123",
+                governance_change="manual-review",
+                governance_reason="manual override",
+            )
+
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+                if result.actuation_intent_path
+                else "{}"
+            )
+            governance_payload = actuation_payload["governance"]
+            self.assertEqual(governance_payload["repository"], "alt-org/lab")
+            self.assertEqual(governance_payload["base"], "release")
+            self.assertEqual(governance_payload["head"], custom_head)
+            self.assertEqual(governance_payload["artifact_path"], str(custom_artifact_dir))
+            self.assertEqual(governance_payload["change"], "manual-review")
+            self.assertEqual(governance_payload["priority_id"], "priority-123")
+            self.assertEqual(governance_payload["reason"], "manual override")
 
     def test_lane_blocks_live_without_policy_enablement(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"

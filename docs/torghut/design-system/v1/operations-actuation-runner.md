@@ -11,6 +11,11 @@
 Define a **gated actuation runner** that performs common Torghut recovery actions **via GitOps PRs** (not direct
 kubectl mutations). This is the production-safe counterpart to the read-only health report.
 
+Autonomy recommendation workflows should consume the `governance` block from
+`services/torghut/app/trading/autonomy/lane.py` `actuation-intent.json` payloads and pass the same values into the
+`run` parameters (`repository`, `base`, `head`, `artifact_path`, `change`, `reason`, and optional
+`priorityId`) so each PR is reproducible and auditable.
+
 ## Guardrails (non-negotiable)
 
 - **GitOps-first only:** actuation must open PRs against `argocd/applications/torghut/**`.
