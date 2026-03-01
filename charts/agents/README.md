@@ -182,7 +182,24 @@ controllers:
   podDisruptionBudget:
     enabled: true
     maxUnavailable: 1
+    ```
+
+### Controller rollout strategy (rollout safety)
+
+During upgrades, controller availability is also controlled by `Deployment` strategy settings. Set
+`controllers.deploymentStrategy` when you need stricter availability behavior than the Kubernetes default.
+
+```yaml
+controllers:
+  enabled: true
+  deploymentStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
 ```
+
+For single-controller deployments this keeps at least one controller pod available throughout the rollout.
 
 ### Observability (Prometheus + Grafana)
 

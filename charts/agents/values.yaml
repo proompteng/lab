@@ -43,6 +43,7 @@ controllers:
     minAvailable: 1
     maxUnavailable: ''
     annotations: {}
+  deploymentStrategy: {}
   image:
     repository: ''
     tag: ''

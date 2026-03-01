@@ -88,6 +88,21 @@
           },
           "additionalProperties": false
         },
+        "deploymentStrategy": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "rollingUpdate": {
+              "type": "object",
+              "properties": {
+                "maxUnavailable": { "type": ["integer", "string"] },
+                "maxSurge": { "type": ["integer", "string"] }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "resources": {
           "type": "object",
           "properties": {
