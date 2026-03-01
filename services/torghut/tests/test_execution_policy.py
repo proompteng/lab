@@ -675,6 +675,47 @@ class TestExecutionPolicy(TestCase):
         )
         self.assertIn("execution_microstructure", outcome.params_update())
 
+    def test_microstructure_state_staleness_falls_back_to_baseline_safely(self) -> None:
+        config.settings.trading_execution_advisor_enabled = False
+        config.settings.trading_execution_advisor_max_staleness_seconds = 10
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"),
+            price=Decimal("100"),
+            order_type="market",
+            action="buy",
+        ).model_copy(
+            update={
+                "event_ts": datetime(2026, 1, 1, 0, 1, 0, tzinfo=timezone.utc),
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "8",
+                        "depth_top5_usd": "200000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 20,
+                        "fill_hazard": "0.45",
+                        "liquidity_regime": "normal",
+                    },
+                },
+            }
+        )
+
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+
+        self.assertEqual(outcome.decision.order_type, "market")
+        self.assertEqual(
+            outcome.microstructure_metadata["fallback_reason"],
+            "microstructure_state_stale",
+        )
+        self.assertFalse(outcome.microstructure_metadata["applied"])
+        self.assertIn("execution_microstructure", outcome.params_update())
+
     def test_adaptive_policy_fallback_is_respected_as_safe_default(self) -> None:
         policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.1")))
         adaptive_policy = AdaptiveExecutionPolicyDecision(

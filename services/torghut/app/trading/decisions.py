@@ -473,10 +473,8 @@ def _has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
         if value is None:
             return False
         if isinstance(value, Mapping):
-            for nested_value in cast(Mapping[str, object], value).values():
-                if _is_explicit_value(nested_value):
-                    return True
-            return False
+            typed_mapping = cast(Mapping[Any, Any], value)
+            return any(_is_explicit_value(v) for v in typed_mapping.values())
         if isinstance(value, str):
             return bool(value.strip())
         return True
