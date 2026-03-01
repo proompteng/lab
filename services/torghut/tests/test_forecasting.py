@@ -182,6 +182,7 @@ class TestForecastRouterV5(TestCase):
             )
 
         signal = _signal()
+        signal.payload['macd']['macd'] = '-0.40'
         signal.payload['macd']['signal'] = '-0.30'
         signal.payload['hmm_regime_id'] = 'R2'
         signal.payload['hmm_guardrail'] = {
@@ -340,6 +341,7 @@ class TestForecastRouterV5(TestCase):
             )
 
         signal = _signal()
+        signal.payload['macd']['macd'] = '1.2'
         signal.payload['hmm_regime_id'] = 'R2'
         signal.payload['regime_label'] = 'trend'
         result = router.route_and_forecast(
@@ -398,6 +400,7 @@ class TestForecastRouterV5(TestCase):
             )
 
         signal = _signal()
+        signal.payload['macd']['macd'] = '0.40'
         signal.payload['macd']['signal'] = '0.55'
         signal.payload['hmm_regime_id'] = 'R2'
         signal.payload['hmm_transition_shock'] = True
@@ -415,3 +418,20 @@ class TestForecastRouterV5(TestCase):
 
         self.assertEqual(result.contract.route_key.split('|')[-1], 'mean_revert')
         self.assertEqual(result.contract.model_family, 'moment')
+
+    def test_router_prefers_normalized_route_regime_label_hint(self) -> None:
+        signal = _signal()
+        signal.payload['macd']['macd'] = '0.40'
+        signal.payload['macd']['signal'] = '0.55'
+        signal.payload['hmm_regime_id'] = 'R2'
+        signal.payload['hmm_transition_shock'] = True
+        signal.payload['hmm_guardrail'] = {'stale': False, 'fallback_to_defensive': False}
+        signal.payload['hmm_artifact'] = {
+            'model_id': 'hmm-regime-v1',
+            'feature_schema': 'hmm-v1',
+            'training_run_id': 'trn-v1',
+        }
+        feature_vector = normalize_feature_vector_v3(signal)
+
+        self.assertNotIn('hmm_transition_shock', feature_vector.values)
+        self.assertEqual(feature_vector.values.get('route_regime_label'), 'mean_revert')

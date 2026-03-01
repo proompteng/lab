@@ -5,6 +5,7 @@
 - Strengthen HMM/routing contracts used by forecasting and decision/runtime paths.
 - Enforce fail-closed execution handling for non-authoritative HMM regime states.
 - Expand tests for transition-shock behavior and migration-safe scheduler enablement.
+- Resolve a regression where feature-normalized HMM transition-shock context could be dropped before forecast routing.
 
 ## Changes made
 
@@ -13,7 +14,7 @@
   - Added `HMMRegimeContext.authority_reason` to provide canonical reasoning for non-authoritative states.
 
 - `services/torghut/app/trading/forecasting.py`
-  - Updated `ForecastRouterV5._resolve_regime` to delegate regime routing to `resolve_regime_route_label` so forecast route selection uses a single shared routing contract with guardrails and transition-shock handling.
+  - Updated `ForecastRouterV5._resolve_regime` to prefer `route_regime_label` from the normalized feature vector before reparsing HMM context directly, preventing transition-shock drop-through introduced by feature normalization.
 
 - `services/torghut/app/trading/scheduler.py`
   - Updated runtime regime gate logic to fail-closed on any non-authoritative regime payload (including invalid/missing regime identifiers), not just when legacy labels are absent.
@@ -32,6 +33,7 @@
 ## Validation
 
 - Executed: `bun run format`
-- Executed: `python3 -m py_compile` on touched Python modules/tests for syntax validation
-- Attempted: `python3 -m unittest tests.test_forecasting tests.test_decisions tests.test_trading_pipeline`
-  - Blocked by missing Python runtime dependencies in this environment (`pydantic`, `sqlalchemy`).
+- Executed: `cd services/torghut && uv run --frozen pyright --project pyrightconfig.json`
+- Executed: `cd services/torghut && uv run --frozen pyright --project pyrightconfig.alpha.json`
+- Executed: `cd services/torghut && uv run --frozen pyright --project pyrightconfig.scripts.json`
+- Executed: `cd services/torghut && uv run --frozen python -m unittest tests/test_forecasting.py tests/test_decisions.py tests/test_scheduler_regime_resolution.py`

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from .features import FeatureVectorV3, optional_decimal
-from .regime_hmm import resolve_hmm_context
+from .regime_hmm import resolve_hmm_context, resolve_regime_route_label
 
 
 def _empty_dict() -> dict[str, Any]:
@@ -592,7 +592,12 @@ class ForecastRouterV5:
         return ForecastRouterResult(contract=contract, audit=audit, telemetry=telemetry)
 
     def _resolve_regime(self, feature_vector: FeatureVectorV3) -> str:
-        resolved_regime = resolve_regime_route_label(
+        route_regime_label = feature_vector.values.get('route_regime_label')
+        if isinstance(route_regime_label, str):
+            normalized = route_regime_label.strip().lower()
+            if normalized:
+                return normalized
+        resolved_regime: str = resolve_regime_route_label(
             feature_vector.values,
             macd=optional_decimal(feature_vector.values.get('macd')),
             macd_signal=optional_decimal(feature_vector.values.get('macd_signal')),
