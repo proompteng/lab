@@ -21,6 +21,12 @@ class TestAutonomyGates(TestCase):
             required_feature_null_rate=Decimal("0.00"),
             staleness_ms_p95=0,
             symbol_coverage=3,
+            tca_metrics={
+                "order_count": 12,
+                "avg_slippage_bps": "18",
+                "avg_shortfall_notional": "7",
+                "avg_churn_ratio": "0.45",
+            },
             llm_metrics={"error_ratio": "0.00"},
             metrics={
                 "decision_count": 20,

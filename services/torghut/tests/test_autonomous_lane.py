@@ -276,7 +276,13 @@ class TestAutonomousLane(TestCase):
                 session_factory=session_factory,
             )
 
-            self.assertIsNotNone(result.paper_patch_path)
+            self.assertIsNone(result.paper_patch_path)
+            gate_payload = json.loads(
+                result.gate_report_path.read_text(encoding="utf-8")
+            )
+            self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
+            self.assertIn("tca_order_count_missing", gate_payload["promotion_decision"]["reasons"])
+
             with session_factory() as session:
                 run_row = session.execute(
                     select(ResearchRun).where(ResearchRun.run_id == result.run_id)
@@ -560,7 +566,7 @@ class TestAutonomousLane(TestCase):
             )
             self.assertEqual(gate0["status"], "pass")
 
-    def test_intraday_strategy_candidate_uses_intraday_universe_type(self) -> None:
+    def test_intraday_strategy_candidate_blocks_paper_patch_without_tca_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             config_dir = Path(tmpdir) / "configs"
             config_dir.mkdir(parents=True, exist_ok=True)
@@ -664,14 +670,12 @@ class TestAutonomousLane(TestCase):
                 session_factory=session_factory,
                 code_version="test-sha",
             )
-            self.assertIsNotNone(result.paper_patch_path)
-            assert result.paper_patch_path is not None
-            patch_payload = safe_load(
-                result.paper_patch_path.read_text(encoding="utf-8")
+            self.assertIsNone(result.paper_patch_path)
+            gate_payload = json.loads(
+                result.gate_report_path.read_text(encoding="utf-8")
             )
-            strategies_payload = safe_load(patch_payload["data"]["strategies.yaml"])
-            strategies = strategies_payload["strategies"]
-            self.assertEqual(strategies[0]["universe_type"], "intraday_tsmom_v1")
+            self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
+            self.assertIn("tca_order_count_missing", gate_payload["promotion_decision"]["reasons"])
 
     def test_lane_blocks_promotion_when_profitability_threshold_not_met(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
