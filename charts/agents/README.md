@@ -163,6 +163,27 @@ Enable gRPC for agentctl or in-cluster clients:
 - `grpc.enabled=true`
 - Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token
 
+### PodDisruptionBudget (availability)
+
+The chart exposes component-scoped disruption controls:
+
+- `podDisruptionBudget.*` applies to the control-plane `Deployment/agents`.
+- `controllers.podDisruptionBudget.*` applies to the controllers `Deployment/agents-controllers` and only takes effect when `controllers.enabled=true`.
+
+Example:
+
+```yaml
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+controllers:
+  enabled: true
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+```
+
 ### Observability (Prometheus + Grafana)
 
 The chart ships a Prometheus scrape endpoint and an optional ServiceMonitor plus a Grafana dashboard ConfigMap.
@@ -376,6 +397,12 @@ grpc:
 
 podDisruptionBudget:
   enabled: true
+
+controllers:
+  enabled: true
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
 
 networkPolicy:
   enabled: true

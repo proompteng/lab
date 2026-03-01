@@ -1,12 +1,12 @@
 # Chart Controllers PodDisruptionBudget
 
-Status: Draft (2026-02-07)
+Status: Implemented (2026-03-01)
 
 Docs index: [README](../README.md)
 
 ## Overview
 
-The chart can deploy a separate controllers Deployment (`agents-controllers`), but the chart’s PodDisruptionBudget (PDB) template currently only targets the control plane pods. This creates an availability gap: controllers may all be evicted during node drains or cluster maintenance even when the control plane is protected.
+The chart can deploy a separate controllers Deployment (`agents-controllers`), and it now renders PDBs for both the control plane and controllers when configured.
 
 ## Goals
 
@@ -21,8 +21,12 @@ The chart can deploy a separate controllers Deployment (`agents-controllers`), b
 
 - Existing PDB template: `charts/agents/templates/poddisruptionbudget.yaml`
   - Selects `{{ include "agents.selectorLabels" . }}` (control plane).
-- Controllers selector labels differ: `charts/agents/templates/_helpers.tpl` (`agents.controllersSelectorLabels`).
-- Values: `charts/agents/values.yaml` exposes `podDisruptionBudget.*` (single set).
+- The same template also renders `agents-controllers` PDBs when
+  `controllers.enabled=true` and `controllers.podDisruptionBudget.enabled=true`,
+  selecting with `{{ include "agents.controllersSelectorLabels" . }}` from `charts/agents/templates/_helpers.tpl`.
+- Values: `charts/agents/values.yaml` now supports:
+  - `podDisruptionBudget.*` for control plane (backward-compatible),
+  - `controllers.podDisruptionBudget.*` for controllers.
 - Cluster desired state: `argocd/applications/agents/values.yaml` does not enable a PDB.
 
 ## Design
@@ -31,8 +35,8 @@ The chart can deploy a separate controllers Deployment (`agents-controllers`), b
 
 Add component-scoped PDBs:
 
-- `controlPlane.podDisruptionBudget` (defaults to existing `podDisruptionBudget`)
-- `controllers.podDisruptionBudget` (new)
+- `podDisruptionBudget` for control plane (existing key, backward-compatible)
+- `controllers.podDisruptionBudget` for controllers (new)
 
 ### Defaults
 
@@ -48,9 +52,9 @@ Add component-scoped PDBs:
 
 ## Rollout Plan
 
-1. Add `controllers.podDisruptionBudget` with defaults (disabled).
-2. Enable in non-prod and validate node-drain behavior.
-3. Enable in prod after confirming controllers can roll without downtime.
+1. ✅ Add `controllers.podDisruptionBudget` with defaults (disabled).
+2. ✅ Validate local/prod chart render and selector behavior.
+3. Enable in production overlays after confirming rollout safety.
 
 Rollback:
 
