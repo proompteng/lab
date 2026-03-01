@@ -171,6 +171,8 @@ class DSPyReviewRuntime:
     ) -> tuple[LLMReviewResponse, DSPyRuntimeMetadata]:
         if self.mode == "disabled":
             raise DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled")
+        if self.mode == "active":
+            self._require_live_runtime_gate()
         if self.artifact_hash is None:
             raise DSPyRuntimeUnsupportedStateError("dspy_artifact_hash_missing")
         if (
@@ -386,6 +388,15 @@ class DSPyReviewRuntime:
             raise DSPyRuntimeUnsupportedStateError("dspy_program_name_mismatch")
         if manifest.signature_version != self.signature_version:
             raise DSPyRuntimeUnsupportedStateError("dspy_signature_version_mismatch")
+
+    def _require_live_runtime_gate(self) -> None:
+        allowed, reasons = settings.llm_dspy_live_runtime_gate()
+        if allowed:
+            return
+        reason_summary = "|".join(reasons) or "dspy_live_runtime_gate_blocked"
+        raise DSPyRuntimeUnsupportedStateError(
+            f"dspy_live_runtime_gate_blocked:{reason_summary}"
+        )
 
 
 def _normalize_hash(value: str | None) -> str | None:

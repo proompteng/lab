@@ -25,6 +25,73 @@ from app.trading.llm.dspy_programs.signatures import DSPyTradeReviewOutput
 
 
 class TestLLMDSPyRuntime(TestCase):
+    def _enable_live_runtime_gate(
+        self,
+        *,
+        jangar_base_url: str | None = None,
+        trading_mode: str = "live",
+    ) -> dict[str, object]:
+        original = {
+            "trading_mode": settings.trading_mode,
+            "llm_dspy_runtime_mode": settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": settings.llm_dspy_artifact_hash,
+            "jangar_base_url": settings.jangar_base_url,
+            "llm_allowed_models_raw": settings.llm_allowed_models_raw,
+            "llm_rollout_stage": settings.llm_rollout_stage,
+            "llm_evaluation_report": settings.llm_evaluation_report,
+            "llm_effective_challenge_id": settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": settings.llm_shadow_completed_at,
+            "llm_model_version_lock": settings.llm_model_version_lock,
+        }
+        settings.llm_allowed_models_raw = settings.llm_model
+        settings.llm_rollout_stage = "stage3"
+        settings.llm_evaluation_report = "ok"
+        settings.llm_effective_challenge_id = "dspy-runtime-challenge"
+        settings.llm_shadow_completed_at = "2026-03-01T00:00:00Z"
+        settings.llm_model_version_lock = settings.llm_model
+        settings.llm_dspy_runtime_mode = "active"
+        settings.llm_dspy_artifact_hash = "a" * 64
+        if jangar_base_url is not None:
+            settings.jangar_base_url = jangar_base_url
+        settings.trading_mode = trading_mode
+        return original
+
+    def _restore_live_runtime_gate(self, original: dict[str, object]) -> None:
+        settings.trading_mode = cast(str, original["trading_mode"])
+        settings.llm_dspy_runtime_mode = cast(
+            str,
+            original["llm_dspy_runtime_mode"],
+        )
+        settings.llm_dspy_artifact_hash = cast(
+            str | None,
+            original["llm_dspy_artifact_hash"],
+        )
+        settings.jangar_base_url = cast(str | None, original["jangar_base_url"])
+        settings.llm_allowed_models_raw = cast(
+            str | None,
+            original["llm_allowed_models_raw"],
+        )
+        settings.llm_rollout_stage = cast(
+            str | None,
+            original["llm_rollout_stage"],
+        )
+        settings.llm_evaluation_report = cast(
+            str | None,
+            original["llm_evaluation_report"],
+        )
+        settings.llm_effective_challenge_id = cast(
+            str | None,
+            original["llm_effective_challenge_id"],
+        )
+        settings.llm_shadow_completed_at = cast(
+            str | None,
+            original["llm_shadow_completed_at"],
+        )
+        settings.llm_model_version_lock = cast(
+            str | None,
+            original["llm_model_version_lock"],
+        )
+
     def _request(self) -> LLMReviewRequest:
         return LLMReviewRequest(
             decision=LLMDecisionContext(
@@ -165,7 +232,9 @@ class TestLLMDSPyRuntime(TestCase):
             settings.jangar_api_key = original_api_key
 
     def test_active_runtime_review_uses_dspy_live_program(self) -> None:
-        original_base = settings.jangar_base_url
+        original_gate = self._enable_live_runtime_gate(
+            jangar_base_url="https://jangar.openai.local/openai/v1"
+        )
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,
@@ -195,7 +264,6 @@ class TestLLMDSPyRuntime(TestCase):
         fake_program = SimpleNamespace(run=lambda _payload: expected_output)
 
         try:
-            settings.jangar_base_url = "https://jangar.openai.local/openai/v1"
             with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
                 with patch.object(
                     runtime, "_resolve_program", return_value=fake_program
@@ -207,7 +275,31 @@ class TestLLMDSPyRuntime(TestCase):
             self.assertEqual(metadata.artifact_source, "database")
             self.assertEqual(metadata.program_name, "trade-review-committee-v1")
         finally:
-            settings.jangar_base_url = original_base
+            self._restore_live_runtime_gate(original_gate)
+
+    def test_active_runtime_blocks_when_live_gate_fails(self) -> None:
+        original_gate = self._enable_live_runtime_gate(
+            jangar_base_url="https://jangar.openai.local"
+        )
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash="a" * 64,
+            program_name="trade-review-committee-v1",
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+        settings.llm_rollout_stage = "stage2"
+
+        try:
+            with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
+                runtime.review(self._request())
+
+            self.assertIn(
+                "dspy_live_runtime_gate_blocked", str(exc.exception)
+            )
+            self.assertIn("dspy_live_runtime_gate_blocked:", str(exc.exception))
+        finally:
+            self._restore_live_runtime_gate(original_gate)
 
     def test_disabled_runtime_mode_is_blocking(self) -> None:
         runtime = DSPyReviewRuntime(
@@ -224,6 +316,9 @@ class TestLLMDSPyRuntime(TestCase):
         self.assertIn("dspy_runtime_disabled", str(exc.exception))
 
     def test_active_runtime_rejects_bootstrap_artifact_hash(self) -> None:
+        original_gate = self._enable_live_runtime_gate(
+            jangar_base_url="https://jangar.openai.local"
+        )
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash=DSPyReviewRuntime.bootstrap_artifact_hash(),
@@ -236,8 +331,12 @@ class TestLLMDSPyRuntime(TestCase):
             runtime.review(self._request())
 
         self.assertIn("dspy_bootstrap_artifact_forbidden", str(exc.exception))
+        self._restore_live_runtime_gate(original_gate)
 
     def test_program_name_mismatch_is_blocking(self) -> None:
+        original_gate = self._enable_live_runtime_gate(
+            jangar_base_url="https://jangar.openai.local"
+        )
         runtime = DSPyReviewRuntime(
             mode="shadow",
             artifact_hash=DSPyReviewRuntime.bootstrap_artifact_hash(),
@@ -250,8 +349,12 @@ class TestLLMDSPyRuntime(TestCase):
             runtime.review(self._request())
 
         self.assertIn("dspy_program_name_mismatch", str(exc.exception))
+        self._restore_live_runtime_gate(original_gate)
 
     def test_unknown_artifact_hash_is_rejected(self) -> None:
+        original_gate = self._enable_live_runtime_gate(
+            jangar_base_url="https://jangar.openai.local"
+        )
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,
@@ -265,8 +368,12 @@ class TestLLMDSPyRuntime(TestCase):
                 runtime.review(self._request())
 
         self.assertIn("dspy_artifact_manifest_not_found", str(exc.exception))
+        self._restore_live_runtime_gate(original_gate)
 
     def test_runtime_requires_artifact_hash(self) -> None:
+        original_gate = self._enable_live_runtime_gate(
+            jangar_base_url="https://jangar.openai.local"
+        )
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash=None,
@@ -279,8 +386,12 @@ class TestLLMDSPyRuntime(TestCase):
             runtime.review(self._request())
 
         self.assertIn("dspy_artifact_hash_missing", str(exc.exception))
+        self._restore_live_runtime_gate(original_gate)
 
     def test_active_runtime_rejects_heuristic_executor(self) -> None:
+        original_gate = self._enable_live_runtime_gate(
+            jangar_base_url="https://jangar.openai.local"
+        )
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,
@@ -307,8 +418,12 @@ class TestLLMDSPyRuntime(TestCase):
             "dspy_active_mode_requires_dspy_live_executor",
             str(exc.exception),
         )
+        self._restore_live_runtime_gate(original_gate)
 
     def test_unknown_artifact_executor_is_blocking(self) -> None:
+        original_gate = self._enable_live_runtime_gate(
+            jangar_base_url="https://jangar.openai.local"
+        )
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,
@@ -333,3 +448,4 @@ class TestLLMDSPyRuntime(TestCase):
                 runtime.review(self._request())
 
         self.assertIn("dspy_artifact_executor_unknown", str(exc.exception))
+        self._restore_live_runtime_gate(original_gate)
