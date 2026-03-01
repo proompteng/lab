@@ -50,7 +50,7 @@ The v1 documents are written to stay consistent with:
 - v5: total=15 (Implemented=0, Partial=7, Planned=8)
 - v6: total=8 (Implemented=0, Partial=5, Planned=3)
 
-- Evidence-sync checkpoint: `iteration-11.md`
+- Evidence-sync checkpoint: `implementation-audit.md`
 
 ## Design doc set
 
