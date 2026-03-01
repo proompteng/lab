@@ -21,11 +21,13 @@ spec:
                 secretKeyRef:
                   name: huly-secret
                   key: SERVER_SECRET
-            - name: DB_URL
+            - name: COCKROACH_DB_URL
               valueFrom:
                 secretKeyRef:
                   name: huly-secret
                   key: CR_DB_URL
+            - name: DB_URL
+              value: "$(COCKROACH_DB_URL)?sslmode=require"
             - name: FULLTEXT_DB_URL
               valueFrom:
                 configMapKeyRef:
@@ -53,7 +55,6 @@ spec:
           name: fulltext
           ports:
             - containerPort: 4700
-              hostPort: 4700
               protocol: TCP
           resources:
             limits:
