@@ -222,6 +222,34 @@ class TestConfig(TestCase):
         self.assertFalse(allowed)
         self.assertIn("dspy_jangar_base_url_invalid", reasons)
 
+    def test_live_dspy_runtime_gate_blocks_jangar_path_with_query_or_fragment(self) -> None:
+        settings = Settings(
+            TRADING_MODE="live",
+            TRADING_LIVE_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="jangar",
+            LLM_DSPY_RUNTIME_MODE="active",
+            LLM_DSPY_ARTIFACT_HASH="a" * 64,
+            JANGAR_BASE_URL="https://jangar.example/openai/v1/chat/completions?x=1",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+
+        allowed, reasons = settings.llm_dspy_live_runtime_gate()
+        self.assertFalse(allowed)
+        self.assertIn("dspy_jangar_base_url_invalid", reasons)
+
+        settings = Settings(
+            TRADING_MODE="live",
+            TRADING_LIVE_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="jangar",
+            LLM_DSPY_RUNTIME_MODE="active",
+            LLM_DSPY_ARTIFACT_HASH="a" * 64,
+            JANGAR_BASE_URL="https://jangar.example/openai/v1/chat/completions#frag",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        allowed, reasons = settings.llm_dspy_live_runtime_gate()
+        self.assertFalse(allowed)
+        self.assertIn("dspy_jangar_base_url_invalid", reasons)
+
     def test_live_dspy_runtime_gate_allows_openai_compatible_jangar_base_url(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
