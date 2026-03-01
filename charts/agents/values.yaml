@@ -218,7 +218,6 @@ controller:
     leaseDurationSeconds: 30
     renewDeadlineSeconds: 20
     retryPeriodSeconds: 5
-  namespaces: []
   concurrency:
     perNamespace: 10
     perAgent: 5
@@ -333,11 +332,11 @@ versionControlProvider:
 
 orchestrationController:
   enabled: true
-  namespaces: []
+  # Omit namespaces to target the release namespace.
 
 supportingController:
   enabled: true
-  namespaces: []
+  # Omit namespaces to target the release namespace.
 
 agentComms:
   enabled: false

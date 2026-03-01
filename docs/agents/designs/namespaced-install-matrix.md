@@ -22,15 +22,16 @@ Define the supported install modes and their RBAC implications for the Agents co
 
 | Install mode        | controller.namespaces  | rbac.clusterScoped | Expected RBAC                    |
 | ------------------- | ---------------------- | ------------------ | -------------------------------- |
-| Namespaced (single) | `[]` or `["agents"]`   | `false`            | Role + RoleBinding in namespace  |
+| Namespaced (single) | omitted or `["agents"]` | `false`            | Role + RoleBinding in namespace  |
 | Multi-namespace     | `["team-a", "team-b"]` | `true`             | ClusterRole + ClusterRoleBinding |
 | Wildcard            | `["*"]`                | `true`             | ClusterRole + ClusterRoleBinding |
 
 ## Behavior
 
-- Namespaced installs only watch the configured namespace(s).
+- Namespaced installs only watch the configured namespace(s). Omitting the key watches the release namespace.
 - Cluster-scoped installs watch multiple namespaces or wildcarded namespaces.
 - The controller fails fast on wildcard namespaces without cluster-scoped RBAC.
+- An explicit empty list (`[]`) is rejected at render time.
 
 ## Validation
 

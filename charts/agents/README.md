@@ -110,9 +110,11 @@ Agent memory backends are configured separately via the `Memory` CRD.
 
 ### Controller scope
 
-- Single namespace: default
-- Multi-namespace: set `controller.namespaces` and `rbac.clusterScoped=true`
+- Single namespace (namespaced RBAC): omit `controller.namespaces` for release-namespace default or set one namespace
+- Multi-namespace: set `controller.namespaces` with multiple namespaces and `rbac.clusterScoped=true`
 - Wildcard: set `controller.namespaces=["*"]` and `rbac.clusterScoped=true`
+
+Do **not** set `controller.namespaces: []`. An explicit empty list is rejected by chart validation.
 
 ### AgentRun status artifact limits
 
@@ -129,7 +131,7 @@ Note: The CRD schema hard-caps `status.artifacts` at 50 entries; controller-side
 
 | Install mode               | controller.namespaces  | rbac.clusterScoped | RBAC scope                                              |
 | -------------------------- | ---------------------- | ------------------ | ------------------------------------------------------- |
-| Namespaced (single)        | `[]` or `["agents"]`   | `false`            | Role + RoleBinding                                      |
+| Namespaced (single)        | omitted or `["agents"]` | `false`            | Role + RoleBinding                                      |
 | Multi-namespace (explicit) | `["team-a", "team-b"]` | `true`             | ClusterRole + ClusterRoleBinding                        |
 | Wildcard (all namespaces)  | `["*"]`                | `true`             | ClusterRole + ClusterRoleBinding (namespace list/watch) |
 
