@@ -138,6 +138,37 @@ class TestAlphaLane(TestCase):
                 },
             )
 
+    def test_lane_iteration_notes_use_explicit_artifact_path_argument(self) -> None:
+        train, test = self._trend_frames()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "alpha-notes"
+            notes_artifact_path = Path(tmpdir) / "explicit-notes-root"
+            result = run_alpha_discovery_lane(
+                artifact_path=output_dir,
+                train_prices=train,
+                test_prices=test,
+                notes_artifact_path=str(notes_artifact_path),
+                execution_context={
+                    "execution_context": {
+                        "artifactPath": str(Path(tmpdir) / "execution-notes-root"),
+                    }
+                },
+            )
+
+            notes_dir = notes_artifact_path / "notes"
+            notes = sorted(notes_dir.glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            self.assertIn(
+                "Alpha lane iteration 1",
+                notes[0].read_text(encoding="utf-8"),
+            )
+            self.assertEqual(result.output_dir, output_dir)
+            self.assertFalse(
+                any((output_dir / "notes").glob("iteration-*.md")),
+                "iteration notes should be written under explicit artifactPath argument",
+            )
+
     def test_lane_lineage_persists_in_candidate_spec(self) -> None:
         train, test = self._trend_frames()
 

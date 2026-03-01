@@ -108,15 +108,22 @@ def _coalesce_alpha_inputs(
     base: str | None,
     head: str | None,
     priority_id: str | None,
+    notes_artifact_path: str | None,
     execution_context: Mapping[str, Any] | None,
 ) -> tuple[str | None, str | None, str | None, str | None, Path | None]:
     raw_execution_context = (
-        execution_context.get("execution_context")
-        if isinstance(execution_context, Mapping)
-        and isinstance(execution_context.get("execution_context"), Mapping)
+        execution_context if isinstance(execution_context, Mapping) else {}
+    )
+    nested_execution_context = (
+        raw_execution_context.get("execution_context")
+        if isinstance(raw_execution_context.get("execution_context"), Mapping)
+        else raw_execution_context
+    )
+    runtime_context = (
+        cast(Mapping[str, Any], nested_execution_context)
+        if isinstance(nested_execution_context, Mapping)
         else {}
     )
-    runtime_context = cast(Mapping[str, Any], raw_execution_context)
 
     repository_resolved = (
         repository if repository is not None else _coerce_str(runtime_context.get("repository"))
@@ -132,15 +139,18 @@ def _coalesce_alpha_inputs(
         if priority_id is not None
         else _coerce_str(runtime_context.get("priorityId"))
     )
-    artifact_path = _coerce_str(runtime_context.get("artifactPath"), default="")
-    notes_artifact_path = Path(artifact_path) if artifact_path else None
+    artifact_root = (
+        _coerce_str(notes_artifact_path)
+        or _coerce_str(runtime_context.get("artifactPath"))
+    )
+    resolved_artifact_path = Path(artifact_root) if artifact_root else None
 
     return (
         repository_resolved,
         base_resolved,
         head_resolved,
         priority_id_resolved,
-        notes_artifact_path,
+        resolved_artifact_path,
     )
 
 
@@ -562,6 +572,7 @@ def run_alpha_discovery_lane(
     base: str | None = None,
     head: str | None = None,
     priority_id: str | None = None,
+    notes_artifact_path: str | None = None,
     lookback_days: Iterable[int] = (20, 40, 60),
     vol_lookback_days: Iterable[int] = (10, 20, 40),
     target_daily_vols: Iterable[float] = (0.0075, 0.01, 0.0125),
@@ -593,6 +604,7 @@ def run_alpha_discovery_lane(
         base=base,
         head=head,
         priority_id=priority_id,
+        notes_artifact_path=notes_artifact_path,
         execution_context=execution_context,
     )
     research_dir = output_dir / "research"

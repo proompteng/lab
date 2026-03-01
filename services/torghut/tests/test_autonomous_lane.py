@@ -1140,6 +1140,183 @@ class TestAutonomousLane(TestCase):
                 candidate.metadata_bundle["replay_artifact_hashes"],
             )
 
+    @patch(
+        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+        return_value=PromotionPrerequisiteResult(
+            allowed=True,
+            reasons=[],
+            required_artifacts=[],
+            missing_artifacts=[],
+            reason_details=[],
+            artifact_refs=[],
+            required_throughput={"signal_count": 1, "decision_count": 1},
+            observed_throughput={"signal_count": 1, "decision_count": 1},
+        ),
+    )
+    @patch(
+        "app.trading.autonomy.lane.evaluate_rollback_readiness",
+        return_value=RollbackReadinessResult(
+            ready=True,
+            reasons=[],
+            required_checks=[],
+            missing_checks=[],
+        ),
+    )
+    @patch(
+        "app.trading.autonomy.lane.evaluate_gate_matrix",
+        return_value=GateEvaluationReport(
+            policy_version="v3-gates-1",
+            promotion_target="paper",
+            promotion_allowed=True,
+            recommended_mode="paper",
+            gates=[
+                GateResult(gate_id="gate0_data_integrity", status="pass"),
+                GateResult(gate_id="gate1_statistical_robustness", status="pass"),
+                GateResult(gate_id="gate2_risk_capacity", status="pass"),
+                GateResult(gate_id="gate3_shadow_paper_quality", status="pass"),
+                GateResult(gate_id="gate4_operational_readiness", status="pass"),
+                GateResult(gate_id="gate6_profitability_evidence", status="pass"),
+                GateResult(gate_id="gate5_live_ramp_readiness", status="pass"),
+            ],
+            reasons=[],
+            uncertainty_gate_action="pass",
+            coverage_error="0.01",
+            conformal_interval_width="1.0",
+            shift_score="0.10",
+            recalibration_run_id=None,
+            evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            code_version="test-sha",
+        ),
+    )
+    @patch(
+        "app.trading.autonomy.lane.build_promotion_recommendation",
+        return_value=PromotionRecommendation(
+            action="promote",
+            requested_mode="paper",
+            recommended_mode="paper",
+            eligible=True,
+            rationale="promoted_for_immutable_evidence_test",
+            reasons=[],
+            evidence=PromotionEvidenceSummary(
+                fold_metrics_count=1,
+                stress_metrics_count=4,
+                rationale_present=True,
+                evidence_complete=True,
+                reasons=[],
+            ),
+            trace_id="promote-test-trace",
+        ),
+    )
+    def test_lane_persists_immutable_lineage_for_promoted_candidate(
+        self,
+        _mock_build_recommendation: object,
+        _mock_gate: object,
+        _mock_rollback: object,
+        _mock_prerequisites: object,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+        strategy_configmap_path = (
+            Path(__file__).parent.parent.parent.parent
+            / "argocd"
+            / "applications"
+            / "torghut"
+            / "strategy-configmap.yaml"
+        )
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-promoted"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                strategy_configmap_path=strategy_configmap_path,
+                code_version="test-sha",
+                persist_results=True,
+                session_factory=session_factory,
+            )
+            self.assertIsNotNone(result.paper_patch_path)
+
+            candidate_spec = json.loads(
+                result.candidate_spec_path.read_text(encoding="utf-8")
+            )
+            with session_factory() as session:
+                candidate = session.execute(
+                    select(ResearchCandidate).where(
+                        ResearchCandidate.candidate_id == result.candidate_id
+                    )
+                ).scalar_one()
+                promotion_row = session.execute(
+                    select(ResearchPromotion).where(
+                        ResearchPromotion.candidate_id == result.candidate_id
+                    )
+                ).scalar_one()
+
+        self.assertEqual(candidate.lifecycle_role, "champion")
+        self.assertEqual(candidate.lifecycle_status, "active")
+        self.assertIsNotNone(candidate.candidate_hash)
+        self.assertIn("stage_lineage", candidate.metadata_bundle)
+        self.assertIn("stage_manifest_refs", candidate.metadata_bundle)
+        self.assertIn("replay_artifact_hashes", candidate.metadata_bundle)
+        self.assertIn("stage_trace_ids", candidate.metadata_bundle)
+        self.assertEqual(
+            candidate.metadata_bundle["stage_lineage"]["root_lineage_hash"],
+            result.stage_lineage_root,
+        )
+        self.assertEqual(
+            candidate.metadata_bundle["stage_lineage"]["root_lineage_hash"],
+            candidate_spec["stage_lineage"]["root_lineage_hash"],
+        )
+        self.assertEqual(
+            candidate.metadata_bundle["stage_manifest_refs"],
+            candidate_spec["stage_manifest_refs"],
+        )
+        self.assertEqual(
+            candidate.metadata_bundle["stage_trace_ids"],
+            candidate_spec["stage_trace_ids"],
+        )
+        self.assertEqual(
+            candidate.metadata_bundle["replay_artifact_hashes"],
+            candidate_spec["replay_artifact_hashes"],
+        )
+        self.assertEqual(promotion_row.approved_mode, "paper")
+        self.assertEqual(promotion_row.decision_action, "promote")
+        self.assertIsNotNone(promotion_row.approve_reason)
+        self.assertEqual(
+            promotion_row.evidence_bundle["stage_lineage"]["root_lineage_hash"],
+            result.stage_lineage_root,
+        )
+        self.assertEqual(
+            promotion_row.evidence_bundle["replay_artifact_hashes"],
+            candidate.metadata_bundle["replay_artifact_hashes"],
+        )
+
+        for artifact_key, expected_hash in candidate_spec["replay_artifact_hashes"].items():
+            artifact_path = candidate_spec["artifacts"].get(artifact_key)
+            self.assertIsNotNone(
+                artifact_path,
+                f"artifact {artifact_key} should be included in candidate spec artifacts",
+            )
+            self.assertEqual(
+                expected_hash,
+                self._artifact_sha256(Path(artifact_path)),
+                f"artifact hash for {artifact_key} should be immutable",
+            )
+
     def test_lane_fails_closed_when_required_stage_artifact_is_missing(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
         strategy_config_path = (

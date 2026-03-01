@@ -110,6 +110,9 @@ def main() -> int:
         base=args.base,
         head=args.head,
         priority_id=args.priority_id,
+        notes_artifact_path=str(args.artifact_path)
+        if args.artifact_path
+        else None,
         lookback_days=_parse_ints(args.lookbacks),
         vol_lookback_days=_parse_ints(args.vol_lookbacks),
         target_daily_vols=_parse_floats(args.target_vols),
@@ -118,13 +121,6 @@ def main() -> int:
         cost_bps_per_turnover=args.cost_bps,
         gate_policy_path=args.gate_policy,
         promotion_target=args.promotion_target,
-        execution_context={
-            "execution_context": {
-                "artifactPath": str(args.artifact_path)
-            }
-        }
-        if args.artifact_path
-        else None,
     )
 
     payload = {
