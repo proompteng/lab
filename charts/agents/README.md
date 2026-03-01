@@ -119,15 +119,17 @@ Source-of-truth model:
 - Externally managed Secret/ConfigMap inputs: the chart does **not** read live resources at render
   time. You must supply checksum values from your external source of truth.
 
-The external inputs should be the exact same contract inputs that drive pod behavior. In practice,
-that means entries from values:
+The external inputs should be the exact same contract inputs that drive pod behavior. When
+`rolloutChecksums.enabled=true`, each source below that is in use becomes required in
+`rolloutChecksums.secrets` / `rolloutChecksums.configMaps`.
 
 - `database.secretRef` / `database.createSecret` (database source of truth)
+- `database.caSecret` (Postgres CA certificate Secret)
 - `envFromSecretRefs` (Secret names injected via `envFrom`)
 - `envFromConfigMapRefs` (ConfigMap names injected via `envFrom`)
 - `env.secrets` (Secret key refs in `env.secrets`)
 - `env.config` (ConfigMap key refs in `env.config`)
-- Any explicit Secret/ConfigMap mounts or references used as env values
+- `agentComms.nats.userSecret` (NATS credentials secret)
 
 Example:
 
@@ -147,11 +149,11 @@ rolloutChecksums:
   secrets:
     - name: agents-github-token-env
       namespace: agents # optional when same as release namespace
-      checksum: "d34db33f..." # 64-char sha256 hex from external source of truth
+      checksum: 'd34db33f...' # 64-char sha256 hex from external source of truth
   configMaps:
     - name: agents-runtime-config
       namespace: agents # optional when same as release namespace
-      checksum: "a1b2c3d4..."
+      checksum: 'a1b2c3d4...'
 ```
 
 The chart merges these entries into pod annotations for both `Deployment/agents` and
@@ -192,6 +194,7 @@ Limitations:
 
 - For external secret/configmap managers (ESO/ExternalSecrets, external controllers, etc.), Helm cannot safely read live object payloads during template rendering, so checksum updates must be supplied explicitly.
 - Include every secret/configmap that affects container runtime behavior; unmanaged edits to referenced values without matching checksums will not trigger rollout.
+- Chart rendering fails when required external Secret/ConfigMap inputs used by this chart are not listed in `rolloutChecksums`.
 - Empty or invalid checksum values are rejected by values schema/validation.
 - Duplicate `namespace/name` entries in the same object type (`secrets` or `configMaps`) are rejected.
 

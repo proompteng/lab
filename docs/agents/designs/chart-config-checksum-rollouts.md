@@ -22,8 +22,10 @@ This doc defines the checksum annotation mechanism used to trigger Deployment ro
 ## Current State
 
 - Chart references:
-  - DB URL Secret: `charts/agents/templates/deployment.yaml` and `deployment-controllers.yaml`
-  - `envFromSecretRefs` / `envFromConfigMapRefs`: same templates
+- DB URL Secret: `charts/agents/templates/deployment.yaml` and `deployment-controllers.yaml`
+- `envFromSecretRefs` / `envFromConfigMapRefs`: same templates
+- `database.caSecret`: same templates (volume + `PGSSLROOTCERT`)
+- `agentComms.nats.userSecret`: same templates (NATS credentials)
 - Checksum annotations exist in both control plane and controllers pod templates.
 
 ## Design
@@ -79,7 +81,9 @@ When enabled, annotate pod templates with:
 - Externally managed resources: source of truth is the GitOps/Secrets controller manifest and any
   backing data store. The chart does not perform live lookups of Secret/ConfigMap payloads.
 
-The explicit checksum list is therefore your contract boundary for restart behavior.
+The explicit checksum list is therefore your contract boundary for restart behavior. The chart validation
+phase enforces contract completeness, so enabling `rolloutChecksums.enabled` requires explicit entries
+for every externally-managed Secret/ConfigMap input present in the rendered pod templates.
 
 For GitOps-managed objects (ESO/External Secrets, sealed-secrets, or similar), this means:
 
@@ -91,10 +95,12 @@ Relevant chart inputs to include when externally managed:
 
 - `database.createSecret` (chart-owned value-derived secret)
 - `database.secretRef`
+- `database.caSecret`
 - `envFromSecretRefs`
 - `envFromConfigMapRefs`
 - `env.secrets`
 - `env.config`
+- `agentComms.nats.userSecret`
 
 ### Operator usage
 
@@ -131,9 +137,9 @@ For externally managed resources, compute hashes from source-of-truth manifests 
 
 ## Config Mapping
 
-| Helm value                                               | Rendered annotation                            | Intended behavior                          |
-| -------------------------------------------------------- | --------------------------------------------- | ----------------------------------------- |
-| `rolloutChecksums.enabled=true`                          | `checksum/*` annotations                       | Any change triggers a Deployment rollout.  |
+| Helm value                                                                               | Rendered annotation                                   | Intended behavior                                    |
+| ---------------------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
+| `rolloutChecksums.enabled=true`                                                          | `checksum/*` annotations                              | Any change triggers a Deployment rollout.            |
 | `rolloutChecksums.secrets=[{\"name\":\"agents-github-token-env\",\"checksum\":\"...\"}]` | `checksum/secret/<namespace>/agents-github-token-env` | Restart when the referenced Secret checksum changes. |
 
 ## Rollout Plan

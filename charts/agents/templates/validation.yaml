@@ -31,8 +31,56 @@
 {{- $dbNamespace := .Values.namespaceOverride | default .Release.Namespace -}}
 {{- $checksumNamespacePattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" -}}
 {{- $checksumResourceNamePattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$" -}}
+{{- $requiredSecrets := dict -}}
+{{- $requiredConfigMaps := dict -}}
+{{- $configuredSecretRefs := dict -}}
+{{- $configuredConfigMapRefs := dict -}}
 {{- $seenSecretRefs := dict -}}
 {{- $seenConfigMapRefs := dict -}}
+
+{{- if and (not .Values.database.createSecret.enabled) (not .Values.database.url) -}}
+{{- $dbSecretName := trim (default "" .Values.database.secretRef.name) -}}
+{{- if $dbSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $dbSecretName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- if .Values.database.caSecret.name -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace (.Values.database.caSecret.name | trim)) true -}}
+{{- end -}}
+
+{{- if .Values.agentComms.nats.userSecret.name -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace (.Values.agentComms.nats.userSecret.name | trim)) true -}}
+{{- end -}}
+
+{{- range .Values.envFromSecretRefs }}
+{{- $requiredSecretName := trim . -}}
+{{- if $requiredSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.env.secrets }}
+{{- $requiredSecretName := trim (default "" .secretName) -}}
+{{- if $requiredSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.envFromConfigMapRefs }}
+{{- $requiredConfigMapName := trim . -}}
+{{- if $requiredConfigMapName -}}
+{{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.env.config }}
+{{- $requiredConfigMapName := trim (default "" .configMapName) -}}
+{{- if $requiredConfigMapName -}}
+{{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
+{{- end -}}
+{{- end -}}
+
 {{- if and .Values.database.createSecret.enabled (not .Values.database.url) -}}
 {{- $errors = append $errors "rolloutChecksums.enabled=true requires database.url when database.createSecret.enabled=true." -}}
 {{- end -}}
@@ -61,6 +109,7 @@
 {{- end -}}
 {{- if and $secretName $secretNamespace -}}
 {{- $secretRef := printf "%s/%s" $secretNamespace $secretName -}}
+{{- $_ := set $configuredSecretRefs $secretRef true -}}
 {{- if hasKey $seenSecretRefs $secretRef -}}
 {{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d] duplicates key %s. namespace+name must be unique." $idx $secretRef) -}}
 {{- else -}}
@@ -90,11 +139,24 @@
 {{- end -}}
 {{- if and $configMapName $configMapNamespace -}}
 {{- $configMapRef := printf "%s/%s" $configMapNamespace $configMapName -}}
+{{- $_ := set $configuredConfigMapRefs $configMapRef true -}}
 {{- if hasKey $seenConfigMapRefs $configMapRef -}}
 {{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d] duplicates key %s. namespace+name must be unique." $idx $configMapRef) -}}
 {{- else -}}
 {{- $_ := set $seenConfigMapRefs $configMapRef true -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- range $requiredRef := keys $requiredSecrets -}}
+{{- if not (hasKey $configuredSecretRefs $requiredRef) -}}
+{{- $errors = append $errors (printf "rolloutChecksums.secrets is missing required contract entry for %s. Add an exact checksum for each secret used by pod env/volume references when rolloutChecksums.enabled=true." $requiredRef) -}}
+{{- end -}}
+{{- end -}}
+
+{{- range $requiredRef := keys $requiredConfigMaps -}}
+{{- if not (hasKey $configuredConfigMapRefs $requiredRef) -}}
+{{- $errors = append $errors (printf "rolloutChecksums.configMaps is missing required contract entry for %s. Add an exact checksum for each configmap used by pod env/volume references when rolloutChecksums.enabled=true." $requiredRef) -}}
 {{- end -}}
 {{- end -}}
 
