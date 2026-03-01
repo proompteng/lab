@@ -265,7 +265,9 @@ class TestLLMDSPyRuntime(TestCase):
             metadata_json={},
         )
 
-        with patch("app.trading.llm.dspy_programs.runtime.SessionLocal", return_value=_FakeSessionContext(row)), patch(
+        with patch(
+            "app.db.SessionLocal", return_value=_FakeSessionContext(row)
+        ), patch(
             "app.trading.llm.dspy_programs.runtime.hash_payload",
             return_value=artifact_hash,
         ):
