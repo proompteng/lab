@@ -78,6 +78,7 @@ from .phase_manifest_contract import (
     AUTONOMY_SLO_CONTRACT_VERSION,
     build_rollback_proof_phase_payload,
     build_runtime_governance_phase_payload,
+    AUTONOMY_PHASE_SLO_GATES,
     build_ordered_phase_summaries,
     coerce_phase_status,
     normalize_phase_transitions,

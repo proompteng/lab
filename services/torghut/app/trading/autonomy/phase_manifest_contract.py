@@ -161,8 +161,6 @@ def build_rollback_proof_phase_payload(
         if rollback_incident_evidence
         else [],
     }
-
-
 def get_phase_slo_gate_ids(phase_name: str) -> tuple[str, ...]:
     gates = AUTONOMY_PHASE_SLO_GATES.get(phase_name, ())
     return tuple(str(gate.get("id", "")) for gate in gates if str(gate.get("id", "")))
