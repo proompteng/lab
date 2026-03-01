@@ -416,12 +416,17 @@ class TestDecisionEngine(TestCase):
                 'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
                 'rsi14': Decimal('20'),
                 'price': Decimal('100'),
-                'spread': Decimal('0.02'),
-                'depth_top5_usd': Decimal('1200000'),
-                'order_flow_imbalance': Decimal('0.15'),
-                'latency_ms_estimate': 22,
-                'fill_hazard': Decimal('0.65'),
-                'liquidity_regime': 'compressed',
+                'microstructure_state': {
+                    'schema_version': 'microstructure_state_v1',
+                    'symbol': 'aapl',
+                    'event_ts': datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
+                    'spread_bps': '18',
+                    'depth_top5_usd': '1200000',
+                    'order_flow_imbalance': '0.15',
+                    'latency_ms_estimate': 22,
+                    'fill_hazard': '0.65',
+                    'liquidity_regime': 'compressed',
+                },
                 'execution_advice': {
                     'urgency_tier': 'normal',
                     'max_participation_rate': '0.05',
@@ -462,6 +467,40 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(fragility.get('symbol'), 'AAPL')
         self.assertEqual(fragility.get('fragility_state'), 'elevated')
         self.assertEqual(fragility.get('spread_acceleration'), Decimal('0.30'))
+
+    def test_decision_params_do_not_synthesize_microstructure_without_explicit_payload(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='synthesis-safe',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol='AAPL',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+                'spread': Decimal('0.02'),
+                'depth_top5_usd': Decimal('1200000'),
+                'order_flow_imbalance': Decimal('0.15'),
+                'latency_ms_estimate': 22,
+                'fill_hazard': Decimal('0.65'),
+                'liquidity_regime': 'compressed',
+            },
+            timeframe='1Min',
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        self.assertIsNone(decisions[0].params.get('microstructure_state'))
 
     def test_decision_params_include_signal_seq(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
