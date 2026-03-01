@@ -44,6 +44,7 @@ MICROSTRUCTURE_HAZARD_RATE_SCALE = Decimal('0.75')
 MICROSTRUCTURE_LOW_DEPTH_RATE_SCALE = Decimal('0.75')
 MICROSTRUCTURE_STRESS_EXECUTION_SCALE = Decimal('1.40')
 MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE = Decimal('1.10')
+MICROSTRUCTURE_EXECUTION_SCALE_EPSILON = Decimal('0.01')
 
 
 @dataclass(frozen=True)
@@ -928,6 +929,10 @@ def _combined_execution_seconds_scale(
     if adaptive_application is not None and adaptive_application.applied:
         execution_scale *= adaptive_application.decision.execution_seconds_scale
     execution_scale *= microstructure_execution_scale
+    if execution_scale <= 0:
+        execution_scale = MICROSTRUCTURE_EXECUTION_SCALE_EPSILON
+    if execution_scale < MICROSTRUCTURE_EXECUTION_SCALE_EPSILON:
+        execution_scale = MICROSTRUCTURE_EXECUTION_SCALE_EPSILON
     execution_scale = min(MICROSTRUCTURE_EXECUTION_SCALE_MAX, execution_scale)
     if execution_scale == 1:
         return None

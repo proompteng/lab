@@ -788,3 +788,43 @@ class TestExecutionPolicy(TestCase):
 
         self.assertTrue(outcome.adaptive.applied)
         self.assertEqual(outcome.impact_assumptions["inputs"]["execution_seconds"], 51)
+
+    def test_near_zero_or_invalid_execution_scale_is_safely_clamped(self) -> None:
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.2")))
+        adaptive_policy = AdaptiveExecutionPolicyDecision(
+            key="AAPL:trend",
+            symbol="AAPL",
+            regime_label="trend",
+            sample_size=6,
+            adaptive_samples=6,
+            baseline_slippage_bps=Decimal("8"),
+            recent_slippage_bps=Decimal("3"),
+            baseline_shortfall_notional=Decimal("1"),
+            recent_shortfall_notional=Decimal("0.5"),
+            effect_size_bps=Decimal("-2"),
+            degradation_bps=Decimal("1"),
+            expected_shortfall_coverage=Decimal("1"),
+            expected_shortfall_sample_count=6,
+            fallback_active=False,
+            fallback_reason=None,
+            prefer_limit=False,
+            participation_rate_scale=Decimal("1"),
+            execution_seconds_scale=Decimal("0"),
+            aggressiveness="offensive",
+            generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+
+        decision = _decision(
+            qty=Decimal("1"), price=Decimal("100"), order_type="market"
+        ).model_copy(update={"params": {"price": Decimal("100"), "execution_seconds": 5}})
+
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+            adaptive_policy=adaptive_policy,
+        )
+
+        self.assertTrue(outcome.adaptive.applied)
+        self.assertEqual(outcome.impact_assumptions["inputs"]["execution_seconds"], 10)
