@@ -74,7 +74,11 @@ from .policy_checks import evaluate_promotion_prerequisites, evaluate_rollback_r
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 from .phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
+    AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
+    AUTONOMY_SLO_CONTRACT_VERSION,
     AUTONOMY_PHASE_SLO_GATES,
+    build_rollback_proof_phase_payload,
+    build_runtime_governance_phase_payload,
     build_ordered_phase_summaries,
     coerce_phase_status,
     normalize_phase_transitions,
@@ -84,7 +88,7 @@ from .phase_manifest_contract import (
 _ACTUATION_INTENT_SCHEMA_VERSION = "torghut.autonomy.actuation-intent.v1"
 _ACTUATION_CONFIRMATION_PHRASE = "ACTUATE_TORGHUT"
 _ACTUATION_INTENT_PATH = "gates/actuation-intent.json"
-_AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION = "torghut.autonomy.phase-manifest.v1"
+_AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION = AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION
 _AUTONOMY_PHASE_MANIFEST_PATH = "phase-manifest.json"
 _AUTONOMY_NOTES_DIR = "notes"
 _AUTONOMY_NOTES_PREFIX = "iteration-"
@@ -1483,9 +1487,6 @@ def _build_phase_manifest(
 
     runtime_governance = _coerce_mapping(governance.get("runtime_governance"))
     rollback_proof = _coerce_mapping(governance.get("rollback_proof"))
-    runtime_gate_status = coerce_phase_status(
-        runtime_governance.get("governance_status", "skipped")
-    )
     runtime_artifact_refs = _coerce_path_strings(
         runtime_governance.get("artifact_refs", [])
         if isinstance(runtime_governance.get("artifact_refs", []), list)
@@ -1498,13 +1499,26 @@ def _build_phase_manifest(
     rollback_proof_path = _coerce_str(
         rollback_proof.get("rollback_incident_evidence_path"), default=""
     ) or _coerce_str(rollback_proof.get("rollback_incident_evidence"), default="")
-    rollback_proof_status = (
-        "pass" if (not rollback_triggered) else ("pass" if rollback_proof_path else "fail")
-    )
     drift_artifact_refs = _coerce_path_strings(
         drift_gate_check.get("artifact_refs")
         if isinstance(drift_gate_check.get("artifact_refs", []), list)
         else []
+    )
+    runtime_governance_phase = build_runtime_governance_phase_payload(
+        requested_promotion_target=requested_promotion_target,
+        timestamp=phase_timestamp,
+        drift_status=str(runtime_governance.get("drift_status", "unknown")),
+        action_type=str(runtime_governance.get("action_type", "")) or None,
+        action_triggered=bool(runtime_governance.get("action_triggered", False)),
+        rollback_triggered=rollback_triggered,
+        reasons=list(runtime_governance.get("reasons", [])),
+        artifact_refs=runtime_artifact_refs,
+    )
+    rollback_proof_phase = build_rollback_proof_phase_payload(
+        timestamp=phase_timestamp,
+        rollback_triggered=rollback_triggered,
+        rollback_incident_evidence_path=rollback_proof_path,
+        reasons=list(rollback_proof.get("reasons", [])),
     )
     canary_status = "pass" if patch_path is not None else (
         "fail" if requested_promotion_target == "paper" else "skipped"
@@ -1661,55 +1675,8 @@ def _build_phase_manifest(
             },
             "artifact_refs": ([canary_artifact_path] if canary_artifact_path else []),
         },
-        {
-            "name": "runtime-governance",
-            "status": runtime_gate_status,
-            "timestamp": phase_timestamp,
-            "slo_gates": [
-                {
-                    "id": "slo_runtime_rollback_not_triggered",
-                    "status": "pass" if not rollback_triggered else "fail",
-                    "threshold": False,
-                    "value": rollback_triggered,
-                }
-            ],
-            "observations": {
-                "requested_promotion_target": requested_promotion_target,
-                "drift_status": str(runtime_governance.get("drift_status", "unknown")),
-                "action_type": str(runtime_governance.get("action_type", "")) or None,
-                "action_triggered": bool(
-                    runtime_governance.get("action_triggered", False)
-                ),
-                "rollback_triggered": rollback_triggered,
-            },
-            "required": {"required_items": ["drift_status", "rollback_triggered"]},
-            "artifact_refs": runtime_artifact_refs,
-            "reasons": list(runtime_governance.get("reasons", [])),
-        },
-        {
-            "name": "rollback-proof",
-            "status": rollback_proof_status,
-            "timestamp": phase_timestamp,
-            "slo_gates": [
-                {
-                    "id": "slo_rollback_evidence_required_when_triggered",
-                    "status": (
-                        "pass" if rollback_proof_path and rollback_triggered else "pass"
-                        if not rollback_triggered
-                        else "fail"
-                    ),
-                    "threshold": True,
-                    "value": bool(rollback_proof_path),
-                }
-            ],
-            "observations": {
-                "rollback_triggered": rollback_triggered,
-                "rollback_incident_evidence_path": rollback_proof_path or None,
-                "rollback_incident_evidence": rollback_proof_path or None,
-            },
-            "artifact_refs": [rollback_proof_path] if rollback_proof_path else [],
-            "reasons": list(rollback_proof.get("reasons", [])),
-        },
+        runtime_governance_phase,
+        rollback_proof_phase,
     ]
 
     ordered_phase_summaries = build_ordered_phase_summaries(
@@ -1818,12 +1785,16 @@ def _build_phase_manifest(
         "runtime_governance": {
             "requested_promotion_target": requested_promotion_target,
             "drift_status": str(runtime_governance.get("drift_status", "unknown")),
-            "governance_status": runtime_governance.get("governance_status"),
+            "governance_status": runtime_governance_phase.get("status"),
             "rollback_triggered": rollback_triggered,
-            "rollback_incident_evidence": rollback_proof_path,
-            "rollback_incident_evidence_path": rollback_proof_path,
-            "artifact_refs": runtime_artifact_refs,
-            "reasons": list(runtime_governance.get("reasons", [])),
+            "rollback_incident_evidence": rollback_proof_phase.get(
+                "observations", {}
+            ).get("rollback_incident_evidence"),
+            "rollback_incident_evidence_path": rollback_proof_phase.get(
+                "observations", {}
+            ).get("rollback_incident_evidence_path"),
+            "artifact_refs": runtime_governance_phase.get("artifact_refs", []),
+            "reasons": list(runtime_governance_phase.get("reasons", [])),
             "phase_count": len(_AUTONOMY_PHASE_ORDER),
             "action_type": str(runtime_governance.get("action_type", "")) or None,
             "action_triggered": bool(runtime_governance.get("action_triggered", False)),
@@ -1831,14 +1802,18 @@ def _build_phase_manifest(
         "rollback_proof": {
             "requested_promotion_target": requested_promotion_target,
             "rollback_triggered": rollback_triggered,
-            "rollback_incident_evidence": rollback_proof_path,
-            "rollback_incident_evidence_path": rollback_proof_path,
-            "artifact_refs": ([rollback_proof_path] if rollback_proof_path else []),
-            "reasons": list(rollback_proof.get("reasons", [])),
-            "status": rollback_proof_status,
+            "rollback_incident_evidence": rollback_proof_phase.get(
+                "observations", {}
+            ).get("rollback_incident_evidence"),
+            "rollback_incident_evidence_path": rollback_proof_phase.get(
+                "observations", {}
+            ).get("rollback_incident_evidence_path"),
+            "artifact_refs": rollback_proof_phase.get("artifact_refs", []),
+            "reasons": list(rollback_proof_phase.get("reasons", [])),
+            "status": rollback_proof_phase.get("status"),
         },
         "artifact_refs": manifest_artifact_refs,
-        "slo_contract_version": "governance-slo-v1",
+        "slo_contract_version": AUTONOMY_SLO_CONTRACT_VERSION,
         "artifacts": {
             "candidate_spec": str(candidate_spec_path),
             "evaluation_report": str(evaluation_report_path),

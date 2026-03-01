@@ -25,7 +25,12 @@ from app.trading.autonomy.policy_checks import (
     PromotionPrerequisiteResult,
     RollbackReadinessResult,
 )
-from app.trading.autonomy.phase_manifest_contract import coerce_phase_status
+from app.trading.autonomy.phase_manifest_contract import (
+    AUTONOMY_SLO_CONTRACT_VERSION,
+    build_rollback_proof_phase_payload,
+    build_runtime_governance_phase_payload,
+    coerce_phase_status,
+)
 from app.trading.autonomy.gates import GateEvaluationReport, GateResult
 from app.trading.evaluation import WalkForwardDecision
 from app.trading.features import SignalFeatures
@@ -1597,6 +1602,99 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(gate_transition_statuses["runtime-governance"], "skipped")
             self.assertEqual(gate_transition_statuses["rollback-proof"], "pass")
 
+    def test_build_phase_manifest_includes_authoritative_slo_contract_and_gate_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            signals = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    payload={},
+                )
+            ]
+            output_dir = Path(tmpdir) / "manifest-contract"
+            gate_report = GateEvaluationReport(
+                policy_version="v3-gates-1",
+                promotion_target="paper",
+                promotion_allowed=True,
+                recommended_mode="paper",
+                gates=[GateResult(gate_id="gate0_data_integrity", status="pass")],
+                reasons=[],
+                uncertainty_gate_action="pass",
+                coverage_error="0.01",
+                conformal_interval_width="1.0",
+                shift_score="0.1",
+                recalibration_run_id=None,
+                evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                code_version="test-sha",
+            )
+            manifest = _build_phase_manifest(
+                run_id="run-slo",
+                candidate_id="cand-2",
+                evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                output_dir=output_dir,
+                signals=signals,
+                requested_promotion_target="paper",
+                gate_report=gate_report,
+                gate_report_path=output_dir / "gate-evaluation.json",
+                gate_report_payload={
+                    "gates": [],
+                    "recommended_mode": "paper",
+                    "throughput": {
+                        "signal_count": 1,
+                        "decision_count": 1,
+                        "trade_count": 0,
+                    },
+                },
+                promotion_check=PromotionPrerequisiteResult(
+                    allowed=True,
+                    reasons=[],
+                    required_artifacts=[],
+                    missing_artifacts=[],
+                    reason_details=[],
+                    artifact_refs=[],
+                    required_throughput={"signal_count": 1, "decision_count": 1},
+                    observed_throughput={"signal_count": 1, "decision_count": 1},
+                ),
+                rollback_check=RollbackReadinessResult(
+                    ready=True,
+                    reasons=[],
+                    required_checks=[],
+                    missing_checks=[],
+                ),
+                drift_gate_check={"allowed": True, "reasons": []},
+                patch_path=output_dir / "paper-candidate" / "strategy-configmap-patch.yaml",
+                recommended_mode="paper",
+                promotion_reasons=[],
+                drift_promotion_evidence=None,
+            )
+
+            self.assertEqual(
+                manifest["slo_contract_version"], AUTONOMY_SLO_CONTRACT_VERSION
+            )
+            runtime_phase = next(
+                phase
+                for phase in manifest["phases"]
+                if phase.get("name") == "runtime-governance"
+            )
+            rollback_phase = next(
+                phase
+                for phase in manifest["phases"]
+                if phase.get("name") == "rollback-proof"
+            )
+            runtime_gate_ids = {gate.get("id") for gate in runtime_phase.get("slo_gates", [])}
+            rollback_gate_ids = {
+                gate.get("id") for gate in rollback_phase.get("slo_gates", [])
+            }
+            self.assertEqual(
+                runtime_gate_ids,
+                {"slo_runtime_rollback_not_triggered"},
+            )
+            self.assertEqual(
+                rollback_gate_ids,
+                {"slo_rollback_evidence_required_when_triggered"},
+            )
+
     def test_build_phase_manifest_defaults_execution_context_artifact_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             signals = [
@@ -1917,6 +2015,124 @@ class TestAutonomousLane(TestCase):
                 str(rollback_evidence),
             )
             self.assertIn(str(rollback_evidence), manifest["artifact_refs"])
+
+    def test_build_phase_manifest_fails_rollback_proof_when_rollback_triggered_without_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            signals = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    payload={},
+                )
+            ]
+            output_dir = Path(tmpdir) / "manifest-rollback-missing-evidence"
+            gate_report = GateEvaluationReport(
+                policy_version="v3-gates-1",
+                promotion_target="paper",
+                promotion_allowed=True,
+                recommended_mode="paper",
+                gates=[GateResult(gate_id="gate0_data_integrity", status="pass")],
+                reasons=[],
+                uncertainty_gate_action="pass",
+                coverage_error="0.01",
+                conformal_interval_width="1.0",
+                shift_score="0.1",
+                recalibration_run_id=None,
+                evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                code_version="test-sha",
+            )
+            manifest = _build_phase_manifest(
+                run_id="run-126",
+                candidate_id="cand-4",
+                evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                output_dir=output_dir,
+                signals=signals,
+                requested_promotion_target="paper",
+                gate_report=gate_report,
+                gate_report_path=output_dir / "gate-evaluation.json",
+                gate_report_payload={
+                    "gates": [],
+                    "recommended_mode": "paper",
+                    "throughput": {
+                        "signal_count": 1,
+                        "decision_count": 1,
+                        "trade_count": 0,
+                    },
+                },
+                promotion_check=PromotionPrerequisiteResult(
+                    allowed=True,
+                    reasons=[],
+                    required_artifacts=[],
+                    missing_artifacts=[],
+                    reason_details=[],
+                    artifact_refs=[],
+                    required_throughput={"signal_count": 1, "decision_count": 1},
+                    observed_throughput={"signal_count": 1, "decision_count": 1},
+                ),
+                rollback_check=RollbackReadinessResult(
+                    ready=True,
+                    reasons=[],
+                    required_checks=[],
+                    missing_checks=[],
+                ),
+                drift_gate_check={"allowed": True, "reasons": []},
+                patch_path=output_dir / "paper-candidate" / "strategy-configmap-patch.yaml",
+                recommended_mode="paper",
+                promotion_reasons=[],
+                governance_inputs={
+                    "runtime_governance": {
+                        "governance_status": "fail",
+                        "artifact_refs": [],
+                        "drift_status": "drift_detected",
+                        "rollback_triggered": True,
+                    },
+                    "rollback_proof": {
+                        "rollback_triggered": True,
+                        "rollback_incident_evidence_path": "",
+                    },
+                },
+                drift_promotion_evidence=None,
+            )
+
+            runtime = manifest["runtime_governance"]
+            rollback = manifest["rollback_proof"]
+            self.assertEqual(runtime.get("governance_status"), "fail")
+            self.assertEqual(manifest["phases"][5]["status"], "fail")
+            self.assertEqual(manifest["phases"][6]["status"], "fail")
+            self.assertEqual(rollback.get("status"), "fail")
+            self.assertEqual(manifest["status"], "fail")
+
+    def test_runtime_and_rollback_phase_payload_helpers(self) -> None:
+        runtime_payload = build_runtime_governance_phase_payload(
+            requested_promotion_target="paper",
+            timestamp="2026-01-01T00:00:00Z",
+            drift_status="drift_detected",
+            action_type="pause",
+            action_triggered=True,
+            rollback_triggered=True,
+            reasons=["risk_ofdrawdown", "risk_ofdrawdown"],
+            artifact_refs=["b.json", "a.json", "a.json"],
+        )
+        rollback_payload = build_rollback_proof_phase_payload(
+            timestamp="2026-01-01T00:00:00Z",
+            rollback_triggered=True,
+            rollback_incident_evidence_path="",
+            reasons=["risk_ofdrawdown"],
+        )
+
+        self.assertEqual(runtime_payload["name"], "runtime-governance")
+        self.assertEqual(runtime_payload["status"], "fail")
+        self.assertEqual(runtime_payload["slo_gates"][0].get("status"), "fail")
+        self.assertEqual(runtime_payload["artifact_refs"], ["a.json", "b.json"])
+        self.assertEqual(runtime_payload["reasons"], ["risk_ofdrawdown"])
+
+        self.assertEqual(rollback_payload["name"], "rollback-proof")
+        self.assertEqual(rollback_payload["status"], "fail")
+        self.assertEqual(rollback_payload["slo_gates"][0].get("status"), "fail")
+        self.assertEqual(rollback_payload["artifact_refs"], [])
 
     def test_coerce_phase_status_unknown_status_fails(self) -> None:
         self.assertEqual(coerce_phase_status("blocked"), "fail")

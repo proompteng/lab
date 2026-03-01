@@ -13,6 +13,8 @@ AUTONOMY_PHASE_ORDER: tuple[str, ...] = (
     "rollback-proof",
 )
 AUTONOMY_PHASE_STATUS_DEFAULT = "skip"
+AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION = "torghut.autonomy.phase-manifest.v1"
+AUTONOMY_SLO_CONTRACT_VERSION = "governance-slo-v1"
 AUTONOMY_PHASE_SLO_GATES: dict[str, tuple[dict[str, Any], ...]] = cast(
     dict[str, tuple[dict[str, Any], ...]],
     {
@@ -64,6 +66,103 @@ def coerce_phase_status(raw: Any, *, default: str = "fail") -> str:
         return default
     status = str(raw).strip().lower()
     return status if status in AUTONOMY_MANIFEST_STATUSES else default
+
+
+def _coerce_reason_values(raw: Any) -> list[str]:
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes, bytearray)):
+        return []
+    return [
+        str(item).strip()
+        for item in cast(Sequence[Any], raw)
+        if str(item).strip()
+    ]
+
+
+def build_runtime_governance_phase_payload(
+    *,
+    requested_promotion_target: str,
+    timestamp: str,
+    drift_status: str,
+    action_type: str | None,
+    action_triggered: bool,
+    rollback_triggered: bool,
+    reasons: Sequence[Any],
+    artifact_refs: Sequence[Any],
+) -> dict[str, Any]:
+    normalized_drift_status = str(drift_status).strip() or "unknown"
+    normalized_reasons = sorted(set(_coerce_reason_values(reasons)))
+    normalized_artifacts = sorted(
+        {
+            str(item).strip()
+            for item in cast(Sequence[Any], artifact_refs)
+            if str(item).strip()
+        }
+    )
+    is_fail = rollback_triggered or normalized_drift_status in {
+        "drift_detected",
+        "unhealthy",
+    }
+    status = "fail" if is_fail else "pass"
+    return {
+        "name": "runtime-governance",
+        "status": status,
+        "timestamp": timestamp,
+        "observations": {
+            "requested_promotion_target": requested_promotion_target,
+            "drift_status": normalized_drift_status,
+            "action_type": action_type or None,
+            "action_triggered": bool(action_triggered),
+            "rollback_triggered": bool(rollback_triggered),
+        },
+        "slo_gates": [
+            {
+                "id": "slo_runtime_rollback_not_triggered",
+                "status": "pass" if not is_fail else "fail",
+                "threshold": False,
+                "value": bool(rollback_triggered),
+            }
+        ],
+        "reasons": normalized_reasons,
+        "artifact_refs": normalized_artifacts,
+    }
+
+
+def build_rollback_proof_phase_payload(
+    *,
+    timestamp: str,
+    rollback_triggered: bool,
+    rollback_incident_evidence_path: str | None,
+    reasons: Sequence[Any],
+) -> dict[str, Any]:
+    rollback_incident_evidence = str(rollback_incident_evidence_path or "").strip()
+    status = (
+        "pass"
+        if (not rollback_triggered or rollback_incident_evidence)
+        else "fail"
+    )
+    normalized_reasons = sorted(set(_coerce_reason_values(reasons)))
+    return {
+        "name": "rollback-proof",
+        "status": status,
+        "timestamp": timestamp,
+        "slo_gates": [
+            {
+                "id": "slo_rollback_evidence_required_when_triggered",
+                "status": "pass" if status == "pass" else "fail",
+                "threshold": True,
+                "value": bool(rollback_incident_evidence),
+            }
+        ],
+        "observations": {
+            "rollback_triggered": bool(rollback_triggered),
+            "rollback_incident_evidence_path": rollback_incident_evidence,
+            "rollback_incident_evidence": rollback_incident_evidence,
+        },
+        "reasons": normalized_reasons,
+        "artifact_refs": [rollback_incident_evidence]
+        if rollback_incident_evidence
+        else [],
+    }
 
 
 def get_phase_slo_gate_ids(phase_name: str) -> tuple[str, ...]:

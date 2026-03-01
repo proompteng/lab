@@ -79,6 +79,9 @@ from .llm.schema import MarketContextBundle
 from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
 from .autonomy.phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
+    build_ordered_phase_summaries,
+    build_rollback_proof_phase_payload,
+    build_runtime_governance_phase_payload,
     coerce_phase_status,
     normalize_phase_transitions,
 )
@@ -5873,15 +5876,10 @@ class TradingScheduler:
                 }
             )
 
-        def _build_placeholder_phase(name: str) -> dict[str, Any]:
-            return {
-                "name": name,
-                "status": "skip",
-                "timestamp": now.isoformat(),
-                "observations": {"note": "stage not evaluated"},
-                "slo_gates": [],
-                "artifact_refs": [],
-            }
+        def _coerce_mapping(raw: Any) -> dict[str, Any]:
+            if isinstance(raw, Mapping):
+                return cast(dict[str, Any], dict(raw))
+            return {}
 
         drift_status = str(
             drift_governance_payload.get("drift_status")
@@ -5941,11 +5939,6 @@ class TradingScheduler:
             self.state.emergency_stop_active
             or drift_governance_payload.get("rollback_triggered", False)
         )
-        governance_status = (
-            "fail"
-            if rollback_triggered or drift_status in {"drift_detected", "unhealthy"}
-            else "pass"
-        )
         reasons = sorted(
             {
                 str(item).strip()
@@ -5957,117 +5950,88 @@ class TradingScheduler:
                 if str(item).strip()
             }
         )
-
-        governance_phase: dict[str, Any] = {
-            "name": "runtime-governance",
-            "status": governance_status,
-            "timestamp": now.isoformat(),
-            "observations": {
-                "requested_promotion_target": requested_promotion_target,
-                "drift_status": drift_status,
-                "action_type": action_type or None,
-                "action_triggered": action_triggered,
-                "rollback_triggered": rollback_triggered,
-            },
-            "slo_gates": [
-                {
-                    "id": "slo_runtime_rollback_not_triggered",
-                    "status": "pass" if not rollback_triggered else "fail",
-                    "threshold": False,
-                    "value": rollback_triggered,
-                },
-            ],
-            "reasons": reasons,
-            "artifact_refs": evidence_refs,
-        }
-
-        rollback_proof_status = (
-            "pass" if (not rollback_triggered or rollback_incident_evidence) else "fail"
+        governance_phase: dict[str, Any] = build_runtime_governance_phase_payload(
+            requested_promotion_target=requested_promotion_target,
+            timestamp=now.isoformat(),
+            drift_status=drift_status,
+            action_type=action_type or None,
+            action_triggered=action_triggered,
+            rollback_triggered=rollback_triggered,
+            reasons=reasons,
+            artifact_refs=evidence_refs,
         )
-        rollback_proof_phase: dict[str, Any] = {
-            "name": "rollback-proof",
-            "status": rollback_proof_status,
-            "timestamp": now.isoformat(),
-            "slo_gates": [
-                {
-                    "id": "slo_rollback_evidence_required_when_triggered",
-                    "status": "pass" if not rollback_triggered else (
-                        "pass" if rollback_incident_evidence else "fail"
-                    ),
-                    "threshold": True,
-                    "value": bool(rollback_incident_evidence),
-                },
-            ],
-            "observations": {
-                "rollback_triggered": rollback_triggered,
-                "rollback_incident_evidence_path": rollback_incident_evidence,
-            },
-            "reasons": reasons,
-            "artifact_refs": (
-                [rollback_incident_evidence] if rollback_incident_evidence else []
-            ),
-        }
+        rollback_proof_phase: dict[str, Any] = build_rollback_proof_phase_payload(
+            timestamp=now.isoformat(),
+            rollback_triggered=rollback_triggered,
+            rollback_incident_evidence_path=rollback_incident_evidence,
+            reasons=reasons,
+        )
+
+        existing_runtime_governance = _coerce_mapping(manifest.get("runtime_governance"))
+        existing_rollback_proof = _coerce_mapping(manifest.get("rollback_proof"))
 
         existing_phases = manifest.get("phases", [])
-        phase_lookup: dict[str, dict[str, Any]] = {}
+        phase_payloads: list[dict[str, Any]] = []
         if isinstance(existing_phases, list):
             for raw_phase in cast(list[Any], existing_phases):
                 if not isinstance(raw_phase, dict):
                     continue
                 phase = cast(dict[str, Any], raw_phase)
                 name = str(phase.get("name", "")).strip()
-                if name:
-                    phase_lookup[name] = dict(phase)
-        phase_lookup["runtime-governance"] = governance_phase
-        phase_lookup["rollback-proof"] = rollback_proof_phase
-
-        ordered_phases: list[dict[str, Any]] = []
-        for name in _AUTONOMY_PHASE_ORDER:
-            phase_payload = phase_lookup.get(name)
-            if phase_payload is None:
-                ordered_phases.append(_build_placeholder_phase(name))
-                continue
-            phase_payload["name"] = name
-            phase_payload["status"] = coerce_phase_status(
-                phase_payload.get("status"), default="skip"
-            )
+                if name in {"runtime-governance", "rollback-proof"}:
+                    continue
+                phase_payloads.append(dict(phase))
+        phase_payloads.extend([governance_phase, rollback_proof_phase])
+        ordered_phases = build_ordered_phase_summaries(
+            phase_payloads,
+            phase_timestamp=now.isoformat(),
+            default_status="skip",
+        )
+        for phase_payload in ordered_phases:
             phase_payload["artifact_refs"] = _coerce_strs(
                 phase_payload.get("artifact_refs", [])
             )
-            ordered_phases.append(phase_payload)
 
         manifest["phases"] = ordered_phases
         manifest["runtime_governance"] = {
+            **existing_runtime_governance,
             "requested_promotion_target": requested_promotion_target,
-            "drift_status": drift_status,
-            "governance_status": governance_status,
+            "drift_status": str(drift_status),
+            "governance_status": governance_phase.get("status"),
             "rollback_triggered": rollback_triggered,
             "rollback_incident_evidence": rollback_incident_evidence,
             "rollback_incident_evidence_path": rollback_incident_evidence,
-            "artifact_refs": evidence_refs,
+            "artifact_refs": list(governance_phase.get("artifact_refs", [])),
             "phase_count": len(ordered_phases),
-            "action_type": action_type,
+            "action_type": action_type or None,
             "action_triggered": action_triggered,
-            "reasons": reasons,
+            "reasons": list(governance_phase.get("reasons", [])),
         }
         manifest["rollback_proof"] = {
+            **existing_rollback_proof,
             "requested_promotion_target": requested_promotion_target,
             "rollback_triggered": rollback_triggered,
-            "rollback_incident_evidence_path": rollback_incident_evidence,
-            "rollback_incident_evidence": rollback_incident_evidence,
-            "artifact_refs": (
-                [rollback_incident_evidence]
-                if rollback_incident_evidence
-                else []
+            "rollback_incident_evidence_path": str(
+                rollback_proof_phase.get("observations", {}).get(
+                    "rollback_incident_evidence_path", rollback_incident_evidence
+                )
             ),
-            "reasons": reasons,
-            "status": rollback_proof_status,
+            "rollback_incident_evidence": str(
+                rollback_proof_phase.get("observations", {}).get(
+                    "rollback_incident_evidence",
+                    rollback_incident_evidence,
+                )
+            ),
+            "artifact_refs": list(rollback_proof_phase.get("artifact_refs", [])),
+            "reasons": list(rollback_proof_phase.get("reasons", [])),
+            "status": rollback_proof_phase.get("status"),
         }
 
         manifest["status"] = (
             "fail"
             if any(
-                str(phase.get("status")) not in {"pass", "skipped", "skip"}
+                coerce_phase_status(phase.get("status"), default="fail")
+                not in {"pass", "skipped", "skip"}
                 for phase in ordered_phases
             )
             else "pass"

@@ -23,7 +23,7 @@ The autonomous promotion pipeline produces a single canonical phase manifest at:
 
 Every manifest must include all of these top-level fields:
 
-- `schema_version` = `autonomy-phase-manifest-v1`
+- `schema_version` = `torghut.autonomy.phase-manifest.v1`
 - `run_id`
 - `candidate_id`
 - `execution_context`
@@ -43,7 +43,8 @@ Every manifest must include all of these top-level fields:
 - `slo_contract_version` = `governance-slo-v1`
 - `observation_summary`
 
-Phase order is fixed and authoritative for every manifest:
+Phase order is fixed and authoritative for every manifest and defined once in
+`AUTONOMY_PHASE_ORDER`:
 
 1. `gate-evaluation`
 2. `promotion-prerequisites`
@@ -63,6 +64,8 @@ Every phase payload includes:
 - `artifact_refs`
 
 `phase_transitions` must be derived only from the canonical phase list and must include transitions between each adjacent phase.
+
+The contract source of truth lives in `services/torghut/app/trading/autonomy/phase_manifest_contract.py` and is used by both `run_autonomous_lane` and scheduler runtime-governance append logic, so all pipeline stages consume the same SLO gate definitions from the shared `AUTONOMY_PHASE_SLO_GATES` map and `AUTONOMY_PHASE_ORDER`.
 
 ## SLO gate requirements
 
