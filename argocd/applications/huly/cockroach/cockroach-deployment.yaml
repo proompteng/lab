@@ -12,19 +12,52 @@
           labels:
             app: cockroach
         spec:
-          # initContainers:
-          # - name: init-certs-dir
-          #   image: busybox
-          #   command: ['sh', '-c', 'mkdir -p /cockroach/cockroach-certs && chmod -R 700 /cockroach']
-          #   volumeMounts:
-          #   - name: certs
-          #     mountPath: /cockroach/certs
+          initContainers:
+            - name: init-certs
+              image: cockroachdb/cockroach:latest-v24.2
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  mkdir -p /cockroach/certs
+                  if [ ! -f /cockroach/certs/ca.crt ] || \
+                     [ ! -f /cockroach/certs/node.crt ] || \
+                     [ ! -f /cockroach/certs/node.key ] || \
+                     [ ! -f /cockroach/certs/root.key ] || \
+                     [ ! -f /cockroach/certs/root.crt ]; then
+                    cockroach cert create-ca \
+                      --certs-dir=/cockroach/certs \
+                      --ca-key=/cockroach/certs/ca.key
+                    cockroach cert create-node \
+                      --certs-dir=/cockroach/certs \
+                      --ca-key=/cockroach/certs/ca.key \
+                      --overwrite \
+                      cockroach \
+                      cockroach.huly \
+                      cockroach.huly.svc \
+                      cockroach.huly.svc.cluster.local \
+                      localhost \
+                      127.0.0.1 \
+                      $(hostname -i)
+                    cockroach cert create-client \
+                      --certs-dir=/cockroach/certs \
+                      --ca-key=/cockroach/certs/ca.key \
+                      --overwrite \
+                      root
+                  fi
+                  chmod -R 700 /cockroach/certs
+              volumeMounts:
+                - name: cockroachdb-certs
+                  mountPath: /cockroach/certs
           containers:
           - name: cockroachdb
             image: cockroachdb/cockroach:latest-v24.2
             args:
               - start-single-node
-              - --accept-sql-without-tls
+              - --certs-dir=/cockroach/certs
+              - --listen-addr=0.0.0.0:26257
+              - --http-addr=0.0.0.0:8080
             env:
               - name: COCKROACH_DATABASE
                 value: "defaultdb"
