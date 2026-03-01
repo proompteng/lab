@@ -3388,7 +3388,7 @@ def _resolve_gate_fragility_inputs(
 
     if selected_measurement is None:
         if fallback_measurement is None:
-            return ("crisis", Decimal("1"), False, False)
+            return ("not_measured", Decimal("0"), False, False)
         selected_measurement = fallback_measurement
 
     selected_state, selected_score, selected_stability = selected_measurement
@@ -3530,15 +3530,15 @@ def _load_tca_gate_inputs(
     except Exception:
         return {
             "order_count": 0,
-            "avg_slippage_bps": Decimal("0"),
-            "avg_shortfall_notional": Decimal("0"),
-            "avg_churn_ratio": Decimal("0"),
-            "avg_divergence_bps": Decimal("0"),
-            "avg_realized_shortfall_bps": Decimal("0"),
-            "expected_shortfall_coverage": Decimal("0"),
+            "avg_slippage_bps": None,
+            "avg_shortfall_notional": None,
+            "avg_churn_ratio": None,
+            "avg_divergence_bps": None,
+            "avg_realized_shortfall_bps": None,
+            "expected_shortfall_coverage": None,
             "expected_shortfall_sample_count": 0,
-            "avg_expected_shortfall_bps_p50": Decimal("0"),
-            "avg_expected_shortfall_bps_p95": Decimal("0"),
+            "avg_expected_shortfall_bps_p50": None,
+            "avg_expected_shortfall_bps_p95": None,
         }
 
 

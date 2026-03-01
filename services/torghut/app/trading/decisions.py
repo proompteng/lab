@@ -532,7 +532,11 @@ def _resolve_regime_context(
         macd=macd,
         macd_signal=macd_signal,
     )
-    normalized_route_label = route_regime_label.strip().lower()
+    normalized_route_label = (
+        str(route_regime_label).strip().lower()
+        if isinstance(route_regime_label, str) and route_regime_label
+        else None
+    )
     return regime_context.to_payload(), normalized_route_label
 
 

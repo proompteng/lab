@@ -138,8 +138,8 @@ class TestAutonomousLane(TestCase):
             metrics_payload={},
             decisions=[],
         )
-        self.assertEqual(state, "crisis")
-        self.assertEqual(score, Decimal("1"))
+        self.assertEqual(state, "not_measured")
+        self.assertEqual(score, Decimal("0"))
         self.assertFalse(stability)
         self.assertFalse(inputs_valid)
 
@@ -174,8 +174,8 @@ class TestAutonomousLane(TestCase):
                 )
             ],
         )
-        self.assertEqual(state, "crisis")
-        self.assertEqual(score, Decimal("1"))
+        self.assertEqual(state, "not_measured")
+        self.assertEqual(score, Decimal("0"))
         self.assertFalse(stability)
         self.assertFalse(inputs_valid)
 
@@ -1042,6 +1042,7 @@ class TestAutonomousLane(TestCase):
             self.assertIn("- repository: proompteng/lab", note_body)
             self.assertIn("- base: main", note_body)
             self.assertIn("- head: agentruns/notes-check", note_body)
+
     @patch(
         "app.trading.autonomy.lane.evaluate_rollback_readiness",
         return_value=RollbackReadinessResult(

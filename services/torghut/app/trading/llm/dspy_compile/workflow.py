@@ -42,6 +42,7 @@ _PROMOTION_MIN_SCHEMA_VALID_RATE = 0.995
 _PROMOTION_MAX_FALLBACK_RATE = 0.05
 _PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS = 60 * 60 * 24
 _PROMOTION_EVIDENCE_OVERRIDE_KEYS = {
+    "evalReportRef",
     "gateCompatibility",
     "schemaValidRate",
     "deterministicCompatibility",
@@ -560,11 +561,6 @@ def _lane_overrides_with_defaults(
             "compileResultRef",
             f"{artifact_root}/compile/dspy-compile-result.json",
         )
-    elif lane == "promote":
-        normalized.setdefault(
-            "evalReportRef",
-            f"{artifact_root}/eval/dspy-eval-report.json",
-        )
     return normalized
 
 
@@ -814,16 +810,17 @@ def orchestrate_dspy_agentrun_workflow(
     lineage_by_lane: dict[str, dict[str, Any]] = {}
 
     for lane_index, lane in enumerate(lanes):
+        raw_lane_overrides = overrides_by_lane.get(lane, {})
         lane_overrides = _lane_overrides_with_defaults(
             lane=lane,
-            lane_overrides=overrides_by_lane.get(lane, {}),
+            lane_overrides=raw_lane_overrides,
             artifact_root=artifact_root_normalized,
         )
         gate_snapshot: dict[str, Any] | None = None
 
         if lane == "promote":
             gate_snapshot = _resolve_promotion_gate_snapshot(
-                lane_overrides,
+                raw_lane_overrides,
                 artifact_root=artifact_root_normalized,
             )
             gate_failures = _promotion_gate_failures(
