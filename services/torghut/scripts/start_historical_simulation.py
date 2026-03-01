@@ -3400,8 +3400,8 @@ def main() -> None:
     )
     _log_script_event(
         'postgres_config_ready',
-        admin_dsn=postgres_config.admin_dsn,
-        simulation_dsn=postgres_config.simulation_dsn,
+        admin_dsn=_redact_dsn_credentials(postgres_config.admin_dsn),
+        simulation_dsn=_redact_dsn_credentials(postgres_config.simulation_dsn),
         simulation_db=postgres_config.simulation_db,
         migration_command=postgres_config.migrations_command,
     )
