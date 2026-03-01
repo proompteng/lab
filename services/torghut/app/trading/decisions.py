@@ -473,7 +473,8 @@ def _has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
         if value is None:
             return False
         if isinstance(value, Mapping):
-            return any(_is_explicit_value(v) for v in value.values())
+            casted_value = cast(dict[str, Any], value)
+            return any(_is_explicit_value(v) for v in casted_value.values())
         if isinstance(value, str):
             return bool(value.strip())
         return True
