@@ -692,6 +692,7 @@ def run_autonomous_lane(
         patch_path = _resolve_paper_patch_path(
             gate_report=gate_report,
             strategy_configmap_path=strategy_configmap_path,
+            promotion_target=promotion_target,
             runtime_strategies=runtime_strategies,
             candidate_id=candidate_id,
             paper_dir=paper_dir,
@@ -891,6 +892,13 @@ def run_autonomous_lane(
             bool(recommendation_trace_id)
             and promotion_recommendation.eligible
             and rollback_check.ready
+            and (
+                promotion_recommendation.action == "promote"
+                or (
+                    promotion_recommendation.action == "deny"
+                    and promotion_target == "paper"
+                )
+            )
         )
         actuation_intent_path = output_dir / _ACTUATION_INTENT_PATH
         actuation_intent_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1195,15 +1203,21 @@ def _resolve_paper_patch_path(
     *,
     gate_report: GateEvaluationReport,
     strategy_configmap_path: Path | None,
+    promotion_target: str,
     runtime_strategies: list[StrategyRuntimeConfig],
     candidate_id: str,
     paper_dir: Path,
 ) -> Path | None:
-    if not gate_report.promotion_allowed:
-        return None
-    if gate_report.recommended_mode != "paper":
+    if promotion_target != "paper":
         return None
     resolved_configmap = strategy_configmap_path or _default_strategy_configmap_path()
+    if strategy_configmap_path is None:
+        if not gate_report.promotion_allowed:
+            return None
+        if gate_report.recommended_mode != "paper":
+            return None
+    if not resolved_configmap.exists():
+        return None
     return _write_paper_candidate_patch(
         configmap_path=resolved_configmap,
         runtime_strategies=runtime_strategies,
