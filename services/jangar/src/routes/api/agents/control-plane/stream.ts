@@ -5,6 +5,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { safeJsonStringify } from '~/server/chat-text'
 import { resolveGrpcStatus } from '~/server/control-plane-grpc'
 import { buildControlPlaneStatus, type ControlPlaneStatus } from '~/server/control-plane-status'
+import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { startResourceWatch } from '~/server/kube-watch'
 import { recordSseConnection, recordSseError } from '~/server/metrics'
 import { type AgentPrimitiveKind, listPrimitiveKinds, resolvePrimitiveKind } from '~/server/primitives-control-plane'
@@ -53,8 +54,27 @@ type NamespaceStream = {
 
 const HEARTBEAT_INTERVAL_MS = 15_000
 const STATUS_DEBOUNCE_MS = 500
+const SWARM_WATCH_RESOURCE = RESOURCE_MAP.Swarm
 
 const namespaceStreams = new Map<string, NamespaceStream>()
+
+const isMissingResourceTypeError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  return /(doesn't have a resource type|does not have a resource type)/i.test(message)
+}
+
+const isSwarmWatchSupported = async (namespace: string, kube: Pick<KubernetesClient, 'list'>) => {
+  try {
+    await kube.list(SWARM_WATCH_RESOURCE, namespace)
+    return true
+  } catch (error) {
+    return !isMissingResourceTypeError(error)
+  }
+}
+
+export const __test__ = {
+  isSwarmWatchSupported,
+}
 
 const toSummary = (resource: Record<string, unknown>) => ({
   apiVersion: asString(resource.apiVersion) ?? null,
@@ -93,7 +113,7 @@ const scheduleStatusRefresh = (stream: NamespaceStream, namespace: string) => {
   }, STATUS_DEBOUNCE_MS)
 }
 
-const ensureNamespaceStream = (namespace: string): NamespaceStream => {
+const ensureNamespaceStream = (namespace: string, watchSwarm: boolean): NamespaceStream => {
   const existing = namespaceStreams.get(namespace)
   if (existing) {
     existing.refCount += 1
@@ -116,6 +136,7 @@ const ensureNamespaceStream = (namespace: string): NamespaceStream => {
   for (const kind of kinds) {
     const resolved = resolvePrimitiveKind(kind)
     if (!resolved) continue
+    if (resolved.kind === 'Swarm' && !watchSwarm) continue
 
     stream.watchers.push(
       startResourceWatch({
@@ -184,8 +205,12 @@ const releaseNamespaceStream = (namespace: string) => {
   namespaceStreams.delete(namespace)
 }
 
-const subscribeNamespaceEvents = (namespace: string, onEvent: (event: ControlPlaneStreamEvent) => void) => {
-  const stream = ensureNamespaceStream(namespace)
+const subscribeNamespaceEvents = (
+  namespace: string,
+  watchSwarm: boolean,
+  onEvent: (event: ControlPlaneStreamEvent) => void,
+) => {
+  const stream = ensureNamespaceStream(namespace, watchSwarm)
   const listener = (event: ControlPlaneStreamEvent) => onEvent(event)
   stream.emitter.on('event', listener)
   return () => {
@@ -197,6 +222,8 @@ const subscribeNamespaceEvents = (namespace: string, onEvent: (event: ControlPla
 export const streamControlPlaneEvents = async (request: Request) => {
   const url = new URL(request.url)
   const namespace = normalizeNamespace(url.searchParams.get('namespace'), 'agents')
+  const kube = createKubernetesClient()
+  const watchSwarm = await isSwarmWatchSupported(namespace, kube)
   const encoder = new TextEncoder()
 
   let heartbeat: ReturnType<typeof setInterval> | null = null
@@ -231,7 +258,7 @@ export const streamControlPlaneEvents = async (request: Request) => {
       safeEnqueue('retry: 1000\n\n')
       safeEnqueue(': connected\n\n')
 
-      unsubscribe = subscribeNamespaceEvents(namespace, (event) => {
+      unsubscribe = subscribeNamespaceEvents(namespace, watchSwarm, (event) => {
         push(event)
       })
 
