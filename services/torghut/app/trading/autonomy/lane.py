@@ -891,18 +891,9 @@ def run_autonomous_lane(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
 
-        candidate_hash = _compute_candidate_hash(
-            run_id=run_id,
-            runtime_strategies=runtime_strategies,
-            gate_report=gate_report,
-            signals_path=signals_path,
-            strategy_config_path=strategy_config_path,
-            gate_policy_path=gate_policy_path,
-        )
         research_spec: dict[str, Any] = {
             "run_id": run_id,
             "candidate_id": candidate_id,
-            "candidate_hash": candidate_hash,
             "promotion_target": promotion_target,
             "bounded_llm": {
                 "enabled": False,
@@ -937,9 +928,6 @@ def run_autonomous_lane(
             },
         }
         candidate_spec_path = research_dir / "candidate-spec.json"
-        candidate_spec_path.write_text(
-            json.dumps(research_spec, indent=2), encoding="utf-8"
-        )
 
         patch_path: Path | None = None
 
@@ -1283,6 +1271,17 @@ def run_autonomous_lane(
             ),
         }
         replay_artifact_hashes = _artifact_hashes(replay_artifacts)
+        candidate_hash = _compute_candidate_hash(
+            run_id=run_id,
+            runtime_strategies=runtime_strategies,
+            gate_report=gate_report,
+            signals_path=signals_path,
+            strategy_config_path=strategy_config_path,
+            gate_policy_path=gate_policy_path,
+            stage_lineage_payload=stage_lineage_payload,
+            replay_artifact_hashes=replay_artifact_hashes,
+        )
+        research_spec["candidate_hash"] = candidate_hash
         research_spec["stage_lineage"] = stage_lineage_payload
         research_spec["stage_trace_ids"] = dict(stage_trace_ids)
         research_spec["stage_lineage_root"] = (
@@ -1380,6 +1379,9 @@ def run_autonomous_lane(
                 governance_reason
                 or f"Autonomous recommendation for {promotion_target} target."
             ),
+            stage_lineage_payload=stage_lineage_payload,
+            replay_artifact_hashes=replay_artifact_hashes,
+            candidate_hash=candidate_hash,
         )
         actuation_intent_path.write_text(
             json.dumps(actuation_intent_payload, indent=2), encoding="utf-8"
@@ -2054,6 +2056,9 @@ def _build_actuation_intent_payload(
     priority_id: str | None,
     governance_change: str,
     governance_reason: str,
+    stage_lineage_payload: dict[str, Any],
+    replay_artifact_hashes: dict[str, str],
+    candidate_hash: str,
 ) -> dict[str, Any]:
     raw_missing_checks = cast(object, rollback_check.get("missing_checks"))
     rollback_missing_checks = (
@@ -2119,6 +2124,7 @@ def _build_actuation_intent_payload(
             "promotion_action": promotion_recommendation.action,
             "recommendation_reasons": recommendations,
         },
+        "candidate_hash": candidate_hash,
         "artifact_refs": sorted(
             {item for item in rollback_evidence_links if item.strip()}
         ),
@@ -2126,6 +2132,8 @@ def _build_actuation_intent_payload(
             "candidate_state_payload": candidate_state_payload,
             "promotion_check": promotion_check,
             "rollback_check": rollback_check,
+            "stage_lineage": stage_lineage_payload,
+            "replay_artifact_hashes": replay_artifact_hashes,
             "patch_required": patch_required,
             "patch_available": paper_patch_path is not None,
             "rollback_readiness_readout": {
@@ -2783,6 +2791,8 @@ def _compute_candidate_hash(
     signals_path: Path,
     strategy_config_path: Path,
     gate_policy_path: Path,
+    stage_lineage_payload: dict[str, Any],
+    replay_artifact_hashes: dict[str, str],
 ) -> str:
     hasher = hashlib.sha256()
     hasher.update(signals_path.read_bytes())
@@ -2792,6 +2802,20 @@ def _compute_candidate_hash(
     hasher.update(str(_strategy_parameter_set(runtime_strategies)).encode("utf-8"))
     hasher.update(gate_report.recommended_mode.encode("utf-8"))
     hasher.update(str(sorted(gate_report.reasons)).encode("utf-8"))
+    hasher.update(
+        json.dumps(
+            stage_lineage_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    hasher.update(
+        json.dumps(
+            replay_artifact_hashes,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
     return hasher.hexdigest()[:32]
 
 

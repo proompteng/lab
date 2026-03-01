@@ -1254,6 +1254,11 @@ class TestAutonomousLane(TestCase):
             candidate_spec = json.loads(
                 result.candidate_spec_path.read_text(encoding="utf-8")
             )
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+                if result.actuation_intent_path
+                else "{}"
+            )
             with session_factory() as session:
                 candidate = session.execute(
                     select(ResearchCandidate).where(
@@ -1268,6 +1273,19 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(candidate.lifecycle_role, "champion")
             self.assertEqual(candidate.lifecycle_status, "active")
             self.assertIsNotNone(candidate.candidate_hash)
+            self.assertEqual(candidate_spec["candidate_hash"], candidate.candidate_hash)
+            self.assertEqual(
+                actuation_payload["candidate_hash"],
+                candidate.candidate_hash,
+            )
+            self.assertEqual(
+                actuation_payload["audit"]["stage_lineage"],
+                candidate_spec["stage_lineage"],
+            )
+            self.assertEqual(
+                actuation_payload["audit"]["replay_artifact_hashes"],
+                candidate_spec["replay_artifact_hashes"],
+            )
             self.assertIn("stage_lineage", candidate.metadata_bundle)
             self.assertIn("stage_manifest_refs", candidate.metadata_bundle)
             self.assertIn("replay_artifact_hashes", candidate.metadata_bundle)
@@ -1442,6 +1460,7 @@ class TestAutonomousLane(TestCase):
             candidate_spec = json.loads(
                 result.candidate_spec_path.read_text(encoding="utf-8")
             )
+            self.assertIn("candidate_hash", candidate_spec)
             self.assertEqual(
                 candidate_spec["stage_trace_ids"],
                 result.stage_trace_ids,
@@ -1449,6 +1468,13 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(
                 candidate_spec["stage_lineage"]["root_lineage_hash"],
                 result.stage_lineage_root,
+            )
+            self.assertIn("audit", actuation_payload)
+            self.assertIn("stage_lineage", actuation_payload["audit"])
+            self.assertIn("replay_artifact_hashes", actuation_payload["audit"])
+            self.assertEqual(
+                actuation_payload["candidate_hash"],
+                candidate_spec["candidate_hash"],
             )
             self.assertIn("promotion-recommendation", candidate_spec["stage_trace_ids"])
             self.assertIn(
