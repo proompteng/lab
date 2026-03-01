@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from dataclasses import dataclass
 from contextlib import contextmanager
@@ -144,6 +145,7 @@ class _SchedulerDependencies:
         self.call_kwargs: dict[str, Any] = {}
         self.gate_payload: dict[str, Any] = {"recommended_mode": "paper", "gates": []}
         self.actuation_intent_path: Path | None = None
+        self.phase_manifest_path: Path | None = None
         self.actuation_payload: dict[str, Any] | None = None
 
 
@@ -1034,6 +1036,186 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertIsNotNone(scheduler.state.rollback_incident_evidence_path)
 
+    def test_run_autonomous_cycle_passes_autonomy_execution_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "GITHUB_REPOSITORY": "acme/torghut",
+                    "GITHUB_BASE_REF": "release",
+                    "GITHUB_HEAD_REF": "feature/abc-123",
+                    "PRIORITY_ID": "42",
+                },
+                clear=False,
+            ):
+                with patch(
+                    "app.trading.scheduler.run_autonomous_lane",
+                    side_effect=self._fake_run_autonomous_lane(deps),
+                ):
+                    scheduler._run_autonomous_cycle()
+
+            governance_inputs = deps.call_kwargs.get("governance_inputs")
+            self.assertIsInstance(governance_inputs, dict)
+            execution_context = governance_inputs.get("execution_context")
+            self.assertIsInstance(execution_context, dict)
+            self.assertEqual(execution_context.get("repository"), "acme/torghut")
+            self.assertEqual(execution_context.get("base"), "release")
+            self.assertEqual(execution_context.get("head"), "feature/abc-123")
+            self.assertEqual(
+                execution_context.get("artifactPath"), str(deps.call_kwargs.get("output_dir"))
+            )
+            self.assertEqual(execution_context.get("priorityId"), "42")
+
+    def test_run_autonomous_cycle_writes_iteration_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(_deps),
+            ):
+                scheduler._run_autonomous_cycle()
+
+            notes_path = (
+                Path(scheduler.state.last_autonomy_iteration_notes_path or "")
+                if scheduler.state.last_autonomy_iteration_notes_path
+                else None
+            )
+            self.assertIsNotNone(notes_path)
+            assert notes_path is not None
+            self.assertTrue(notes_path.exists())
+            self.assertEqual(notes_path.parent.name, "notes")
+            self.assertEqual(notes_path.name, "iteration-1.md")
+            self.assertEqual(
+                scheduler.state.last_autonomy_iteration,
+                1,
+            )
+
+            notes_payload = json.loads(notes_path.read_text(encoding="utf-8"))
+            self.assertEqual(notes_payload.get("status"), "lane_completed")
+            self.assertEqual(
+                notes_payload.get("phase_manifest_path"),
+                scheduler.state.last_autonomy_phase_manifest,
+            )
+
+    def test_append_runtime_governance_updates_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            scheduler.state.drift_last_detection_path = str(
+                Path(tmpdir) / "drift-detection.json"
+            )
+            scheduler.state.drift_last_action_path = str(
+                Path(tmpdir) / "drift-action.json"
+            )
+            scheduler.state.drift_last_outcome_path = str(
+                Path(tmpdir) / "drift-outcome.json"
+            )
+            scheduler.state.rollback_incident_evidence_path = str(
+                Path(tmpdir) / "rollback-evidence.json"
+            )
+            Path(scheduler.state.drift_last_detection_path).write_text("{}", encoding="utf-8")
+            Path(scheduler.state.drift_last_action_path).write_text("{}", encoding="utf-8")
+            Path(scheduler.state.drift_last_outcome_path).write_text("{}", encoding="utf-8")
+            Path(scheduler.state.rollback_incident_evidence_path).write_text(
+                "{}", encoding="utf-8"
+            )
+            scheduler.state.emergency_stop_active = True
+
+            manifest_path = Path(tmpdir) / "rollout" / "phase-manifest.json"
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_payload = {
+                "schema_version": "autonomy-phase-manifest-v1",
+                "run_id": "run-1",
+                "candidate_id": "cand-1",
+                "phases": [
+                    {"name": "gate-evaluation", "status": "pass", "artifact_refs": []},
+                    {
+                        "name": "promotion-prerequisites",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
+                    {
+                        "name": "rollback-readiness",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
+                    {"name": "drift-gate", "status": "pass", "artifact_refs": []},
+                    {"name": "paper-canary", "status": "pass", "artifact_refs": []},
+                    {
+                        "name": "runtime-governance",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
+                    {"name": "rollback-proof", "status": "pass", "artifact_refs": []},
+                ],
+            }
+            manifest_path.write_text(
+                json.dumps(manifest_payload, indent=2), encoding="utf-8"
+            )
+
+            scheduler._append_runtime_governance_to_phase_manifest(
+                manifest_path=manifest_path,
+                requested_promotion_target="paper",
+                drift_governance_payload={
+                    "drift_status": "drift_detected",
+                    "detection": {"reason_codes": ["performance_drawdown_exceeded"]},
+                    "action": {
+                        "action_type": "quarantine",
+                        "triggered": True,
+                        "reason_codes": ["performance_drawdown_exceeded"],
+                    },
+                    "reasons": ["evidence_anomaly"],
+                },
+                now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            )
+
+            updated_manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
+            phases = updated_manifest["phases"]
+            self.assertEqual(
+                [phase["name"] for phase in phases],
+                [
+                    "gate-evaluation",
+                    "promotion-prerequisites",
+                    "rollback-readiness",
+                    "drift-gate",
+                    "paper-canary",
+                    "runtime-governance",
+                    "rollback-proof",
+                ],
+            )
+            self.assertEqual(
+                phases[5]["status"],
+                "fail",
+                "drift detected should fail runtime governance",
+            )
+            self.assertEqual(
+                phases[6]["status"],
+                "pass",
+                "rollback proof should pass when evidence is attached",
+            )
+            self.assertIn(
+                str(scheduler.state.rollback_incident_evidence_path),
+                updated_manifest["artifact_refs"],
+            )
+            self.assertIn(
+                {"from": "drift-gate", "to": "paper-canary", "status": "pass"},
+                updated_manifest["phase_transitions"],
+            )
+
     def _build_scheduler_with_fixtures(
         self,
         tmpdir: str,
@@ -1191,6 +1373,53 @@ class TestTradingSchedulerAutonomy(TestCase):
                 json.dumps(actuation_payload), encoding="utf-8"
             )
             deps.actuation_intent_path = actuation_intent_path
+            rollout_dir = output_dir / "rollout"
+            rollout_dir.mkdir(parents=True, exist_ok=True)
+            phase_manifest_path = rollout_dir / "phase-manifest.json"
+            phase_manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "autonomy-phase-manifest-v1",
+                        "run_id": "test-run-id",
+                        "candidate_id": "cand-test",
+                        "phases": [
+                            {
+                                "name": "gate-evaluation",
+                                "status": "pass",
+                                "artifact_refs": [],
+                            },
+                            {
+                                "name": "promotion-prerequisites",
+                                "status": "pass",
+                                "artifact_refs": [],
+                            },
+                            {
+                                "name": "rollback-readiness",
+                                "status": "pass",
+                                "artifact_refs": [],
+                            },
+                            {"name": "drift-gate", "status": "pass", "artifact_refs": []},
+                            {"name": "paper-canary", "status": "pass", "artifact_refs": []},
+                            {
+                                "name": "runtime-governance",
+                                "status": "pass",
+                                "artifact_refs": [],
+                            },
+                            {
+                                "name": "rollback-proof",
+                                "status": "pass",
+                                "artifact_refs": [],
+                            },
+                        ],
+                        "runtime_governance": {"governance_status": "pass"},
+                        "rollback_proof": {"rollback_triggered": False},
+                        "phase_count": 7,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            deps.phase_manifest_path = phase_manifest_path
 
             return SimpleNamespace(
                 run_id="test-run-id",
@@ -1199,6 +1428,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 gate_report_path=gate_report_path,
                 actuation_intent_path=actuation_intent_path,
                 paper_patch_path=None,
+                phase_manifest_path=phase_manifest_path,
             )
 
         return _capture

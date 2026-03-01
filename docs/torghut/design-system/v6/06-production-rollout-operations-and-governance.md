@@ -4,16 +4,134 @@
 
 - Doc: `v6/06`
 - Date: `2026-02-27`
-- Maturity: `production design`
+- Maturity: `production implementation draft`
 - Scope: phased rollout plan for Beyond-TSMOM architecture with explicit SLO, rollback, and governance controls
-- Implementation status: `Planned`
+- Implementation status: `In Progress`
 - Evidence:
   - `docs/torghut/design-system/v6/06-production-rollout-operations-and-governance.md` (rollout plan)
-- Rollout gap: canonical phase manifest, canary gates, and rollback proof artifacts are not yet integrated into a single automated cutover pipeline.
+- Rollout status: canonical phase manifest, canary gates, and rollback proof artifacts are integrated into the autonomous lane + scheduler governance pipeline.
 
 ## Objective
 
 Provide a practical rollout plan from current live posture to fully operational intraday regime-adaptive and DSPy-governed decisioning.
+
+## Autonomous rollout contract (authoritative)
+
+The autonomous promotion pipeline produces a single canonical phase manifest at:
+
+`<artifact_path>/rollout/phase-manifest.json`
+
+Every manifest must include all of these top-level fields:
+
+- `schema_version` = `autonomy-phase-manifest-v1`
+- `run_id`
+- `candidate_id`
+- `execution_context`
+  - `repository`
+  - `base`
+  - `head`
+  - `artifactPath`
+  - `priorityId`
+- `requested_promotion_target` (`paper` | `live`)
+- `status` (`pass` | `fail`)
+- `phase_count`
+- `phase_transitions` list of adjacent transitions
+- `phases` list in exact order
+- `runtime_governance`
+- `rollback_proof`
+- `artifact_refs`
+- `slo_contract_version` = `governance-slo-v1`
+- `observation_summary`
+
+Phase order is fixed and authoritative for every manifest:
+
+1. `gate-evaluation`
+2. `promotion-prerequisites`
+3. `rollback-readiness`
+4. `drift-gate`
+5. `paper-canary`
+6. `runtime-governance`
+7. `rollback-proof`
+
+Every phase payload includes:
+
+- `name`
+- `status` (`pass`, `fail`, `skip`, `skipped`)
+- `timestamp`
+- `slo_gates`
+- `observations`
+- `artifact_refs`
+
+`phase_transitions` must be derived only from the canonical phase list and must include transitions between each adjacent phase.
+
+## SLO gate requirements
+
+Each phase must declare SLO checks in `slo_gates`:
+
+- `gate-evaluation`
+  - `slo_signal_count_minimum`
+  - `slo_decision_count_minimum`
+  - promotion gate-derived status checks
+- `promotion-prerequisites`
+  - `slo_required_artifacts_present`
+- `rollback-readiness`
+  - `slo_required_rollback_checks_present`
+- `drift-gate`
+  - `slo_drift_gate_allowed`
+- `paper-canary`
+  - `slo_paper_canary_patch_present`
+- `runtime-governance`
+  - `slo_runtime_rollback_not_triggered`
+- `rollback-proof`
+  - `slo_rollback_evidence_required_when_triggered`
+
+Failure policy:
+
+- manifest `status` is `fail` when any phase status is not `pass`/`skip`/`skipped`
+- transitions preserve the same failure state.
+
+## Rollout execution flow
+
+- `run_autonomous_lane` is the single phase-manifest producer.
+- The scheduler appends runtime governance and rollback proof updates after drift policy evaluation.
+- The scheduler publishes a per-iteration notes artifact on every cycle and records:
+  - outcome (`lane_completed`, `lane_execution_failed`, or `blocked_no_signal`)
+  - reason
+  - phase manifest path
+  - emergency-stop/rollback evidence path
+  - throughput and recommendation trace identifiers
+
+## Canary and rollback-proof controls
+
+### Canary promotion control
+
+- `paper-canary` is the gate that marks whether a paper strategy patch was produced.
+- For `paper` target, missing patch => `fail`.
+- For `live` target, missing patch => `skip`.
+- Canary completion path is captured in phase artifact references.
+
+### Rollback-proof control
+
+- `runtime-governance` status becomes `fail` when runtime drift/rollback policy is triggered or when drift state is unhealthy.
+- `rollback-proof` status becomes:
+  - `pass` when not rollback-triggered
+  - `pass` only when evidence path exists if rollback is triggered
+- Evidence is referenced by:
+  - `drift_last_detection_path`
+  - `drift_last_action_path`
+  - `drift_last_outcome_path`
+  - `rollback_incident_evidence_path`
+
+## Per-iteration notes artifact
+
+Each scheduler cycle writes an evidence notes file at:
+
+`${artifactPath}/notes/iteration-<n>.md`
+
+`artifactPath` is the autonomy artifact root (`settings.trading_autonomy_artifact_dir`).
+`n` increments from the existing highest `iteration-*` file in the notes folder.
+
+Notes are append-only per cycle and must remain uncommitted in source control.
 
 ## Rollout Phases
 

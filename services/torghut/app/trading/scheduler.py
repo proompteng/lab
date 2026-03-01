@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -76,9 +77,15 @@ from .universe import UniverseResolver
 from .llm.schema import MarketSnapshot as LLMMarketSnapshot
 from .llm.schema import MarketContextBundle
 from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
+from .autonomy.phase_manifest_contract import (
+    AUTONOMY_PHASE_ORDER,
+    coerce_phase_status,
+    normalize_phase_transitions,
+)
 from .route_metadata import coerce_route_text
 
 logger = logging.getLogger(__name__)
+_AUTONOMY_PHASE_ORDER: tuple[str, ...] = AUTONOMY_PHASE_ORDER
 
 _RECOVERABLE_EMERGENCY_STOP_PREFIXES: tuple[str, ...] = (
     "signal_lag_exceeded:",
@@ -972,11 +979,14 @@ class TradingState:
     last_autonomy_candidate_id: Optional[str] = None
     last_autonomy_gates: Optional[str] = None
     last_autonomy_actuation_intent: Optional[str] = None
+    last_autonomy_phase_manifest: Optional[str] = None
     last_autonomy_patch: Optional[str] = None
     last_autonomy_recommendation: Optional[str] = None
     last_autonomy_promotion_action: Optional[str] = None
     last_autonomy_promotion_eligible: Optional[bool] = None
     last_autonomy_recommendation_trace_id: Optional[str] = None
+    last_autonomy_iteration: Optional[int] = None
+    last_autonomy_iteration_notes_path: Optional[str] = None
     last_autonomy_throughput: Optional[dict[str, int | bool | str | None]] = None
     last_ingest_signals_total: int = 0
     last_ingest_window_start: Optional[datetime] = None
@@ -4929,6 +4939,13 @@ class TradingScheduler:
                 else settings.trading_autonomy_artifact_dir
             )
         )
+        autonomy_iteration = self._next_autonomy_iteration(artifact_root=artifact_root)
+        notes_path = self._iteration_notes_path(
+            artifact_root=artifact_root,
+            iteration=autonomy_iteration,
+        )
+        self.state.last_autonomy_iteration = autonomy_iteration
+        self.state.last_autonomy_iteration_notes_path = str(notes_path)
         now = datetime.now(timezone.utc)
         lookback_minutes = max(
             1, int(settings.trading_autonomy_signal_lookback_minutes)
@@ -4965,6 +4982,17 @@ class TradingScheduler:
                 strategy_config_path=strategy_config_path,
                 gate_policy_path=gate_policy_path,
             )
+            self._write_autonomy_iteration_notes(
+                notes_path=notes_path,
+                iteration=autonomy_iteration,
+                now=now,
+                outcome="blocked_no_signal",
+                reason=blocked_batch.no_signal_reason or "no_signal",
+                promotion_target="paper",
+                run_output_dir=None,
+                gate_manifest_path=self.state.last_autonomy_phase_manifest,
+                error=self.state.last_autonomy_error,
+            )
             return
         if not signals:
             self._handle_autonomy_no_signal_cycle(
@@ -4974,6 +5002,17 @@ class TradingScheduler:
                 artifact_root=artifact_root,
                 strategy_config_path=strategy_config_path,
                 gate_policy_path=gate_policy_path,
+            )
+            self._write_autonomy_iteration_notes(
+                notes_path=notes_path,
+                iteration=autonomy_iteration,
+                now=now,
+                outcome="blocked_no_signal",
+                reason=autonomy_batch.no_signal_reason or "no_signal",
+                promotion_target="paper",
+                run_output_dir=None,
+                gate_manifest_path=self.state.last_autonomy_phase_manifest,
+                error=self.state.last_autonomy_error,
             )
             return
 
@@ -5003,8 +5042,23 @@ class TradingScheduler:
             ),
             governance_artifact_path=str(run_output_dir),
             priority_id=priority_id,
+            execution_context=self._build_autonomy_execution_context(
+                run_output_dir=run_output_dir,
+                promotion_target=promotion_target,
+            ),
         )
         if result is None:
+            self._write_autonomy_iteration_notes(
+                notes_path=notes_path,
+                iteration=autonomy_iteration,
+                now=now,
+                outcome="lane_execution_failed",
+                reason=self.state.last_autonomy_reason or "lane_execution_failed",
+                promotion_target=promotion_target,
+                run_output_dir=None,
+                gate_manifest_path=self.state.last_autonomy_phase_manifest,
+                error=self.state.last_autonomy_error,
+            )
             return
 
         self._apply_autonomy_lane_result(
@@ -5012,6 +5066,20 @@ class TradingScheduler:
             run_output_dir=run_output_dir,
             signals=signals,
             now=now,
+            requested_promotion_target=promotion_target,
+        )
+        self._write_autonomy_iteration_notes(
+            notes_path=notes_path,
+            iteration=autonomy_iteration,
+            now=now,
+            outcome="lane_completed",
+            reason="completed",
+            promotion_target=promotion_target,
+            run_output_dir=run_output_dir,
+            gate_manifest_path=self.state.last_autonomy_phase_manifest,
+            error=self.state.last_autonomy_error,
+            emergency_stop_active=self.state.emergency_stop_active,
+            rollback_incident_path=self.state.rollback_incident_evidence_path,
         )
 
     @staticmethod
@@ -5023,6 +5091,30 @@ class TradingScheduler:
         if not gate_policy_path:
             raise RuntimeError("autonomy_gate_policy_path_missing")
         return Path(strategy_config_path), Path(gate_policy_path)
+
+    @staticmethod
+    def _build_autonomy_execution_context(
+        *,
+        run_output_dir: Path,
+        promotion_target: str,
+    ) -> dict[str, str]:
+        repository = (os.getenv("GITHUB_REPOSITORY") or "unknown").strip() or "unknown"
+        base_ref = os.getenv("GITHUB_BASE_REF") or os.getenv("GITHUB_REF") or "unknown"
+        if base_ref.startswith("refs/heads/"):
+            base_ref = base_ref.removeprefix("refs/heads/")
+        head_ref = (
+            os.getenv("GITHUB_HEAD_REF")
+            or os.getenv("GITHUB_REF_NAME")
+            or ("live" if promotion_target == "live" else "unknown")
+        )
+        priority_id = os.getenv("PRIORITY_ID") or os.getenv("CODEX_PRIORITY_ID") or ""
+        return {
+            "repository": repository,
+            "base": base_ref,
+            "head": head_ref,
+            "artifactPath": str(run_output_dir),
+            "priorityId": priority_id,
+        }
 
     def _record_autonomy_batch_state(
         self,
@@ -5139,6 +5231,7 @@ class TradingScheduler:
         self.state.last_autonomy_candidate_id = None
         self.state.last_autonomy_gates = str(no_signal_path)
         self.state.last_autonomy_actuation_intent = None
+        self.state.last_autonomy_phase_manifest = None
         self.state.last_autonomy_patch = None
         self.state.last_autonomy_recommendation = None
         self.state.last_autonomy_promotion_action = "hold"
@@ -5218,6 +5311,60 @@ class TradingScheduler:
         signals_path.write_text(json.dumps(signal_payloads, indent=2), encoding="utf-8")
         return run_output_dir, signals_path
 
+    def _next_autonomy_iteration(self, *, artifact_root: Path) -> int:
+        notes_root = artifact_root / "notes"
+        notes_root.mkdir(parents=True, exist_ok=True)
+        max_iteration = 0
+        for path in notes_root.glob("iteration-*.md"):
+            suffix = path.stem.removeprefix("iteration-")
+            if suffix.isdigit():
+                max_iteration = max(max_iteration, int(suffix))
+        return max_iteration + 1
+
+    def _iteration_notes_path(self, *, artifact_root: Path, iteration: int) -> Path:
+        return artifact_root / "notes" / f"iteration-{iteration}.md"
+
+    def _write_autonomy_iteration_notes(
+        self,
+        *,
+        notes_path: Path,
+        iteration: int,
+        now: datetime,
+        outcome: str,
+        reason: str,
+        promotion_target: str,
+        run_output_dir: Path | None,
+        gate_manifest_path: str | None,
+        error: str | None = None,
+        emergency_stop_active: bool = False,
+        rollback_incident_path: str | None = None,
+    ) -> None:
+        notes_payload = {
+            "iteration": iteration,
+            "status": outcome,
+            "timestamp": now.isoformat(),
+            "reason": reason,
+            "promotion_target": promotion_target,
+            "run_output_dir": str(run_output_dir) if run_output_dir else None,
+            "phase_manifest_path": gate_manifest_path,
+            "autonomy_run_id": self.state.last_autonomy_run_id,
+            "autonomy_candidate_id": self.state.last_autonomy_candidate_id,
+            "recommender": self.state.last_autonomy_recommendation,
+            "promotion_action": self.state.last_autonomy_promotion_action,
+            "promotion_eligible": self.state.last_autonomy_promotion_eligible,
+            "recommendation_trace_id": self.state.last_autonomy_recommendation_trace_id,
+            "error": error,
+            "emergency_stop_active": emergency_stop_active,
+            "rollback_incident_evidence_path": rollback_incident_path,
+            "throughput": self.state.last_autonomy_throughput,
+            "metrics": {
+                "drift_status": self.state.drift_status,
+                "security_controls_triggered": self.state.last_autonomy_reason,
+            },
+        }
+        notes_path.parent.mkdir(parents=True, exist_ok=True)
+        notes_path.write_text(json.dumps(notes_payload, indent=2), encoding="utf-8")
+
     def _reset_autonomy_signal_state(self, *, signal_count: int) -> None:
         market_session_open = self._is_market_session_open()
         self.state.market_session_open = market_session_open
@@ -5289,6 +5436,7 @@ class TradingScheduler:
         governance_head: str | None = None,
         governance_artifact_path: str | None = None,
         priority_id: str | None = None,
+        execution_context: Mapping[str, str] | None = None,
     ) -> Any | None:
         if self._pipeline is None:
             raise RuntimeError("trading_pipeline_not_initialized")
@@ -5318,11 +5466,39 @@ class TradingScheduler:
                 governance_reason=(
                     f"Autonomous recommendation for {promotion_target} target."
                 ),
+                governance_inputs=(
+                    {
+                        "execution_context": dict(
+                            execution_context
+                            or self._build_autonomy_execution_context(
+                                run_output_dir=run_output_dir,
+                                promotion_target=promotion_target,
+                            )
+                        ),
+                        "runtime_governance": {
+                            "governance_status": "pass",
+                            "drift_status": "queued",
+                            "artifact_refs": [],
+                            "rollback_triggered": False,
+                            "reasons": [
+                                "autonomy_runtime_governance_pending",
+                            ],
+                        },
+                        "rollback_proof": {
+                            "rollback_triggered": False,
+                            "rollback_incident_evidence_path": "",
+                            "reasons": [],
+                        },
+                    }
+                    if execution_context is not None
+                    else None
+                ),
                 persist_results=True,
                 session_factory=self._pipeline.session_factory,
             )
         except Exception as exc:
             self.state.autonomy_failure_streak += 1
+            self.state.last_autonomy_phase_manifest = None
             self.state.last_autonomy_error = str(exc)
             self.state.last_autonomy_reason = "lane_execution_failed"
             self._clear_autonomy_result_state()
@@ -5335,6 +5511,7 @@ class TradingScheduler:
         self.state.last_autonomy_candidate_id = None
         self.state.last_autonomy_gates = None
         self.state.last_autonomy_actuation_intent = None
+        self.state.last_autonomy_phase_manifest = None
         self.state.last_autonomy_patch = None
         self.state.last_autonomy_recommendation = None
         self.state.last_autonomy_promotion_action = None
@@ -5349,6 +5526,7 @@ class TradingScheduler:
         run_output_dir: Path,
         signals: list[SignalEnvelope],
         now: datetime,
+        requested_promotion_target: Literal["paper", "live"],
     ) -> None:
         self.state.autonomy_failure_streak = 0
         self.state.autonomy_runs_total += 1
@@ -5361,6 +5539,7 @@ class TradingScheduler:
             if result.actuation_intent_path
             else None
         )
+        self.state.last_autonomy_phase_manifest = str(result.phase_manifest_path)
         self.state.last_autonomy_reason = None
 
         gate_report_raw = json.loads(
@@ -5466,17 +5645,33 @@ class TradingScheduler:
         self.state.last_autonomy_error = None
 
         if settings.trading_drift_governance_enabled:
-            self._evaluate_drift_governance(
+            drift_governance_payload = self._evaluate_drift_governance(
                 run_output_dir=run_output_dir,
                 run_id=result.run_id,
                 signals=signals,
                 gate_report_payload=gate_report,
                 now=now,
             )
+            last_manifest = self.state.last_autonomy_phase_manifest
+            if last_manifest:
+                self._append_runtime_governance_to_phase_manifest(
+                    manifest_path=Path(last_manifest),
+                    requested_promotion_target=requested_promotion_target,
+                    drift_governance_payload=cast(Mapping[str, Any], drift_governance_payload),
+                    now=now,
+                )
         else:
             self.state.drift_status = "disabled"
             self.state.drift_live_promotion_eligible = False
             self.state.drift_live_promotion_reasons = ["drift_governance_disabled"]
+            last_manifest = self.state.last_autonomy_phase_manifest
+            if last_manifest:
+                self._append_runtime_governance_to_phase_manifest(
+                    manifest_path=Path(last_manifest),
+                    requested_promotion_target=requested_promotion_target,
+                    drift_governance_payload={},
+                    now=now,
+                )
 
         if result.paper_patch_path is not None:
             self.state.last_autonomy_patch = str(result.paper_patch_path)
@@ -5485,6 +5680,279 @@ class TradingScheduler:
             return
         self.state.last_autonomy_patch = None
         self._evaluate_safety_controls()
+
+    def _append_runtime_governance_to_phase_manifest(
+        self,
+        manifest_path: Path,
+        *,
+        requested_promotion_target: str,
+        drift_governance_payload: Mapping[str, Any],
+        now: datetime,
+    ) -> None:
+        if not manifest_path.exists():
+            return
+        try:
+            manifest_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(manifest_raw, dict):
+            return
+        manifest = cast(dict[str, Any], manifest_raw)
+
+        def _to_items(raw: Any) -> list[Any]:
+            if isinstance(raw, list):
+                return cast(list[Any], raw)
+            if isinstance(raw, tuple):
+                return list(cast(tuple[Any, ...], raw))
+            if isinstance(raw, set):
+                return list(cast(set[Any], raw))
+            return []
+
+        def _coerce_strs(raw: Any) -> list[str]:
+            raw_items = _to_items(raw)
+            if not raw_items:
+                return []
+            return sorted(
+                {
+                    str(item).strip()
+                    for item in raw_items
+                    if str(item).strip()
+                }
+            )
+
+        def _coerce_path(raw: Any) -> str:
+            if not isinstance(raw, str):
+                return ""
+            return raw.strip()
+
+        def _coerce_reason_codes(raw: Any) -> list[str]:
+            raw_items = _to_items(raw)
+            if not raw_items:
+                return []
+            return sorted(
+                {
+                    str(item).strip()
+                    for item in raw_items
+                    if str(item).strip()
+                }
+            )
+
+        def _build_placeholder_phase(name: str) -> dict[str, Any]:
+            return {
+                "name": name,
+                "status": "skip",
+                "timestamp": now.isoformat(),
+                "observations": {"note": "stage not evaluated"},
+                "slo_gates": [],
+                "artifact_refs": [],
+            }
+
+        drift_status = str(
+            drift_governance_payload.get("drift_status")
+            or self.state.drift_status
+            or "skipped"
+        ).strip().lower()
+
+        drift_reasons = _coerce_reason_codes(
+            drift_governance_payload.get("reasons", [])
+        )
+        action_payload = drift_governance_payload.get("action")
+        detection_payload = drift_governance_payload.get("detection")
+        if isinstance(action_payload, dict):
+            action_payload_map = cast(dict[str, Any], action_payload)
+            action_type = str(action_payload_map.get("action_type", "")).strip()
+            action_triggered = bool(action_payload_map.get("triggered", False))
+            action_reasons = _coerce_reason_codes(
+                action_payload_map.get("reason_codes", [])
+            )
+        else:
+            action_type = ""
+            action_triggered = False
+            action_reasons = []
+
+        if isinstance(detection_payload, dict):
+            detection_payload_map = cast(dict[str, Any], detection_payload)
+            detection_reasons = _coerce_reason_codes(
+                detection_payload_map.get("reason_codes", [])
+            )
+        else:
+            detection_reasons = []
+
+        evidence_refs = [
+            _coerce_path(self.state.drift_last_detection_path),
+            _coerce_path(self.state.drift_last_action_path),
+            _coerce_path(self.state.drift_last_outcome_path),
+            _coerce_path(self.state.rollback_incident_evidence_path),
+        ]
+        artifact_refs_payload = drift_governance_payload.get("artifact_refs", [])
+        if isinstance(artifact_refs_payload, (list, tuple, set)):
+            evidence_refs.extend(
+                [
+                    _coerce_path(item)
+                    for item in _to_items(artifact_refs_payload)
+                    if _coerce_path(item)
+                ]
+            )
+        evidence_refs = sorted({item for item in evidence_refs if item})
+        rollback_incident_evidence = _coerce_path(
+            drift_governance_payload.get("rollback_incident_evidence")
+        ) or _coerce_path(self.state.rollback_incident_evidence_path)
+        if rollback_incident_evidence:
+            evidence_refs.append(rollback_incident_evidence)
+        evidence_refs = sorted(set(evidence_refs))
+
+        rollback_triggered = bool(
+            self.state.emergency_stop_active
+            or drift_governance_payload.get("rollback_triggered", False)
+        )
+        governance_status = (
+            "fail"
+            if rollback_triggered or drift_status in {"drift_detected", "unhealthy"}
+            else "pass"
+        )
+        reasons = sorted(
+            {
+                str(item).strip()
+                for item in (
+                    *detection_reasons,
+                    *action_reasons,
+                    *drift_reasons,
+                )
+                if str(item).strip()
+            }
+        )
+
+        governance_phase: dict[str, Any] = {
+            "name": "runtime-governance",
+            "status": governance_status,
+            "timestamp": now.isoformat(),
+            "observations": {
+                "requested_promotion_target": requested_promotion_target,
+                "drift_status": drift_status,
+                "action_type": action_type or None,
+                "action_triggered": action_triggered,
+                "rollback_triggered": rollback_triggered,
+            },
+            "slo_gates": [
+                {
+                    "id": "slo_runtime_rollback_not_triggered",
+                    "status": "pass" if not rollback_triggered else "fail",
+                    "threshold": False,
+                    "value": rollback_triggered,
+                },
+            ],
+            "reasons": reasons,
+            "artifact_refs": evidence_refs,
+        }
+
+        rollback_proof_status = (
+            "pass" if (not rollback_triggered or rollback_incident_evidence) else "fail"
+        )
+        rollback_proof_phase: dict[str, Any] = {
+            "name": "rollback-proof",
+            "status": rollback_proof_status,
+            "timestamp": now.isoformat(),
+            "slo_gates": [
+                {
+                    "id": "slo_rollback_evidence_required_when_triggered",
+                    "status": "pass" if not rollback_triggered else (
+                        "pass" if rollback_incident_evidence else "fail"
+                    ),
+                    "threshold": True,
+                    "value": bool(rollback_incident_evidence),
+                },
+            ],
+            "observations": {
+                "rollback_triggered": rollback_triggered,
+                "rollback_incident_evidence_path": rollback_incident_evidence,
+            },
+            "reasons": reasons,
+            "artifact_refs": (
+                [rollback_incident_evidence] if rollback_incident_evidence else []
+            ),
+        }
+
+        existing_phases = manifest.get("phases", [])
+        phase_lookup: dict[str, dict[str, Any]] = {}
+        if isinstance(existing_phases, list):
+            for raw_phase in cast(list[Any], existing_phases):
+                if not isinstance(raw_phase, dict):
+                    continue
+                phase = cast(dict[str, Any], raw_phase)
+                name = str(phase.get("name", "")).strip()
+                if name:
+                    phase_lookup[name] = dict(phase)
+        phase_lookup["runtime-governance"] = governance_phase
+        phase_lookup["rollback-proof"] = rollback_proof_phase
+
+        ordered_phases: list[dict[str, Any]] = []
+        for name in _AUTONOMY_PHASE_ORDER:
+            phase_payload = phase_lookup.get(name)
+            if phase_payload is None:
+                ordered_phases.append(_build_placeholder_phase(name))
+                continue
+            phase_payload["name"] = name
+            phase_payload["status"] = coerce_phase_status(
+                phase_payload.get("status"), default="skip"
+            )
+            phase_payload["artifact_refs"] = _coerce_strs(
+                phase_payload.get("artifact_refs", [])
+            )
+            ordered_phases.append(phase_payload)
+
+        manifest["phases"] = ordered_phases
+        manifest["runtime_governance"] = {
+            "requested_promotion_target": requested_promotion_target,
+            "drift_status": drift_status,
+            "governance_status": governance_status,
+            "rollback_triggered": rollback_triggered,
+            "rollback_incident_evidence": rollback_incident_evidence,
+            "artifact_refs": evidence_refs,
+            "phase_count": len(ordered_phases),
+            "action_type": action_type,
+            "action_triggered": action_triggered,
+            "reasons": reasons,
+        }
+        manifest["rollback_proof"] = {
+            "requested_promotion_target": requested_promotion_target,
+            "rollback_triggered": rollback_triggered,
+            "rollback_incident_evidence": rollback_incident_evidence,
+            "artifact_refs": (
+                [rollback_incident_evidence]
+                if rollback_incident_evidence
+                else []
+            ),
+            "reasons": reasons,
+            "status": rollback_proof_status,
+        }
+
+        manifest["status"] = (
+            "fail"
+            if any(
+                str(phase.get("status")) not in {"pass", "skipped", "skip"}
+                for phase in ordered_phases
+            )
+            else "pass"
+        )
+        manifest["phase_count"] = len(ordered_phases)
+        manifest["updated_at"] = now.isoformat()
+
+        artifact_refs = [
+            str(item)
+            for phase in ordered_phases
+            for item in _coerce_strs(phase.get("artifact_refs", []))
+        ]
+        artifact_refs.extend(evidence_refs)
+        manifest["artifact_refs"] = sorted(
+            {
+                artifact_ref
+                for artifact_ref in artifact_refs
+                if str(artifact_ref).strip()
+            }
+        )
+        manifest["phase_transitions"] = normalize_phase_transitions(ordered_phases)
+
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     def _update_autonomy_recommendation_state(
         self,
