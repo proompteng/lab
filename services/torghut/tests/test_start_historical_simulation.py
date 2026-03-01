@@ -13,6 +13,7 @@ from scripts.start_historical_simulation import (
     ClickHouseRuntimeConfig,
     KafkaRuntimeConfig,
     PostgresRuntimeConfig,
+    _build_clickhouse_runtime_config,
     _build_argocd_automation_config,
     _build_kafka_runtime_config,
     _build_plan_report,
@@ -20,6 +21,7 @@ from scripts.start_historical_simulation import (
     _build_resources,
     _configure_torghut_service_for_simulation,
     _discover_automation_pointer,
+    _find_vector_extension_blocking_revision,
     _dump_topics,
     _dump_sha256_for_replay,
     _ensure_topics,
@@ -35,6 +37,7 @@ from scripts.start_historical_simulation import (
     _restore_ta_configuration,
     _replay_dump,
     _set_argocd_automation_mode,
+    _run_migrations,
     _torghut_env_overrides_from_manifest,
     _validate_dump_coverage,
     _validate_window_policy,
@@ -116,6 +119,43 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(config.runtime_username, 'torghut-runtime')
         self.assertEqual(config.runtime_password, 'sim-secret')
 
+    def test_build_clickhouse_runtime_config_supports_password_env(self) -> None:
+        with patch.dict('os.environ', {'TORGHUT_CLICKHOUSE_PASSWORD': 'clickhouse-secret'}, clear=False):
+            config = _build_clickhouse_runtime_config(
+                {
+                    'clickhouse': {
+                        'http_url': 'http://clickhouse.local:8123',
+                        'username': 'torghut',
+                        'password_env': 'TORGHUT_CLICKHOUSE_PASSWORD',
+                    }
+                }
+            )
+        self.assertEqual(config.http_url, 'http://clickhouse.local:8123')
+        self.assertEqual(config.username, 'torghut')
+        self.assertEqual(config.password, 'clickhouse-secret')
+
+    def test_build_postgres_runtime_config_supports_admin_dsn_password_env(self) -> None:
+        with patch.dict('os.environ', {'TORGHUT_POSTGRES_PASSWORD': 'postgres-secret'}, clear=False):
+            config = _build_postgres_runtime_config(
+                {
+                    'postgres': {
+                        'admin_dsn': 'postgresql://torghut_app@localhost:5432/postgres',
+                        'admin_dsn_password_env': 'TORGHUT_POSTGRES_PASSWORD',
+                        'simulation_dsn_template': 'postgresql://torghut_app@localhost:5432/{db}',
+                    }
+                },
+                simulation_db='torghut_sim_test',
+            )
+        self.assertEqual(config.simulation_db, 'torghut_sim_test')
+        self.assertEqual(
+            config.admin_dsn,
+            'postgresql://torghut_app:postgres-secret@localhost:5432/postgres',
+        )
+        self.assertEqual(
+            config.simulation_dsn,
+            'postgresql://torghut_app:postgres-secret@localhost:5432/torghut_sim_test',
+        )
+
     def test_build_postgres_runtime_config_uses_db_from_explicit_dsn(self) -> None:
         config = _build_postgres_runtime_config(
             {
@@ -133,6 +173,48 @@ class TestStartHistoricalSimulation(TestCase):
             _redact_dsn_credentials('postgresql://torghut:secret@localhost:5432/torghut_sim'),
             'postgresql://torghut:***@localhost:5432/torghut_sim',
         )
+
+    def test_find_vector_extension_blocking_revision(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        target = _find_vector_extension_blocking_revision(repo_root)
+        self.assertEqual(target, '0016_whitepaper_engineering_triggers_and_rollout')
+
+    def test_run_migrations_falls_back_to_pre_vector_revision_on_permission_error(self) -> None:
+        config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='/opt/venv/bin/alembic upgrade heads',
+        )
+        calls: list[str] = []
+
+        def _fake_run_command(args, *, cwd=None, env=None, input_text=None) -> None:
+            _ = (cwd, env, input_text)
+            calls.append(' '.join(args))
+            if args[-1] == 'heads':
+                raise RuntimeError('command_failed: permission denied to create extension \"vector\"')
+            return None
+
+        def _fake_retry(*, label: str, operation: object, attempts: int = 8, sleep_seconds: float = 0.5) -> None:
+            _ = (label, attempts, sleep_seconds)
+            return operation()
+
+        with (
+            patch('scripts.start_historical_simulation._run_command', side_effect=_fake_run_command),
+            patch(
+                'scripts.start_historical_simulation._run_with_transient_postgres_retry',
+                side_effect=_fake_retry,
+            ),
+            patch(
+                'scripts.start_historical_simulation._find_vector_extension_blocking_revision',
+                return_value='0016_whitepaper_engineering_triggers_and_rollout',
+            ),
+        ):
+            _run_migrations(config)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn('heads', calls[0])
+        self.assertIn('0016_whitepaper_engineering_triggers_and_rollout', calls[1])
 
     def test_merge_env_entries_updates_and_removes(self) -> None:
         current = [

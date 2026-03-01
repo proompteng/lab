@@ -27,9 +27,15 @@ Use this playbook when you need to:
 ## Prerequisites
 
 - `kubectl` access to the target cluster and namespace (`torghut`).
-- Python runtime + dependencies for the script (`uv sync --frozen --extra dev` in `services/torghut`).
-- Kafka, ClickHouse, and Postgres connectivity from the execution environment.
+- Access to the cluster services for Kafka, ClickHouse, and Postgres from Argo workflow runtime.
 - A dataset manifest file (YAML/JSON) with explicit `window.start` and `window.end`.
+- A reflected Strimzi KafkaUser password in `argo-workflows`:
+
+```bash
+kubectl get secret kafka-codex-credentials -n argo-workflows -o jsonpath='{.data.password}' >/dev/null
+```
+
+This secret is reflected from the Strimzi `KafkaUser kafka-codex-credentials` in namespace `kafka` via `kubernetes-reflector` annotations, so password rotation is handled at source.
 
 ## Step 1: Prepare Manifest
 
@@ -50,18 +56,27 @@ Recommendation:
 - set `torghut_env_overrides.TRADING_FEATURE_MAX_STALENESS_MS` only for an explicit custom budget.
 - set `monitor.*` thresholds for minimum decisions/executions/TCA rows.
 
-## Step 2: Plan
+Kafka credential handling:
 
-From `services/torghut`:
+- `runtime_sasl_password_env` should stay `TORGHUT_SIM_KAFKA_PASSWORD`.
+- Do not pass plaintext credentials in commands or manifests.
+- Ensure the Kubernetes secret name in the workflow is `kafka-codex-credentials` and the key is `password`.
+
+This playbook is Argo-first and should not be executed locally.
+
+## Step 2: Plan (Argo)
 
 ```bash
-RUN_ID=sim-2026-02-28-01
+RUN_ID=sim-2026-02-27-01
 MANIFEST=config/simulation/example-dataset.yaml
+MANIFEST_B64="$(base64 < "${MANIFEST}" | tr -d '\n')"
 
-uv run python scripts/start_historical_simulation.py \
-  --mode plan \
-  --run-id "${RUN_ID}" \
-  --dataset-manifest "${MANIFEST}"
+argo submit --from workflowtemplate/torghut-historical-simulation \
+  -n argo-workflows \
+  -p runId="${RUN_ID}" \
+  -p mode=plan \
+  -p datasetManifestB64="${MANIFEST_B64}"
+
 ```
 
 Verify plan output shows isolated targets:
@@ -70,7 +85,22 @@ Verify plan output shows isolated targets:
 - `postgres_database` is not `torghut`
 - simulation topics are `torghut.sim.*`
 
-## Step 3: Run Simulation End-to-End
+## Step 3: Run Simulation End-to-End (Argo)
+
+From Argo:
+
+```bash
+RUN_ID=sim-2026-02-27-01
+MANIFEST=config/simulation/example-dataset.yaml
+MANIFEST_B64="$(base64 < "${MANIFEST}" | tr -d '\n')"
+
+argo submit --from workflowtemplate/torghut-historical-simulation \
+  -n argo-workflows \
+  -p runId="${RUN_ID}" \
+  -p mode=run \
+  -p confirmPhrase=START_HISTORICAL_SIMULATION \
+  -p datasetManifestB64="${MANIFEST_B64}"
+```
 
 `start_historical_simulation.py --mode run` handles:
 
@@ -80,24 +110,46 @@ Verify plan output shows isolated targets:
 - post-run report generation,
 - teardown + Argo automation restore.
 
-```bash
-uv run python scripts/start_historical_simulation.py \
-  --mode run \
-  --run-id "${RUN_ID}" \
-  --dataset-manifest "${MANIFEST}" \
-  --confirm START_HISTORICAL_SIMULATION
+Workflow pods run in the image environment, so ensure the manifest includes:
+
+```yaml
+postgres:
+  migrations_command: /opt/venv/bin/python -m alembic upgrade heads
 ```
+
+- If migration fails with `permission denied to create extension "vector"`, it indicates the configured Postgres role is not superuser. In that case, the script now automatically retries migrations at the pre-vector revision and proceeds with simulation-safe migration state.
 
 For reruns with existing dump/replay:
 
 ```bash
-uv run python scripts/start_historical_simulation.py \
-  --mode run \
-  --run-id "${RUN_ID}" \
-  --dataset-manifest "${MANIFEST}" \
-  --confirm START_HISTORICAL_SIMULATION \
-  --force-replay
+RUN_ID=sim-2026-02-27-10
+MANIFEST=/tmp/torghut-historical-sim-2026-02-27-manifest-run06.yaml
+MANIFEST_B64="$(base64 < "${MANIFEST}" | tr -d '\n')"
+
+argo submit --from workflowtemplate/torghut-historical-simulation \
+  -n argo-workflows \
+  -p runId="${RUN_ID}" \
+  -p mode=run \
+  -p confirmPhrase=START_HISTORICAL_SIMULATION \
+  -p datasetManifestB64="${MANIFEST_B64}" \
+  -p forceReplay=false
 ```
+
+Track status:
+
+```bash
+WORKFLOW_NAME="$(argo submit --from workflowtemplate/torghut-historical-simulation \
+  -n argo-workflows \
+  -p runId="${RUN_ID}" \
+  -p mode=run \
+  -p confirmPhrase=START_HISTORICAL_SIMULATION \
+  -p datasetManifestB64="${MANIFEST_B64}" \
+  -p forceReplay=false -o name | sed 's/workflow.argoproj.io\\/\\///')"
+argo wait -n argo-workflows "${WORKFLOW_NAME}"
+argo get -n argo-workflows "${WORKFLOW_NAME}"
+```
+
+Use `-p forceDump=false` for fresh dumps and `-p forceReplay=true` when replay artifacts already exist.
 
 ## Step 4: Validate Simulation Runtime (During Run)
 
@@ -191,13 +243,17 @@ kubectl exec -i -n torghut chi-torghut-clickhouse-default-0-0-0 -- \
            GROUP BY table ORDER BY table FORMAT TabSeparated"
 ```
 
-## Step 6: Split-Mode Teardown (Only if you did not use `--mode run`)
+## Step 6: Split-Mode Teardown (Only if you did not use `mode=run`)
 
 ```bash
-uv run python scripts/start_historical_simulation.py \
-  --mode teardown \
-  --run-id "${RUN_ID}" \
-  --dataset-manifest "${MANIFEST}"
+MANIFEST_B64="$(base64 < "${MANIFEST}" | tr -d '\n')"
+
+argo submit --from workflowtemplate/torghut-historical-simulation \
+  -n argo-workflows \
+  -p runId="${RUN_ID}" \
+  -p mode=teardown \
+  -p confirmPhrase=START_HISTORICAL_SIMULATION \
+  -p datasetManifestB64="${MANIFEST_B64}"
 ```
 
 Verify:
@@ -225,11 +281,19 @@ Expected: `Synced`, `Healthy`, and `Succeeded`.
 
 ## Known Issues (as of 2026-02-28)
 
-1. Argo automation management can fail if ApplicationSet path structure changes.
+1. `manifest.kafka.runtime_sasl_*` fields are required by design, but runbooks should avoid duplicating secrets in manifests by
+   using one of:
+   - `kafka.runtime_sasl_password_env` with `runtime_sasl_password_env`
+   - base `kafka.sasl_password` with `sasl_password_env` plus runtime protocol/security/mechanism settings
+
+   The script now falls back to base Kafka credentials when runtime fields are omitted, which prevents failures when manifests
+   accidentally use only the base credentials.
+
+2. Argo automation management can fail if ApplicationSet path structure changes.
 
 - Mitigation: keep `argocd.applicationset_name/app_name` manifest settings current and verify `run-state.json` phase status.
 
-2. Simulation ClickHouse DB may not contain `ta_microbars`/`ta_signals` tables automatically.
+3. Simulation ClickHouse DB may not contain `ta_microbars`/`ta_signals` tables automatically.
 
 - Symptom: Torghut log contains `clickhouse_http_404` unknown table in simulation DB.
 - Mitigation: create simulation tables before running TA/Torghut against the simulation DB.
@@ -252,7 +316,7 @@ ENGINE = ReplicatedReplacingMergeTree(
 );
 ```
 
-3. Replay can advance cursor but produce zero decisions/executions.
+4. Replay can advance cursor but produce zero decisions/executions.
 
 - Typical causes:
   - replay window timestamps are outside market/actionable logic,
@@ -265,6 +329,14 @@ ENGINE = ReplicatedReplacingMergeTree(
   - rely on auto-derived staleness budget from `window.start` (or explicit override),
   - ensure monitor thresholds are configured and fail-closed,
   - reset/inspect simulation `trade_cursor` when re-running with the same DB.
+
+5. `kubectl` is image-owned in `services/torghut/Dockerfile`.
+
+- The workflow no longer downloads `kubectl` at runtime.
+- Ensure the Torghut image includes an architecture-correct `kubectl` for your runtime:
+  - `/usr/local/bin/kubectl`
+  - verify startup with `kubectl version --client`
+- If you see `Exec format error`, rebuild `registry.ide-newton.ts.net/lab/torghut` after updating `services/torghut/Dockerfile` with the runtime platform mapping.
 
 ## Completion Checklist
 

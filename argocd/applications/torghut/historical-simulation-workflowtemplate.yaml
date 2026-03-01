@@ -39,7 +39,24 @@ spec:
           - name: allowMissingState
           - name: outputRoot
       container:
-        image: registry.ide-newton.ts.net/lab/torghut:latest
+        image: registry.ide-newton.ts.net/lab/torghut:sim-run-fix-2026-02-28-09
+        imagePullPolicy: Always
+        env:
+        - name: TORGHUT_SIM_KAFKA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: kafka-codex-credentials
+              key: password
+        - name: TORGHUT_CLICKHOUSE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: torghut-clickhouse-auth
+              key: torghut_password
+        - name: TORGHUT_POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: torghut-db-app
+              key: password
         command:
           - /bin/bash
           - -lc

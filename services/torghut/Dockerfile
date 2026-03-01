@@ -35,13 +35,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 ARG KUBECTL_VERSION=v1.30.0
+ARG TARGETPLATFORM
 
 RUN apt-get update \
  && apt-get install --no-install-recommends -y \
       ca-certificates \
       curl \
       libpq5 \
- && curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+ && case "${TARGETPLATFORM}" in \
+      "linux/amd64") KUBECTL_ARCH="amd64" ;; \
+      "linux/arm64") KUBECTL_ARCH="arm64" ;; \
+      *) echo "Unsupported platform: ${TARGETPLATFORM}" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KUBECTL_ARCH}/kubectl" \
  && chmod +x /usr/local/bin/kubectl \
  && rm -rf /var/lib/apt/lists/*
 
