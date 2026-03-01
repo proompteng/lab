@@ -6,6 +6,14 @@
 - Date: `2026-02-27`
 - Maturity: `production design`
 - Scope: replace static intraday TSMOM loop with a layered regime-adaptive system plus fast/slow decision routing
+- Implementation status: `Partial`
+- Evidence:
+  - `services/torghut/app/trading/features.py`
+  - `services/torghut/app/trading/forecasting.py`
+  - `services/torghut/app/trading/scheduler.py`
+  - `services/torghut/app/trading/portfolio.py`
+  - `services/torghut/app/trading/regime.py`
+- Rollout gap: missing first-class HMM control-plane and promotion lane that enforces this architecture as the dominant live path.
 
 ## Objective
 

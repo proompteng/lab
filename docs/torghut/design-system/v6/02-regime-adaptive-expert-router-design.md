@@ -6,6 +6,13 @@
 - Date: `2026-02-27`
 - Maturity: `production design`
 - Scope: implement MM-DREX-style expert routing in Torghut with deterministic guardrails
+- Implementation status: `Partial`
+- Evidence:
+  - `services/torghut/app/trading/features.py`
+  - `services/torghut/app/trading/forecasting.py`
+  - `services/torghut/app/trading/scheduler.py`
+  - `services/torghut/app/trading/portfolio.py`
+- Rollout gap: no production expert-router artifact registry or concentration/fallback tuning SLO loop exists yet.
 
 ## Objective
 
@@ -36,7 +43,7 @@ Implement a regime-aware routing layer that dynamically allocates weight across 
   "weights": {
     "trend": 0.62,
     "reversal": 0.14,
-    "breakout": 0.20,
+    "breakout": 0.2,
     "defensive": 0.04
   },
   "entropy": 0.41,

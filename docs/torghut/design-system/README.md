@@ -37,7 +37,20 @@ The v1 documents are written to stay consistent with:
 ## Implementation Audit
 
 - Document-by-document implementation status matrix:
-  - `docs/torghut/design-system/implementation-status-matrix-2026-02-21.md`
+- `docs/torghut/design-system/implementation-status-matrix-2026-02-21.md`
+- `docs/torghut/design-system/implementation-audit.md`
+
+## Corpus implementation status (2026-03-01 evidence sync)
+
+- root: total=2 (Implemented=0, Partial=0, Planned=2)
+- v1: total=60 (Implemented=11, Partial=44, Planned=5)
+- v2: total=25 (Implemented=0, Partial=17, Planned=8)
+- v3: total=37 (Implemented=4, Partial=29, Planned=4)
+- v4: total=11 (Implemented=0, Partial=1, Planned=10)
+- v5: total=15 (Implemented=0, Partial=7, Planned=8)
+- v6: total=8 (Implemented=0, Partial=5, Planned=3)
+
+- Evidence-sync checkpoint: `implementation-audit.md`
 
 ## Design doc set
 
@@ -59,6 +72,7 @@ The v1 documents are written to stay consistent with:
   - Entry point: `docs/torghut/design-system/v6/index.md`
 
 - `v1/` - first cohesive design-system pass aligned to production reality as of **2026-02-08**.
+  - Entry point: `docs/torghut/design-system/v1/index.md`
 
 ### v1 Index
 

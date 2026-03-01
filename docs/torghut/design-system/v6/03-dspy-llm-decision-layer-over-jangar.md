@@ -6,6 +6,16 @@
 - Date: `2026-02-27`
 - Maturity: `production design`
 - Scope: production LLM decision architecture using DSPy programs, Jangar OpenAI-compatible inference, and deterministic safety integration
+- Implementation status: `Partial`
+- Evidence:
+  - `services/torghut/app/trading/llm/dspy_programs/runtime.py`
+  - `services/torghut/app/trading/llm/dspy_compile/workflow.py`
+  - `services/torghut/app/trading/llm/review_engine.py`
+  - `services/torghut/app/trading/llm/schema.py`
+  - `services/torghut/tests/test_llm_dspy_workflow.py`
+  - `services/torghut/tests/test_llm_review_engine.py`
+  - `argocd/applications/torghut/knative-service.yaml`
+- Rollout gap: full production-path cutover still needs legacy LLM route decommission and end-to-end artifact-driven promotion telemetry.
 
 ## Objective
 

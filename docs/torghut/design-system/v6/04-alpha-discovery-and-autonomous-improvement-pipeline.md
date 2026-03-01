@@ -6,6 +6,10 @@
 - Date: `2026-02-27`
 - Maturity: `production design`
 - Scope: offline strategy and factor discovery pipeline that continuously improves live expert stack without unsafe online mutation
+- Implementation status: `Planned`
+- Evidence:
+  - `docs/torghut/design-system/v6/04-alpha-discovery-and-autonomous-improvement-pipeline.md` (design-level contract)
+- Rollout gap: candidate generation, evaluation, and promotion lanes are not yet present as explicit AgentRun workflows in `services/torghut` or `services/torghut/app`.
 
 ## Objective
 

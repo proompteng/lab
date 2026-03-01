@@ -5,6 +5,10 @@
 - Version: `v1`
 - Last updated: **2026-02-27**
 - Source of truth (config): `argocd/applications/torghut/**`
+- Implementation status: `Partial`
+- Implementation evidence: `services/torghut/scripts/start_historical_simulation.py`, `services/torghut/scripts/analyze_historical_simulation.py`, `services/torghut/tests/test_start_historical_simulation.py`, `services/torghut/tests/test_analyze_historical_simulation.py`, `services/torghut/app/config.py`
+- Implementation gaps: no first-class cluster-wide trading-day scheduler and no dedicated zero-touch evidence publication control loop for production operators yet.
+- Rollout and verification: keep this doc implementation-ready by wiring one-click/cron automation against pre-generated manifests and validating isolation deltas in `run_manifest.json`.
 
 ## Purpose
 
@@ -79,16 +83,16 @@ flowchart LR
 
 ## Topic contract mapping
 
-| Role | Production topic | Simulation topic |
-| --- | --- | --- |
-| Trades ingest | `torghut.trades.v1` | `torghut.sim.trades.v1` |
-| Quotes ingest | `torghut.quotes.v1` | `torghut.sim.quotes.v1` |
-| Bars ingest | `torghut.bars.1m.v1` | `torghut.sim.bars.1m.v1` |
-| Forwarder status | `torghut.status.v1` | `torghut.sim.status.v1` |
-| TA microbars | `torghut.ta.bars.1s.v1` | `torghut.sim.ta.bars.1s.v1` |
-| TA signals | `torghut.ta.signals.v1` | `torghut.sim.ta.signals.v1` |
-| TA status | `torghut.ta.status.v1` | `torghut.sim.ta.status.v1` |
-| Order updates | `torghut.trade-updates.v1` | `torghut.sim.trade-updates.v1` |
+| Role             | Production topic           | Simulation topic               |
+| ---------------- | -------------------------- | ------------------------------ |
+| Trades ingest    | `torghut.trades.v1`        | `torghut.sim.trades.v1`        |
+| Quotes ingest    | `torghut.quotes.v1`        | `torghut.sim.quotes.v1`        |
+| Bars ingest      | `torghut.bars.1m.v1`       | `torghut.sim.bars.1m.v1`       |
+| Forwarder status | `torghut.status.v1`        | `torghut.sim.status.v1`        |
+| TA microbars     | `torghut.ta.bars.1s.v1`    | `torghut.sim.ta.bars.1s.v1`    |
+| TA signals       | `torghut.ta.signals.v1`    | `torghut.sim.ta.signals.v1`    |
+| TA status        | `torghut.ta.status.v1`     | `torghut.sim.ta.status.v1`     |
+| Order updates    | `torghut.trade-updates.v1` | `torghut.sim.trade-updates.v1` |
 
 Contract rules:
 
@@ -159,39 +163,47 @@ uv run python services/torghut/scripts/start_historical_simulation.py --run-id <
 The script must implement the full startup workflow:
 
 1. Validate prerequisites.
+
 - `kubectl` access.
 - Kafka + ClickHouse + Postgres endpoints reachable.
 - Required topics/config/credentials present.
 
 2. Create and validate isolation targets.
+
 - Ensure simulation topics exist.
 - Ensure ClickHouse simulation DB exists (or create it).
 - Ensure Postgres simulation DB exists and run migrations.
 
 3. Dump production topic window.
+
 - Bounded by explicit start/end timestamps or offsets.
 - Capture metadata needed for deterministic replay and lineage (`topic`, `partition`, `offset`, key, timestamp).
 
 4. Replay dump into simulation topics.
+
 - Preserve per-symbol ordering.
 - Allow pacing mode (`event_time`, `accelerated`, `max_throughput`).
 
 5. Configure TA for simulation.
+
 - Patch `torghut-ta-config` with simulation topics/group and simulation ClickHouse DB URL.
 - Suspend/resume TA with restart nonce bump.
 
 6. Configure Torghut for simulation.
+
 - Set simulation signal/price tables.
 - Point order feed to simulation trade-updates topic only.
 - Force safe mode: `TRADING_MODE=paper`, `TRADING_LIVE_ENABLED=false`.
 - Set execution fallback policy to avoid accidental live mutation routes.
 
 7. Verify health and contamination guards.
+
 - TA running and producing simulation signals.
 - Torghut consuming only simulation topics/tables.
 - Production DB/table write counters unchanged during simulation window.
 
 8. Emit run manifest.
+
 - Output a single JSON artifact with run id, all topic/db names, group ids, dump window, and checksum/hashes.
 
 Script operational contract:
@@ -222,13 +234,13 @@ All KPIs must be scoped by `simulation_run_id` and symbol.
 
 ## Failure modes and mitigations
 
-| Failure | Signal | Mitigation |
-| --- | --- | --- |
-| Replay contract drift | parse/decode failures in TA or order feed | validate dump records against schema before replay |
-| Storage contamination | simulation rows appear in production DB/tables | hard block startup when isolation targets are not set |
-| Hidden production topic consumption | order-feed events from live topics during sim | require explicit topic whitelist and clear `TRADING_ORDER_FEED_TOPIC_V2` |
-| Replay outruns compute | TA lag/checkpoint failures | pacing throttles + backpressure limits |
-| Live mutation risk | unexpected broker order activity | enforce `paper` mode and no live fallback routes |
+| Failure                             | Signal                                         | Mitigation                                                               |
+| ----------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------ |
+| Replay contract drift               | parse/decode failures in TA or order feed      | validate dump records against schema before replay                       |
+| Storage contamination               | simulation rows appear in production DB/tables | hard block startup when isolation targets are not set                    |
+| Hidden production topic consumption | order-feed events from live topics during sim  | require explicit topic whitelist and clear `TRADING_ORDER_FEED_TOPIC_V2` |
+| Replay outruns compute              | TA lag/checkpoint failures                     | pacing throttles + backpressure limits                                   |
+| Live mutation risk                  | unexpected broker order activity               | enforce `paper` mode and no live fallback routes                         |
 
 ## Acceptance criteria
 
