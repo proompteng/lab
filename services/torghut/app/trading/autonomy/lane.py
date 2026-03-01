@@ -78,7 +78,11 @@ from .policy_checks import (
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 from .phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
+    AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
+    AUTONOMY_SLO_CONTRACT_VERSION,
     AUTONOMY_PHASE_SLO_GATES,
+    build_rollback_proof_phase_payload,
+    build_runtime_governance_phase_payload,
     build_ordered_phase_summaries,
     coerce_phase_status,
     normalize_phase_transitions,

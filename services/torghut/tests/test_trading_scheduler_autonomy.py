@@ -654,6 +654,79 @@ class TestTradingSchedulerAutonomy(TestCase):
                 },
             )
 
+    def test_append_runtime_governance_to_phase_manifest_records_rollback_trigger_without_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _ = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            manifest_path = Path(tmpdir) / "phase-manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.autonomy.phase-manifest.v1",
+                        "run_id": "run-trigger-no-evidence",
+                        "candidate_id": "cand-trigger-no-evidence",
+                        "phases": [
+                            {
+                                "name": "gate-evaluation",
+                                "status": "pass",
+                                "timestamp": "2026-01-01T00:00:00Z",
+                                "slo_gates": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            scheduler._append_runtime_governance_to_phase_manifest(
+                manifest_path=manifest_path,
+                requested_promotion_target="paper",
+                drift_governance_payload={
+                    "drift_status": "unhealthy",
+                    "rollback_triggered": True,
+                    "reasons": ["performance_drawdown_exceeded"],
+                    "detection": {
+                        "reason_codes": ["performance_drawdown_exceeded"],
+                    },
+                },
+                now=datetime(2026, 1, 5, tzinfo=timezone.utc),
+            )
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                manifest["runtime_governance"]["governance_status"],
+                "fail",
+            )
+            self.assertTrue(manifest["runtime_governance"]["rollback_triggered"])
+            self.assertEqual(manifest["rollback_proof"]["status"], "fail")
+            self.assertEqual(manifest["phases"][5]["status"], "fail")
+            self.assertEqual(manifest["phases"][6]["status"], "fail")
+            self.assertEqual(manifest["status"], "fail")
+            paper_to_runtime = next(
+                transition
+                for transition in manifest["phase_transitions"]
+                if transition.get("from") == "paper-canary"
+                and transition.get("to") == "runtime-governance"
+            )
+            self.assertEqual(
+                paper_to_runtime["status"],
+                "fail",
+            )
+            runtime_to_rollback_proof = next(
+                transition
+                for transition in manifest["phase_transitions"]
+                if transition.get("from") == "runtime-governance"
+                and transition.get("to") == "rollback-proof"
+            )
+            self.assertEqual(
+                runtime_to_rollback_proof["status"],
+                "fail",
+            )
+
     def test_append_runtime_governance_to_phase_manifest_records_pass_path_with_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, _ = self._build_scheduler_with_fixtures(
@@ -1481,7 +1554,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 Path(tmpdir) / "backtest" / "walkforward-results.json"
             )
             manifest_payload = {
-                "schema_version": "autonomy-phase-manifest-v1",
+                "schema_version": "torghut.autonomy.phase-manifest.v1",
                 "run_id": "run-1",
                 "candidate_id": "cand-1",
                 "phases": [
@@ -1744,9 +1817,10 @@ class TestTradingSchedulerAutonomy(TestCase):
             phase_manifest_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "autonomy-phase-manifest-v1",
+                        "schema_version": "torghut.autonomy.phase-manifest.v1",
                         "run_id": "test-run-id",
                         "candidate_id": "cand-test",
+                        "slo_contract_version": "governance-slo-v1",
                         "phases": [
                             {
                                 "name": "gate-evaluation",
