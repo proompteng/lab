@@ -53,8 +53,8 @@ def _resolve_dspy_jangar_api_base() -> str:
         raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_invalid")
 
     normalized_path = parsed_base_url.path.rstrip("/")
-    if normalized_path == "":
-        api_base_path = ""
+    if normalized_path in ("", "/"):
+        api_base_path = _DSPY_OPENAI_BASE_PATH
     elif normalized_path == _DSPY_OPENAI_BASE_PATH:
         api_base_path = _DSPY_OPENAI_BASE_PATH
     elif normalized_path == _DSPY_OPENAI_BASE_PATH + _DSPY_OPENAI_CHAT_COMPLETION_SUFFIX:
