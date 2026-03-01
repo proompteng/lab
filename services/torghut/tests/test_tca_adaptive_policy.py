@@ -276,6 +276,51 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         self.assertIsNone(decision.prefer_limit)
         self.assertGreater(decision.degradation_bps or Decimal("0"), Decimal("4"))
 
+    def test_derivation_stays_neutral_when_shortfall_signal_is_missing(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            self._insert_observations(
+                session,
+                strategy,
+                symbol="AAPL",
+                regime="trend",
+                slippages=[
+                    Decimal("10"),
+                    Decimal("12"),
+                    Decimal("14"),
+                    Decimal("16"),
+                    Decimal("18"),
+                    Decimal("20"),
+                ],
+                shortfalls=[
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ],
+                expected_shortfall_p50_values=[
+                    Decimal("5"),
+                    Decimal("5"),
+                    Decimal("5"),
+                    Decimal("5"),
+                    Decimal("5"),
+                    Decimal("5"),
+                ],
+                adaptive_applied=False,
+            )
+
+            decision = derive_adaptive_execution_policy(
+                session,
+                symbol="AAPL",
+                regime_label="trend",
+            )
+
+        self.assertFalse(decision.fallback_active)
+        self.assertIsNone(decision.prefer_limit)
+        self.assertEqual(decision.aggressiveness, "neutral")
+
     def _insert_strategy(self, session: Session) -> Strategy:
         strategy = Strategy(
             name="adaptive-policy-test",
@@ -298,7 +343,7 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         symbol: str,
         regime: str,
         slippages: list[Decimal],
-        shortfalls: list[Decimal],
+        shortfalls: list[Decimal | None],
         adaptive_applied: bool,
         expected_shortfall_p50_values: list[Decimal] | None = None,
         expected_shortfall_p95_values: list[Decimal] | None = None,
