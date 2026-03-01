@@ -67,7 +67,7 @@ spec:
             fi
 
             printf '%s' "{{inputs.parameters.datasetManifestB64}}" | base64 -d > "${MANIFEST_PATH}"
-            python3 - <<'PY'
+            /opt/venv/bin/python - <<'PY'
             import os
             import yaml
 
@@ -118,7 +118,7 @@ spec:
             fi
 
             mkdir -p "$OUTPUT_ROOT"
-            python3 /app/scripts/start_historical_simulation.py "${SCRIPT_ARGS[@]}"
+            /opt/venv/bin/python /app/scripts/start_historical_simulation.py "${SCRIPT_ARGS[@]}"
       outputs:
         artifacts:
           - name: simulation-output
