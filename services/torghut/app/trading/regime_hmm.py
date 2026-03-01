@@ -140,7 +140,7 @@ def resolve_hmm_context(raw_payload: Mapping[str, Any] | None) -> HMMRegimeConte
     payload = dict(cast(dict[str, Any], raw_payload))
     direct_payload = _extract_context_payload(payload)
     if direct_payload is None:
-        if not _has_hmm_split_fields(payload):
+        if not _has_hmm_split_fields(payload) and not _has_any_context_field(payload):
             return HMMRegimeContext.unknown()
         return _parse_context_map(payload)
 
@@ -155,7 +155,7 @@ def resolve_regime_route_label(
 ) -> str:
     context = resolve_hmm_context(payload)
     if context.is_authoritative:
-        return context.regime_id
+        return context.regime_id.lower()
 
     explicit = payload.get("regime_label")
     if isinstance(explicit, str):

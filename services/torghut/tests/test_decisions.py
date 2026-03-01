@@ -703,7 +703,7 @@ class TestDecisionEngine(TestCase):
             symbol='AAPL',
             timeframe='1Min',
             payload={
-                'macd': {'macd': Decimal('0.1'), 'signal': Decimal('0.5')},
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
                 'rsi14': Decimal('20'),
                 'price': Decimal('100'),
                 'regime_label': '  TREND  ',
