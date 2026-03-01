@@ -471,7 +471,12 @@ def run_autonomous_lane(
             profitability_validation.to_payload()
         )
         metrics_payload = report.metrics.to_payload()
-        fragility_state, fragility_score, stability_mode_active = (
+        (
+            fragility_state,
+            fragility_score,
+            stability_mode_active,
+            fragility_inputs_valid,
+        ) = (
             _resolve_gate_fragility_inputs(
                 metrics_payload=metrics_payload, decisions=walk_decisions
             )
@@ -528,6 +533,7 @@ def run_autonomous_lane(
             fragility_state=fragility_state,
             fragility_score=fragility_score,
             stability_mode_active=stability_mode_active,
+            fragility_inputs_valid=fragility_inputs_valid,
             operational_ready=True,
             runbook_validated=True,
             kill_switch_dry_run_passed=True,
@@ -1771,17 +1777,17 @@ def _required_feature_null_rate(signals: list[SignalEnvelope]) -> Decimal:
     return Decimal(missing) / Decimal(total)
 
 
-def _coerce_fragility_state(value: object) -> str:
+def _coerce_fragility_state(value: object) -> str | None:
     if not isinstance(value, str):
-        return "crisis"
+        return None
     normalized = value.strip().lower()
     if normalized in {"normal", "elevated", "stress", "crisis"}:
         return normalized
-    return "crisis"
+    return None
 
 
 def _fragility_state_rank(state: str) -> int:
-    normalized = _coerce_fragility_state(state)
+    normalized = state.strip().lower()
     if normalized == "normal":
         return 0
     if normalized == "elevated":
@@ -1791,7 +1797,7 @@ def _fragility_state_rank(state: str) -> int:
     return 3
 
 
-def _coerce_bool(value: object, *, default: bool = False) -> bool:
+def _coerce_fragility_bool(value: object) -> bool | None:
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float, Decimal)):
@@ -1802,26 +1808,58 @@ def _coerce_bool(value: object, *, default: bool = False) -> bool:
             return True
         if normalized in {"0", "false", "no", "off", ""}:
             return False
-    return default
+    return None
+
+
+def _coerce_fragility_score(value: object) -> Decimal | None:
+    try:
+        parsed = Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+    if not parsed.is_finite():
+        return None
+    return parsed
+
+
+def _coerce_fragility_measurement(
+    payload: dict[str, object]
+) -> tuple[str, Decimal, bool] | None:
+    state = _coerce_fragility_state(payload.get("fragility_state"))
+    score = _coerce_fragility_score(payload.get("fragility_score"))
+    stability = _coerce_fragility_bool(payload.get("stability_mode_active"))
+    if state is None or score is None or stability is None:
+        return None
+    return (state, score, stability)
+
+
+def _is_more_worse_fragility(
+    candidate: tuple[str, Decimal, bool], current: tuple[str, Decimal, bool]
+) -> bool:
+    candidate_rank = _fragility_state_rank(candidate[0])
+    current_rank = _fragility_state_rank(current[0])
+    if candidate_rank != current_rank:
+        return candidate_rank > current_rank
+    if candidate[1] != current[1]:
+        return candidate[1] > current[1]
+    return not candidate[2] and current[2]
 
 
 def _resolve_gate_fragility_inputs(
     *,
     metrics_payload: dict[str, object],
     decisions: list[WalkForwardDecision],
-) -> tuple[str, Decimal, bool]:
-    fallback_state = _coerce_fragility_state(metrics_payload.get("fragility_state"))
-    fallback_score = _decimal_or_default(
-        metrics_payload.get("fragility_score"), Decimal("1")
-    )
-    fallback_stability = _coerce_bool(
-        metrics_payload.get("stability_mode_active"), default=False
+) -> tuple[str, Decimal, bool, bool]:
+    fallback_measurement = _coerce_fragility_measurement(
+        {
+            "fragility_state": metrics_payload.get("fragility_state"),
+            "fragility_score": metrics_payload.get("fragility_score"),
+            "stability_mode_active": metrics_payload.get(
+                "stability_mode_active"
+            ),
+        }
     )
 
-    selected_state = fallback_state
-    selected_score = fallback_score
-    selected_stability = fallback_stability
-    selected_rank = _fragility_state_rank(fallback_state)
+    selected_measurement: tuple[str, Decimal, bool] | None = None
 
     for item in decisions:
         params = item.decision.params
@@ -1846,18 +1884,28 @@ def _resolve_gate_fragility_inputs(
         if raw_stability is None:
             raw_stability = params.get("stability_mode_active")
 
-        state = _coerce_fragility_state(raw_state)
-        score = _decimal_or_default(raw_score, fallback_score)
-        stability = _coerce_bool(raw_stability, default=fallback_stability)
-        rank = _fragility_state_rank(state)
+        candidate = _coerce_fragility_measurement(
+            {
+                "fragility_state": raw_state,
+                "fragility_score": raw_score,
+                "stability_mode_active": raw_stability,
+            }
+        )
+        if candidate is None:
+            continue
 
-        if rank > selected_rank or (rank == selected_rank and score > selected_score):
-            selected_state = state
-            selected_score = score
-            selected_stability = stability
-            selected_rank = rank
+        if selected_measurement is None or _is_more_worse_fragility(
+            candidate, selected_measurement
+        ):
+            selected_measurement = candidate
 
-    return selected_state, selected_score, selected_stability
+    if selected_measurement is None:
+        if fallback_measurement is None:
+            return ("crisis", Decimal("1"), False, False)
+        selected_measurement = fallback_measurement
+
+    selected_state, selected_score, selected_stability = selected_measurement
+    return selected_state, selected_score, selected_stability, True
 
 
 def _resolve_gate_forecast_metrics(
@@ -1984,13 +2032,6 @@ def _nearest_rank_percentile(values: list[int], percentile: int) -> int:
     if index < 0:
         index = 0
     return ordered[index]
-
-
-def _decimal_or_default(value: object, default: Decimal) -> Decimal:
-    try:
-        return Decimal(str(value))
-    except (ArithmeticError, TypeError, ValueError):
-        return default
 
 
 def _load_tca_gate_inputs(

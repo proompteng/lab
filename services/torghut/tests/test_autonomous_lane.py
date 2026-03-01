@@ -111,24 +111,26 @@ class TestAutonomousLane(TestCase):
             )
         ]
 
-        state, score, stability = _resolve_gate_fragility_inputs(
+        state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
             metrics_payload=fallback_metrics, decisions=decisions
         )
 
         self.assertEqual(state, "crisis")
         self.assertEqual(score, Decimal("0.92"))
         self.assertTrue(stability)
+        self.assertTrue(inputs_valid)
 
     def test_gate_fragility_inputs_fail_closed_on_missing_or_invalid_values(self) -> None:
-        state, score, stability = _resolve_gate_fragility_inputs(
+        state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
             metrics_payload={},
             decisions=[],
         )
         self.assertEqual(state, "crisis")
         self.assertEqual(score, Decimal("1"))
         self.assertFalse(stability)
+        self.assertFalse(inputs_valid)
 
-        state, score, stability = _resolve_gate_fragility_inputs(
+        state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
             metrics_payload={},
             decisions=[
                 WalkForwardDecision(
@@ -162,6 +164,7 @@ class TestAutonomousLane(TestCase):
         self.assertEqual(state, "crisis")
         self.assertEqual(score, Decimal("1"))
         self.assertFalse(stability)
+        self.assertFalse(inputs_valid)
 
     def test_lane_emits_gate_report_and_paper_patch(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"

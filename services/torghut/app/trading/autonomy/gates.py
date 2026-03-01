@@ -58,6 +58,7 @@ class GateInputs:
     fragility_state: str = "elevated"
     fragility_score: Decimal = Decimal("0.5")
     stability_mode_active: bool = False
+    fragility_inputs_valid: bool = True
     operational_ready: bool = True
     runbook_validated: bool = True
     kill_switch_dry_run_passed: bool = True
@@ -689,6 +690,8 @@ def _gate7_uncertainty_calibration(
 
 def _gate2_base_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
     reasons: list[str] = []
+    if not inputs.fragility_inputs_valid:
+        reasons.append("fragility_inputs_invalid")
     max_drawdown = _decimal(inputs.metrics.get("max_drawdown")) or Decimal("0")
     turnover_ratio = _decimal(inputs.metrics.get("turnover_ratio")) or Decimal("0")
     cost_bps = _decimal(inputs.metrics.get("cost_bps")) or Decimal("0")

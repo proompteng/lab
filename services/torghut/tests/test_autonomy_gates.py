@@ -246,6 +246,43 @@ class TestAutonomyGates(TestCase):
         self.assertFalse(report.promotion_allowed)
         self.assertIn("fragility_stability_mode_inactive", report.reasons)
 
+    def test_gate_matrix_fails_when_fragility_inputs_are_invalid(self) -> None:
+        policy = GatePolicyMatrix()
+        inputs = GateInputs(
+            feature_schema_version="3.0.0",
+            required_feature_null_rate=Decimal("0.00"),
+            staleness_ms_p95=0,
+            symbol_coverage=2,
+            llm_metrics={"error_ratio": "0.00"},
+            metrics={
+                "decision_count": 20,
+                "trade_count": 10,
+                "net_pnl": "50",
+                "max_drawdown": "100",
+                "turnover_ratio": "1.5",
+                "cost_bps": "5",
+            },
+            robustness={"fold_count": 4, "negative_fold_count": 0, "net_pnl_cv": "0.2"},
+            tca_metrics={
+                "order_count": 12,
+                "avg_slippage_bps": "18",
+                "avg_shortfall_notional": "7",
+                "avg_churn_ratio": "0.45",
+            },
+            forecast_metrics=_healthy_forecast_metrics_payload(),
+            profitability_evidence=_profitability_evidence_payload(),
+            fragility_state="elevated",
+            fragility_score=Decimal("0.60"),
+            stability_mode_active=True,
+            fragility_inputs_valid=False,
+        )
+        report = evaluate_gate_matrix(
+            inputs, policy=policy, promotion_target="paper", code_version="test"
+        )
+
+        self.assertFalse(report.promotion_allowed)
+        self.assertIn("fragility_inputs_invalid", report.reasons)
+
     def test_gate_matrix_fails_when_forecast_health_metrics_degrade(self) -> None:
         policy = GatePolicyMatrix(
             gate3_max_forecast_fallback_rate=Decimal("0.05"),

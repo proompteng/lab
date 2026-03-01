@@ -708,6 +708,7 @@ def _load_eval_snapshot_for_promotion(
     artifact_snapshot = _load_eval_gate_snapshot(str(resolved_ref_path))
     snapshot["eval_report_loaded"] = artifact_snapshot is not None
     if artifact_snapshot is None:
+        snapshot["eval_report_trusted"] = False
         snapshot["eval_report_trust_reason"] = "invalid_artifact"
         return snapshot
     snapshot.update(artifact_snapshot)

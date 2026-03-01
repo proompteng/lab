@@ -900,6 +900,85 @@ class TestLLMDSPyWorkflow(TestCase):
             gate_failures = orchestration.get("gateFailures") or []
             self.assertIn("eval_report_outside_artifact_root", gate_failures)
 
+    def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_payload_is_invalid(
+        self,
+    ) -> None:
+        responses = [
+            {
+                "agentRun": {"id": "record-dataset"},
+                "resource": {
+                    "metadata": {"name": "run-dataset", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-compile"},
+                "resource": {
+                    "metadata": {"name": "run-compile", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-eval"},
+                "resource": {"metadata": {"name": "run-eval", "namespace": "agents"}},
+            },
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir) / "artifacts" / "dspy" / "run-invalid"
+            eval_output_path = artifact_root / "eval" / "dspy-eval-report.json"
+            eval_output_path.parent.mkdir(parents=True, exist_ok=True)
+            eval_output_path.write_text("[]", encoding="utf-8")
+            lane_overrides = _build_dspy_lane_overrides(
+                artifact_root=artifact_root,
+                promote_overrides={
+                    "approvalRef": "risk-committee",
+                    "promotionTarget": "constrained_live",
+                },
+            )
+
+            with patch(
+                "app.trading.llm.dspy_compile.workflow.submit_jangar_agentrun",
+                side_effect=responses,
+            ) as submit_mock:
+                with patch(
+                    "app.trading.llm.dspy_compile.workflow.wait_for_jangar_agentrun_terminal_status",
+                    side_effect=["succeeded", "succeeded", "succeeded"],
+                ) as wait_mock:
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "dspy_promotion_gate_blocked:eval_report_invalid_payload",
+                    ):
+                        with Session(self.engine) as session:
+                            orchestrate_dspy_agentrun_workflow(
+                                session,
+                                base_url="http://jangar.test",
+                                repository="proompteng/lab",
+                                base="main",
+                                head="codex/dspy-rollout",
+                                artifact_root=str(artifact_root),
+                                run_prefix="torghut-dspy-run-invalid",
+                                auth_token="token-123",
+                                lane_parameter_overrides=lane_overrides,
+                                include_gepa_experiment=False,
+                                secret_binding_ref="codex-whitepaper-github-token",
+                                ttl_seconds_after_finished=3600,
+                            )
+
+            self.assertEqual(submit_mock.call_count, 3)
+            self.assertEqual(wait_mock.call_count, 3)
+
+        with Session(self.engine) as session:
+            row = session.execute(
+                select(LLMDSPyWorkflowArtifact).where(
+                    LLMDSPyWorkflowArtifact.run_key == "torghut-dspy-run-invalid:promote"
+                )
+            ).scalar_one()
+            metadata = row.metadata_json or {}
+            self.assertIsInstance(metadata, dict)
+            orchestration = metadata.get("orchestration")
+            self.assertIsInstance(orchestration, dict)
+            gate_failures = orchestration.get("gateFailures") or []
+            self.assertIn("eval_report_invalid_payload", gate_failures)
+
 
 def _build_dspy_lane_overrides(
     artifact_root: Path,
