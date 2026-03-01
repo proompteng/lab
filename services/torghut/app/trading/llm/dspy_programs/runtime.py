@@ -5,6 +5,7 @@ from __future__ import annotations
 import string
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 from typing import Any, Literal, Mapping, cast
 
 from ....config import settings
@@ -141,6 +142,11 @@ class DSPyReviewRuntime:
             reasons.append("dspy_artifact_hash_missing")
         elif self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH:
             reasons.append("dspy_bootstrap_artifact_forbidden")
+        try:
+            _resolve_dspy_model_name()
+            _resolve_dspy_completion_url()
+        except DSPyRuntimeUnsupportedStateError as exc:
+            reasons.append(str(exc))
         if reasons:
             return False, tuple(reasons)
 
@@ -434,11 +440,37 @@ def _resolve_dspy_model_name() -> str:
     return f"openai/{raw}"
 
 
-def _resolve_dspy_api_base() -> str | None:
-    base_url = (settings.jangar_base_url or "").strip().rstrip("/")
-    if not base_url:
+def _resolve_dspy_api_base() -> str:
+    raw_base_url = (settings.jangar_base_url or "").strip()
+    if not raw_base_url:
         raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
-    return f"{base_url}/openai/v1"
+
+    parsed = urlsplit(raw_base_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise DSPyRuntimeUnsupportedStateError(
+            "dspy_jangar_base_url_invalid_scheme"
+        )
+    if not parsed.netloc:
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
+    if parsed.query or parsed.fragment:
+        raise DSPyRuntimeUnsupportedStateError(
+            "dspy_jangar_base_url_invalid_path"
+        )
+
+    base_path = parsed.path.rstrip("/").strip()
+    if base_path.endswith("/openai/v1"):
+        base_path = base_path[: -len("/openai/v1")]
+    if base_path == "/":
+        base_path = ""
+
+    normalized_base = f"{parsed.scheme}://{parsed.netloc}{base_path}"
+    normalized_base = normalized_base.rstrip("/")
+
+    return f"{normalized_base}/openai/v1"
+
+
+def _resolve_dspy_completion_url() -> str:
+    return f"{_resolve_dspy_api_base()}/chat/completions"
 
 
 __all__ = [
