@@ -45,7 +45,8 @@ Update the values file with your Jangar image tag, database secret, and (optiona
 The chart defaults `controller.jobTtlSecondsAfterFinished` to a safe value; set it to `0` to disable job cleanup.
 If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
 If any scope list (`controller.namespaces`, `orchestrationController.namespaces`,
-`supportingController.namespaces`) is explicitly set to `[]`, the chart fails rendering.
+`supportingController.namespaces`) is explicitly set to `[]` or mixes `'*'` with a specific namespace,
+the chart fails rendering before the install is applied.
 
 GitOps rollout notes (native workflow runtime):
 

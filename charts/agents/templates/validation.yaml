@@ -3,19 +3,16 @@
 {{- $validationInputs := list
   (dict
     "label" "controller"
-    "enabled" (.Values.controller.enabled | default true)
     "namespaces" (.Values.controller.namespaces | default (list))
     "explicit" (and (hasKey .Values "controller") (hasKey .Values.controller "namespaces"))
   )
   (dict
     "label" "orchestrationController"
-    "enabled" (.Values.orchestrationController.enabled | default true)
     "namespaces" (.Values.orchestrationController.namespaces | default (list))
     "explicit" (and (hasKey .Values "orchestrationController") (hasKey .Values.orchestrationController "namespaces"))
   )
   (dict
     "label" "supportingController"
-    "enabled" (.Values.supportingController.enabled | default true)
     "namespaces" (.Values.supportingController.namespaces | default (list))
     "explicit" (and (hasKey .Values "supportingController") (hasKey .Values.supportingController "namespaces"))
   )
@@ -23,57 +20,54 @@
 
 {{- range $scope := $validationInputs }}
   {{- $label := $scope.label -}}
-  {{- $enabled := $scope.enabled -}}
   {{- $namespaces := $scope.namespaces -}}
   {{- $explicit := $scope.explicit -}}
   {{- $normalized := list -}}
   {{- $seen := dict -}}
   {{- $hasWildcard := false -}}
 
-  {{- if $enabled }}
-    {{- if and $explicit (not (kindIs "slice" $namespaces)) }}
-      {{- $errors = append $errors (printf "%s.namespaces must be an array (for example, [\"agents\"] or [\"*\"])." $label) }}
-    {{- else if and $explicit (eq (len $namespaces) 0) }}
-      {{- $errors = append $errors (printf "%s.namespaces is set but empty; remove the key to use the release namespace or provide one namespace, a multi-namespace list, or ['*']." $label) }}
-    {{- else }}
-      {{- range $namespace := $namespaces }}
-        {{- if not (kindIs "string" $namespace) }}
-          {{- $errors = append $errors (printf "%s.namespaces entry for %q must be a string; found %v." $label $namespace $namespace) }}
-        {{- else if eq (trim $namespace) "" }}
-          {{- $errors = append $errors (printf "%s.namespaces entry %q must not be empty or whitespace." $label $namespace) }}
+  {{- if and $explicit (not (kindIs "slice" $namespaces)) }}
+    {{- $errors = append $errors (printf "%s.namespaces must be an array (for example, [\"agents\"] or [\"*\"])." $label) }}
+  {{- else if and $explicit (eq (len $namespaces) 0) }}
+    {{- $errors = append $errors (printf "%s.namespaces is set but empty; remove the key to use the release namespace or provide one namespace, a multi-namespace list, or ['*']." $label) }}
+  {{- else }}
+    {{- range $namespace := $namespaces }}
+      {{- if not (kindIs "string" $namespace) }}
+        {{- $errors = append $errors (printf "%s.namespaces entry for %q must be a string; found %v." $label $namespace $namespace) }}
+      {{- else if eq (trim $namespace) "" }}
+        {{- $errors = append $errors (printf "%s.namespaces entry %q must not be empty or whitespace." $label $namespace) }}
+      {{- else }}
+        {{- $cleaned := trim $namespace }}
+        {{- if ne $cleaned $namespace }}
+          {{- $errors = append $errors (printf "%s.namespaces entry %q has leading or trailing whitespace; use %q instead." $label $namespace $cleaned) }}
+        {{- end }}
+
+        {{- if and (contains "*" $cleaned) (ne $cleaned "*") }}
+          {{- $errors = append $errors (printf "%s.namespaces entry %q must be '*' or a valid namespace token." $label $cleaned) }}
+        {{- else if and (ne $cleaned "*") (not (regexMatch "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" $cleaned)) -}}
+          {{- $errors = append $errors (printf "%s.namespaces entry %q is not a valid namespace token." $label $cleaned) }}
+        {{- else if hasKey $seen $cleaned -}}
+          {{- $errors = append $errors (printf "%s.namespaces contains duplicate namespace %q; remove duplicates." $label $cleaned) }}
         {{- else }}
-          {{- $cleaned := trim $namespace }}
-          {{- if ne $cleaned $namespace }}
-            {{- $errors = append $errors (printf "%s.namespaces entry %q has leading or trailing whitespace; use %q instead." $label $namespace $cleaned) }}
-          {{- end }}
-
-          {{- if and (contains "*" $cleaned) (ne $cleaned "*") }}
-            {{- $errors = append $errors (printf "%s.namespaces entry %q must be '*' or a valid namespace token." $label $cleaned) }}
-          {{- else if and (ne $cleaned "*") (not (regexMatch "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" $cleaned)) -}}
-            {{- $errors = append $errors (printf "%s.namespaces entry %q is not a valid namespace token." $label $cleaned) }}
-          {{- else if hasKey $seen $cleaned -}}
-            {{- $errors = append $errors (printf "%s.namespaces contains duplicate namespace %q; remove duplicates." $label $cleaned) }}
-          {{- else }}
-            {{- $_ := set $seen $cleaned true }}
-            {{- $normalized = append $normalized $cleaned }}
-            {{- if eq $cleaned "*" -}}
-              {{- $hasWildcard = true -}}
-            {{- end -}}
-          {{- end }}
+          {{- $_ := set $seen $cleaned true }}
+          {{- $normalized = append $normalized $cleaned }}
+          {{- if eq $cleaned "*" -}}
+            {{- $hasWildcard = true -}}
+          {{- end -}}
         {{- end }}
       {{- end }}
+    {{- end }}
 
-      {{- if gt (len $normalized) 1 }}
-        {{- if $hasWildcard }}
-          {{- $errors = append $errors (printf "%s.namespaces may not combine '*' with specific namespaces; use only ['*']." $label) }}
-        {{- else if not $clusterScoped -}}
-          {{- $errors = append $errors (printf "%s.namespaces has %d entries; set rbac.clusterScoped=true for multi-namespace behavior." $label (len $normalized)) }}
-        {{- end }}
+    {{- if gt (len $normalized) 1 }}
+      {{- if $hasWildcard }}
+        {{- $errors = append $errors (printf "%s.namespaces may not combine '*' with specific namespaces; use only ['*']." $label) }}
+      {{- else if not $clusterScoped -}}
+        {{- $errors = append $errors (printf "%s.namespaces has %d entries; set rbac.clusterScoped=true for multi-namespace behavior." $label (len $normalized)) }}
       {{- end }}
+    {{- end }}
 
-      {{- if and $hasWildcard (not $clusterScoped) -}}
-        {{- $errors = append $errors (printf "rbac.clusterScoped must be true when %s.namespaces includes '*'." $label) -}}
-      {{- end }}
+    {{- if and $hasWildcard (not $clusterScoped) -}}
+      {{- $errors = append $errors (printf "rbac.clusterScoped must be true when %s.namespaces includes '*'." $label) -}}
     {{- end }}
   {{- end }}
 {{- end }}

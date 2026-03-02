@@ -36,6 +36,29 @@ See also:
   - `helm template charts/agents --set-json 'supportingController.namespaces=["agents","agents-ci"]' --set rbac.clusterScoped=false` (expect fail: multi-namespace requires cluster-scoped RBAC)
   - `helm template charts/agents --set-json 'orchestrationController.namespaces=["*","agents"]' --set rbac.clusterScoped=true` (expect fail: wildcard may not combine with specific namespaces)
   - `helm template charts/agents --set-json 'supportingController.namespaces=["*","agents"]' --set rbac.clusterScoped=true` (expect fail: wildcard may not combine with specific namespaces)
+  - `helm template charts/agents --set-json 'orchestrationController.namespaces=["*"]' --set rbac.clusterScoped=true` (expect success with namespaced controller and cluster-scoped RBAC)
+  - `helm template charts/agents --set-json 'supportingController.namespaces=["*"]' --set rbac.clusterScoped=true` (expect success with supporting controller and cluster-scoped RBAC)
+
+Validation command helper (example):
+```bash
+namespace_guardrails() {
+  for cmd in \
+    "helm template charts/agents --set-json 'controller.namespaces=[\"agents\",\"agents-ci\"]' --set rbac.clusterScoped=false" \
+    "helm template charts/agents --set-json 'controller.namespaces=[\"*\"]' --set rbac.clusterScoped=false" \
+    "helm template charts/agents --set-json 'controller.namespaces=[]'" \
+    "helm template charts/agents --set-json 'controller.namespaces=[\"*\",\"agents\"]' --set rbac.clusterScoped=true" \
+    "helm template charts/agents --set-json 'orchestrationController.namespaces=[\"agents\",\"agents-ci\"]' --set rbac.clusterScoped=false" \
+    "helm template charts/agents --set-json 'supportingController.namespaces=[\"*\",\"agents\"]' --set rbac.clusterScoped=true"; do
+    local output
+    if output="$(eval "${cmd}" 2>&1)"; then
+      printf 'PASS: %s\n' "${cmd}"
+    else
+      printf 'EXPECTED FAILURE: %s\n' "${cmd}" >&2
+      printf 'ERROR: %s\n' "${output}" >&2
+    fi
+  done
+}
+```
 
 ## Integration Tests
 
