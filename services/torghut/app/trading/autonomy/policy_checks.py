@@ -1125,7 +1125,9 @@ def _append_evidence_artifact_reasons(
         )
         return
 
-    if artifact_ref.startswith("db:") or "://" in artifact_ref:
+    if artifact_ref.startswith("db:") or (
+        "://" in artifact_ref and not artifact_ref.startswith("file://")
+    ):
         reasons.append(f"{evidence_name}_artifact_ref_untrusted")
         reason_details.append(
             {
@@ -1136,7 +1138,8 @@ def _append_evidence_artifact_reasons(
         )
         return
 
-    candidate_path = Path(artifact_ref)
+    artifact_ref_for_path = artifact_ref.removeprefix("file://")
+    candidate_path = Path(artifact_ref_for_path)
     if not candidate_path.is_absolute():
         candidate_path = artifact_root / candidate_path
     try:

@@ -961,7 +961,7 @@ class TestPolicyChecks(TestCase):
             )
 
         self.assertFalse(promotion.allowed)
-        self.assertIn("stress_metrics_evidence_ref_not_trusted", promotion.reasons)
+        self.assertIn("stress_metrics_artifact_ref_untrusted", promotion.reasons)
 
     def test_promotion_prerequisites_fail_when_stress_evidence_generated_at_is_missing(
         self,
@@ -1028,6 +1028,52 @@ class TestPolicyChecks(TestCase):
 
         self.assertFalse(promotion.allowed)
         self.assertIn("stress_metrics_evidence_generated_at_missing", promotion.reasons)
+
+    def test_promotion_prerequisites_allow_file_uri_stress_artifact_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            _write_janus_artifacts(root)
+            _write_stress_artifacts(root)
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+
+            gate_report = _gate_report()
+            evidence = gate_report.get("promotion_evidence", {})
+            if isinstance(evidence, dict):
+                stress_metrics = evidence.get("stress_metrics")
+                if isinstance(stress_metrics, dict):
+                    stress_metrics["artifact_ref"] = (
+                        f"file://{(root / 'gates/stress-metrics-v1.json').as_posix()}"
+                    )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_stress_evidence": True,
+                    "promotion_require_patch_targets": [],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertNotIn("stress_metrics_artifact_ref_untrusted", promotion.reasons)
+        self.assertNotIn("stress_metrics_evidence_ref_not_trusted", promotion.reasons)
+        self.assertNotIn("stress_metrics_artifact_missing", promotion.reasons)
 
     def test_promotion_prerequisites_fail_when_rationale_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
