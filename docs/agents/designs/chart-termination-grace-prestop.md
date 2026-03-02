@@ -53,15 +53,15 @@ Control plane uses global defaults by default and can be overridden via `control
 
 ## Config Mapping
 
-| Helm value                                  | Rendered field                                                               | Intended behavior                          |
-| ------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------ |
-| `controlPlane.terminationGracePeriodSeconds` | `deploy/agents.spec.template.spec.terminationGracePeriodSeconds`              | Gives control plane time to stop cleanly.    |
-| `controllers.terminationGracePeriodSeconds` | `deploy/agents-controllers.spec.template.spec.terminationGracePeriodSeconds` | Gives controllers time to stop cleanly.    |
-| `deploymentLifecycle` | `deploy/agents.spec.minReadySeconds`, `deploy/agents.spec.progressDeadlineSeconds`, `deploy/agents.spec.revisionHistoryLimit` (and equivalent in controllers) | Global rollout timing defaults for upgrade safety. |
-| `controlPlane.deploymentLifecycle` | `deploy/agents.spec.minReadySeconds`, `deploy/agents.spec.progressDeadlineSeconds`, `deploy/agents.spec.revisionHistoryLimit` | Control plane rollout timing override. |
-| `controllers.deploymentLifecycle` | `deploy/agents-controllers.spec.minReadySeconds`, `deploy/agents-controllers.spec.progressDeadlineSeconds`, `deploy/agents-controllers.spec.revisionHistoryLimit` | Controllers rollout timing override. |
-| `controlPlane.lifecycle`                    | `deploy/agents.spec.template.spec.containers[0].lifecycle`                   | Supports optional `preStop` and related hooks for control plane. |
-| `controllers.lifecycle`                     | `deploy/agents-controllers.spec.template.spec.containers[0].lifecycle`       | Supports optional `preStop` and related hooks for controllers. |
+| Helm value                                   | Rendered field                                                                                                                                                    | Intended behavior                                                |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `controlPlane.terminationGracePeriodSeconds` | `deploy/agents.spec.template.spec.terminationGracePeriodSeconds`                                                                                                  | Gives control plane time to stop cleanly.                        |
+| `controllers.terminationGracePeriodSeconds`  | `deploy/agents-controllers.spec.template.spec.terminationGracePeriodSeconds`                                                                                      | Gives controllers time to stop cleanly.                          |
+| `deploymentLifecycle`                        | `deploy/agents.spec.minReadySeconds`, `deploy/agents.spec.progressDeadlineSeconds`, `deploy/agents.spec.revisionHistoryLimit` (and equivalent in controllers)     | Global rollout timing defaults for upgrade safety.               |
+| `controlPlane.deploymentLifecycle`           | `deploy/agents.spec.minReadySeconds`, `deploy/agents.spec.progressDeadlineSeconds`, `deploy/agents.spec.revisionHistoryLimit`                                     | Control plane rollout timing override.                           |
+| `controllers.deploymentLifecycle`            | `deploy/agents-controllers.spec.minReadySeconds`, `deploy/agents-controllers.spec.progressDeadlineSeconds`, `deploy/agents-controllers.spec.revisionHistoryLimit` | Controllers rollout timing override.                             |
+| `controlPlane.lifecycle`                     | `deploy/agents.spec.template.spec.containers[0].lifecycle`                                                                                                        | Supports optional `preStop` and related hooks for control plane. |
+| `controllers.lifecycle`                      | `deploy/agents-controllers.spec.template.spec.containers[0].lifecycle`                                                                                            | Supports optional `preStop` and related hooks for controllers.   |
 
 ## Rollout Plan
 
