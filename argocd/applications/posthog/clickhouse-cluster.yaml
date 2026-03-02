@@ -37,6 +37,9 @@ spec:
         - 10.0.0.0/8
         - 172.16.0.0/12
         - 192.168.0.0/16
+      posthog/grants/query:
+        - 'GRANT NAMED COLLECTION ON msk_cluster'
+        - 'GRANT NAMED COLLECTION ON warpstream_ingestion'
     zookeeper:
       nodes:
         - host: keeper-posthog-keeper
