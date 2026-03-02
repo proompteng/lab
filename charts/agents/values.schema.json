@@ -174,7 +174,10 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
-        "manageEnvVar": { "type": "boolean" },
+        "manageEnvVar": {
+          "type": "boolean",
+          "description": "When true, chart-managed JANGAR_GRPC_* values are derived from grpc.* and explicit managed values must align."
+        },
         "port": { "type": "integer" },
         "servicePort": { "type": "integer" },
         "serviceType": { "type": "string", "enum": ["ClusterIP"] }
@@ -184,7 +187,10 @@
     "validation": {
       "type": "object",
       "properties": {
-        "reservedEnvKeysEnforced": { "type": "boolean" }
+        "reservedEnvKeysEnforced": {
+          "type": "boolean",
+          "description": "Fail chart render if structured envFrom entries import reserved chart-managed env keys without matching values in the consuming component env maps."
+        }
       },
       "additionalProperties": false
     },
@@ -411,18 +417,20 @@
     "envFromSecretRefs": {
       "type": "array",
       "items": {
+        "description": "Optional envFrom references for shared credentials/settings. Use object form with keys to enable reserved-key validation.",
         "oneOf": [
           { "type": "string" },
           {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
-              "optional": { "type": "boolean" },
+              "name": { "type": "string", "description": "Secret name." },
+              "optional": { "type": "boolean", "description": "Whether missing secret is non-fatal." },
               "keys": {
                 "oneOf": [
                   { "type": "string" },
                   { "type": "array", "items": { "type": "string" } }
-                ]
+                ],
+                "description": "Optional key list used by validation only."
               }
             },
             "required": ["name"],
@@ -434,18 +442,20 @@
     "envFromConfigMapRefs": {
       "type": "array",
       "items": {
+        "description": "Optional envFrom references for shared config. Use object form with keys to enable reserved-key validation.",
         "oneOf": [
           { "type": "string" },
           {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
-              "optional": { "type": "boolean" },
+              "name": { "type": "string", "description": "ConfigMap name." },
+              "optional": { "type": "boolean", "description": "Whether missing ConfigMap is non-fatal." },
               "keys": {
                 "oneOf": [
                   { "type": "string" },
                   { "type": "array", "items": { "type": "string" } }
-                ]
+                ],
+                "description": "Optional key list used by validation only."
               }
             },
             "required": ["name"],

@@ -27,10 +27,10 @@ The chart now treats gRPC for the control plane as chart-driven and deterministi
 - `grpc.enabled` is the source-of-truth for whether control-plane gRPC is enabled.
 - `grpc.manageEnvVar` (default `true`) controls whether the chart injects control-plane values for
   `JANGAR_GRPC_ENABLED`, `JANGAR_GRPC_HOST`, and `JANGAR_GRPC_PORT`.
-- `JANGAR_GRPC_*` in `env.vars` / `controlPlane.env.vars` is treated as a conflicting override when
-  `grpc.manageEnvVar=true`; values must match managed defaults or rendering fails.
+- `JANGAR_GRPC_*` in `env.vars` / `controlPlane.env.vars` / `controllers.env.vars` is treated as an explicit override when
+  `grpc.manageEnvVar=true`; conflicting values must align or rendering fails.
 - `grpc.manageEnvVar=false` restores manual env-var ownership for control-plane gRPC keys.
-- Controllers are owned by `controllers.env.vars` for chart-managed `JANGAR_GRPC_*` guards: if you set
+- Controllers are owned by `controllers.env.vars` (and shared `env.vars`) for chart-managed `JANGAR_GRPC_*` guards: if you set
   controller-side gRPC env vars there, those values become authoritative for controller behavior.
 - When managed mode is enabled, `env.vars`, `controlPlane.env.vars`, and any explicit `controllers.env.vars` for managed keys
   must align. If they disagree, validation fails.

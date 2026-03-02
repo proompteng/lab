@@ -2,19 +2,19 @@
 {{- $controllersImage := .Values.controllers.image | default dict -}}
 {{- $controllersEnvVars := .Values.controllers.env.vars | default dict -}}
 {{- $envVars := merge (deepCopy (.Values.env.vars | default dict)) (deepCopy $controllersEnvVars) -}}
-{{- if not (hasKey $controllersEnvVars "JANGAR_MIGRATIONS") -}}
+{{- if not (hasKey $envVars "JANGAR_MIGRATIONS") -}}
 {{- $_ := set $envVars "JANGAR_MIGRATIONS" "skip" -}}
 {{- end -}}
-{{- if not (hasKey $controllersEnvVars "JANGAR_GRPC_ENABLED") -}}
+{{- if not (hasKey $envVars "JANGAR_GRPC_ENABLED") -}}
 {{- $_ := set $envVars "JANGAR_GRPC_ENABLED" "0" -}}
 {{- end -}}
-{{- if not (hasKey $controllersEnvVars "JANGAR_CONTROL_PLANE_CACHE_ENABLED") -}}
+{{- if not (hasKey $envVars "JANGAR_CONTROL_PLANE_CACHE_ENABLED") -}}
 {{- $_ := set $envVars "JANGAR_CONTROL_PLANE_CACHE_ENABLED" "0" -}}
 {{- end -}}
-{{- if not (hasKey $controllersEnvVars "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED") -}}
+{{- if not (hasKey $envVars "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED") -}}
 {{- $_ := set $envVars "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED" "true" -}}
 {{- end -}}
-{{- if not (hasKey $controllersEnvVars "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS") -}}
+{{- if not (hasKey $envVars "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS") -}}
 {{- $_ := set $envVars "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS" "30" -}}
 {{- end -}}
 {{- if not (hasKey $envVars "JANGAR_AGENTRUN_ARTIFACTS_MAX") -}}

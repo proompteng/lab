@@ -4,13 +4,32 @@
 {{- $orchestrationNamespaces := .Values.orchestrationController.namespaces | default (list) -}}
 {{- $supportingNamespaces := .Values.supportingController.namespaces | default (list) -}}
 {{- $globalEnvVars := .Values.env.vars | default dict -}}
-{{- $controlPlaneEnvVars := merge (deepCopy $globalEnvVars) (deepCopy (.Values.controlPlane.env.vars | default dict)) -}}
 {{- $controlPlaneExplicitEnvVars := .Values.controlPlane.env.vars | default dict -}}
 {{- $controllersExplicitEnvVars := .Values.controllers.env.vars | default dict -}}
+{{- $controlPlaneEnvVars := merge (deepCopy $globalEnvVars) (deepCopy $controlPlaneExplicitEnvVars) -}}
+{{- $controllersEnvVars := merge (deepCopy $globalEnvVars) (deepCopy $controllersExplicitEnvVars) -}}
+{{- $controllersEnabled := .Values.controllers.enabled | default false -}}
 {{- $envFromSecretRefs := .Values.envFromSecretRefs | default (list) -}}
 {{- $envFromConfigMapRefs := .Values.envFromConfigMapRefs | default (list) -}}
 {{- $reservedEnvKeysEnforced := .Values.validation.reservedEnvKeysEnforced | default false -}}
 {{- $reservedEnvKeys := list
+  "JANGAR_GRPC_ENABLED"
+  "JANGAR_GRPC_HOST"
+  "JANGAR_GRPC_PORT"
+  "JANGAR_MIGRATIONS"
+  "JANGAR_CONTROL_PLANE_CACHE_ENABLED"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS"
+  "JANGAR_AGENTRUN_ARTIFACTS_MAX"
+  "JANGAR_AGENTRUN_ARTIFACTS_STRICT"
+}}
+{{- $controlPlaneReservedEnvKeys := list
+  "JANGAR_GRPC_ENABLED"
+  "JANGAR_GRPC_HOST"
+  "JANGAR_GRPC_PORT"
+  "JANGAR_MIGRATIONS"
+}}
+{{- $controllersReservedEnvKeys := list
   "JANGAR_GRPC_ENABLED"
   "JANGAR_GRPC_HOST"
   "JANGAR_GRPC_PORT"
@@ -98,11 +117,11 @@
 {{- end }}
 {{- range $refKeys }}
 {{- if and (kindIs "string" .) (has . $reservedEnvKeys) }}
-{{- if not (hasKey $controlPlaneEnvVars .) }}
+{{- if and (has . $controlPlaneReservedEnvKeys) (not (hasKey $controlPlaneEnvVars .)) }}
 {{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controlPlane.env.vars+env.vars does not explicitly set it; add it to controlPlane.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
 {{- end }}
-{{- if not (hasKey $controllersExplicitEnvVars .) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controllers.env.vars does not explicitly set it; add it to controllers.env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
+{{- if and $controllersEnabled (has . $controllersReservedEnvKeys) (not (hasKey $controllersEnvVars .)) }}
+{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controllers.env.vars+env.vars does not explicitly set it; add it to controllers.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -121,11 +140,11 @@
 {{- end }}
 {{- range $refKeys }}
 {{- if and (kindIs "string" .) (has . $reservedEnvKeys) }}
-{{- if not (hasKey $controlPlaneEnvVars .) }}
+{{- if and (has . $controlPlaneReservedEnvKeys) (not (hasKey $controlPlaneEnvVars .)) }}
 {{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controlPlane.env.vars+env.vars does not explicitly set it; add it to controlPlane.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
 {{- end }}
-{{- if not (hasKey $controllersExplicitEnvVars .) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controllers.env.vars does not explicitly set it; add it to controllers.env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
+{{- if and $controllersEnabled (has . $controllersReservedEnvKeys) (not (hasKey $controllersEnvVars .)) }}
+{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controllers.env.vars+env.vars does not explicitly set it; add it to controllers.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
 {{- end }}
 {{- end }}
 {{- end }}

@@ -18,15 +18,14 @@ For the control plane:
 
 1. `controlPlane.env.vars` wins over `env.vars`.
 2. `env.vars` is second.
-3. Chart-managed gRPC values from `grpc.*` are applied next when `grpc.manageEnvVar=true`.
-4. If both `env.vars` and `controlPlane.env.vars` define managed gRPC keys, values must match; conflicting values fail validation.
-5. Runtime defaults apply after render.
+3. `grpc.manageEnvVar=true` injects managed gRPC values from `grpc.*` and rejects mismatched explicit overrides in validation.
+4. Runtime defaults apply after render.
 
 For controllers:
 
 1. `controllers.env.vars` wins over `env.vars`.
 2. `env.vars` is second.
-3. Chart-managed controller defaults are then applied and may override `env.vars` for certain reserved keys:
+3. Chart-managed controller defaults are then applied only when the merged map does not set the key:
    - `JANGAR_MIGRATIONS=skip`
    - `JANGAR_GRPC_ENABLED=0`
    - `JANGAR_CONTROL_PLANE_CACHE_ENABLED=0`
@@ -55,10 +54,10 @@ For controllers:
   - control plane: `controlPlane.env.vars` or `env.vars`
   - controllers: `controllers.env.vars`
 - For managed `JANGAR_GRPC_*` keys, `env.vars` and `controllers.env.vars` are treated as a single source of truth for validation.
-- `envFrom` cannot be used as an undocumented source for managed gRPC values: if keys are declared and
-  `grpc.manageEnvVar=true`, the pinned component values must align with chart-managed gRPC values.
+- `envFrom` cannot be used as an undocumented source for managed chart keys: if keys are declared and
+  `grpc.manageEnvVar=true`, the pinned component values must align with chart-managed expectations.
 
 ## Notes
 
-- Controllers retain safe defaults (`JANGAR_MIGRATIONS=skip`, `JANGAR_GRPC_ENABLED=0`) when they do not set explicit component values.
+- Controllers retain safe defaults (`JANGAR_MIGRATIONS=skip`, `JANGAR_GRPC_ENABLED=0`, `JANGAR_CONTROL_PLANE_CACHE_ENABLED=0`) when they do not set explicit component values in either `env.vars` or `controllers.env.vars`.
 - Use explicit chart values for security-sensitive toggles; avoid relying on runtime import order.

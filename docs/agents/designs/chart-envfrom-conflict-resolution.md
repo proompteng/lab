@@ -20,7 +20,7 @@ optional validation in chart rendering.
 - If a reserved key is listed in a structured `envFrom` reference, it must also be
   explicitly set in the env map for the component that consumes `envFrom`:
   - control plane: `controlPlane.env.vars` or global `env.vars`
-  - controllers: `controllers.env.vars` only
+  - controllers: `controllers.env.vars` or global `env.vars` (and only when `controllers.enabled=true`)
 - `envFrom` can still be a string (legacy mode): `["existing-secret"]`.
 - New structured mode enables safer metadata:
 
@@ -44,7 +44,7 @@ validation:
 ```
 
 - If set and a structured `envFrom` entry declares a reserved key, chart render fails
-  unless the key is explicitly overridden by the matching component map.
+  unless the key is explicitly set in the consuming component map(s).
 - If `JANGAR_GRPC_*` is declared in structured `envFrom`, controlled-mode rendering also requires
   the pinned component values to match chart-managed gRPC defaults when `grpc.manageEnvVar=true`.
 
@@ -55,7 +55,7 @@ validation:
 3. If validation blocks render, either:
    - add the key to the relevant component env map, or
    - disable enforcement by setting `validation.reservedEnvKeysEnforced=false`.
-   - keep `env.vars` and `controlPlane.env.vars` aligned for shared managed gRPC keys when both are used.
+- keep `env.vars`, `controlPlane.env.vars`, and `controllers.env.vars` aligned for shared managed gRPC keys when both are used.
 
 ## Reserved key set used by this chart
 
