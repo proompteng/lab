@@ -590,6 +590,7 @@ class TestDecisionEngine(TestCase):
                 'rsi14': Decimal('20'),
                 'price': Decimal('100'),
                 'hmm_regime_id': 'R2',
+                'schema_version': 'hmm_regime_context_v1',
                 'hmm_state_posterior': {'R2': '0.75'},
                 'hmm_entropy': '1.23',
                 'hmm_entropy_band': 'medium',

@@ -1165,7 +1165,12 @@ class TestTradingPipeline(TestCase):
             qty=Decimal("10"),
             params={
                 "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
                     "regime_id": "unknown",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
                     "artifact": {"model_id": "hmm-regime-v1.2.0"},
                     "guardrail": {"reason": "stable"},
                 },
@@ -1202,7 +1207,12 @@ class TestTradingPipeline(TestCase):
             qty=Decimal("10"),
             params={
                 "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
                     "regime_id": "R2-ish",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
                     "artifact": {"model_id": "hmm-regime-v1.2.0"},
                     "guardrail": {"reason": "legacy_bridge"},
                 },
@@ -1320,7 +1330,12 @@ class TestTradingPipeline(TestCase):
             qty=Decimal("10"),
             params={
                 "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
                     "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
                     "artifact": {"model_id": "hmm-regime-v1.2.0"},
                     "guardrail": {"reason": "aging_output", "stale": True},
                 },
@@ -1357,7 +1372,12 @@ class TestTradingPipeline(TestCase):
             qty=Decimal("10"),
             params={
                 "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
                     "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
                     "artifact": {"model_id": "hmm-regime-v1.2.0"},
                     "guardrail": {"fallback_to_defensive": True},
                 },
@@ -1396,7 +1416,12 @@ class TestTradingPipeline(TestCase):
             qty=Decimal("10"),
             params={
                 "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
                     "regime_id": "not-a-regime-id",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
                     "artifact": {"model_id": "hmm-regime-v1.2.0"},
                     "guardrail": {"reason": "transitioning"},
                 },

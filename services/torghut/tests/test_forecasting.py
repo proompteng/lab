@@ -396,6 +396,8 @@ class TestForecastRouterV5(TestCase):
         signal = _signal()
         signal.payload['macd']['macd'] = '1.2'
         signal.payload['hmm_regime_id'] = 'R2'
+        signal.payload['schema_version'] = 'hmm_regime_context_v1'
+        signal.payload['hmm_state_posterior'] = {'R2': '0.75'}
         signal.payload['regime_label'] = 'trend'
         result = router.route_and_forecast(
             feature_vector=normalize_feature_vector_v3(signal),

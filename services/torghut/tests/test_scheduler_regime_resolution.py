@@ -57,7 +57,12 @@ class TestSchedulerRegimeResolution(TestCase):
             params={
                 'regime': {'label': 'Vol=High|Trend=Flat|Liq=Liquid'},
                 'regime_hmm': {
+                    'schema_version': 'hmm_regime_context_v1',
                     'regime_id': 'not-a-regime-id',
+                    'posterior': {'R2': '0.75'},
+                    'entropy': '1.23',
+                    'entropy_band': 'medium',
+                    'predicted_next': 'R3',
                     'artifact': {'model_id': 'hmm-regime-v1.2.0'},
                     'guardrail': {'reason': 'unknown_model'},
                 },
@@ -82,7 +87,12 @@ class TestSchedulerRegimeResolution(TestCase):
             params={
                 'regime': {'label': 'Vol=Mid|Trend=Up|Liq=Liquid'},
                 'regime_hmm': {
+                    'schema_version': 'hmm_regime_context_v1',
                     'regime_id': 'R2',
+                    'posterior': {'R2': '0.75'},
+                    'entropy': '1.23',
+                    'entropy_band': 'medium',
+                    'predicted_next': 'R3',
                     'artifact': {'model_id': 'hmm-regime-v1.2.0'},
                     'guardrail': {'reason': 'stable'},
                 },
@@ -104,7 +114,12 @@ class TestSchedulerRegimeResolution(TestCase):
             params={
                 'regime': {'label': 'Vol=Mid|Trend=Up|Liq=Liquid'},
                 'regime_hmm': {
+                    'schema_version': 'hmm_regime_context_v1',
                     'regime_id': 'R2',
+                    'posterior': {'R2': '0.75'},
+                    'entropy': '1.23',
+                    'entropy_band': 'medium',
+                    'predicted_next': 'R3',
                     'artifact': {'model_id': 'hmm-regime-v1.2.0'},
                     'guardrail': {'stale': True, 'reason': 'aging_output'},
                 },
@@ -129,7 +144,12 @@ class TestSchedulerRegimeResolution(TestCase):
             params={
                 'regime_label': 'Vol=Mid|Trend=Up|Liq=Liquid',
                 'regime_hmm': {
+                    'schema_version': 'hmm_regime_context_v1',
                     'regime_id': 'unknown',
+                    'posterior': {'R2': '0.75'},
+                    'entropy': '1.23',
+                    'entropy_band': 'medium',
+                    'predicted_next': 'R3',
                     'artifact': {'model_id': 'hmm-regime-v1.2.0'},
                     'guardrail': {'reason': 'stable'},
                 },
@@ -156,6 +176,10 @@ class TestSchedulerRegimeResolution(TestCase):
                 'regime_hmm': {
                     'schema_version': 'hmm_regime_context_v0',
                     'regime_id': 'R2',
+                    'posterior': {'R2': '0.75'},
+                    'entropy': '1.23',
+                    'entropy_band': 'medium',
+                    'predicted_next': 'R3',
                     'artifact': {'model_id': 'hmm-regime-v1.2.0'},
                     'guardrail': {'reason': 'stable'},
                 },
@@ -179,16 +203,17 @@ class TestSchedulerRegimeResolution(TestCase):
             qty=Decimal('1'),
             params={
                 'regime_label': 'trend',
-                'schema_version': 'hmm_regime_context_v1',
-                'hmm_regime_id': 'R2',
-                'hmm_state_posterior': {'R2': 'bad-posterior'},
-                'hmm_entropy': '1.23',
-                'hmm_entropy_band': 'medium',
-                'hmm_predicted_next': 'R3',
-                'hmm_artifact': {'model_id': 'hmm-regime-v1.2.0'},
-                'hmm_transition_shock': False,
-                'hmm_duration_ms': 14,
-                'hmm_guardrail': {'stale': False, 'fallback_to_defensive': False},
+                'regime_hmm': {
+                    'schema_version': 'hmm_regime_context_v1',
+                    'regime_id': 'R2',
+                    'posterior': {'R2': 'bad-posterior'},
+                    'entropy': '1.23',
+                    'entropy_band': 'medium',
+                    'predicted_next': 'R3',
+                    'artifact': {'model_id': 'hmm-regime-v1.2.0'},
+                    'transition_shock': False,
+                    'guardrail': {'stale': False, 'fallback_to_defensive': False},
+                },
             },
         )
 
@@ -210,7 +235,12 @@ class TestSchedulerRegimeResolution(TestCase):
             params={
                 'regime_label': 'trend',
                 'regime_hmm': {
+                    'schema_version': 'hmm_regime_context_v1',
                     'regime_id': 'R2',
+                    'posterior': {'R2': '0.75'},
+                    'entropy': '1.23',
+                    'entropy_band': 'medium',
+                    'predicted_next': 'R3',
                     'artifact': {'model_id': 'hmm-regime-v1.2.0'},
                     'guardrail': {'stale': False, 'fallback_to_defensive': False},
                     'transition_shock': True,
@@ -236,7 +266,12 @@ class TestSchedulerRegimeResolution(TestCase):
             params={
                 'regime': {'label': 'Vol=Mid|Trend=Up|Liq=Liquid'},
                 'regime_hmm': {
+                    'schema_version': 'hmm_regime_context_v1',
                     'regime_id': 'R2',
+                    'posterior': {'R2': '0.75'},
+                    'entropy': '1.23',
+                    'entropy_band': 'medium',
+                    'predicted_next': 'R3',
                     'artifact': {'model_id': 'hmm-regime-v1.2.0'},
                     'guardrail': {'fallback_to_defensive': True, 'reason': 'risk_override'},
                 },
@@ -261,7 +296,12 @@ class TestSchedulerRegimeResolution(TestCase):
             params={
                 'regime': {'label': 'Trend'},
                 'regime_hmm': {
+                    'schema_version': 'hmm_regime_context_v1',
                     'regime_id': 'R2',
+                    'posterior': {'R2': '0.75'},
+                    'entropy': '1.23',
+                    'entropy_band': 'medium',
+                    'predicted_next': 'R3',
                     'artifact': {'model_id': 'hmm-regime-v1.2.0'},
                     'guardrail': {'stale': False, 'fallback_to_defensive': False},
                     'transition_shock': True,

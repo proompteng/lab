@@ -252,6 +252,8 @@ def _extract_context_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] | 
             return {str(k): v for k, v in regime_payload.items()}
     if _has_hmm_split_fields(regime_payload):
         return {
+            "schema_version": regime_payload.get("schema_version")
+            or regime_payload.get("schemaVersion"),
             "regime_id": regime_payload.get("hmm_regime_id"),
             "posterior": regime_payload.get("hmm_state_posterior"),
             "entropy": regime_payload.get("hmm_entropy"),
