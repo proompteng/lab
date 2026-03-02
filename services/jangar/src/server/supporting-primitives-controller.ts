@@ -1224,7 +1224,7 @@ const reconcileSwarm = async (
 
     const stageLabel = normalizeLabelValue(stageConfig.stage)
     const schedule = {
-      apiVersion: 'schedules.schedules.proompteng.ai/v1alpha1',
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
       kind: 'Schedule',
       metadata: {
         name: stageConfig.scheduleName,
