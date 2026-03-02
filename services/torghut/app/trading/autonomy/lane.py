@@ -2663,7 +2663,7 @@ def _normalize_governance_inputs(
     override_execution_context = _coerce_mapping(override_payload.get("execution_context"))
     runtime_governance = dict(
         {
-            "governance_status": "pass",
+            "governance_status": "skipped",
             "drift_status": "unknown",
             "rollback_triggered": False,
             "artifact_refs": [],
