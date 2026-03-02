@@ -174,9 +174,17 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
+        "manageEnvVar": { "type": "boolean" },
         "port": { "type": "integer" },
         "servicePort": { "type": "integer" },
         "serviceType": { "type": "string", "enum": ["ClusterIP"] }
+      },
+      "additionalProperties": false
+    },
+    "validation": {
+      "type": "object",
+      "properties": {
+        "reservedEnvKeysEnforced": { "type": "boolean" }
       },
       "additionalProperties": false
     },
@@ -400,8 +408,52 @@
       },
       "additionalProperties": false
     },
-    "envFromSecretRefs": { "type": "array", "items": { "type": "string" } },
-    "envFromConfigMapRefs": { "type": "array", "items": { "type": "string" } },
+    "envFromSecretRefs": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "optional": { "type": "boolean" },
+              "keys": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "array", "items": { "type": "string" } }
+                ]
+              }
+            },
+            "required": ["name"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "envFromConfigMapRefs": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "optional": { "type": "boolean" },
+              "keys": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "array", "items": { "type": "string" } }
+                ]
+              }
+            },
+            "required": ["name"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
     "controller": {
       "type": "object",
       "properties": {
