@@ -20,7 +20,7 @@ spec:
         - 192.168.0.0/16
     zookeeper:
       nodes:
-        - host: posthog-keeper
+        - host: keeper-posthog-keeper
           port: 2181
     clusters:
       - name: default
@@ -36,7 +36,7 @@ spec:
         spec:
           containers:
             - name: clickhouse
-              image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+              image: clickhouse/clickhouse-server:25.12.5.44
               resources:
                 requests:
                   cpu: 1000m

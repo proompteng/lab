@@ -2,24 +2,31 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: posthog-migrate
+  generateName: posthog-migrate-
   labels:
     "app.kubernetes.io/name": "posthog"
     "app.kubernetes.io/instance": "posthog"
   annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
-      name: posthog-migrate
       annotations:
         checksum/secrets.yaml: f419c0eca4937c746dd2c8a35e325c8a1f4558fc3956e8b05c1984e982e2f58c
       labels:
         app: posthog
         release: "posthog"
     spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
       restartPolicy: Never
       containers:
       - name: migrate-job
-        image: "posthog/posthog:release-1.43.1"
+        image: "mirror.gcr.io/posthog/posthog:release-1.43.1"
         command:
           - /bin/sh
           - -c
@@ -77,12 +84,16 @@ spec:
           valueFrom:
             secretKeyRef:
               name: "posthog-db-app"
-              key: "postgresql-password"
+              key: "password"
         - name: USING_PGBOUNCER
           value: 'false'
+        - name: SKIP_SERVICE_VERSION_REQUIREMENTS
+          value: '1'
         - name: CLICKHOUSE_HOST
           value: "posthog-clickhouse.posthog.svc.cluster.local"
         - name: CLICKHOUSE_CLUSTER
+          value: "default"
+        - name: CLICKHOUSE_MIGRATIONS_CLUSTER
           value: "default"
         - name: CLICKHOUSE_DATABASE
           value: "default"
@@ -119,33 +130,27 @@ spec:
           value: "true"
         resources:
           {}
-      initContainers:        
+      initContainers:
         - name: wait-for-service-dependencies
-          image: ghcr.io/cloudnative-pg/postgresql:17.0
+          image: "mirror.gcr.io/posthog/posthog:release-1.43.1"
           env:
+            - name: POSTHOG_POSTGRES_HOST
+              value: "posthog-db-rw.posthog.svc.cluster.local"
+            - name: POSTHOG_POSTGRES_PORT
+              value: "5432"
             - name: CLICKHOUSE_HOST
               value: "posthog-clickhouse.posthog.svc.cluster.local"
-            - name: CLICKHOUSE_CLUSTER
-              value: "default"
-            - name: CLICKHOUSE_DATABASE
-              value: "default"
-            - name: CLICKHOUSE_USER
-              value: "posthog"
-            - name: CLICKHOUSE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: "posthog-clickhouse-auth"
-                  key: "password"
-            - name: CLICKHOUSE_SECURE
-              value: "false"
-            - name: CLICKHOUSE_VERIFY
-              value: "false"
           command:
             - /bin/sh
             - -c
-            - >
-                until pg_isready -q -h "posthog-db-rw.$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).svc.cluster.local" -p 5432;
+            - |
+                until python -c 'import os, socket, sys; s=socket.socket(); s.settimeout(2); c=s.connect_ex((os.environ["POSTHOG_POSTGRES_HOST"], int(os.environ["POSTHOG_POSTGRES_PORT"]))); s.close(); sys.exit(c)';
                 do
                   echo "waiting for Postgres";
+                  sleep 1;
+                done
+                until python -c 'import os, socket, sys; s=socket.socket(); s.settimeout(2); c=s.connect_ex((os.environ["CLICKHOUSE_HOST"], 8123)); s.close(); sys.exit(c)';
+                do
+                  echo "waiting for ClickHouse HTTP";
                   sleep 1;
                 done

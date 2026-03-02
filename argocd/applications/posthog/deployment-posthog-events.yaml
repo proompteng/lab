@@ -5,7 +5,6 @@ metadata:
   labels:
     "app.kubernetes.io/name": "posthog"
     "app.kubernetes.io/instance": "posthog"
-  annotations:
 spec:
   selector:
     matchLabels:
@@ -22,10 +21,12 @@ spec:
         release: "posthog"
         role: events
     spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
       serviceAccountName: posthog
       containers:
       - name: posthog-events
-        image: "posthog/posthog:release-1.43.1"
+        image: "mirror.gcr.io/posthog/posthog:release-1.43.1"
         command:
           - ./bin/docker-server
         imagePullPolicy: IfNotPresent
@@ -64,6 +65,8 @@ spec:
           value: '1'
         - name: IS_BEHIND_PROXY
           value: '1'
+        - name: POSTHOG_SKIP_MIGRATION_CHECKS
+          value: 'true'
         # PostHog app settings        
         - name: SECRET_KEY
           valueFrom:
@@ -85,9 +88,11 @@ spec:
           valueFrom:
             secretKeyRef:
               name: "posthog-db-app"
-              key: "postgresql-password"
+              key: "password"
         - name: USING_PGBOUNCER
           value: 'true'
+        - name: SKIP_SERVICE_VERSION_REQUIREMENTS
+          value: '1'
         - name: CLICKHOUSE_HOST
           value: "posthog-clickhouse.posthog.svc.cluster.local"
         - name: CLICKHOUSE_CLUSTER
@@ -126,15 +131,15 @@ spec:
         - name: CAPTURE_INTERNAL_METRICS
           value: "true"
         - name: SOCIAL_AUTH_GOOGLE_OAUTH2_KEY
-          value: null
+          value: ""
         - name: SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET
-          value: null
+          value: ""
         - name: SOCIAL_AUTH_GOOGLE_OAUTH2_WHITELISTED_DOMAINS
           value: posthog.com
         livenessProbe:
           failureThreshold: 5
           httpGet:
-            path: /_health/
+            path: /_livez
             port: 8000
             scheme: HTTP
           initialDelaySeconds: 50
@@ -144,56 +149,72 @@ spec:
         readinessProbe:
           failureThreshold: 10
           httpGet:
-            path: /_health/
+            path: /_readyz?role=events
             port: 8000
             scheme: HTTP
           initialDelaySeconds: 50
           periodSeconds: 10
           successThreshold: 1
           timeoutSeconds: 2
+        startupProbe:
+          httpGet:
+            path: /_readyz?role=events
+            port: 8000
+            scheme: HTTP
+          failureThreshold: 6
+          initialDelaySeconds: 0
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
         resources:
             {}
       initContainers:        
         - name: wait-for-service-dependencies
-          image: ghcr.io/cloudnative-pg/postgresql:17.0
+          image: "mirror.gcr.io/posthog/posthog:release-1.43.1"
           env:
+            - name: POSTHOG_POSTGRES_HOST
+              value: posthog-db-pooler
+            - name: POSTHOG_POSTGRES_PORT
+              value: "5432"
             - name: CLICKHOUSE_HOST
               value: "posthog-clickhouse.posthog.svc.cluster.local"
-            - name: CLICKHOUSE_CLUSTER
-              value: "default"
-            - name: CLICKHOUSE_DATABASE
-              value: "default"
-            - name: CLICKHOUSE_USER
-              value: "posthog"
-            - name: CLICKHOUSE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: "posthog-clickhouse-auth"
-                  key: "password"
-            - name: CLICKHOUSE_SECURE
-              value: "false"
-            - name: CLICKHOUSE_VERIFY
-              value: "false"
+            - name: CLICKHOUSE_PORT
+              value: "8123"
           command:
             - /bin/sh
             - -c
-            - >
-                until pg_isready -q -h "posthog-db-pooler.$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).svc.cluster.local" -p 5432;
+            - |
+                until python -c 'import os, socket, sys; s=socket.socket(); s.settimeout(2); c=s.connect_ex((os.environ["POSTHOG_POSTGRES_HOST"], int(os.environ["POSTHOG_POSTGRES_PORT"]))); s.close(); sys.exit(c)';
                 do
                   echo "waiting for Postgres pooler";
+                  sleep 1;
+                done
+                until python -c 'import os, socket, sys; s=socket.socket(); s.settimeout(2); c=s.connect_ex((os.environ["CLICKHOUSE_HOST"], int(os.environ["CLICKHOUSE_PORT"]))); s.close(); sys.exit(c)';
+                do
+                  echo "waiting for ClickHouse";
                   sleep 1;
                 done
         
                         
         - name: wait-for-migrations
-          image: "posthog/posthog:release-1.43.1"
+          image: "mirror.gcr.io/posthog/posthog:release-1.43.1"
           command:
             - /bin/sh
             - -c
-            - >
+            - |
+                until python -c 'import os, socket, sys; s=socket.socket(); s.settimeout(2); c=s.connect_ex((os.environ["CLICKHOUSE_HOST"], 8123)); s.close(); sys.exit(c)';
+                do
+                    echo "Waiting for clickhouse service readiness"; sleep 1;
+                done
+
                 until (python manage.py migrate --check);
                 do
                     echo "Waiting for database migrations to be completed"; sleep 1;
+                done
+
+                until (python manage.py migrate_clickhouse --check);
+                do
+                    echo "Waiting for clickhouse migrations to be completed"; sleep 1;
                 done
           env:
         
@@ -211,9 +232,11 @@ spec:
             valueFrom:
               secretKeyRef:
                 name: "posthog-db-app"
-                key: "postgresql-password"
+                key: "password"
           - name: USING_PGBOUNCER
             value: 'true'
+          - name: SKIP_SERVICE_VERSION_REQUIREMENTS
+            value: '1'
         
           # Redis env variables  
           
