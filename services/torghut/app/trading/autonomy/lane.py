@@ -267,32 +267,6 @@ def _build_candidate_state_payload(
     }
 
 
-def _build_gate_readiness_inputs(candidate_state_payload: Mapping[str, Any]) -> dict[str, bool]:
-    rollback_readiness = candidate_state_payload.get("rollbackReadiness")
-    if isinstance(rollback_readiness, dict):
-        rollback_readiness_raw = cast(dict[str, Any], rollback_readiness)
-    else:
-        rollback_readiness_raw = {}
-
-    operational_ready = bool(
-        _coerce_evidence_bool(rollback_readiness_raw.get("strategyDisableDryRunPassed"))
-    )
-    runbook_validated = bool(_coerce_evidence_bool(candidate_state_payload.get("runbookValidated")))
-    kill_switch_dry_run_passed = bool(
-        _coerce_evidence_bool(rollback_readiness_raw.get("killSwitchDryRunPassed"))
-    )
-    rollback_dry_run_passed = bool(
-        _coerce_evidence_bool(rollback_readiness_raw.get("gitopsRevertDryRunPassed"))
-    )
-
-    return {
-        "operational_ready": operational_ready,
-        "runbook_validated": runbook_validated,
-        "kill_switch_dry_run_passed": kill_switch_dry_run_passed,
-        "rollback_dry_run_passed": rollback_dry_run_passed,
-    }
-
-
 @dataclass(frozen=True)
 class AutonomousLaneResult:
     run_id: str
@@ -990,7 +964,12 @@ def run_autonomous_lane(
             code_version=code_version,
             runbook_validated=_is_runbook_valid(strategy_configmap_path),
         )
-        gate_readiness_inputs = _build_gate_readiness_inputs(candidate_state_payload)
+        candidate_state_readiness_raw = candidate_state_payload.get("rollbackReadiness", {})
+        candidate_state_readiness = (
+            candidate_state_readiness_raw
+            if isinstance(candidate_state_readiness_raw, dict)
+            else {}
+        )
         gate_inputs = GateInputs(
             feature_schema_version=gate_policy.required_feature_schema_version,
             required_feature_null_rate=_required_feature_null_rate(signals),
@@ -1011,10 +990,23 @@ def run_autonomous_lane(
             fragility_score=fragility_score,
             stability_mode_active=stability_mode_active,
             fragility_inputs_valid=fragility_inputs_valid,
-            operational_ready=gate_readiness_inputs["operational_ready"],
-            runbook_validated=gate_readiness_inputs["runbook_validated"],
-            kill_switch_dry_run_passed=gate_readiness_inputs["kill_switch_dry_run_passed"],
-            rollback_dry_run_passed=gate_readiness_inputs["rollback_dry_run_passed"],
+            operational_ready=not bool(candidate_state_payload.get("paused", False)),
+            runbook_validated=bool(
+                _coerce_evidence_bool(candidate_state_payload.get("runbookValidated"))
+            ),
+            kill_switch_dry_run_passed=bool(
+                _coerce_evidence_bool(
+                    candidate_state_readiness.get("killSwitchDryRunPassed")
+                )
+            ),
+            rollback_dry_run_passed=bool(
+                _coerce_evidence_bool(
+                    candidate_state_readiness.get("gitopsRevertDryRunPassed")
+                )
+                and _coerce_evidence_bool(
+                    candidate_state_readiness.get("strategyDisableDryRunPassed")
+                )
+            ),
             approval_token=approval_token,
         )
         gate_report = evaluate_gate_matrix(
@@ -2304,7 +2296,12 @@ def _build_actuation_intent_payload(
     rollback_evidence_links.extend(
         [str(item) for item in promotion_check.get("artifact_refs", [])]
     )
-    candidate_state_readiness = candidate_state_payload.get("rollbackReadiness", {})
+    candidate_state_readiness_raw = candidate_state_payload.get("rollbackReadiness", {})
+    candidate_state_readiness = (
+        candidate_state_readiness_raw
+        if isinstance(candidate_state_readiness_raw, dict)
+        else {}
+    )
     return {
         "schema_version": _ACTUATION_INTENT_SCHEMA_VERSION,
         "run_id": run_id,
@@ -3386,7 +3383,8 @@ def _resolve_gate_fragility_inputs(
             selected_measurement = candidate
 
     if selected_measurement is None:
-        return ("not_measured", Decimal("0"), False, False)
+        return ("normal", Decimal("0"), False, False)
+
     selected_state, selected_score, selected_stability = selected_measurement
     return selected_state, selected_score, selected_stability, True
 
@@ -3524,18 +3522,7 @@ def _load_tca_gate_inputs(
         with session_factory() as session:
             return build_tca_gate_inputs(session)
     except Exception:
-        return {
-            "order_count": 0,
-            "avg_slippage_bps": None,
-            "avg_shortfall_notional": None,
-            "avg_churn_ratio": None,
-            "avg_divergence_bps": None,
-            "avg_realized_shortfall_bps": None,
-            "expected_shortfall_coverage": None,
-            "expected_shortfall_sample_count": 0,
-            "avg_expected_shortfall_bps_p50": None,
-            "avg_expected_shortfall_bps_p95": None,
-        }
+        return {}
 
 
 def _baseline_runtime_strategies() -> list[StrategyRuntimeConfig]:
