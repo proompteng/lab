@@ -781,9 +781,10 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
 
     expected_shortfall_coverage = _decimal(
         inputs.tca_metrics.get("expected_shortfall_coverage")
-    ) or Decimal("0")
-    expected_shortfall_sample_count = int(
-        inputs.tca_metrics.get("expected_shortfall_sample_count", 0)
+    )
+    expected_shortfall_sample_count = _int_or_default(
+        inputs.tca_metrics.get("expected_shortfall_sample_count"),
+        0,
     )
     avg_tca_realized_shortfall = _abs_decimal(
         inputs.tca_metrics.get("avg_realized_shortfall_bps_abs")
@@ -816,6 +817,8 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
         expected_shortfall_sample_count <= 0
         and policy.gate2_min_tca_expected_shortfall_coverage > 0
     ):
+        reasons.append("tca_expected_shortfall_calibration_coverage_missing")
+    elif expected_shortfall_coverage is None:
         reasons.append("tca_expected_shortfall_calibration_coverage_missing")
     elif expected_shortfall_coverage < policy.gate2_min_tca_expected_shortfall_coverage:
         reasons.append("tca_expected_shortfall_calibration_coverage_below_threshold")
