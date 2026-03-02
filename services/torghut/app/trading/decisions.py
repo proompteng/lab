@@ -588,6 +588,7 @@ def _resolve_microstructure_state_payload(
         if event_ts is None:
             state["event_ts"] = signal.event_ts.isoformat()
         return state
+    return state
 
 
 def _microstructure_state_payload(state: MicrostructureStateV5) -> dict[str, Any]:
