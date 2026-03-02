@@ -32,9 +32,23 @@ spec:
           - /bin/sh
           - -c
           - |
-            set -e
-            python manage.py notify_helm_install || true
-            ./bin/migrate
+              set -e
+              python manage.py notify_helm_install || true
+              python - <<'PY'
+              import os
+              from clickhouse_driver import Client
+
+              client = Client(
+                  host=os.environ['CLICKHOUSE_HOST'],
+                  user=os.environ['CLICKHOUSE_USER'],
+                  password=os.environ['CLICKHOUSE_PASSWORD'],
+              )
+              client.execute(
+                  'CREATE VIEW IF NOT EXISTS system.crash_log AS '
+                  'SELECT event_date FROM system.error_log'
+              )
+              PY
+              ./bin/migrate
 
         env:
         # Kafka env variables        
