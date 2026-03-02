@@ -38,7 +38,7 @@ from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor, SignalBatch
 from .llm import LLMReviewEngine, apply_policy
 from .llm.dspy_programs.runtime import (
-    DSPyReviewRuntime,
+    
     DSPyRuntimeUnsupportedStateError,
 )
 from .llm.guardrails import evaluate_llm_guardrails
@@ -5082,6 +5082,30 @@ class TradingScheduler:
         promotion_target, approval_token = self._resolve_autonomy_promotion_target(
             drift_gate_evidence
         )
+        governance_inputs_payload = self._build_autonomy_governance_inputs(
+            governance_inputs=governance_inputs,
+            artifact_root=artifact_root,
+            promotion_target=promotion_target,
+            governance_repository=governance_repository,
+            governance_base=governance_base,
+            governance_head=governance_head,
+            priority_id=priority_id,
+        )
+        execution_context = cast(
+            Mapping[str, str], governance_inputs_payload.get("execution_context", {})
+        )
+        resolved_governance_repository = str(execution_context.get("repository", "").strip())
+        if not resolved_governance_repository or resolved_governance_repository == "unknown":
+            resolved_governance_repository = governance_repository or "proompteng/lab"
+        resolved_governance_base = str(execution_context.get("base", "").strip())
+        if not resolved_governance_base or resolved_governance_base == "unknown":
+            resolved_governance_base = governance_base or "main"
+        resolved_governance_head = str(execution_context.get("head", "").strip())
+        if not resolved_governance_head or resolved_governance_head == "unknown":
+            resolved_governance_head = (
+                governance_head
+                or f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
+            )
         result = self._execute_autonomous_lane(
             signals_path=signals_path,
             strategy_config_path=strategy_config_path,
@@ -5090,24 +5114,15 @@ class TradingScheduler:
             promotion_target=promotion_target,
             approval_token=approval_token,
             drift_gate_evidence=drift_gate_evidence,
-            governance_repository=governance_repository or "proompteng/lab",
-            governance_base=governance_base or "main",
+            governance_repository=resolved_governance_repository,
+            governance_base=resolved_governance_base,
             governance_head=(
-                governance_head
-                or f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
+                resolved_governance_head
             ),
             governance_artifact_path=str(run_output_dir),
             priority_id=priority_id,
             artifact_root=artifact_root,
-            governance_inputs=self._build_autonomy_governance_inputs(
-                governance_inputs=governance_inputs,
-                artifact_root=artifact_root,
-                promotion_target=promotion_target,
-                governance_repository=governance_repository,
-                governance_base=governance_base,
-                governance_head=governance_head,
-                priority_id=priority_id,
-            ),
+            governance_inputs=governance_inputs_payload,
         )
         if result is None:
             self._write_autonomy_iteration_notes(

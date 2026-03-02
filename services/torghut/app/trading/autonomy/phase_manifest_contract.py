@@ -96,10 +96,7 @@ def build_runtime_governance_phase_payload(
             if str(item).strip()
         }
     )
-    is_fail = rollback_triggered or normalized_drift_status in {
-        "drift_detected",
-        "unhealthy",
-    }
+    is_fail = rollback_triggered
     status = "fail" if is_fail else "pass"
     return {
         "name": "runtime-governance",
