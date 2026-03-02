@@ -8,8 +8,6 @@ metadata:
     app.kubernetes.io/part-of: posthog
 spec:
   configuration:
-    profiles:
-      default/deduplicate_merge_projection_mode: drop
     users:
       posthog/password:
         valueFrom:
@@ -38,7 +36,7 @@ spec:
         spec:
           containers:
             - name: clickhouse
-              image: clickhouse/clickhouse-server:25.12.5.44
+              image: clickhouse/clickhouse-server:22.8.21.38
               resources:
                 requests:
                   cpu: 1000m
