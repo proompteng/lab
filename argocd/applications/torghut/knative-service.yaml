@@ -76,7 +76,7 @@ spec:
             - name: TRADING_ENABLED
               value: "true"
             - name: TRADING_KILL_SWITCH_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_FEATURE_FLAGS_ENABLED
               value: "true"
             - name: TRADING_FEATURE_FLAGS_URL
@@ -297,7 +297,7 @@ spec:
             - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
               value: "3"
             - name: TRADING_MARKET_CONTEXT_REQUIRED
-              value: "true"
+              value: "false"
             - name: TRADING_MARKET_CONTEXT_FAIL_MODE
               value: shadow_only
             - name: TRADING_MARKET_CONTEXT_MIN_QUALITY
