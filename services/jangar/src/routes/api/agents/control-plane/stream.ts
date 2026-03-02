@@ -47,6 +47,7 @@ type NamespaceStream = {
   emitter: EventEmitter
   refCount: number
   watchers: Array<{ stop: () => void }>
+  watchSwarm: boolean
   statusTimeout: NodeJS.Timeout | null
   lastStatus: ControlPlaneStatus | null
   resourceFingerprints: Map<string, string>
@@ -113,29 +114,17 @@ const scheduleStatusRefresh = (stream: NamespaceStream, namespace: string) => {
   }, STATUS_DEBOUNCE_MS)
 }
 
-const ensureNamespaceStream = (namespace: string, watchSwarm: boolean): NamespaceStream => {
-  const existing = namespaceStreams.get(namespace)
-  if (existing) {
-    existing.refCount += 1
-    return existing
-  }
-
-  const emitter = new EventEmitter()
-  emitter.setMaxListeners(0)
-
-  const stream: NamespaceStream = {
-    emitter,
-    refCount: 1,
-    watchers: [],
-    statusTimeout: null,
-    lastStatus: null,
-    resourceFingerprints: new Map(),
-  }
-
+const startNamespaceWatchers = (
+  stream: NamespaceStream,
+  namespace: string,
+  watchSwarm: boolean,
+  kindsToWatch?: ReadonlySet<AgentPrimitiveKind>,
+): void => {
   const kinds = listPrimitiveKinds()
   for (const kind of kinds) {
     const resolved = resolvePrimitiveKind(kind)
     if (!resolved) continue
+    if (kindsToWatch && !kindsToWatch.has(kind)) continue
     if (resolved.kind === 'Swarm' && !watchSwarm) continue
 
     stream.watchers.push(
@@ -181,6 +170,32 @@ const ensureNamespaceStream = (namespace: string, watchSwarm: boolean): Namespac
       }),
     )
   }
+}
+
+const ensureNamespaceStream = (namespace: string, watchSwarm: boolean): NamespaceStream => {
+  const existing = namespaceStreams.get(namespace)
+  if (existing) {
+    existing.refCount += 1
+    if (watchSwarm && !existing.watchSwarm) {
+      startNamespaceWatchers(existing, namespace, watchSwarm, new Set(['Swarm']))
+      existing.watchSwarm = true
+    }
+    return existing
+  }
+
+  const emitter = new EventEmitter()
+  emitter.setMaxListeners(0)
+
+  const stream: NamespaceStream = {
+    emitter,
+    refCount: 1,
+    watchers: [],
+    statusTimeout: null,
+    lastStatus: null,
+    resourceFingerprints: new Map(),
+    watchSwarm,
+  }
+  startNamespaceWatchers(stream, namespace, watchSwarm)
 
   namespaceStreams.set(namespace, stream)
   void emitStatus(stream, namespace)

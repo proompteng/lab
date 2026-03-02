@@ -9,6 +9,7 @@ import { shouldApplyStatus } from '~/server/status-utils'
 
 const DEFAULT_NAMESPACES = ['agents']
 const DEFAULT_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.supporting_controller.enabled'
+const SWARM_CRD_REFRESH_INTERVAL_MS = 15_000
 
 const REQUIRED_CRDS = [
   RESOURCE_MAP.Tool,
@@ -58,8 +59,10 @@ let started = controllerState.started
 let starting = false
 let lifecycleToken = 0
 let reconciling = false
+let swarmWatchersStarted = false
 let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 let watchHandles: Array<{ stop: () => void }> = []
+let swarmCrdsRefreshHandle: NodeJS.Timeout | null = null
 const namespaceQueues = new Map<string, Promise<void>>()
 const optionalCrdsReady = new Set<string>()
 const swarmUnfreezeTimers = new Map<string, NodeJS.Timeout>()
@@ -240,6 +243,38 @@ const clearSwarmUnfreezeTimer = (namespace: string, name: string) => {
   if (!timer) return
   clearTimeout(timer)
   swarmUnfreezeTimers.delete(key)
+}
+
+const startSwarmWatchers = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespaces: string[],
+  handles: Array<{ stop: () => void }>,
+) => {
+  for (const namespace of namespaces) {
+    handles.push(
+      startResourceWatch({
+        resource: RESOURCE_MAP.Swarm,
+        namespace,
+        onEvent: (event) => handleResourceEvent(kube, namespace, event),
+        onError: (error) => console.warn('[jangar] swarm watch failed', error),
+      }),
+    )
+  }
+}
+
+const refreshOptionalSwarmWatches = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespaces: string[],
+  token: number,
+) => {
+  if (lifecycleToken !== token || !started) return
+  if (swarmWatchersStarted) return
+  const crds = await checkCrds()
+  if (lifecycleToken !== token || !started) return
+  if (!crds.ok || !optionalCrdsReady.has(RESOURCE_MAP.Swarm)) return
+  startSwarmWatchers(kube, namespaces, watchHandles)
+  swarmWatchersStarted = true
+  void reconcileAll(kube, namespaces)
 }
 
 const normalizeConditions = (raw: unknown): Condition[] => {
@@ -1640,6 +1675,7 @@ export const startSupportingPrimitivesController = async () => {
         }),
       )
       if (optionalCrdsReady.has(RESOURCE_MAP.Swarm)) {
+        swarmWatchersStarted = true
         handles.push(
           startResourceWatch({
             resource: RESOURCE_MAP.Swarm,
@@ -1685,6 +1721,14 @@ export const startSupportingPrimitivesController = async () => {
       )
     }
 
+    if (!optionalCrdsReady.has(RESOURCE_MAP.Swarm)) {
+      if (swarmCrdsRefreshHandle) clearInterval(swarmCrdsRefreshHandle)
+      swarmCrdsRefreshHandle = setInterval(() => {
+        if (!started) return
+        void refreshOptionalSwarmWatches(kube, namespaces, token)
+      }, SWARM_CRD_REFRESH_INTERVAL_MS)
+    }
+
     if (lifecycleToken !== token) return
     watchHandles = handles
     started = true
@@ -1697,6 +1741,10 @@ export const startSupportingPrimitivesController = async () => {
         handle.stop()
       }
     }
+    if (swarmCrdsRefreshHandle && (lifecycleToken !== token || !started)) {
+      clearInterval(swarmCrdsRefreshHandle)
+      swarmCrdsRefreshHandle = null
+    }
     if (lifecycleToken === token) {
       starting = false
     }
@@ -1706,6 +1754,11 @@ export const startSupportingPrimitivesController = async () => {
 export const stopSupportingPrimitivesController = () => {
   lifecycleToken += 1
   starting = false
+  if (swarmCrdsRefreshHandle) {
+    clearInterval(swarmCrdsRefreshHandle)
+    swarmCrdsRefreshHandle = null
+  }
+  swarmWatchersStarted = false
   for (const handle of watchHandles) {
     handle.stop()
   }
@@ -1720,4 +1773,5 @@ export const __test__ = {
   reconcileTool,
   reconcileSwarm,
   shouldStartWithFeatureFlag,
+  SWARM_CRD_REFRESH_INTERVAL_MS,
 }

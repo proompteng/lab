@@ -1,25 +1,104 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 
 vi.mock('~/server/feature-flags', () => ({
   resolveBooleanFeatureToggle: vi.fn(async () => true),
 }))
 
+const childProcessMocks = vi.hoisted(() => ({
+  spawn: vi.fn(),
+}))
+
+const kubeWatchMocks = vi.hoisted(() => ({
+  startResourceWatch: vi.fn(() => ({ stop: vi.fn() })),
+}))
+
+const primitivesKubeMocks = vi.hoisted(() => ({
+  createKubernetesClient: vi.fn(),
+}))
+
+vi.mock('node:child_process', () => childProcessMocks)
+vi.mock('~/server/kube-watch', () => kubeWatchMocks)
+vi.mock('~/server/primitives-kube', async () => {
+  const actual = await vi.importActual<typeof import('~/server/primitives-kube')>('~/server/primitives-kube')
+  return {
+    ...actual,
+    createKubernetesClient: primitivesKubeMocks.createKubernetesClient,
+  }
+})
+
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { asString } from '~/server/primitives-http'
 import type { KubernetesClient } from '~/server/primitives-kube'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
-import { __test__ } from '~/server/supporting-primitives-controller'
+import {
+  __test__,
+  startSupportingPrimitivesController,
+  stopSupportingPrimitivesController,
+} from '~/server/supporting-primitives-controller'
+
+const createMockKubectlProcess = (code: number, stderr = '') => {
+  const stdout = new EventEmitter() as EventEmitter & { setEncoding: () => void }
+  const stderrStream = new EventEmitter() as EventEmitter & { setEncoding: () => void }
+  stdout.setEncoding = () => {}
+  stderrStream.setEncoding = () => {}
+
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: typeof stdout
+    stderr: typeof stderrStream
+    kill: () => void
+  }
+  child.stdout = stdout
+  child.stderr = stderrStream
+  child.kill = () => {}
+
+  queueMicrotask(() => {
+    if (stderr) {
+      stderrStream.emit('data', stderr)
+    }
+    child.emit('close', code)
+  })
+
+  return child
+}
 
 describe('supporting primitives controller', () => {
+  let resolveSwarmAvailability: (resource: string, call: number) => { code: number; stderr?: string } = () => ({
+    code: 0,
+  })
+  let kubectlCalls = new Map<string, number>()
+
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:00:00Z'))
+    kubectlCalls = new Map()
+    resolveSwarmAvailability = (resource, call) => {
+      if (resource === 'swarms' && call === 1) {
+        return {
+          code: 1,
+          stderr: 'error: the server does not have a resource type "swarms.swarm.proompteng.ai"',
+        }
+      }
+      return { code: 0 }
+    }
+    childProcessMocks.spawn.mockImplementation((_, args: string[] = []) => {
+      const resource = typeof args[1] === 'string' ? args[1] : ''
+      const normalizedResource = resource.split('.').at(0) ?? resource
+      const count = (kubectlCalls.get(resource) ?? 0) + 1
+      kubectlCalls.set(resource, count)
+      const result = resolveSwarmAvailability(normalizedResource, count)
+      return createMockKubectlProcess(result.code, result.stderr ?? '')
+    })
+    primitivesKubeMocks.createKubernetesClient.mockReturnValue({
+      list: vi.fn(async () => ({ items: [] })),
+    })
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
   })
 
   afterEach(() => {
+    stopSupportingPrimitivesController()
     vi.useRealTimers()
   })
 
@@ -69,6 +148,26 @@ describe('supporting primitives controller', () => {
         fallbackEnvVar: 'JANGAR_SUPPORTING_CONTROLLER_ENABLED',
         defaultValue: false,
       })
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv
+    }
+  })
+
+  it('starts swarm watches when optional swarm CRD appears after startup', async () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+    try {
+      await startSupportingPrimitivesController()
+
+      const watchCalls = vi.mocked(kubeWatchMocks.startResourceWatch).mock.calls
+      const initialSwarmWatchCalls = watchCalls.filter(([options]) => options.resource === RESOURCE_MAP.Swarm)
+      expect(initialSwarmWatchCalls).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(__test__.SWARM_CRD_REFRESH_INTERVAL_MS)
+
+      expect(vi.mocked(kubeWatchMocks.startResourceWatch)).toHaveBeenCalledWith(
+        expect.objectContaining({ resource: RESOURCE_MAP.Swarm, namespace: 'agents' }),
+      )
     } finally {
       process.env.NODE_ENV = previousNodeEnv
     }
