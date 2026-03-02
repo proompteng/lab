@@ -72,6 +72,26 @@ spec:
         
         - name: POSTHOG_REDIS_PORT
           value: "6379"
+        - name: REDIS_URL
+          value: "redis://posthog-redis.posthog.svc.cluster.local:6379/"
+        - name: CDP_REDIS_HOST
+          value: posthog-redis.posthog.svc.cluster.local
+        - name: CDP_REDIS_PORT
+          value: "6379"
+        - name: LOGS_REDIS_HOST
+          value: posthog-redis.posthog.svc.cluster.local
+        - name: LOGS_REDIS_PORT
+          value: "6379"
+        - name: LOGS_REDIS_TLS
+          value: "false"
+        - name: COOKIELESS_REDIS_HOST
+          value: posthog-redis.posthog.svc.cluster.local
+        - name: COOKIELESS_REDIS_PORT
+          value: "6379"
+        - name: SESSION_RECORDING_API_REDIS_HOST
+          value: posthog-redis.posthog.svc.cluster.local
+        - name: SESSION_RECORDING_API_REDIS_PORT
+          value: "6379"
 
         # statsd env variables
         
