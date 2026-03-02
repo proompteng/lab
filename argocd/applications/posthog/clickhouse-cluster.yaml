@@ -1,0 +1,59 @@
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: posthog-clickhouse
+  namespace: posthog
+  labels:
+    app.kubernetes.io/name: posthog-clickhouse
+    app.kubernetes.io/part-of: posthog
+spec:
+  configuration:
+    users:
+      posthog/password:
+        valueFrom:
+          secretKeyRef:
+            name: posthog-clickhouse-auth
+            key: password
+      posthog/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    zookeeper:
+      nodes:
+        - host: posthog-keeper
+          port: 2181
+    clusters:
+      - name: default
+        layout:
+          shardsCount: 1
+          replicasCount: 1
+        templates:
+          podTemplate: chi-default
+          volumeClaimTemplate: chi-data
+  templates:
+    podTemplates:
+      - name: chi-default
+        spec:
+          containers:
+            - name: clickhouse
+              image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+              resources:
+                requests:
+                  cpu: 1000m
+                  memory: 2Gi
+                limits:
+                  cpu: 2000m
+                  memory: 4Gi
+    volumeClaimTemplates:
+      - name: chi-data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 10Gi
+          storageClassName: rook-ceph-block
+  defaults:
+    templates:
+      podTemplate: chi-default
+      volumeClaimTemplate: chi-data
