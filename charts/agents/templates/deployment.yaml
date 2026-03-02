@@ -30,7 +30,10 @@
 {{- $controlPlaneStartupProbe := merge (deepCopy (.Values.startupProbe | default dict)) (deepCopy (.Values.controlPlane.startupProbe | default dict)) -}}
 {{- $controlPlaneLifecycle := merge (deepCopy (.Values.lifecycle | default dict)) (deepCopy (.Values.controlPlane.lifecycle | default dict)) -}}
 {{- $controlPlaneDeploymentLifecycle := merge (deepCopy (.Values.deploymentLifecycle | default dict)) (deepCopy (.Values.controlPlane.deploymentLifecycle | default dict)) -}}
-{{- $controlPlaneTerminationGracePeriodSeconds := .Values.controlPlane.terminationGracePeriodSeconds | default .Values.terminationGracePeriodSeconds -}}
+{{- $controlPlaneTerminationGracePeriodSeconds := .Values.terminationGracePeriodSeconds -}}
+{{- if hasKey .Values.controlPlane "terminationGracePeriodSeconds" -}}
+{{- $controlPlaneTerminationGracePeriodSeconds = .Values.controlPlane.terminationGracePeriodSeconds -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

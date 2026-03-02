@@ -38,7 +38,10 @@
 {{- $controllersStartupProbe := merge (deepCopy (.Values.startupProbe | default dict)) (deepCopy (.Values.controllers.startupProbe | default dict)) -}}
 {{- $controllersLifecycle := merge (deepCopy (.Values.lifecycle | default dict)) (deepCopy (.Values.controllers.lifecycle | default dict)) -}}
 {{- $controllersDeploymentLifecycle := merge (deepCopy (.Values.deploymentLifecycle | default dict)) (deepCopy (.Values.controllers.deploymentLifecycle | default dict)) -}}
-{{- $controllersTerminationGracePeriodSeconds := .Values.controllers.terminationGracePeriodSeconds | default .Values.terminationGracePeriodSeconds -}}
+{{- $controllersTerminationGracePeriodSeconds := .Values.terminationGracePeriodSeconds -}}
+{{- if hasKey .Values.controllers "terminationGracePeriodSeconds" -}}
+{{- $controllersTerminationGracePeriodSeconds = .Values.controllers.terminationGracePeriodSeconds -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
