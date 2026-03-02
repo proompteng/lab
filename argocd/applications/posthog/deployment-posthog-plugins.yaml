@@ -15,6 +15,11 @@ spec:
         release: "posthog"
         role: plugins
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 100%
+      maxSurge: 0
   template:
     metadata:
       annotations:
@@ -47,8 +52,6 @@ spec:
           value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
         - name: KAFKA_CONSUMER_METADATA_BROKER_LIST
           value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
-        - name: KAFKA_CONSUMER_PARTITION_ASSIGNMENT_STRATEGY
-          value: "range,roundrobin"
         - name: KAFKA_CDP_PRODUCER_METADATA_BROKER_LIST
           value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
         - name: KAFKA_WARPSTREAM_PRODUCER_METADATA_BROKER_LIST
