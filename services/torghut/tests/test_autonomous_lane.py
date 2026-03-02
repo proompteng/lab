@@ -827,6 +827,7 @@ class TestAutonomousLane(TestCase):
                 candidate_state_payload: dict[str, Any],
                 promotion_target: str,
                 artifact_root: Path,
+                now: datetime | None = None,
             ) -> PromotionPrerequisiteResult:
                 self.assertTrue(
                     (artifact_root / "paper-candidate" / "strategy-configmap-patch.yaml").exists()

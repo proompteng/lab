@@ -1156,6 +1156,7 @@ def run_autonomous_lane(
             candidate_state_payload=candidate_state_payload,
             promotion_target=promotion_target,
             artifact_root=output_dir,
+            now=now,
         )
         rollback_check = evaluate_rollback_readiness(
             policy_payload=raw_gate_policy,
