@@ -108,7 +108,9 @@ def _coalesce_alpha_inputs(
     base: str | None,
     head: str | None,
     priority_id: str | None,
+    priorityId: str | None = None,
     notes_artifact_path: str | None,
+    artifactPath: str | None = None,
     execution_context: Mapping[str, Any] | None,
 ) -> tuple[str | None, str | None, str | None, str | None, Path | None]:
     raw_execution_context = (
@@ -135,12 +137,13 @@ def _coalesce_alpha_inputs(
         head if head is not None else _coerce_str(runtime_context.get("head"))
     )
     priority_id_resolved = (
-        priority_id
-        if priority_id is not None
-        else _coerce_str(runtime_context.get("priorityId"))
+        priority_id if priority_id is not None else _coerce_str(priorityId)
     )
+    if not priority_id_resolved:
+        priority_id_resolved = _coerce_str(runtime_context.get("priorityId"))
     artifact_root = (
         _coerce_str(notes_artifact_path)
+        or _coerce_str(artifactPath)
         or _coerce_str(runtime_context.get("artifactPath"))
     )
     resolved_artifact_path = Path(artifact_root) if artifact_root else None
@@ -572,7 +575,9 @@ def run_alpha_discovery_lane(
     base: str | None = None,
     head: str | None = None,
     priority_id: str | None = None,
+    priorityId: str | None = None,
     notes_artifact_path: str | None = None,
+    artifactPath: str | None = None,
     lookback_days: Iterable[int] = (20, 40, 60),
     vol_lookback_days: Iterable[int] = (10, 20, 40),
     target_daily_vols: Iterable[float] = (0.0075, 0.01, 0.0125),
@@ -604,7 +609,9 @@ def run_alpha_discovery_lane(
         base=base,
         head=head,
         priority_id=priority_id,
+        priorityId=priorityId,
         notes_artifact_path=notes_artifact_path,
+        artifactPath=artifactPath,
         execution_context=execution_context,
     )
     research_dir = output_dir / "research"

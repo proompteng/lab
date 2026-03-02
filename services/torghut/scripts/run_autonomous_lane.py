@@ -77,10 +77,22 @@ def main() -> int:
         help="Optional artifact root for execution-context notes and governance artifact path.",
     )
     parser.add_argument(
+        "--artifactPath",
+        type=Path,
+        default=None,
+        help="CamelCase alias for --artifact-path",
+    )
+    parser.add_argument(
         "--priority-id",
         type=str,
         default=None,
         help="Priority identifier for lane execution and governance output.",
+    )
+    parser.add_argument(
+        "--priorityId",
+        type=str,
+        default=None,
+        help="CamelCase alias for --priority-id",
     )
     parser.add_argument(
         "--promotion-target", choices=("shadow", "paper", "live"), default="paper"
@@ -109,7 +121,11 @@ def main() -> int:
         artifact_path=str(args.artifact_path)
         if args.artifact_path is not None
         else None,
+        artifactPath=str(args.artifactPath)
+        if args.artifactPath is not None
+        else None,
         priority_id=args.priority_id,
+        priorityId=args.priorityId,
         promotion_target=args.promotion_target,
         strategy_configmap_path=args.strategy_configmap,
         code_version=_resolve_git_sha(),
