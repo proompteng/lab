@@ -36,15 +36,17 @@ Controllers reconcile CRDs in a set of namespaces. The chart exposes `controller
 - `controller.namespaces` is optional. When omitted, templates default to the release namespace.
 - When set, `controller.namespaces` must be a non-empty list.
 - Empty list (`[]`) is rejected at Helm render-time.
+- In namespaced mode (`rbac.clusterScoped=false`), an explicit single namespace must match
+  the chart namespace (`namespaceOverride`/`Release.Namespace`) to avoid forbidden-list failures.
 - For `rbac.clusterScoped=true`, explicit `controller.namespaces: ["*"]` means all namespaces.
 
 ## Config Mapping
 
-| Helm value                            | Env var                                             | Intended behavior                                                          |
-| ------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------- |
-| `controller.namespaces: [\"agents\"]` | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"agents\"]`  | Reconcile only `agents` namespace resources.                               |
-| omitted                              | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"agents\"]` (templated fallback) | Reconcile the release namespace resources. |
-| `controller.namespaces: [\"*\"]`      | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"*\"]`       | (When clusterScoped=true) reconcile all namespaces.                        |
+| Helm value                            | Env var                                                                 | Intended behavior                                   |
+| ------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------- |
+| `controller.namespaces: [\"agents\"]` | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"agents\"]`                      | Reconcile only `agents` namespace resources.        |
+| omitted                               | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"agents\"]` (templated fallback) | Reconcile the release namespace resources.          |
+| `controller.namespaces: [\"*\"]`      | `JANGAR_AGENTS_CONTROLLER_NAMESPACES=[\"*\"]`                           | (When clusterScoped=true) reconcile all namespaces. |
 
 ## Rollout Plan
 

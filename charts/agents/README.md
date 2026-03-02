@@ -117,6 +117,8 @@ Agent memory backends are configured separately via the `Memory` CRD.
   - explicit empty list (`[]`)
   - wildcard (`"*"`) combined with any specific namespace
   - multi-namespace with `rbac.clusterScoped=false`
+  - single-namespace lists in namespaced mode that target a namespace different from the chart namespace
+    (`namespaceOverride`/`Release.Namespace`)
 
 For all scope keys:
 
@@ -125,6 +127,9 @@ For all scope keys:
 - `supportingController.namespaces`
 
 Do **not** set an explicit empty list (`[]`). Empty scope arrays are rejected by chart validation.
+
+`rbac.clusterScoped=false` is namespaced to `namespaceOverride` (falling back to `Release.Namespace`
+when unset). If any scope key is set explicitly to one namespace, that namespace must be the same chart namespace.
 
 ### AgentRun status artifact limits
 

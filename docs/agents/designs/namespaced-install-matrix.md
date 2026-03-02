@@ -29,7 +29,8 @@ Define the supported install modes and their RBAC implications for the Agents co
 
 ## Behavior
 
-- Namespaced installs only watch the configured namespace(s). Omitting the key watches the release namespace.
+- Namespaced installs only watch the configured namespace(s). With `rbac.clusterScoped=false`, explicit lists must target the chart namespace (`namespaceOverride`, or `Release.Namespace` fallback).
+- Omitting a scope key still watches the chart namespace.
 - Cluster-scoped installs watch multiple namespaces or wildcarded namespaces.
 - The controller fails fast on wildcard namespaces without cluster-scoped RBAC.
 - An explicit empty list (`[]`) is rejected at render time.
