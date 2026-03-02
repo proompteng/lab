@@ -3504,55 +3504,6 @@ def _resolve_gate_llm_metrics(
         return {}
 
 
-def _is_valid_strategy_configmap(strategy_configmap_path: Path | None) -> bool:
-    if strategy_configmap_path is None or not strategy_configmap_path.is_file():
-        return False
-
-    try:
-        parsed = yaml.safe_load(strategy_configmap_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        return False
-
-    if not isinstance(parsed, dict):
-        return False
-    if not parsed:
-        return False
-    kind = str(parsed.get("kind", "")).strip().lower()
-    if kind and kind != "configmap":
-        return False
-    return True
-
-
-def _build_rollback_readiness(
-    *,
-    promotion_target: PromotionTarget,
-    strategy_configmap_valid: bool,
-    runtime_strategies: list[StrategyRuntimeConfig],
-    now: datetime,
-    code_version: str,
-    approval_token: str | None,
-) -> dict[str, object]:
-    checks_ready = strategy_configmap_valid and bool(runtime_strategies)
-    if promotion_target == "live" and not bool(approval_token):
-        checks_ready = False
-
-    if checks_ready:
-        rollback_target = f"{code_version or 'unknown'}"
-        dry_run_completed_at = now.isoformat()
-    else:
-        rollback_target = ""
-        dry_run_completed_at = ""
-
-    return {
-        "killSwitchDryRunPassed": checks_ready,
-        "gitopsRevertDryRunPassed": checks_ready,
-        "strategyDisableDryRunPassed": checks_ready,
-        "dryRunCompletedAt": dry_run_completed_at,
-        "humanApproved": promotion_target != "live" or bool(approval_token),
-        "rollbackTarget": rollback_target,
-    }
-
-
 def _nearest_rank_percentile(values: list[int], percentile: int) -> int:
     if not values:
         return 0
