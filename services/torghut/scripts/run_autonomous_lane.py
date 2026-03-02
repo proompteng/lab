@@ -95,6 +95,12 @@ def main() -> int:
         help="CamelCase alias for --priority-id",
     )
     parser.add_argument(
+        "--design-doc",
+        type=str,
+        default=None,
+        help="Optional design document reference (for governance contract and evidence provenance).",
+    )
+    parser.add_argument(
         "--promotion-target", choices=("shadow", "paper", "live"), default="paper"
     )
     parser.add_argument(
@@ -126,6 +132,7 @@ def main() -> int:
         else None,
         priority_id=args.priority_id,
         priorityId=args.priorityId,
+        design_doc=args.design_doc,
         promotion_target=args.promotion_target,
         strategy_configmap_path=args.strategy_configmap,
         code_version=_resolve_git_sha(),
@@ -149,6 +156,7 @@ def main() -> int:
         ),
         "evaluation_manifest_path": str(result.evaluation_manifest_path),
         "recommendation_manifest_path": str(result.recommendation_manifest_path),
+        "profitability_manifest_path": str(result.profitability_manifest_path),
         "recommendation_artifact_path": str(result.recommendation_artifact_path),
         "stage_trace_ids": result.stage_trace_ids,
         "stage_lineage_root": result.stage_lineage_root,

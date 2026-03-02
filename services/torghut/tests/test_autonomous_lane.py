@@ -534,6 +534,41 @@ class TestAutonomousLane(TestCase):
                 "P-1001",
             )
 
+    def test_lane_propagates_design_doc_to_profitability_manifest(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-design-doc"
+            design_doc = "docs/torghut/design-system/v6/08-profitability-operating-system.md"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                design_doc=design_doc,
+                priority_id="P-2002",
+            )
+
+            profitability_manifest = json.loads(
+                result.profitability_manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                profitability_manifest["run_context"]["design_doc"],
+                design_doc,
+            )
+            self.assertEqual(
+                profitability_manifest["run_context"]["priority_id"],
+                "P-2002",
+            )
+
     def test_lane_top_level_execution_context_args_are_honored(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
         strategy_config_path = (
@@ -903,6 +938,129 @@ class TestAutonomousLane(TestCase):
             )
 
     @patch(
+        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+        return_value=PromotionPrerequisiteResult(
+            allowed=False,
+            reasons=["profitability_stage_manifest_stage_chain_not_passed"],
+            required_artifacts=[],
+            missing_artifacts=[],
+            reason_details=[{"reason": "profitability_stage_manifest_stage_chain_not_passed"}],
+            artifact_refs=[],
+            required_throughput={"signal_count": 1, "decision_count": 1},
+            observed_throughput={"signal_count": 1, "decision_count": 1},
+        ),
+    )
+    @patch(
+        "app.trading.autonomy.lane.evaluate_rollback_readiness",
+        return_value=RollbackReadinessResult(
+            ready=True,
+            reasons=[],
+            required_checks=[],
+            missing_checks=[],
+        ),
+    )
+    def test_lane_marks_actuation_not_allowed_when_profitability_stage_manifest_chain_fails(
+        self,
+        _mock_rollback: object,
+        _mock_promotion_prerequisites: object,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-manifest-chain-fail"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+            )
+            self.assertFalse(actuation_payload["actuation_allowed"])
+            self.assertIn(
+                "profitability_stage_manifest_stage_chain_not_passed",
+                actuation_payload["gates"]["recommendation_reasons"],
+            )
+            self.assertIn(
+                "profitability_stage_manifest_stage_chain_not_passed",
+                actuation_payload["audit"]["promotion_check"]["reasons"],
+            )
+
+    @patch(
+        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+    )
+    def test_lane_forces_profitability_stage_manifest_requirement_for_policy_check(
+        self,
+        mock_promotion_prerequisites: object,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        call_payload: dict[str, object] = {}
+
+        def _mock_evaluate_promotion_prerequisites(
+            *,
+            policy_payload: dict[str, Any],
+            gate_report_payload: dict[str, Any],
+            candidate_state_payload: dict[str, Any],
+            promotion_target: str,
+            artifact_root: Path,
+            now: Any | None = None,
+        ) -> PromotionPrerequisiteResult:
+            call_payload["policy_payload"] = dict(policy_payload)
+            call_payload["artifact_root"] = str(artifact_root)
+            return PromotionPrerequisiteResult(
+                allowed=False,
+                reasons=["profitability_stage_manifest_stage_chain_not_passed"],
+                required_artifacts=[],
+                missing_artifacts=[],
+                reason_details=[],
+                artifact_refs=[],
+                required_throughput={"signal_count": 1, "decision_count": 1},
+                observed_throughput={"signal_count": 1, "decision_count": 1},
+            )
+
+        mock_promotion_prerequisites.side_effect = (
+            _mock_evaluate_promotion_prerequisites
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-manifest-enforced"
+            run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+        policy_payload = call_payload["policy_payload"]
+        assert isinstance(policy_payload, dict)
+        self.assertTrue(
+            policy_payload.get("promotion_require_profitability_stage_manifest")
+        )
+        self.assertEqual(
+            policy_payload.get("promotion_profitability_stage_manifest_artifact"),
+            "profitability/profitability-stage-manifest-v1.json",
+        )
+
+    @patch(
         "app.trading.autonomy.lane._evaluate_drift_promotion_gate",
         return_value={
             "allowed": False,
@@ -1000,6 +1158,16 @@ class TestAutonomousLane(TestCase):
                 artifact_root: Path,
                 now: datetime | None = None,
             ) -> PromotionPrerequisiteResult:
+                self.assertTrue(
+                    policy_payload.get("promotion_require_profitability_stage_manifest")
+                )
+                self.assertEqual(
+                    policy_payload.get(
+                        "promotion_profitability_stage_manifest_artifact",
+                        "profitability/profitability-stage-manifest-v1.json",
+                    ),
+                    "profitability/profitability-stage-manifest-v1.json",
+                )
                 self.assertTrue(
                     (artifact_root / "paper-candidate" / "strategy-configmap-patch.yaml").exists()
                 )
@@ -1527,6 +1695,14 @@ class TestAutonomousLane(TestCase):
             candidate_spec = json.loads(
                 result.candidate_spec_path.read_text(encoding="utf-8")
             )
+            self.assertIn(
+                "profitability_stage_manifest",
+                candidate_spec["artifacts"],
+            )
+            self.assertIn(
+                "profitability_stage_manifest",
+                candidate_spec["stage_manifest_refs"],
+            )
             self.assertIn("stage_lineage", candidate_spec)
             self.assertEqual(
                 candidate_spec["stage_lineage"]["root_lineage_hash"],
@@ -1565,6 +1741,23 @@ class TestAutonomousLane(TestCase):
                     ],
                 }
             )
+            profitability_manifest = json.loads(
+                result.profitability_manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                candidate_spec["stage_manifest_refs"][
+                    "profitability_stage_manifest"
+                ],
+                str(result.profitability_manifest_path),
+            )
+            self.assertTrue(
+                result.profitability_manifest_path.exists(),
+                "profitability stage manifest should be written",
+            )
+            self.assertIn("research", profitability_manifest["stages"])
+            self.assertIn("validation", profitability_manifest["stages"])
+            self.assertIn("execution", profitability_manifest["stages"])
+            self.assertIn("governance", profitability_manifest["stages"])
             for artifact_key, expected_hash in candidate_spec[
                 "replay_artifact_hashes"
             ].items():
@@ -3020,6 +3213,113 @@ class TestAutonomousLane(TestCase):
                 str(rollback_evidence),
             )
             self.assertIn(str(rollback_evidence), manifest["artifact_refs"])
+
+    def test_build_phase_manifest_requires_rollback_evidence_when_triggered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            signals = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    payload={},
+                )
+            ]
+            output_dir = Path(tmpdir) / "manifest-rollback-required"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            gate_report = GateEvaluationReport(
+                policy_version="v3-gates-1",
+                promotion_target="paper",
+                promotion_allowed=True,
+                recommended_mode="paper",
+                gates=[GateResult(gate_id="gate0_data_integrity", status="pass")],
+                reasons=[],
+                uncertainty_gate_action="pass",
+                coverage_error="0.01",
+                conformal_interval_width="1.0",
+                shift_score="0.1",
+                recalibration_run_id=None,
+                evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                code_version="test-sha",
+            )
+            manifest = _build_phase_manifest(
+                run_id="run-126",
+                candidate_id="cand-4",
+                evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                output_dir=output_dir,
+                signals=signals,
+                requested_promotion_target="paper",
+                gate_report=gate_report,
+                gate_report_payload={
+                    "gates": [],
+                    "recommended_mode": "paper",
+                    "throughput": {
+                        "signal_count": 1,
+                        "decision_count": 1,
+                        "trade_count": 0,
+                    },
+                },
+                gate_report_path=output_dir / "gate-evaluation.json",
+                promotion_check=PromotionPrerequisiteResult(
+                    allowed=True,
+                    reasons=[],
+                    required_artifacts=[],
+                    missing_artifacts=[],
+                    reason_details=[],
+                    artifact_refs=[],
+                    required_throughput={"signal_count": 1, "decision_count": 1},
+                    observed_throughput={"signal_count": 1, "decision_count": 1},
+                ),
+                rollback_check=RollbackReadinessResult(
+                    ready=True,
+                    reasons=[],
+                    required_checks=[],
+                    missing_checks=[],
+                ),
+                drift_gate_check={"allowed": True, "reasons": []},
+                patch_path=None,
+                recommended_mode="paper",
+                promotion_reasons=[],
+                governance_inputs={
+                    "execution_context": {
+                        "repository": "acme/torghut",
+                        "base": "main",
+                        "head": "paper-path",
+                        "artifactPath": str(output_dir),
+                        "priorityId": "p1",
+                    },
+                    "runtime_governance": {
+                        "governance_status": "pass",
+                        "artifact_refs": ["runtime-check.json"],
+                        "drift_status": "stable",
+                        "rollback_triggered": True,
+                    },
+                    "rollback_proof": {
+                        "rollback_triggered": True,
+                        "rollback_incident_evidence_path": "",
+                    },
+                },
+                drift_promotion_evidence=None,
+            )
+            runtime = manifest["runtime_governance"]
+            rollback = manifest["rollback_proof"]
+            phases_by_name = {
+                phase["name"]: phase
+                for phase in manifest["phases"]
+                if isinstance(phase, dict)
+            }
+            self.assertEqual(runtime.get("governance_status"), "pass")
+            self.assertEqual(
+                phases_by_name["runtime-governance"]["status"], "pass"
+            )
+            self.assertEqual(phases_by_name["rollback-proof"]["status"], "fail")
+            self.assertIsNone(rollback.get("rollback_incident_evidence"))
+            self.assertIn(
+                "slo_rollback_evidence_required_when_triggered",
+                {
+                    item.get("id"): item.get("status")
+                    for item in phases_by_name["rollback-proof"]["slo_gates"]
+                },
+            )
 
     def test_coerce_phase_status_unknown_status_fails(self) -> None:
         self.assertEqual(coerce_phase_status("blocked"), "fail")

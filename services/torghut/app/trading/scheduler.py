@@ -5098,10 +5098,12 @@ class TradingScheduler:
             ),
             governance_artifact_path=str(run_output_dir),
             priority_id=priority_id,
+            design_doc=os.getenv("DESIGN_DOC"),
             artifact_root=artifact_root,
             execution_context=self._build_autonomy_execution_context(
                 artifact_root=artifact_root,
                 promotion_target=promotion_target,
+                design_doc=os.getenv("DESIGN_DOC"),
             ),
         )
         if result is None:
@@ -5154,6 +5156,7 @@ class TradingScheduler:
         *,
         artifact_root: Path,
         promotion_target: str,
+        design_doc: str | None = None,
     ) -> dict[str, str]:
         repository = (os.getenv("GITHUB_REPOSITORY") or "unknown").strip() or "unknown"
         base_ref = os.getenv("GITHUB_BASE_REF") or os.getenv("GITHUB_REF") or "unknown"
@@ -5165,12 +5168,14 @@ class TradingScheduler:
             or ("live" if promotion_target == "live" else "unknown")
         )
         priority_id = os.getenv("PRIORITY_ID") or os.getenv("CODEX_PRIORITY_ID") or ""
+        design_ref = design_doc if design_doc is not None else os.getenv("DESIGN_DOC", "")
         return {
             "repository": repository,
             "base": base_ref,
             "head": head_ref,
             "artifactPath": str(artifact_root),
             "priorityId": priority_id,
+            "designDoc": design_ref.strip(),
         }
 
     def _record_autonomy_batch_state(
@@ -5493,6 +5498,7 @@ class TradingScheduler:
         governance_head: str | None = None,
         governance_artifact_path: str | None = None,
         priority_id: str | None = None,
+        design_doc: str | None = None,
         artifact_root: Path | None = None,
         execution_context: Mapping[str, str] | None = None,
     ) -> Any | None:
@@ -5520,6 +5526,7 @@ class TradingScheduler:
                 ).strip()
                 or str(run_output_dir),
                 priority_id=priority_id,
+                design_doc=design_doc,
                 governance_change="autonomous-promotion",
                 governance_reason=(
                     f"Autonomous recommendation for {promotion_target} target."
