@@ -982,7 +982,6 @@ class TradingState:
     last_autonomy_run_id: Optional[str] = None
     last_autonomy_candidate_id: Optional[str] = None
     last_autonomy_gates: Optional[str] = None
-    last_autonomy_phase_manifest: Optional[str] = None
     last_autonomy_actuation_intent: Optional[str] = None
     last_autonomy_phase_manifest: Optional[str] = None
     last_autonomy_patch: Optional[str] = None
