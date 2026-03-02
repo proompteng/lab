@@ -38,6 +38,7 @@ spec:
         - 172.16.0.0/12
         - 192.168.0.0/16
       posthog/grants/query:
+        - 'GRANT CREATE DATABASE ON default.*'
         - 'GRANT NAMED COLLECTION ON msk_cluster'
         - 'GRANT NAMED COLLECTION ON warpstream_ingestion'
     zookeeper:
