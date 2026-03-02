@@ -77,6 +77,7 @@ Endpoints:
   - `LLM_DSPY_PROGRAM_NAME`, `LLM_DSPY_SIGNATURE_VERSION`, `LLM_DSPY_TIMEOUT_SECONDS`
 
 AgentRun payload builder (`build_dspy_agentrun_payload`) enforces:
+
 - explicit `idempotencyKey`
 - `implementationSpecRef` from DSPy lane catalog
 - `vcsPolicy.required=true` with `mode=read-write`
