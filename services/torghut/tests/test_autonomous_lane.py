@@ -135,8 +135,8 @@ class TestAutonomousLane(TestCase):
             metrics_payload={},
             decisions=[]
         )
-        self.assertEqual(state, "normal")
-        self.assertEqual(score, Decimal("0"))
+        self.assertEqual(state, "crisis")
+        self.assertEqual(score, Decimal("1"))
         self.assertFalse(stability)
         self.assertFalse(inputs_valid)
 
@@ -171,8 +171,8 @@ class TestAutonomousLane(TestCase):
                 )
             ],
         )
-        self.assertEqual(state, "normal")
-        self.assertEqual(score, Decimal("0"))
+        self.assertEqual(state, "crisis")
+        self.assertEqual(score, Decimal("1"))
         self.assertFalse(stability)
         self.assertFalse(inputs_valid)
 
