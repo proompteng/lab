@@ -9,11 +9,10 @@ metadata:
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/sync-wave: "1"
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
     argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 5
-  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       annotations:
