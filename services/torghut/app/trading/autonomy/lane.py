@@ -89,6 +89,8 @@ _AUTONOMY_LANE_SCHEMA_VERSION = "torghut-autonomy-stage-manifest-v1"
 _STAGE_CANDIDATE_GENERATION = "candidate-generation"
 _STAGE_EVALUATION = "evaluation"
 _STAGE_RECOMMENDATION = "promotion-recommendation"
+_STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
+_STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
 
 
 @dataclass(frozen=True)
@@ -104,6 +106,191 @@ class _StageManifestRecord:
     parent_lineage_hash: str | None = None
     parent_stage: str | None = None
     inputs: dict[str, str] = field(default_factory=dict)
+
+
+def _readable_stage_iteration_number(artifact_root: Path) -> int:
+    pattern = re.compile(r"^iteration-(\d+)\.md$")
+    highest = 0
+    for item in artifact_root.glob("iteration-*.md"):
+        match = pattern.match(item.name)
+        if not match:
+            continue
+        try:
+            candidate = int(match.group(1))
+        except (TypeError, ValueError):
+            continue
+        if candidate > highest:
+            highest = candidate
+    return highest + 1
+
+
+def _write_stage_iteration_notes(
+    *,
+    artifact_root: Path,
+    run_id: str,
+    candidate_id: str,
+    promotion_target: PromotionTarget,
+    promotion_recommended_mode: PromotionTarget,
+    gate_allowed: bool,
+    recommendation_action: str,
+    recommendation_reason_count: int,
+    promotion_reasons: list[str],
+    repository: str,
+    base: str,
+    head: str,
+    priority_id: str | None,
+) -> Path:
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    iteration = _readable_stage_iteration_number(artifact_root)
+    notes_path = artifact_root / f"iteration-{iteration}.md"
+
+    lines = [
+        f"# Autonomy lane iteration {iteration}",
+        "",
+        f"- run_id: {run_id}",
+        f"- candidate_id: {candidate_id}",
+        f"- promotion_target: {promotion_target}",
+        f"- recommendation_mode: {promotion_recommended_mode}",
+        f"- recommendation_action: {recommendation_action}",
+        f"- gate_allowed: {str(gate_allowed).lower()}",
+        f"- recommendation_reason_count: {recommendation_reason_count}",
+        "- repository: {0}".format(repository),
+        "- base: {0}".format(base),
+        "- head: {0}".format(head),
+    ]
+    if priority_id:
+        lines.append(f"- priority_id: {priority_id}")
+
+    lines.append("")
+    lines.append("## Gate and evidence summary")
+    lines.extend(f"- {reason}" for reason in promotion_reasons)
+
+    notes_path.write_text("\n".join(lines), encoding="utf-8")
+    return notes_path
+
+
+def _coerce_evidence_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        if not math.isfinite(value):
+            return None
+        return value != 0
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off", ""}:
+        return False
+    return None
+
+
+def _normalize_strategy_artifacts(value: object) -> object | None:
+    if not isinstance(value, dict):
+        return value
+
+    kind = str(value.get("kind", "")).strip().lower()
+    if kind == "configmap":
+        data = value.get("data")
+        if not isinstance(data, dict):
+            return None
+        strategies_yaml = data.get("strategies.yaml")
+        if not isinstance(strategies_yaml, str):
+            return None
+        try:
+            nested_payload = yaml.safe_load(strategies_yaml)
+        except Exception:
+            return None
+        return _normalize_strategy_artifacts(nested_payload)
+
+    return value
+
+
+def _is_runbook_valid(strategy_configmap_path: Path | None) -> bool:
+    resolved_path = strategy_configmap_path or _default_strategy_configmap_path()
+    if not resolved_path.exists() or not resolved_path.is_file():
+        return False
+
+    try:
+        raw_payload = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+
+    normalized_payload = _normalize_strategy_artifacts(raw_payload)
+
+    if normalized_payload is None:
+        return False
+
+    if isinstance(normalized_payload, dict):
+        strategies = normalized_payload.get("strategies")
+    elif isinstance(normalized_payload, list):
+        strategies = normalized_payload
+    else:
+        return False
+
+    if not isinstance(strategies, list):
+        return False
+
+    return bool(strategies) and all(isinstance(item, dict) for item in strategies)
+
+
+def _build_candidate_state_payload(
+    *,
+    candidate_id: str,
+    run_id: str,
+    promotion_target: PromotionTarget,
+    approval_token: str | None,
+    runtime_strategies: list[StrategyRuntimeConfig],
+    now: datetime,
+    code_version: str,
+    runbook_validated: bool,
+) -> dict[str, Any]:
+    return {
+        "candidateId": candidate_id,
+        "runId": run_id,
+        "activeStage": "gate-evaluation",
+        "paused": False,
+        "datasetSnapshotRef": "signals_window",
+        "noSignalReason": None,
+        "runbookValidated": runbook_validated,
+        "rollbackReadiness": {
+            "killSwitchDryRunPassed": bool(runtime_strategies),
+            "gitopsRevertDryRunPassed": (
+                promotion_target != "live" or bool(approval_token)
+            ),
+            "strategyDisableDryRunPassed": bool(runtime_strategies),
+            "dryRunCompletedAt": now.isoformat(),
+            "humanApproved": promotion_target != "live" or bool(approval_token),
+            "rollbackTarget": f"{code_version or 'unknown'}",
+        },
+    }
+
+
+def _build_gate_readiness_inputs(candidate_state_payload: Mapping[str, Any]) -> dict[str, bool]:
+    rollback_readiness = candidate_state_payload.get("rollbackReadiness")
+    if isinstance(rollback_readiness, dict):
+        rollback_readiness_raw = cast(dict[str, Any], rollback_readiness)
+    else:
+        rollback_readiness_raw = {}
+
+    operational_ready = bool(
+        _coerce_evidence_bool(rollback_readiness_raw.get("strategyDisableDryRunPassed"))
+    )
+    runbook_validated = bool(_coerce_evidence_bool(candidate_state_payload.get("runbookValidated")))
+    kill_switch_dry_run_passed = bool(
+        _coerce_evidence_bool(rollback_readiness_raw.get("killSwitchDryRunPassed"))
+    )
+    rollback_dry_run_passed = bool(
+        _coerce_evidence_bool(rollback_readiness_raw.get("gitopsRevertDryRunPassed"))
+    )
+
+    return {
+        "operational_ready": operational_ready,
+        "runbook_validated": runbook_validated,
+        "kill_switch_dry_run_passed": kill_switch_dry_run_passed,
+        "rollback_dry_run_passed": rollback_dry_run_passed,
+    }
 
 
 @dataclass(frozen=True)
@@ -262,7 +449,7 @@ def _artifact_hashes(artifacts: Mapping[str, Path | None]) -> dict[str, str]:
     return digests
 
 
-def _readable_iteration_number(notes_dir: Path) -> int:
+def _readable_notes_iteration_number(notes_dir: Path) -> int:
     pattern = re.compile(r"^iteration-(\d+)\.md$")
     highest = 0
     for item in notes_dir.glob("iteration-*.md"):
@@ -383,7 +570,7 @@ def _write_iteration_notes(
 ) -> Path:
     notes_dir = artifact_root / "notes"
     notes_dir.mkdir(parents=True, exist_ok=True)
-    iteration = _readable_iteration_number(notes_dir)
+    iteration = _readable_notes_iteration_number(notes_dir)
     notes_path = notes_dir / f"iteration-{iteration}.md"
 
     lines = [
@@ -494,6 +681,7 @@ def run_autonomous_lane(
     profitability_validation_path = gates_dir / "profitability-evidence-validation.json"
     janus_event_car_path = gates_dir / "janus-event-car-v1.json"
     janus_hgrm_reward_path = gates_dir / "janus-hgrm-reward-v1.json"
+    stress_metrics_path = gates_dir / _STRESS_METRICS_ARTIFACT_PATH
     recalibration_report_path = gates_dir / "recalibration-report.json"
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     phase_manifest_path = rollout_dir / "phase-manifest.json"
@@ -538,7 +726,6 @@ def run_autonomous_lane(
             code_version=code_version,
             now=now,
         )
-
     try:
         ordered_signals = sorted(
             signals, key=lambda item: (item.event_ts, item.symbol, item.seq or 0)
@@ -744,12 +931,12 @@ def run_autonomous_lane(
             json.dumps(profitability_validation.to_payload(), indent=2),
             encoding="utf-8",
         )
+        metrics_payload = report.metrics.to_payload()
 
         gate_policy = GatePolicyMatrix.from_path(gate_policy_path)
         profitability_evidence_payload["validation"] = (
             profitability_validation.to_payload()
         )
-        metrics_payload = report.metrics.to_payload()
         (
             fragility_state,
             fragility_score,
@@ -757,7 +944,7 @@ def run_autonomous_lane(
             fragility_inputs_valid,
         ) = (
             _resolve_gate_fragility_inputs(
-                metrics_payload=metrics_payload, decisions=walk_decisions
+                decisions=walk_decisions
             )
         )
         forecast_gate_metrics = _resolve_gate_forecast_metrics(signals=ordered_signals)
@@ -793,8 +980,19 @@ def run_autonomous_lane(
             ),
             encoding="utf-8",
         )
+        candidate_state_payload = _build_candidate_state_payload(
+            candidate_id=candidate_id,
+            run_id=run_id,
+            promotion_target=promotion_target,
+            approval_token=approval_token,
+            runtime_strategies=runtime_strategies,
+            now=now,
+            code_version=code_version,
+            runbook_validated=_is_runbook_valid(strategy_configmap_path),
+        )
+        gate_readiness_inputs = _build_gate_readiness_inputs(candidate_state_payload)
         gate_inputs = GateInputs(
-            feature_schema_version="3.0.0",
+            feature_schema_version=gate_policy.required_feature_schema_version,
             required_feature_null_rate=_required_feature_null_rate(signals),
             staleness_ms_p95=_resolve_gate_staleness_ms_p95(
                 signals=ordered_signals,
@@ -813,10 +1011,10 @@ def run_autonomous_lane(
             fragility_score=fragility_score,
             stability_mode_active=stability_mode_active,
             fragility_inputs_valid=fragility_inputs_valid,
-            operational_ready=True,
-            runbook_validated=True,
-            kill_switch_dry_run_passed=True,
-            rollback_dry_run_passed=True,
+            operational_ready=gate_readiness_inputs["operational_ready"],
+            runbook_validated=gate_readiness_inputs["runbook_validated"],
+            kill_switch_dry_run_passed=gate_readiness_inputs["kill_switch_dry_run_passed"],
+            rollback_dry_run_passed=gate_readiness_inputs["rollback_dry_run_passed"],
             approval_token=approval_token,
         )
         gate_report = evaluate_gate_matrix(
@@ -840,8 +1038,19 @@ def run_autonomous_lane(
         ]
         stress_evidence = [
             _build_stress_bundle(report, stress_case)
-            for stress_case in ("spread", "volatility", "liquidity", "halt")
+            for stress_case in _STRESS_METRICS_CASES
         ]
+        stress_metrics_count = len(stress_evidence)
+        stress_metrics_payload = {
+            "schema_version": "stress-metrics-v1",
+            "run_id": run_id,
+            "generated_at": now.isoformat(),
+            "count": stress_metrics_count,
+            "items": stress_evidence,
+        }
+        stress_metrics_path.write_text(
+            json.dumps(stress_metrics_payload, indent=2), encoding="utf-8"
+        )
         gate_report_payload = gate_report.to_payload()
         gate_report_payload["run_id"] = run_id
         gate_report_payload["throughput"] = {
@@ -851,7 +1060,7 @@ def run_autonomous_lane(
             "no_signal_window": False,
             "no_signal_reason": None,
             "fold_metrics_count": len(walk_results.folds),
-            "stress_metrics_count": 4,
+            "stress_metrics_count": stress_metrics_count,
         }
         gate_report_payload["promotion_evidence"] = {
             "fold_metrics": {
@@ -862,7 +1071,7 @@ def run_autonomous_lane(
             "stress_metrics": {
                 "count": len(stress_evidence),
                 "items": stress_evidence,
-                "artifact_ref": "db:research_stress_metrics",
+                "artifact_ref": str(stress_metrics_path),
             },
             "janus_q": {
                 "event_car": {
@@ -910,6 +1119,7 @@ def run_autonomous_lane(
                 "profitability_benchmark": str(profitability_benchmark_path),
                 "profitability_evidence": str(profitability_evidence_path),
                 "profitability_validation": str(profitability_validation_path),
+                "stress_metrics": str(stress_metrics_path),
                 "janus_event_car": str(janus_event_car_path),
                 "janus_hgrm_reward": str(janus_hgrm_reward_path),
                 "recalibration_report": str(recalibration_report_path),
@@ -932,24 +1142,6 @@ def run_autonomous_lane(
         patch_path: Path | None = None
 
         raw_gate_policy = gate_policy_payload
-        candidate_state_payload = {
-            "candidateId": candidate_id,
-            "runId": run_id,
-            "activeStage": "gate-evaluation",
-            "paused": False,
-            "datasetSnapshotRef": "signals_window",
-            "noSignalReason": None,
-            "rollbackReadiness": {
-                "killSwitchDryRunPassed": True,
-                "gitopsRevertDryRunPassed": (
-                    promotion_target != "live" or bool(approval_token)
-                ),
-                "strategyDisableDryRunPassed": bool(runtime_strategies),
-                "dryRunCompletedAt": now.isoformat(),
-                "humanApproved": promotion_target != "live" or bool(approval_token),
-                "rollbackTarget": f"{code_version or 'unknown'}",
-            },
-        }
         patch_path = _resolve_paper_patch_path(
             gate_report=gate_report,
             strategy_configmap_path=strategy_configmap_path,
@@ -981,7 +1173,6 @@ def run_autonomous_lane(
             drift_promotion_evidence=drift_promotion_evidence,
         )
         fold_metrics_count = len(walk_results.folds)
-        stress_metrics_count = 4
         promotion_rationale = _build_promotion_rationale(
             gate_report=gate_report,
             promotion_check_reasons=promotion_check.reasons,
@@ -1047,6 +1238,7 @@ def run_autonomous_lane(
                         str(gate_report_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(stress_metrics_path),
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         str(recalibration_report_path),
@@ -1069,6 +1261,7 @@ def run_autonomous_lane(
                         str(profitability_benchmark_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(stress_metrics_path),
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         *[
@@ -1096,7 +1289,7 @@ def run_autonomous_lane(
             "stress_metrics": {
                 "count": len(stress_evidence),
                 "items": stress_evidence,
-                "artifact_ref": "db:research_stress_metrics",
+                "artifact_ref": str(stress_metrics_path),
             },
             "janus_q": {
                 "event_car": {
@@ -1450,6 +1643,21 @@ def run_autonomous_lane(
             now=now,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
+        )
+        _write_stage_iteration_notes(
+            artifact_root=output_dir,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            promotion_target=promotion_target,
+            promotion_recommended_mode=recommended_mode,
+            gate_allowed=promotion_allowed,
+            recommendation_action=promotion_recommendation.action,
+            recommendation_reason_count=len(promotion_reasons),
+            promotion_reasons=promotion_reasons,
+            repository=cast(str, resolved_governance_repository),
+            base=cast(str, resolved_governance_base),
+            head=cast(str, resolved_governance_head),
+            priority_id=priority_id,
         )
 
         return AutonomousLaneResult(
@@ -3131,19 +3339,8 @@ def _is_more_worse_fragility(
 
 def _resolve_gate_fragility_inputs(
     *,
-    metrics_payload: dict[str, object],
     decisions: list[WalkForwardDecision],
 ) -> tuple[str, Decimal, bool, bool]:
-    fallback_measurement = _coerce_fragility_measurement(
-        {
-            "fragility_state": metrics_payload.get("fragility_state"),
-            "fragility_score": metrics_payload.get("fragility_score"),
-            "stability_mode_active": metrics_payload.get(
-                "stability_mode_active"
-            ),
-        }
-    )
-
     selected_measurement: tuple[str, Decimal, bool] | None = None
 
     for item in decisions:
@@ -3185,10 +3382,7 @@ def _resolve_gate_fragility_inputs(
             selected_measurement = candidate
 
     if selected_measurement is None:
-        if fallback_measurement is None:
-            return ("crisis", Decimal("1"), False, False)
-        selected_measurement = fallback_measurement
-
+        return ("not_measured", Decimal("0"), False, False)
     selected_state, selected_score, selected_stability = selected_measurement
     return selected_state, selected_score, selected_stability, True
 
@@ -3328,15 +3522,15 @@ def _load_tca_gate_inputs(
     except Exception:
         return {
             "order_count": 0,
-            "avg_slippage_bps": Decimal("0"),
-            "avg_shortfall_notional": Decimal("0"),
-            "avg_churn_ratio": Decimal("0"),
-            "avg_divergence_bps": Decimal("0"),
-            "avg_realized_shortfall_bps": Decimal("0"),
-            "expected_shortfall_coverage": Decimal("0"),
+            "avg_slippage_bps": None,
+            "avg_shortfall_notional": None,
+            "avg_churn_ratio": None,
+            "avg_divergence_bps": None,
+            "avg_realized_shortfall_bps": None,
+            "expected_shortfall_coverage": None,
             "expected_shortfall_sample_count": 0,
-            "avg_expected_shortfall_bps_p50": Decimal("0"),
-            "avg_expected_shortfall_bps_p95": Decimal("0"),
+            "avg_expected_shortfall_bps_p50": None,
+            "avg_expected_shortfall_bps_p95": None,
         }
 
 

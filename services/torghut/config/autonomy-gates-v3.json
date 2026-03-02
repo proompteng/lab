@@ -52,6 +52,12 @@
     "gates/janus-event-car-v1.json",
     "gates/janus-hgrm-reward-v1.json"
   ],
+  "promotion_require_stress_evidence": true,
+  "promotion_stress_required_targets": ["paper", "live"],
+  "promotion_stress_required_artifacts": [
+    "gates/stress-metrics-v1.json"
+  ],
+  "promotion_stress_max_age_hours": 24,
   "promotion_require_janus_evidence": true,
   "promotion_janus_event_car_artifact": "gates/janus-event-car-v1.json",
   "promotion_janus_hgrm_reward_artifact": "gates/janus-hgrm-reward-v1.json",

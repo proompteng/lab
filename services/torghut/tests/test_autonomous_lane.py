@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
@@ -16,6 +16,7 @@ from typing import Any
 from app.trading.autonomy.lane import (
     _AUTONOMY_PHASE_ORDER,
     _build_phase_manifest,
+    _STRESS_METRICS_CASES,
     _resolve_paper_patch_path,
     _resolve_gate_forecast_metrics,
     _resolve_gate_fragility_inputs,
@@ -90,11 +91,6 @@ class TestAutonomousLane(TestCase):
         self.assertGreaterEqual(Decimal(metrics["calibration_score_min"]), Decimal("0"))
 
     def test_gate_fragility_inputs_are_derived_from_decision_payloads(self) -> None:
-        fallback_metrics = {
-            "fragility_state": "elevated",
-            "fragility_score": "0.40",
-            "stability_mode_active": False,
-        }
         decisions = [
             WalkForwardDecision(
                 decision=StrategyDecision(
@@ -125,7 +121,7 @@ class TestAutonomousLane(TestCase):
         ]
 
         state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
-            metrics_payload=fallback_metrics, decisions=decisions
+            decisions=decisions
         )
 
         self.assertEqual(state, "crisis")
@@ -135,16 +131,14 @@ class TestAutonomousLane(TestCase):
 
     def test_gate_fragility_inputs_fail_closed_on_missing_or_invalid_values(self) -> None:
         state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
-            metrics_payload={},
-            decisions=[],
+            decisions=[]
         )
-        self.assertEqual(state, "crisis")
-        self.assertEqual(score, Decimal("1"))
+        self.assertEqual(state, "not_measured")
+        self.assertEqual(score, Decimal("0"))
         self.assertFalse(stability)
         self.assertFalse(inputs_valid)
 
         state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
-            metrics_payload={},
             decisions=[
                 WalkForwardDecision(
                     decision=StrategyDecision(
@@ -174,8 +168,8 @@ class TestAutonomousLane(TestCase):
                 )
             ],
         )
-        self.assertEqual(state, "crisis")
-        self.assertEqual(score, Decimal("1"))
+        self.assertEqual(state, "not_measured")
+        self.assertEqual(score, Decimal("0"))
         self.assertFalse(stability)
         self.assertFalse(inputs_valid)
 
@@ -219,7 +213,16 @@ class TestAutonomousLane(TestCase):
             self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
             evidence = gate_payload["promotion_evidence"]
             self.assertEqual(evidence["fold_metrics"]["count"], 1)
-            self.assertEqual(evidence["stress_metrics"]["count"], 4)
+            self.assertEqual(
+                evidence["stress_metrics"]["count"], len(_STRESS_METRICS_CASES)
+            )
+            self.assertEqual(
+                evidence["stress_metrics"]["artifact_ref"],
+                str(output_dir / "gates" / "stress-metrics-v1.json"),
+            )
+            self.assertTrue(
+                (output_dir / "gates" / "stress-metrics-v1.json").exists()
+            )
             self.assertIn("janus_q", evidence)
             self.assertEqual(evidence["janus_q"]["event_car"]["count"], 3)
             self.assertEqual(evidence["janus_q"]["hgrm_reward"]["count"], 3)
@@ -273,6 +276,10 @@ class TestAutonomousLane(TestCase):
             )
             self.assertIn(
                 str(output_dir / "gates" / "rollback-readiness.json"),
+                actuation_payload["artifact_refs"],
+            )
+            self.assertIn(
+                str(output_dir / "gates" / "stress-metrics-v1.json"),
                 actuation_payload["artifact_refs"],
             )
 
@@ -345,6 +352,55 @@ class TestAutonomousLane(TestCase):
             note_text = notes[0].read_text(encoding="utf-8")
             self.assertIn("Autonomous lane iteration 1", note_text)
             self.assertIn("candidate-generation", note_text)
+
+    def test_lane_reads_runtime_strategy_file_for_runbook_validation(self) -> None:
+        fixture_path = (
+            Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        )
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-runtime-runbook"
+            strategy_configmap_path = Path(tmpdir) / "strategies.yaml"
+            strategy_configmap_path.write_text(
+                json.dumps(
+                    {
+                        "strategies": [
+                            {
+                                "strategy_id": "runtime-macd-rsi",
+                                "strategy_type": "legacy_macd_rsi",
+                                "version": "1.0.0",
+                                "enabled": True,
+                            }
+                        ]
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                strategy_configmap_path=strategy_configmap_path,
+            )
+
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+            )
+            self.assertNotIn(
+                "runbook_not_validated",
+                actuation_payload["gates"]["recommendation_reasons"],
+            )
 
     def test_lane_progression_and_iteration_notes_respect_execution_artifact_path(
         self,
@@ -862,6 +918,186 @@ class TestAutonomousLane(TestCase):
             )
             self.assertIsNotNone(patch_path)
             self.assertTrue(patch_path.exists())
+
+    def test_lane_blocks_promotion_when_candidate_readiness_is_invalid(
+        self,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+        strategy_configmap_path = (
+            Path(__file__).parent.parent.parent.parent
+            / "argocd"
+            / "applications"
+            / "torghut"
+            / "strategy-configmap.yaml"
+        )
+
+        def invalid_candidate_state(
+            candidate_id: str,
+            run_id: str,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            return {
+                "candidateId": candidate_id,
+                "runId": run_id,
+                "activeStage": "gate-evaluation",
+                "paused": False,
+                "datasetSnapshotRef": "signals_window",
+                "noSignalReason": None,
+                "runbookValidated": "unknown",
+                "rollbackReadiness": {
+                    "killSwitchDryRunPassed": "maybe",
+                    "gitopsRevertDryRunPassed": "maybe",
+                    "strategyDisableDryRunPassed": "maybe",
+                    "dryRunCompletedAt": "not-a-timestamp",
+                    "humanApproved": "unknown",
+                    "rollbackTarget": None,
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "app.trading.autonomy.lane._build_candidate_state_payload",
+                side_effect=invalid_candidate_state,
+            ):
+                output_dir = Path(tmpdir) / "lane-invalid-readiness"
+                result = run_autonomous_lane(
+                    signals_path=fixture_path,
+                    strategy_config_path=strategy_config_path,
+                    gate_policy_path=gate_policy_path,
+                    output_dir=output_dir,
+                    promotion_target="paper",
+                    code_version="test-sha",
+                    strategy_configmap_path=strategy_configmap_path,
+                )
+
+                actuation_payload = json.loads(
+                    result.actuation_intent_path.read_text(encoding="utf-8")
+                )
+                self.assertFalse(actuation_payload["actuation_allowed"])
+                self.assertTrue(
+                    any(
+                        reason in actuation_payload["gates"]["recommendation_reasons"]
+                        for reason in [
+                            "rollback_checks_missing_or_failed",
+                            "rollback_dry_run_failed",
+                        ]
+                    )
+                )
+                self.assertIn(
+                    "runbook_not_validated",
+                    actuation_payload["gates"]["recommendation_reasons"],
+                )
+
+    def test_lane_blocks_promotion_when_candidate_rollbacks_are_stale(
+        self,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+        strategy_configmap_path = (
+            Path(__file__).parent.parent.parent.parent
+            / "argocd"
+            / "applications"
+            / "torghut"
+            / "strategy-configmap.yaml"
+        )
+        stale_cutoff = datetime(2026, 2, 1, tzinfo=timezone.utc)
+
+        def stale_candidate_state(
+            candidate_id: str,
+            run_id: str,
+            now: datetime,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            return {
+                "candidateId": candidate_id,
+                "runId": run_id,
+                "activeStage": "gate-evaluation",
+                "paused": False,
+                "datasetSnapshotRef": "signals_window",
+                "noSignalReason": None,
+                "runbookValidated": True,
+                "rollbackReadiness": {
+                    "killSwitchDryRunPassed": True,
+                    "gitopsRevertDryRunPassed": True,
+                    "strategyDisableDryRunPassed": True,
+                    "dryRunCompletedAt": (
+                        now - timedelta(days=4)
+                    ).isoformat(),
+                    "humanApproved": True,
+                    "rollbackTarget": "deadbeef",
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "app.trading.autonomy.lane._build_candidate_state_payload",
+                side_effect=stale_candidate_state,
+            ):
+                output_dir = Path(tmpdir) / "lane-stale-readiness"
+                result = run_autonomous_lane(
+                    signals_path=fixture_path,
+                    strategy_config_path=strategy_config_path,
+                    gate_policy_path=gate_policy_path,
+                    output_dir=output_dir,
+                    promotion_target="paper",
+                    code_version="test-sha",
+                    strategy_configmap_path=strategy_configmap_path,
+                    evaluated_at=stale_cutoff,
+                )
+
+                actuation_payload = json.loads(
+                    result.actuation_intent_path.read_text(encoding="utf-8")
+                )
+                self.assertFalse(actuation_payload["actuation_allowed"])
+                self.assertIn(
+                    "rollback_dry_run_stale",
+                    actuation_payload["gates"]["recommendation_reasons"],
+                )
+
+    def test_lane_writes_iteration_report(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-notes"
+            session_factory = self._empty_session_factory()
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                session_factory=session_factory,
+                code_version="test-sha",
+                governance_head="agentruns/notes-check",
+                governance_base="main",
+                governance_repository="proompteng/lab",
+            )
+
+            notes_path = output_dir / "iteration-1.md"
+            self.assertTrue(notes_path.exists())
+            note_body = notes_path.read_text(encoding="utf-8")
+            self.assertIn(f"- run_id: {result.run_id}", note_body)
+            self.assertIn(f"- candidate_id: {result.candidate_id}", note_body)
+            self.assertIn("- repository: proompteng/lab", note_body)
+            self.assertIn("- base: main", note_body)
+            self.assertIn("- head: agentruns/notes-check", note_body)
 
     @patch(
         "app.trading.autonomy.lane.evaluate_rollback_readiness",
@@ -1667,7 +1903,7 @@ class TestAutonomousLane(TestCase):
                 json.dumps(
                     {
                         "policy_version": "v3-gates-1",
-                        "required_feature_schema_version": "3.0.0",
+                        "required_feature_schema_version": "v3",
                         "gate0_max_null_rate": "0",
                         "gate0_max_staleness_ms": 120000,
                         "gate0_min_symbol_coverage": 1,
@@ -1980,7 +2216,7 @@ class TestAutonomousLane(TestCase):
                         reasons=[],
                         evidence=PromotionEvidenceSummary(
                             fold_metrics_count=1,
-                            stress_metrics_count=4,
+                            stress_metrics_count=len(_STRESS_METRICS_CASES),
                             rationale_present=True,
                             evidence_complete=True,
                             reasons=[],
@@ -2091,7 +2327,7 @@ class TestAutonomousLane(TestCase):
                         reasons=["shadow_mode_recommended"],
                         evidence=PromotionEvidenceSummary(
                             fold_metrics_count=1,
-                            stress_metrics_count=4,
+                            stress_metrics_count=len(_STRESS_METRICS_CASES),
                             rationale_present=True,
                             evidence_complete=True,
                             reasons=[],

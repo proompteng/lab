@@ -137,6 +137,20 @@ class TestLLMDSPyWorkflow(TestCase):
         )
         self.assertEqual(payload["parameters"]["issueNumber"], "2125")
 
+    def test_build_dspy_agentrun_payload_includes_priority_id(self) -> None:
+        payload = build_dspy_agentrun_payload(
+            lane="compile",
+            idempotency_key="torghut-dspy-compile-priority",
+            repository="proompteng/lab",
+            base="main",
+            head="codex/priority",
+            artifact_path="artifacts/dspy/run-priority/compile",
+            parameter_overrides={"datasetRef": "s3://dataset/path.json"},
+            issue_number="0",
+            priority_id="  priority-7 ",
+        )
+        self.assertEqual(payload["parameters"]["priorityId"], "priority-7")
+
     def test_sanitize_idempotency_key_replaces_invalid_chars(self) -> None:
         key = _sanitize_idempotency_key(" :torghut:dspy:run:2026-02-27T07:39:00Z: ")
         self.assertTrue(key)
@@ -658,6 +672,96 @@ class TestLLMDSPyWorkflow(TestCase):
             self.assertNotIn("schemaValidRate", promote_parameters)
             self.assertNotIn("deterministicCompatibility", promote_parameters)
             self.assertNotIn("fallbackRate", promote_parameters)
+            self.assertIn("evalReportRef", promote_parameters)
+
+    def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_override_is_internal_but_not_canonical(
+        self,
+    ) -> None:
+        responses = [
+            {
+                "agentRun": {"id": "record-dataset"},
+                "resource": {
+                    "metadata": {"name": "run-dataset", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-compile"},
+                "resource": {
+                    "metadata": {"name": "run-compile", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-eval"},
+                "resource": {"metadata": {"name": "run-eval", "namespace": "agents"}},
+            },
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir) / "artifacts" / "dspy" / "run-override"
+            alternate_eval_path = artifact_root / "alternate" / "dspy-eval-report.json"
+            alternate_eval_path.parent.mkdir(parents=True, exist_ok=True)
+            alternate_eval_path.write_text(
+                json.dumps({"createdAt": datetime.now(timezone.utc).isoformat()}, default=str),
+                encoding="utf-8",
+            )
+            _write_dspy_promotion_eval_snapshot(
+                artifact_root=artifact_root,
+                created_at=datetime.now(timezone.utc),
+            )
+            lane_overrides = _build_dspy_lane_overrides(
+                artifact_root=artifact_root,
+                promote_overrides={
+                    "approvalRef": "risk-committee",
+                    "promotionTarget": "constrained_live",
+                    "evalReportRef": str(alternate_eval_path),
+                },
+            )
+
+            with patch(
+                "app.trading.llm.dspy_compile.workflow.submit_jangar_agentrun",
+                side_effect=responses,
+            ) as submit_mock:
+                with patch(
+                    "app.trading.llm.dspy_compile.workflow.wait_for_jangar_agentrun_terminal_status",
+                    side_effect=["succeeded", "succeeded", "succeeded"],
+                ) as wait_mock:
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "dspy_promotion_gate_blocked:eval_report_reference_override_disallowed",
+                    ):
+                        with Session(self.engine) as session:
+                            orchestrate_dspy_agentrun_workflow(
+                                session,
+                                base_url="http://jangar.test",
+                                repository="proompteng/lab",
+                                base="main",
+                                head="codex/dspy-rollout",
+                                artifact_root=str(artifact_root),
+                                run_prefix="torghut-dspy-run-override-internal",
+                                auth_token="token-123",
+                                lane_parameter_overrides=lane_overrides,
+                                include_gepa_experiment=False,
+                                secret_binding_ref="codex-whitepaper-github-token",
+                                ttl_seconds_after_finished=3600,
+                            )
+
+            self.assertEqual(submit_mock.call_count, 3)
+            self.assertEqual(wait_mock.call_count, 3)
+
+        with Session(self.engine) as session:
+            row = session.execute(
+                select(LLMDSPyWorkflowArtifact).where(
+                    LLMDSPyWorkflowArtifact.run_key
+                    == "torghut-dspy-run-override-internal:promote"
+                )
+            ).scalar_one()
+            metadata = row.metadata_json or {}
+            self.assertIsInstance(metadata, dict)
+            orchestration = metadata.get("orchestration")
+            self.assertIsInstance(orchestration, dict)
+            gate_failures = orchestration.get("gateFailures") or []
+            self.assertIn("eval_report_reference_override_disallowed", gate_failures)
+
 
     def test_orchestrate_dspy_agentrun_workflow_blocks_promotion_when_eval_report_missing(
         self,

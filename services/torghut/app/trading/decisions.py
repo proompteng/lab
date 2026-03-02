@@ -473,10 +473,8 @@ def _has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
         if value is None:
             return False
         if isinstance(value, Mapping):
-            return any(
-                _is_explicit_value(v)
-                for v in cast(Any, value).values()
-            )
+            resolved_mapping = cast(dict[str, object], value)
+            return any(_is_explicit_value(v) for v in resolved_mapping.values())
         if isinstance(value, str):
             return bool(value.strip())
         return True
@@ -532,7 +530,7 @@ def _resolve_regime_context(
         macd=macd,
         macd_signal=macd_signal,
     )
-    normalized_route_label = route_regime_label.strip().lower()
+    normalized_route_label = str(route_regime_label).strip().lower()
     return regime_context.to_payload(), normalized_route_label
 
 

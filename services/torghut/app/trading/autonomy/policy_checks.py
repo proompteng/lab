@@ -57,7 +57,9 @@ def evaluate_promotion_prerequisites(
     candidate_state_payload: dict[str, Any],
     promotion_target: str,
     artifact_root: Path,
+    now: datetime | None = None,
 ) -> PromotionPrerequisiteResult:
+    evaluation_at = now or datetime.now(timezone.utc)
     reasons: list[str] = []
     reason_details: list[dict[str, object]] = []
     profitability_required = _requires_profitability_evidence(
@@ -68,11 +70,16 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
+    stress_required = _requires_stress_evidence(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     required_artifacts = _required_artifacts_for_target(
         policy_payload,
         promotion_target,
         include_profitability_artifacts=profitability_required,
         include_janus_artifacts=janus_required,
+        include_stress_artifacts=stress_required,
     )
     missing_artifacts = [
         item for item in required_artifacts if not (artifact_root / item).exists()
@@ -135,6 +142,8 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         gate_report_payload=gate_report_payload,
         promotion_target=promotion_target,
+        artifact_root=artifact_root,
+        now=evaluation_at,
     )
     if evidence_reasons:
         reasons.extend(evidence_reasons)
@@ -561,7 +570,9 @@ def evaluate_rollback_readiness(
         rollback = {}
 
     missing_checks = [
-        name for name in required_checks if not bool(rollback.get(name, False))
+        name
+        for name in required_checks
+        if _coerce_evidence_bool(rollback.get(name)) is not True
     ]
     if missing_checks:
         reasons.append("rollback_checks_missing_or_failed")
@@ -577,8 +588,8 @@ def evaluate_rollback_readiness(
         if current - dry_run_completed_at > timedelta(hours=max_age_hours):
             reasons.append("rollback_dry_run_stale")
 
-    if policy_payload.get("rollback_require_human_approval", True) and not bool(
-        rollback.get("humanApproved", False)
+    if policy_payload.get("rollback_require_human_approval", True) and (
+        _coerce_evidence_bool(rollback.get("humanApproved")) is not True
     ):
         reasons.append("rollback_human_approval_missing")
 
@@ -599,6 +610,7 @@ def _required_artifacts_for_target(
     *,
     include_profitability_artifacts: bool,
     include_janus_artifacts: bool,
+    include_stress_artifacts: bool,
 ) -> list[str]:
     base_raw = policy_payload.get(
         "promotion_required_artifacts",
@@ -640,6 +652,15 @@ def _required_artifacts_for_target(
         )
         janus_artifacts = _list_from_any(janus_artifacts_raw)
         for artifact in janus_artifacts:
+            if isinstance(artifact, str):
+                required.append(artifact)
+    if include_stress_artifacts:
+        stress_artifacts_raw = policy_payload.get(
+            "promotion_stress_required_artifacts",
+            ["gates/stress-metrics-v1.json"],
+        )
+        stress_artifacts = _list_from_any(stress_artifacts_raw)
+        for artifact in stress_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
     return sorted(set(required))
@@ -687,6 +708,26 @@ def _requires_janus_evidence(
     return promotion_target in required_targets
 
 
+def _requires_stress_evidence(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("promotion_require_stress_evidence", False)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_stress_required_targets", ["paper", "live"]
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
 def _required_rollback_checks(policy_payload: dict[str, Any]) -> list[str]:
     checks_raw = policy_payload.get(
         "rollback_required_checks",
@@ -698,6 +739,32 @@ def _required_rollback_checks(policy_payload: dict[str, Any]) -> list[str]:
     )
     checks = _list_from_any(checks_raw)
     return [str(item) for item in checks if isinstance(item, str)]
+
+
+def _normalize_artifact_path(
+    artifact_ref: str, *, artifact_root: Path
+) -> Path | None:
+    normalized_ref = str(artifact_ref).strip()
+    if not normalized_ref:
+        return None
+    if "://" in normalized_ref and not normalized_ref.startswith("file://"):
+        return None
+    normalized_ref = normalized_ref.removeprefix("file://")
+
+    candidate = Path(normalized_ref)
+    if not candidate.is_absolute():
+        candidate = artifact_root / candidate
+    try:
+        normalized_candidate = candidate.resolve()
+    except OSError:
+        return None
+    try:
+        normalized_root = artifact_root.resolve()
+    except OSError:
+        normalized_root = artifact_root
+    if not normalized_candidate.is_relative_to(normalized_root):
+        return None
+    return normalized_candidate
 
 
 def _required_throughput(policy_payload: dict[str, Any]) -> dict[str, int]:
@@ -719,6 +786,8 @@ def _evaluate_promotion_evidence(
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
     promotion_target: str,
+    artifact_root: Path,
+    now: datetime,
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
     reasons: list[str] = []
     details: list[dict[str, object]] = []
@@ -741,6 +810,9 @@ def _evaluate_promotion_evidence(
     stress_reasons, stress_details, stress_refs = _evaluate_stress_metrics_evidence(
         policy_payload=policy_payload,
         evidence=evidence,
+        artifact_root=artifact_root,
+        now=now,
+        promotion_target=promotion_target,
     )
     reasons.extend(stress_reasons)
     details.extend(stress_details)
@@ -875,10 +947,19 @@ def _evaluate_stress_metrics_evidence(
     *,
     policy_payload: dict[str, Any],
     evidence: dict[str, Any],
+    artifact_root: Path,
+    now: datetime,
+    promotion_target: str,
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
     reasons: list[str] = []
     details: list[dict[str, object]] = []
     refs: list[str] = []
+    if not _requires_stress_evidence(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return reasons, details, refs
+
     stress_raw = evidence.get("stress_metrics")
     stress_metrics = (
         cast(dict[str, Any], stress_raw) if isinstance(stress_raw, dict) else {}
@@ -888,6 +969,92 @@ def _evaluate_stress_metrics_evidence(
         1,
         _int_or_default(policy_payload.get("promotion_min_stress_case_count"), 4),
     )
+    stress_ref = str(stress_metrics.get("artifact_ref") or "").strip()
+    artifact_ref_path = None
+    if stress_ref:
+        artifact_ref_path = _normalize_artifact_path(stress_ref, artifact_root=artifact_root)
+    if artifact_ref_path is None and stress_ref:
+        reasons.append("stress_metrics_evidence_ref_not_trusted")
+        details.append(
+            {
+                "reason": "stress_metrics_evidence_ref_not_trusted",
+                "artifact_ref": stress_ref,
+            }
+        )
+    if not stress_ref:
+        reasons.append("stress_metrics_evidence_artifact_ref_missing")
+        details.append({"reason": "stress_metrics_evidence_artifact_ref_missing"})
+        stress_payload = None
+    elif artifact_ref_path is None:
+        stress_payload = None
+    elif not artifact_ref_path.exists():
+        reasons.append("stress_metrics_evidence_artifact_missing")
+        details.append(
+            {
+                "reason": "stress_metrics_evidence_artifact_missing",
+                "artifact_ref": stress_ref,
+            }
+        )
+        stress_payload = None
+    else:
+        stress_payload = _load_json_if_exists(artifact_ref_path)
+        if stress_payload is None:
+            reasons.append("stress_metrics_evidence_artifact_invalid")
+            details.append(
+                {
+                    "reason": "stress_metrics_evidence_artifact_invalid",
+                    "artifact_ref": stress_ref,
+                }
+            )
+
+    if stress_payload is not None:
+        schema_version = str(stress_payload.get("schema_version") or "").strip()
+        if schema_version and schema_version != "stress-metrics-v1":
+            reasons.append("stress_metrics_evidence_schema_invalid")
+            details.append(
+                {
+                    "reason": "stress_metrics_evidence_schema_invalid",
+                    "artifact_ref": stress_ref,
+                    "actual_schema_version": schema_version,
+                    "expected_schema_version": "stress-metrics-v1",
+                }
+            )
+        items = _list_from_any(stress_payload.get("items"))
+        payload_count = _int_or_default(stress_payload.get("count"), len(items))
+        if payload_count < min_stress_count:
+            reasons.append("stress_metrics_evidence_insufficient")
+            details.append(
+                {
+                    "reason": "stress_metrics_evidence_insufficient",
+                    "actual_stress_case_count": payload_count,
+                    "minimum_stress_case_count": min_stress_count,
+                }
+            )
+        max_age_hours = max(
+            1, _int_or_default(policy_payload.get("promotion_stress_max_age_hours"), 24)
+        )
+        generated_at = _parse_datetime(
+            str(stress_payload.get("generated_at") or "").strip()
+        )
+        if generated_at is None:
+            reasons.append("stress_metrics_evidence_generated_at_missing")
+            details.append(
+                {
+                    "reason": "stress_metrics_evidence_generated_at_missing",
+                    "artifact_ref": stress_ref,
+                }
+            )
+        elif (now - generated_at).total_seconds() > max_age_hours * 3600:
+            reasons.append("stress_metrics_evidence_stale")
+            details.append(
+                {
+                    "reason": "stress_metrics_evidence_stale",
+                    "artifact_ref": stress_ref,
+                    "generated_at": str(stress_payload.get("generated_at") or ""),
+                    "max_age_hours": max_age_hours,
+                }
+            )
+
     if stress_count < min_stress_count:
         reasons.append("stress_metrics_evidence_insufficient")
         details.append(
@@ -1063,6 +1230,23 @@ def _int_or_default(value: Any, default: int) -> int:
             except ValueError:
                 return default
     return default
+
+
+def _coerce_evidence_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            return None
+        return value != 0
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off", ""}:
+        return False
+    return None
 
 
 def _float_or_default(value: Any, default: float) -> float:
