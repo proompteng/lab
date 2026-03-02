@@ -290,6 +290,13 @@ describe('supporting primitives controller', () => {
     expect(apply).toHaveBeenCalledTimes(1)
   })
 
+  it('resolves watched resources only for controller-managed kinds', () => {
+    expect(__test__.resolveWatchedResourceForKind('Swarm')).toBe(RESOURCE_MAP.Swarm)
+    expect(__test__.resolveWatchedResourceForKind('Schedule')).toBe(RESOURCE_MAP.Schedule)
+    expect(__test__.resolveWatchedResourceForKind('Artifact')).toBe(RESOURCE_MAP.Artifact)
+    expect(__test__.resolveWatchedResourceForKind('ConfigMap')).toBeNull()
+  })
+
   it('resolves startup gate from feature flags with env fallback default', async () => {
     const previousNodeEnv = process.env.NODE_ENV
     try {

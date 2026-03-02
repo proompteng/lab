@@ -538,6 +538,20 @@ const resolveComparableResource = (kind: string) => {
   return null
 }
 
+const resolveWatchedResourceForKind = (kind: string) => {
+  if (kind === 'Tool') return RESOURCE_MAP.Tool
+  if (kind === 'ApprovalPolicy') return RESOURCE_MAP.ApprovalPolicy
+  if (kind === 'Budget') return RESOURCE_MAP.Budget
+  if (kind === 'SecretBinding') return RESOURCE_MAP.SecretBinding
+  if (kind === 'Signal') return RESOURCE_MAP.Signal
+  if (kind === 'SignalDelivery') return RESOURCE_MAP.SignalDelivery
+  if (kind === 'Schedule') return RESOURCE_MAP.Schedule
+  if (kind === 'Swarm') return RESOURCE_MAP.Swarm
+  if (kind === 'Workspace') return RESOURCE_MAP.Workspace
+  if (kind === 'Artifact') return RESOURCE_MAP.Artifact
+  return null
+}
+
 const applyResourceIfChanged = async (
   kube: ReturnType<typeof createKubernetesClient>,
   resource: Record<string, unknown>,
@@ -2213,7 +2227,16 @@ const handleResourceEvent = (
   const resourceKind = asString(resource.kind) ?? 'Unknown'
   const resourceName = asString(readNested(resource, ['metadata', 'name'])) ?? 'unknown'
   const queueKey = `${resourceNamespace}/${resourceKind}/${resourceName}`
-  queueResourceTask(resourceNamespace, queueKey, () => reconcileResource(kube, resource, resourceNamespace))
+  queueResourceTask(resourceNamespace, queueKey, async () => {
+    const watchedResource = resolveWatchedResourceForKind(resourceKind)
+    if (!watchedResource || !resourceName || resourceName === 'unknown') {
+      await reconcileResource(kube, resource, resourceNamespace)
+      return
+    }
+    const latestResource = await kube.get(watchedResource, resourceName, resourceNamespace)
+    if (!latestResource) return
+    await reconcileResource(kube, latestResource, resourceNamespace)
+  })
 }
 
 const handleScheduleRunnerEvent = async (
@@ -2439,6 +2462,7 @@ export const __test__ = {
   buildScheduleRunnerCommand,
   reconcileTool,
   reconcileSwarm,
+  resolveWatchedResourceForKind,
   shouldStartWithFeatureFlag,
   SWARM_CRD_REFRESH_INTERVAL_MS,
 }
