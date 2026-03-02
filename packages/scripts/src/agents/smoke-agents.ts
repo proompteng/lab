@@ -417,7 +417,7 @@ const main = async () => {
   const dbName = process.env.AGENTS_DB_NAME ?? 'agents'
   const dbHost = process.env.AGENTS_DB_HOST ?? `${releaseName}-postgres`
   const dbPort = process.env.AGENTS_DB_PORT ?? '5432'
-  const dbImage = process.env.AGENTS_DB_IMAGE ?? 'pgvector/pgvector:pg16'
+  const dbImage = process.env.AGENTS_DB_IMAGE ?? ''
   const agentctlBin = process.env.AGENTCTL_BIN ?? 'agentctl'
   const kubeconfigPath =
     process.env.AGENTCTL_KUBECONFIG ?? process.env.KUBECONFIG ?? resolve(homedir(), '.kube', 'config')
@@ -441,6 +441,10 @@ const main = async () => {
   }
 
   if (dbBootstrap) {
+    if (!dbImage) {
+      fatal('AGENTS_DB_IMAGE is required when AGENTS_DB_BOOTSTRAP=true.')
+    }
+
     const namespaceCheck = await execCapture(['kubectl', 'get', 'namespace', namespace])
     if (namespaceCheck.exitCode !== 0) {
       if (/forbidden|cannot/i.test(namespaceCheck.stderr)) {
