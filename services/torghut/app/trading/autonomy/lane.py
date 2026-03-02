@@ -2264,6 +2264,10 @@ def _build_phase_manifest(
     phase_timestamp = evaluated_at.isoformat()
     governance = _normalize_governance_inputs(governance_inputs)
     execution_context = governance["execution_context"]
+    execution_context["artifactPath"] = _coerce_str(
+        execution_context.get("artifactPath"),
+        default=str(output_dir),
+    )
     runtime_governance = governance["runtime_governance"]
     rollback_proof = governance["rollback_proof"]
     gate_status = "pass" if gate_report.promotion_allowed else "fail"
