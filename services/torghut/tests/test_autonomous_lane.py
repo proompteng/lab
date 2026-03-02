@@ -276,6 +276,10 @@ class TestAutonomousLane(TestCase):
                 str(output_dir / "gates" / "rollback-readiness.json"),
                 actuation_payload["artifact_refs"],
             )
+            self.assertIn(
+                str(output_dir / "rollout" / "phase-manifest.json"),
+                actuation_payload["artifact_refs"],
+            )
 
     def test_lane_supports_governance_override_for_actuation_intent(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
@@ -832,6 +836,8 @@ class TestAutonomousLane(TestCase):
             first_note_contents = notes[0].read_text(encoding="utf-8")
             self.assertIn("Autonomy phase iteration 1", first_note_contents)
             self.assertIn("candidate-spec", first_note_contents)
+            self.assertNotIn("\\n", first_note_contents)
+            self.assertGreater(len(first_note_contents.splitlines()), 1)
 
             second = run_autonomous_lane(
                 signals_path=fixture_path,

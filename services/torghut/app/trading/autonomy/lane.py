@@ -1227,8 +1227,7 @@ def _build_actuation_intent_payload(
     )
     if paper_patch_path is not None:
         rollback_evidence_links.append(str(paper_patch_path))
-    if phase_manifest_path.exists():
-        rollback_evidence_links.append(str(phase_manifest_path))
+    rollback_evidence_links.append(str(phase_manifest_path))
     rollback_evidence_links.extend(
         [str(item) for item in promotion_check.get("artifact_refs", [])]
     )
@@ -2088,7 +2087,7 @@ def _write_autonomy_iteration_notes(
                 f"- parent: {cast(dict[str, object], stage_payload).get('parent_stage')}",
             ]
         )
-    notes_path.write_text("\\n".join(lines), encoding="utf-8")
+    notes_path.write_text("\n".join(lines), encoding="utf-8")
     return notes_path
 
 
