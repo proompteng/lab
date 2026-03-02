@@ -1,82 +1,97 @@
 {
   "run_id": "wp-d3cdc094c8e3184af629999a",
-  "generated_at_utc": "2026-02-27T08:32:14Z",
-  "executive_summary": "Blocked: the whitepaper source PDF is not accessible from the provided GitHub attachment URL or the Ceph object path in this execution environment. Requirement to read the full paper end-to-end cannot be satisfied, so no evidence-backed technical synthesis of paper claims is possible.",
-  "problem_statement": "Assess implementation viability of the whitepaper for repository proompteng/lab, grounded in full-paper evidence and current codebase constraints.",
-  "methodology_summary": "Attempted deterministic source acquisition from the primary PDF URL, Ceph object URI, Torghut run endpoint, and Jangar whitepaper endpoints. Source retrieval failed (404 / run-not-found / unavailable credentials), preventing full-text review and section-level claim extraction.",
+  "generated_at_utc": "2026-03-02T00:55:57Z",
+  "executive_summary": "Blocked at source acquisition. The provided primary PDF URL returns HTTP 404, the referenced issue is a historical merged PR entry with no whitepaper body, and the run id deterministically maps to known test fixture inputs. Without retrievable source bytes, full-paper reading and section-level synthesis are impossible.",
+  "problem_statement": "Determine implementation viability for whitepaper run wp-d3cdc094c8e3184af629999a in proompteng/lab, grounded in full-document evidence and current repository constraints.",
+  "methodology_summary": "Validated source accessibility, issue metadata, and deterministic run-id provenance. Checked whitepaper workflow code paths to verify run-id derivation and compared provided inputs against known test fixtures. Because no source PDF was obtainable, synthesis is limited to blockage diagnosis.",
   "key_findings": [
     {
       "id": "KF-1",
       "finding": "Primary PDF URL is inaccessible.",
       "evidence": [
-        "HTTP 404 from GitHub user-attachments URL"
+        "curl -L --fail --silent --show-error https://github.com/user-attachments/files/12345/sample-paper.pdf",
+        "Exit signal: curl_exit:22",
+        "HTTP status: 404"
       ]
     },
     {
       "id": "KF-2",
-      "finding": "Ceph object cannot be fetched in the current workspace due missing credentials and RBAC limits.",
+      "finding": "Issue reference does not provide whitepaper context.",
       "evidence": [
-        "No WHITEPAPER_CEPH_*/AWS_*/MINIO_* env vars present",
-        "Forbidden when attempting to read torghut namespace secrets/configmaps"
+        "gh issue view 42 -R proompteng/lab --json number,title,body,url,state,closedAt",
+        "Resolved object is merged PR #42 with empty body and title 'Update targetRevision to main in argo-cd.yaml'"
       ]
     },
     {
       "id": "KF-3",
-      "finding": "Run ID does not exist in reachable Torghut/Jangar APIs.",
+      "finding": "Run id aligns exactly with deterministic hash of test placeholder inputs.",
       "evidence": [
-        "torghut /whitepapers/runs/{run_id} => whitepaper_run_not_found",
-        "jangar /api/whitepapers/{run_id} => 404 whitepaper run not found"
+        "build_whitepaper_run_id in services/torghut/app/whitepapers/workflow.py computes sha256(source_identifier|attachment_url)[:24]",
+        "Computed seed: proompteng/lab#42|https://github.com/user-attachments/files/12345/sample-paper.pdf",
+        "Computed run id: wp-d3cdc094c8e3184af629999a (exact match)",
+        "services/torghut/tests/test_whitepaper_workflow.py uses the same attachment URL placeholder"
       ]
     },
     {
       "id": "KF-4",
-      "finding": "No whitepaper sections/claims can be cited because the source document was not obtained.",
+      "finding": "Ceph object URI is not directly retrievable from supplied inputs.",
       "evidence": [
-        "No readable PDF bytes available in workspace"
+        "No signed HTTPS URL provided for object key",
+        "aws CLI unavailable in workspace (aws_cli_missing)"
       ]
     }
   ],
   "novelty_claims": [
     {
-      "claim": "Not assessable",
+      "claim": "Paper novelty and technical claims are not assessable",
       "assessment": "blocked",
-      "notes": "Novelty analysis requires full-paper reading; source unavailable."
+      "notes": "No whitepaper content was retrieved, so section/appendix claim extraction cannot be performed."
     }
   ],
   "risk_assessment": [
     {
       "risk": "evidence_insufficiency",
       "severity": "critical",
-      "detail": "Without full source access, any implementation recommendation would be speculative and non-auditable."
+      "detail": "Implementation guidance without full paper text would be speculative and violate deterministic evidence requirements."
     },
     {
-      "risk": "workflow_input_integrity",
+      "risk": "input_integrity_mismatch",
       "severity": "high",
-      "detail": "Issue URL and attachment appear non-actionable for this run, indicating stale or placeholder workflow inputs."
+      "detail": "Run metadata appears derived from test fixtures, creating high risk of analyzing the wrong artifact."
     }
   ],
   "citations": [
     {
-      "type": "source_access_attempt",
+      "id": "CIT-1",
+      "kind": "source_access_attempt",
       "target": "https://github.com/user-attachments/files/12345/sample-paper.pdf",
       "result": "http_404"
     },
     {
-      "type": "source_access_attempt",
+      "id": "CIT-2",
+      "kind": "issue_metadata",
+      "target": "https://github.com/proompteng/lab/issues/42",
+      "result": "resolves_to_merged_pr_with_empty_body"
+    },
+    {
+      "id": "CIT-3",
+      "kind": "repo_code_reference",
+      "target": "services/torghut/app/whitepapers/workflow.py::build_whitepaper_run_id",
+      "result": "run_id_deterministic_hash_definition"
+    },
+    {
+      "id": "CIT-4",
+      "kind": "repo_test_reference",
+      "target": "services/torghut/tests/test_whitepaper_workflow.py",
+      "result": "uses_sample_paper_placeholder_url"
+    },
+    {
+      "id": "CIT-5",
+      "kind": "source_access_attempt",
       "target": "s3://torghut-whitepapers/raw/checksum/b5/b5d4c2daa152f53c02621a70601b11dc5b4aecbda1cc3f5962bc5f7f491bad40/source.pdf",
-      "result": "not_retrievable_without_ceph_credentials"
-    },
-    {
-      "type": "run_lookup",
-      "target": "http://torghut.torghut.svc.cluster.local/whitepapers/runs/wp-d3cdc094c8e3184af629999a",
-      "result": "whitepaper_run_not_found"
-    },
-    {
-      "type": "run_lookup",
-      "target": "http://jangar.jangar.svc.cluster.local/api/whitepapers/wp-d3cdc094c8e3184af629999a",
-      "result": "404_whitepaper_run_not_found"
+      "result": "not_retrievable_from_provided_inputs"
     }
   ],
-  "implementation_plan_md": "Blocked until source access is restored.\\n\\n1. Provide a valid downloadable PDF URL or presigned Ceph URL for the exact checksum object.\\n2. Re-run full paper reading and section/claim extraction.\\n3. Recompute viability using repository constraints and produce non-blocked synthesis/verdict artifacts.\\n4. Update design.md with concrete, evidence-backed implementation decisions.",
-  "confidence": 0.08
+  "implementation_plan_md": "Blocked until source access is restored.\\n\\n1. Provide one valid downloadable source for this run (direct PDF URL, presigned HTTPS Ceph URL, or reachable run PDF endpoint).\\n2. Verify downloaded bytes against expected SHA-256 before analysis.\\n3. Read the full paper including appendices/references and extract section-level claims with citations.\\n4. Recompute implementation viability against repository constraints and update design/verdict artifacts.",
+  "confidence": 0.1
 }

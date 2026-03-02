@@ -1,28 +1,40 @@
 {
   "run_id": "wp-d3cdc094c8e3184af629999a",
+  "generated_at_utc": "2026-03-02T00:55:57Z",
   "verdict": "reject",
   "score": 0.0,
-  "confidence": 0.97,
-  "decision_policy": "whitepaper_v1.blocked_on_source_access",
-  "rationale": "The required full-paper review could not be performed because the provided whitepaper sources were not accessible (primary URL 404, Ceph object not retrievable in this runtime, run not found in Torghut/Jangar). Any implementation decision beyond rejection would violate evidence requirements.",
+  "confidence": 0.98,
+  "decision_policy": "whitepaper_v1.require_full_source_read",
+  "rationale": "The run cannot satisfy the mandatory full-paper-read gate. The provided PDF URL returns HTTP 404, issue #42 does not contain whitepaper metadata, and the run id maps exactly to known test fixture inputs. Proceeding with implementation assessment would violate evidence and auditability requirements.",
   "rejection_reasons": [
-    "Requirement unmet: full whitepaper could not be read end-to-end.",
-    "No section/claim-level citations can be grounded in source text.",
-    "Run metadata appears inconsistent (issue URL does not contain whitepaper context; run not present in reachable control plane)."
+    "Full whitepaper was not retrievable, so requirement (1) failed.",
+    "No section-level citations can be produced without source text.",
+    "Input integrity risk: run metadata appears synthetic or misrouted from test-like fixtures."
   ],
   "recommendations": [
-    "Provide one valid source artifact for this run: accessible PDF URL, presigned Ceph URL, or reachable run PDF endpoint.",
-    "Re-run analysis after source retrieval and include section/claim citations from the complete paper.",
-    "Validate issue/run linkage in Torghut so run_id, issue metadata, and source artifact are consistent before dispatch."
+    "Provide a valid downloadable PDF source for run wp-d3cdc094c8e3184af629999a (direct or presigned HTTPS).",
+    "Confirm run metadata links to an actual whitepaper issue/body before dispatch.",
+    "Re-run implementation analysis only after successful source download and checksum verification."
   ],
   "requires_followup": true,
   "blocked_stage": "source_acquisition",
-  "block_reason": "whitepaper_source_unavailable",
+  "block_reason": "whitepaper_source_unavailable_or_invalid",
   "evidence": {
-    "primary_pdf_url_status": "404",
-    "ceph_retrieval": "blocked_missing_credentials_or_endpoint_visibility",
-    "torghut_run_lookup": "whitepaper_run_not_found",
-    "jangar_run_lookup": "404_whitepaper_run_not_found"
+    "primary_pdf_url": "https://github.com/user-attachments/files/12345/sample-paper.pdf",
+    "primary_pdf_status": "http_404",
+    "issue_lookup": {
+      "url": "https://github.com/proompteng/lab/issues/42",
+      "resolved_state": "MERGED",
+      "resolved_title": "Update targetRevision to 'main' in argo-cd.yaml",
+      "resolved_body": ""
+    },
+    "run_id_derivation": {
+      "seed": "proompteng/lab#42|https://github.com/user-attachments/files/12345/sample-paper.pdf",
+      "derived_run_id": "wp-d3cdc094c8e3184af629999a"
+    },
+    "ceph_object_uri": "s3://torghut-whitepapers/raw/checksum/b5/b5d4c2daa152f53c02621a70601b11dc5b4aecbda1cc3f5962bc5f7f491bad40/source.pdf",
+    "ceph_access": "no_presigned_url_or_object_credentials_provided",
+    "aws_cli": "missing"
   },
-  "smallest_unblocker": "Provide a working downloadable source PDF for run wp-d3cdc094c8e3184af629999a."
+  "smallest_unblocker": "Provide one working downloadable PDF artifact for this run and verify checksum before analysis."
 }
