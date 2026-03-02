@@ -31,10 +31,12 @@ spec:
     swarmAgentIdentity: vw-jangar-control-plane-discover-worker-jangar-discover
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: virtual-workers
-    hulyProject: jangar-control-plane
+    hulyWorkspace: proompteng
+    hulyProject: DefaultProject
     hulyChannelName: general
-    hulyTeamspaceName: Quick-Start Docs
+    hulyTeamspaceName: PROOMPTENG
+    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
+    hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
     objective: continuously discover platform work for the Jangar control plane
   secrets:
@@ -74,10 +76,12 @@ spec:
     swarmAgentIdentity: vw-jangar-control-plane-plan-worker-jangar-plan
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: virtual-workers
-    hulyProject: jangar-control-plane
+    hulyWorkspace: proompteng
+    hulyProject: DefaultProject
     hulyChannelName: general
-    hulyTeamspaceName: Quick-Start Docs
+    hulyTeamspaceName: PROOMPTENG
+    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
+    hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
     objective: produce executable plans for autonomous platform improvements
   secrets:
@@ -121,10 +125,12 @@ spec:
     objective: autonomously implement platform improvements and requirement handoffs from Torghut
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: virtual-workers
-    hulyProject: jangar-control-plane
+    hulyWorkspace: proompteng
+    hulyProject: DefaultProject
     hulyChannelName: general
-    hulyTeamspaceName: Quick-Start Docs
+    hulyTeamspaceName: PROOMPTENG
+    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
+    hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
   vcsRef:
     name: github
@@ -169,10 +175,12 @@ spec:
     swarmAgentIdentity: vw-jangar-control-plane-verify-worker-jangar-verify
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: virtual-workers
-    hulyProject: jangar-control-plane
+    hulyWorkspace: proompteng
+    hulyProject: DefaultProject
     hulyChannelName: general
-    hulyTeamspaceName: Quick-Start Docs
+    hulyTeamspaceName: PROOMPTENG
+    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
+    hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
     objective: verify runtime, delivery, and policy health for the control plane
   secrets:
@@ -212,10 +220,12 @@ spec:
     swarmAgentIdentity: vw-torghut-quant-discover-worker-torghut-discover
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: virtual-workers
-    hulyProject: torghut-quant
+    hulyWorkspace: proompteng
+    hulyProject: DefaultProject
     hulyChannelName: general
-    hulyTeamspaceName: Quick-Start Docs
+    hulyTeamspaceName: PROOMPTENG
+    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
+    hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
     objective: discover alpha, execution, and risk-control opportunities for Torghut
   secrets:
@@ -255,10 +265,12 @@ spec:
     swarmAgentIdentity: vw-torghut-quant-plan-worker-torghut-plan
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: virtual-workers
-    hulyProject: torghut-quant
+    hulyWorkspace: proompteng
+    hulyProject: DefaultProject
     hulyChannelName: general
-    hulyTeamspaceName: Quick-Start Docs
+    hulyTeamspaceName: PROOMPTENG
+    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
+    hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
     objective: plan regime-aware quant improvements with explicit risk controls
   secrets:
@@ -302,10 +314,12 @@ spec:
     objective: implement regime-aware quant and risk-control improvements via GitOps changes
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: virtual-workers
-    hulyProject: torghut-quant
+    hulyWorkspace: proompteng
+    hulyProject: DefaultProject
     hulyChannelName: general
-    hulyTeamspaceName: Quick-Start Docs
+    hulyTeamspaceName: PROOMPTENG
+    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
+    hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
   vcsRef:
     name: github
@@ -350,10 +364,12 @@ spec:
     swarmAgentIdentity: vw-torghut-quant-verify-worker-torghut-verify
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: virtual-workers
-    hulyProject: torghut-quant
+    hulyWorkspace: proompteng
+    hulyProject: DefaultProject
     hulyChannelName: general
-    hulyTeamspaceName: Quick-Start Docs
+    hulyTeamspaceName: PROOMPTENG
+    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
+    hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
     objective: verify strategy health, guardrails, and market-regime readiness
   secrets:

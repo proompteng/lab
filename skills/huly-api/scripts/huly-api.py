@@ -36,12 +36,14 @@ DEFAULT_ISSUE_STATUS = 'tracker:status:Backlog'
 DEFAULT_ISSUE_KIND = 'tracker:taskTypes:Issue'
 DEFAULT_DOCUMENT_PARENT = 'document:ids:NoParent'
 DEFAULT_RANK = '0|zzzzzz:'
+DEFAULT_TEAMSPACE = 'PROOMPTENG'
 
 
 @dataclass
 class HulyContext:
     base_url: str
     token: str
+    token_source: str
     workspace_id: str
     actor_id: str
     timeout_seconds: int
@@ -53,6 +55,57 @@ def env_first(*keys: str) -> str:
         if value:
             return value
     return ''
+
+
+def env_if_set(key: str) -> str:
+    return os.getenv(key, '').strip()
+
+
+def normalize_token_key(value: str) -> str:
+    parts: list[str] = []
+    for char in value.strip():
+        if char.isalnum():
+            parts.append(char.upper())
+        else:
+            parts.append('_')
+    normalized = ''.join(parts).strip('_')
+    while '__' in normalized:
+        normalized = normalized.replace('__', '_')
+    return normalized
+
+
+def resolve_token(args: argparse.Namespace) -> tuple[str, str]:
+    explicit = args.token.strip()
+    if explicit:
+        return explicit, 'cli'
+
+    token_env_key = args.token_env_key.strip()
+    if token_env_key:
+        candidate = env_if_set(token_env_key)
+        if candidate:
+            return candidate, token_env_key
+
+    worker_identity = args.worker_identity.strip() or env_if_set('SWARM_AGENT_IDENTITY')
+    if worker_identity:
+        key = f'HULY_API_TOKEN_{normalize_token_key(worker_identity)}'
+        candidate = env_if_set(key)
+        if candidate:
+            return candidate, key
+
+    worker_id = args.worker_id.strip() or env_if_set('SWARM_AGENT_WORKER_ID')
+    if worker_id:
+        key = f'HULY_API_TOKEN_{normalize_token_key(worker_id)}'
+        candidate = env_if_set(key)
+        if candidate:
+            return candidate, key
+
+    if args.require_worker_token:
+        return '', ''
+
+    fallback = env_first('HULY_API_TOKEN', 'HULY_TOKEN')
+    if fallback:
+        return fallback, 'HULY_API_TOKEN/HULY_TOKEN'
+    return '', ''
 
 
 def maybe_parse_json(value: str) -> Any:
@@ -565,8 +618,10 @@ def build_context(args: argparse.Namespace, *, for_platform_api: bool) -> HulyCo
     if not base_url_raw:
         raise RuntimeError('missing HULY_API_BASE_URL/HULY_BASE_URL')
 
-    token = args.token.strip() or env_first('HULY_API_TOKEN', 'HULY_TOKEN')
+    token, token_source = resolve_token(args)
     if not token:
+        if args.require_worker_token:
+            raise RuntimeError('missing worker-scoped HULY_API_TOKEN_<WORKER> credential')
         raise RuntimeError('missing HULY_API_TOKEN/HULY_TOKEN')
 
     base_url = normalize_api_base_url(base_url_raw) if for_platform_api else base_url_raw.rstrip('/')
@@ -596,10 +651,55 @@ def build_context(args: argparse.Namespace, *, for_platform_api: bool) -> HulyCo
     return HulyContext(
         base_url=base_url,
         token=token,
+        token_source=token_source,
         workspace_id=workspace_id,
         actor_id=actor_id,
         timeout_seconds=args.timeout_seconds,
     )
+
+
+def fetch_account_info(context: HulyContext) -> dict[str, Any]:
+    account = api_call(
+        method='GET',
+        url=join_url(context.base_url, f'/api/v1/account/{context.workspace_id}'),
+        token=context.token,
+        timeout_seconds=context.timeout_seconds,
+    )
+    if not isinstance(account, dict):
+        raise RuntimeError('invalid account response')
+    return account
+
+
+def run_account_info(args: argparse.Namespace) -> int:
+    context = build_context(args, for_platform_api=True)
+    account = fetch_account_info(context)
+    actor_id = str(account.get('primarySocialId') or '').strip()
+    if args.expected_actor_id.strip() and actor_id != args.expected_actor_id.strip():
+        print(
+            json.dumps(
+                {
+                    'error': 'expected_actor_id_mismatch',
+                    'expectedActorId': args.expected_actor_id.strip(),
+                    'actualActorId': actor_id,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    output = {
+        'workspaceId': context.workspace_id,
+        'actorId': actor_id,
+        'tokenSource': context.token_source,
+        'workerScopedToken': context.token_source.startswith('HULY_API_TOKEN_'),
+        'person': account.get('person'),
+        'accountRole': account.get('role'),
+        'workspaces': account.get('workspaces'),
+    }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
 
 
 def run_http(args: argparse.Namespace) -> int:
@@ -784,12 +884,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--operation',
         default='http',
-        choices=['http', 'create-issue', 'create-document', 'post-channel-message', 'upsert-mission'],
+        choices=['http', 'create-issue', 'create-document', 'post-channel-message', 'upsert-mission', 'account-info'],
         help='Operation mode',
     )
 
     # Shared auth/runtime flags.
     parser.add_argument('--token', default='', help='Override bearer token (defaults to env)')
+    parser.add_argument(
+        '--token-env-key',
+        default='',
+        help='Specific env var name containing bearer token (for per-worker accounts)',
+    )
+    parser.add_argument('--worker-id', default='', help='Worker id used to resolve per-worker token env vars')
+    parser.add_argument('--worker-identity', default='', help='Worker identity used to resolve per-worker token env vars')
+    parser.add_argument(
+        '--require-worker-token',
+        action='store_true',
+        help='Fail unless token was resolved from a worker-specific env var',
+    )
     parser.add_argument(
         '--base-url',
         default='',
@@ -809,7 +921,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--project', default=env_first('HULY_PROJECT'), help='Project identifier/name/id for tasks')
     parser.add_argument(
         '--teamspace',
-        default=env_first('HULY_TEAMSPACE') or 'Quick-Start Docs',
+        default=env_first('HULY_TEAMSPACE') or DEFAULT_TEAMSPACE,
         help='Teamspace name/id for documents',
     )
     parser.add_argument('--channel', default=env_first('HULY_CHANNEL') or 'general', help='Channel name/id for chat')
@@ -825,6 +937,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--status', default='', help='Mission status label for upsert-mission')
     parser.add_argument('--issue-status', default=DEFAULT_ISSUE_STATUS, help='Issue status id for task artifacts')
     parser.add_argument('--priority', type=int, default=0, help='Issue priority for task artifacts')
+    parser.add_argument(
+        '--expected-actor-id',
+        default='',
+        help='When set, account-info fails unless current token resolves to this actor id',
+    )
 
     return parser
 
@@ -844,6 +961,8 @@ def main() -> int:
             return run_post_channel_message(args)
         if args.operation == 'upsert-mission':
             return run_upsert_mission(args)
+        if args.operation == 'account-info':
+            return run_account_info(args)
         print(f'unsupported operation: {args.operation}', file=sys.stderr)
         return 2
     except ValueError as error:

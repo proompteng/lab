@@ -367,17 +367,19 @@ Huly should be treated as the mandatory collaboration layer for virtual workers 
 
 ### Huly workspace topology for virtual workers
 
-Use one shared workspace with three spaces:
+Current deployment target uses one shared workspace and shared defaults:
 
-- `Jangar Control Plane`: platform missions and control-plane upgrades.
-- `Torghut Quant`: trading, regime, risk, and execution missions.
-- `Swarm Bridge`: explicit inter-swarm handoffs and contracts.
+- Workspace: `proompteng`
+- Tracker board/project: `DefaultProject`
+- Tracker URL: `https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues`
+- Documents teamspace: `PROOMPTENG`
+- Chat channel: `general`
 
 Required Huly objects per mission:
 
-- One issue in the correct space/project (system of record for status and ownership).
+- One issue in `DefaultProject` (system of record for status and ownership).
 - One chat thread linked from the issue (real-time coordination).
-- One document page linked from the issue (design, evidence, rollout notes).
+- One document page in `PROOMPTENG` linked from the issue (design, evidence, rollout notes).
 - One inbox entry for owner visibility (approval, override, or notification path).
 
 ### Virtual worker access bundle (all agents)
@@ -394,6 +396,7 @@ Production controls for these identities:
 
 - Short-lived API credentials issued by a central secret manager.
 - Rotation every 24h or on compromise signal.
+- One token per agent identity stored as `HULY_API_TOKEN_<SWARM_AGENT_IDENTITY>` (or worker id equivalent).
 - Space/project permission templates applied automatically at creation time.
 - Every write includes `swarm`, `stage`, `missionId`, and `deliveryId` metadata for audit.
 
@@ -401,12 +404,12 @@ Production controls for these identities:
 
 Inter-swarm handoff protocol:
 
-1. Source swarm creates a `Swarm Bridge` issue labeled with:
+1. Source swarm creates a requirement issue in `DefaultProject` labeled with:
    - `from-swarm`, `to-swarm`, `handoff-type`, `priority`, `deadline`, `risk-tier`.
 2. Source swarm posts structured payload in issue body:
    - problem statement, required outcome, constraints, evidence links, acceptance tests.
 3. Destination swarm posts ACK comment with planned execution window.
-4. Destination swarm links implementation issue in its own space and mirrors status to bridge issue.
+4. Destination swarm links its implementation issue and mirrors status back to the requirement issue.
 5. Source swarm closes bridge issue only after destination evidence + verification links are attached.
 
 Kubernetes bridge contract used by the swarm controller:
