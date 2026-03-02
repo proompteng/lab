@@ -6,7 +6,7 @@ metadata:
 spec:
   owner:
     id: platform-owner
-    channel: https://huly.proompteng.ai
+    channel: http://transactor.huly.svc.cluster.local
   domains:
     - platform-reliability
     - platform-evolution
@@ -78,7 +78,7 @@ metadata:
 spec:
   owner:
     id: trading-owner
-    channel: https://huly.proompteng.ai
+    channel: http://transactor.huly.svc.cluster.local
   domains:
     - quant-research
     - autonomous-trading

@@ -24,12 +24,16 @@ spec:
     - hulyApiBaseUrl (optional)
     - hulyWorkspace (optional)
     - hulyProject (optional)
+    - hulyChannelName (optional, default general)
+    - hulyTeamspaceName (optional, default Quick-Start Docs)
     - hulySkillRef (optional, default skills/huly-api/SKILL.md)
 
     Requirements:
     - Keep this run read-only: do not open PRs and do not mutate Kubernetes resources.
     - Use internet research when stage needs fresh external facts.
     - Use the Huly skill at ${hulySkillRef} for owner updates and cross-swarm communication.
+    - Publish mission artifacts through all Huly collaboration modules (tasks board, channel message, mission document).
+    - Use `python3 skills/huly-api/scripts/huly-api.py --operation upsert-mission ...` to write those artifacts.
     - Sign communications with worker identity ${swarmAgentWorkerId}/${swarmAgentIdentity} when present.
     - Write a concise Markdown stage report to `/workspace/.agentrun/swarm/${swarmName}-${swarmStage}.md`.
 
@@ -39,7 +43,7 @@ spec:
     - verify: validate current runtime/code health, list regressions and risk deltas.
 
     Output:
-    - Include: Summary, Evidence, Risks, Next Actions, and Owner Update (for ${ownerChannel}).
+    - Include: Summary, Evidence, Risks, Next Actions, Owner Update (for ${ownerChannel}), and Huly artifact IDs.
 
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
@@ -71,6 +75,8 @@ spec:
     - hulyApiBaseUrl (optional)
     - hulyWorkspace (optional)
     - hulyProject (optional)
+    - hulyChannelName (optional, default general)
+    - hulyTeamspaceName (optional, default Quick-Start Docs)
     - hulySkillRef (optional, default skills/huly-api/SKILL.md)
 
     Optional cross-swarm requirement inputs (present when this run was dispatched from a Signal):
@@ -87,8 +93,13 @@ spec:
        swarmRequirementSource -> swarmRequirementTarget and use the requirement description/payload as the primary scope.
     2) Implement minimal, production-quality code and config changes in ${repository}.
     3) Run targeted validation for touched areas (lint/type-check/tests as applicable).
-    4) Use the Huly skill at ${hulySkillRef} to create/update mission issue/chat/doc records in Huly and publish status
-       with ${swarmAgentWorkerId}/${swarmAgentIdentity} identity when present.
+    4) Use the Huly skill at ${hulySkillRef} and call
+       `python3 skills/huly-api/scripts/huly-api.py --operation upsert-mission ...`
+       so this mission always updates all three Huly modules:
+       - tasks board issue
+       - channel status message
+       - mission document
+       Include ${swarmAgentWorkerId}/${swarmAgentIdentity} in the written content.
     5) Commit to ${head}, open or update a PR against ${base}, and include requirement provenance (signal/channel/id).
     6) Return a short release note with risks, rollback path, and owner-facing status for ${ownerChannel}.
 

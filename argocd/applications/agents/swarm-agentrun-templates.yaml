@@ -29,10 +29,12 @@ spec:
     swarmAgentRole: discover
     swarmAgentWorkerId: worker-jangar-discover
     swarmAgentIdentity: vw-jangar-control-plane-discover-worker-jangar-discover
-    ownerChannel: https://huly.proompteng.ai
-    hulyApiBaseUrl: https://huly.proompteng.ai
+    ownerChannel: http://transactor.huly.svc.cluster.local
+    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: virtual-workers
     hulyProject: jangar-control-plane
+    hulyChannelName: general
+    hulyTeamspaceName: Quick-Start Docs
     hulySkillRef: skills/huly-api/SKILL.md
     objective: continuously discover platform work for the Jangar control plane
   secrets:
@@ -70,10 +72,12 @@ spec:
     swarmAgentRole: plan
     swarmAgentWorkerId: worker-jangar-plan
     swarmAgentIdentity: vw-jangar-control-plane-plan-worker-jangar-plan
-    ownerChannel: https://huly.proompteng.ai
-    hulyApiBaseUrl: https://huly.proompteng.ai
+    ownerChannel: http://transactor.huly.svc.cluster.local
+    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: virtual-workers
     hulyProject: jangar-control-plane
+    hulyChannelName: general
+    hulyTeamspaceName: Quick-Start Docs
     hulySkillRef: skills/huly-api/SKILL.md
     objective: produce executable plans for autonomous platform improvements
   secrets:
@@ -115,10 +119,12 @@ spec:
     swarmAgentWorkerId: worker-jangar-implement
     swarmAgentIdentity: vw-jangar-control-plane-implement-worker-jangar-implement
     objective: autonomously implement platform improvements and requirement handoffs from Torghut
-    ownerChannel: https://huly.proompteng.ai
-    hulyApiBaseUrl: https://huly.proompteng.ai
+    ownerChannel: http://transactor.huly.svc.cluster.local
+    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: virtual-workers
     hulyProject: jangar-control-plane
+    hulyChannelName: general
+    hulyTeamspaceName: Quick-Start Docs
     hulySkillRef: skills/huly-api/SKILL.md
   vcsRef:
     name: github
@@ -161,10 +167,12 @@ spec:
     swarmAgentRole: verify
     swarmAgentWorkerId: worker-jangar-verify
     swarmAgentIdentity: vw-jangar-control-plane-verify-worker-jangar-verify
-    ownerChannel: https://huly.proompteng.ai
-    hulyApiBaseUrl: https://huly.proompteng.ai
+    ownerChannel: http://transactor.huly.svc.cluster.local
+    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: virtual-workers
     hulyProject: jangar-control-plane
+    hulyChannelName: general
+    hulyTeamspaceName: Quick-Start Docs
     hulySkillRef: skills/huly-api/SKILL.md
     objective: verify runtime, delivery, and policy health for the control plane
   secrets:
@@ -202,10 +210,12 @@ spec:
     swarmAgentRole: discover
     swarmAgentWorkerId: worker-torghut-discover
     swarmAgentIdentity: vw-torghut-quant-discover-worker-torghut-discover
-    ownerChannel: https://huly.proompteng.ai
-    hulyApiBaseUrl: https://huly.proompteng.ai
+    ownerChannel: http://transactor.huly.svc.cluster.local
+    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: virtual-workers
     hulyProject: torghut-quant
+    hulyChannelName: general
+    hulyTeamspaceName: Quick-Start Docs
     hulySkillRef: skills/huly-api/SKILL.md
     objective: discover alpha, execution, and risk-control opportunities for Torghut
   secrets:
@@ -243,10 +253,12 @@ spec:
     swarmAgentRole: plan
     swarmAgentWorkerId: worker-torghut-plan
     swarmAgentIdentity: vw-torghut-quant-plan-worker-torghut-plan
-    ownerChannel: https://huly.proompteng.ai
-    hulyApiBaseUrl: https://huly.proompteng.ai
+    ownerChannel: http://transactor.huly.svc.cluster.local
+    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: virtual-workers
     hulyProject: torghut-quant
+    hulyChannelName: general
+    hulyTeamspaceName: Quick-Start Docs
     hulySkillRef: skills/huly-api/SKILL.md
     objective: plan regime-aware quant improvements with explicit risk controls
   secrets:
@@ -288,10 +300,12 @@ spec:
     swarmAgentWorkerId: worker-torghut-implement
     swarmAgentIdentity: vw-torghut-quant-implement-worker-torghut-implement
     objective: implement regime-aware quant and risk-control improvements via GitOps changes
-    ownerChannel: https://huly.proompteng.ai
-    hulyApiBaseUrl: https://huly.proompteng.ai
+    ownerChannel: http://transactor.huly.svc.cluster.local
+    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: virtual-workers
     hulyProject: torghut-quant
+    hulyChannelName: general
+    hulyTeamspaceName: Quick-Start Docs
     hulySkillRef: skills/huly-api/SKILL.md
   vcsRef:
     name: github
@@ -334,10 +348,12 @@ spec:
     swarmAgentRole: verify
     swarmAgentWorkerId: worker-torghut-verify
     swarmAgentIdentity: vw-torghut-quant-verify-worker-torghut-verify
-    ownerChannel: https://huly.proompteng.ai
-    hulyApiBaseUrl: https://huly.proompteng.ai
+    ownerChannel: http://transactor.huly.svc.cluster.local
+    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: virtual-workers
     hulyProject: torghut-quant
+    hulyChannelName: general
+    hulyTeamspaceName: Quick-Start Docs
     hulySkillRef: skills/huly-api/SKILL.md
     objective: verify strategy health, guardrails, and market-regime readiness
   secrets:
