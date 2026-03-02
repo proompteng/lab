@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: posthog
+resources:
+  - postgres-cluster.yaml
+  - redis.yaml
+  - clickhouse-secret.yaml
+  - clickhouse-keeper.yaml
+  - clickhouse-cluster.yaml
+  - clickhouse-service.yaml
+  - pooler-posthog-db.yaml
+  - serviceaccount-posthog.yaml
+  - secret-posthog.yaml
+  - service-posthog-events.yaml
+  - service-posthog-web.yaml
+  - ingressroute-posthog.yaml
+  - deployment-posthog-events.yaml
+  - deployment-posthog-plugins.yaml
+  - deployment-posthog-web.yaml
+  - deployment-posthog-worker.yaml
+  - job-posthog-migrate.yaml

@@ -1,0 +1,19 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: posthog
+  labels:
+    app.kubernetes.io/name: posthog
+    app.kubernetes.io/instance: posthog
+  namespace: posthog
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`posthog.proompteng.ai`)
+      services:
+        - name: posthog-web
+          port: 8000
+  tls: {}
