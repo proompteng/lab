@@ -45,6 +45,22 @@ def _coerce_horizon(value: str) -> str:
     return cleaned
 
 
+def _coerce_model_family(value: str) -> str:
+    normalized = value.strip().lower().replace('-', '_').replace(' ', '_')
+    aliases = {
+        'timesfm': 'financial_tsfm',
+        'financial_tsfm': 'financial_tsfm',
+        'financialtsfm': 'financial_tsfm',
+        'financial_tsfm_v1': 'financial_tsfm',
+        'financial-tsfm-v1': 'financial_tsfm',
+        'baseline': 'baseline',
+        'deterministic_baseline': 'baseline',
+        'moment': 'moment',
+        'chronos': 'chronos',
+    }
+    return aliases.get(normalized, normalized)
+
+
 @dataclass(frozen=True)
 class ForecastInterval:
     p05: Decimal

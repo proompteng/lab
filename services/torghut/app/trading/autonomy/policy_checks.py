@@ -845,6 +845,18 @@ def _evaluate_promotion_evidence(
     reasons.extend(rationale_reasons)
     details.extend(rationale_details)
 
+    parity_reasons, parity_details, parity_refs = (
+        _evaluate_foundation_router_parity_evidence(
+            policy_payload=policy_payload,
+            gate_report_payload=gate_report_payload,
+            artifact_root=artifact_root,
+            promotion_target=promotion_target,
+        )
+    )
+    reasons.extend(parity_reasons)
+    details.extend(parity_details)
+    refs.extend(parity_refs)
+
     return sorted(set(reasons)), details, sorted(set(refs))
 
 
