@@ -909,6 +909,12 @@ const resolveScheduleTarget = async (
   throw new Error(`unsupported schedule target kind: ${targetKind}`)
 }
 
+const buildScheduleRunnerCommand = (): string =>
+  [
+    'DELIVERY_ID=$(cat /proc/sys/kernel/random/uuid);',
+    'sed "s/__JANGAR_DELIVERY_ID__/${DELIVERY_ID}/g" /config/run.json | kubectl create -f -',
+  ].join(' ')
+
 const reconcileSchedule = async (
   kube: ReturnType<typeof createKubernetesClient>,
   schedule: Record<string, unknown>,
@@ -990,14 +996,7 @@ const reconcileSchedule = async (
                   {
                     name: 'schedule-runner',
                     image,
-                    command: [
-                      '/bin/sh',
-                      '-ec',
-                      [
-                        'DELIVERY_ID=$(cat /proc/sys/kernel/random/uuid);',
-                        `sed "s/__JANGAR_DELIVERY_ID__/\\$${'{DELIVERY_ID}'}/g" /config/run.json | kubectl create -f -`,
-                      ].join(' '),
-                    ],
+                    command: ['/bin/sh', '-ec', buildScheduleRunnerCommand()],
                     volumeMounts: [{ name: 'schedule-template', mountPath: '/config' }],
                   },
                 ],
@@ -1770,6 +1769,7 @@ export const stopSupportingPrimitivesController = () => {
 }
 
 export const __test__ = {
+  buildScheduleRunnerCommand,
   reconcileTool,
   reconcileSwarm,
   shouldStartWithFeatureFlag,

@@ -131,6 +131,14 @@ describe('supporting primitives controller', () => {
     expect(degraded?.status).toBe('True')
   })
 
+  it('builds schedule runner command with runtime delivery id substitution', () => {
+    const command = __test__.buildScheduleRunnerCommand()
+
+    expect(command).toContain('DELIVERY_ID=$(cat /proc/sys/kernel/random/uuid);')
+    expect(command).toContain('s/__JANGAR_DELIVERY_ID__/${DELIVERY_ID}/g')
+    expect(command).not.toContain('\\${DELIVERY_ID}')
+  })
+
   it('resolves startup gate from feature flags with env fallback default', async () => {
     const previousNodeEnv = process.env.NODE_ENV
     try {
