@@ -545,7 +545,11 @@ const SWARM_SCHEDULE_ANNOTATION_HULY_WORKSPACE = 'swarm.proompteng.ai/huly-works
 const SWARM_SCHEDULE_ANNOTATION_HULY_PROJECT = 'swarm.proompteng.ai/huly-project'
 const SWARM_SCHEDULE_ANNOTATION_HULY_SECRET = 'swarm.proompteng.ai/huly-secret'
 const SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF = 'swarm.proompteng.ai/huly-skill-ref'
-const SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT = 16_384
+const SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT = (() => {
+  const raw = Number(process.env.JANGAR_SWARM_REQUIREMENT_MAX_PAYLOAD_BYTES ?? '16384')
+  if (!Number.isFinite(raw) || raw < 1) return 16_384
+  return Math.floor(raw)
+})()
 const SWARM_DEFAULT_HULY_BASE_URL = (() => {
   const value = asString(process.env.JANGAR_SWARM_HULY_BASE_URL)?.trim()
   return value && value.length > 0 ? value : 'https://huly.proompteng.ai'
@@ -923,12 +927,48 @@ const stringifyUnknown = (value: unknown) => {
   }
 }
 
+const truncateUtf8 = (value: string, maxBytes: number) => {
+  const safeMaxBytes = Math.max(0, maxBytes)
+  if (!value) return ''
+  if (safeMaxBytes === 0) return ''
+
+  let usedBytes = 0
+  const encoder = new TextEncoder()
+  let result = ''
+
+  for (const char of value) {
+    const charBytes = encoder.encode(char).byteLength
+    if (usedBytes + charBytes > safeMaxBytes) break
+    usedBytes += charBytes
+    result += char
+  }
+
+  return result
+}
+
+const clampUtf8 = (value: string, maxBytes: number) => {
+  const encoder = new TextEncoder()
+  const encoded = encoder.encode(value)
+  if (encoded.byteLength <= maxBytes) {
+    return {
+      value,
+      bytes: encoded.byteLength,
+      truncated: false,
+    }
+  }
+
+  return {
+    value: truncateUtf8(value, maxBytes),
+    bytes: encoded.byteLength,
+    truncated: true,
+  }
+}
+
 const makeRequirementObjective = (description: string, payload: string) => {
   const parts = [description, payload].filter((value) => value.length > 0)
   if (parts.length === 0) return ''
   const combined = parts.join('\n\n')
-  if (combined.length <= SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT) return combined
-  return `${combined.slice(0, SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT - 3)}...`
+  return clampUtf8(combined, SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT).value
 }
 
 const normalizeParameterMap = (raw: unknown) => {
@@ -1607,9 +1647,9 @@ const reconcileSwarm = async (
       [SWARM_SCHEDULE_ANNOTATION_IDENTITY]: requirementIdentity.identity,
     }
     const rawPayloadValue = stringifyUnknown(signalSpec.payload)
-    const payloadValue = rawPayloadValue.slice(0, SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT)
+    const payloadValue = clampUtf8(rawPayloadValue, SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT)
     const description = asString(signalSpec.description)
-    const objectiveValue = makeRequirementObjective(description ?? '', payloadValue)
+    const objectiveValue = makeRequirementObjective(description ?? '', payloadValue.value)
     const requirementParameters: Record<string, string> = {
       ...runtimeParameters,
       swarmRequirementId: requirementId,
@@ -1621,8 +1661,12 @@ const reconcileSwarm = async (
     if (description) {
       requirementParameters.swarmRequirementDescription = description
     }
-    if (payloadValue) {
-      requirementParameters.swarmRequirementPayload = payloadValue
+    if (payloadValue.value) {
+      requirementParameters.swarmRequirementPayload = payloadValue.value
+      requirementParameters.swarmRequirementPayloadBytes = String(payloadValue.bytes)
+      if (payloadValue.truncated) {
+        requirementParameters.swarmRequirementPayloadTruncated = 'true'
+      }
     }
     if (objectiveValue) {
       requirementParameters.objective = objectiveValue
