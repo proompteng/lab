@@ -1001,6 +1001,16 @@ class TestAutonomousLane(TestCase):
                 now: datetime | None = None,
             ) -> PromotionPrerequisiteResult:
                 self.assertTrue(
+                    policy_payload.get("promotion_require_profitability_stage_manifest")
+                )
+                self.assertEqual(
+                    policy_payload.get(
+                        "promotion_profitability_stage_manifest_artifact",
+                        "profitability/profitability-stage-manifest-v1.json",
+                    ),
+                    "profitability/profitability-stage-manifest-v1.json",
+                )
+                self.assertTrue(
                     (artifact_root / "paper-candidate" / "strategy-configmap-patch.yaml").exists()
                 )
                 return PromotionPrerequisiteResult(
@@ -1527,6 +1537,14 @@ class TestAutonomousLane(TestCase):
             candidate_spec = json.loads(
                 result.candidate_spec_path.read_text(encoding="utf-8")
             )
+            self.assertIn(
+                "profitability_stage_manifest",
+                candidate_spec["artifacts"],
+            )
+            self.assertIn(
+                "profitability_stage_manifest",
+                candidate_spec["stage_manifest_refs"],
+            )
             self.assertIn("stage_lineage", candidate_spec)
             self.assertEqual(
                 candidate_spec["stage_lineage"]["root_lineage_hash"],
@@ -1565,6 +1583,23 @@ class TestAutonomousLane(TestCase):
                     ],
                 }
             )
+            profitability_manifest = json.loads(
+                result.profitability_manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                candidate_spec["stage_manifest_refs"][
+                    "profitability_stage_manifest"
+                ],
+                str(result.profitability_manifest_path),
+            )
+            self.assertTrue(
+                result.profitability_manifest_path.exists(),
+                "profitability stage manifest should be written",
+            )
+            self.assertIn("research", profitability_manifest["stages"])
+            self.assertIn("validation", profitability_manifest["stages"])
+            self.assertIn("execution", profitability_manifest["stages"])
+            self.assertIn("governance", profitability_manifest["stages"])
             for artifact_key, expected_hash in candidate_spec[
                 "replay_artifact_hashes"
             ].items():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
@@ -64,6 +65,9 @@ def evaluate_promotion_prerequisites(
     reason_details: list[dict[str, object]] = []
     if now is None:
         now = datetime.now(timezone.utc)
+    require_profitability_manifest = bool(
+        policy_payload.get("promotion_require_profitability_stage_manifest", False)
+    )
     profitability_required = _requires_profitability_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
@@ -82,6 +86,7 @@ def evaluate_promotion_prerequisites(
         include_profitability_artifacts=profitability_required,
         include_janus_artifacts=janus_required,
         include_stress_artifacts=stress_required,
+        require_profitability_manifest=require_profitability_manifest,
     )
     missing_artifacts = [
         item for item in required_artifacts if not (artifact_root / item).exists()
@@ -134,6 +139,13 @@ def evaluate_promotion_prerequisites(
         )
     if janus_required:
         _append_janus_evidence_reasons(
+            reasons=reasons,
+            reason_details=reason_details,
+            policy_payload=policy_payload,
+            artifact_root=artifact_root,
+        )
+    if require_profitability_manifest:
+        _append_profitability_stage_manifest_reasons(
             reasons=reasons,
             reason_details=reason_details,
             policy_payload=policy_payload,
@@ -383,6 +395,276 @@ def _append_run_id_mismatch_reasons(
     )
 
 
+def _append_profitability_stage_manifest_reasons(
+    *,
+    reasons: list[str],
+    reason_details: list[dict[str, object]],
+    policy_payload: dict[str, Any],
+    artifact_root: Path,
+) -> None:
+    manifest_relpath = str(
+        policy_payload.get(
+            "promotion_profitability_stage_manifest_artifact",
+            "profitability/profitability-stage-manifest-v1.json",
+        )
+    )
+    manifest_path = artifact_root / manifest_relpath
+    manifest_payload = _load_json_if_exists(manifest_path)
+    if manifest_payload is None:
+        reasons.append("profitability_stage_manifest_missing")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_missing",
+                "artifact_ref": str(manifest_path),
+            }
+        )
+        return
+
+    schema_version = str(manifest_payload.get("schema_version", "")).strip()
+    if schema_version != "profitability-stage-manifest-v1":
+        reasons.append("profitability_stage_manifest_schema_version_invalid")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_schema_version_invalid",
+                "artifact_ref": str(manifest_path),
+                "schema_version": schema_version,
+            }
+        )
+
+    candidate_id = str(manifest_payload.get("candidate_id", "")).strip()
+    if not candidate_id:
+        reasons.append("profitability_stage_manifest_candidate_id_missing")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_candidate_id_missing",
+                "artifact_ref": str(manifest_path),
+            }
+        )
+
+    strategy_family = str(manifest_payload.get("strategy_family", "")).strip()
+    if not strategy_family:
+        reasons.append("profitability_stage_manifest_strategy_family_missing")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_strategy_family_missing",
+                "artifact_ref": str(manifest_path),
+            }
+        )
+
+    run_context = _as_dict(manifest_payload.get("run_context"))
+    if not run_context:
+        reasons.append("profitability_stage_manifest_run_context_missing")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_run_context_missing",
+                "artifact_ref": str(manifest_path),
+            }
+        )
+    elif not run_context.get("run_id"):
+        reasons.append("profitability_stage_manifest_run_context_incomplete")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_run_context_incomplete",
+                "artifact_ref": str(manifest_path),
+            }
+        )
+
+    stages_raw = manifest_payload.get("stages")
+    stages = _as_dict(stages_raw)
+    if not stages:
+        reasons.append("profitability_stage_manifest_stages_missing")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_stages_missing",
+                "artifact_ref": str(manifest_path),
+            }
+        )
+    else:
+        stage_names = {str(name).strip().lower() for name in stages.keys()}
+        required_stage_names = {"research", "validation", "execution", "governance"}
+        if stage_names != required_stage_names:
+            reasons.append("profitability_stage_manifest_stage_missing")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_stage_missing",
+                    "artifact_ref": str(manifest_path),
+                    "stages_present": sorted(stages.keys()),
+                }
+            )
+        for stage_name in required_stage_names:
+            stage_payload = _as_dict(stages.get(stage_name))
+            if not stage_payload:
+                reasons.append("profitability_stage_manifest_stage_missing")
+                reason_details.append(
+                    {
+                        "reason": "profitability_stage_manifest_stage_missing",
+                        "artifact_ref": str(manifest_path),
+                        "stage": stage_name,
+                    }
+                )
+                continue
+
+            status = str(stage_payload.get("status", "")).strip()
+            if status not in {"pass", "fail"}:
+                reasons.append("profitability_stage_manifest_stage_status_invalid")
+                reason_details.append(
+                    {
+                        "reason": "profitability_stage_manifest_stage_status_invalid",
+                        "artifact_ref": str(manifest_path),
+                        "stage": stage_name,
+                        "status": status,
+                    }
+                )
+            for required_key in ("checks", "artifacts", "owner", "completed_at_utc"):
+                if required_key not in stage_payload:
+                    reasons.append("profitability_stage_manifest_stage_structure_invalid")
+                    reason_details.append(
+                        {
+                            "reason": "profitability_stage_manifest_stage_structure_invalid",
+                            "artifact_ref": str(manifest_path),
+                            "stage": stage_name,
+                            "required_key": required_key,
+                        }
+                    )
+            artifacts = _as_dict(stage_payload.get("artifacts"))
+            if not artifacts:
+                continue
+            for artifact_payload_raw in artifacts.values():
+                artifact_payload = _as_dict(artifact_payload_raw)
+                artifact_ref = str(
+                    artifact_payload.get("path", "")
+                ).strip()
+                if not artifact_ref:
+                    continue
+                expected_sha = str(artifact_payload.get("sha256", "")).strip()
+                artifact_file = artifact_root / artifact_ref
+                if not artifact_file.exists():
+                    reasons.append("profitability_stage_manifest_artifact_missing")
+                    reason_details.append(
+                        {
+                            "reason": "profitability_stage_manifest_artifact_missing",
+                            "artifact_ref": str(artifact_file),
+                            "stage": stage_name,
+                        }
+                    )
+                    continue
+                if expected_sha:
+                    actual_sha = _sha256_path(artifact_file)
+                    if expected_sha != actual_sha:
+                        reasons.append("profitability_stage_manifest_artifact_hash_mismatch")
+                        reason_details.append(
+                            {
+                                "reason": "profitability_stage_manifest_artifact_hash_mismatch",
+                                "artifact_ref": str(artifact_file),
+                                "stage": stage_name,
+                                "expected_sha256": expected_sha,
+                                "actual_sha256": actual_sha,
+                            }
+                        )
+
+    rollback_contract = manifest_payload.get("rollback_contract_ref")
+    if not rollback_contract:
+        reasons.append("profitability_stage_manifest_rollback_contract_ref_missing")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_rollback_contract_ref_missing",
+                "artifact_ref": str(manifest_path),
+            }
+        )
+
+    content_hash = str(manifest_payload.get("content_hash", "")).strip()
+    if not content_hash:
+        reasons.append("profitability_stage_manifest_content_hash_missing")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_content_hash_missing",
+                "artifact_ref": str(manifest_path),
+            }
+        )
+    else:
+        content_hash_payload = dict(manifest_payload)
+        content_hash_payload.pop("content_hash", None)
+        expected_content_hash = _sha256_json(content_hash_payload)
+        if content_hash != expected_content_hash:
+            reasons.append("profitability_stage_manifest_content_hash_mismatch")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_content_hash_mismatch",
+                    "artifact_ref": str(manifest_path),
+                    "content_hash": content_hash,
+                    "expected_content_hash": expected_content_hash,
+                }
+            )
+
+    overall_status = str(manifest_payload.get("overall_status", "")).strip()
+    if overall_status not in {"pass", "fail"}:
+        reasons.append("profitability_stage_manifest_overall_status_invalid")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_overall_status_invalid",
+                "artifact_ref": str(manifest_path),
+                "overall_status": overall_status,
+            }
+        )
+
+    failure_reasons = _list_of_strings(manifest_payload.get("failure_reasons"))
+    if overall_status == "fail":
+        if not failure_reasons:
+            reasons.append("profitability_stage_manifest_failure_reasons_missing")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_failure_reasons_missing",
+                    "artifact_ref": str(manifest_path),
+                }
+            )
+
+    if overall_status in {"pass", "fail"} and stages:
+        stage_statuses: list[bool] = []
+        for stage_name in ("research", "validation", "execution", "governance"):
+            stage_payload = _as_dict(stages.get(stage_name))
+            stage_statuses.append(str(stage_payload.get("status", "")).strip() == "pass")
+        expected_overall_status = (
+            "pass" if all(stage_statuses) else "fail"
+        )
+        if overall_status != expected_overall_status:
+            reasons.append("profitability_stage_manifest_overall_status_mismatch")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_overall_status_mismatch",
+                    "artifact_ref": str(manifest_path),
+                    "overall_status": overall_status,
+                    "calculated_overall_status": expected_overall_status,
+                }
+            )
+    ordered_stages = ("research", "validation", "execution", "governance")
+    failure_encountered = False
+    for stage_name in ordered_stages:
+        stage_payload = _as_dict(stages.get(stage_name))
+        stage_status = str(stage_payload.get("status", "")).strip()
+        if stage_status != "pass":
+            failure_encountered = True
+            continue
+        if failure_encountered:
+            reasons.append("profitability_stage_manifest_stage_transition_violation")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_stage_transition_violation",
+                    "artifact_ref": str(manifest_path),
+                    "stage": stage_name,
+                }
+            )
+            break
+    if overall_status == "fail":
+        reasons.append("profitability_stage_manifest_stage_chain_not_passed")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_stage_chain_not_passed",
+                "artifact_ref": str(manifest_path),
+                "failure_reasons": failure_reasons,
+            }
+        )
+
+
 def _append_profitability_evidence_reasons(
     *,
     reasons: list[str],
@@ -613,6 +895,7 @@ def _required_artifacts_for_target(
     include_profitability_artifacts: bool,
     include_janus_artifacts: bool,
     include_stress_artifacts: bool,
+    require_profitability_manifest: bool,
 ) -> list[str]:
     base_raw = policy_payload.get(
         "promotion_required_artifacts",
@@ -644,6 +927,15 @@ def _required_artifacts_for_target(
         for artifact in profitability_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
+    if require_profitability_manifest:
+        required.append(
+            str(
+                policy_payload.get(
+                    "promotion_profitability_stage_manifest_artifact",
+                    "profitability/profitability-stage-manifest-v1.json",
+                )
+            )
+        )
     if include_janus_artifacts:
         janus_artifacts_raw = policy_payload.get(
             "promotion_janus_required_artifacts",
@@ -1552,6 +1844,18 @@ def _load_json_if_exists(path: Path) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
     return cast(dict[str, Any], payload)
+
+
+def _sha256_path(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _sha256_json(payload: object) -> str:
+    payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
 
 def _int_or_default(value: Any, default: int) -> int:

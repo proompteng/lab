@@ -149,6 +149,7 @@ def main() -> int:
         ),
         "evaluation_manifest_path": str(result.evaluation_manifest_path),
         "recommendation_manifest_path": str(result.recommendation_manifest_path),
+        "profitability_manifest_path": str(result.profitability_manifest_path),
         "recommendation_artifact_path": str(result.recommendation_artifact_path),
         "stage_trace_ids": result.stage_trace_ids,
         "stage_lineage_root": result.stage_lineage_root,
