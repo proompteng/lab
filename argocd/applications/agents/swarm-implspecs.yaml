@@ -1,0 +1,97 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: swarm-intelligence-cycle-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - swarmName
+      - swarmStage
+      - ownerChannel
+      - objective
+  summary: 'Run one read-only swarm intelligence cycle stage.'
+  text: |
+    Objective: Execute one read-only swarm intelligence stage for ${swarmName}.
+
+    Inputs:
+    - swarmName
+    - swarmStage (discover | plan | verify)
+    - ownerChannel
+    - objective
+    - swarmAgentWorkerId (optional)
+    - swarmAgentIdentity (optional)
+    - hulyApiBaseUrl (optional)
+    - hulyWorkspace (optional)
+    - hulyProject (optional)
+    - hulySkillRef (optional, default skills/huly-api/SKILL.md)
+
+    Requirements:
+    - Keep this run read-only: do not open PRs and do not mutate Kubernetes resources.
+    - Use internet research when stage needs fresh external facts.
+    - Use the Huly skill at ${hulySkillRef} for owner updates and cross-swarm communication.
+    - Sign communications with worker identity ${swarmAgentWorkerId}/${swarmAgentIdentity} when present.
+    - Write a concise Markdown stage report to `/workspace/.agentrun/swarm/${swarmName}-${swarmStage}.md`.
+
+    Stage behavior:
+    - discover: identify high-value needs, cite sources, rank top 3.
+    - plan: turn top need into an executable implementation plan and test plan.
+    - verify: validate current runtime/code health, list regressions and risk deltas.
+
+    Output:
+    - Include: Summary, Evidence, Risks, Next Actions, and Owner Update (for ${ownerChannel}).
+
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: swarm-autonomous-implementation-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - swarmName
+      - objective
+  summary: 'Implement prioritized swarm work and deliver through GitOps/PR flow.'
+  text: |
+    Objective: Implement one high-value mission for ${swarmName} and deliver safely.
+
+    Inputs:
+    - repository
+    - base
+    - head
+    - swarmName
+    - objective
+    - ownerChannel
+    - swarmAgentWorkerId (optional)
+    - swarmAgentIdentity (optional)
+    - hulyApiBaseUrl (optional)
+    - hulyWorkspace (optional)
+    - hulyProject (optional)
+    - hulySkillRef (optional, default skills/huly-api/SKILL.md)
+
+    Optional cross-swarm requirement inputs (present when this run was dispatched from a Signal):
+    - swarmRequirementId
+    - swarmRequirementSignal
+    - swarmRequirementSource
+    - swarmRequirementTarget
+    - swarmRequirementChannel
+    - swarmRequirementDescription
+    - swarmRequirementPayload
+
+    Required execution:
+    1) If swarmRequirementChannel exists and points to Huly, treat this run as a cross-swarm requirement from
+       swarmRequirementSource -> swarmRequirementTarget and use the requirement description/payload as the primary scope.
+    2) Implement minimal, production-quality code and config changes in ${repository}.
+    3) Run targeted validation for touched areas (lint/type-check/tests as applicable).
+    4) Use the Huly skill at ${hulySkillRef} to create/update mission issue/chat/doc records in Huly and publish status
+       with ${swarmAgentWorkerId}/${swarmAgentIdentity} identity when present.
+    5) Commit to ${head}, open or update a PR against ${base}, and include requirement provenance (signal/channel/id).
+    6) Return a short release note with risks, rollback path, and owner-facing status for ${ownerChannel}.
+
+    Constraints:
+    - Keep scope narrow and evidence-backed.
+    - No direct kubectl production mutations; use GitOps changes only.

@@ -504,6 +504,7 @@ const resolveNamespace = (resource: Record<string, unknown>) =>
 
 const STAGE_NAMES = ['discover', 'plan', 'implement', 'verify'] as const
 type StageName = (typeof STAGE_NAMES)[number]
+type StageTargetRef = { kind: 'AgentRun' | 'OrchestrationRun'; name: string; namespace: string }
 
 const STAGE_CADENCE_KEY: Record<StageName, string> = {
   discover: 'discoverEvery',
@@ -522,6 +523,59 @@ const STAGE_LAST_RUN_KEY: Record<StageName, string> = {
 const TERMINAL_SUCCESS_PHASES = new Set(['succeeded', 'success', 'completed'])
 const TERMINAL_FAILURE_PHASES = new Set(['failed', 'error', 'cancelled'])
 const ACTIVE_PHASES = new Set(['pending', 'running', 'inprogress', 'progressing', 'queued'])
+const SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE = (() => {
+  const raw = Number(process.env.JANGAR_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE ?? '5')
+  if (!Number.isFinite(raw) || raw < 1) return 5
+  return Math.floor(raw)
+})()
+const SWARM_REQUIREMENT_LABEL_TYPE = 'swarm.proompteng.ai/type'
+const SWARM_REQUIREMENT_LABEL_TO = 'swarm.proompteng.ai/to'
+const SWARM_REQUIREMENT_LABEL_FROM = 'swarm.proompteng.ai/from'
+const SWARM_REQUIREMENT_LABEL_ID = 'swarm.proompteng.ai/requirement-id'
+const SWARM_REQUIREMENT_LABEL_ATTEMPT = 'swarm.proompteng.ai/requirement-attempt'
+const SWARM_REQUIREMENT_LABEL_CHANNEL = 'swarm.proompteng.ai/requirement-channel'
+const SWARM_REQUIREMENT_ANNOTATION_SIGNAL = 'swarm.proompteng.ai/requirement-signal'
+const SWARM_AGENT_WORKER_ID_LABEL = 'swarm.proompteng.ai/worker-id'
+const SWARM_SCHEDULE_ANNOTATION_WORKER_ID = 'swarm.proompteng.ai/worker-id'
+const SWARM_SCHEDULE_ANNOTATION_IDENTITY = 'swarm.proompteng.ai/agent-identity'
+const SWARM_SCHEDULE_ANNOTATION_ROLE = 'swarm.proompteng.ai/agent-role'
+const SWARM_SCHEDULE_ANNOTATION_OWNER_CHANNEL = 'swarm.proompteng.ai/owner-channel'
+const SWARM_SCHEDULE_ANNOTATION_HULY_BASE_URL = 'swarm.proompteng.ai/huly-base-url'
+const SWARM_SCHEDULE_ANNOTATION_HULY_WORKSPACE = 'swarm.proompteng.ai/huly-workspace'
+const SWARM_SCHEDULE_ANNOTATION_HULY_PROJECT = 'swarm.proompteng.ai/huly-project'
+const SWARM_SCHEDULE_ANNOTATION_HULY_SECRET = 'swarm.proompteng.ai/huly-secret'
+const SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF = 'swarm.proompteng.ai/huly-skill-ref'
+const SWARM_DEFAULT_HULY_BASE_URL = (() => {
+  const value = asString(process.env.JANGAR_SWARM_HULY_BASE_URL)?.trim()
+  return value && value.length > 0 ? value : 'https://huly.proompteng.ai'
+})()
+const SWARM_DEFAULT_HULY_SECRET_NAME = (() => {
+  const value = asString(process.env.JANGAR_SWARM_HULY_SECRET_NAME)?.trim()
+  return value && value.length > 0 ? value : 'huly-api'
+})()
+const SWARM_DEFAULT_HULY_SKILL_REF = (() => {
+  const value = asString(process.env.JANGAR_SWARM_HULY_SKILL_REF)?.trim()
+  return value && value.length > 0 ? value : 'skills/huly-api/SKILL.md'
+})()
+const SWARM_REQUIREMENT_MAX_ATTEMPTS = (() => {
+  const raw = Number(process.env.JANGAR_SWARM_REQUIREMENT_MAX_ATTEMPTS ?? '3')
+  if (!Number.isFinite(raw) || raw < 1) return 3
+  return Math.floor(raw)
+})()
+
+type SwarmHulyIntegration = {
+  baseUrl: string
+  workspace?: string
+  project?: string
+  secretName: string
+  skillRef: string
+}
+
+type SwarmAgentIdentity = {
+  workerId: string
+  identity: string
+  role: StageName
+}
 
 const normalizeLabelValue = (value: string) => {
   const normalized = value
@@ -536,6 +590,154 @@ const normalizeLabelValue = (value: string) => {
     .replace(/^[.\-]+/, '')
     .replace(/[.\-]+$/, '')
   return trimmed || 'swarm'
+}
+
+const parseStringList = (raw: unknown) => {
+  if (!Array.isArray(raw)) return []
+  return raw.map((item) => (typeof item === 'string' ? item.trim() : '')).filter((item) => item.length > 0)
+}
+
+const mergeUniqueStrings = (...values: string[][]) => {
+  const merged: string[] = []
+  const seen = new Set<string>()
+  for (const list of values) {
+    for (const value of list) {
+      if (seen.has(value)) continue
+      seen.add(value)
+      merged.push(value)
+    }
+  }
+  return merged
+}
+
+const normalizeHulyBaseUrl = (value: string | null | undefined) => {
+  if (!value) return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (trimmed.toLowerCase().startsWith('huly://')) {
+    return SWARM_DEFAULT_HULY_BASE_URL
+  }
+  try {
+    const url = new URL(trimmed)
+    if (!url.hostname.toLowerCase().includes('huly')) return ''
+    const origin = `${url.protocol}//${url.host}`
+    return origin.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+const resolveSwarmHulyIntegration = (
+  spec: Record<string, unknown>,
+  owner: Record<string, unknown>,
+): SwarmHulyIntegration => {
+  const integrations = asRecord(spec.integrations) ?? {}
+  const huly = asRecord(integrations.huly) ?? {}
+  const authSecretRef = asRecord(huly.authSecretRef) ?? {}
+  const ownerChannel = asString(owner.channel)
+  const baseUrl =
+    normalizeHulyBaseUrl(asString(huly.baseUrl)) || normalizeHulyBaseUrl(ownerChannel) || SWARM_DEFAULT_HULY_BASE_URL
+  const secretName = asString(authSecretRef.name)?.trim() || SWARM_DEFAULT_HULY_SECRET_NAME
+  const workspace = asString(huly.workspace)?.trim() || undefined
+  const project = asString(huly.project)?.trim() || undefined
+  const skillRef = asString(huly.skillRef)?.trim() || SWARM_DEFAULT_HULY_SKILL_REF
+  return {
+    baseUrl,
+    workspace,
+    project,
+    secretName,
+    skillRef,
+  }
+}
+
+const buildSwarmAgentIdentity = (input: { swarmName: string; stage: StageName; seedSuffix?: string }) => {
+  const seed = `${input.swarmName}:${input.stage}:${input.seedSuffix ?? ''}`
+  const hash = hashNameSuffix(seed)
+  const workerId = `worker-${hash.slice(0, 8)}`
+  const swarmLabel = normalizeLabelValue(input.swarmName)
+  const identity = `vw-${swarmLabel}-${input.stage}-${workerId}`.slice(0, 120)
+  return {
+    workerId,
+    identity,
+    role: input.stage,
+  } satisfies SwarmAgentIdentity
+}
+
+const buildSwarmRuntimeParameters = (input: {
+  ownerChannel: string | null
+  huly: SwarmHulyIntegration
+  identity: SwarmAgentIdentity
+}) => {
+  const parameters: Record<string, string> = {
+    swarmAgentWorkerId: input.identity.workerId,
+    swarmAgentIdentity: input.identity.identity,
+    swarmAgentRole: input.identity.role,
+    hulyApiBaseUrl: input.huly.baseUrl,
+    hulySkillRef: input.huly.skillRef,
+  }
+  if (input.ownerChannel) {
+    parameters.ownerChannel = input.ownerChannel
+  }
+  if (input.huly.workspace) {
+    parameters.hulyWorkspace = input.huly.workspace
+  }
+  if (input.huly.project) {
+    parameters.hulyProject = input.huly.project
+  }
+  return parameters
+}
+
+const buildSwarmScheduleAnnotations = (input: {
+  ownerChannel: string | null
+  huly: SwarmHulyIntegration
+  identity: SwarmAgentIdentity
+}) => {
+  const annotations: Record<string, string> = {
+    [SWARM_SCHEDULE_ANNOTATION_WORKER_ID]: input.identity.workerId,
+    [SWARM_SCHEDULE_ANNOTATION_IDENTITY]: input.identity.identity,
+    [SWARM_SCHEDULE_ANNOTATION_ROLE]: input.identity.role,
+    [SWARM_SCHEDULE_ANNOTATION_HULY_BASE_URL]: input.huly.baseUrl,
+    [SWARM_SCHEDULE_ANNOTATION_HULY_SECRET]: input.huly.secretName,
+    [SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF]: input.huly.skillRef,
+  }
+  if (input.ownerChannel) {
+    annotations[SWARM_SCHEDULE_ANNOTATION_OWNER_CHANNEL] = input.ownerChannel
+  }
+  if (input.huly.workspace) {
+    annotations[SWARM_SCHEDULE_ANNOTATION_HULY_WORKSPACE] = input.huly.workspace
+  }
+  if (input.huly.project) {
+    annotations[SWARM_SCHEDULE_ANNOTATION_HULY_PROJECT] = input.huly.project
+  }
+  return annotations
+}
+
+const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown>) => {
+  const annotations = asRecord(readNested(schedule, ['metadata', 'annotations'])) ?? {}
+  const ownerChannel = asString(annotations[SWARM_SCHEDULE_ANNOTATION_OWNER_CHANNEL]) ?? null
+  const workerId = asString(annotations[SWARM_SCHEDULE_ANNOTATION_WORKER_ID])
+  const identity = asString(annotations[SWARM_SCHEDULE_ANNOTATION_IDENTITY])
+  const role = asString(annotations[SWARM_SCHEDULE_ANNOTATION_ROLE])
+  const hulyBaseUrl = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_BASE_URL])
+  const hulyWorkspace = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_WORKSPACE])
+  const hulyProject = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_PROJECT])
+  const hulySecret = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_SECRET])
+  const hulySkillRef = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF])
+
+  const parameters: Record<string, string> = {}
+  if (ownerChannel) parameters.ownerChannel = ownerChannel
+  if (workerId) parameters.swarmAgentWorkerId = workerId
+  if (identity) parameters.swarmAgentIdentity = identity
+  if (role) parameters.swarmAgentRole = role
+  if (hulyBaseUrl) parameters.hulyApiBaseUrl = hulyBaseUrl
+  if (hulyWorkspace) parameters.hulyWorkspace = hulyWorkspace
+  if (hulyProject) parameters.hulyProject = hulyProject
+  if (hulySkillRef) parameters.hulySkillRef = hulySkillRef
+
+  return {
+    parameters,
+    hulySecret,
+  }
 }
 
 const parseDurationToMs = (raw: string) => {
@@ -597,7 +799,7 @@ const resolveStageTargetRef = (stageSpec: Record<string, unknown>, defaultNamesp
   const namespace = asString(targetRef.namespace) ?? defaultNamespace
   if (!kind || !name) return null
   if (kind !== 'AgentRun' && kind !== 'OrchestrationRun') return null
-  return { kind, name, namespace }
+  return { kind, name, namespace } satisfies StageTargetRef
 }
 
 const resolveStageApiVersion = (kind: string) => {
@@ -688,6 +890,61 @@ const filterRunsAfterTime = (resources: Record<string, unknown>[], timestampMs: 
     const runTimestamp = parseTimeOrNull(getRunTimestamp(resource))
     return runTimestamp !== null && runTimestamp > timestampMs
   })
+}
+
+const requirementIdForSignal = (signalNamespace: string, signalName: string) =>
+  hashNameSuffix(`${signalNamespace}/${signalName}`)
+
+const isHulyChannel = (channel: string | null | undefined) => {
+  if (!channel) return false
+  const value = channel.trim()
+  if (!value) return false
+  if (value.toLowerCase().startsWith('huly://')) return true
+  try {
+    const url = new URL(value)
+    return url.hostname.toLowerCase().includes('huly')
+  } catch {
+    return false
+  }
+}
+
+const stringifyUnknown = (value: unknown) => {
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return ''
+  }
+}
+
+const normalizeParameterMap = (raw: unknown) => {
+  const record = asRecord(raw) ?? {}
+  const output: Record<string, string> = {}
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value === 'string') {
+      output[key] = value
+      continue
+    }
+    if (value === null || value === undefined) continue
+    output[key] = stringifyUnknown(value)
+  }
+  return output
+}
+
+const makeGenerateName = (base: string, suffix: string) => {
+  const candidate = makeHashedName(base, suffix)
+  const trimmed = candidate.slice(0, 62).replace(/-+$/, '')
+  return `${trimmed || 'run'}-`
+}
+
+const resolveStageTargetResource = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  targetRef: StageTargetRef,
+) => {
+  if (targetRef.kind === 'AgentRun') {
+    return kube.get(RESOURCE_MAP.AgentRun, targetRef.name, targetRef.namespace)
+  }
+  return kube.get(RESOURCE_MAP.OrchestrationRun, targetRef.name, targetRef.namespace)
 }
 
 const reconcileTool = async (kube: ReturnType<typeof createKubernetesClient>, tool: Record<string, unknown>) => {
@@ -846,9 +1103,15 @@ const buildScheduleRunTemplate = (
     'schedules.proompteng.ai/schedule': scheduleName,
     'jangar.proompteng.ai/delivery-id': deliveryPlaceholder,
   }
+  const runtimeInjection = resolveScheduleRuntimeInjection(schedule)
 
   if (targetKind === 'AgentRun') {
     const spec = asRecord(target.spec) ?? {}
+    const existingParameters = normalizeParameterMap(spec.parameters)
+    const existingSecrets = parseStringList(spec.secrets)
+    const mergedSecrets = runtimeInjection.hulySecret
+      ? mergeUniqueStrings(existingSecrets, [runtimeInjection.hulySecret])
+      : existingSecrets
     return {
       apiVersion: 'agents.proompteng.ai/v1alpha1',
       kind: 'AgentRun',
@@ -860,12 +1123,18 @@ const buildScheduleRunTemplate = (
       spec: {
         ...spec,
         idempotencyKey: deliveryPlaceholder,
+        parameters: {
+          ...existingParameters,
+          ...runtimeInjection.parameters,
+        },
+        ...(mergedSecrets.length > 0 ? { secrets: mergedSecrets } : {}),
       },
     }
   }
 
   if (targetKind === 'OrchestrationRun') {
     const spec = asRecord(target.spec) ?? {}
+    const existingParameters = normalizeParameterMap(spec.parameters)
     return {
       apiVersion: 'orchestration.proompteng.ai/v1alpha1',
       kind: 'OrchestrationRun',
@@ -877,6 +1146,10 @@ const buildScheduleRunTemplate = (
       spec: {
         ...spec,
         deliveryId: deliveryPlaceholder,
+        parameters: {
+          ...existingParameters,
+          ...runtimeInjection.parameters,
+        },
       },
     }
   }
@@ -1058,6 +1331,8 @@ const reconcileSwarm = async (
   const timezone = asString(spec.timezone) ?? 'UTC'
   const execution = asRecord(spec.execution) ?? {}
   const risk = asRecord(spec.risk) ?? {}
+  const ownerChannel = asString(owner.channel) ?? null
+  const huly = resolveSwarmHulyIntegration(spec, owner)
 
   const freezeAfterFailuresRaw = Number(risk.freezeAfterFailures)
   const freezeAfterFailures =
@@ -1083,7 +1358,7 @@ const reconcileSwarm = async (
     scheduleName: string
     every?: string
     cron?: string
-    targetRef?: { kind: string; name: string; namespace: string }
+    targetRef?: StageTargetRef
   }> = []
 
   for (const stage of STAGE_NAMES) {
@@ -1198,6 +1473,206 @@ const reconcileSwarm = async (
   }
 
   const ownerReferences = buildOwnerRefs(swarm)
+  const implementStageConfig = stageConfigs.find(
+    (
+      stageConfig,
+    ): stageConfig is { stage: StageName; enabled: boolean; scheduleName: string; targetRef: StageTargetRef } =>
+      stageConfig.stage === 'implement' && stageConfig.enabled && Boolean(stageConfig.targetRef),
+  )
+  const requirementSelector = `${SWARM_REQUIREMENT_LABEL_TYPE}=requirement,${SWARM_REQUIREMENT_LABEL_TO}=${swarmLabel}`
+  const requirementSignals = listItems(await kube.list(RESOURCE_MAP.Signal, swarmNamespace, requirementSelector))
+  const requirementRunStates = new Map<
+    string,
+    {
+      any: boolean
+      active: boolean
+      success: boolean
+      failed: number
+    }
+  >()
+  for (const run of implementRuns) {
+    const requirementId = asString(readNested(run, ['metadata', 'labels', SWARM_REQUIREMENT_LABEL_ID]))
+    if (!requirementId) continue
+    const phase = (asString(readNested(run, ['status', 'phase'])) ?? '').toLowerCase()
+    const current = requirementRunStates.get(requirementId) ?? { any: false, active: false, success: false, failed: 0 }
+    current.any = true
+    if (TERMINAL_SUCCESS_PHASES.has(phase)) current.success = true
+    if (ACTIVE_PHASES.has(phase)) current.active = true
+    if (TERMINAL_FAILURE_PHASES.has(phase)) current.failed += 1
+    requirementRunStates.set(requirementId, current)
+  }
+
+  let requirementTemplate: Record<string, unknown> | null | undefined
+  let requirementTemplateError: string | null = null
+  const requirementStats = {
+    pending: 0,
+    dispatched: 0,
+    blocked: 0,
+    completed: 0,
+    invalidChannel: 0,
+  }
+
+  for (const signal of requirementSignals) {
+    const signalName = asString(readNested(signal, ['metadata', 'name']))
+    if (!signalName) continue
+    const signalNamespace = asString(readNested(signal, ['metadata', 'namespace'])) ?? swarmNamespace
+    const requirementId = requirementIdForSignal(signalNamespace, signalName)
+    const signalSpec = asRecord(signal.spec) ?? {}
+    const signalChannel = asString(signalSpec.channel)
+
+    if (!isHulyChannel(signalChannel)) {
+      requirementStats.pending += 1
+      requirementStats.blocked += 1
+      requirementStats.invalidChannel += 1
+      continue
+    }
+
+    const state = requirementRunStates.get(requirementId)
+    if (state?.success) {
+      requirementStats.completed += 1
+      continue
+    }
+
+    requirementStats.pending += 1
+
+    if (state?.active) continue
+    const attempt = Math.max(1, Math.min((state?.failed ?? 0) + 1, SWARM_REQUIREMENT_MAX_ATTEMPTS))
+    if (state?.failed && state.failed >= SWARM_REQUIREMENT_MAX_ATTEMPTS) {
+      requirementStats.blocked += 1
+      continue
+    }
+    if (state?.any && !state.failed) {
+      requirementStats.blocked += 1
+      continue
+    }
+    if (freezeActive) continue
+    if (requirementStats.dispatched >= SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE) continue
+    if (!implementStageConfig?.targetRef) {
+      requirementStats.blocked += 1
+      continue
+    }
+
+    if (requirementTemplate === undefined) {
+      requirementTemplate = await resolveStageTargetResource(kube, implementStageConfig.targetRef)
+      if (!requirementTemplate) {
+        requirementTemplateError = `implement target ${implementStageConfig.targetRef.kind}/${implementStageConfig.targetRef.name} not found`
+      }
+    }
+    if (!requirementTemplate) {
+      requirementStats.blocked += 1
+      continue
+    }
+
+    const sourceSwarmRaw =
+      asString(readNested(signal, ['metadata', 'labels', SWARM_REQUIREMENT_LABEL_FROM])) ?? 'unknown'
+    const sourceSwarmLabel = normalizeLabelValue(sourceSwarmRaw)
+    const requirementIdentity = buildSwarmAgentIdentity({
+      swarmName,
+      stage: 'implement',
+      seedSuffix: requirementId,
+    })
+    const runtimeParameters = buildSwarmRuntimeParameters({
+      ownerChannel,
+      huly,
+      identity: requirementIdentity,
+    })
+    const runLabels = {
+      'swarm.proompteng.ai/name': swarmLabel,
+      'swarm.proompteng.ai/stage': 'implement',
+      'swarm.proompteng.ai/mode': mode,
+      ...(swarmUid ? { 'swarm.proompteng.ai/uid': swarmUid } : {}),
+      [SWARM_AGENT_WORKER_ID_LABEL]: requirementIdentity.workerId,
+      [SWARM_REQUIREMENT_LABEL_ID]: requirementId,
+      [SWARM_REQUIREMENT_LABEL_ATTEMPT]: String(attempt),
+      [SWARM_REQUIREMENT_LABEL_FROM]: sourceSwarmLabel,
+      [SWARM_REQUIREMENT_LABEL_TO]: swarmLabel,
+      [SWARM_REQUIREMENT_LABEL_CHANNEL]: 'huly',
+    }
+    const runAnnotations = {
+      [SWARM_REQUIREMENT_ANNOTATION_SIGNAL]: signalName,
+      [SWARM_SCHEDULE_ANNOTATION_IDENTITY]: requirementIdentity.identity,
+    }
+    const payloadValue = stringifyUnknown(signalSpec.payload)
+    const description = asString(signalSpec.description)
+    const requirementParameters: Record<string, string> = {
+      ...runtimeParameters,
+      swarmRequirementId: requirementId,
+      swarmRequirementSignal: signalName,
+      swarmRequirementSource: sourceSwarmRaw,
+      swarmRequirementTarget: swarmName,
+      swarmRequirementChannel: signalChannel ?? '',
+    }
+    if (description) {
+      requirementParameters.swarmRequirementDescription = description
+    }
+    if (payloadValue) {
+      requirementParameters.swarmRequirementPayload = payloadValue.slice(0, 16_384)
+    }
+
+    const targetKind = asString(requirementTemplate.kind)
+    const targetNamespace =
+      asString(readNested(requirementTemplate, ['metadata', 'namespace'])) ?? implementStageConfig.targetRef.namespace
+    const targetSpec = asRecord(requirementTemplate.spec) ?? {}
+    const generateName = makeGenerateName(`${swarmName}-${sourceSwarmLabel}`, `req-${requirementId}-${attempt}`)
+
+    try {
+      if (targetKind === 'AgentRun') {
+        const existingParameters = normalizeParameterMap(targetSpec.parameters)
+        const existingSecrets = parseStringList(targetSpec.secrets)
+        const mergedSecrets = huly.secretName ? mergeUniqueStrings(existingSecrets, [huly.secretName]) : existingSecrets
+        await kube.apply({
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'AgentRun',
+          metadata: {
+            generateName,
+            namespace: targetNamespace,
+            labels: runLabels,
+            annotations: runAnnotations,
+            ...(ownerReferences && targetNamespace === swarmNamespace ? { ownerReferences } : {}),
+          },
+          spec: {
+            ...targetSpec,
+            idempotencyKey: `swarm-requirement-${swarmName}-${requirementId}-attempt-${attempt}`,
+            parameters: {
+              ...existingParameters,
+              ...requirementParameters,
+            },
+            ...(mergedSecrets.length > 0 ? { secrets: mergedSecrets } : {}),
+          },
+        })
+      } else if (targetKind === 'OrchestrationRun') {
+        const existingParameters = normalizeParameterMap(targetSpec.parameters)
+        await kube.apply({
+          apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+          kind: 'OrchestrationRun',
+          metadata: {
+            generateName,
+            namespace: targetNamespace,
+            labels: runLabels,
+            annotations: runAnnotations,
+            ...(ownerReferences && targetNamespace === swarmNamespace ? { ownerReferences } : {}),
+          },
+          spec: {
+            ...targetSpec,
+            deliveryId: `swarm-requirement-${swarmName}-${requirementId}-attempt-${attempt}`,
+            parameters: {
+              ...existingParameters,
+              ...requirementParameters,
+            },
+          },
+        })
+      } else {
+        requirementStats.blocked += 1
+        continue
+      }
+
+      requirementStats.dispatched += 1
+      requirementRunStates.set(requirementId, { any: true, active: true, success: false, failed: state?.failed ?? 0 })
+    } catch {
+      requirementStats.blocked += 1
+    }
+  }
+
   const stageStates: Record<string, unknown> = {}
 
   for (const stageConfig of stageConfigs) {
@@ -1222,6 +1697,16 @@ const reconcileSwarm = async (
     }
 
     const stageLabel = normalizeLabelValue(stageConfig.stage)
+    const stageIdentity = buildSwarmAgentIdentity({
+      swarmName,
+      stage: stageConfig.stage,
+      seedSuffix: stageConfig.targetRef ? `${stageConfig.targetRef.kind}:${stageConfig.targetRef.name}` : undefined,
+    })
+    const stageAnnotations = buildSwarmScheduleAnnotations({
+      ownerChannel,
+      huly,
+      identity: stageIdentity,
+    })
     const schedule = {
       apiVersion: 'schedules.proompteng.ai/v1alpha1',
       kind: 'Schedule',
@@ -1232,8 +1717,10 @@ const reconcileSwarm = async (
           'swarm.proompteng.ai/name': swarmLabel,
           'swarm.proompteng.ai/stage': stageLabel,
           'swarm.proompteng.ai/mode': mode,
+          [SWARM_AGENT_WORKER_ID_LABEL]: stageIdentity.workerId,
           ...(swarmUid ? { 'swarm.proompteng.ai/uid': swarmUid } : {}),
         },
+        annotations: stageAnnotations,
         ...(ownerReferences ? { ownerReferences } : {}),
       },
       spec: {
@@ -1256,6 +1743,8 @@ const reconcileSwarm = async (
       ...baseState,
       phase: schedulePhase,
       lastRunTime: lastRunTime ?? null,
+      agentWorkerId: stageIdentity.workerId,
+      agentIdentity: stageIdentity.identity,
     }
   }
 
@@ -1294,12 +1783,20 @@ const reconcileSwarm = async (
     observedGeneration: asRecord(swarm.metadata)?.generation ?? 0,
     phase: freezeActive ? 'Frozen' : 'Active',
     activeMissions,
-    queuedNeeds: Number(status.queuedNeeds ?? 0) || 0,
+    queuedNeeds: requirementStats.pending,
     discoveries24h,
     missions24h: runsIn24h.length,
     autonomousSuccessRate24h,
     lastProductionChangeRef,
     stageStates,
+    requirements: {
+      pending: requirementStats.pending,
+      dispatched: requirementStats.dispatched,
+      blocked: requirementStats.blocked,
+      completed: requirementStats.completed,
+      invalidChannel: requirementStats.invalidChannel,
+      ...(requirementTemplateError ? { error: requirementTemplateError } : {}),
+    },
   }
 
   for (const stage of STAGE_NAMES) {
@@ -1339,6 +1836,39 @@ const reconcileSwarm = async (
       status: 'False',
       reason: 'NotFrozen',
       message: 'swarm operating normally',
+    })
+  }
+
+  if (requirementStats.invalidChannel > 0) {
+    conditions = upsertCondition(conditions, {
+      type: 'RequirementsBridge',
+      status: 'False',
+      reason: 'InvalidRequirementChannel',
+      message: `${requirementStats.invalidChannel} requirement signal(s) were rejected because channel is not Huly`,
+    })
+  } else if (requirementTemplateError) {
+    conditions = upsertCondition(conditions, {
+      type: 'RequirementsBridge',
+      status: 'False',
+      reason: 'ImplementTemplateMissing',
+      message: requirementTemplateError,
+    })
+  } else if (requirementStats.blocked > 0) {
+    conditions = upsertCondition(conditions, {
+      type: 'RequirementsBridge',
+      status: 'False',
+      reason: 'RequirementBlocked',
+      message: `${requirementStats.blocked} requirement signal(s) blocked for manual intervention`,
+    })
+  } else {
+    conditions = upsertCondition(conditions, {
+      type: 'RequirementsBridge',
+      status: 'True',
+      reason: requirementStats.pending > 0 ? 'Processing' : 'Idle',
+      message:
+        requirementStats.pending > 0
+          ? `${requirementStats.pending} requirement signal(s) pending; ${requirementStats.dispatched} dispatched`
+          : 'no requirement signals pending',
     })
   }
   nextStatus.conditions = conditions

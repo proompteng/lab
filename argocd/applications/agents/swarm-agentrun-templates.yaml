@@ -1,0 +1,345 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: jangar-swarm-discover-template
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: swarm-intelligence-cycle-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 43200
+  workflow:
+    steps:
+      - name: discover
+        parameters:
+          stage: research
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-jangar-control-plane-discover
+    issueNumber: swarm-jangar-control-plane-discover
+    issueTitle: Jangar swarm discover mission
+    swarmName: jangar-control-plane
+    swarmStage: discover
+    swarmAgentRole: discover
+    swarmAgentWorkerId: worker-jangar-discover
+    swarmAgentIdentity: vw-jangar-control-plane-discover-worker-jangar-discover
+    ownerChannel: https://huly.proompteng.ai
+    hulyApiBaseUrl: https://huly.proompteng.ai
+    hulyWorkspace: virtual-workers
+    hulyProject: jangar-control-plane
+    hulySkillRef: skills/huly-api/SKILL.md
+    objective: continuously discover platform work for the Jangar control plane
+  secrets:
+    - codex-auth
+    - huly-api
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: jangar-swarm-plan-template
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: swarm-intelligence-cycle-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 43200
+  workflow:
+    steps:
+      - name: plan
+        parameters:
+          stage: planning
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-jangar-control-plane-plan
+    issueNumber: swarm-jangar-control-plane-plan
+    issueTitle: Jangar swarm plan mission
+    swarmName: jangar-control-plane
+    swarmStage: plan
+    swarmAgentRole: plan
+    swarmAgentWorkerId: worker-jangar-plan
+    swarmAgentIdentity: vw-jangar-control-plane-plan-worker-jangar-plan
+    ownerChannel: https://huly.proompteng.ai
+    hulyApiBaseUrl: https://huly.proompteng.ai
+    hulyWorkspace: virtual-workers
+    hulyProject: jangar-control-plane
+    hulySkillRef: skills/huly-api/SKILL.md
+    objective: produce executable plans for autonomous platform improvements
+  secrets:
+    - codex-auth
+    - huly-api
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: jangar-swarm-implement-template
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: swarm-autonomous-implementation-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 172800
+  workflow:
+    steps:
+      - name: implement
+        retries: 1
+        retryBackoffSeconds: 30
+        timeoutSeconds: 7200
+        parameters:
+          stage: implementation
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-jangar-control-plane
+    issueNumber: swarm-jangar-control-plane
+    issueTitle: Jangar autonomous swarm implementation mission
+    swarmName: jangar-control-plane
+    swarmStage: implement
+    swarmAgentRole: implement
+    swarmAgentWorkerId: worker-jangar-implement
+    swarmAgentIdentity: vw-jangar-control-plane-implement-worker-jangar-implement
+    objective: autonomously implement platform improvements and requirement handoffs from Torghut
+    ownerChannel: https://huly.proompteng.ai
+    hulyApiBaseUrl: https://huly.proompteng.ai
+    hulyWorkspace: virtual-workers
+    hulyProject: jangar-control-plane
+    hulySkillRef: skills/huly-api/SKILL.md
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  secrets:
+    - github-token
+    - codex-auth
+    - huly-api
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: jangar-swarm-verify-template
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: swarm-intelligence-cycle-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 43200
+  workflow:
+    steps:
+      - name: verify
+        parameters:
+          stage: verify
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-jangar-control-plane-verify
+    issueNumber: swarm-jangar-control-plane-verify
+    issueTitle: Jangar swarm verify mission
+    swarmName: jangar-control-plane
+    swarmStage: verify
+    swarmAgentRole: verify
+    swarmAgentWorkerId: worker-jangar-verify
+    swarmAgentIdentity: vw-jangar-control-plane-verify-worker-jangar-verify
+    ownerChannel: https://huly.proompteng.ai
+    hulyApiBaseUrl: https://huly.proompteng.ai
+    hulyWorkspace: virtual-workers
+    hulyProject: jangar-control-plane
+    hulySkillRef: skills/huly-api/SKILL.md
+    objective: verify runtime, delivery, and policy health for the control plane
+  secrets:
+    - codex-auth
+    - huly-api
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-swarm-discover-template
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: swarm-intelligence-cycle-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 43200
+  workflow:
+    steps:
+      - name: discover
+        parameters:
+          stage: research
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-torghut-quant-discover
+    issueNumber: swarm-torghut-quant-discover
+    issueTitle: Torghut swarm discover mission
+    swarmName: torghut-quant
+    swarmStage: discover
+    swarmAgentRole: discover
+    swarmAgentWorkerId: worker-torghut-discover
+    swarmAgentIdentity: vw-torghut-quant-discover-worker-torghut-discover
+    ownerChannel: https://huly.proompteng.ai
+    hulyApiBaseUrl: https://huly.proompteng.ai
+    hulyWorkspace: virtual-workers
+    hulyProject: torghut-quant
+    hulySkillRef: skills/huly-api/SKILL.md
+    objective: discover alpha, execution, and risk-control opportunities for Torghut
+  secrets:
+    - codex-auth
+    - huly-api
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-swarm-plan-template
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: swarm-intelligence-cycle-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 43200
+  workflow:
+    steps:
+      - name: plan
+        parameters:
+          stage: planning
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-torghut-quant-plan
+    issueNumber: swarm-torghut-quant-plan
+    issueTitle: Torghut swarm plan mission
+    swarmName: torghut-quant
+    swarmStage: plan
+    swarmAgentRole: plan
+    swarmAgentWorkerId: worker-torghut-plan
+    swarmAgentIdentity: vw-torghut-quant-plan-worker-torghut-plan
+    ownerChannel: https://huly.proompteng.ai
+    hulyApiBaseUrl: https://huly.proompteng.ai
+    hulyWorkspace: virtual-workers
+    hulyProject: torghut-quant
+    hulySkillRef: skills/huly-api/SKILL.md
+    objective: plan regime-aware quant improvements with explicit risk controls
+  secrets:
+    - codex-auth
+    - huly-api
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-swarm-implement-template
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: swarm-autonomous-implementation-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 172800
+  workflow:
+    steps:
+      - name: implement
+        retries: 1
+        retryBackoffSeconds: 30
+        timeoutSeconds: 7200
+        parameters:
+          stage: implementation
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-torghut-quant
+    issueNumber: swarm-torghut-quant
+    issueTitle: Torghut autonomous swarm implementation mission
+    swarmName: torghut-quant
+    swarmStage: implement
+    swarmAgentRole: implement
+    swarmAgentWorkerId: worker-torghut-implement
+    swarmAgentIdentity: vw-torghut-quant-implement-worker-torghut-implement
+    objective: implement regime-aware quant and risk-control improvements via GitOps changes
+    ownerChannel: https://huly.proompteng.ai
+    hulyApiBaseUrl: https://huly.proompteng.ai
+    hulyWorkspace: virtual-workers
+    hulyProject: torghut-quant
+    hulySkillRef: skills/huly-api/SKILL.md
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  secrets:
+    - github-token
+    - codex-auth
+    - huly-api
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-swarm-verify-template
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: swarm-intelligence-cycle-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 43200
+  workflow:
+    steps:
+      - name: verify
+        parameters:
+          stage: verify
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-torghut-quant-verify
+    issueNumber: swarm-torghut-quant-verify
+    issueTitle: Torghut swarm verify mission
+    swarmName: torghut-quant
+    swarmStage: verify
+    swarmAgentRole: verify
+    swarmAgentWorkerId: worker-torghut-verify
+    swarmAgentIdentity: vw-torghut-quant-verify-worker-torghut-verify
+    ownerChannel: https://huly.proompteng.ai
+    hulyApiBaseUrl: https://huly.proompteng.ai
+    hulyWorkspace: virtual-workers
+    hulyProject: torghut-quant
+    hulySkillRef: skills/huly-api/SKILL.md
+    objective: verify strategy health, guardrails, and market-regime readiness
+  secrets:
+    - codex-auth
+    - huly-api

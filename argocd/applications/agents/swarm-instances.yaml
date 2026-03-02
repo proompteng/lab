@@ -1,0 +1,143 @@
+apiVersion: swarm.proompteng.ai/v1alpha1
+kind: Swarm
+metadata:
+  name: jangar-control-plane
+  namespace: agents
+spec:
+  owner:
+    id: platform-owner
+    channel: https://huly.proompteng.ai
+  domains:
+    - platform-reliability
+    - platform-evolution
+  objectives:
+    - continuously discover and implement control-plane improvements
+    - deliver Torghut platform requirements safely to production
+  mode: lights-out
+  timezone: UTC
+  cadence:
+    discoverEvery: 20m
+    planEvery: 30m
+    implementEvery: 6h
+    verifyEvery: 20m
+  discovery:
+    minCitations: 2
+    minConfidence: 0.75
+    sources:
+      - name: internet-research
+      - name: runtime-alerts
+      - name: huly-requirements
+  delivery:
+    repoAllowlist:
+      - proompteng/lab
+    requiredChecks:
+      - lint
+      - type-check
+      - unit-tests
+    mergePolicy: merge-queue
+    deploymentTargets:
+      - agents
+    rollout:
+      strategy: canary
+      steps:
+        - setWeight: 10
+          pause: 5m
+        - setWeight: 30
+          pause: 10m
+        - setWeight: 100
+          pause: 0m
+      analysisTemplateRef: default-canary-analysis
+  risk:
+    budgetRef: default-budget
+    approvalPolicyRef: default-approval
+    freezeAfterFailures: 3
+    freezeDuration: 60m
+  execution:
+    discover:
+      targetRef:
+        kind: AgentRun
+        name: jangar-swarm-discover-template
+    plan:
+      targetRef:
+        kind: AgentRun
+        name: jangar-swarm-plan-template
+    implement:
+      targetRef:
+        kind: AgentRun
+        name: jangar-swarm-implement-template
+    verify:
+      targetRef:
+        kind: AgentRun
+        name: jangar-swarm-verify-template
+---
+apiVersion: swarm.proompteng.ai/v1alpha1
+kind: Swarm
+metadata:
+  name: torghut-quant
+  namespace: agents
+spec:
+  owner:
+    id: trading-owner
+    channel: https://huly.proompteng.ai
+  domains:
+    - quant-research
+    - autonomous-trading
+  objectives:
+    - continuously discover and implement quant alpha and risk-control improvements
+    - issue platform requirements to jangar-control-plane via Huly requirement channels
+  mode: lights-out
+  timezone: UTC
+  cadence:
+    discoverEvery: 10m
+    planEvery: 20m
+    implementEvery: 6h
+    verifyEvery: 10m
+  discovery:
+    minCitations: 2
+    minConfidence: 0.8
+    sources:
+      - name: internet-research
+      - name: market-regime-feed
+      - name: runtime-alerts
+  delivery:
+    repoAllowlist:
+      - proompteng/lab
+    requiredChecks:
+      - lint
+      - pyright
+      - unit-tests
+    mergePolicy: merge-queue
+    deploymentTargets:
+      - torghut
+    rollout:
+      strategy: canary
+      steps:
+        - setWeight: 10
+          pause: 5m
+        - setWeight: 30
+          pause: 10m
+        - setWeight: 100
+          pause: 0m
+      analysisTemplateRef: default-canary-analysis
+  risk:
+    budgetRef: default-budget
+    approvalPolicyRef: default-approval
+    freezeAfterFailures: 2
+    freezeDuration: 60m
+  execution:
+    discover:
+      targetRef:
+        kind: AgentRun
+        name: torghut-swarm-discover-template
+    plan:
+      targetRef:
+        kind: AgentRun
+        name: torghut-swarm-plan-template
+    implement:
+      targetRef:
+        kind: AgentRun
+        name: torghut-swarm-implement-template
+    verify:
+      targetRef:
+        kind: AgentRun
+        name: torghut-swarm-verify-template
