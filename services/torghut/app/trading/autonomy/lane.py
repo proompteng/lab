@@ -860,6 +860,7 @@ def _build_profitability_stage_manifest(
             "artifact_path": run_context.get("artifact_path", str(output_dir)),
             "run_id": run_context.get("run_id", run_id),
             "design_doc": run_context.get("design_doc", ""),
+            "priority_id": run_context.get("priority_id", ""),
         },
         "stages": stage_payloads,
         "overall_status": overall_status,
@@ -1524,6 +1525,7 @@ def run_autonomous_lane(
             "artifact_path": notes_artifact_root or str(output_dir),
             "run_id": run_id,
             "design_doc": str(resolved_design_doc or ""),
+            "priority_id": str(resolved_governance_priority_id or ""),
         }
         profitability_manifest_payload = _build_profitability_stage_manifest(
             output_dir=output_dir,

@@ -450,13 +450,22 @@ def _append_profitability_stage_manifest_reasons(
     manifest_path = artifact_root / manifest_relpath
     manifest_payload = _load_json_if_exists(manifest_path)
     if manifest_payload is None:
-        reasons.append("profitability_stage_manifest_missing")
-        reason_details.append(
-            {
-                "reason": "profitability_stage_manifest_missing",
-                "artifact_ref": str(manifest_path),
-            }
-        )
+        if manifest_path.exists():
+            reasons.append("profitability_stage_manifest_invalid_json")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_invalid_json",
+                    "artifact_ref": str(manifest_path),
+                }
+            )
+        else:
+            reasons.append("profitability_stage_manifest_missing")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_missing",
+                    "artifact_ref": str(manifest_path),
+                }
+            )
         return
 
     schema_version = str(manifest_payload.get("schema_version", "")).strip()
@@ -638,6 +647,18 @@ def _append_profitability_stage_manifest_reasons(
                         }
                     )
                     continue
+                if (
+                    artifact_file.suffix.lower() == ".json"
+                    and _load_json_if_exists(artifact_file) is None
+                ):
+                    reasons.append("profitability_stage_manifest_artifact_invalid_json")
+                    reason_details.append(
+                        {
+                            "reason": "profitability_stage_manifest_artifact_invalid_json",
+                            "artifact_ref": str(artifact_file),
+                            "stage": stage_name,
+                        }
+                    )
                 if expected_sha:
                     actual_sha = _sha256_path(artifact_file)
                     if expected_sha != actual_sha:
