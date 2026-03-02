@@ -169,6 +169,36 @@ class TestSchedulerRegimeResolution(TestCase):
             ('trend', 'legacy', 'hmm_schema_version_invalid'),
         )
 
+    def test_regime_resolution_falls_back_to_legacy_when_hmm_posterior_invalid(self) -> None:
+        decision = StrategyDecision(
+            strategy_id='strategy-1',
+            symbol='AAPL',
+            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+            timeframe='1Min',
+            action='buy',
+            qty=Decimal('1'),
+            params={
+                'regime_label': 'trend',
+                'schema_version': 'hmm_regime_context_v1',
+                'hmm_regime_id': 'R2',
+                'hmm_state_posterior': {'R2': 'bad-posterior'},
+                'hmm_entropy': '1.23',
+                'hmm_entropy_band': 'medium',
+                'hmm_predicted_next': 'R3',
+                'hmm_artifact': {'model_id': 'hmm-regime-v1.2.0'},
+                'hmm_transition_shock': False,
+                'hmm_duration_ms': 14,
+                'hmm_guardrail': {'stale': False, 'fallback_to_defensive': False},
+            },
+        )
+
+        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+
+        self.assertEqual(
+            source_regime_label,
+            ('trend', 'legacy', 'hmm_invalid_posterior'),
+        )
+
     def test_regime_resolution_falls_back_to_legacy_when_hmm_transition_shock(self) -> None:
         decision = StrategyDecision(
             strategy_id='strategy-1',
