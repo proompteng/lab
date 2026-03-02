@@ -322,6 +322,50 @@ describe('supporting primitives controller', () => {
     ).toBe(false)
   })
 
+  it('throttles schedule runner status reconciles within the guard interval', () => {
+    const key = 'agents/Schedule/jangar-control-plane-plan-sched'
+    const startMs = 1_000
+
+    expect(__test__.shouldThrottleScheduleRunnerStatusReconcile(key, startMs)).toBe(false)
+    expect(
+      __test__.shouldThrottleScheduleRunnerStatusReconcile(
+        key,
+        startMs + __test__.SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS - 1,
+      ),
+    ).toBe(true)
+    expect(
+      __test__.shouldThrottleScheduleRunnerStatusReconcile(
+        key,
+        startMs + __test__.SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS,
+      ),
+    ).toBe(false)
+  })
+
+  it('reconciles schedule runner status without full schedule apply path', async () => {
+    const get = vi.fn(async (resource: string) => {
+      if (resource === 'cronjob') {
+        return { status: { lastScheduleTime: '2026-01-20T00:10:00Z' } }
+      }
+      return null
+    })
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, applyStatus } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: { name: 'schedule-a', namespace: 'agents', generation: 3 },
+      status: { conditions: [] },
+    }
+
+    await __test__.reconcileScheduleRunnerStatus(kube, schedule, 'agents')
+
+    expect(get).toHaveBeenCalledWith('cronjob', 'schedule-a-cron', 'agents')
+    expect(applyStatus).toHaveBeenCalledTimes(1)
+    const payload = applyStatus.mock.calls[0]?.[0] as { status?: Record<string, unknown> }
+    expect(payload.status?.phase).toBe('Active')
+    expect(payload.status?.lastRunTime).toBe('2026-01-20T00:10:00Z')
+  })
+
   it('resolves startup gate from feature flags with env fallback default', async () => {
     const previousNodeEnv = process.env.NODE_ENV
     try {

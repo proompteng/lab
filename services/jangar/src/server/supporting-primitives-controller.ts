@@ -68,8 +68,10 @@ const queuedResourceKeysByNamespace = new Map<string, Map<string, { rerun: boole
 const optionalCrdsReady = new Set<string>()
 const swarmUnfreezeTimers = new Map<string, NodeJS.Timeout>()
 const swarmStatusReconcileThrottleByKey = new Map<string, number>()
+const scheduleRunnerStatusReconcileThrottleByKey = new Map<string, number>()
 
 const SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS = 30_000
+const SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS = 30_000
 
 const nowIso = () => new Date().toISOString()
 
@@ -574,6 +576,15 @@ const shouldThrottleSwarmStatusReconcile = (resourceKey: string, nowMs = Date.no
     return true
   }
   swarmStatusReconcileThrottleByKey.set(resourceKey, nowMs)
+  return false
+}
+
+const shouldThrottleScheduleRunnerStatusReconcile = (resourceKey: string, nowMs = Date.now()) => {
+  const last = scheduleRunnerStatusReconcileThrottleByKey.get(resourceKey)
+  if (last !== undefined && nowMs - last < SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS) {
+    return true
+  }
+  scheduleRunnerStatusReconcileThrottleByKey.set(resourceKey, nowMs)
   return false
 }
 
@@ -1354,6 +1365,28 @@ const buildScheduleRunnerCommand = (): string =>
     'sed "s/__JANGAR_DELIVERY_ID__/${DELIVERY_ID}/g" /config/run.json | kubectl create -f -',
   ].join(' ')
 
+const reconcileScheduleRunnerStatus = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  schedule: Record<string, unknown>,
+  namespace: string,
+) => {
+  const status = asRecord(schedule.status) ?? {}
+  const scheduleName = asString(readNested(schedule, ['metadata', 'name'])) ?? 'schedule'
+  const cronJobName = makeName(scheduleName, 'cron')
+  const cronResource = await kube.get('cronjob', cronJobName, namespace)
+  const lastRunTime = asString(readNested(cronResource ?? {}, ['status', 'lastScheduleTime'])) ?? undefined
+  const conditions = upsertCondition(
+    normalizeConditions(status.conditions),
+    buildReadyCondition(true, 'Active', 'schedule active'),
+  )
+  await setStatus(kube, schedule, {
+    observedGeneration: asRecord(schedule.metadata)?.generation ?? 0,
+    phase: 'Active',
+    lastRunTime,
+    conditions,
+  })
+}
+
 const reconcileSchedule = async (
   kube: ReturnType<typeof createKubernetesClient>,
   schedule: Record<string, unknown>,
@@ -1454,18 +1487,7 @@ const reconcileSchedule = async (
       },
     }
     await applyResourceIfChanged(kube, cronJob)
-    const cronResource = await kube.get('cronjob', cronJobName, namespace)
-    const lastRunTime = asString(readNested(cronResource ?? {}, ['status', 'lastScheduleTime'])) ?? undefined
-    const conditions = upsertCondition(
-      normalizeConditions(status.conditions),
-      buildReadyCondition(true, 'Active', 'schedule active'),
-    )
-    await setStatus(kube, schedule, {
-      observedGeneration: asRecord(schedule.metadata)?.generation ?? 0,
-      phase: 'Active',
-      lastRunTime,
-      conditions,
-    })
+    await reconcileScheduleRunnerStatus(kube, schedule, namespace)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const conditions = upsertCondition(
@@ -2276,10 +2298,16 @@ const handleScheduleRunnerEvent = async (
   if (!resource) return
   const scheduleName = asString(readNested(resource, ['metadata', 'labels', 'schedules.proompteng.ai/schedule']))
   if (!scheduleName) return
-  queueResourceTask(namespace, `${namespace}/Schedule/${scheduleName}`, async () => {
+  const queueKey = `${namespace}/Schedule/${scheduleName}`
+  if (event.type === 'MODIFIED' && shouldThrottleScheduleRunnerStatusReconcile(queueKey)) return
+  queueResourceTask(namespace, queueKey, async () => {
     const schedule = await kube.get(RESOURCE_MAP.Schedule, scheduleName, namespace)
     if (!schedule) return
-    await reconcileSchedule(kube, schedule, namespace)
+    if (event.type === 'DELETED') {
+      await reconcileSchedule(kube, schedule, namespace)
+      return
+    }
+    await reconcileScheduleRunnerStatus(kube, schedule, namespace)
   })
 }
 
@@ -2482,6 +2510,7 @@ export const stopSupportingPrimitivesController = () => {
   namespaceQueues.clear()
   queuedResourceKeysByNamespace.clear()
   swarmStatusReconcileThrottleByKey.clear()
+  scheduleRunnerStatusReconcileThrottleByKey.clear()
   started = false
   controllerState.started = false
 }
@@ -2490,10 +2519,13 @@ export const __test__ = {
   applyResourceIfChanged,
   buildScheduleRunnerCommand,
   isSwarmStatusOnlyEvent,
+  reconcileScheduleRunnerStatus,
   reconcileTool,
   reconcileSwarm,
   resolveWatchedResourceForKind,
+  shouldThrottleScheduleRunnerStatusReconcile,
   shouldThrottleSwarmStatusReconcile,
+  SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS,
   shouldStartWithFeatureFlag,
   SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS,
   SWARM_CRD_REFRESH_INTERVAL_MS,
