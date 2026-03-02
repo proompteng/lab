@@ -52,7 +52,12 @@ if [ ! -s "${PGDATA}/PG_VERSION" ]; then
 
   if [ -n "${POSTGRES_DB}" ]; then
     pg_ctl -D "${PGDATA}" -o "-p ${PGPORT} -c listen_addresses='*'" -w start
-    createdb --username="${POSTGRES_USER}" --owner="${POSTGRES_USER}" --encoding=UTF8 --template=template0 --if-not-exists "${POSTGRES_DB}"
+
+    db_name_escaped="$(printf "%s" "${POSTGRES_DB}" | sed "s/'/''/g")"
+    if ! psql --username="${POSTGRES_USER}" --dbname=postgres --tuples-only --no-align -c "SELECT 1 FROM pg_database WHERE datname='${db_name_escaped}'" | grep -q 1; then
+      createdb --username="${POSTGRES_USER}" --owner="${POSTGRES_USER}" --encoding=UTF8 --template=template0 "${POSTGRES_DB}"
+    fi
+
     pg_ctl -D "${PGDATA}" -m fast -w stop
   fi
 fi
