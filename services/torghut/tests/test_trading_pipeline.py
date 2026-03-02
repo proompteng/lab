@@ -1306,6 +1306,126 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "regime_hmm_non_authoritative")
         self.assertEqual(gate.reason, "hmm_invalid_posterior")
 
+    def test_pipeline_runtime_regime_gate_invalid_schema_version_fails_closed_and_preserves_artifact_lineage(
+        self,
+    ) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v0",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.2",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {
+                        "model_id": "hmm-regime-v1.2.0",
+                        "feature_schema": "hmm-v1-feature-schema",
+                        "training_run_id": "run-2026-03-01",
+                    },
+                    "transition_shock": False,
+                    "guardrail": {"stale": False, "fallback_to_defensive": False},
+                },
+                "regime_label": "trend",
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_unknown_regime")
+        self.assertEqual(gate.reason, "hmm_schema_version_invalid")
+        self.assertIsNone(gate.regime_label)
+        regime_payload = decision.params.get("regime_hmm")
+        self.assertIsInstance(regime_payload, dict)
+        self.assertEqual(regime_payload.get("schema_version"), "hmm_regime_context_v0")
+        regime_artifact = regime_payload.get("artifact")
+        self.assertIsInstance(regime_artifact, dict)
+        self.assertEqual(regime_artifact.get("model_id"), "hmm-regime-v1.2.0")
+        self.assertEqual(regime_artifact.get("feature_schema"), "hmm-v1-feature-schema")
+        self.assertEqual(regime_artifact.get("training_run_id"), "run-2026-03-01")
+
+    def test_pipeline_runtime_regime_gate_invalid_posterior_fails_closed_and_preserves_artifact_lineage(
+        self,
+    ) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {
+                        "R2": "bad-probability",
+                        "R3": "0.5",
+                    },
+                    "entropy": "1.2",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {
+                        "model_id": "hmm-regime-v1.2.0",
+                        "feature_schema": "hmm-v1-feature-schema",
+                        "training_run_id": "run-2026-03-01",
+                    },
+                    "transition_shock": False,
+                    "guardrail": {"stale": False, "fallback_to_defensive": False},
+                },
+                "regime_label": "trend",
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_non_authoritative")
+        self.assertEqual(gate.reason, "hmm_invalid_posterior")
+        self.assertIsNone(gate.regime_label)
+        regime_payload = decision.params.get("regime_hmm")
+        self.assertIsInstance(regime_payload, dict)
+        self.assertEqual(regime_payload.get("schema_version"), "hmm_regime_context_v1")
+        regime_artifact = regime_payload.get("artifact")
+        self.assertIsInstance(regime_artifact, dict)
+        self.assertEqual(
+            regime_artifact.get("model_id"),
+            "hmm-regime-v1.2.0",
+        )
+
     def test_pipeline_runtime_regime_gate_stale_hmm_is_fail_closed(self) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
@@ -1348,6 +1468,61 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "regime_hmm_stale")
         self.assertEqual(gate.reason, "aging_output")
 
+    def test_pipeline_runtime_regime_gate_stale_hmm_is_fail_closed_and_preserves_lineage(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {
+                        "model_id": "hmm-regime-v1.2.0",
+                        "feature_schema": "hmm-v1-feature-schema",
+                        "training_run_id": "run-2026-03-01",
+                    },
+                    "guardrail": {"reason": "aging_output", "stale": True},
+                },
+                "regime_label": "trend",
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_stale")
+        self.assertEqual(gate.reason, "aging_output")
+        self.assertEqual(gate.regime_label, "trend")
+        regime_payload = decision.params.get("regime_hmm")
+        self.assertIsInstance(regime_payload, dict)
+        self.assertEqual(regime_payload.get("schema_version"), "hmm_regime_context_v1")
+        regime_artifact = regime_payload.get("artifact")
+        self.assertIsInstance(regime_artifact, dict)
+        self.assertEqual(
+            regime_artifact.get("model_id"),
+            "hmm-regime-v1.2.0",
+        )
     def test_pipeline_runtime_regime_gate_fallback_to_defensive_is_fail_closed(self) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
