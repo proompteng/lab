@@ -225,6 +225,123 @@ describe('runCodexImplementation', () => {
     expect(invocation?.prompt).not.toContain('IMPORTANT git + PR contract')
   }, 40_000)
 
+  it('uses cross-swarm requirement scope when channel is Huly', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm dispatch and implementation handoff',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mu',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
+      swarmRequirementPayload:
+        '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
+      swarmRequirementPayloadBytes: '142',
+      swarmRequirementPayloadTruncated: false,
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toContain('Cross-swarm implementation requirement (primary scope):')
+    expect(invocation?.prompt).toContain('Requirement ID: 00gcj8mu')
+    expect(invocation?.prompt).toContain('Signal: torghut-to-jangar-e2e-1772426902')
+    expect(invocation?.prompt).toContain('Source: torghut-quant')
+    expect(invocation?.prompt).toContain('Target: jangar-control-plane')
+    expect(invocation?.prompt).toContain(
+      'Description:\nEnd-to-end validation requirement from torghut swarm to jangar swarm.',
+    )
+    expect(invocation?.prompt).toContain(
+      'Payload:\n{\n  "acceptance": [\n    "run includes requirement provenance labels and parameters"\n  ],\n  "priority": "high"\n}',
+    )
+    expect(invocation?.prompt).toContain('Objective: validate cross-swarm dispatch and implementation handoff')
+    expect(invocation?.prompt).toContain('Run prompt context:')
+  }, 40_000)
+
+  it('adds cross-swarm provenance fields to notify payload for Huly requirements', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm dispatch and implementation handoff',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mu',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
+      swarmRequirementPayload:
+        '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
+      swarmRequirementPayloadBytes: 142,
+      swarmRequirementPayloadTruncated: false,
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as {
+      cross_swarm_requirement?: boolean
+      swarm_requirement?: Record<string, unknown>
+      swarmRequirementId?: string | null
+      swarmRequirementSignal?: string | null
+      swarmRequirementSource?: string | null
+      swarmRequirementTarget?: string | null
+      swarmRequirementChannel?: string | null
+      swarmRequirementObjective?: string | null
+      swarmRequirementPayload?: string | null
+    }
+    expect(notify.cross_swarm_requirement).toBe(true)
+    expect(notify.swarm_requirement).toMatchObject({
+      id: '00gcj8mu',
+      signal: 'torghut-to-jangar-e2e-1772426902',
+      source: 'torghut-quant',
+      target: 'jangar-control-plane',
+      channel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      objective: 'validate cross-swarm dispatch and implementation handoff',
+      description: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
+      payload: '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
+      payloadBytes: '142',
+      payloadTruncated: false,
+    })
+    expect(notify.swarmRequirementId).toBe('00gcj8mu')
+    expect(notify.swarmRequirementSignal).toBe('torghut-to-jangar-e2e-1772426902')
+    expect(notify.swarmRequirementSource).toBe('torghut-quant')
+    expect(notify.swarmRequirementTarget).toBe('jangar-control-plane')
+    expect(notify.swarmRequirementChannel).toBe('huly://swarm-bridge/issues/TORGHUT-1772426902')
+    expect(notify.swarmRequirementObjective).toBe('validate cross-swarm dispatch and implementation handoff')
+    expect(notify.swarmRequirementPayload).toContain('"acceptance"')
+  }, 40_000)
+
+  it('does not apply cross-swarm prompt wrapping for non-Huly channels', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      swarmRequirementChannel: 'slack://channel-id',
+      swarmRequirementDescription: 'No Huly wrapping should occur.',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toBe('Implementation prompt')
+  }, 40_000)
+
   it('forwards systemPrompt from the payload into runCodexSession', async () => {
     const systemPrompt = 'You are a strict system prompt.'
     const payload = {

@@ -36,6 +36,7 @@ interface ImplementationEventPayload {
   systemPrompt?: string | null
   repository?: string
   issueNumber?: number | string
+  objective?: string
   issueTitle?: string | null
   issueBody?: string | null
   issueUrl?: string | null
@@ -49,6 +50,16 @@ interface ImplementationEventPayload {
   iterationCycle?: number | string | null
   iteration_cycle?: number | string | null
   iterations?: number | string | null
+  parameters?: Record<string, string | number | boolean>
+  swarmRequirementId?: string | null
+  swarmRequirementSignal?: string | null
+  swarmRequirementSource?: string | null
+  swarmRequirementTarget?: string | null
+  swarmRequirementChannel?: string | null
+  swarmRequirementDescription?: string | null
+  swarmRequirementPayload?: string | null
+  swarmRequirementPayloadBytes?: string | number | null
+  swarmRequirementPayloadTruncated?: string | boolean | null
 }
 
 const readEventPayload = async (path: string): Promise<ImplementationEventPayload> => {
@@ -60,6 +71,160 @@ const readEventPayload = async (path: string): Promise<ImplementationEventPayloa
       `Failed to parse event payload at ${path}: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
+}
+
+type RequirementMetadata = {
+  id?: string
+  signal?: string
+  source?: string
+  target?: string
+  channel?: string
+  description?: string
+  objective?: string
+  payload?: string
+  payloadBytes?: string
+  payloadTruncated?: boolean
+}
+
+const asStringMap = (value: Record<string, string | number | boolean> | undefined): Record<string, string> => {
+  if (!value) {
+    return {}
+  }
+  const output: Record<string, string> = {}
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (typeof rawValue === 'string') {
+      output[key] = rawValue
+    } else if (typeof rawValue === 'number' || typeof rawValue === 'boolean') {
+      output[key] = String(rawValue)
+    }
+  }
+  return output
+}
+
+const normalizeNullableStringValue = (value: string | null | undefined | number | boolean) => {
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+const parseBool = (value: string | boolean | number | null | undefined) => {
+  if (typeof value === 'boolean') {
+    return value
+  }
+  if (typeof value === 'number') {
+    return value !== 0
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+      return true
+    }
+    if (['0', 'false', 'no', 'off', ''].includes(normalized)) {
+      return false
+    }
+  }
+  return false
+}
+
+const isHulyRequirementChannel = (channel: string | undefined | null) => {
+  if (!channel) {
+    return false
+  }
+  return channel.trim().toLowerCase().startsWith('huly://')
+}
+
+const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): RequirementMetadata => {
+  const parameters = asStringMap(event.parameters)
+  const resolve = (primary: keyof ImplementationEventPayload, fallback?: string) => {
+    const primaryValue = normalizeNullableStringValue(event[primary] as string | null | undefined | number | boolean)
+    if (primaryValue) {
+      return primaryValue
+    }
+    if (fallback) {
+      const fallbackValue = normalizeNullableStringValue(parameters[fallback])
+      if (fallbackValue) {
+        return fallbackValue
+      }
+    }
+    return undefined
+  }
+
+  const payload = resolve('swarmRequirementPayload')
+  let payloadObjective: string | undefined
+  if (payload) {
+    try {
+      const parsed = JSON.parse(payload)
+      if (parsed && typeof parsed === 'object' && typeof parsed.objective === 'string') {
+        payloadObjective = parsed.objective.trim()
+      }
+    } catch {
+      // ignore malformed JSON payloads
+    }
+  }
+
+  return {
+    id: resolve('swarmRequirementId'),
+    signal: resolve('swarmRequirementSignal'),
+    source: resolve('swarmRequirementSource'),
+    target: resolve('swarmRequirementTarget'),
+    channel: resolve('swarmRequirementChannel'),
+    description: resolve('swarmRequirementDescription'),
+    objective: resolve('objective') ?? payloadObjective,
+    payload,
+    payloadBytes: resolve('swarmRequirementPayloadBytes'),
+    payloadTruncated: parseBool(parameters.swarmRequirementPayloadTruncated),
+  }
+}
+
+const prettyRequirementPayload = (payload: string) => {
+  const trimmed = payload.trim()
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2)
+  } catch {
+    return trimmed
+  }
+}
+
+const buildCrossSwarmRequirementScopePrompt = (basePrompt: string, requirement: RequirementMetadata) => {
+  if (!isHulyRequirementChannel(requirement.channel)) {
+    return basePrompt
+  }
+
+  const provenance = [
+    requirement.id ? `Requirement ID: ${requirement.id}` : null,
+    requirement.signal ? `Signal: ${requirement.signal}` : null,
+    requirement.source ? `Source: ${requirement.source}` : null,
+    requirement.target ? `Target: ${requirement.target}` : null,
+    requirement.channel ? `Channel: ${requirement.channel}` : null,
+  ]
+    .filter((value): value is string => value !== null)
+    .join(' | ')
+
+  const lines = [
+    'Cross-swarm implementation requirement (primary scope):',
+    provenance.length > 0 ? provenance : 'Cross-swarm requirement received',
+  ]
+
+  if (requirement.objective) {
+    lines.push(`Objective: ${requirement.objective}`)
+  }
+
+  if (requirement.description) {
+    lines.push(`Description:\n${requirement.description}`)
+  }
+
+  if (requirement.payload) {
+    lines.push(`Payload:\n${prettyRequirementPayload(requirement.payload)}`)
+  }
+
+  lines.push('Run prompt context:', basePrompt)
+
+  return lines.join('\n\n')
 }
 
 const sanitizeNullableString = (value: string | null | undefined) => {
@@ -162,6 +327,29 @@ type CodexNotifyPayload = {
   output_paths: Record<string, string>
   log_excerpt?: CodexNotifyLogExcerpt
   issued_at: string
+  cross_swarm_requirement?: boolean
+  swarm_requirement?: {
+    id?: string
+    signal?: string
+    source?: string
+    target?: string
+    channel?: string
+    description?: string
+    objective?: string
+    payload?: string
+    payloadBytes?: string
+    payloadTruncated?: boolean
+  }
+  swarmRequirementId?: string | null
+  swarmRequirementSignal?: string | null
+  swarmRequirementSource?: string | null
+  swarmRequirementTarget?: string | null
+  swarmRequirementChannel?: string | null
+  swarmRequirementDescription?: string | null
+  swarmRequirementObjective?: string | null
+  swarmRequirementPayload?: string | null
+  swarmRequirementPayloadBytes?: string | null
+  swarmRequirementPayloadTruncated?: boolean | null
 }
 
 const MAX_NOTIFY_LOG_CHARS = 12_000
@@ -302,6 +490,7 @@ const buildNotifyPayload = ({
   iteration,
   iterationCycle,
   iterations,
+  requirementMetadata,
 }: {
   repository: string
   issueNumber: string
@@ -334,6 +523,7 @@ const buildNotifyPayload = ({
   iteration?: number | null
   iterationCycle?: number | null
   iterations?: number | null
+  requirementMetadata?: RequirementMetadata
 }): CodexNotifyPayload => {
   return {
     type: 'agent-turn-complete',
@@ -383,6 +573,29 @@ const buildNotifyPayload = ({
     },
     log_excerpt: logExcerpt,
     issued_at: new Date().toISOString(),
+    cross_swarm_requirement: isHulyRequirementChannel(requirementMetadata?.channel),
+    swarm_requirement: {
+      id: requirementMetadata?.id,
+      signal: requirementMetadata?.signal,
+      source: requirementMetadata?.source,
+      target: requirementMetadata?.target,
+      channel: requirementMetadata?.channel,
+      description: requirementMetadata?.description,
+      objective: requirementMetadata?.objective,
+      payload: requirementMetadata?.payload,
+      payloadBytes: requirementMetadata?.payloadBytes,
+      payloadTruncated: requirementMetadata?.payloadTruncated,
+    },
+    swarmRequirementId: requirementMetadata?.id ?? null,
+    swarmRequirementSignal: requirementMetadata?.signal ?? null,
+    swarmRequirementSource: requirementMetadata?.source ?? null,
+    swarmRequirementTarget: requirementMetadata?.target ?? null,
+    swarmRequirementChannel: requirementMetadata?.channel ?? null,
+    swarmRequirementDescription: requirementMetadata?.description ?? null,
+    swarmRequirementObjective: requirementMetadata?.objective ?? null,
+    swarmRequirementPayload: requirementMetadata?.payload ?? null,
+    swarmRequirementPayloadBytes: requirementMetadata?.payloadBytes ?? null,
+    swarmRequirementPayloadTruncated: requirementMetadata?.payloadTruncated ?? null,
   }
 }
 
@@ -1344,8 +1557,9 @@ export const runCodexImplementation = async (eventPath: string) => {
   }
 
   const event = await readEventPayload(eventPath)
+  const requirementMetadata = extractSwarmRequirementMetadata(event)
 
-  let prompt = event.prompt?.trim() ?? ''
+  let prompt = buildCrossSwarmRequirementScopePrompt(event.prompt?.trim() ?? '', requirementMetadata)
 
   const repository = event.repository?.trim()
   if (!repository) {
@@ -1852,6 +2066,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       iteration,
       iterationCycle,
       iterations,
+      requirementMetadata,
     })
     try {
       await ensureFileDirectory(notifyPath)
