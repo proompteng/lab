@@ -4737,6 +4737,7 @@ class TestTradingPipeline(TestCase):
             "llm_dspy_program_name": config.settings.llm_dspy_program_name,
             "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
             "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "jangar_base_url": config.settings.jangar_base_url,
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
@@ -4854,6 +4855,7 @@ class TestTradingPipeline(TestCase):
                 "llm_dspy_signature_version"
             ]
             config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.jangar_base_url = original["jangar_base_url"]
 
     def test_pipeline_llm_guardrails_force_shadow(self) -> None:
         from app import config
