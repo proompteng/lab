@@ -11,7 +11,11 @@ import math
 from pathlib import Path
 from typing import Any, cast
 
-from ..parity import BENCHMARK_PARITY_SCHEMA_VERSION
+from ..parity import (
+    BENCHMARK_PARITY_REQUIRED_FAMILIES,
+    BENCHMARK_PARITY_REQUIRED_SCORECARDS,
+    BENCHMARK_PARITY_SCHEMA_VERSION,
+)
 
 
 _PROFITABILITY_STAGE_ORDER: tuple[str, ...] = (
@@ -1477,10 +1481,9 @@ def _evaluate_benchmark_parity_evidence(
         )
 
     scorecards = _as_dict(payload.get("scorecards"))
-    required_scorecards = (
-        ("decision_quality", scorecards.get("decision_quality")),
-        ("reasoning_quality", scorecards.get("reasoning_quality")),
-        ("forecast_quality", scorecards.get("forecast_quality")),
+    required_scorecards = tuple(
+        (name, scorecards.get(name))
+        for name in BENCHMARK_PARITY_REQUIRED_SCORECARDS
     )
     for scorecard_name, scorecard in required_scorecards:
         scorecard_payload = _as_dict(scorecard)
@@ -1561,7 +1564,7 @@ def _evaluate_benchmark_parity_evidence(
         max_confidence_degradation = 0.01
 
     families_seen = set[str]()
-    required_families = {"ai-trader", "fev-bench", "gift-eval"}
+    required_families = set(BENCHMARK_PARITY_REQUIRED_FAMILIES)
     for run in _as_list_of_dicts(benchmark_runs):
         family = str(run.get("family", "")).strip().lower()
         if family:

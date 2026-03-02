@@ -15,6 +15,25 @@ from .models import SignalEnvelope
 
 
 BENCHMARK_PARITY_SCHEMA_VERSION = "benchmark-parity-report-v1"
+BENCHMARK_PARITY_REQUIRED_SCORECARDS: tuple[str, ...] = (
+    "decision_quality",
+    "reasoning_quality",
+    "forecast_quality",
+)
+BENCHMARK_PARITY_REQUIRED_FAMILIES: tuple[str, ...] = (
+    "ai-trader",
+    "fev-bench",
+    "gift-eval",
+)
+BENCHMARK_PARITY_REQUIRED_RUN_FIELDS: tuple[str, ...] = (
+    "dataset_ref",
+    "window_ref",
+    "family",
+    "metrics",
+    "slice_metrics",
+    "policy_violations",
+    "run_hash",
+)
 
 
 def _deterministic_ratio(seed: str) -> float:
@@ -179,7 +198,7 @@ def build_benchmark_parity_report(
             family=family,
             now=now,
         )
-        for family in ("ai-trader", "fev-bench", "gift-eval")
+        for family in BENCHMARK_PARITY_REQUIRED_FAMILIES
     ]
     scorecards: dict[str, dict[str, object]] = {
         "decision_quality": decision_card,
@@ -385,6 +404,9 @@ __all__ = [
     'run_feature_parity',
     'write_feature_parity_report',
     'BENCHMARK_PARITY_SCHEMA_VERSION',
+    'BENCHMARK_PARITY_REQUIRED_SCORECARDS',
+    'BENCHMARK_PARITY_REQUIRED_FAMILIES',
+    'BENCHMARK_PARITY_REQUIRED_RUN_FIELDS',
     'build_benchmark_parity_report',
     'write_benchmark_parity_report',
     '_benchmark_report_hash',

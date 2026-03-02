@@ -226,6 +226,7 @@ class AutonomousLaneResult:
     actuation_intent_path: Path | None
     paper_patch_path: Path | None
     phase_manifest_path: Path
+    benchmark_parity_path: Path
     gate_report_trace_id: str
     recommendation_trace_id: str
     recommendation_artifact_path: Path
@@ -2064,6 +2065,7 @@ def run_autonomous_lane(
             evaluation_manifest_path=manifest_paths[_STAGE_EVALUATION],
             recommendation_manifest_path=manifest_paths[_STAGE_RECOMMENDATION],
             profitability_manifest_path=profitability_manifest_path,
+            benchmark_parity_path=benchmark_parity_path,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
             stage_trace_ids=stage_trace_ids,

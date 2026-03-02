@@ -30,6 +30,12 @@ from app.trading.autonomy.policy_checks import (
 from app.trading.autonomy.phase_manifest_contract import coerce_phase_status
 from app.trading.autonomy.gates import GateEvaluationReport, GateResult
 from app.trading.evaluation import WalkForwardDecision
+from app.trading.parity import (
+    BENCHMARK_PARITY_REQUIRED_FAMILIES,
+    BENCHMARK_PARITY_REQUIRED_RUN_FIELDS,
+    BENCHMARK_PARITY_REQUIRED_SCORECARDS,
+    BENCHMARK_PARITY_SCHEMA_VERSION,
+)
 from app.trading.features import SignalFeatures
 from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.reporting import PromotionEvidenceSummary, PromotionRecommendation
@@ -233,6 +239,32 @@ class TestAutonomousLane(TestCase):
             self.assertTrue(
                 (output_dir / "benchmarks" / "benchmark-parity-report-v1.json").exists()
             )
+            self.assertEqual(
+                result.benchmark_parity_path,
+                output_dir / "benchmarks" / "benchmark-parity-report-v1.json",
+            )
+            benchmark_parity_payload = json.loads(
+                result.benchmark_parity_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                benchmark_parity_payload["schema_version"],
+                BENCHMARK_PARITY_SCHEMA_VERSION,
+            )
+            self.assertEqual(
+                set(BENCHMARK_PARITY_REQUIRED_SCORECARDS),
+                set(benchmark_parity_payload.get("scorecards", {}).keys()),
+            )
+            self.assertEqual(
+                set(BENCHMARK_PARITY_REQUIRED_FAMILIES),
+                {
+                    str(run.get("family"))
+                    for run in benchmark_parity_payload.get("benchmark_runs", [])
+                    if isinstance(run, dict)
+                },
+            )
+            for required_run in BENCHMARK_PARITY_REQUIRED_RUN_FIELDS:
+                for run in benchmark_parity_payload.get("benchmark_runs", []):
+                    self.assertIn(required_run, run)
             self.assertIn("janus_q", evidence)
             self.assertEqual(evidence["janus_q"]["event_car"]["count"], 3)
             self.assertEqual(evidence["janus_q"]["hgrm_reward"]["count"], 3)

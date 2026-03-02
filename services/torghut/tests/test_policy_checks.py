@@ -10,6 +10,10 @@ from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
 
+from app.trading.parity import (
+    BENCHMARK_PARITY_REQUIRED_FAMILIES,
+    BENCHMARK_PARITY_SCHEMA_VERSION,
+)
 from app.trading.autonomy.policy_checks import (
     evaluate_promotion_prerequisites,
     evaluate_rollback_readiness,
@@ -2749,6 +2753,164 @@ class TestPolicyChecks(TestCase):
             )
         )
 
+    def test_promotion_prerequisites_fail_when_benchmark_parity_schema_version_is_invalid(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            payload = _build_benchmark_parity_payload(
+                adverse_regime_degradation=0.0,
+                risk_veto_degradation=0.0,
+                confidence_calibration_error_degradation=0.0,
+                schema_version="benchmark-parity-report-bad",
+            )
+            (root / "benchmarks" / "benchmark-parity-report-v1.json").write_text(
+                json.dumps(payload, sort_keys=True), encoding="utf-8"
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("benchmark_parity_schema_version_invalid", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_benchmark_parity_family_results_are_incomplete(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            _write_benchmark_parity_payload(
+                root,
+                adverse_regime_degradation=0.0,
+                risk_veto_degradation=0.0,
+                confidence_calibration_error_degradation=0.0,
+                families=BENCHMARK_PARITY_REQUIRED_FAMILIES[:2],
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("benchmark_parity_family_results_missing", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_benchmark_parity_risk_veto_degradation_threshold_is_exceeded(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            _write_benchmark_parity_payload(
+                root,
+                risk_veto_degradation=0.02,
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "promotion_benchmark_parity_max_risk_veto_alignment_degradation": 0.01,
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn(
+            "benchmark_parity_risk_veto_degradation_exceeds_threshold",
+            promotion.reasons,
+        )
+        self.assertTrue(
+            any(
+                item.get("reason")
+                == "benchmark_parity_risk_veto_degradation_exceeds_threshold"
+                for item in promotion.reason_details
+            )
+        )
+
+    def test_promotion_prerequisites_fail_when_benchmark_parity_confidence_degradation_threshold_is_exceeded(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            _write_benchmark_parity_payload(
+                root,
+                confidence_calibration_error_degradation=0.02,
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "promotion_benchmark_parity_max_confidence_calibration_error_degradation": 0.01,
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn(
+            "benchmark_parity_confidence_calibration_error_degradation_exceeds_threshold",
+            promotion.reasons,
+        )
+        self.assertTrue(
+            any(
+                item.get("reason")
+                == "benchmark_parity_confidence_calibration_error_degradation_exceeds_threshold"
+                for item in promotion.reason_details
+            )
+        )
+
 
 def _candidate_state() -> dict[str, object]:
     return {
@@ -2775,11 +2937,15 @@ def _write_benchmark_parity_payload(
     adverse_regime_degradation: float = 0.0,
     risk_veto_degradation: float = 0.0,
     confidence_calibration_error_degradation: float = 0.0,
+    families: tuple[str, ...] = BENCHMARK_PARITY_REQUIRED_FAMILIES,
+    schema_version: str = BENCHMARK_PARITY_SCHEMA_VERSION,
 ) -> Path:
     payload = _build_benchmark_parity_payload(
+        families=families,
         adverse_regime_degradation=adverse_regime_degradation,
         risk_veto_degradation=risk_veto_degradation,
         confidence_calibration_error_degradation=confidence_calibration_error_degradation,
+        schema_version=schema_version,
     )
     artifact_path = (
         root / "benchmarks" / "benchmark-parity-report-v1.json"
@@ -2791,60 +2957,19 @@ def _write_benchmark_parity_payload(
 
 def _build_benchmark_parity_payload(
     *,
+    families: tuple[str, ...] = BENCHMARK_PARITY_REQUIRED_FAMILIES,
     adverse_regime_degradation: float = 0.0,
     risk_veto_degradation: float = 0.0,
     confidence_calibration_error_degradation: float = 0.0,
+    schema_version: str = BENCHMARK_PARITY_SCHEMA_VERSION,
 ) -> dict[str, object]:
     return {
-        "schema_version": "benchmark-parity-report-v1",
+        "schema_version": schema_version,
         "candidate_id": "cand-test",
         "baseline_candidate_id": "base-test",
         "benchmark_runs": [
-            {
-                "family": "ai-trader",
-                "metrics": {
-                    "advisory_output_rate": 0.998,
-                    "risk_veto_alignment": 0.95,
-                    "confidence_calibration_error": 0.015,
-                },
-                "policy_violations": {
-                    "deterministic_gate_compatible": True,
-                    "rate": 0.01,
-                    "baseline_rate": 0.01,
-                    "fallback_rate": 0.001,
-                    "timeout_rate": 0.001,
-                },
-            },
-            {
-                "family": "fev-bench",
-                "metrics": {
-                    "advisory_output_rate": 0.998,
-                    "risk_veto_alignment": 0.95,
-                    "confidence_calibration_error": 0.015,
-                },
-                "policy_violations": {
-                    "deterministic_gate_compatible": True,
-                    "rate": 0.01,
-                    "baseline_rate": 0.01,
-                    "fallback_rate": 0.001,
-                    "timeout_rate": 0.001,
-                },
-            },
-            {
-                "family": "gift-eval",
-                "metrics": {
-                    "advisory_output_rate": 0.998,
-                    "risk_veto_alignment": 0.95,
-                    "confidence_calibration_error": 0.015,
-                },
-                "policy_violations": {
-                    "deterministic_gate_compatible": True,
-                    "rate": 0.01,
-                    "baseline_rate": 0.01,
-                    "fallback_rate": 0.001,
-                    "timeout_rate": 0.001,
-                },
-            },
+            _build_test_benchmark_parity_run(family)
+            for family in families
         ],
         "scorecards": {
             "decision_quality": {"status": "pass"},
@@ -2865,6 +2990,24 @@ def _build_benchmark_parity_payload(
         },
         "created_at_utc": datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
         "artifact_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    }
+
+
+def _build_test_benchmark_parity_run(family: str) -> dict[str, object]:
+    return {
+        "family": family,
+        "metrics": {
+            "advisory_output_rate": 0.998,
+            "risk_veto_alignment": 0.95,
+            "confidence_calibration_error": 0.015,
+        },
+        "policy_violations": {
+            "deterministic_gate_compatible": True,
+            "rate": 0.01,
+            "baseline_rate": 0.01,
+            "fallback_rate": 0.001,
+            "timeout_rate": 0.001,
+        },
     }
 
 
