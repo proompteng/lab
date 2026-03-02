@@ -32,7 +32,6 @@ controlPlane:
   readinessProbe: {}
   startupProbe: {}
   lifecycle: {}
-  terminationGracePeriodSeconds: 30
   deploymentLifecycle: {}
 
 controllers:
@@ -63,7 +62,6 @@ controllers:
   readinessProbe: {}
   startupProbe: {}
   lifecycle: {}
-  terminationGracePeriodSeconds: 60
   deploymentLifecycle: {}
 
 runner:
