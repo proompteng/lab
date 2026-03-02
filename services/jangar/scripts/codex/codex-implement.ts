@@ -1162,6 +1162,36 @@ const enrichRunNatsAttrs = (
   if (requirementMetadata.workerRole) {
     attrs.swarmAgentRole = requirementMetadata.workerRole
   }
+  if (requirementMetadata.id) {
+    attrs.swarmRequirementId = requirementMetadata.id
+  }
+  if (requirementMetadata.signal) {
+    attrs.swarmRequirementSignal = requirementMetadata.signal
+  }
+  if (requirementMetadata.source) {
+    attrs.swarmRequirementSource = requirementMetadata.source
+  }
+  if (requirementMetadata.target) {
+    attrs.swarmRequirementTarget = requirementMetadata.target
+  }
+  if (requirementMetadata.channel) {
+    attrs.swarmRequirementChannel = requirementMetadata.channel
+  }
+  if (requirementMetadata.description) {
+    attrs.swarmRequirementDescription = requirementMetadata.description
+  }
+  if (requirementMetadata.objective) {
+    attrs.swarmRequirementObjective = requirementMetadata.objective
+  }
+  if (requirementMetadata.payload) {
+    attrs.swarmRequirementPayload = requirementMetadata.payload
+  }
+  if (requirementMetadata.payloadBytes) {
+    attrs.swarmRequirementPayloadBytes = requirementMetadata.payloadBytes
+  }
+  if (typeof requirementMetadata.payloadTruncated === 'boolean') {
+    attrs.swarmRequirementPayloadTruncated = requirementMetadata.payloadTruncated
+  }
   return attrs
 }
 

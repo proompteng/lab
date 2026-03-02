@@ -762,6 +762,93 @@ describe('runCodexImplementation', () => {
     expect(attrs.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-0027jshz')
   }, 40_000)
 
+  it('includes cross-swarm requirement metadata in NATS run-started attrs', async () => {
+    const binDir = join(workdir, 'bin')
+    await mkdir(binDir, { recursive: true })
+
+    const capturePath = join(workdir, 'nats-publish-run-started-requirement.jsonl')
+    process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH = capturePath
+    process.env.NATS_URL = 'nats://example'
+    process.env.PATH = `${binDir}:${process.env.PATH ?? ''}`
+
+    const publishScriptPath = join(binDir, 'codex-nats-publish')
+    await writeFile(
+      publishScriptPath,
+      [
+        '#!/usr/bin/env node',
+        'const { appendFileSync } = require("node:fs");',
+        'const path = process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH;',
+        'if (path) { appendFileSync(path, JSON.stringify(process.argv.slice(2)) + "\\n", "utf8"); }',
+        'process.exit(0);',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    await chmod(publishScriptPath, 0o755)
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm handoff visibility',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mu',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'End-to-end requirement handoff validation.',
+      swarmRequirementPayload:
+        '{"acceptance":["publish swarm requirement metadata on all run events"],"priority":"high"}',
+      swarmRequirementPayloadBytes: '142',
+      swarmRequirementPayloadTruncated: false,
+      swarmRequirementObjective: 'validate cross-swarm handoff visibility',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
+      swarmAgentRole: 'implement',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const captured = (await readFile(capturePath, 'utf8'))
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[])
+
+    const runStarted = captured.find((args) => {
+      const kindIndex = args.indexOf('--kind')
+      return kindIndex >= 0 && args[kindIndex + 1] === 'run-started'
+    })
+    expect(runStarted).toBeDefined()
+    if (!runStarted) {
+      throw new Error('Expected at least one run-started publish call')
+    }
+
+    const attrsIndex = runStarted.indexOf('--attrs-json')
+    expect(attrsIndex).toBeGreaterThan(-1)
+    const attrsRaw = runStarted[attrsIndex + 1]
+    expect(typeof attrsRaw).toBe('string')
+    const attrs = JSON.parse(attrsRaw ?? '{}') as Record<string, unknown>
+
+    expect(attrs.swarmAgentWorkerId).toBe('worker-0027jshz')
+    expect(attrs.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-0027jshz')
+    expect(attrs.swarmAgentRole).toBe('implement')
+    expect(attrs.swarmRequirementId).toBe('00gcj8mu')
+    expect(attrs.swarmRequirementSignal).toBe('torghut-to-jangar-e2e-1772426902')
+    expect(attrs.swarmRequirementSource).toBe('torghut-quant')
+    expect(attrs.swarmRequirementTarget).toBe('jangar-control-plane')
+    expect(attrs.swarmRequirementChannel).toBe('huly://swarm-bridge/issues/TORGHUT-1772426902')
+    expect(attrs.swarmRequirementDescription).toBe('End-to-end requirement handoff validation.')
+    expect(attrs.swarmRequirementObjective).toBe('validate cross-swarm handoff visibility')
+    expect(attrs.swarmRequirementPayload).toContain('"acceptance"')
+    expect(attrs.swarmRequirementPayloadBytes).toBe('142')
+    expect(attrs.swarmRequirementPayloadTruncated).toBe(false)
+  }, 40_000)
+
   it('includes PR metadata from artifact files and does not overwrite them', async () => {
     const prNumberPath = join(workdir, '.codex-pr-number.txt')
     const prUrlPath = join(workdir, '.codex-pr-url.txt')
