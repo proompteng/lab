@@ -981,6 +981,7 @@ def _evaluate_stress_metrics_evidence(
     artifact_root: Path,
     now: datetime | None = None,
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    now = now or datetime.now(timezone.utc)
     reasons: list[str] = []
     details: list[dict[str, object]] = []
     refs: list[str] = []

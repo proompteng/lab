@@ -267,32 +267,6 @@ def _build_candidate_state_payload(
     }
 
 
-def _build_gate_readiness_inputs(candidate_state_payload: Mapping[str, Any]) -> dict[str, bool]:
-    rollback_readiness = candidate_state_payload.get("rollbackReadiness")
-    if isinstance(rollback_readiness, dict):
-        rollback_readiness_raw = cast(dict[str, Any], rollback_readiness)
-    else:
-        rollback_readiness_raw = {}
-
-    operational_ready = bool(
-        _coerce_evidence_bool(rollback_readiness_raw.get("strategyDisableDryRunPassed"))
-    )
-    runbook_validated = bool(_coerce_evidence_bool(candidate_state_payload.get("runbookValidated")))
-    kill_switch_dry_run_passed = bool(
-        _coerce_evidence_bool(rollback_readiness_raw.get("killSwitchDryRunPassed"))
-    )
-    rollback_dry_run_passed = bool(
-        _coerce_evidence_bool(rollback_readiness_raw.get("gitopsRevertDryRunPassed"))
-    )
-
-    return {
-        "operational_ready": operational_ready,
-        "runbook_validated": runbook_validated,
-        "kill_switch_dry_run_passed": kill_switch_dry_run_passed,
-        "rollback_dry_run_passed": rollback_dry_run_passed,
-    }
-
-
 @dataclass(frozen=True)
 class AutonomousLaneResult:
     run_id: str
