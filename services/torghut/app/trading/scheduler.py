@@ -5735,6 +5735,10 @@ class TradingScheduler:
             self.state.drift_status = "disabled"
             self.state.drift_live_promotion_eligible = False
             self.state.drift_live_promotion_reasons = ["drift_governance_disabled"]
+            if not self.state.emergency_stop_active:
+                self.state.drift_last_detection_path = None
+                self.state.drift_last_action_path = None
+                self.state.drift_last_outcome_path = None
             last_manifest = self.state.last_autonomy_phase_manifest
             if last_manifest:
                 self._append_runtime_governance_to_phase_manifest(
@@ -5779,12 +5783,25 @@ class TradingScheduler:
                 return list(cast(set[Any], raw))
             return []
 
+        artifact_refs_payload = drift_governance_payload.get("artifact_refs", [])
+        action_payload = drift_governance_payload.get("action")
+        detection_payload = drift_governance_payload.get("detection")
         drift_status = str(
             drift_governance_payload.get("drift_status")
             or self.state.drift_status
             or "skipped"
         ).strip().lower()
-
+        has_payload_values = (
+            drift_governance_payload.get("rollback_triggered")
+            or _as_values(action_payload)
+            or _as_values(detection_payload)
+            or drift_status in {"drift_detected", "unhealthy"}
+            or (
+                isinstance(artifact_refs_payload, (list, tuple, set))
+                and _as_values(artifact_refs_payload)
+            )
+        )
+        has_drift_payload = bool(has_payload_values)
         drift_reasons = sorted(
             {
                 str(reason).strip()
@@ -5792,8 +5809,6 @@ class TradingScheduler:
                 if str(reason).strip()
             }
         )
-        action_payload = drift_governance_payload.get("action")
-        detection_payload = drift_governance_payload.get("detection")
         if isinstance(action_payload, dict):
             action_payload_map = cast(dict[str, Any], action_payload)
             action_type = str(action_payload_map.get("action_type", "")).strip()
@@ -5824,26 +5839,31 @@ class TradingScheduler:
         else:
             detection_reasons = []
 
-        evidence_refs = [
-            str(path).strip()
-            for path in [
-                self.state.drift_last_detection_path,
-                self.state.drift_last_action_path,
-                self.state.drift_last_outcome_path,
-                self.state.rollback_incident_evidence_path,
-            ]
-            if isinstance(path, str) and path.strip()
-        ]
-        artifact_refs_payload = drift_governance_payload.get("artifact_refs", [])
-        if isinstance(artifact_refs_payload, (list, tuple, set)):
-            evidence_refs.extend(
-                [
-                    str(item).strip()
-                    for item in _as_values(artifact_refs_payload)
-                    if str(item).strip()
+        rollback_triggered = bool(
+            self.state.emergency_stop_active
+            or drift_governance_payload.get("rollback_triggered", False)
+        )
+        evidence_refs: list[str] = []
+        if has_drift_payload:
+            evidence_refs = [
+                str(path).strip()
+                for path in [
+                    self.state.drift_last_detection_path,
+                    self.state.drift_last_action_path,
+                    self.state.drift_last_outcome_path,
                 ]
-            )
-        evidence_refs = sorted({item for item in evidence_refs if item})
+                if isinstance(path, str) and path.strip()
+            ]
+            artifact_refs_payload = drift_governance_payload.get("artifact_refs", [])
+            if isinstance(artifact_refs_payload, (list, tuple, set)):
+                evidence_refs.extend(
+                    [
+                        str(item).strip()
+                        for item in _as_values(artifact_refs_payload)
+                        if str(item).strip()
+                    ]
+                )
+            evidence_refs = sorted({item for item in evidence_refs if item})
         rollback_incident_evidence = (
             str(drift_governance_payload.get("rollback_incident_evidence", "")).strip()
             if isinstance(
@@ -5851,18 +5871,16 @@ class TradingScheduler:
             )
             else ""
         )
-        if not rollback_incident_evidence and isinstance(
-            self.state.rollback_incident_evidence_path, str
+        if (
+            not rollback_incident_evidence
+            and rollback_triggered
+            and isinstance(self.state.rollback_incident_evidence_path, str)
         ):
             rollback_incident_evidence = self.state.rollback_incident_evidence_path.strip()
         if rollback_incident_evidence:
             evidence_refs.append(rollback_incident_evidence)
         evidence_refs = sorted(set(evidence_refs))
 
-        rollback_triggered = bool(
-            self.state.emergency_stop_active
-            or drift_governance_payload.get("rollback_triggered", False)
-        )
         governance_status = (
             "fail"
             if rollback_triggered or drift_status in {"drift_detected", "unhealthy"}

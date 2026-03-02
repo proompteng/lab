@@ -26,6 +26,34 @@ AUTONOMY_PASSING_MANIFEST_STATUSES: tuple[str, ...] = (
 )
 AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION = "autonomy-phase-manifest-v1"
 AUTONOMY_PHASE_MANIFEST_SLO_VERSION = "governance-slo-v1"
+AUTONOMY_PHASE_SLO_GATE_IDS = {
+    "gate-evaluation": (
+        "slo_signal_count_minimum",
+        "slo_decision_count_minimum",
+    ),
+    "promotion-prerequisites": (
+        "slo_required_artifacts_present",
+    ),
+    "rollback-readiness": (
+        "slo_required_rollback_checks_present",
+    ),
+    "drift-gate": (
+        "slo_drift_gate_allowed",
+    ),
+    "paper-canary": (
+        "slo_paper_canary_patch_present",
+    ),
+    "runtime-governance": (
+        "slo_runtime_rollback_not_triggered",
+    ),
+    "rollback-proof": (
+        "slo_rollback_evidence_required_when_triggered",
+    ),
+}
+
+
+def required_slo_gate_ids(phase_name: str) -> tuple[str, ...]:
+    return AUTONOMY_PHASE_SLO_GATE_IDS.get(_coerce_str(phase_name), tuple())
 
 
 def _coerce_str(raw: Any, default: str = "") -> str:
@@ -302,7 +330,29 @@ def normalize_phase_manifest_phases(
             default="skipped",
         )
         normalized_phase.setdefault("observations", {})
-        normalized_phase.setdefault("slo_gates", [])
+        phase_status = str(normalized_phase.get("status", "skipped"))
+        existing_slo_gates = normalized_phase.get("slo_gates")
+        normalized_phase["slo_gates"] = (
+            list(existing_slo_gates)
+            if isinstance(existing_slo_gates, list)
+            else []
+        )
+        normalized_slo_gate_ids = {
+            str(gate.get("id", "")).strip()
+            for gate in normalized_phase["slo_gates"]
+            if isinstance(gate, Mapping) and str(gate.get("id", "")).strip()
+        }
+        required_gate_ids = required_slo_gate_ids(phase_name)
+        for gate_id in required_gate_ids:
+            if gate_id not in normalized_slo_gate_ids:
+                normalized_phase["slo_gates"].append(
+                    {
+                        "id": gate_id,
+                        "status": phase_status,
+                        "threshold": None,
+                        "value": None,
+                    }
+                )
         normalized_phase["artifact_refs"] = coerce_path_strings(
             normalized_phase.get("artifact_refs", [])
         )

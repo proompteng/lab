@@ -4,7 +4,13 @@
 
 - Doc: `v6/06`
 - Date: `2026-02-27`
-- Maturity: `production implementation draft`
+- Maturity: `production implementation`
+
+## Contract source of truth
+
+The authoritative implementation is in:
+
+- `services/torghut/app/trading/autonomy/phase_manifest_contract.py`
 - Scope: phased rollout plan for Beyond-TSMOM architecture with explicit SLO, rollback, and governance controls
 - Implementation status: `In Progress`
 - Evidence:
@@ -63,6 +69,7 @@ Every phase payload includes:
 - `artifact_refs`
 
 `phase_transitions` must be derived only from the canonical phase list and must include transitions between each adjacent phase.
+`slo_gates` entries must include all IDs in `AUTONOMY_PHASE_SLO_GATE_IDS`; missing IDs are normalized during manifest assembly.
 
 ## SLO gate requirements
 
@@ -93,7 +100,8 @@ Failure policy:
 ## Rollout execution flow
 
 - `run_autonomous_lane` is the single phase-manifest producer.
-- The scheduler appends runtime governance and rollback proof updates after drift policy evaluation.
+- The scheduler appends runtime governance and rollback proof updates after drift policy evaluation in:
+  - `TradingScheduler._append_runtime_governance_to_phase_manifest`
 - The scheduler publishes a per-iteration notes artifact on every cycle and records:
   - outcome (`lane_completed`, `lane_execution_failed`, or `blocked_no_signal`)
   - reason
@@ -122,6 +130,11 @@ Failure policy:
   - `drift_last_outcome_path`
   - `rollback_incident_evidence_path`
 
+Evidence is only consumed by rollback-proof when:
+
+- `runtime-governance` or `drift` policy signals rollback is triggered, and
+- the cycle is not in a legacy/disabled drift governance state.
+
 ## Per-iteration notes artifact
 
 Each scheduler cycle writes an evidence notes file at:
@@ -132,6 +145,11 @@ Each scheduler cycle writes an evidence notes file at:
 `n` increments from the existing highest `iteration-*` file in the notes folder.
 
 Notes are append-only per cycle and must remain uncommitted in source control.
+
+## Governance invariants
+
+- Canary and rollback state must flow only through manifest phase transitions.
+- Rollback evidence paths must be attached only when rollback is actually triggered.
 
 ## Rollout Phases
 

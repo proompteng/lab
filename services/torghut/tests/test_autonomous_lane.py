@@ -31,6 +31,7 @@ from app.trading.autonomy.phase_manifest_contract import (
     coerce_phase_status,
     build_rollback_proof_phase,
     build_runtime_governance_phase,
+    required_slo_gate_ids,
     normalize_phase_manifest_phases,
 )
 from app.trading.autonomy.gates import GateEvaluationReport, GateResult
@@ -2914,6 +2915,39 @@ class TestAutonomousLane(TestCase):
         )
         self.assertEqual(normalized[5]["status"], "pass")
         self.assertEqual(normalized[6]["status"], "skipped")
+        rollback_proof_gate_map = {
+            gate["id"]: gate.get("status")
+            for gate in normalized[6].get("slo_gates", [])
+            if isinstance(gate, dict)
+        }
+        self.assertIn(
+            "slo_rollback_evidence_required_when_triggered",
+            rollback_proof_gate_map,
+        )
+        self.assertEqual(
+            rollback_proof_gate_map["slo_rollback_evidence_required_when_triggered"],
+            "skipped",
+        )
+        runtime_gate_map = {
+            gate["id"]: gate.get("status")
+            for gate in normalized[5].get("slo_gates", [])
+            if isinstance(gate, dict)
+        }
+        self.assertEqual(
+            set(required_slo_gate_ids("runtime-governance")),
+            set(runtime_gate_map),
+            "runtime-governance requires explicit SLO gates",
+        )
+        gate_evaluation_gate_map = {
+            gate["id"]: gate.get("status")
+            for gate in normalized[0].get("slo_gates", [])
+            if isinstance(gate, dict)
+        }
+        self.assertEqual(
+            set(required_slo_gate_ids("gate-evaluation")),
+            set(gate_evaluation_gate_map),
+            "gate-evaluation requires explicit SLO gates",
+        )
 
     def test_build_runtime_governance_phase_carries_gate_status_and_reasons(self) -> None:
         phase = build_runtime_governance_phase(
