@@ -224,12 +224,18 @@
 {{- $dbNamespace := .Values.namespaceOverride | default .Release.Namespace -}}
 {{- $checksumNamespacePattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" -}}
 {{- $checksumResourceNamePattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$" -}}
+{{- $ownedDbSecretRef := "" -}}
 {{- $requiredSecrets := dict -}}
 {{- $requiredConfigMaps := dict -}}
 {{- $configuredSecretRefs := dict -}}
 {{- $configuredConfigMapRefs := dict -}}
 {{- $seenSecretRefs := dict -}}
 {{- $seenConfigMapRefs := dict -}}
+
+{{- if and .Values.database.createSecret.enabled .Values.database.url -}}
+{{- $ownedDbSecretName := include "agents.databaseSecretName" . }}
+{{- $ownedDbSecretRef = printf "%s/%s" $dbNamespace $ownedDbSecretName -}}
+{{- end -}}
 
 {{- if and (not .Values.database.createSecret.enabled) (not .Values.database.url) -}}
 {{- $dbSecretName := trim (default "" .Values.database.secretRef.name) -}}
@@ -302,11 +308,15 @@
 {{- end -}}
 {{- if and $secretName $secretNamespace -}}
 {{- $secretRef := printf "%s/%s" $secretNamespace $secretName -}}
+{{- if and $ownedDbSecretRef (eq $secretRef $ownedDbSecretRef) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d] cannot target %s because database.createSecret.enabled=true already owns checksum/secret/%s" $idx $secretRef $secretRef) -}}
+{{- else -}}
 {{- $_ := set $configuredSecretRefs $secretRef true -}}
 {{- if hasKey $seenSecretRefs $secretRef -}}
 {{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d] duplicates key %s. namespace+name must be unique." $idx $secretRef) -}}
 {{- else -}}
 {{- $_ := set $seenSecretRefs $secretRef true -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

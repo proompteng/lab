@@ -46,9 +46,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- else -}}
 {{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
 {{- $annotations := dict -}}
+{{- $dbSecretAnnotationKey := "" -}}
 
 {{- if and .Values.database.createSecret.enabled .Values.database.url -}}
 {{- $dbSecretName := include "agents.databaseSecretName" . }}
+{{- $dbSecretAnnotationKey = printf "checksum/secret/%s/%s" $namespace $dbSecretName -}}
 {{- $annotations = set $annotations (printf "checksum/secret/%s/%s" $namespace $dbSecretName) (sha256sum .Values.database.url) -}}
 {{- end -}}
 
@@ -57,7 +59,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $checksum := .checksum | trim -}}
 {{- if and $secretName $checksum -}}
 {{- $secretNamespace := default $namespace .namespace -}}
-{{- $annotations = set $annotations (printf "checksum/secret/%s/%s" $secretNamespace $secretName) $checksum -}}
+{{- $secretAnnotationKey := printf "checksum/secret/%s/%s" $secretNamespace $secretName -}}
+{{- if ne $secretAnnotationKey $dbSecretAnnotationKey -}}
+{{- $annotations = set $annotations $secretAnnotationKey $checksum -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
