@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 AUTONOMY_PHASE_ORDER: tuple[str, ...] = (
     "gate-evaluation",
@@ -68,11 +68,12 @@ def coerce_phase_status(raw: Any, *, default: str = "fail") -> str:
 def _coerce_reason_values(raw: Any) -> list[str]:
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes, bytearray)):
         return []
-    return [
-        str(item).strip()
-        for item in raw
-        if str(item).strip()
-    ]
+    normalized_reasons: list[str] = []
+    for item in cast(Sequence[Any], raw):
+        reason = str(item).strip()
+        if reason:
+            normalized_reasons.append(reason)
+    return normalized_reasons
 
 
 def build_runtime_governance_phase_payload(

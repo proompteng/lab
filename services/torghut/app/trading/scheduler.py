@@ -4814,8 +4814,8 @@ class TradingScheduler:
             phase_lineage = cast(dict[str, Any], phase_payload.get("phase_lineage"))
         raw_phase_trace = phase_lineage.get("stage_ids")
         if isinstance(raw_phase_trace, list):
-            phase_manifest_trace = []
-            for item in raw_phase_trace:
+            phase_manifest_trace: list[str] = []
+            for item in cast(list[Any], raw_phase_trace):
                 trace_id = str(item).strip()
                 if trace_id:
                     phase_manifest_trace.append(trace_id)
@@ -5930,7 +5930,8 @@ class TradingScheduler:
 
         def _coerce_mapping(raw: Any) -> dict[str, Any]:
             if isinstance(raw, Mapping):
-                return {str(key): value for key, value in raw.items()}
+                mapped_items = cast(Mapping[Any, Any], raw)
+                return {str(key): value for key, value in mapped_items.items()}
             return {}
 
         drift_status = str(
