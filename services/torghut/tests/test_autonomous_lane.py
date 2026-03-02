@@ -1695,6 +1695,85 @@ class TestAutonomousLane(TestCase):
                 {"slo_rollback_evidence_required_when_triggered"},
             )
 
+    def test_build_phase_manifest_links_actuation_payload_to_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            signals = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    payload={},
+                )
+            ]
+            output_dir = Path(tmpdir) / "actuation-lineage"
+            gate_report = GateEvaluationReport(
+                policy_version="v3-gates-1",
+                promotion_target="paper",
+                promotion_allowed=True,
+                recommended_mode="paper",
+                gates=[GateResult(gate_id="gate0_data_integrity", status="pass")],
+                reasons=[],
+                uncertainty_gate_action="pass",
+                coverage_error="0.01",
+                conformal_interval_width="1.0",
+                shift_score="0.1",
+                recalibration_run_id=None,
+                evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                code_version="test-sha",
+            )
+            manifest = _build_phase_manifest(
+                run_id="run-actuation",
+                candidate_id="cand-3",
+                evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                output_dir=output_dir,
+                signals=signals,
+                requested_promotion_target="paper",
+                gate_report=gate_report,
+                gate_report_path=output_dir / "gate-evaluation.json",
+                gate_report_payload={
+                    "gates": [],
+                    "recommended_mode": "paper",
+                    "throughput": {
+                        "signal_count": 1,
+                        "decision_count": 1,
+                        "trade_count": 0,
+                    },
+                },
+                promotion_check=PromotionPrerequisiteResult(
+                    allowed=True,
+                    reasons=[],
+                    required_artifacts=[],
+                    missing_artifacts=[],
+                    reason_details=[],
+                    artifact_refs=[],
+                    required_throughput={"signal_count": 1, "decision_count": 1},
+                    observed_throughput={"signal_count": 1, "decision_count": 1},
+                ),
+                rollback_check=RollbackReadinessResult(
+                    ready=True,
+                    reasons=[],
+                    required_checks=[],
+                    missing_checks=[],
+                ),
+                drift_gate_check={"allowed": True, "reasons": []},
+                patch_path=output_dir / "paper-candidate" / "strategy-configmap-patch.yaml",
+                recommended_mode="paper",
+                promotion_reasons=[],
+                drift_promotion_evidence=None,
+                actuation_payload={
+                    "schema_version": "torghut.autonomy.actuation-intent.v1",
+                    "actuation_allowed": True,
+                    "artifact_refs": ["/actuation/intent.json"],
+                },
+            )
+            lineages = manifest["phase_lineage"]["lineage_stages"]
+            self.assertEqual(
+                lineages["actuation-intent"]["status"], "pass",
+            )
+            self.assertEqual(
+                lineages["paper-patch"]["parent_stage"], "actuation-intent",
+            )
+
     def test_build_phase_manifest_defaults_execution_context_artifact_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             signals = [

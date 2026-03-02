@@ -1025,6 +1025,7 @@ def run_autonomous_lane(
             promotion_reasons=promotion_reasons,
             governance_inputs=governance_context,
             drift_promotion_evidence=drift_promotion_evidence,
+            actuation_payload=actuation_intent_payload,
         )
         phase_manifest_path.write_text(
             json.dumps(phase_manifest_payload, indent=2), encoding="utf-8"

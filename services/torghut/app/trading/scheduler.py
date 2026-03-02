@@ -5580,27 +5580,21 @@ class TradingScheduler:
     ) -> Any | None:
         if self._pipeline is None:
             raise RuntimeError("trading_pipeline_not_initialized")
-        governance_payload: dict[str, Any] | None = None
-        if governance_inputs is not None:
-            governance_payload = dict(governance_inputs)
-        elif execution_context is not None:
-            governance_payload = {
-                "execution_context": dict(execution_context),
-                "runtime_governance": {
-                    "governance_status": "pass",
-                    "drift_status": "queued",
-                    "artifact_refs": [],
-                    "rollback_triggered": False,
-                    "reasons": [
-                        "autonomy_runtime_governance_pending",
-                    ],
-                },
-                "rollback_proof": {
-                    "rollback_triggered": False,
-                    "rollback_incident_evidence_path": "",
-                    "reasons": [],
-                },
-            }
+        governance_payload = self._build_autonomy_governance_inputs(
+            governance_inputs=governance_inputs,
+            artifact_root=artifact_root or run_output_dir,
+            promotion_target=promotion_target,
+            governance_repository=governance_repository,
+            governance_base=governance_base,
+            governance_head=governance_head,
+            priority_id=priority_id,
+        )
+        if execution_context is not None:
+            governance_payload["execution_context"] = dict(
+                execution_context
+                if isinstance(execution_context, Mapping)
+                else {}
+            )
         try:
             return run_autonomous_lane(
                 signals_path=signals_path,
