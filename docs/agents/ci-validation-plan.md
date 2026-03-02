@@ -34,6 +34,7 @@ See also:
   - `helm template charts/agents --set namespaceOverride='' --set-json 'controller.namespaces=["agents"]'` (expect fail: namespaceOverride is set but empty)
   - `helm template charts/agents --set-json 'controller.namespaces=["agents"]' --set rbac.clusterScoped=true` (expect pass with ClusterRole for explicit single namespace)
   - `helm template charts/agents --set-json 'controller.namespaces=["*"]' --set rbac.clusterScoped=true` (expect pass with ClusterRole)
+  - `helm template charts/agents --set-json 'controller.namespaces=["agents","agents-ci"]' --set rbac.clusterScoped=true` (expect pass: explicit multi-namespace scope requires cluster-scoped RBAC)
   - `helm template charts/agents --set-json 'orchestrationController.namespaces=["agents"]' --set rbac.clusterScoped=false` (expect pass)
   - `helm template charts/agents --set-json 'supportingController.namespaces=["agents"]' --set rbac.clusterScoped=false` (expect pass)
   - `helm template charts/agents --set-json 'orchestrationController.namespaces=["*"]' --set rbac.clusterScoped=true` (expect pass)
@@ -44,7 +45,10 @@ See also:
   - `helm template charts/agents --set-json 'controller.namespaces=["*"]' --set rbac.clusterScoped=false` (expect fail: wildcard requires cluster-scoped RBAC)
   - `helm template charts/agents --set-json 'controller.namespaces=[]'` (expect fail: explicit empty list is invalid)
   - `helm template charts/agents --set-json 'controller.namespaces="agents"'` (expect fail: namespaces must be an array)
+  - `helm template charts/agents --set-json 'controller.namespaces=[""]'` (expect fail: namespace entries must not be empty)
   - `helm template charts/agents --set-json 'controller.namespaces=[" agents"]'` (expect fail: namespace entries cannot contain leading/trailing whitespace)
+  - `helm template charts/agents --set-json 'controller.namespaces=["Agents"]'` (expect fail: namespace entries must be valid namespace tokens)
+  - `helm template charts/agents --set-json 'controller.namespaces=["agents","agents"]' --set rbac.clusterScoped=true` (expect fail: duplicate namespaces are rejected)
   - `helm template charts/agents --set-json 'controller.namespaces=["*","agents"]' --set rbac.clusterScoped=true` (expect fail: wildcard may not combine with specific namespaces)
   - `helm template charts/agents --set namespaceOverride=agents --set-json 'controller.namespaces=["agents-ci"]' --set rbac.clusterScoped=false` (expect fail: namespaced RBAC must target chart namespace)
   - `helm template charts/agents --set-json 'orchestrationController.namespaces=["*","agents"]' --set rbac.clusterScoped=true` (expect fail: wildcard may not combine with specific namespaces)
@@ -59,8 +63,11 @@ namespace_guardrails() {
     "helm template charts/agents --set namespaceOverride=agents --set-json 'controller.namespaces=["agents"]' --set rbac.clusterScoped=false"
     "helm template charts/agents --set-json 'controller.namespaces=["agents"]' --set rbac.clusterScoped=true"
     "helm template charts/agents --set-json 'controller.namespaces=["*"]' --set rbac.clusterScoped=true"
+    "helm template charts/agents --set-json 'controller.namespaces=["agents", "agents-ci"]' --set rbac.clusterScoped=true"
     "helm template charts/agents --set-json 'orchestrationController.namespaces=["agents"]' --set rbac.clusterScoped=false"
     "helm template charts/agents --set-json 'supportingController.namespaces=["agents"]' --set rbac.clusterScoped=false"
+    "helm template charts/agents --set-json 'orchestrationController.namespaces=["*"]' --set rbac.clusterScoped=true"
+    "helm template charts/agents --set-json 'supportingController.namespaces=["*"]' --set rbac.clusterScoped=true"
   )
   local fail_cmds=(
     "helm template charts/agents --set-json 'controller.namespaces=["agents","agents-ci"]' --set rbac.clusterScoped=false"
@@ -69,7 +76,10 @@ namespace_guardrails() {
     "helm template charts/agents --set-json 'controller.namespaces=["*"]' --set rbac.clusterScoped=false"
     "helm template charts/agents --set-json 'controller.namespaces=[]'"
     "helm template charts/agents --set-json 'controller.namespaces="agents"'"
+    "helm template charts/agents --set-json 'controller.namespaces=[""]' --set rbac.clusterScoped=false"
     "helm template charts/agents --set-json 'controller.namespaces=[" agents"]'"
+    "helm template charts/agents --set-json 'controller.namespaces=["Agents"]' --set rbac.clusterScoped=true"
+    "helm template charts/agents --set-json 'controller.namespaces=["agents", "agents"]' --set rbac.clusterScoped=true"
     "helm template charts/agents --set-json 'controller.namespaces=["*","agents"]' --set rbac.clusterScoped=true"
     "helm template charts/agents --set namespaceOverride=' agents' --set-json 'controller.namespaces=["agents"]'"
     "helm template charts/agents --set namespaceOverride='' --set-json 'controller.namespaces=["agents"]' --set rbac.clusterScoped=false"
@@ -99,6 +109,12 @@ namespace_guardrails() {
       printf 'PASS (expected failure): %s\n' "${cmd}"
     fi
   done
+}
+
+run_namespace_guardrails() {
+  local log_file="${1:-/tmp/agents-namespace-guardrails-$(date +%Y%m%d-%H%M%S).log}"
+  namespace_guardrails 2>&1 | tee "${log_file}"
+  printf 'Guardrail log captured: %s\n' "${log_file}"
 }
 ```
 

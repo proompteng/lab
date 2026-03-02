@@ -63,6 +63,7 @@
 {{- $expectedGrpcEnabled := ternary "true" "false" .Values.grpc.enabled -}}
 {{- $expectedGrpcHost := "0.0.0.0" -}}
 {{- $expectedGrpcPort := toString .Values.grpc.port -}}
+{{- $namespaceTokenPattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" -}}
 
 {{- $validationInputs := list
   (dict
@@ -107,9 +108,9 @@
         {{- end }}
 
         {{- if and (contains "*" $cleaned) (ne $cleaned "*") }}
-          {{- $errors = append $errors (printf "%s.namespaces entry %q must be '*' or a valid namespace token." $label $cleaned) }}
-        {{- else if and (ne $cleaned "*") (not (regexMatch "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" $cleaned)) -}}
-          {{- $errors = append $errors (printf "%s.namespaces entry %q is not a valid namespace token." $label $cleaned) }}
+          {{- $errors = append $errors (printf "%s.namespaces entry %q is invalid; entries must be a single '*' or a Kubernetes namespace token." $label $cleaned) }}
+        {{- else if and (ne $cleaned "*") (not (regexMatch $namespaceTokenPattern $cleaned)) -}}
+          {{- $errors = append $errors (printf "%s.namespaces entry %q is not a valid Kubernetes namespace token." $label $cleaned) }}
         {{- else if hasKey $seen $cleaned -}}
           {{- $errors = append $errors (printf "%s.namespaces contains duplicate namespace %q; remove duplicates." $label $cleaned) }}
         {{- else }}
@@ -123,10 +124,10 @@
     {{- end }}
 
 {{- if gt (len $normalized) 1 }}
-{{- if $hasWildcard }}
-        {{- $errors = append $errors (printf "%s.namespaces may not combine '*' with specific namespaces; use only ['*'] and set rbac.clusterScoped=true." $label) }}
+    {{- if $hasWildcard }}
+        {{- $errors = append $errors (printf "%s.namespaces uses wildcard '*' with specific namespaces. Use ['*'] only, then set rbac.clusterScoped=true." $label) }}
       {{- else if not $clusterScoped }}
-        {{- $errors = append $errors (printf "%s.namespaces has %d entries; set rbac.clusterScoped=true for multi-namespace behavior." $label (len $normalized)) }}
+        {{- $errors = append $errors (printf "%s.namespaces has %d entries; set rbac.clusterScoped=true for multi-namespace scope." $label (len $normalized)) }}
       {{- end }}
     {{- end }}
 
@@ -137,7 +138,7 @@
     {{- if and (not $hasWildcard) (not $clusterScoped) (eq (len $normalized) 1) }}
       {{- $scopeNamespace := index $normalized 0 -}}
       {{- if ne $scopeNamespace $defaultNamespace -}}
-        {{- $errors = append $errors (printf "%s.namespaces is set to %q but rbac.clusterScoped=false creates permissions only for namespace %q; either set rbac.clusterScoped=true or use that namespace." $label $scopeNamespace $defaultNamespace) -}}
+        {{- $errors = append $errors (printf "%s.namespaces is set to %q but rbac.clusterScoped=false can scope to only namespace %q; set rbac.clusterScoped=true for cross-namespace scope or align this list." $label $scopeNamespace $defaultNamespace) -}}
       {{- end -}}
     {{- end }}
   {{- end }}
