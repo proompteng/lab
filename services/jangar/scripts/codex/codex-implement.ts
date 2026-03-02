@@ -194,7 +194,7 @@ const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): Req
     workerId: resolve('swarmAgentWorkerId', 'swarmAgentWorkerId'),
     workerIdentity: resolve('swarmAgentIdentity', 'swarmAgentIdentity'),
     workerRole: resolve('swarmAgentRole', 'swarmAgentRole'),
-    objective: resolve('objective') ?? payloadObjective,
+    objective: payloadObjective ?? resolve('objective'),
     payload,
     payloadBytes: resolve('swarmRequirementPayloadBytes'),
     payloadTruncated: parseBool(parameters.swarmRequirementPayloadTruncated),
@@ -255,7 +255,13 @@ const buildCrossSwarmRequirementScopePrompt = (basePrompt: string, requirement: 
     }
   }
 
-  lines.push('Run prompt context:', basePrompt)
+  if (requirement.description || requirement.payload || requirement.objective) {
+    if (basePrompt.length > 0) {
+      lines.push('Original request context:', basePrompt)
+    }
+  } else {
+    lines.push('Run prompt context:', basePrompt)
+  }
 
   return lines.join('\n\n')
 }

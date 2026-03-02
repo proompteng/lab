@@ -353,7 +353,33 @@ describe('runCodexImplementation', () => {
       'Executor: Worker ID: worker-0027jshz | Worker Identity: vw-jangar-control-plane-implement-worker-0027jshz',
     )
     expect(invocation?.prompt).toContain('Objective: validate cross-swarm dispatch and implementation handoff')
-    expect(invocation?.prompt).toContain('Run prompt context:')
+    expect(invocation?.prompt).toContain('Original request context:')
+  }, 40_000)
+
+  it('uses payload objective as cross-swarm primary objective', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'ignore this objective',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
+      swarmRequirementPayload:
+        '{"objective":"Payload objective should dominate","acceptance":["run uses requirement payload objective"]}',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toContain('Objective: Payload objective should dominate')
+    expect(invocation?.prompt).not.toContain('ignore this objective')
+    expect(invocation?.prompt).toContain(
+      'Description:\nEnd-to-end validation requirement from torghut swarm to jangar swarm.',
+    )
   }, 40_000)
 
   it('uses cross-swarm requirement scope when channel is an HTTPS Huly URL', async () => {
