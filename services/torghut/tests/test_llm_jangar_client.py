@@ -255,6 +255,10 @@ class TestJangarCompletionEndpointResolution(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             _resolve_dspy_jangar_completion_url()
 
+        settings.jangar_base_url = "http://:80/openai/v1"
+        with self.assertRaises(RuntimeError):
+            _resolve_dspy_jangar_completion_url()
+
     def test_request_review_posts_to_normalized_jangar_completion_url(self) -> None:
         settings.llm_provider = "jangar"
         settings.jangar_base_url = "http://jangar.example/openai/v1/chat/completions"

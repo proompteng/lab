@@ -2088,7 +2088,7 @@ class Settings(BaseSettings):
                 reasons.append("dspy_jangar_base_url_invalid")
             elif parsed_base_url.scheme not in {"http", "https"}:
                 reasons.append("dspy_jangar_base_url_invalid")
-            elif not parsed_base_url.netloc:
+            elif not parsed_base_url.hostname:
                 reasons.append("dspy_jangar_base_url_invalid")
             elif (parsed_base_url.query or parsed_base_url.fragment):
                 reasons.append("dspy_jangar_base_url_invalid")

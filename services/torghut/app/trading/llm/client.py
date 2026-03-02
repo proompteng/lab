@@ -251,7 +251,7 @@ def _resolve_dspy_jangar_completion_url() -> str:
     if (
         not parsed_base_url.scheme
         or parsed_base_url.scheme not in {"http", "https"}
-        or not parsed_base_url.netloc
+        or not parsed_base_url.hostname
     ):
         raise RuntimeError("jangar completion request failed (invalid base URL)")
     if parsed_base_url.query or parsed_base_url.fragment:
