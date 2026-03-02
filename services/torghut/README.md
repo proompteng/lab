@@ -77,6 +77,7 @@ Endpoints:
   - `LLM_DSPY_PROGRAM_NAME`, `LLM_DSPY_SIGNATURE_VERSION`, `LLM_DSPY_TIMEOUT_SECONDS`
 
 AgentRun payload builder (`build_dspy_agentrun_payload`) enforces:
+
 - explicit `idempotencyKey`
 - `implementationSpecRef` from DSPy lane catalog
 - `vcsPolicy.required=true` with `mode=read-write`
@@ -267,6 +268,11 @@ Outputs:
 - `artifacts/autonomy-lane/backtest/evaluation-report.json`
 - `artifacts/autonomy-lane/gates/gate-evaluation.json`
 - `artifacts/autonomy-lane/gates/actuation-intent.json` (governed actuation payload with rollback-readiness evidence links)
+- `artifacts/autonomy-lane/rollout/phase-manifest.json` (authoritative phase transitions with gate SLO status and phase lineage)
+- `artifacts/autonomy-lane/stages/candidate-generation-manifest.json`
+- `artifacts/autonomy-lane/stages/evaluation-manifest.json`
+- `artifacts/autonomy-lane/stages/promotion-recommendation-manifest.json`
+- `artifacts/autonomy-lane/notes/iteration-<n>.md` (appended per run, with monotonic iteration numbering)
 - `artifacts/autonomy-lane/paper-candidate/strategy-configmap-patch.yaml` (written when paper is recommended and paper patch preconditions pass)
 
 Safety defaults:

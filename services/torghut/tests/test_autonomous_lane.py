@@ -1764,6 +1764,7 @@ class TestAutonomousLane(TestCase):
                 actuation_payload["audit"]["replay_artifact_hashes"],
                 candidate_spec["replay_artifact_hashes"],
             )
+            lineage_root = candidate.metadata_bundle["stage_lineage"]["root_lineage_hash"]
             self.assertIn("stage_lineage", candidate.metadata_bundle)
             self.assertIn("stage_manifest_refs", candidate.metadata_bundle)
             self.assertIn("replay_artifact_hashes", candidate.metadata_bundle)
@@ -1958,6 +1959,198 @@ class TestAutonomousLane(TestCase):
             self.assertIn(
                 "stage_lineage",
                 candidate_spec,
+            )
+
+    def test_lane_records_phase_transitions_and_stage_trace_ids_in_actuation_audit(
+        self,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-phase-transitions"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+            phase_payload = json.loads(
+                result.phase_manifest_path.read_text(encoding="utf-8")
+            )
+            candidate_spec = json.loads(
+                result.candidate_spec_path.read_text(encoding="utf-8")
+            )
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+            )
+            phases = phase_payload["phases"]
+            phase_transitions = phase_payload["phase_transitions"]
+
+            self.assertEqual(
+                phases[0]["name"], "gate-evaluation"
+            )
+            self.assertEqual(
+                phases[1]["name"], "promotion-prerequisites"
+            )
+            self.assertEqual(
+                phases[2]["name"], "rollback-readiness"
+            )
+            self.assertEqual(
+                phases[3]["name"], "drift-gate"
+            )
+            self.assertEqual(
+                phases[4]["name"], "paper-canary"
+            )
+            self.assertEqual(
+                phases[5]["name"], "runtime-governance"
+            )
+            self.assertEqual(
+                phases[6]["name"], "rollback-proof"
+            )
+            self.assertEqual(len(phase_transitions), len(phases) - 1)
+            for index, transition in enumerate(phase_transitions):
+                self.assertEqual(
+                    transition["from"],
+                    phases[index]["name"],
+                )
+                self.assertEqual(transition["to"], phases[index + 1]["name"])
+                self.assertEqual(
+                    transition["status"],
+                    phases[index + 1]["status"],
+                )
+            self.assertEqual(
+                candidate_spec["stage_trace_ids"],
+                actuation_payload["audit"]["stage_trace_ids"],
+            )
+            self.assertEqual(
+                actuation_payload["audit"]["stage_lineage"]["root_lineage_hash"],
+                candidate_spec["stage_lineage"]["root_lineage_hash"],
+            )
+
+    @patch(
+        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+        return_value=PromotionPrerequisiteResult(
+            allowed=False,
+            reasons=["required_artifacts_missing"],
+            required_artifacts=[],
+            missing_artifacts=[],
+            reason_details=[],
+            artifact_refs=[],
+            required_throughput={},
+            observed_throughput={},
+        ),
+    )
+    @patch(
+        "app.trading.autonomy.lane.evaluate_gate_matrix",
+        return_value=GateEvaluationReport(
+            policy_version="v3-gates-1",
+            promotion_target="paper",
+            promotion_allowed=False,
+            recommended_mode="shadow",
+            gates=[
+                GateResult(gate_id="gate0_data_integrity", status="fail"),
+                GateResult(gate_id="gate1_statistical_robustness", status="fail"),
+            ],
+            reasons=["gate0_data_integrity", "gate1_statistical_robustness"],
+            uncertainty_gate_action="pass",
+            coverage_error="0.01",
+            conformal_interval_width="1.0",
+            shift_score="0.1",
+            recalibration_run_id=None,
+            evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            code_version="test-sha",
+        ),
+    )
+    def test_lane_regression_gate_failure_is_reflected_in_phase_manifest(
+        self,
+        _mock_gate: object,
+        _mock_prereq: object,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-failed-gate"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+            phase_payload = json.loads(
+                result.phase_manifest_path.read_text(encoding="utf-8")
+            )
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(phase_payload["status"], "fail")
+            self.assertEqual(phase_payload["phases"][0]["status"], "fail")
+            self.assertEqual(phase_payload["phases"][1]["status"], "fail")
+            self.assertFalse(actuation_payload["actuation_allowed"])
+
+    def test_lane_includes_rollback_proof_path_in_actuation_artifact_refs(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-rollback-proof"
+            rollback_evidence = output_dir / "artifacts" / "rollback-proof.json"
+            rollback_evidence.parent.mkdir(parents=True, exist_ok=True)
+            rollback_evidence.write_text("{}", encoding="utf-8")
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                governance_inputs={
+                    "runtime_governance": {
+                        "governance_status": "pass",
+                        "rollback_triggered": True,
+                        "artifact_refs": [],
+                    },
+                    "rollback_proof": {
+                        "rollback_triggered": True,
+                        "rollback_incident_evidence_path": str(rollback_evidence),
+                    },
+                },
+            )
+
+            actuation_payload = json.loads(
+                result.actuation_intent_path.read_text(encoding="utf-8")
+            )
+            phase_payload = json.loads(
+                result.phase_manifest_path.read_text(encoding="utf-8")
+            )
+
+            self.assertIn(
+                str(rollback_evidence), actuation_payload["artifact_refs"]
+            )
+            self.assertEqual(
+                phase_payload["phases"][6]["status"], "pass"
             )
 
     def test_lane_writes_phase_manifest_and_iteration_notes(self) -> None:

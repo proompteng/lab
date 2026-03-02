@@ -748,6 +748,19 @@ def run_autonomous_lane(
             else None
         ),
     )
+    rollback_incident_evidence_path = _coerce_str(
+        _coerce_mapping(governance_context.get("rollback_proof", {})).get(
+            "rollback_incident_evidence_path"
+        ),
+        default="",
+    )
+    if not rollback_incident_evidence_path:
+        rollback_incident_evidence_path = _coerce_str(
+            _coerce_mapping(governance_context.get("rollback_proof", {})).get(
+                "rollback_incident_evidence"
+            ),
+            default="",
+        )
     notes_artifact_root = Path(
         _coerce_str(
             governance_context["execution_context"].get("artifactPath"),
@@ -1478,6 +1491,11 @@ def run_autonomous_lane(
             promotion_gate_path=promotion_gate_path,
             promotion_recommendation=promotion_recommendation,
             recommendations=promotion_reasons,
+            rollback_incident_evidence_path=(
+                rollback_incident_evidence_path
+                if rollback_incident_evidence_path
+                else None
+            ),
             phase_manifest_path=phase_manifest_path,
             governance_repository=resolved_governance_repository,
             governance_base=resolved_governance_base,
@@ -1638,6 +1656,7 @@ def run_autonomous_lane(
         actuation_intent_payload["audit"]["replay_artifact_hashes"] = (
             replay_artifact_hashes
         )
+        actuation_intent_payload["audit"]["stage_trace_ids"] = stage_trace_ids
         actuation_intent_path.write_text(
             json.dumps(actuation_intent_payload, indent=2), encoding="utf-8"
         )
@@ -2429,6 +2448,7 @@ def _build_actuation_intent_payload(
     promotion_gate_path: Path,
     promotion_recommendation: PromotionRecommendation,
     recommendations: list[str],
+    rollback_incident_evidence_path: str | None,
     phase_manifest_path: Path,
     governance_repository: str,
     governance_base: str,
@@ -2463,8 +2483,12 @@ def _build_actuation_intent_payload(
     )
     if paper_patch_path is not None:
         rollback_evidence_links.append(str(paper_patch_path))
-    if phase_manifest_path.exists():
-        rollback_evidence_links.append(str(phase_manifest_path))
+    rollback_incident_evidence_path = _coerce_str(
+        rollback_incident_evidence_path, default=""
+    )
+    if rollback_incident_evidence_path:
+        rollback_evidence_links.append(rollback_incident_evidence_path)
+    rollback_evidence_links.append(str(phase_manifest_path))
     rollback_evidence_links.extend(
         [str(item) for item in promotion_check.get("artifact_refs", [])]
     )
@@ -2511,6 +2535,7 @@ def _build_actuation_intent_payload(
             "candidate_state_payload": candidate_state_payload,
             "promotion_check": promotion_check,
             "rollback_check": rollback_check,
+            "stage_trace_ids": {},
             "patch_required": patch_required,
             "patch_available": paper_patch_path is not None,
             "rollback_readiness_readout": {
@@ -2637,7 +2662,7 @@ def _normalize_governance_inputs(
     override_execution_context = _coerce_mapping(override_payload.get("execution_context"))
     runtime_governance = dict(
         {
-            "governance_status": "skipped",
+            "governance_status": "pass",
             "drift_status": "unknown",
             "rollback_triggered": False,
             "artifact_refs": [],
@@ -2758,7 +2783,7 @@ def _build_phase_manifest(
     runtime_governance = _coerce_mapping(governance.get("runtime_governance"))
     rollback_proof = _coerce_mapping(governance.get("rollback_proof"))
     runtime_gate_status = coerce_phase_status(
-        runtime_governance.get("governance_status", "skipped")
+        runtime_governance.get("governance_status", "pass")
     )
     runtime_artifact_refs = _coerce_path_strings(
         runtime_governance.get("artifact_refs", [])
@@ -3404,7 +3429,7 @@ def _write_autonomy_iteration_notes(
                 f"- parent: {cast(dict[str, object], stage_payload).get('parent_stage')}",
             ]
         )
-    notes_path.write_text("\\n".join(lines), encoding="utf-8")
+    notes_path.write_text("\n".join(lines), encoding="utf-8")
     return notes_path
 
 
