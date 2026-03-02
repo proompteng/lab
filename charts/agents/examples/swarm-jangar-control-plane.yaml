@@ -1,0 +1,70 @@
+apiVersion: swarm.proompteng.ai/v1alpha1
+kind: Swarm
+metadata:
+  name: jangar-control-plane
+  namespace: agents
+spec:
+  owner:
+    id: platform-owner
+    channel: swarm://owner/platform
+  domains:
+    - platform-reliability
+    - platform-evolution
+  objectives:
+    - continuously discover and implement control-plane improvements
+    - autonomously construct and expand internal platform capabilities
+  mode: lights-out
+  timezone: UTC
+  cadence:
+    discoverEvery: 5m
+    planEvery: 10m
+    implementEvery: 10m
+    verifyEvery: 5m
+  discovery:
+    minCitations: 2
+    minConfidence: 0.75
+    sources:
+      - name: github-issues
+      - name: runtime-alerts
+  delivery:
+    repoAllowlist:
+      - proompteng/lab
+    requiredChecks:
+      - lint
+      - type-check
+      - unit-tests
+    mergePolicy: merge-queue
+    deploymentTargets:
+      - agents
+    rollout:
+      strategy: canary
+      steps:
+        - setWeight: 10
+          pause: 5m
+        - setWeight: 30
+          pause: 10m
+        - setWeight: 100
+          pause: 0m
+      analysisTemplateRef: default-canary-analysis
+  risk:
+    budgetRef: default-budget
+    approvalPolicyRef: default-approval
+    freezeAfterFailures: 3
+    freezeDuration: 60m
+  execution:
+    discover:
+      targetRef:
+        kind: AgentRun
+        name: agentrun-sample
+    plan:
+      targetRef:
+        kind: AgentRun
+        name: agentrun-sample
+    implement:
+      targetRef:
+        kind: OrchestrationRun
+        name: orchestrationrun-sample
+    verify:
+      targetRef:
+        kind: AgentRun
+        name: agentrun-sample

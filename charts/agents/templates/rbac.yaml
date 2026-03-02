@@ -187,10 +187,30 @@ rules:
       - create
       - update
       - patch
+      - delete
   - apiGroups:
       - schedules.proompteng.ai
     resources:
       - schedules/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - swarm.proompteng.ai
+    resources:
+      - swarms
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - swarm.proompteng.ai
+    resources:
+      - swarms/status
     verbs:
       - get
       - update

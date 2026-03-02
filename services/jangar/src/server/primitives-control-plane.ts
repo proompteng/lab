@@ -15,6 +15,7 @@ export type AgentPrimitiveKind =
   | 'Signal'
   | 'SignalDelivery'
   | 'Schedule'
+  | 'Swarm'
   | 'Artifact'
   | 'Workspace'
   | 'SecretBinding'
@@ -41,6 +42,7 @@ const PRIMITIVE_KIND_CONFIG: PrimitiveKindConfig[] = [
   { kind: 'Signal', resource: RESOURCE_MAP.Signal },
   { kind: 'SignalDelivery', resource: RESOURCE_MAP.SignalDelivery },
   { kind: 'Schedule', resource: RESOURCE_MAP.Schedule },
+  { kind: 'Swarm', resource: RESOURCE_MAP.Swarm },
   { kind: 'Artifact', resource: RESOURCE_MAP.Artifact },
   { kind: 'Workspace', resource: RESOURCE_MAP.Workspace },
   { kind: 'SecretBinding', resource: RESOURCE_MAP.SecretBinding },

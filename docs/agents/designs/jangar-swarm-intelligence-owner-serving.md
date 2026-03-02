@@ -225,6 +225,99 @@ Default risk thresholds (lights-out):
 - Consecutive failed autonomous missions >= `2` triggers freeze.
 - Freeze requires explicit resume policy window.
 
+## Torghut Regime-Change Flexibility Contract (Internet-Backed)
+
+As of 2026-03-01, regime adaptability in `torghut-quant` should follow these source-backed constraints:
+
+- Use regime-switching inference for discrete state changes, not a single stationary model
+  ([Hamilton 1989](https://EconPapers.repec.org/RePEc:ecm:emetrp:v:57:y:1989:i:2:p:357-84)).
+- Treat long-memory signatures and regime shifts as separable hypotheses before allocation decisions
+  ([Diebold and Inoue 2001](https://EconPapers.repec.org/RePEc:eee:econom:v:105:y:2001:i:1:p:131-159)).
+- Combine explicit changepoint detection with drift adaptation rather than periodic blind retraining
+  ([Adams and MacKay 2007](https://arxiv.org/abs/0710.3742),
+  [Bifet and Gavaldà 2007](https://doi.org/10.1137/1.9781611972771.42),
+  [Lu et al. 2020](https://arxiv.org/abs/2004.05785)).
+- Keep autonomous actuation under hard pre-trade and emergency stop controls
+  ([17 CFR 240.15c3-5](https://www.law.cornell.edu/cfr/text/17/240.15c3-5),
+  [MiFID II Article 17](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX%3A32014L0065),
+  [Commission Delegated Regulation (EU) 2017/589](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32017R0589)).
+- Validate strategy selection against data-snooping risk before promotion
+  ([White 2000](https://EconPapers.repec.org/RePEc:ecm:emetrp:v:68:y:2000:i:5:p:1097-1126)).
+
+### Most recent research update (2025-2026)
+
+As of 2026-03-01, recent evidence that should be reflected in Torghut policy:
+
+- 2026 peer-reviewed volatility regime modeling reinforces explicit state inference in crypto markets:
+  [RIBAF 2026, vol. 83](https://www.sciencedirect.com/science/article/abs/pii/S027553192600022X),
+  [Discover Analytics 2026](https://link.springer.com/article/10.1007/s44257-025-00046-1).
+- 2025 live evaluation benchmarks show static benchmark scores are weak proxies for live trading quality:
+  [LiveTradeBench (arXiv:2511.03628)](https://arxiv.org/abs/2511.03628).
+- 2025 multi-agent trading preprints support role-specialized agents with explicit risk modules:
+  [QuantAgent (arXiv:2509.09995)](https://arxiv.org/abs/2509.09995),
+  [TradingGroup (arXiv:2508.17565)](https://arxiv.org/abs/2508.17565).
+- 2025-2026 microstructure RL work emphasizes non-stationary LOB environments and scalable MARL training:
+  [Non-stationary LOB market making (arXiv:2509.12456)](https://arxiv.org/abs/2509.12456),
+  [JaxMARL-HFT (arXiv:2511.02136)](https://arxiv.org/abs/2511.02136).
+- 2025 market-structure risk research highlights autonomous collusion risk in RL trading agents:
+  [NBER Working Paper 34054](https://www.nber.org/papers/w34054).
+
+Design implications for Torghut:
+
+- Keep regime detector + drift detector as first-class verify gates.
+- Maintain portfolio-of-experts routing with regime-conditioned allocation caps.
+- Require live/shadow evaluation windows before full-capital promotion.
+- Keep collusion/market-impact safeguards as mandatory risk checks in lights-out mode.
+- Mark preprint-backed changes as provisional until replicated in internal live tests.
+
+### Torghut runtime contract (no extra CRDs)
+
+Regime state remains in runtime storage (not CRD fields), versioned per delivery cycle:
+
+- `regime.id`: trend / mean-revert / high-vol / stressed-liquidity / uncertain.
+- `regime.posterior`: probability vector over regimes.
+- `regime.changepointScore`: online changepoint posterior.
+- `regime.driftScore`: detector ensemble alarm score.
+- `regime.updatedAt`, `regime.minDwellUntil`.
+
+### Detection and transition policy
+
+- Detector ensemble:
+  - Markov-switching posterior.
+  - Bayesian online changepoint detector.
+  - ADWIN-style adaptive window drift alarm.
+  - Market microstructure checks (spread, depth, impact, realized volatility percentile).
+- Transition hysteresis:
+  - Candidate regime requires persistent confirmation windows.
+  - Promotion to active regime requires both posterior and changepoint thresholds.
+  - Reversion requires sustained evidence, not one-tick reversal.
+- Uncertain regime fallback:
+  - When detector disagreement is high, force defensive profile and reduce exposure.
+
+### Allocation and implementation policy
+
+- Portfolio-of-experts routing:
+  - Each strategy/expert declares supported regimes.
+  - Capital weights are regime-conditioned and capped by per-expert risk budgets.
+- Capital rollout for new policy in active regime:
+  - shadow -> 1% notional -> 5% -> 20% -> full target only after gated verification.
+- Automatic de-allocation:
+  - Remove weight from experts that underperform regime-specific baselines after costs/slippage.
+
+### Verification and freeze policy
+
+- Verify loop must enforce regime-specific limits:
+  - max drawdown by regime
+  - exposure and concentration caps
+  - slippage/impact bounds
+  - order reject/error rate thresholds
+- Freeze conditions:
+  - breach of hard risk limits
+  - repeated failed implementations
+  - repeated verify-gate failures during promotion
+- Resume policy:
+  - freeze window expiry and successful re-qualification in shadow/canary stages.
+
 ## Failure Semantics
 
 - CI failure: autonomous retries up to `N=3`, then `Degraded`.
@@ -397,6 +490,25 @@ spec:
 - SWE-agent: [https://arxiv.org/abs/2405.15793](https://arxiv.org/abs/2405.15793)
 - Anthropic effective agents: [https://www.anthropic.com/engineering/building-effective-agents](https://www.anthropic.com/engineering/building-effective-agents)
 - OpenAI deep research: [https://openai.com/index/introducing-deep-research/](https://openai.com/index/introducing-deep-research/)
+- Hamilton (1989), Markov regime switching: [https://EconPapers.repec.org/RePEc:ecm:emetrp:v:57:y:1989:i:2:p:357-84](https://EconPapers.repec.org/RePEc:ecm:emetrp:v:57:y:1989:i:2:p:357-84)
+- Adams and MacKay (2007), Bayesian online changepoint detection: [https://arxiv.org/abs/0710.3742](https://arxiv.org/abs/0710.3742)
+- Bifet and Gavaldà (2007), ADWIN: [https://doi.org/10.1137/1.9781611972771.42](https://doi.org/10.1137/1.9781611972771.42)
+- Gama et al. (2014), concept drift adaptation survey: [https://doi.org/10.1145/2523813](https://doi.org/10.1145/2523813)
+- Lu et al. (2020), learning under concept drift review: [https://arxiv.org/abs/2004.05785](https://arxiv.org/abs/2004.05785)
+- Diebold and Inoue (2001), long memory vs regime switching: [https://EconPapers.repec.org/RePEc:eee:econom:v:105:y:2001:i:1:p:131-159](https://EconPapers.repec.org/RePEc:eee:econom:v:105:y:2001:i:1:p:131-159)
+- White (2000), reality check for data snooping: [https://EconPapers.repec.org/RePEc:ecm:emetrp:v:68:y:2000:i:5:p:1097-1126](https://EconPapers.repec.org/RePEc:ecm:emetrp:v:68:y:2000:i:5:p:1097-1126)
+- SEC market-access risk controls (17 CFR 240.15c3-5): [https://www.law.cornell.edu/cfr/text/17/240.15c3-5](https://www.law.cornell.edu/cfr/text/17/240.15c3-5)
+- MiFID II Article 17 algorithmic trading: [https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX%3A32014L0065](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX%3A32014L0065)
+- Commission Delegated Regulation (EU) 2017/589 (RTS 6): [https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32017R0589](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32017R0589)
+- NIST AI Risk Management Framework: [https://www.nist.gov/itl/ai-risk-management-framework](https://www.nist.gov/itl/ai-risk-management-framework)
+- RIBAF 2026 Bitcoin regime-switching volatility: [https://www.sciencedirect.com/science/article/abs/pii/S027553192600022X](https://www.sciencedirect.com/science/article/abs/pii/S027553192600022X)
+- Discover Analytics 2026 hybrid Heston-LSTM + blockchain: [https://link.springer.com/article/10.1007/s44257-025-00046-1](https://link.springer.com/article/10.1007/s44257-025-00046-1)
+- LiveTradeBench (arXiv:2511.03628): [https://arxiv.org/abs/2511.03628](https://arxiv.org/abs/2511.03628)
+- QuantAgent (arXiv:2509.09995): [https://arxiv.org/abs/2509.09995](https://arxiv.org/abs/2509.09995)
+- TradingGroup (arXiv:2508.17565): [https://arxiv.org/abs/2508.17565](https://arxiv.org/abs/2508.17565)
+- Non-stationary LOB RL market making (arXiv:2509.12456): [https://arxiv.org/abs/2509.12456](https://arxiv.org/abs/2509.12456)
+- JaxMARL-HFT (arXiv:2511.02136): [https://arxiv.org/abs/2511.02136](https://arxiv.org/abs/2511.02136)
+- NBER w34054 (AI trading and collusion): [https://www.nber.org/papers/w34054](https://www.nber.org/papers/w34054)
 
 ## Diagram
 

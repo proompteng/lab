@@ -9,6 +9,7 @@ import { shouldApplyStatus } from '~/server/status-utils'
 
 const DEFAULT_NAMESPACES = ['agents']
 const DEFAULT_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.supporting_controller.enabled'
+const SWARM_CRD_REFRESH_INTERVAL_MS = 15_000
 
 const REQUIRED_CRDS = [
   RESOURCE_MAP.Tool,
@@ -22,6 +23,7 @@ const REQUIRED_CRDS = [
   RESOURCE_MAP.Artifact,
   RESOURCE_MAP.Workspace,
 ]
+const OPTIONAL_CRDS = [RESOURCE_MAP.Swarm]
 
 type Condition = {
   type: string
@@ -57,9 +59,13 @@ let started = controllerState.started
 let starting = false
 let lifecycleToken = 0
 let reconciling = false
+let swarmWatchersStarted = false
 let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 let watchHandles: Array<{ stop: () => void }> = []
+let swarmCrdsRefreshHandle: NodeJS.Timeout | null = null
 const namespaceQueues = new Map<string, Promise<void>>()
+const optionalCrdsReady = new Set<string>()
+const swarmUnfreezeTimers = new Map<string, NodeJS.Timeout>()
 
 const nowIso = () => new Date().toISOString()
 
@@ -166,6 +172,17 @@ const checkCrds = async (): Promise<CrdCheckState> => {
       }
     }
   }
+  const optionalUnavailable: string[] = []
+  optionalCrdsReady.clear()
+  for (const name of OPTIONAL_CRDS) {
+    const resource = name.split('.')[0] ?? name
+    const result = await runKubectl(['get', resource, '-n', namespace, '-o', 'json'])
+    if (result.code === 0) {
+      optionalCrdsReady.add(name)
+      continue
+    }
+    optionalUnavailable.push(name)
+  }
   const state = {
     ok: missing.length === 0 && forbidden.length === 0,
     missing: [...missing, ...forbidden],
@@ -184,6 +201,11 @@ const checkCrds = async (): Promise<CrdCheckState> => {
         )}`,
       )
     }
+  }
+  if (optionalUnavailable.length > 0) {
+    console.warn(
+      `[jangar] optional supporting primitives CRDs unavailable in namespace ${namespace}: ${optionalUnavailable.join(', ')}`,
+    )
   }
   return state
 }
@@ -206,6 +228,53 @@ const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
       console.warn('[jangar] supporting controller task failed', error)
     })
   namespaceQueues.set(namespace, next)
+}
+
+const clearAllSwarmUnfreezeTimers = () => {
+  for (const timer of swarmUnfreezeTimers.values()) {
+    clearTimeout(timer)
+  }
+  swarmUnfreezeTimers.clear()
+}
+
+const clearSwarmUnfreezeTimer = (namespace: string, name: string) => {
+  const key = `${namespace}/${name}`
+  const timer = swarmUnfreezeTimers.get(key)
+  if (!timer) return
+  clearTimeout(timer)
+  swarmUnfreezeTimers.delete(key)
+}
+
+const startSwarmWatchers = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespaces: string[],
+  handles: Array<{ stop: () => void }>,
+) => {
+  for (const namespace of namespaces) {
+    handles.push(
+      startResourceWatch({
+        resource: RESOURCE_MAP.Swarm,
+        namespace,
+        onEvent: (event) => handleResourceEvent(kube, namespace, event),
+        onError: (error) => console.warn('[jangar] swarm watch failed', error),
+      }),
+    )
+  }
+}
+
+const refreshOptionalSwarmWatches = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespaces: string[],
+  token: number,
+) => {
+  if (lifecycleToken !== token || !started) return
+  if (swarmWatchersStarted) return
+  const crds = await checkCrds()
+  if (lifecycleToken !== token || !started) return
+  if (!crds.ok || !optionalCrdsReady.has(RESOURCE_MAP.Swarm)) return
+  startSwarmWatchers(kube, namespaces, watchHandles)
+  swarmWatchersStarted = true
+  void reconcileAll(kube, namespaces)
 }
 
 const normalizeConditions = (raw: unknown): Condition[] => {
@@ -375,14 +444,42 @@ const listItems = (payload: Record<string, unknown>) => {
   return items.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
 }
 
+const hashNameSuffix = (value: string) => {
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i)
+    hash |= 0
+  }
+  return Math.abs(hash).toString(36).padStart(8, '0').slice(0, 8)
+}
+
 const makeName = (base: string, suffix: string) => {
-  const max = 45
   const sanitized = base
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
-  const trimmed = sanitized.length > max ? sanitized.slice(0, max) : sanitized
+  const maxBaseLength = 45
+  if (sanitized.length <= maxBaseLength) {
+    return `${sanitized}-${suffix}`
+  }
+  const trimmed = sanitized.slice(0, maxBaseLength)
   return `${trimmed}-${suffix}`
+}
+
+const makeHashedName = (base: string, suffix: string) => {
+  const sanitized = base
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+  const maxBaseLength = 63 - 1 - suffix.length
+  if (sanitized.length <= maxBaseLength) {
+    return `${sanitized}-${suffix}`
+  }
+  const hash = hashNameSuffix(base)
+  const separator = '-'
+  const hashBaseLength = Math.max(1, maxBaseLength - hash.length - separator.length)
+  const hashBase = sanitized.slice(0, hashBaseLength)
+  return `${hashBase}-${hash}-${suffix}`
 }
 
 const buildOwnerRefs = (resource: Record<string, unknown>) => {
@@ -404,6 +501,194 @@ const buildOwnerRefs = (resource: Record<string, unknown>) => {
 
 const resolveNamespace = (resource: Record<string, unknown>) =>
   asString(readNested(resource, ['metadata', 'namespace'])) ?? 'default'
+
+const STAGE_NAMES = ['discover', 'plan', 'implement', 'verify'] as const
+type StageName = (typeof STAGE_NAMES)[number]
+
+const STAGE_CADENCE_KEY: Record<StageName, string> = {
+  discover: 'discoverEvery',
+  plan: 'planEvery',
+  implement: 'implementEvery',
+  verify: 'verifyEvery',
+}
+
+const STAGE_LAST_RUN_KEY: Record<StageName, string> = {
+  discover: 'lastDiscoverAt',
+  plan: 'lastPlanAt',
+  implement: 'lastImplementAt',
+  verify: 'lastVerifyAt',
+}
+
+const TERMINAL_SUCCESS_PHASES = new Set(['succeeded', 'success', 'completed'])
+const TERMINAL_FAILURE_PHASES = new Set(['failed', 'error', 'cancelled'])
+const ACTIVE_PHASES = new Set(['pending', 'running', 'inprogress', 'progressing', 'queued'])
+
+const normalizeLabelValue = (value: string) => {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9.-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+/, '')
+    .replace(/-+$/, '')
+  if (!normalized) return 'swarm'
+  const trimmed = normalized
+    .slice(0, 63)
+    .replace(/^[.\-]+/, '')
+    .replace(/[.\-]+$/, '')
+  return trimmed || 'swarm'
+}
+
+const parseDurationToMs = (raw: string) => {
+  const value = raw.trim().toLowerCase()
+  const match = /^(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)$/.exec(
+    value,
+  )
+  if (!match) return null
+  const amount = Number(match[1])
+  if (!Number.isFinite(amount) || amount <= 0) return null
+  const unit = match[2]
+  if (unit.startsWith('s')) return amount * 1000
+  if (unit.startsWith('m')) return amount * 60 * 1000
+  if (unit.startsWith('h')) return amount * 60 * 60 * 1000
+  return amount * 24 * 60 * 60 * 1000
+}
+
+const cadenceToCron = (raw: string) => {
+  const durationMs = parseDurationToMs(raw)
+  if (!durationMs) return null
+  const durationMinutes = durationMs / (60 * 1000)
+
+  if (durationMinutes < 1) {
+    return null
+  }
+
+  if (durationMinutes < 60 && Number.isInteger(durationMinutes)) {
+    return `*/${durationMinutes} * * * *`
+  }
+
+  if (durationMinutes % 60 === 0) {
+    const hours = durationMinutes / 60
+    if (hours >= 1 && hours <= 23 && Number.isInteger(hours)) {
+      return `0 */${hours} * * *`
+    }
+  }
+
+  if (durationMinutes % (24 * 60) === 0) {
+    const days = durationMinutes / (24 * 60)
+    if (days >= 1 && days <= 28 && Number.isInteger(days)) {
+      return `0 0 */${days} * *`
+    }
+  }
+
+  return null
+}
+
+const resolveStageEvery = (spec: Record<string, unknown>, stageSpec: Record<string, unknown>, stage: StageName) => {
+  const stageEvery = asString(stageSpec.every)
+  if (stageEvery) return stageEvery
+  const cadence = asRecord(spec.cadence) ?? {}
+  return asString(cadence[STAGE_CADENCE_KEY[stage]])
+}
+
+const resolveStageTargetRef = (stageSpec: Record<string, unknown>, defaultNamespace: string) => {
+  const targetRef = asRecord(stageSpec.targetRef) ?? {}
+  const kind = asString(targetRef.kind)
+  const name = asString(targetRef.name)
+  const namespace = asString(targetRef.namespace) ?? defaultNamespace
+  if (!kind || !name) return null
+  if (kind !== 'AgentRun' && kind !== 'OrchestrationRun') return null
+  return { kind, name, namespace }
+}
+
+const resolveStageApiVersion = (kind: string) => {
+  if (kind === 'AgentRun') return 'agents.proompteng.ai/v1alpha1'
+  if (kind === 'OrchestrationRun') return 'orchestration.proompteng.ai/v1alpha1'
+  return ''
+}
+
+const stageScheduleName = (swarmName: string, stage: StageName) => makeHashedName(swarmName, `${stage}-sched`)
+
+const getRunTimestamp = (resource: Record<string, unknown>) => {
+  return (
+    asString(readNested(resource, ['status', 'startedAt'])) ??
+    asString(readNested(resource, ['status', 'finishedAt'])) ??
+    asString(readNested(resource, ['metadata', 'creationTimestamp']))
+  )
+}
+
+const parseTimeOrNull = (value: string | null | undefined) => {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) return null
+  return parsed
+}
+
+const scheduleSwarmUnfreezeReconcile = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  swarmName: string,
+  freezeUntil: string,
+) => {
+  const untilMs = parseTimeOrNull(freezeUntil)
+  if (untilMs === null) return
+
+  clearSwarmUnfreezeTimer(namespace, swarmName)
+
+  const key = `${namespace}/${swarmName}`
+  const scheduleChunk = (delayMs: number) => {
+    const clampedDelay = Math.min(Math.max(0, delayMs), 2_147_483_647)
+    const timer = setTimeout(async () => {
+      if (delayMs <= 2_147_483_647) {
+        swarmUnfreezeTimers.delete(key)
+        await enqueueNamespaceTask(namespace, async () => {
+          const latest = await kube.get(RESOURCE_MAP.Swarm, swarmName, namespace)
+          if (!latest) return
+          await reconcileSwarm(kube, latest, namespace)
+        })
+        return
+      }
+      scheduleChunk(delayMs - 2_147_483_647)
+    }, clampedDelay)
+    swarmUnfreezeTimers.set(key, timer)
+  }
+
+  scheduleChunk(Math.max(0, untilMs - Date.now()))
+}
+
+const sortByMostRecentRun = (resources: Record<string, unknown>[]) => {
+  return [...resources].sort((left, right) => {
+    const leftTs = parseTimeOrNull(getRunTimestamp(left))
+    const rightTs = parseTimeOrNull(getRunTimestamp(right))
+    if (leftTs === null && rightTs === null) return 0
+    if (leftTs === null) return 1
+    if (rightTs === null) return -1
+    return rightTs - leftTs
+  })
+}
+
+const countConsecutiveFailures = (resources: Record<string, unknown>[]) => {
+  const sorted = sortByMostRecentRun(resources)
+  let failures = 0
+  for (const resource of sorted) {
+    const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
+    if (!phase) continue
+    if (TERMINAL_FAILURE_PHASES.has(phase)) {
+      failures += 1
+      continue
+    }
+    if (TERMINAL_SUCCESS_PHASES.has(phase)) break
+    if (ACTIVE_PHASES.has(phase)) break
+  }
+  return failures
+}
+
+const filterRunsAfterTime = (resources: Record<string, unknown>[], timestampMs: number | null) => {
+  if (timestampMs === null) return resources
+  return resources.filter((resource) => {
+    const runTimestamp = parseTimeOrNull(getRunTimestamp(resource))
+    return runTimestamp !== null && runTimestamp > timestampMs
+  })
+}
 
 const reconcileTool = async (kube: ReturnType<typeof createKubernetesClient>, tool: Record<string, unknown>) => {
   const spec = asRecord(tool.spec) ?? {}
@@ -547,7 +832,17 @@ const buildScheduleRunTemplate = (
   const targetKind = asString(target.kind) ?? ''
   const targetNamespace = asString(readNested(target, ['metadata', 'namespace'])) ?? resolveNamespace(schedule)
   const scheduleName = asString(readNested(schedule, ['metadata', 'name'])) ?? 'schedule'
+  const scheduleLabels = asRecord(readNested(schedule, ['metadata', 'labels'])) ?? {}
+  const inheritedLabels = Object.fromEntries(
+    Object.entries(scheduleLabels).filter(
+      ([key, value]) =>
+        typeof value === 'string' &&
+        key !== 'schedules.proompteng.ai/schedule' &&
+        key !== 'jangar.proompteng.ai/delivery-id',
+    ),
+  ) as Record<string, string>
   const labels = {
+    ...inheritedLabels,
     'schedules.proompteng.ai/schedule': scheduleName,
     'jangar.proompteng.ai/delivery-id': deliveryPlaceholder,
   }
@@ -747,6 +1042,311 @@ const reconcileSchedule = async (
   }
 }
 
+const reconcileSwarm = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  swarm: Record<string, unknown>,
+  namespace: string,
+) => {
+  const metadata = asRecord(swarm.metadata) ?? {}
+  const spec = asRecord(swarm.spec) ?? {}
+  const status = asRecord(swarm.status) ?? {}
+  const conditionsBase = normalizeConditions(status.conditions)
+  const swarmName = asString(metadata.name) ?? 'swarm'
+  const swarmNamespace = asString(metadata.namespace) ?? namespace
+  const swarmUid = asString(metadata.uid)
+  const owner = asRecord(spec.owner) ?? {}
+  const mode = asString(spec.mode) ?? ''
+  const timezone = asString(spec.timezone) ?? 'UTC'
+  const execution = asRecord(spec.execution) ?? {}
+  const risk = asRecord(spec.risk) ?? {}
+
+  const freezeAfterFailuresRaw = Number(risk.freezeAfterFailures)
+  const freezeAfterFailures =
+    Number.isFinite(freezeAfterFailuresRaw) && freezeAfterFailuresRaw >= 1 ? Math.floor(freezeAfterFailuresRaw) : 3
+  const freezeDurationRaw = asString(risk.freezeDuration) ?? '60m'
+  const freezeDurationMs = parseDurationToMs(freezeDurationRaw) ?? 60 * 60 * 1000
+
+  const errors: string[] = []
+
+  if (!asString(owner.id)) {
+    errors.push('spec.owner.id is required')
+  }
+  if (!asString(owner.channel)) {
+    errors.push('spec.owner.channel is required')
+  }
+  if (mode !== 'assisted' && mode !== 'lights-out') {
+    errors.push('spec.mode must be assisted or lights-out')
+  }
+
+  const stageConfigs: Array<{
+    stage: StageName
+    enabled: boolean
+    scheduleName: string
+    every?: string
+    cron?: string
+    targetRef?: { kind: string; name: string; namespace: string }
+  }> = []
+
+  for (const stage of STAGE_NAMES) {
+    const stageSpec = asRecord(execution[stage]) ?? {}
+    const enabled = stageSpec.enabled !== false
+    const scheduleName = stageScheduleName(swarmName, stage)
+    if (!enabled) {
+      stageConfigs.push({ stage, enabled, scheduleName })
+      continue
+    }
+
+    const every = resolveStageEvery(spec, stageSpec, stage)
+    if (!every) {
+      errors.push(`spec.execution.${stage}.every or spec.cadence.${STAGE_CADENCE_KEY[stage]} is required`)
+      stageConfigs.push({ stage, enabled, scheduleName })
+      continue
+    }
+
+    const cron = cadenceToCron(every)
+    if (!cron) {
+      errors.push(`unsupported cadence for ${stage}: ${every}`)
+      stageConfigs.push({ stage, enabled, scheduleName, every })
+      continue
+    }
+
+    const targetRef = resolveStageTargetRef(stageSpec, swarmNamespace)
+    if (!targetRef) {
+      errors.push(`spec.execution.${stage}.targetRef requires kind (AgentRun|OrchestrationRun) and name`)
+      stageConfigs.push({ stage, enabled, scheduleName, every, cron })
+      continue
+    }
+
+    stageConfigs.push({ stage, enabled, scheduleName, every, cron, targetRef })
+  }
+
+  if (errors.length > 0) {
+    clearSwarmUnfreezeTimer(swarmNamespace, swarmName)
+    for (const stageConfig of stageConfigs) {
+      try {
+        await kube.delete(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace, { wait: false })
+      } catch {
+        // best effort
+      }
+    }
+
+    const conditions = upsertCondition(conditionsBase, buildReadyCondition(false, 'InvalidSpec', errors.join('; ')))
+    await setStatus(kube, swarm, {
+      observedGeneration: asRecord(swarm.metadata)?.generation ?? 0,
+      phase: 'Invalid',
+      conditions,
+    })
+    return
+  }
+
+  const swarmLabel = normalizeLabelValue(swarmName)
+  const swarmSelector = swarmUid
+    ? `swarm.proompteng.ai/name=${swarmLabel},swarm.proompteng.ai/uid=${swarmUid}`
+    : `swarm.proompteng.ai/name=${swarmLabel}`
+  const runNamespaces = Array.from(
+    new Set(
+      stageConfigs
+        .filter((stageConfig) => stageConfig.enabled)
+        .map((stageConfig) => stageConfig.targetRef?.namespace)
+        .filter((targetNamespace): targetNamespace is string => {
+          return typeof targetNamespace === 'string' && targetNamespace.length > 0
+        }),
+    ),
+  )
+  const namespacesForRunQueries = runNamespaces.length > 0 ? runNamespaces : [swarmNamespace]
+  const runPayloads = await Promise.all(
+    namespacesForRunQueries.flatMap((targetNamespace) => [
+      kube.list(RESOURCE_MAP.AgentRun, targetNamespace, swarmSelector),
+      kube.list(RESOURCE_MAP.OrchestrationRun, targetNamespace, swarmSelector),
+    ]),
+  )
+  const runSeen = new Set<string>()
+  const allRuns = runPayloads.flatMap(listItems).filter((run) => {
+    const runMetadata = asRecord(run.metadata) ?? {}
+    const runKind = asString(run.kind) ?? ''
+    const runNamespace = asString(runMetadata.namespace) ?? ''
+    const runName = asString(runMetadata.name)
+    if (!runName) return false
+    const runKey = `${runKind}/${runNamespace}/${runName}`
+    if (runSeen.has(runKey)) return false
+    runSeen.add(runKey)
+    return true
+  })
+  const implementRuns = allRuns.filter(
+    (run) => asString(readNested(run, ['metadata', 'labels', 'swarm.proompteng.ai/stage'])) === 'implement',
+  )
+
+  const nowMs = Date.now()
+  const existingFreezeUntil = asString(readNested(status, ['freeze', 'until']))
+  const existingFreezeReason = asString(readNested(status, ['freeze', 'reason']))
+  const existingFreezeAt = parseTimeOrNull(existingFreezeUntil)
+  let freezeActive = existingFreezeAt !== null && existingFreezeAt > nowMs
+  let freezeReason = existingFreezeReason ?? 'FreezeActive'
+  let freezeUntil = existingFreezeUntil ?? undefined
+  const failureWindowStartMs = existingFreezeAt !== null && existingFreezeAt <= nowMs ? existingFreezeAt : null
+
+  if (!freezeActive) {
+    const recentImplementRuns = filterRunsAfterTime(implementRuns, failureWindowStartMs)
+    const consecutiveFailures = countConsecutiveFailures(recentImplementRuns)
+    if (consecutiveFailures >= freezeAfterFailures) {
+      freezeActive = true
+      freezeReason = 'ConsecutiveFailures'
+      freezeUntil = new Date(nowMs + freezeDurationMs).toISOString()
+    } else {
+      freezeReason = 'Healthy'
+      freezeUntil = undefined
+    }
+  }
+
+  const ownerReferences = buildOwnerRefs(swarm)
+  const stageStates: Record<string, unknown> = {}
+
+  for (const stageConfig of stageConfigs) {
+    const baseState: Record<string, unknown> = {
+      enabled: stageConfig.enabled,
+      scheduleName: stageConfig.scheduleName,
+      cadence: stageConfig.every ?? null,
+      targetRef: stageConfig.targetRef ?? null,
+    }
+
+    if (!stageConfig.enabled || freezeActive) {
+      try {
+        await kube.delete(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace, { wait: false })
+      } catch {
+        // best effort
+      }
+      stageStates[stageConfig.stage] = {
+        ...baseState,
+        phase: freezeActive ? 'Frozen' : 'Disabled',
+      }
+      continue
+    }
+
+    const stageLabel = normalizeLabelValue(stageConfig.stage)
+    const schedule = {
+      apiVersion: 'schedules.schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: stageConfig.scheduleName,
+        namespace: swarmNamespace,
+        labels: {
+          'swarm.proompteng.ai/name': swarmLabel,
+          'swarm.proompteng.ai/stage': stageLabel,
+          'swarm.proompteng.ai/mode': mode,
+          ...(swarmUid ? { 'swarm.proompteng.ai/uid': swarmUid } : {}),
+        },
+        ...(ownerReferences ? { ownerReferences } : {}),
+      },
+      spec: {
+        cron: stageConfig.cron,
+        timezone,
+        targetRef: {
+          apiVersion: resolveStageApiVersion(stageConfig.targetRef?.kind ?? ''),
+          kind: stageConfig.targetRef?.kind,
+          name: stageConfig.targetRef?.name,
+          namespace: stageConfig.targetRef?.namespace,
+        },
+      },
+    }
+
+    await kube.apply(schedule)
+    const scheduleResource = await kube.get(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace)
+    const schedulePhase = asString(readNested(scheduleResource ?? {}, ['status', 'phase'])) ?? 'Active'
+    const lastRunTime = asString(readNested(scheduleResource ?? {}, ['status', 'lastRunTime'])) ?? undefined
+    stageStates[stageConfig.stage] = {
+      ...baseState,
+      phase: schedulePhase,
+      lastRunTime: lastRunTime ?? null,
+    }
+  }
+
+  const missions24hThreshold = nowMs - 24 * 60 * 60 * 1000
+  const runsIn24h = allRuns.filter((run) => {
+    const timestamp = parseTimeOrNull(getRunTimestamp(run))
+    return timestamp !== null && timestamp >= missions24hThreshold
+  })
+  const discoveries24h = runsIn24h.filter(
+    (run) => asString(readNested(run, ['metadata', 'labels', 'swarm.proompteng.ai/stage'])) === 'discover',
+  ).length
+  const activeMissions = allRuns.filter((run) => {
+    const phase = (asString(readNested(run, ['status', 'phase'])) ?? '').toLowerCase()
+    return ACTIVE_PHASES.has(phase)
+  }).length
+
+  const terminalRuns24h = runsIn24h.filter((run) => {
+    const phase = (asString(readNested(run, ['status', 'phase'])) ?? '').toLowerCase()
+    return TERMINAL_SUCCESS_PHASES.has(phase) || TERMINAL_FAILURE_PHASES.has(phase)
+  })
+  const succeededRuns24h = terminalRuns24h.filter((run) =>
+    TERMINAL_SUCCESS_PHASES.has((asString(readNested(run, ['status', 'phase'])) ?? '').toLowerCase()),
+  ).length
+  const autonomousSuccessRate24h =
+    terminalRuns24h.length > 0 ? Number((succeededRuns24h / terminalRuns24h.length).toFixed(4)) : 1
+
+  const latestSuccessfulImplement = sortByMostRecentRun(implementRuns).find((run) =>
+    TERMINAL_SUCCESS_PHASES.has((asString(readNested(run, ['status', 'phase'])) ?? '').toLowerCase()),
+  )
+  const lastProductionChangeRef =
+    asString(readNested(latestSuccessfulImplement ?? {}, ['metadata', 'name'])) ??
+    asString(status.lastProductionChangeRef) ??
+    undefined
+
+  const nextStatus: Record<string, unknown> = {
+    observedGeneration: asRecord(swarm.metadata)?.generation ?? 0,
+    phase: freezeActive ? 'Frozen' : 'Active',
+    activeMissions,
+    queuedNeeds: Number(status.queuedNeeds ?? 0) || 0,
+    discoveries24h,
+    missions24h: runsIn24h.length,
+    autonomousSuccessRate24h,
+    lastProductionChangeRef,
+    stageStates,
+  }
+
+  for (const stage of STAGE_NAMES) {
+    const stageState = asRecord(stageStates[stage])
+    const stageLastRun = asString(stageState?.lastRunTime)
+    if (stageLastRun) {
+      nextStatus[STAGE_LAST_RUN_KEY[stage]] = stageLastRun
+    } else {
+      const existing = asString(status[STAGE_LAST_RUN_KEY[stage]])
+      if (existing) nextStatus[STAGE_LAST_RUN_KEY[stage]] = existing
+    }
+  }
+
+  let conditions = conditionsBase
+  if (freezeActive) {
+    if (freezeUntil) {
+      scheduleSwarmUnfreezeReconcile(kube, swarmNamespace, swarmName, freezeUntil)
+    } else {
+      clearSwarmUnfreezeTimer(swarmNamespace, swarmName)
+    }
+    conditions = upsertCondition(conditions, buildReadyCondition(false, 'Frozen', `swarm frozen until ${freezeUntil}`))
+    conditions = upsertCondition(conditions, {
+      type: 'Frozen',
+      status: 'True',
+      reason: freezeReason,
+      message: `swarm frozen until ${freezeUntil}`,
+    })
+    nextStatus.freeze = {
+      reason: freezeReason,
+      until: freezeUntil,
+    }
+  } else {
+    clearSwarmUnfreezeTimer(swarmNamespace, swarmName)
+    conditions = upsertCondition(conditions, buildReadyCondition(true, 'Active', 'swarm active'))
+    conditions = upsertCondition(conditions, {
+      type: 'Frozen',
+      status: 'False',
+      reason: 'NotFrozen',
+      message: 'swarm operating normally',
+    })
+  }
+  nextStatus.conditions = conditions
+
+  await setStatus(kube, swarm, nextStatus)
+}
+
 const reconcileWorkspace = async (
   kube: ReturnType<typeof createKubernetesClient>,
   workspace: Record<string, unknown>,
@@ -886,6 +1486,10 @@ const reconcileResource = async (
     await reconcileSchedule(kube, resource, namespace)
     return
   }
+  if (kind === 'Swarm') {
+    await reconcileSwarm(kube, resource, namespace)
+    return
+  }
   if (kind === 'Workspace') {
     await reconcileWorkspace(kube, resource, namespace)
     return
@@ -896,7 +1500,7 @@ const reconcileResource = async (
 }
 
 const reconcileNamespace = async (kube: ReturnType<typeof createKubernetesClient>, namespace: string) => {
-  const payloads = await Promise.all([
+  const listRequests = [
     kube.list(RESOURCE_MAP.Tool, namespace),
     kube.list(RESOURCE_MAP.ApprovalPolicy, namespace),
     kube.list(RESOURCE_MAP.Budget, namespace),
@@ -906,7 +1510,11 @@ const reconcileNamespace = async (kube: ReturnType<typeof createKubernetesClient
     kube.list(RESOURCE_MAP.Schedule, namespace),
     kube.list(RESOURCE_MAP.Artifact, namespace),
     kube.list(RESOURCE_MAP.Workspace, namespace),
-  ])
+  ]
+  if (optionalCrdsReady.has(RESOURCE_MAP.Swarm)) {
+    listRequests.push(kube.list(RESOURCE_MAP.Swarm, namespace))
+  }
+  const payloads = await Promise.all(listRequests)
   const items = payloads.flatMap(listItems)
   for (const item of items) {
     await reconcileResource(kube, item, namespace)
@@ -932,8 +1540,18 @@ const handleResourceEvent = (
   namespace: string,
   event: { type?: string; object?: Record<string, unknown> },
 ) => {
-  if (event.type === 'DELETED') return
   const resource = asRecord(event.object)
+  if (event.type === 'DELETED') {
+    const kind = asString(resource?.kind)
+    if (kind === 'Swarm') {
+      const name = asString(readNested(resource ?? {}, ['metadata', 'name']))
+      const resourceNamespace = asString(readNested(resource ?? {}, ['metadata', 'namespace'])) ?? namespace
+      if (name) {
+        clearSwarmUnfreezeTimer(resourceNamespace, name)
+      }
+    }
+    return
+  }
   if (!resource) return
   enqueueNamespaceTask(namespace, () => reconcileResource(kube, resource, namespace))
 }
@@ -1056,6 +1674,17 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] schedule watch failed', error),
         }),
       )
+      if (optionalCrdsReady.has(RESOURCE_MAP.Swarm)) {
+        swarmWatchersStarted = true
+        handles.push(
+          startResourceWatch({
+            resource: RESOURCE_MAP.Swarm,
+            namespace,
+            onEvent: (event) => handleResourceEvent(kube, namespace, event),
+            onError: (error) => console.warn('[jangar] swarm watch failed', error),
+          }),
+        )
+      }
       handles.push(
         startResourceWatch({
           resource: RESOURCE_MAP.Artifact,
@@ -1092,6 +1721,14 @@ export const startSupportingPrimitivesController = async () => {
       )
     }
 
+    if (!optionalCrdsReady.has(RESOURCE_MAP.Swarm)) {
+      if (swarmCrdsRefreshHandle) clearInterval(swarmCrdsRefreshHandle)
+      swarmCrdsRefreshHandle = setInterval(() => {
+        if (!started) return
+        void refreshOptionalSwarmWatches(kube, namespaces, token)
+      }, SWARM_CRD_REFRESH_INTERVAL_MS)
+    }
+
     if (lifecycleToken !== token) return
     watchHandles = handles
     started = true
@@ -1104,6 +1741,10 @@ export const startSupportingPrimitivesController = async () => {
         handle.stop()
       }
     }
+    if (swarmCrdsRefreshHandle && (lifecycleToken !== token || !started)) {
+      clearInterval(swarmCrdsRefreshHandle)
+      swarmCrdsRefreshHandle = null
+    }
     if (lifecycleToken === token) {
       starting = false
     }
@@ -1113,9 +1754,15 @@ export const startSupportingPrimitivesController = async () => {
 export const stopSupportingPrimitivesController = () => {
   lifecycleToken += 1
   starting = false
+  if (swarmCrdsRefreshHandle) {
+    clearInterval(swarmCrdsRefreshHandle)
+    swarmCrdsRefreshHandle = null
+  }
+  swarmWatchersStarted = false
   for (const handle of watchHandles) {
     handle.stop()
   }
+  clearAllSwarmUnfreezeTimers()
   watchHandles = []
   namespaceQueues.clear()
   started = false
@@ -1124,5 +1771,7 @@ export const stopSupportingPrimitivesController = () => {
 
 export const __test__ = {
   reconcileTool,
+  reconcileSwarm,
   shouldStartWithFeatureFlag,
+  SWARM_CRD_REFRESH_INTERVAL_MS,
 }
