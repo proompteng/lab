@@ -345,6 +345,95 @@ class TestLLMDSPyWorkflow(TestCase):
                 assert isinstance(lineage, dict)
                 self.assertIn("dataset-build", lineage)
 
+    def test_orchestrate_dspy_agentrun_workflow_promotes_with_falsey_eval_report_override(
+        self,
+    ) -> None:
+        responses = [
+            {
+                "agentRun": {"id": "record-dataset"},
+                "resource": {
+                    "metadata": {"name": "run-dataset", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-compile"},
+                "resource": {
+                    "metadata": {"name": "run-compile", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-eval"},
+                "resource": {"metadata": {"name": "run-eval", "namespace": "agents"}},
+            },
+            {
+                "agentRun": {"id": "record-promote"},
+                "resource": {
+                    "metadata": {"name": "run-promote", "namespace": "agents"}
+                },
+            },
+        ]
+
+        for eval_report_ref in (None, 0):
+            with TemporaryDirectory() as tmpdir:
+                artifact_root = Path(tmpdir) / "artifacts" / "dspy" / "run-falsey"
+                _write_dspy_promotion_eval_snapshot(
+                    artifact_root=artifact_root,
+                    created_at=datetime.now(timezone.utc),
+                )
+                lane_overrides = _build_dspy_lane_overrides(
+                    artifact_root=artifact_root,
+                    promote_overrides={"evalReportRef": eval_report_ref},
+                )
+                run_prefix = (
+                    f"torghut-dspy-run-falsey-{eval_report_ref}"
+                    if eval_report_ref is not None
+                    else "torghut-dspy-run-falsey-none"
+                )
+
+                with patch(
+                    "app.trading.llm.dspy_compile.workflow.submit_jangar_agentrun",
+                    side_effect=responses,
+                ) as submit_mock:
+                    with patch(
+                        "app.trading.llm.dspy_compile.workflow.wait_for_jangar_agentrun_terminal_status",
+                        side_effect=[
+                            "succeeded",
+                            "succeeded",
+                            "succeeded",
+                            "succeeded",
+                        ],
+                    ) as wait_mock:
+                        with Session(self.engine) as session:
+                            result = orchestrate_dspy_agentrun_workflow(
+                                session,
+                                base_url="http://jangar.test",
+                                repository="proompteng/lab",
+                                base="main",
+                                head="codex/dspy-rollout",
+                                artifact_root=str(artifact_root),
+                                run_prefix=run_prefix,
+                                auth_token="token-123",
+                                lane_parameter_overrides=lane_overrides,
+                                include_gepa_experiment=False,
+                                secret_binding_ref="codex-whitepaper-github-token",
+                                ttl_seconds_after_finished=3600,
+                            )
+
+                self.assertEqual(submit_mock.call_count, 4)
+                self.assertEqual(wait_mock.call_count, 4)
+                self.assertEqual(
+                    sorted(result.keys()),
+                    ["compile", "dataset-build", "eval", "promote"],
+                )
+                expected_eval_report_ref = str(
+                    artifact_root / "eval" / "dspy-eval-report.json"
+                )
+                promote_payload = submit_mock.call_args_list[-1].kwargs["payload"]
+                self.assertEqual(
+                    promote_payload["parameters"]["evalReportRef"],
+                    expected_eval_report_ref,
+                )
+
     def test_orchestrate_dspy_agentrun_workflow_persists_submitted_lanes_before_failure(
         self,
     ) -> None:

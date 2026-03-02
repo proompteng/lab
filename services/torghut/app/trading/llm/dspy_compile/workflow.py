@@ -556,7 +556,9 @@ def _lane_overrides_with_defaults(
     normalized = dict(lane_overrides)
     requested_eval_report_ref = ""
     if lane == "promote":
-        requested_eval_report_ref = str(normalized.get("evalReportRef", "")).strip()
+        eval_report_ref = normalized.get("evalReportRef")
+        if eval_report_ref:
+            requested_eval_report_ref = str(eval_report_ref).strip()
         for key in _PROMOTION_EVIDENCE_OVERRIDE_KEYS:
             normalized.pop(key, None)
     if lane == "compile":

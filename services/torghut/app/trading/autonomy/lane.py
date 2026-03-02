@@ -907,34 +907,6 @@ def run_autonomous_lane(
         )
         metrics_payload = report.metrics.to_payload()
 
-        resolved_strategy_configmap_path = (
-            strategy_configmap_path or _default_strategy_configmap_path()
-        )
-        runbook_validated = _is_valid_strategy_configmap(
-            resolved_strategy_configmap_path
-        )
-        rollback_readiness = _build_rollback_readiness(
-            promotion_target=promotion_target,
-            strategy_configmap_valid=runbook_validated,
-            runtime_strategies=runtime_strategies,
-            now=now,
-            code_version=code_version,
-            approval_token=approval_token,
-        )
-        candidate_state_payload = {
-            "candidateId": candidate_id,
-            "runId": run_id,
-            "activeStage": "gate-evaluation",
-            "paused": False,
-            "datasetSnapshotRef": "signals_window",
-            "noSignalReason": None,
-            "runbookValidated": runbook_validated,
-            "rollbackReadiness": rollback_readiness,
-        }
-        candidate_state_readiness = cast(
-            dict[str, Any], candidate_state_payload.get("rollbackReadiness", {})
-        )
-
         gate_policy = GatePolicyMatrix.from_path(gate_policy_path)
         profitability_evidence_payload["validation"] = (
             profitability_validation.to_payload()
