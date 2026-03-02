@@ -201,6 +201,14 @@ const CONTROL_PLANE_PRIMITIVES: PrimitiveDefinition[] = [
     listPath: '/control-plane/schedules',
     detailPath: '/control-plane/schedules/$name',
   },
+  {
+    kind: 'Swarm',
+    title: 'Swarms',
+    description: 'Always-on autonomous mission controllers.',
+    section: 'Orchestration',
+    listPath: '/control-plane/swarms',
+    detailPath: '/control-plane/swarms/$name',
+  },
 ]
 
 const CONTROL_PLANE_SECTIONS = Array.from(
@@ -560,7 +568,7 @@ const controllers = [
     id: 'orchestration',
     title: 'Orchestration controller',
     description: 'Orchestrations, schedules, and runs.',
-    kinds: ['Orchestration', 'OrchestrationRun', 'Schedule'] as AgentPrimitiveKind[],
+    kinds: ['Orchestration', 'OrchestrationRun', 'Swarm', 'Schedule'] as AgentPrimitiveKind[],
   },
   {
     id: 'supporting',

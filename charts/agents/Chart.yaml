@@ -5,7 +5,7 @@ home: https://github.com/proompteng/charts/tree/main/charts/agents
 sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
 type: application
-version: 0.9.3
+version: 0.9.4
 appVersion: '0.9.0'
 icon: https://avatars.githubusercontent.com/u/234536857
 keywords:
@@ -79,6 +79,9 @@ annotations:
     - kind: Schedule
       version: v1alpha1
       name: schedules.schedules.proompteng.ai
+    - kind: Swarm
+      version: v1alpha1
+      name: swarms.swarm.proompteng.ai
     - kind: Artifact
       version: v1alpha1
       name: artifacts.artifacts.proompteng.ai
@@ -172,7 +175,36 @@ annotations:
         parameters:
           repository: proompteng/lab
           issueNumber: "1234"
+    - apiVersion: swarm.proompteng.ai/v1alpha1
+      kind: Swarm
+      metadata:
+        name: platform-swarm
+      spec:
+        owner:
+          id: platform-owner
+          channel: swarm://owner/platform
+        domains: [platform-reliability]
+        objectives: ["Continuously improve service quality"]
+        mode: assisted
+        cadence:
+          discoverEvery: 5m
+          planEvery: 10m
+          implementEvery: 10m
+          verifyEvery: 5m
+        discovery:
+          sources: [{name: github-issues}]
+        delivery:
+          deploymentTargets: [agents]
+        execution:
+          discover: {targetRef: {kind: AgentRun, name: codex-run-sample}}
+          plan: {targetRef: {kind: AgentRun, name: codex-run-sample}}
+          implement: {targetRef: {kind: OrchestrationRun, name: codex-autonomous-run}}
+          verify: {targetRef: {kind: AgentRun, name: codex-run-sample}}
   artifacthub.io/changes: |
+    - kind: added
+      description: "Add Swarm CRD for always-on autonomous mission orchestration."
+    - kind: changed
+      description: "Extend controller/runtime RBAC and control-plane summary wiring for Swarm resources."
     - kind: added
       description: "Add AgentRun workflow step loop fields (fixed and conditional iteration semantics)."
     - kind: added
