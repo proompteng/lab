@@ -64,6 +64,7 @@ let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 let watchHandles: Array<{ stop: () => void }> = []
 let swarmCrdsRefreshHandle: NodeJS.Timeout | null = null
 const namespaceQueues = new Map<string, Promise<void>>()
+const queuedResourceKeysByNamespace = new Map<string, Map<string, { rerun: boolean }>>()
 const optionalCrdsReady = new Set<string>()
 const swarmUnfreezeTimers = new Map<string, NodeJS.Timeout>()
 
@@ -228,6 +229,42 @@ const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
       console.warn('[jangar] supporting controller task failed', error)
     })
   namespaceQueues.set(namespace, next)
+}
+
+const queueResourceTask = (namespace: string, key: string, task: () => Promise<void>) => {
+  const keys = queuedResourceKeysByNamespace.get(namespace) ?? new Map<string, { rerun: boolean }>()
+  const existing = keys.get(key)
+  if (existing) {
+    existing.rerun = true
+    return
+  }
+
+  const state = { rerun: false }
+  keys.set(key, state)
+  queuedResourceKeysByNamespace.set(namespace, keys)
+
+  const runTask = () => {
+    enqueueNamespaceTask(namespace, async () => {
+      try {
+        await task()
+      } finally {
+        const currentKeys = queuedResourceKeysByNamespace.get(namespace)
+        const currentState = currentKeys?.get(key)
+        if (!currentKeys || !currentState) return
+        if (currentState.rerun) {
+          currentState.rerun = false
+          runTask()
+          return
+        }
+        currentKeys.delete(key)
+        if (currentKeys.size === 0) {
+          queuedResourceKeysByNamespace.delete(namespace)
+        }
+      }
+    })
+  }
+
+  runTask()
 }
 
 const clearAllSwarmUnfreezeTimers = () => {
@@ -442,6 +479,92 @@ const setStatus = async (
 const listItems = (payload: Record<string, unknown>) => {
   const items = Array.isArray(payload.items) ? payload.items : []
   return items.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+}
+
+const stableStringify = (value: unknown): string => {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value) ?? 'null'
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(',')}]`
+  }
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort()
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`
+}
+
+const extractComparableValue = (actual: unknown, desired: unknown): unknown => {
+  if (desired === null || typeof desired !== 'object') {
+    return actual
+  }
+  if (Array.isArray(desired)) {
+    if (!Array.isArray(actual)) return actual
+    return desired.map((entry, index) => extractComparableValue(actual[index], entry))
+  }
+  if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
+    return actual
+  }
+  const actualRecord = actual as Record<string, unknown>
+  const desiredRecord = desired as Record<string, unknown>
+  const output: Record<string, unknown> = {}
+  for (const key of Object.keys(desiredRecord)) {
+    output[key] = extractComparableValue(actualRecord[key], desiredRecord[key])
+  }
+  return output
+}
+
+const normalizeResourceForApplyCompare = (input: Record<string, unknown>, desired: Record<string, unknown>) => {
+  const next: Record<string, unknown> = {
+    apiVersion: asString(input.apiVersion) ?? asString(desired.apiVersion),
+    kind: asString(input.kind) ?? asString(desired.kind),
+    metadata: extractComparableValue(asRecord(input.metadata) ?? {}, asRecord(desired.metadata) ?? {}),
+  }
+
+  for (const key of Object.keys(desired)) {
+    if (key === 'apiVersion' || key === 'kind' || key === 'metadata' || key === 'status') continue
+    next[key] = extractComparableValue(input[key], desired[key])
+  }
+
+  return next
+}
+
+const resolveComparableResource = (kind: string) => {
+  if (kind === 'Schedule') return RESOURCE_MAP.Schedule
+  if (kind === 'ConfigMap') return 'configmap'
+  if (kind === 'CronJob') return 'cronjob'
+  if (kind === 'PersistentVolumeClaim') return 'persistentvolumeclaim'
+  return null
+}
+
+const applyResourceIfChanged = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  resource: Record<string, unknown>,
+) => {
+  const kind = asString(resource.kind)
+  const metadata = asRecord(resource.metadata) ?? {}
+  const name = asString(metadata.name)
+  const namespace = asString(metadata.namespace)
+  if (!kind || !name || !namespace) {
+    return kube.apply(resource)
+  }
+
+  const comparableResource = resolveComparableResource(kind)
+  if (!comparableResource) {
+    return kube.apply(resource)
+  }
+
+  const existing = await kube.get(comparableResource, name, namespace)
+  if (existing) {
+    const normalizedExisting = normalizeResourceForApplyCompare(existing, resource)
+    const normalizedDesired = normalizeResourceForApplyCompare(resource, resource)
+    if (stableStringify(normalizedExisting) === stableStringify(normalizedDesired)) {
+      return existing
+    }
+  }
+
+  return kube.apply(resource)
 }
 
 const hashNameSuffix = (value: string) => {
@@ -846,7 +969,7 @@ const scheduleSwarmUnfreezeReconcile = (
     const timer = setTimeout(async () => {
       if (delayMs <= 2_147_483_647) {
         swarmUnfreezeTimers.delete(key)
-        await enqueueNamespaceTask(namespace, async () => {
+        queueResourceTask(namespace, `Swarm/${namespace}/${swarmName}`, async () => {
           const latest = await kube.get(RESOURCE_MAP.Swarm, swarmName, namespace)
           if (!latest) return
           await reconcileSwarm(kube, latest, namespace)
@@ -1235,7 +1358,7 @@ const reconcileSchedule = async (
         'run.json': JSON.stringify(template, null, 2),
       },
     }
-    await kube.apply(configMap)
+    await applyResourceIfChanged(kube, configMap)
 
     const image =
       process.env.JANGAR_SCHEDULE_RUNNER_IMAGE || process.env.JANGAR_IMAGE || 'ghcr.io/proompteng/jangar:latest'
@@ -1291,7 +1414,7 @@ const reconcileSchedule = async (
         },
       },
     }
-    await kube.apply(cronJob)
+    await applyResourceIfChanged(kube, cronJob)
     const cronResource = await kube.get('cronjob', cronJobName, namespace)
     const lastRunTime = asString(readNested(cronResource ?? {}, ['status', 'lastScheduleTime'])) ?? undefined
     const conditions = upsertCondition(
@@ -1739,7 +1862,7 @@ const reconcileSwarm = async (
       },
     }
 
-    await kube.apply(schedule)
+    await applyResourceIfChanged(kube, schedule)
     const scheduleResource = await kube.get(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace)
     const schedulePhase = asString(readNested(scheduleResource ?? {}, ['status', 'phase'])) ?? 'Active'
     const lastRunTime = asString(readNested(scheduleResource ?? {}, ['status', 'lastRunTime'])) ?? undefined
@@ -1922,7 +2045,7 @@ const reconcileWorkspace = async (
       ...(storageClassName ? { storageClassName } : {}),
     },
   }
-  await kube.apply(pvc)
+  await applyResourceIfChanged(kube, pvc)
 
   const pvcResource = await kube.get('persistentvolumeclaim', workspaceName, namespace)
   const pvcPhase = asString(readNested(pvcResource ?? {}, ['status', 'phase'])) ?? 'Pending'
@@ -2086,7 +2209,11 @@ const handleResourceEvent = (
     return
   }
   if (!resource) return
-  enqueueNamespaceTask(namespace, () => reconcileResource(kube, resource, namespace))
+  const resourceNamespace = asString(readNested(resource, ['metadata', 'namespace'])) ?? namespace
+  const resourceKind = asString(resource.kind) ?? 'Unknown'
+  const resourceName = asString(readNested(resource, ['metadata', 'name'])) ?? 'unknown'
+  const queueKey = `${resourceNamespace}/${resourceKind}/${resourceName}`
+  queueResourceTask(resourceNamespace, queueKey, () => reconcileResource(kube, resource, resourceNamespace))
 }
 
 const handleScheduleRunnerEvent = async (
@@ -2098,9 +2225,11 @@ const handleScheduleRunnerEvent = async (
   if (!resource) return
   const scheduleName = asString(readNested(resource, ['metadata', 'labels', 'schedules.proompteng.ai/schedule']))
   if (!scheduleName) return
-  const schedule = await kube.get(RESOURCE_MAP.Schedule, scheduleName, namespace)
-  if (!schedule) return
-  await reconcileSchedule(kube, schedule, namespace)
+  queueResourceTask(namespace, `${namespace}/Schedule/${scheduleName}`, async () => {
+    const schedule = await kube.get(RESOURCE_MAP.Schedule, scheduleName, namespace)
+    if (!schedule) return
+    await reconcileSchedule(kube, schedule, namespace)
+  })
 }
 
 const handleWorkspaceVolumeEvent = async (
@@ -2112,9 +2241,11 @@ const handleWorkspaceVolumeEvent = async (
   if (!resource) return
   const workspaceName = asString(readNested(resource, ['metadata', 'labels', 'workspaces.proompteng.ai/workspace']))
   if (!workspaceName) return
-  const workspace = await kube.get(RESOURCE_MAP.Workspace, workspaceName, namespace)
-  if (!workspace) return
-  await reconcileWorkspace(kube, workspace, namespace)
+  queueResourceTask(namespace, `${namespace}/Workspace/${workspaceName}`, async () => {
+    const workspace = await kube.get(RESOURCE_MAP.Workspace, workspaceName, namespace)
+    if (!workspace) return
+    await reconcileWorkspace(kube, workspace, namespace)
+  })
 }
 
 export const startSupportingPrimitivesController = async () => {
@@ -2298,11 +2429,13 @@ export const stopSupportingPrimitivesController = () => {
   clearAllSwarmUnfreezeTimers()
   watchHandles = []
   namespaceQueues.clear()
+  queuedResourceKeysByNamespace.clear()
   started = false
   controllerState.started = false
 }
 
 export const __test__ = {
+  applyResourceIfChanged,
   buildScheduleRunnerCommand,
   reconcileTool,
   reconcileSwarm,
