@@ -1,22 +1,22 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: swarm-e2e-1772424059
-  digest: sha256:587460e74e4c4e277d29858209433afda0e88a7cdde498b53eff19fbf7dd7ff4
+  tag: d481ef0d
+  digest: sha256:bcac6a1783be8b41ceac6e2eff304204d6866adc34c861d5166ea1434d39559f
   pullPolicy: IfNotPresent
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: swarm-e2e-1772424059
-    digest: sha256:84ef60a41df897c5e05692685e284b2989f47d46d6b50643ff3cb76866e715c2
+    tag: d481ef0d
+    digest: sha256:cedc77099ed11495b3384f4d7c300423cd560abc006c350aed60ba6af2463dfe
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 09867cb7
-    digest: sha256:9000780a23744b61ee33e724d30415b2eb8d0a48fb7883d3bc999400cdb71e72
+    tag: d481ef0d
+    digest: sha256:bcac6a1783be8b41ceac6e2eff304204d6866adc34c861d5166ea1434d39559f
 controllers:
   enabled: true
   replicaCount: 2
