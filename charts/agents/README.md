@@ -110,11 +110,17 @@ Agent memory backends are configured separately via the `Memory` CRD.
 
 ### Controller scope
 
-- Single namespace (namespaced RBAC): omit `controller.namespaces` for release-namespace default or set one namespace
-- Multi-namespace: set `controller.namespaces` with multiple namespaces and `rbac.clusterScoped=true`
-- Wildcard: set `controller.namespaces=["*"]` and `rbac.clusterScoped=true`
+- Single namespace (namespaced RBAC): omit a scope list for release-namespace default or set one namespace
+- Multi-namespace: set any scope list with multiple namespaces and `rbac.clusterScoped=true`
+- Wildcard: set any scope list to `["*"]` and `rbac.clusterScoped=true`
 
-Do **not** set `controller.namespaces: []`. An explicit empty list is rejected by chart validation.
+For all scope keys:
+
+- `controller.namespaces`
+- `orchestrationController.namespaces`
+- `supportingController.namespaces`
+
+Do **not** set an explicit empty list (`[]`). Empty scope arrays are rejected by chart validation.
 
 ### AgentRun status artifact limits
 
@@ -129,11 +135,11 @@ Note: The CRD schema hard-caps `status.artifacts` at 50 entries; controller-side
 
 #### Namespaced vs cluster-scoped install matrix
 
-| Install mode               | controller.namespaces  | rbac.clusterScoped | RBAC scope                                              |
-| -------------------------- | ---------------------- | ------------------ | ------------------------------------------------------- |
-| Namespaced (single)        | omitted or `["agents"]` | `false`            | Role + RoleBinding                                      |
-| Multi-namespace (explicit) | `["team-a", "team-b"]` | `true`             | ClusterRole + ClusterRoleBinding                        |
-| Wildcard (all namespaces)  | `["*"]`                | `true`             | ClusterRole + ClusterRoleBinding (namespace list/watch) |
+| Install mode               | Scope list examples     | rbac.clusterScoped | RBAC scope                                              |
+| -------------------------- | ----------------------- | ------------------ | ------------------------------------------------------- |
+| Namespaced (single)        | omitted or `["agents"]` | `false`            | Role + RoleBinding in release namespace                 |
+| Multi-namespace (explicit) | `["team-a", "team-b"]`  | `true`             | ClusterRole + ClusterRoleBinding                        |
+| Wildcard (all namespaces)  | `["*"]`                 | `true`             | ClusterRole + ClusterRoleBinding (namespace list/watch) |
 
 ### Default scheduling for job pods
 

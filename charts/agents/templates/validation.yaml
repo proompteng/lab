@@ -31,7 +31,9 @@
   {{- $hasWildcard := false -}}
 
   {{- if $enabled }}
-    {{- if and $explicit (eq (len $namespaces) 0) }}
+    {{- if and $explicit (not (kindIs "slice" $namespaces)) }}
+      {{- $errors = append $errors (printf "%s.namespaces must be an array (for example, [\"agents\"] or [\"*\"])." $label) }}
+    {{- else if and $explicit (eq (len $namespaces) 0) }}
       {{- $errors = append $errors (printf "%s.namespaces is set but empty; remove the key to use the release namespace or provide one namespace, a multi-namespace list, or ['*']." $label) }}
     {{- else }}
       {{- range $namespace := $namespaces }}

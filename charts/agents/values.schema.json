@@ -912,6 +912,33 @@
     {
       "if": {
         "properties": {
+          "controller": {
+            "properties": {
+              "namespaces": {
+                "type": "array",
+                "contains": { "const": "*" }
+              }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["controller"]
+      },
+      "then": {
+        "properties": {
+          "controller": {
+            "properties": {
+              "namespaces": {
+                "maxItems": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "orchestrationController": {
             "properties": {
               "namespaces": { "type": "array", "minItems": 2 }
@@ -960,6 +987,33 @@
     {
       "if": {
         "properties": {
+          "orchestrationController": {
+            "properties": {
+              "namespaces": {
+                "type": "array",
+                "contains": { "const": "*" }
+              }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["orchestrationController"]
+      },
+      "then": {
+        "properties": {
+          "orchestrationController": {
+            "properties": {
+              "namespaces": {
+                "maxItems": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "supportingController": {
             "properties": {
               "namespaces": { "type": "array", "minItems": 2 }
@@ -1003,6 +1057,33 @@
           }
         },
         "required": ["rbac"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "supportingController": {
+            "properties": {
+              "namespaces": {
+                "type": "array",
+                "contains": { "const": "*" }
+              }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["supportingController"]
+      },
+      "then": {
+        "properties": {
+          "supportingController": {
+            "properties": {
+              "namespaces": {
+                "maxItems": 1
+              }
+            }
+          }
+        }
       }
     }
   ]
