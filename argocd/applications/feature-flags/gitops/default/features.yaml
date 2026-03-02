@@ -194,7 +194,7 @@ flags:
     name: Torghut LLM Fail Open Live Approved
     description: Approval gate for live fail-open behavior.
     type: BOOLEAN_FLAG_TYPE
-    enabled: false
+    enabled: true
   - key: torghut_llm_adjustment_allowed
     name: Torghut LLM Adjustment Allowed
     description: Allows LLM-generated quantity adjustments.
