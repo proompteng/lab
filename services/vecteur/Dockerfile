@@ -16,17 +16,13 @@ RUN set -euxo pipefail \
     postgresql-${PG_MAJOR}-pgvector \
   && rm -rf /var/lib/apt/lists/*
 
-RUN cat <<'EOF' > /usr/local/bin/docker-entrypoint.sh
+RUN cat <<'EOF2' > /usr/local/bin/docker-entrypoint.sh
 #!/usr/bin/env bash
 set -euo pipefail
 
 if [ "$#" -gt 0 ] && [ "$1" != "postgres" ]; then
   exec "$@"
 fi
-
-run_as_postgres() {
-  su -s /bin/sh postgres -lc "$1"
-}
 
 export PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 export PGPORT="${PGPORT:-5432}"
@@ -36,7 +32,6 @@ POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
 
 if [ ! -s "${PGDATA}/PG_VERSION" ]; then
   mkdir -p "${PGDATA}"
-  chown -R postgres:postgres "${PGDATA}"
 
   initdb_args=(
     "--username=${POSTGRES_USER}"
@@ -51,18 +46,19 @@ if [ ! -s "${PGDATA}/PG_VERSION" ]; then
     pg_password_file=""
   fi
 
-  run_as_postgres "initdb ${initdb_args[*]}"
+  initdb "${initdb_args[@]}"
+
   [ -n "${pg_password_file}" ] && rm -f "${pg_password_file}"
 fi
 
 if [ "${POSTGRES_DB}" != "${POSTGRES_USER}" ]; then
-  run_as_postgres "createdb --owner='${POSTGRES_USER}' --encoding=UTF8 --template=template0 --if-not-exists '${POSTGRES_DB}'"
+  createdb --owner="${POSTGRES_USER}" --encoding=UTF8 --template=template0 --if-not-exists "${POSTGRES_DB}"
 fi
 
-exec su -s /bin/sh postgres -lc "postgres -D '${PGDATA}' -p '${PGPORT}' -c listen_addresses='*'"
-EOF
+exec postgres -D "${PGDATA}" -p "${PGPORT}" -c listen_addresses='*'
+EOF2
 
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-USER 26
+USER postgres
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
