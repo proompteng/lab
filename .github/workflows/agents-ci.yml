@@ -141,6 +141,8 @@ jobs:
 
       - name: Run agents integration smoke test
         env:
+          # Use an internal pgvector-capable Postgres image to avoid Docker Hub rate limits.
+          AGENTS_DB_IMAGE: registry.ide-newton.ts.net/lab/vecteur:18-trixie
           AGENTS_NAMESPACE: agents-ci
           AGENTS_RELEASE_NAME: agents-ci
           AGENTS_VALUES_FILE: charts/agents/values-ci.yaml

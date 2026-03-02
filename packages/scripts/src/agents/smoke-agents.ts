@@ -105,12 +105,32 @@ const listPodNames = async (namespace: string) => {
 }
 
 const listPodsByLabel = async (namespace: string, labelSelector: string) => {
-  const result = await execCapture(['kubectl', '-n', namespace, 'get', 'pods', '-l', labelSelector, '-o', 'jsonpath={.items[*].metadata.name}'])
+  const result = await execCapture([
+    'kubectl',
+    '-n',
+    namespace,
+    'get',
+    'pods',
+    '-l',
+    labelSelector,
+    '-o',
+    'jsonpath={.items[*].metadata.name}',
+  ])
   if (result.exitCode !== 0) return []
   return result.stdout.split(/\s+/).filter(Boolean)
 }
 
-const summarizeDeploymentStatus = (deploymentName: string, deployment: { status?: { availableReplicas?: number; updatedReplicas?: number; conditions?: Array<{ type?: string; status?: string; reason?: string; message?: string }> }, spec?: { replicas?: number } }) => {
+const summarizeDeploymentStatus = (
+  deploymentName: string,
+  deployment: {
+    status?: {
+      availableReplicas?: number
+      updatedReplicas?: number
+      conditions?: Array<{ type?: string; status?: string; reason?: string; message?: string }>
+    }
+    spec?: { replicas?: number }
+  },
+) => {
   const available = deployment.status?.availableReplicas ?? 0
   const updated = deployment.status?.updatedReplicas ?? 0
   const desired = deployment.spec?.replicas ?? 0
@@ -123,17 +143,7 @@ const summarizeDeploymentStatus = (deploymentName: string, deployment: { status?
 }
 
 const collectPodFailureHints = async (namespace: string, labelSelector: string) => {
-  const result = await execCapture([
-    'kubectl',
-    '-n',
-    namespace,
-    'get',
-    'pods',
-    '-l',
-    labelSelector,
-    '-o',
-    'json',
-  ])
+  const result = await execCapture(['kubectl', '-n', namespace, 'get', 'pods', '-l', labelSelector, '-o', 'json'])
   if (result.exitCode !== 0) return []
   const podsData = parseJson<{
     items?: Array<{
@@ -235,7 +245,9 @@ const waitForDeploymentRollout = async (
         )
         if (progressingFailure && progressingFailure.reason === 'ProgressDeadlineExceeded') {
           await dumpDiagnostics()
-          fatal(`Deployment ${deploymentName} rollout failed due to: ${progressingFailure.reason}. ${progressingFailure.message ?? ''}`)
+          fatal(
+            `Deployment ${deploymentName} rollout failed due to: ${progressingFailure.reason}. ${progressingFailure.message ?? ''}`,
+          )
         }
       }
     }
@@ -405,7 +417,7 @@ const main = async () => {
   const dbName = process.env.AGENTS_DB_NAME ?? 'agents'
   const dbHost = process.env.AGENTS_DB_HOST ?? `${releaseName}-postgres`
   const dbPort = process.env.AGENTS_DB_PORT ?? '5432'
-  const dbImage = process.env.AGENTS_DB_IMAGE ?? 'pgvector/pgvector:pg16'
+  const dbImage = process.env.AGENTS_DB_IMAGE ?? 'registry.ide-newton.ts.net/lab/vecteur:18-trixie'
   const agentctlBin = process.env.AGENTCTL_BIN ?? 'agentctl'
   const kubeconfigPath =
     process.env.AGENTCTL_KUBECONFIG ?? process.env.KUBECONFIG ?? resolve(homedir(), '.kube', 'config')
