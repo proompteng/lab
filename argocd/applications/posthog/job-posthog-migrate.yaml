@@ -7,7 +7,8 @@ metadata:
     "app.kubernetes.io/name": "posthog"
     "app.kubernetes.io/instance": "posthog"
   annotations:
-    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "1"
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
     argocd.argoproj.io/sync-options: Replace=true
 spec:

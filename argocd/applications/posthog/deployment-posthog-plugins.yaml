@@ -6,6 +6,8 @@ metadata:
   labels:
     "app.kubernetes.io/name": "posthog"
     "app.kubernetes.io/instance": "posthog"
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   selector:
     matchLabels:
