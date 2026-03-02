@@ -1028,7 +1028,6 @@ def run_autonomous_lane(
         ),
         priority_id=resolved_priority_id,
         design_doc=design_doc,
-        priority_id=resolved_priority_id,
         now=now,
     )
     governance_context = _normalize_governance_inputs(governance_context)
@@ -1517,6 +1516,9 @@ def run_autonomous_lane(
             candidate_state_payload=candidate_state_payload,
             now=now,
         )
+        rollback_check_path.write_text(
+            json.dumps(rollback_check.to_payload(), indent=2), encoding="utf-8"
+        )
         drift_gate_check = _evaluate_drift_promotion_gate(
             promotion_target=promotion_target,
             drift_promotion_evidence=drift_promotion_evidence,
@@ -1533,37 +1535,41 @@ def run_autonomous_lane(
             "design_doc": str(resolved_design_doc or ""),
             "priority_id": str(resolved_governance_priority_id or ""),
         }
-        profitability_manifest_payload = _build_profitability_stage_manifest(
-            output_dir=output_dir,
-            run_id=run_id,
-            candidate_id=candidate_id,
-            strategy_family=strategy_family,
-            llm_artifact_ref=None,
-            router_artifact_ref=router_artifact_ref,
-            run_context=profitability_run_context,
-            research_manifest_path=manifest_paths.get(_STAGE_CANDIDATE_GENERATION),
-            candidate_spec_path=candidate_spec_path,
-            evaluation_report_path=evaluation_report_path,
-            walkforward_results_path=walk_results_path,
-            baseline_evaluation_report_path=baseline_report_path,
-            gate_report_payload=gate_report_payload,
-            gate_report_path=gate_report_path,
-            profitability_benchmark_path=profitability_benchmark_path,
-            profitability_evidence_path=profitability_evidence_path,
-            profitability_validation_path=profitability_validation_path,
-            janus_event_car_path=janus_event_car_path,
-            janus_hgrm_reward_path=janus_hgrm_reward_path,
-            recalibration_report_path=recalibration_report_path,
-            rollback_check=rollback_check,
-            drift_gate_check=drift_gate_check,
-            patch_path=patch_path,
-            now=now,
-        )
-        profitability_manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        profitability_manifest_path.write_text(
-            json.dumps(profitability_manifest_payload, indent=2),
-            encoding="utf-8",
-        )
+
+        def _write_profitability_manifest() -> None:
+            profitability_manifest_payload = _build_profitability_stage_manifest(
+                output_dir=output_dir,
+                run_id=run_id,
+                candidate_id=candidate_id,
+                strategy_family=strategy_family,
+                llm_artifact_ref=None,
+                router_artifact_ref=router_artifact_ref,
+                run_context=profitability_run_context,
+                research_manifest_path=manifest_paths.get(_STAGE_CANDIDATE_GENERATION),
+                candidate_spec_path=candidate_spec_path,
+                evaluation_report_path=evaluation_report_path,
+                walkforward_results_path=walk_results_path,
+                baseline_evaluation_report_path=baseline_report_path,
+                gate_report_payload=gate_report_payload,
+                gate_report_path=gate_report_path,
+                profitability_benchmark_path=profitability_benchmark_path,
+                profitability_evidence_path=profitability_evidence_path,
+                profitability_validation_path=profitability_validation_path,
+                janus_event_car_path=janus_event_car_path,
+                janus_hgrm_reward_path=janus_hgrm_reward_path,
+                recalibration_report_path=recalibration_report_path,
+                rollback_check=rollback_check,
+                drift_gate_check=drift_gate_check,
+                patch_path=patch_path,
+                now=now,
+            )
+            profitability_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            profitability_manifest_path.write_text(
+                json.dumps(profitability_manifest_payload, indent=2),
+                encoding="utf-8",
+            )
+
+        _write_profitability_manifest()
         promotion_policy_payload = dict(raw_gate_policy)
         promotion_policy_payload["promotion_require_profitability_stage_manifest"] = True
         promotion_policy_payload.setdefault(
@@ -1580,9 +1586,6 @@ def run_autonomous_lane(
         )
         promotion_check_path.write_text(
             json.dumps(promotion_check.to_payload(), indent=2), encoding="utf-8"
-        )
-        rollback_check_path.write_text(
-            json.dumps(rollback_check.to_payload(), indent=2), encoding="utf-8"
         )
         fold_metrics_count = len(walk_results.folds)
         promotion_rationale = _build_promotion_rationale(
@@ -1927,6 +1930,7 @@ def run_autonomous_lane(
         candidate_spec_path.write_text(
             json.dumps(research_spec, indent=2), encoding="utf-8"
         )
+        _write_profitability_manifest()
         _write_iteration_notes(
             artifact_root=notes_root,
             run_id=run_id,
