@@ -237,6 +237,8 @@ describe('runCodexImplementation', () => {
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
       swarmRequirementSource: 'torghut-quant',
       swarmRequirementTarget: 'jangar-control-plane',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
       swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
       swarmRequirementPayload:
         '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
@@ -256,6 +258,9 @@ describe('runCodexImplementation', () => {
     expect(completedBody).toContain('- Channel: huly://swarm-bridge/issues/TORGHUT-1772426902')
     expect(completedBody).toContain('### Requirement description')
     expect(completedBody).toContain('End-to-end validation requirement from torghut swarm to jangar swarm.')
+    expect(completedBody).toContain('### Swarm executor')
+    expect(completedBody).toContain('- Worker ID: worker-0027jshz')
+    expect(completedBody).toContain('- Worker Identity: vw-jangar-control-plane-implement-worker-0027jshz')
   }, 40_000)
 
   it('does not publish progress comments when issue number is non-numeric', async () => {
@@ -320,6 +325,8 @@ describe('runCodexImplementation', () => {
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
       swarmRequirementSource: 'torghut-quant',
       swarmRequirementTarget: 'jangar-control-plane',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
       swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
       swarmRequirementPayload:
         '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
@@ -342,6 +349,9 @@ describe('runCodexImplementation', () => {
     expect(invocation?.prompt).toContain(
       'Payload:\n{\n  "acceptance": [\n    "run includes requirement provenance labels and parameters"\n  ],\n  "priority": "high"\n}',
     )
+    expect(invocation?.prompt).toContain(
+      'Executor: Worker ID: worker-0027jshz | Worker Identity: vw-jangar-control-plane-implement-worker-0027jshz',
+    )
     expect(invocation?.prompt).toContain('Objective: validate cross-swarm dispatch and implementation handoff')
     expect(invocation?.prompt).toContain('Run prompt context:')
   }, 40_000)
@@ -360,6 +370,8 @@ describe('runCodexImplementation', () => {
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
       swarmRequirementSource: 'torghut-quant',
       swarmRequirementTarget: 'jangar-control-plane',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
       swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
       swarmRequirementPayload:
         '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
@@ -381,6 +393,9 @@ describe('runCodexImplementation', () => {
       swarmRequirementChannel?: string | null
       swarmRequirementObjective?: string | null
       swarmRequirementPayload?: string | null
+      swarmAgentWorkerId?: string | null
+      swarmAgentIdentity?: string | null
+      swarmAgentRole?: string | null
     }
     expect(notify.cross_swarm_requirement).toBe(true)
     expect(notify.swarm_requirement).toMatchObject({
@@ -402,6 +417,54 @@ describe('runCodexImplementation', () => {
     expect(notify.swarmRequirementChannel).toBe('huly://swarm-bridge/issues/TORGHUT-1772426902')
     expect(notify.swarmRequirementObjective).toBe('validate cross-swarm dispatch and implementation handoff')
     expect(notify.swarmRequirementPayload).toContain('"acceptance"')
+    expect(notify.swarmAgentWorkerId).toBe('worker-0027jshz')
+    expect(notify.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-0027jshz')
+    expect(notify.swarmAgentRole).toBeNull()
+  }, 40_000)
+
+  it('accepts worker identity metadata from parameters map', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      parameters: {
+        swarmRequirementId: '00gcj8mu',
+        swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+        swarmRequirementSource: 'torghut-quant',
+        swarmRequirementTarget: 'jangar-control-plane',
+        swarmRequirementDescription:
+          'Parameter-fed requirement payload should still be surfaced to run prompt and notifications.',
+        swarmAgentWorkerId: 'worker-params-0027jshz',
+        swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-params-0027jshz',
+      },
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const completedBody = runCodexProgressCommentMock.mock.calls.at(-1)?.[0]?.body
+    expect(completedBody).toContain('### Swarm executor')
+    expect(completedBody).toContain('- Worker ID: worker-params-0027jshz')
+    expect(completedBody).toContain('- Worker Identity: vw-jangar-control-plane-implement-worker-params-0027jshz')
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toContain(
+      'Executor: Worker ID: worker-params-0027jshz | Worker Identity: vw-jangar-control-plane-implement-worker-params-0027jshz',
+    )
+
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as {
+      swarmRequirementId?: string | null
+      swarmAgentWorkerId?: string | null
+      swarmAgentIdentity?: string | null
+    }
+    expect(notify.swarmRequirementId).toBe('00gcj8mu')
+    expect(notify.swarmAgentWorkerId).toBe('worker-params-0027jshz')
+    expect(notify.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-params-0027jshz')
   }, 40_000)
 
   it('does not apply cross-swarm prompt wrapping for non-Huly channels', async () => {
@@ -595,6 +658,78 @@ describe('runCodexImplementation', () => {
     const expectedHash = createHash('sha256').update(systemPrompt, 'utf8').digest('hex')
     expect(attrs.systemPromptHash).toBe(expectedHash)
     expect(attrs.systemPrompt).toBeUndefined()
+  }, 40_000)
+
+  it('includes swarm agent identity in NATS run-started attrs', async () => {
+    const binDir = join(workdir, 'bin')
+    await mkdir(binDir, { recursive: true })
+
+    const capturePath = join(workdir, 'nats-publish-run-started-identity.jsonl')
+    process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH = capturePath
+    process.env.NATS_URL = 'nats://example'
+    process.env.PATH = `${binDir}:${process.env.PATH ?? ''}`
+
+    const publishScriptPath = join(binDir, 'codex-nats-publish')
+    await writeFile(
+      publishScriptPath,
+      [
+        '#!/usr/bin/env node',
+        'const { appendFileSync } = require("node:fs");',
+        'const path = process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH;',
+        'if (path) { appendFileSync(path, JSON.stringify(process.argv.slice(2)) + "\\n", "utf8"); }',
+        'process.exit(0);',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    await chmod(publishScriptPath, 0o755)
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mu',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
+      swarmRequirementPayload:
+        '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
+      swarmRequirementPayloadBytes: 142,
+      swarmRequirementPayloadTruncated: false,
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const captured = (await readFile(capturePath, 'utf8'))
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[])
+
+    const runStarted = captured.find((args) => {
+      const kindIndex = args.indexOf('--kind')
+      return kindIndex >= 0 && args[kindIndex + 1] === 'run-started'
+    })
+    expect(runStarted).toBeDefined()
+    if (!runStarted) {
+      throw new Error('Expected at least one run-started publish call')
+    }
+
+    const attrsIndex = runStarted.indexOf('--attrs-json')
+    expect(attrsIndex).toBeGreaterThan(-1)
+    const attrsRaw = runStarted[attrsIndex + 1]
+    expect(typeof attrsRaw).toBe('string')
+    const attrs = JSON.parse(attrsRaw ?? '{}') as Record<string, unknown>
+
+    expect(attrs.swarmAgentWorkerId).toBe('worker-0027jshz')
+    expect(attrs.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-0027jshz')
   }, 40_000)
 
   it('includes PR metadata from artifact files and does not overwrite them', async () => {
