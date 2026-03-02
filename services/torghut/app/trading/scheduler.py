@@ -2556,6 +2556,9 @@ class TradingPipeline:
                 in {"invalid_regime_id", "missing_regime", "invalid_schema_version"}
                 else "regime_hmm_non_authoritative"
             )
+            regime_context_authority_reason = resolve_regime_context_authority_reason(
+                regime_context
+            )
             return RuntimeUncertaintyGate(
                 action="abstain",
                 source=source,
@@ -2564,7 +2567,8 @@ class TradingPipeline:
                 reason=(
                     regime_fallback
                     if regime_fallback is not None
-                    else regime_context.authority_reason or "regime_hmm_non_authoritative"
+                    else regime_context_authority_reason
+                    or "regime_hmm_non_authoritative"
                 ),
             )
         return RuntimeUncertaintyGate(
