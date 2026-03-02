@@ -1201,10 +1201,21 @@ def _append_evidence_artifact_reasons(
 
     max_age_seconds = int(policy_payload.get("promotion_evidence_max_age_seconds", 0))
     if max_age_seconds > 0 and now is not None:
-        artifact_mtime = datetime.fromtimestamp(
-            os.path.getmtime(artifact_path),
-            tz=timezone.utc,
-        )
+        try:
+            artifact_mtime = datetime.fromtimestamp(
+                os.path.getmtime(artifact_path),
+                tz=timezone.utc,
+            )
+        except OSError:
+            reasons.append(f"{evidence_name}_artifact_ref_invalid")
+            reason_details.append(
+                {
+                    "reason": f"{evidence_name}_artifact_ref_invalid",
+                    "artifact_name": evidence_name,
+                    "artifact_ref": artifact_ref,
+                }
+            )
+            return
         age_seconds = (now - artifact_mtime).total_seconds()
         if age_seconds > max_age_seconds:
             reasons.append(f"{evidence_name}_artifact_stale")
