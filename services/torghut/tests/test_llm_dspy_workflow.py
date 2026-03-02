@@ -757,7 +757,6 @@ class TestLLMDSPyWorkflow(TestCase):
                 select(LLMDSPyWorkflowArtifact).where(
                     LLMDSPyWorkflowArtifact.run_key
                     == "torghut-dspy-run-override-internal:promote"
-                    == "torghut-dspy-run-override-internal:promote"
                 )
             ).scalar_one()
             metadata = row.metadata_json or {}
