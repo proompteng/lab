@@ -1020,6 +1020,7 @@ class TestAutonomousLane(TestCase):
             candidate_state_payload: dict[str, Any],
             promotion_target: str,
             artifact_root: Path,
+            now: Any | None = None,
         ) -> PromotionPrerequisiteResult:
             call_payload["policy_payload"] = dict(policy_payload)
             call_payload["artifact_root"] = str(artifact_root)

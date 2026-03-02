@@ -949,7 +949,10 @@ class TestPolicyChecks(TestCase):
             "profitability_stage_manifest_required_check_failed",
             promotion.reasons,
         )
-        self.assertIn("rollback_ready", "\n".join(promotion.reasons))
+        self.assertIn(
+            "rollback_ready",
+            "\n".join(str(item.get("check", "")) for item in promotion.reason_details),
+        )
 
     def test_promotion_prerequisites_fails_when_profitability_stage_manifest_artifact_is_missing(
         self,
@@ -2689,7 +2692,7 @@ def _build_profitability_stage_manifest_payload(
     janus_event_car_path: Path,
     janus_hgrm_reward_path: Path,
     recalibration_report_path: Path,
-    rollback_readiness_path: Path,
+    rollback_readiness_path: Path | None = None,
     stage_statuses: dict[str, str] | None = None,
     check_status_overrides: dict[tuple[str, str], str] | None = None,
     artifact_path_overrides: dict[tuple[str, str], Path] | None = None,
@@ -2706,6 +2709,10 @@ def _build_profitability_stage_manifest_payload(
             return str(payload_path.relative_to(root))
         except ValueError:
             return str(payload_path)
+
+    rollback_readiness_path = (
+        rollback_readiness_path or (root / "gates" / "rollback-readiness.json")
+    )
 
     stage_owner = {
         "research": "research-orchestrator",
