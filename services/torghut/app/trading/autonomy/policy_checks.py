@@ -977,41 +977,36 @@ def _append_benchmark_parity_evidence_reasons(
     gate_report_payload: dict[str, Any],
     artifact_root: Path,
 ) -> None:
-    if _normalize_artifact_path(
-        str(policy_payload.get("promotion_benchmark_parity_artifact", "")),
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    benchmark_payload = _as_dict(evidence.get("benchmark_parity"))
+    evidence_ref = str(benchmark_payload.get("artifact_ref") or "").strip()
+    artifact_ref = _benchmark_parity_artifact_reference(
+        policy_payload=policy_payload,
+        gate_report_payload=gate_report_payload,
+    )
+    artifact_path = _normalize_artifact_path(
+        artifact_ref,
         artifact_root=artifact_root,
-    ) is None:
-        evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
-        parity_payload = _as_dict(evidence.get("benchmark_parity"))
-        evidence_ref = str(parity_payload.get("artifact_ref") or "").strip()
+    )
+    if artifact_path is None:
         if evidence_ref:
-            if _normalize_artifact_path(evidence_ref, artifact_root=artifact_root) is None:
-                reasons.append("benchmark_parity_artifact_ref_invalid")
-                reason_details.append(
-                    {
-                        "reason": "benchmark_parity_artifact_ref_invalid",
-                        "artifact_ref": evidence_ref,
-                    }
-                )
-                return
-            artifact_ref = evidence_ref
+            reasons.append("benchmark_parity_artifact_ref_invalid")
+            reason_details.append(
+                {
+                    "reason": "benchmark_parity_artifact_ref_invalid",
+                    "artifact_ref": evidence_ref,
+                }
+            )
         else:
-            artifact_ref = str(
-                policy_payload.get(
-                    "promotion_benchmark_parity_artifact",
-                    "benchmarks/benchmark-parity-report-v1.json",
-                )
+            reasons.append("benchmark_parity_artifact_ref_invalid")
+            reason_details.append(
+                {
+                    "reason": "benchmark_parity_artifact_ref_invalid",
+                    "artifact_ref": artifact_ref,
+                }
             )
-            if not artifact_ref:
-                artifact_ref = "benchmarks/benchmark-parity-report-v1.json"
-    else:
-        artifact_ref = str(
-            policy_payload.get(
-                "promotion_benchmark_parity_artifact",
-                "benchmarks/benchmark-parity-report-v1.json",
-            )
-        )
-    parity_path = artifact_root / str(artifact_ref)
+        return
+    parity_path = artifact_path
     if not parity_path.exists():
         reasons.append("benchmark_parity_artifact_missing")
         reason_details.append(
@@ -1154,14 +1149,9 @@ def _required_artifacts_for_target(
             if isinstance(artifact, str):
                 required.append(artifact)
     if include_benchmark_parity_artifacts:
-        benchmark_artifacts_raw = policy_payload.get(
-            "promotion_benchmark_required_artifacts",
-            ["benchmarks/benchmark-parity-report-v1.json"],
-        )
-        benchmark_artifacts = _list_from_any(benchmark_artifacts_raw)
+        benchmark_artifacts = _benchmark_parity_required_artifact_refs(policy_payload)
         for artifact in benchmark_artifacts:
-            if isinstance(artifact, str):
-                required.append(artifact)
+            required.append(artifact)
     if include_stress_artifacts:
         stress_artifacts_raw = policy_payload.get(
             "promotion_stress_required_artifacts",
@@ -1172,6 +1162,44 @@ def _required_artifacts_for_target(
             if isinstance(artifact, str):
                 required.append(artifact)
     return sorted(set(required))
+
+
+def _benchmark_parity_required_artifact_refs(
+    policy_payload: dict[str, Any],
+) -> list[str]:
+    benchmark_artifacts_raw = policy_payload.get(
+        "promotion_benchmark_required_artifacts",
+        ["benchmarks/benchmark-parity-report-v1.json"],
+    )
+    benchmark_artifacts = [
+        str(artifact).strip()
+        for artifact in _list_from_any(benchmark_artifacts_raw)
+        if isinstance(artifact, str) and artifact.strip()
+    ]
+    if benchmark_artifacts:
+        return benchmark_artifacts
+
+    legacy_artifact = str(
+        policy_payload.get("promotion_benchmark_parity_artifact", "").strip()
+    )
+    if legacy_artifact:
+        return [legacy_artifact]
+
+    return ["benchmarks/benchmark-parity-report-v1.json"]
+
+
+def _benchmark_parity_artifact_reference(
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+) -> str:
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    benchmark_payload = _as_dict(evidence.get("benchmark_parity"))
+    evidence_ref = str(benchmark_payload.get("artifact_ref") or "").strip()
+    if evidence_ref:
+        return evidence_ref
+
+    required_artifacts = _benchmark_parity_required_artifact_refs(policy_payload)
+    return required_artifacts[0]
 
 
 def _requires_profitability_evidence(
@@ -1427,15 +1455,10 @@ def _evaluate_benchmark_parity_evidence(
     evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
     benchmark = _as_dict(evidence.get("benchmark_parity"))
     evidence_ref = str(benchmark.get("artifact_ref") or "").strip()
-    artifact_ref = (
-        evidence_ref
-        or str(
-            policy_payload.get(
-                "promotion_benchmark_parity_artifact",
-                "benchmarks/benchmark-parity-report-v1.json",
-            )
-        )
-    ).strip()
+    artifact_ref = _benchmark_parity_artifact_reference(
+        policy_payload=policy_payload,
+        gate_report_payload=gate_report_payload,
+    )
     artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
     if artifact_path is None:
         reasons.append("benchmark_parity_artifact_ref_invalid")
