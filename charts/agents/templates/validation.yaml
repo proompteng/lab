@@ -237,7 +237,7 @@
 {{- $ownedDbSecretRef = printf "%s/%s" $dbNamespace $ownedDbSecretName -}}
 {{- end -}}
 
-{{- if and (not .Values.database.createSecret.enabled) (.Values.database.secretRef.name) -}}
+{{- if and (not .Values.database.createSecret.enabled) (not .Values.database.url) (.Values.database.secretRef.name) -}}
 {{- $dbSecretName := trim (default "" .Values.database.secretRef.name) -}}
 {{- if $dbSecretName -}}
 {{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $dbSecretName) true -}}
@@ -253,7 +253,12 @@
 {{- end -}}
 
 {{- range .Values.envFromSecretRefs }}
-{{- $requiredSecretName := trim . -}}
+{{- $requiredSecretName := "" -}}
+{{- if kindIs "string" . }}
+{{- $requiredSecretName = trim . -}}
+{{- else if kindIs "map" . }}
+{{- $requiredSecretName = trim (default "" .name) -}}
+{{- end -}}
 {{- if $requiredSecretName -}}
 {{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
 {{- end -}}
@@ -267,7 +272,12 @@
 {{- end -}}
 
 {{- range .Values.envFromConfigMapRefs }}
-{{- $requiredConfigMapName := trim . -}}
+{{- $requiredConfigMapName := "" -}}
+{{- if kindIs "string" . }}
+{{- $requiredConfigMapName = trim . -}}
+{{- else if kindIs "map" . }}
+{{- $requiredConfigMapName = trim (default "" .name) -}}
+{{- end -}}
 {{- if $requiredConfigMapName -}}
 {{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
 {{- end -}}
