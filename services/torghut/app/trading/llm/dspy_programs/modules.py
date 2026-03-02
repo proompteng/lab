@@ -262,7 +262,7 @@ def _coerce_dspy_api_base(
     if (
         not parsed.scheme
         or parsed.scheme not in {"http", "https"}
-        or not parsed.netloc
+        or not parsed.hostname
     ):
         raise RuntimeError("dspy_api_base_invalid")
     if parsed.query or parsed.fragment:
