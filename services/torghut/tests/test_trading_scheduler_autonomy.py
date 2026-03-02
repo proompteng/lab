@@ -834,6 +834,49 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertIn("drift_promotion_evidence", deps.call_kwargs)
 
+    def test_run_autonomous_cycle_handles_missing_phase_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+
+            def _run_autonomous_lane_without_phase_manifest(
+                *,
+                signals_path: Path,
+                strategy_config_path: Path,
+                gate_policy_path: Path,
+                output_dir: Path,
+                **kwargs: Any,
+            ) -> SimpleNamespace:
+                result = self._fake_run_autonomous_lane(deps)(
+                    signals_path=signals_path,
+                    strategy_config_path=strategy_config_path,
+                    gate_policy_path=gate_policy_path,
+                    output_dir=output_dir,
+                    **kwargs,
+                )
+                result.phase_manifest_path = None
+                return result
+
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=_run_autonomous_lane_without_phase_manifest,
+            ):
+                scheduler._run_autonomous_cycle()
+
+            self.assertIsNone(scheduler.state.last_autonomy_phase_manifest)
+            notes_path = (
+                Path(scheduler.state.last_autonomy_iteration_notes_path or "")
+                if scheduler.state.last_autonomy_iteration_notes_path
+                else None
+            )
+            self.assertIsNotNone(notes_path)
+            assert notes_path is not None
+            notes_payload = json.loads(notes_path.read_text(encoding="utf-8"))
+            self.assertIsNone(notes_payload.get("phase_manifest_path"))
+
     def test_run_autonomous_cycle_tracks_promotion_and_throughput_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, deps = self._build_scheduler_with_fixtures(

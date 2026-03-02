@@ -5750,7 +5750,6 @@ class TradingScheduler:
             if result.actuation_intent_path
             else None
         )
-        self.state.last_autonomy_phase_manifest = str(result.phase_manifest_path)
         self.state.last_autonomy_reason = None
 
         gate_report_raw = json.loads(
