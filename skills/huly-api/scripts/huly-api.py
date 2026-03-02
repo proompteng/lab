@@ -74,6 +74,10 @@ def normalize_token_key(value: str) -> str:
     return normalized
 
 
+def is_worker_scoped_token_source(source: str) -> bool:
+    return source.startswith('HULY_API_TOKEN_')
+
+
 def resolve_token(args: argparse.Namespace) -> tuple[str, str]:
     explicit = args.token.strip()
     if explicit:
@@ -190,8 +194,13 @@ def api_call(
 
     body = None
     if data is not None:
-        body = json.dumps(data).encode('utf-8')
-        headers.setdefault('Content-Type', 'application/json')
+        if isinstance(data, (bytes, bytearray)):
+            body = bytes(data)
+        elif isinstance(data, str):
+            body = data.encode('utf-8')
+        else:
+            body = json.dumps(data).encode('utf-8')
+            headers.setdefault('Content-Type', 'application/json')
 
     request = urllib.request.Request(url=url, method=method.upper(), headers=headers, data=body)
 
@@ -623,6 +632,10 @@ def build_context(args: argparse.Namespace, *, for_platform_api: bool) -> HulyCo
         if args.require_worker_token:
             raise RuntimeError('missing worker-scoped HULY_API_TOKEN_<WORKER> credential')
         raise RuntimeError('missing HULY_API_TOKEN/HULY_TOKEN')
+    if args.require_worker_token and not is_worker_scoped_token_source(token_source):
+        raise RuntimeError(
+            f'require-worker-token rejected token source "{token_source}"; expected HULY_API_TOKEN_<WORKER>'
+        )
 
     base_url = normalize_api_base_url(base_url_raw) if for_platform_api else base_url_raw.rstrip('/')
 
@@ -693,7 +706,7 @@ def run_account_info(args: argparse.Namespace) -> int:
         'workspaceId': context.workspace_id,
         'actorId': actor_id,
         'tokenSource': context.token_source,
-        'workerScopedToken': context.token_source.startswith('HULY_API_TOKEN_'),
+        'workerScopedToken': is_worker_scoped_token_source(context.token_source),
         'person': account.get('person'),
         'accountRole': account.get('role'),
         'workspaces': account.get('workspaces'),
