@@ -115,7 +115,7 @@ Control plane and controllers pods include rollout annotations only when `rollou
 Source-of-truth model:
 
 - Chart-owned DB secret path: when `database.createSecret.enabled=true`, the chart computes
-  `checksum/secret/<namespace>/<name>` from the literal `database.url` value.
+  `checksum-secret_<namespace>_<name>` from the literal `database.url` value.
 - Externally managed Secret/ConfigMap inputs: the chart does **not** read live resources at render
   time. You must supply checksum values from your external source of truth.
 

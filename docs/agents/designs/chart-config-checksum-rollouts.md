@@ -59,8 +59,8 @@ deduplicated within each list.
 
 When enabled, annotate pod templates with:
 
-- `checksum/secret/<namespace>/<name>: <sha256>`
-- `checksum/configmap/<namespace>/<name>: <sha256>`
+- `checksum-secret_<namespace>_<name>: <sha256>`
+- `checksum-configmap_<namespace>_<name>: <sha256>`
 
 ### Source of truth
 
@@ -140,7 +140,7 @@ For externally managed resources, compute hashes from source-of-truth manifests 
 | Helm value                                                                               | Rendered annotation                                   | Intended behavior                                    |
 | ---------------------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
 | `rolloutChecksums.enabled=true`                                                          | `checksum/*` annotations                              | Any change triggers a Deployment rollout.            |
-| `rolloutChecksums.secrets=[{\"name\":\"agents-github-token-env\",\"checksum\":\"...\"}]` | `checksum/secret/<namespace>/agents-github-token-env` | Restart when the referenced Secret checksum changes. |
+| `rolloutChecksums.secrets=[{\"name\":\"agents-github-token-env\",\"checksum\":\"...\"}]` | `checksum-secret_<namespace>_agents-github-token-env` | Restart when the referenced Secret checksum changes. |
 
 ## Rollout Plan
 
@@ -161,7 +161,7 @@ helm template charts/agents \
   --set-string rolloutChecksums.secrets[0].checksum=9f2c... \
   --set rolloutChecksums.configMaps[0].name=agents-runtime-config \
   --set-string rolloutChecksums.configMaps[0].checksum=a1b2c3... |
-  rg -n "checksum/(secret|configmap)"
+  rg -n "checksum-(secret|configmap)_"
 kubectl -n agents get deploy agents -o jsonpath='{.spec.template.metadata.annotations}'; echo
 ```
 

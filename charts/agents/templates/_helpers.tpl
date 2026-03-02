@@ -50,8 +50,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- if and .Values.database.createSecret.enabled .Values.database.url -}}
 {{- $dbSecretName := include "agents.databaseSecretName" . }}
-{{- $dbSecretAnnotationKey = printf "checksum/secret/%s/%s" $namespace $dbSecretName -}}
-{{- $annotations = set $annotations (printf "checksum/secret/%s/%s" $namespace $dbSecretName) (sha256sum .Values.database.url) -}}
+{{- $dbSecretAnnotationKey = printf "checksum-secret_%s_%s" $namespace $dbSecretName -}}
+{{- $annotations = set $annotations (printf "checksum-secret_%s_%s" $namespace $dbSecretName) (sha256sum .Values.database.url) -}}
 {{- end -}}
 
 {{- range .Values.rolloutChecksums.secrets -}}
@@ -59,7 +59,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $checksum := .checksum | trim -}}
 {{- if and $secretName $checksum -}}
 {{- $secretNamespace := default $namespace .namespace -}}
-{{- $secretAnnotationKey := printf "checksum/secret/%s/%s" $secretNamespace $secretName -}}
+{{- $secretAnnotationKey := printf "checksum-secret_%s_%s" $secretNamespace $secretName -}}
 {{- if ne $secretAnnotationKey $dbSecretAnnotationKey -}}
 {{- $annotations = set $annotations $secretAnnotationKey $checksum -}}
 {{- end -}}
@@ -71,7 +71,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $checksum := .checksum | trim -}}
 {{- if and $configMapName $checksum -}}
 {{- $configMapNamespace := default $namespace .namespace -}}
-{{- $annotations = set $annotations (printf "checksum/configmap/%s/%s" $configMapNamespace $configMapName) $checksum -}}
+{{- $annotations = set $annotations (printf "checksum-configmap_%s_%s" $configMapNamespace $configMapName) $checksum -}}
 {{- end -}}
 {{- end -}}
 

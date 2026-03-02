@@ -293,6 +293,22 @@
 {{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
 {{- end -}}
 {{- end -}}
+{{- with .volume.projected }}
+{{- range .sources }}
+{{- with .secret }}
+{{- $requiredSecretName := trim (default "" .name) -}}
+{{- if $requiredSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
+{{- end -}}
+{{- end -}}
+{{- with .configMap }}
+{{- $requiredConfigMapName := trim (default "" .name) -}}
+{{- if $requiredConfigMapName -}}
+{{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{- if and .Values.database.createSecret.enabled (not .Values.database.url) -}}
