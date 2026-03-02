@@ -41,6 +41,21 @@ def coerce_phase_status(raw: Any, *, default: str = "fail") -> str:
     return status if status in AUTONOMY_MANIFEST_STATUSES else default
 
 
+def _coerce_manifest_artifact_context(
+    execution_context: Mapping[str, Any],
+) -> dict[str, str]:
+    return {
+        "repository": _coerce_str(execution_context.get("repository"), default="unknown"),
+        "base": _coerce_str(execution_context.get("base"), default="unknown"),
+        "head": _coerce_str(execution_context.get("head"), default="unknown"),
+        "artifactPath": _coerce_str(
+            execution_context.get("artifactPath"),
+            default="unknown",
+        ),
+        "priorityId": _coerce_str(execution_context.get("priorityId")),
+    }
+
+
 def normalize_phase_transitions(phases: list[dict[str, Any]]) -> list[dict[str, str]]:
     transitions: list[dict[str, str]] = []
     for index in range(1, len(phases)):
@@ -67,6 +82,84 @@ def coerce_path_strings(values: Any) -> list[str]:
             if _coerce_str(item)
         }
     )
+
+
+def build_phase_manifest_payload(
+    *,
+    run_id: str,
+    candidate_id: str,
+    execution_context: Mapping[str, Any],
+    requested_promotion_target: str,
+    phase_payloads: Sequence[Mapping[str, Any]],
+    runtime_governance: Mapping[str, Any],
+    rollback_proof: Mapping[str, Any],
+    observation_summary: Mapping[str, Any] | None,
+    artifact_refs: Any,
+    phase_timestamp: datetime | str,
+    created_at: datetime | str | None = None,
+    updated_at: datetime | None | str = None,
+    status: str | None = None,
+    schema_version: str = AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
+    slo_contract_version: str = AUTONOMY_PHASE_MANIFEST_SLO_VERSION,
+) -> dict[str, Any]:
+    normalized_phases = normalize_phase_manifest_phases(
+        phase_payloads,
+        phase_timestamp=phase_timestamp,
+    )
+    normalized_status = (
+        "pass" if status is None else coerce_phase_status(status, default="fail")
+    )
+    if status is None:
+        normalized_status = (
+            "pass"
+            if all(
+                coerce_phase_status(phase.get("status"), default="fail")
+                in AUTONOMY_PASSING_MANIFEST_STATUSES
+                for phase in normalized_phases
+            )
+            else "fail"
+        )
+    manifest_artifact_refs = coerce_path_strings(artifact_refs)
+    for phase in normalized_phases:
+        manifest_artifact_refs.extend(coerce_path_strings(phase.get("artifact_refs", [])))
+
+    created_at_timestamp = (
+        created_at.isoformat()
+        if isinstance(created_at, datetime)
+        else _coerce_str(created_at)
+    ) or (
+        phase_timestamp.isoformat()
+        if isinstance(phase_timestamp, datetime)
+        else _coerce_str(phase_timestamp)
+    )
+    updated_at_timestamp = (
+        updated_at.isoformat()
+        if isinstance(updated_at, datetime)
+        else _coerce_str(updated_at)
+    ) or (
+        phase_timestamp.isoformat()
+        if isinstance(phase_timestamp, datetime)
+        else _coerce_str(phase_timestamp)
+    )
+
+    return {
+        "schema_version": schema_version,
+        "run_id": _coerce_str(run_id),
+        "candidate_id": _coerce_str(candidate_id),
+        "execution_context": _coerce_manifest_artifact_context(execution_context),
+        "requested_promotion_target": str(requested_promotion_target),
+        "created_at": created_at_timestamp,
+        "updated_at": updated_at_timestamp,
+        "phase_count": len(normalized_phases),
+        "phase_transitions": normalize_phase_transitions(normalized_phases),
+        "status": normalized_status,
+        "observation_summary": cast(dict[str, Any], observation_summary or {}),
+        "phases": normalized_phases,
+        "runtime_governance": cast(Mapping[str, Any], runtime_governance),
+        "rollback_proof": cast(Mapping[str, Any], rollback_proof),
+        "artifact_refs": sorted(set(manifest_artifact_refs)),
+        "slo_contract_version": slo_contract_version,
+    }
 
 
 def build_runtime_governance_phase(

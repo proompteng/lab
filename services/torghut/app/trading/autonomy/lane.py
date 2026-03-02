@@ -81,12 +81,12 @@ from .phase_manifest_contract import (
     AUTONOMY_PHASE_MANIFEST_SLO_VERSION,
     AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
     AUTONOMY_PASSING_MANIFEST_STATUSES,
+    build_phase_manifest_payload,
     build_rollback_proof_phase,
     build_runtime_governance_phase,
     coerce_path_strings,
     coerce_phase_status,
     normalize_phase_manifest_phases,
-    normalize_phase_transitions,
 )
 
 
@@ -2504,43 +2504,29 @@ def _build_phase_manifest(
         phase_summaries,
         phase_timestamp=evaluated_at,
     )
-    phase_transitions = normalize_phase_transitions(phase_summaries)
 
-    return {
-        "schema_version": AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
-        "run_id": run_id,
-        "candidate_id": candidate_id,
-        "execution_context": {
-            "repository": execution_context.get("repository", "unknown"),
-            "base": execution_context.get("base", "unknown"),
-            "head": execution_context.get("head", "unknown"),
-            "artifactPath": artifact_path,
-            "priorityId": execution_context.get("priorityId", ""),
-        },
-        "requested_promotion_target": requested_promotion_target,
-        "created_at": phase_timestamp,
-        "updated_at": phase_timestamp,
-        "phase_count": len(phase_summaries),
-        "phase_transitions": phase_transitions,
-        "status": "pass" if overall_pass else "fail",
-        "observation_summary": {
+    return build_phase_manifest_payload(
+        run_id=run_id,
+        candidate_id=candidate_id,
+        execution_context=execution_context,
+        requested_promotion_target=requested_promotion_target,
+        phase_timestamp=evaluated_at,
+        status="pass" if overall_pass else "fail",
+        phase_payloads=phase_summaries,
+        runtime_governance=runtime_governance,
+        rollback_proof=rollback_proof,
+        observation_summary={
             "signal_count": len(signals),
             "has_signals": bool(signals),
             "paper_canary_targeted": requested_promotion_target == "paper",
             "live_targeted": requested_promotion_target == "live",
         },
-        "phases": phase_summaries,
-        "runtime_governance": runtime_governance,
-        "rollback_proof": rollback_proof,
-        "artifact_refs": sorted(
-            {
-                artifact_ref
-                for artifact_ref in [*phase_artifact_refs, *evidence_paths]
-                if str(artifact_ref).strip()
-            }
-        ),
-        "slo_contract_version": AUTONOMY_PHASE_MANIFEST_SLO_VERSION,
-    }
+        artifact_refs=[*phase_artifact_refs, *evidence_paths],
+        schema_version=AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
+        slo_contract_version=AUTONOMY_PHASE_MANIFEST_SLO_VERSION,
+        created_at=evaluated_at,
+        updated_at=evaluated_at,
+    )
 
 
 def _coerce_str(raw: Any, default: str = "") -> str:

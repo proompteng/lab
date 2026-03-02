@@ -83,13 +83,11 @@ from .llm.schema import MarketContextBundle
 from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
 from .autonomy.phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
-    AUTONOMY_PASSING_MANIFEST_STATUSES,
+    build_phase_manifest_payload,
     build_rollback_proof_phase,
     build_runtime_governance_phase,
     coerce_path_strings,
-    coerce_phase_status,
     normalize_phase_manifest_phases,
-    normalize_phase_transitions,
 )
 from .route_metadata import coerce_route_text
 
@@ -5919,63 +5917,50 @@ class TradingScheduler:
             phase_timestamp=now,
         )
 
-        manifest["phases"] = ordered_phases
-        manifest["runtime_governance"] = {
-            "requested_promotion_target": requested_promotion_target,
-            "drift_status": drift_status,
-            "governance_status": governance_status,
-            "rollback_triggered": rollback_triggered,
-            "rollback_incident_evidence": rollback_incident_evidence,
-            "rollback_incident_evidence_path": rollback_incident_evidence,
-            "artifact_refs": evidence_refs,
-            "phase_count": len(ordered_phases),
-            "action_type": action_type,
-            "action_triggered": action_triggered,
-            "reasons": reasons,
-        }
-        manifest["rollback_proof"] = {
-            "requested_promotion_target": requested_promotion_target,
-            "rollback_triggered": rollback_triggered,
-            "rollback_incident_evidence_path": rollback_incident_evidence,
-            "rollback_incident_evidence": rollback_incident_evidence,
-            "artifact_refs": (
-                [rollback_incident_evidence]
-                if rollback_incident_evidence
-                else []
+        manifest_payload = build_phase_manifest_payload(
+            run_id=manifest.get("run_id", ""),
+            candidate_id=manifest.get("candidate_id", ""),
+            execution_context=cast(Mapping[str, Any], manifest.get("execution_context", {})),
+            requested_promotion_target=requested_promotion_target,
+            phase_timestamp=now,
+            status=None,
+            phase_payloads=ordered_phases,
+            runtime_governance={
+                "requested_promotion_target": requested_promotion_target,
+                "drift_status": drift_status,
+                "governance_status": governance_status,
+                "rollback_triggered": rollback_triggered,
+                "rollback_incident_evidence": rollback_incident_evidence,
+                "rollback_incident_evidence_path": rollback_incident_evidence,
+                "artifact_refs": evidence_refs,
+                "action_type": action_type,
+                "action_triggered": action_triggered,
+                "reasons": reasons,
+            },
+            rollback_proof={
+                "requested_promotion_target": requested_promotion_target,
+                "rollback_triggered": rollback_triggered,
+                "rollback_incident_evidence_path": rollback_incident_evidence,
+                "rollback_incident_evidence": rollback_incident_evidence,
+                "artifact_refs": (
+                    [rollback_incident_evidence]
+                    if rollback_incident_evidence
+                    else []
+                ),
+                "reasons": reasons,
+                "status": rollback_proof_phase.get("status"),
+            },
+            observation_summary=cast(
+                Mapping[str, Any], manifest.get("observation_summary", {})
             ),
-            "reasons": reasons,
-            "status": rollback_proof_phase.get("status"),
-        }
-
-        manifest["status"] = (
-            "pass"
-            if all(
-                coerce_phase_status(phase.get("status"), default="fail")
-                in AUTONOMY_PASSING_MANIFEST_STATUSES
-                for phase in ordered_phases
-            )
-            else "fail"
+            artifact_refs=[
+                *coerce_path_strings(manifest.get("artifact_refs", [])),
+                *evidence_refs,
+            ],
+            created_at=cast(datetime | str, manifest.get("created_at")),
+            updated_at=now,
         )
-        manifest["phase_count"] = len(ordered_phases)
-        manifest["updated_at"] = now.isoformat()
-
-        existing_artifact_refs = coerce_path_strings(manifest.get("artifact_refs", []))
-        artifact_refs = [
-            str(item)
-            for phase in ordered_phases
-            for item in coerce_path_strings(phase.get("artifact_refs", []))
-        ]
-        artifact_refs.extend(evidence_refs)
-        artifact_refs.extend(existing_artifact_refs)
-        manifest["artifact_refs"] = sorted(
-            {
-                artifact_ref
-                for artifact_ref in artifact_refs
-                if str(artifact_ref).strip()
-            }
-        )
-        manifest["phase_transitions"] = normalize_phase_transitions(ordered_phases)
-
+        manifest.update(manifest_payload)
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     def _update_autonomy_recommendation_state(

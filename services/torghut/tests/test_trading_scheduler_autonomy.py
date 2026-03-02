@@ -1314,6 +1314,123 @@ class TestTradingSchedulerAutonomy(TestCase):
                 updated_manifest["phase_transitions"],
             )
 
+    def test_run_autonomy_cycle_appends_runtime_governance_with_rollback_trigger_and_state_evidence_path(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            scheduler.state.rollback_incident_evidence_path = str(
+                Path(tmpdir) / "state-incident.json"
+            )
+            Path(scheduler.state.rollback_incident_evidence_path).write_text(
+                json.dumps(
+                    {
+                        "triggered_by": "state-fallback",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            drift_payload = {
+                "drift_status": "drift_detected",
+                "reasons": ["fallback_ratio_regression"],
+                "detection": {
+                    "reason_codes": ["fallback_ratio_regression"],
+                },
+                "action": {
+                    "action_type": "quarantine",
+                    "triggered": True,
+                    "reason_codes": ["fallback_ratio_regression"],
+                },
+                "rollback_triggered": True,
+            }
+
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
+                with patch(
+                    "app.trading.scheduler.TradingScheduler._evaluate_drift_governance",
+                    return_value=drift_payload,
+                ):
+                    scheduler._run_autonomous_cycle()
+
+            manifest_path = deps.phase_manifest_path
+            self.assertIsNotNone(manifest_path)
+            assert manifest_path is not None
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            phases_by_name = {
+                phase["name"]: phase for phase in manifest["phases"] if isinstance(phase, dict)
+            }
+            self.assertEqual(phases_by_name["runtime-governance"]["status"], "fail")
+            self.assertEqual(phases_by_name["rollback-proof"]["status"], "pass")
+            self.assertEqual(
+                manifest["rollback_proof"]["rollback_incident_evidence_path"],
+                str(scheduler.state.rollback_incident_evidence_path),
+            )
+            self.assertIn(
+                str(scheduler.state.rollback_incident_evidence_path),
+                manifest["artifact_refs"],
+            )
+            self.assertIn(
+                {"from": "runtime-governance", "to": "rollback-proof", "status": "pass"},
+                manifest["phase_transitions"],
+            )
+
+    def test_run_autonomy_cycle_appends_runtime_governance_fails_on_trigger_without_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+
+            drift_payload = {
+                "drift_status": "drift_detected",
+                "reasons": ["fallback_ratio_regression"],
+                "detection": {
+                    "reason_codes": ["fallback_ratio_regression"],
+                },
+                "action": {
+                    "action_type": "quarantine",
+                    "triggered": True,
+                    "reason_codes": ["fallback_ratio_regression"],
+                },
+                "rollback_triggered": True,
+            }
+
+            with patch(
+                "app.trading.scheduler.run_autonomous_lane",
+                side_effect=self._fake_run_autonomous_lane(deps),
+            ):
+                with patch(
+                    "app.trading.scheduler.TradingScheduler._evaluate_drift_governance",
+                    return_value=drift_payload,
+                ):
+                    scheduler._run_autonomous_cycle()
+
+            manifest_path = deps.phase_manifest_path
+            self.assertIsNotNone(manifest_path)
+            assert manifest_path is not None
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            phases_by_name = {
+                phase["name"]: phase for phase in manifest["phases"] if isinstance(phase, dict)
+            }
+            self.assertEqual(phases_by_name["runtime-governance"]["status"], "fail")
+            self.assertEqual(phases_by_name["rollback-proof"]["status"], "fail")
+            self.assertEqual(manifest["rollback_proof"]["rollback_incident_evidence"], "")
+            self.assertIn(
+                {"from": "runtime-governance", "to": "rollback-proof", "status": "fail"},
+                manifest["phase_transitions"],
+            )
+
     def _build_scheduler_with_fixtures(
         self,
         tmpdir: str,
