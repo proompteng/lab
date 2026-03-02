@@ -32,7 +32,7 @@ spec:
         image: "posthog/posthog:0d2db99f795a0f6201f30ab833016c41c1271a5a"
         imagePullPolicy: IfNotPresent
         command:
-          - ./bin/plugin-server
+          - ./bin/posthog-node
           - --no-restart-loop
         ports:
         # Expose the port on which the healtchheck endpoint listens

@@ -163,7 +163,7 @@ spec:
             path: /_readyz?role=events
             port: 8000
             scheme: HTTP
-          failureThreshold: 6
+          failureThreshold: 24
           initialDelaySeconds: 0
           periodSeconds: 10
           successThreshold: 1
