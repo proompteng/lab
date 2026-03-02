@@ -27,7 +27,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: migrate-job
-        image: "mirror.gcr.io/posthog/posthog:release-1.43.1"
+        image: "posthog/posthog:0d2db99f795a0f6201f30ab833016c41c1271a5a"
         command:
           - /bin/sh
           - -c
@@ -133,7 +133,7 @@ spec:
           {}
       initContainers:
         - name: wait-for-service-dependencies
-          image: "mirror.gcr.io/posthog/posthog:release-1.43.1"
+          image: "posthog/posthog:0d2db99f795a0f6201f30ab833016c41c1271a5a"
           env:
             - name: POSTHOG_POSTGRES_HOST
               value: "posthog-db-rw.posthog.svc.cluster.local"
