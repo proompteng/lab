@@ -19,7 +19,8 @@ For the control plane:
 1. `controlPlane.env.vars` wins over `env.vars`.
 2. `env.vars` is second.
 3. Chart-managed gRPC values from `grpc.*` are applied next when `grpc.manageEnvVar=true`.
-4. Runtime defaults apply after render.
+4. If both `env.vars` and `controlPlane.env.vars` define managed gRPC keys, values must match; conflicting values fail validation.
+5. Runtime defaults apply after render.
 
 For controllers:
 
@@ -30,7 +31,8 @@ For controllers:
    - `JANGAR_GRPC_ENABLED=0`
    - `JANGAR_CONTROL_PLANE_CACHE_ENABLED=0`
    - idempotency/artifact defaults when unset
-4. Runtime defaults apply after render.
+4. `env.vars` and `controllers.env.vars` must not disagree on managed `JANGAR_GRPC_*` keys when `grpc.manageEnvVar=true`.
+5. Runtime defaults apply after render.
 
 ## Deterministic gRPC source-of-truth
 
@@ -39,6 +41,7 @@ For controllers:
   - `JANGAR_GRPC_HOST` from chart default (`0.0.0.0`)
   - `JANGAR_GRPC_PORT` from `grpc.port`
 - Contradictory explicit values in control-plane env maps fail validation.
+- If both `env.vars` and `controlPlane.env.vars` set managed gRPC values, they must match exactly.
 - Set `grpc.manageEnvVar=false` to opt back into manual control-plane ownership for the three keys.
 - Controllers keep `JANGAR_GRPC_ENABLED` managed by chart defaults unless overridden explicitly
   in `controllers.env.vars`.
@@ -51,6 +54,9 @@ For controllers:
   pinned in the component map used by the consuming deployment:
   - control plane: `controlPlane.env.vars` or `env.vars`
   - controllers: `controllers.env.vars`
+- For managed `JANGAR_GRPC_*` keys, `env.vars` and `controllers.env.vars` are treated as a single source of truth for validation.
+- `envFrom` cannot be used as an undocumented source for managed gRPC values: if keys are declared and
+  `grpc.manageEnvVar=true`, the pinned component values must align with chart-managed gRPC values.
 
 ## Notes
 

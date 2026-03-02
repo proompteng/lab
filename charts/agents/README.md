@@ -163,11 +163,30 @@ Enable gRPC for agentctl or in-cluster clients:
 - `grpc.enabled=true`
 - `grpc.manageEnvVar=true` (default) keeps control-plane `JANGAR_GRPC_*` values chart-owned and deterministic
 - `grpc.manageEnvVar=false` if you want manual ownership in values
+- `controlPlane.env.vars` and `env.vars` cannot define conflicting values for managed `JANGAR_GRPC_*` keys. If you set both, values must match.
+- `controllers.env.vars` and `env.vars` also cannot define conflicting values for managed `JANGAR_GRPC_*` keys.
 - Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token
 - For control-plane migration, remove manual `JANGAR_GRPC_*` settings from:
   - `env.vars`
   - `controlPlane.env.vars`
 - If validation fails, explicit control-plane values must match managed values when `grpc.manageEnvVar=true`.
+
+### envFrom reserved-key guardrails
+
+Structured `envFrom` references can be used safely with chart-managed env keys:
+
+```yaml
+envFromSecretRefs:
+  - name: agents-config
+    optional: false
+    keys:
+      - JANGAR_GRPC_ENABLED
+      - JANGAR_MIGRATIONS
+```
+
+- Set `validation.reservedEnvKeysEnforced=true` to make Helm fail if reserved keys are imported by `envFrom` but not explicitly pinned in the consuming component map.
+- For control-plane keys, pin in `controlPlane.env.vars` or `env.vars`.
+- For controller keys, pin in `controllers.env.vars`.
 
 ### Observability (Prometheus + Grafana)
 

@@ -45,6 +45,8 @@ validation:
 
 - If set and a structured `envFrom` entry declares a reserved key, chart render fails
   unless the key is explicitly overridden by the matching component map.
+- If `JANGAR_GRPC_*` is declared in structured `envFrom`, controlled-mode rendering also requires
+  the pinned component values to match chart-managed gRPC defaults when `grpc.manageEnvVar=true`.
 
 ## Migration guidance
 
@@ -53,6 +55,7 @@ validation:
 3. If validation blocks render, either:
    - add the key to the relevant component env map, or
    - disable enforcement by setting `validation.reservedEnvKeysEnforced=false`.
+   - keep `env.vars` and `controlPlane.env.vars` aligned for shared managed gRPC keys when both are used.
 
 ## Reserved key set used by this chart
 

@@ -418,7 +418,12 @@
             "properties": {
               "name": { "type": "string" },
               "optional": { "type": "boolean" },
-              "keys": { "type": "array", "items": { "type": "string" } }
+              "keys": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "array", "items": { "type": "string" } }
+                ]
+              }
             },
             "required": ["name"],
             "additionalProperties": false
@@ -436,7 +441,12 @@
             "properties": {
               "name": { "type": "string" },
               "optional": { "type": "boolean" },
-              "keys": { "type": "array", "items": { "type": "string" } }
+              "keys": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "array", "items": { "type": "string" } }
+                ]
+              }
             },
             "required": ["name"],
             "additionalProperties": false

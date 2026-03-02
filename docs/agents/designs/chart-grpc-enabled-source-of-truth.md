@@ -32,6 +32,8 @@ The chart now treats gRPC for the control plane as chart-driven and deterministi
 - `grpc.manageEnvVar=false` restores manual env-var ownership for control-plane gRPC keys.
 - Controllers are owned by `controllers.env.vars` for chart-managed `JANGAR_GRPC_*` guards: if you set
   controller-side gRPC env vars there, those values become authoritative for controller behavior.
+- When managed mode is enabled, `env.vars`, `controlPlane.env.vars`, and any explicit `controllers.env.vars` for managed keys
+  must align. If they disagree, validation fails.
 
 ## Migration guidance
 
@@ -71,7 +73,7 @@ The chart now treats gRPC for the control plane as chart-driven and deterministi
 ## Validation
 
 - Helm validation fails when `grpc.manageEnvVar=true` and explicit control-plane `JANGAR_GRPC_*` values
-  disagree with managed values.
+  disagree with managed values, including mismatched values across `env.vars` and `controlPlane.env.vars`.
 
 ```bash
 helm template charts/agents \

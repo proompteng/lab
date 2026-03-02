@@ -3,7 +3,9 @@
 {{- $controllerNamespaces := .Values.controller.namespaces | default (list) -}}
 {{- $orchestrationNamespaces := .Values.orchestrationController.namespaces | default (list) -}}
 {{- $supportingNamespaces := .Values.supportingController.namespaces | default (list) -}}
-{{- $controlPlaneEnvVars := merge (deepCopy (.Values.env.vars | default dict)) (deepCopy (.Values.controlPlane.env.vars | default dict)) -}}
+{{- $globalEnvVars := .Values.env.vars | default dict -}}
+{{- $controlPlaneEnvVars := merge (deepCopy $globalEnvVars) (deepCopy (.Values.controlPlane.env.vars | default dict)) -}}
+{{- $controlPlaneExplicitEnvVars := .Values.controlPlane.env.vars | default dict -}}
 {{- $controllersExplicitEnvVars := .Values.controllers.env.vars | default dict -}}
 {{- $envFromSecretRefs := .Values.envFromSecretRefs | default (list) -}}
 {{- $envFromConfigMapRefs := .Values.envFromConfigMapRefs | default (list) -}}
@@ -24,6 +26,8 @@
 {{- $expectedGrpcHost := "0.0.0.0" -}}
 {{- $expectedGrpcPort := toString .Values.grpc.port -}}
 {{- $expectedControllersGrpcEnabled := "0" -}}
+{{- $expectedControllersGrpcHost := "0.0.0.0" -}}
+{{- $expectedControllersGrpcPort := toString .Values.grpc.port -}}
 
 {{- if and (gt (len $controllerNamespaces) 1) (not $clusterScoped) }}
 {{- $errors = append $errors "rbac.clusterScoped must be true when controller.namespaces has multiple entries." -}}
@@ -47,6 +51,20 @@
 {{- end -}}
 
 {{- if $grpcManagedByChart }}
+{{- $grpcControlPlaneGrpcConflictValues := list "JANGAR_GRPC_ENABLED" "JANGAR_GRPC_HOST" "JANGAR_GRPC_PORT" -}}
+{{- range $grpcEnvKey := $grpcControlPlaneGrpcConflictValues }}
+{{- if and (hasKey $controlPlaneExplicitEnvVars $grpcEnvKey) (hasKey $globalEnvVars $grpcEnvKey) }}
+{{- if ne (toString (index $controlPlaneExplicitEnvVars $grpcEnvKey)) (toString (index $globalEnvVars $grpcEnvKey)) }}
+{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but env.vars and controlPlane.env.vars define conflicting values for %q: env.vars=%s, controlPlane.env.vars=%s. Remove one value so the key has one source of truth." $grpcEnvKey (index $globalEnvVars $grpcEnvKey) (index $controlPlaneExplicitEnvVars $grpcEnvKey)) -}}
+{{- end }}
+{{- end }}
+{{- if and (hasKey $controllersExplicitEnvVars $grpcEnvKey) (hasKey $globalEnvVars $grpcEnvKey) }}
+{{- if ne (toString (index $controllersExplicitEnvVars $grpcEnvKey)) (toString (index $globalEnvVars $grpcEnvKey)) }}
+{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but env.vars and controllers.env.vars define conflicting values for %q: env.vars=%s, controllers.env.vars=%s. Set controllers.env.vars to match env.vars or remove it from env.vars." $grpcEnvKey (index $globalEnvVars $grpcEnvKey) (index $controllersExplicitEnvVars $grpcEnvKey)) -}}
+{{- end }}
+{{- end }}
+{{- end }}
+
 {{- if and (hasKey $controlPlaneEnvVars "JANGAR_GRPC_ENABLED") (ne (toString (index $controlPlaneEnvVars "JANGAR_GRPC_ENABLED")) $expectedGrpcEnabled) }}
 {{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but control-plane env values (env.vars + controlPlane.env.vars) set JANGAR_GRPC_ENABLED=%s which does not match grpc.enabled=%s." (index $controlPlaneEnvVars "JANGAR_GRPC_ENABLED") .Values.grpc.enabled) -}}
 {{- end -}}
@@ -59,10 +77,10 @@
 {{- if and (hasKey $controllersExplicitEnvVars "JANGAR_GRPC_ENABLED") (ne (toString (index $controllersExplicitEnvVars "JANGAR_GRPC_ENABLED")) $expectedControllersGrpcEnabled) }}
 {{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but controllers.env.vars sets JANGAR_GRPC_ENABLED=%s. Set it to %q or set grpc.manageEnvVar=false to own controller gRPC settings explicitly." (index $controllersExplicitEnvVars "JANGAR_GRPC_ENABLED") $expectedControllersGrpcEnabled) -}}
 {{- end -}}
-{{- if and (hasKey $controllersExplicitEnvVars "JANGAR_GRPC_HOST") (ne (toString (index $controllersExplicitEnvVars "JANGAR_GRPC_HOST")) $expectedGrpcHost) }}
+{{- if and (hasKey $controllersExplicitEnvVars "JANGAR_GRPC_HOST") (ne (toString (index $controllersExplicitEnvVars "JANGAR_GRPC_HOST")) $expectedControllersGrpcHost) }}
 {{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but controllers.env.vars sets JANGAR_GRPC_HOST=%s. Remove the override or set grpc.manageEnvVar=false to own controller gRPC settings explicitly." (index $controllersExplicitEnvVars "JANGAR_GRPC_HOST")) -}}
 {{- end -}}
-{{- if and (hasKey $controllersExplicitEnvVars "JANGAR_GRPC_PORT") (ne (toString (index $controllersExplicitEnvVars "JANGAR_GRPC_PORT")) $expectedGrpcPort) }}
+{{- if and (hasKey $controllersExplicitEnvVars "JANGAR_GRPC_PORT") (ne (toString (index $controllersExplicitEnvVars "JANGAR_GRPC_PORT")) $expectedControllersGrpcPort) }}
 {{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but controllers.env.vars sets JANGAR_GRPC_PORT=%s, which does not match grpc.port=%s. Remove the override or set grpc.manageEnvVar=false to own controller gRPC settings explicitly." (index $controllersExplicitEnvVars "JANGAR_GRPC_PORT") .Values.grpc.port) -}}
 {{- end -}}
 {{- end -}}
