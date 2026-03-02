@@ -107,6 +107,11 @@ spec:
             secretKeyRef:
               name: posthog
               key: posthog-secret
+        - name: ENCRYPTION_SALT_KEYS
+          valueFrom:
+            secretKeyRef:
+              name: posthog
+              key: encryption-salt-keys
         
         - name: POSTHOG_POSTGRES_HOST
           value: posthog-db-pooler
