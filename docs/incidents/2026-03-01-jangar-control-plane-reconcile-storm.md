@@ -23,15 +23,18 @@
 | 23:04+ | In-pod `/health` checks consistently time out (`code=000`, ~30s). |
 | 23:06+ | `kubectl top` shows Jangar app pinned near CPU limit (~2000m). |
 | 23:06+ | `agents/swarm/jangar-control-plane` status `resourceVersion` advances every few seconds while semantic status remains unchanged (only `updatedAt` churn). |
+| 00:06 (Mar 2) | Swarm throttling/image rollout lands; health endpoint recovers quickly, but CPU remains pinned. |
+| 00:12 (Mar 2) | `CronJob` watch-only sampling shows sustained event storm (`~21 MODIFIED/20s`) on schedule-runner cronjobs in `agents` namespace. |
+| 00:17 (Mar 2) | Confirmed second hot path: each cronjob MODIFIED event triggered full `reconcileSchedule` (target lookup + apply checks + status write), causing sustained `kubectl` subprocess churn. |
 
 ## Root Cause
 
-Jangar entered a **control-plane reconcile feedback loop** in the API pod:
+Jangar entered a **compound control-plane reconcile loop** in the API pod:
 
-1. In-process controllers continuously reconciled watched resources and spawned frequent `kubectl apply -f - -o json` subprocesses.
-2. Swarm status was being rewritten repeatedly with no semantic state change (observed as `resourceVersion` churn where normalized status stayed constant except `updatedAt`).
-3. The resulting process/API churn saturated the app CPU budget (~2 cores), starving the Bun HTTP event loop.
-4. `/health` stopped returning responses, so readiness never became healthy and the service stayed out of rotation.
+1. `Swarm` watch `MODIFIED` events (status-only, no spec change) repeatedly entered expensive reconcile paths and spawned repeated `kubectl` subprocess work.
+2. A second, independent storm came from `CronJob` watch `MODIFIED` events for schedule-runner jobs; each event called full `reconcileSchedule`, including target resolution and desired/live apply comparisons.
+3. Both paths execute inside the same API process as HTTP serving; under high event rate this saturated CPU (~2 cores), starving the Bun event loop.
+4. `/health` timed out under starvation, so readiness stayed unhealthy and the service remained out of rotation.
 
 ## Evidence
 
@@ -45,6 +48,10 @@ Jangar entered a **control-plane reconcile feedback loop** in the API pod:
   - many long-lived `kubectl get ... --watch ...` subprocesses plus repeated short-lived `kubectl apply -f - -o json` children.
 - No-op swarm status churn:
   - `agents/swarm/jangar-control-plane` `resourceVersion` changed repeatedly while normalized status hash (excluding `updatedAt` and condition transition timestamps) stayed constant.
+- Schedule-runner cronjob event storm:
+  - `kubectl get cronjobs -n agents -l schedules.proompteng.ai/schedule --watch-only --output-watch-events --request-timeout=20s -o json` produced ~21 `MODIFIED` events in 20 seconds across `*-sched-cron` resources.
+- Post-swarm-fix residual signal:
+  - After Swarm throttling rollout, health responded `200` but CPU remained ~2000m until cronjob reconcile path was isolated.
 
 ## Contributing Factors
 
@@ -61,15 +68,21 @@ Jangar entered a **control-plane reconcile feedback loop** in the API pod:
 
 1. Captured runtime evidence from failing pods and swarm status objects.
 2. Confirmed issue persisted across rollout/restart, ruling out one-off pod corruption.
-3. Documented incident and root-cause path for follow-on fix PRs.
+3. Shipped no-op apply guards + queue coalescing for supporting primitives reconciles.
+4. Updated watch processing to reconcile latest resource snapshots, not stale event payloads.
+5. Added Swarm status-only reconcile throttling.
+6. Identified and fixed schedule-runner cronjob hot path by:
+   - using throttled status-only reconciliation for cronjob `MODIFIED` events,
+   - retaining full schedule reconciliation only for delete/recreate paths.
+7. Pinned GitOps manifests to the fixed image and validated rollout.
 
 ## Preventive / Follow-up Actions
 
-1. Add explicit reconcile dedupe/guardrails so status writes are skipped when only heartbeat fields would change.
-2. Stop unconditional apply loops in reconcile paths (especially schedule/swarm flows); compare desired/current before apply.
-3. Move heavy control-plane reconciliation out of the request-serving pod (separate deployment/process budget).
-4. Add an alert for sustained `kubectl apply` subprocess churn in Jangar app pods.
-5. Add regression tests for no-op reconciliation (resourceVersion should not churn under stable inputs).
+1. Add explicit per-watch event-rate telemetry by kind (`event_type`, `kind`, `namespace`) to detect controller storms before readiness impact.
+2. Keep status-only throttles on high-churn watches (`Swarm`, `CronJob`) and add equivalent guards for any future high-frequency sources.
+3. Continue replacing full reconcile calls on status-heartbeat events with targeted status refresh routines.
+4. Move heavy control-plane reconciliation out of the request-serving pod (separate deployment/process budget).
+5. Add alerts for sustained Jangar CPU saturation + readiness degradation + watch event surge correlation.
 
 ## Commands Used During Incident
 
@@ -90,4 +103,8 @@ kubectl -n jangar exec <jangar-pod> -c app -- /bin/bash -lc \
 # Swarm status churn verification
 kubectl -n agents get swarm jangar-control-plane -o json
 kubectl -n agents get swarms.swarm.proompteng.ai --watch --output-watch-events -o json --request-timeout=20s
+
+# Cronjob watch event-rate verification
+kubectl -n agents get cronjobs -l schedules.proompteng.ai/schedule \
+  --watch-only --output-watch-events --request-timeout=20s -o json
 ```
