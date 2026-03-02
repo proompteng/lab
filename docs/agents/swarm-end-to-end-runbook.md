@@ -149,10 +149,16 @@ Expected evidence:
 
 ## Current Known State (2026-03-02)
 
-- `agents` Argo CD app: `Synced` + `Healthy`.
+- `agents` Argo CD app: `Synced` + `Healthy` on revision `d455ba84e1e80c3f04a4c7e736a5c26dc59018c1`.
 - Both swarms: `Active` + `Ready=True`.
-- Live cross-swarm run observed: `jangar-control-plane-torghut-quant-req-00gbjlqs-1-n2l4r` (running during latest validation).
-- Last completed cross-swarm requirement example: `jangar-control-plane-torghut-quant-req-00gc1i45-1-hv7qz` (`Succeeded`).
+- Cross-swarm handoff run observed: `jangar-control-plane-torghut-quant-req-00gbjlqs-1-n2l4r` (active).
+- Post-merge channel-behavior probe run succeeded:
+  `e2e-jangar-verify-human-msg-1772441402`.
+- Probe logs confirm required interaction contract:
+  - `list-channel-messages` executed before mission decisions.
+  - `verify-chat-access` executed with explicit worker-authored `--message`.
+  - `upsert-mission` executed with explicit worker-authored `--message`.
+  - Huly artifact ids returned (`issueId`, `documentId`, `messageId`).
 
 ## Failure Criteria
 
