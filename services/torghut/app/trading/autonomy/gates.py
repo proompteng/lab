@@ -760,10 +760,7 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
         reasons.append("tca_shortfall_missing")
     elif avg_tca_shortfall_abs is None:
         reasons.append("tca_shortfall_abs_missing")
-    elif (
-        (avg_tca_shortfall_abs if avg_tca_shortfall_abs is not None else abs(avg_tca_shortfall))
-        > policy.gate2_max_tca_shortfall_notional
-    ):
+    elif abs(avg_tca_shortfall_abs) > policy.gate2_max_tca_shortfall_notional:
         reasons.append("tca_shortfall_exceeds_maximum")
 
     avg_tca_realized_shortfall = _decimal(

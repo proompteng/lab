@@ -3,8 +3,8 @@ package ai.proompteng.dorvud.ta
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.Window
 import ai.proompteng.dorvud.ta.producer.AvroSerde
-import ai.proompteng.dorvud.ta.stream.Macd
 import ai.proompteng.dorvud.ta.stream.DirectionProbabilities
+import ai.proompteng.dorvud.ta.stream.Macd
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.MicrostructureSignalArtifact
 import ai.proompteng.dorvud.ta.stream.MicrostructureSignalV1

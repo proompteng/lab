@@ -72,7 +72,7 @@ def _coalesce_int(raw: Mapping[str, Any], *paths: str) -> int | None:
 
 
 def _coalesce_payload_value(
-    raw: Mapping[str, Any], *paths: tuple[str, ...]
+    raw: Mapping[str, Any], *paths: str
 ) -> Any:
     for path in paths:
         value = raw.get(path)

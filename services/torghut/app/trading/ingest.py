@@ -1025,7 +1025,7 @@ def _merge_microstructure_signal_payload(payload: dict[str, Any], row: dict[str,
     if isinstance(signal_value, dict):
         payload.setdefault("microstructure_signal", {})
         payload["microstructure_signal"] = _merge_dict_payload(
-            payload.get("microstructure_signal"), signal_value
+            payload.get("microstructure_signal"), cast(dict[str, Any], signal_value)
         )
 
 
