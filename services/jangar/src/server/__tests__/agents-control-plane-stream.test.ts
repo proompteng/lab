@@ -82,15 +82,19 @@ describe('control plane stream', () => {
     )
     const callsAfterSecond = vi.mocked(kubeWatchMocks.startResourceWatch).mock.calls.length
 
-    const newlyAddedCalls = vi.mocked(kubeWatchMocks.startResourceWatch).mock.calls.slice(callsAfterFirst)
+    const startWatchCalls = vi.mocked(kubeWatchMocks.startResourceWatch).mock.calls as unknown[][]
+    const newlyAddedCalls = startWatchCalls.slice(callsAfterFirst)
     expect(newlyAddedCalls).toHaveLength(1)
-    expect(newlyAddedCalls[0]?.[0].resource).toBe(RESOURCE_MAP.Swarm)
+    const newlyAddedOptions = (newlyAddedCalls[0]?.[0] ?? {}) as Record<string, unknown>
+    expect(newlyAddedOptions.resource).toBe(RESOURCE_MAP.Swarm)
 
-    const swarmWatches = vi
-      .mocked(kubeWatchMocks.startResourceWatch)
-      .mock.calls.filter(([options]) => options.resource === RESOURCE_MAP.Swarm)
+    const swarmWatches = startWatchCalls.filter((call) => {
+      const options = (call[0] ?? {}) as Record<string, unknown>
+      return options.resource === RESOURCE_MAP.Swarm
+    })
     expect(swarmWatches).toHaveLength(1)
-    expect(swarmWatches[0]?.[0].namespace).toBe(namespace)
+    const firstSwarmWatchOptions = (swarmWatches[0]?.[0] ?? {}) as Record<string, unknown>
+    expect(firstSwarmWatchOptions.namespace).toBe(namespace)
     expect(swarmChecks).toBe(2)
     expect(callsAfterSecond - callsAfterFirst).toBe(1)
 

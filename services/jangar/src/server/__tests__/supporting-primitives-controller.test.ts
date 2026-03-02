@@ -159,8 +159,11 @@ describe('supporting primitives controller', () => {
     try {
       await startSupportingPrimitivesController()
 
-      const watchCalls = vi.mocked(kubeWatchMocks.startResourceWatch).mock.calls
-      const initialSwarmWatchCalls = watchCalls.filter(([options]) => options.resource === RESOURCE_MAP.Swarm)
+      const watchCalls = vi.mocked(kubeWatchMocks.startResourceWatch).mock.calls as unknown[][]
+      const initialSwarmWatchCalls = watchCalls.filter((call) => {
+        const options = (call[0] ?? {}) as Record<string, unknown>
+        return options.resource === RESOURCE_MAP.Swarm
+      })
       expect(initialSwarmWatchCalls).toHaveLength(0)
 
       await vi.advanceTimersByTimeAsync(__test__.SWARM_CRD_REFRESH_INTERVAL_MS)
