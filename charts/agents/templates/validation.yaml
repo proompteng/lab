@@ -3,6 +3,7 @@
 {{- $controllerNamespaces := .Values.controller.namespaces | default (list) -}}
 {{- $orchestrationNamespaces := .Values.orchestrationController.namespaces | default (list) -}}
 {{- $supportingNamespaces := .Values.supportingController.namespaces | default (list) -}}
+{{- $runnerImage := .Values.runner.image | default (dict) -}}
 
 {{- if and (gt (len $controllerNamespaces) 1) (not $clusterScoped) -}}
 {{- $errors = append $errors "rbac.clusterScoped must be true when controller.namespaces has multiple entries." -}}
@@ -23,6 +24,14 @@
 {{- end -}}
 {{- if and (has "*" $supportingNamespaces) (not $clusterScoped) -}}
 {{- $errors = append $errors "rbac.clusterScoped must be true when supportingController.namespaces includes '*' (wildcard)." -}}
+{{- end -}}
+
+{{- if and (hasKey $runnerImage "tag") (empty $runnerImage.tag) -}}
+{{- $errors = append $errors "runner.image.tag must be set when runner.image.repository is configured." -}}
+{{- end -}}
+
+{{- if and (hasKey $runnerImage "digest") (ne $runnerImage.digest "") (not (regexMatch "^sha256:[0-9a-f]{64}$" $runnerImage.digest)) -}}
+{{- $errors = append $errors "runner.image.digest must be empty or a full sha256 digest (sha256:<64-hex>) for explicit runner image pinning." -}}
 {{- end -}}
 
 {{- if gt (len $errors) 0 -}}

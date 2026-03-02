@@ -33,11 +33,13 @@ Promotions are source-of-truth driven by:
 
 - `image.repository` + `image.tag` + `image.digest` define the Jangar control-plane image pin.
 - `runner.image.repository` + `runner.image.tag` + `runner.image.digest` define the AgentRun/ToolRun runtime image pin.
-- The workflow executes an explicit guard pass with `update-manifests.ts --verify-runner-image --verify-runner-image-only`
+- The workflow executes an explicit guard pass with
+  `update-manifests.ts --verify-runner-image --require-runner-image-digest true --verify-runner-image-only`
   using:
   - candidate tag/digest from the release contract
   - resolved target platform (`linux/<runner.arch>`)
   - explicit entrypoint probe (`/usr/local/bin/agent-runner --help`)
+- Verification failures are hard: manifest updates are not written and no PR is created.
 - The workflow then writes both image families from the same candidate:
   - control-plane image uses `image.*`
   - runner image uses `runner.image.*` (`runnerImage*` CLI controls retained for explicitness)
@@ -45,6 +47,7 @@ Promotions are source-of-truth driven by:
   - the runner image cannot be inspected,
   - the runner OS/architecture does not match target platform, or
   - the runner binary cannot be executed for a smoke `--help` check.
+- The promotion is additionally rejected if the runner digest is missing or malformed when promotion mode is enabled.
 - When the guard passes, both manifest families are updated in one commit to avoid skew.
 
 ### Rollback behavior

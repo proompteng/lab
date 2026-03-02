@@ -54,6 +54,8 @@ bun run "$repoRoot/packages/scripts/src/jangar/update-manifests.ts" \
 
 - Any non-zero result from that runtime probe (including `agent-runner --help`) is a hard failure.
 - The release workflow runs this as a dedicated check before manifest writes in `jangar-release.yml`.
+- The guardrail requires `--require-runner-image-digest true`, so promotion cannot proceed if the runner digest is
+  missing or malformed.
 
 ## Integration Tests
 

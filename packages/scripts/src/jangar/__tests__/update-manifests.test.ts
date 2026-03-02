@@ -215,6 +215,15 @@ describe('updateJangarManifests', () => {
     expect(__private.parseArgs(['--verify-runner-image-only', '--tag', 'new-tag']).verifyRunnerImageOnly).toBe(true)
   })
 
+  it('parses require-runner-image-digest flag forms', () => {
+    expect(__private.parseArgs(['--require-runner-image-digest']).requireRunnerImageDigest).toBe(true)
+    expect(__private.parseArgs(['--require-runner-image-digest', 'false']).requireRunnerImageDigest).toBe(false)
+    expect(__private.parseArgs(['--require-runner-image-digest=false']).requireRunnerImageDigest).toBe(false)
+    expect(__private.parseArgs(['--require-runner-image-digest', '--tag', 'new-tag']).requireRunnerImageDigest).toBe(
+      true,
+    )
+  })
+
   it('errors on invalid --verify-runner-image value', () => {
     expect(() => __private.parseArgs(['--verify-runner-image=maybe'])).toThrow('Invalid boolean value: maybe')
   })
@@ -379,6 +388,41 @@ describe('updateJangarManifests', () => {
         agentsValuesPath: relative(repoRoot, fixture.agentsValuesPath),
       }),
     ).toThrow(/Runner image runtime check failed/)
+
+    rmSync(fixture.dir, { recursive: true, force: true })
+  })
+
+  it('fails fast when strict digest requirement is enabled and runner digest is malformed', () => {
+    const fixture = createFixture()
+
+    const spawnMock = ((..._args) => {
+      return {
+        exitCode: 0,
+        stdout: new Uint8Array(),
+        stderr: new Uint8Array(),
+      } as ReturnType<typeof Bun.spawnSync>
+    }) as typeof Bun.spawnSync
+
+    __private.setSpawnSync(spawnMock)
+
+    expect(() =>
+      updateJangarManifests({
+        imageName,
+        tag: 'agents-tag',
+        digest: 'sha256:agentsdigest',
+        runnerImageTag: 'agents-tag',
+        runnerImageDigest: 'agentsdigest',
+        verifyRunnerImage: true,
+        requireRunnerImageDigest: true,
+        runnerImagePlatform: 'linux/amd64',
+        runnerImageBinary: '/usr/local/bin/agent-runner',
+        rolloutTimestamp: '2026-02-20T09:50:00.000Z',
+        kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
+        serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
+        workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
+        agentsValuesPath: relative(repoRoot, fixture.agentsValuesPath),
+      }),
+    ).toThrow(/Runner image digest .* is not a valid sha256 digest/)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

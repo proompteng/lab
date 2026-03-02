@@ -227,6 +227,7 @@ jobs:
             --runner-image-platform "${JANGAR_RUNNER_IMAGE_PLATFORM}" \
             --runner-image-binary /usr/local/bin/agent-runner \
             --verify-runner-image \
+            --require-runner-image-digest true \
             --verify-runner-image-only \
             --rollout-timestamp "${TIMESTAMP}"
           echo "passed=true" >> "$GITHUB_OUTPUT"
@@ -252,6 +253,7 @@ jobs:
             --runner-image-digest "${JANGAR_IMAGE_DIGEST}" \
             --runner-image-platform "${JANGAR_RUNNER_IMAGE_PLATFORM}" \
             --verify-runner-image \
+            --require-runner-image-digest true \
             --rollout-timestamp "${TIMESTAMP}" \
             --agents-values-path "argocd/applications/agents/values.yaml"
 
@@ -297,7 +299,8 @@ jobs:
               - image: `${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}@${{ steps.digest.outputs.digest }}`
               - platform: `${{ steps.meta.outputs.runner_platform }}`
               - probe status: `${{ steps.runner_check.outputs.passed }}`
-              - entrypoint probe: `agent-runner --help` via `update-manifests.ts --verify-runner-image --verify-runner-image-only`
+              - entrypoint probe: `agent-runner --help` via `update-manifests.ts --verify-runner-image --require-runner-image-digest true --verify-runner-image-only`
+              - runner digest format: must match `sha256:<64hex>`
             - Updated API and worker rollout annotations
             - Updated `argocd/applications/agents/values.yaml` for automated sync to namespace `agents`
 

@@ -39,6 +39,7 @@ export type UpdateManifestsOptions = {
   runnerImageBinary?: string
   runnerImagePlatform?: string
   verifyRunnerImage?: boolean
+  requireRunnerImageDigest?: boolean
   verifyRunnerImageOnly?: boolean
   rolloutTimestamp: string
   kustomizationPath?: string
@@ -60,6 +61,7 @@ type CliOptions = {
   runnerImageBinary?: string
   runnerImagePlatform?: string
   verifyRunnerImage?: boolean
+  requireRunnerImageDigest?: boolean
   verifyRunnerImageOnly?: boolean
   rolloutTimestamp?: string
   kustomizationPath?: string
@@ -148,10 +150,20 @@ const validateRunnerImage = (options: {
   imageName: string
   tag: string
   digest?: string
+  requireDigest?: boolean
   binary: string
   platform?: string
 }) => {
   const imageRef = runnerImageRef(options)
+
+  if (options.requireDigest) {
+    if (!options.digest) {
+      throw new Error(`Runner image ${imageRef} requires an explicit digest before promotion`)
+    }
+    if (!/^sha256:[0-9a-f]{64}$/.test(options.digest)) {
+      throw new Error(`Runner image digest ${options.digest} is not a valid sha256 digest`)
+    }
+  }
 
   const inspectResult = runDocker(['image', 'inspect', '--format', '{{json .}}', imageRef])
   if (inspectResult.exitCode !== 0) {
@@ -330,6 +342,7 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
       imageName: runnerImageName,
       tag: runnerImageTag,
       digest: runnerImageDigest,
+      requireDigest: options.requireRunnerImageDigest,
       binary: runnerImageBinary,
       platform: runnerImagePlatform,
     })
@@ -413,6 +426,7 @@ const parseArgs = (argv: string[]): CliOptions => {
   --runner-image-name <value>
   --runner-image-tag <value>
   --runner-image-digest <value>
+  --require-runner-image-digest [true|false]
   --runner-image-binary <value>
   --runner-image-platform <linux/amd64|linux/arm64>
   --verify-runner-image [true|false]
@@ -462,6 +476,22 @@ const parseArgs = (argv: string[]): CliOptions => {
       }
 
       options.verifyRunnerImageOnly = true
+      continue
+    }
+
+    if (flag === '--require-runner-image-digest') {
+      if (inlineValue !== undefined) {
+        options.requireRunnerImageDigest = parseBoolean(inlineValue)
+        continue
+      }
+
+      if (nextValueLooksLikeValue && booleanFlagValues.has(nextValue.toLowerCase())) {
+        options.requireRunnerImageDigest = parseBoolean(nextValue)
+        i += 1
+        continue
+      }
+
+      options.requireRunnerImageDigest = true
       continue
     }
 
@@ -555,6 +585,11 @@ export const main = (cliOptions?: CliOptions) => {
     verifyRunnerImage:
       parsed.verifyRunnerImage ??
       parseBoolean(process.env.JANGAR_VERIFY_RUNNER_IMAGE ?? process.env.JANGAR_RUNNER_IMAGE_VERIFY ?? 'false'),
+    requireRunnerImageDigest:
+      parsed.requireRunnerImageDigest ??
+      parseBoolean(
+        process.env.JANGAR_REQUIRE_RUNNER_IMAGE_DIGEST ?? process.env.JANGAR_RUNNER_IMAGE_REQUIRE_DIGEST ?? 'false',
+      ),
     verifyRunnerImageOnly:
       parsed.verifyRunnerImageOnly ??
       parseBoolean(
