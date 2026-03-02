@@ -642,6 +642,104 @@ class TestExecutionPolicy(TestCase):
             outcome.microstructure_metadata["tightening_reasons"],
         )
 
+    def test_deeplob_bdlob_microstructure_signal_v1_applies_controls(self) -> None:
+        config.settings.trading_execution_advisor_enabled = False
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25"), prefer_limit=False))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_signal": {
+                        "schema_version": "microstructure_signal_v1",
+                        "symbol": "aapl",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "expected_spread_impact_bps": "18",
+                        "depth_top5_usd": "200000",
+                        "direction_probabilities": {"up": "0.62", "down": "0.38"},
+                        "latency_ms": 320,
+                        "feature_quality_status": "pass",
+                        "uncertainty_band": "high",
+                        "liquidity_state": "stressed",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertEqual(outcome.decision.order_type, "limit")
+        self.assertTrue(outcome.microstructure_metadata["applied"])
+        self.assertEqual(
+            outcome.microstructure_metadata["liquidity_regime"],
+            "stressed",
+        )
+
+    def test_stale_deeplob_bdlob_microstructure_signal_v1_falls_back_to_baseline(self) -> None:
+        config.settings.trading_execution_advisor_enabled = False
+        config.settings.trading_execution_advisor_max_staleness_seconds = 10
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_signal": {
+                        "schema_version": "microstructure_signal_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2025-12-31T23:59:00Z",
+                        "expected_spread_impact_bps": "18",
+                        "depth_top5_usd": "200000",
+                        "direction_probabilities": {"up": "0.62", "down": "0.38"},
+                        "latency_ms": 20,
+                        "feature_quality_status": "pass",
+                        "uncertainty_band": "low",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertEqual(outcome.microstructure_metadata["fallback_reason"], "microstructure_state_stale")
+
+    def test_malformed_deeplob_bdlob_microstructure_signal_v1_falls_back_to_baseline(self) -> None:
+        config.settings.trading_execution_advisor_enabled = False
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_signal": {
+                        "schema_version": "microstructure_signal_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "expected_spread_impact_bps": "not-a-number",
+                        "depth_top5_usd": "not-a-number",
+                        "direction_probabilities": {"up": "not-a-number", "down": "not-a-number"},
+                        "latency_ms": 320,
+                        "feature_quality_status": "pass",
+                        "uncertainty_band": "high",
+                        "liquidity_state": "stressed",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertEqual(
+            outcome.microstructure_metadata["fallback_reason"],
+            "microstructure_state_unavailable",
+        )
+
     def test_microstructure_missing_state_falls_back_to_baseline_safely(self) -> None:
         config.settings.trading_execution_advisor_enabled = False
         policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))

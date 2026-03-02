@@ -134,7 +134,8 @@ class ExecutionPolicy:
             )
         )
         microstructure_state = parse_microstructure_state(
-            decision.params.get("microstructure_state"),
+            decision.params.get("microstructure_state")
+            or decision.params.get("microstructure_signal"),
             expected_symbol=decision.symbol,
         )
         microstructure_metadata, microstructure_participation_scale, microstructure_execution_scale = (

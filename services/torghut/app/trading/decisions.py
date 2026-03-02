@@ -539,8 +539,12 @@ def _resolve_microstructure_state_payload(
 ) -> dict[str, Any] | None:
     payload = signal.payload
     raw_state = payload.get("microstructure_state")
+    if raw_state is None:
+        raw_state = payload.get("microstructure_signal")
     if isinstance(raw_state, dict):
         state = dict(cast(dict[str, Any], raw_state))
+        if state.get("schema_version") == "microstructure_signal_v1":
+            state.setdefault("liquidity_regime", state.get("liquidity_state"))
     else:
         extracted = extract_microstructure_features_v1(signal)
         state = {
@@ -555,7 +559,8 @@ def _resolve_microstructure_state_payload(
             "liquidity_regime": extracted.liquidity_regime,
         }
 
-    state["schema_version"] = "microstructure_state_v1"
+    if not state.get("schema_version"):
+        state["schema_version"] = "microstructure_state_v1"
     state["symbol"] = str(state.get("symbol") or signal.symbol).strip().upper()
     if not state["symbol"]:
         state["symbol"] = signal.symbol.strip().upper()

@@ -192,13 +192,13 @@ def build_tca_gate_inputs(
     stmt = select(
         func.count(ExecutionTCAMetric.id),
         func.avg(ExecutionTCAMetric.slippage_bps),
-        func.avg(ExecutionTCAMetric.shortfall_notional),
+        func.avg(func.abs(ExecutionTCAMetric.shortfall_notional)),
         func.avg(ExecutionTCAMetric.churn_ratio),
-        func.avg(ExecutionTCAMetric.divergence_bps),
+        func.avg(func.abs(ExecutionTCAMetric.divergence_bps)),
         func.count(ExecutionTCAMetric.expected_shortfall_bps_p50),
         func.avg(ExecutionTCAMetric.expected_shortfall_bps_p50),
         func.avg(ExecutionTCAMetric.expected_shortfall_bps_p95),
-        func.avg(ExecutionTCAMetric.realized_shortfall_bps),
+        func.avg(func.abs(ExecutionTCAMetric.realized_shortfall_bps)),
         func.max(ExecutionTCAMetric.computed_at),
     )
     if strategy_id:
@@ -208,6 +208,7 @@ def build_tca_gate_inputs(
     order_count = int(row[0] or 0)
     avg_slippage = _decimal_or_none(row[1])
     avg_shortfall = _decimal_or_none(row[2])
+    avg_shortfall_abs = avg_shortfall
     avg_churn = _decimal_or_none(row[3])
     avg_divergence = _decimal_or_none(row[4])
     expected_count = int(row[5] or 0)
@@ -224,8 +225,10 @@ def build_tca_gate_inputs(
         "order_count": order_count,
         "avg_slippage_bps": avg_slippage,
         "avg_shortfall_notional": avg_shortfall,
+        "avg_shortfall_notional_abs": avg_shortfall_abs,
         "avg_churn_ratio": avg_churn,
         "avg_divergence_bps": avg_divergence,
+        "avg_divergence_bps_abs": avg_divergence,
         "expected_shortfall_sample_count": expected_count,
         "expected_shortfall_coverage": expected_shortfall_coverage,
         "avg_expected_shortfall_bps_p50": avg_expected_shortfall_p50,

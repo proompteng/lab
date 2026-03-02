@@ -396,3 +396,24 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
             self.assertEqual(expected["avg_expected_shortfall_bps_p95"], Decimal("10"))
             self.assertEqual(expected["avg_realized_shortfall_bps"], Decimal("2"))
             self.assertEqual(expected["avg_divergence_bps"], Decimal("1"))
+
+    def test_build_tca_gate_inputs_uses_absolute_cost_components(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            self._insert_observations(
+                session,
+                strategy,
+                symbol='AAPL',
+                regime='trend',
+                slippages=[Decimal('10'), Decimal('14')],
+                shortfalls=[Decimal('12'), Decimal('-8')],
+                realized_shortfall_bps_values=[Decimal('-1'), Decimal('3')],
+                divergence_bps_values=[Decimal('-4'), Decimal('6')],
+                expected_shortfall_p50_values=[Decimal('4'), Decimal('4')],
+                expected_shortfall_p95_values=[Decimal('9'), Decimal('11')],
+                adaptive_applied=False,
+            )
+
+            expected = build_tca_gate_inputs(session, strategy_id=strategy.id)
+            self.assertEqual(expected["avg_shortfall_notional_abs"], Decimal("10"))
+            self.assertEqual(expected["avg_divergence_bps_abs"], Decimal("5"))
