@@ -965,7 +965,25 @@ const clampUtf8 = (value: string, maxBytes: number) => {
 }
 
 const makeRequirementObjective = (description: string, payload: string) => {
-  const parts = [description, payload].filter((value) => value.length > 0)
+  const payloadObjective = (() => {
+    if (!payload) {
+      return ''
+    }
+    try {
+      const parsed = JSON.parse(payload)
+      if (parsed && typeof parsed === 'object' && typeof parsed.objective === 'string') {
+        const normalizedObjective = parsed.objective.trim()
+        if (normalizedObjective.length > 0) {
+          return normalizedObjective
+        }
+      }
+    } catch {
+      // ignore malformed payloads and fall back to full payload text
+    }
+    return ''
+  })()
+  const objectiveSource = payloadObjective || payload
+  const parts = [description, objectiveSource].filter((value) => value.length > 0)
   if (parts.length === 0) return ''
   const combined = parts.join('\n\n')
   return clampUtf8(combined, SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT).value

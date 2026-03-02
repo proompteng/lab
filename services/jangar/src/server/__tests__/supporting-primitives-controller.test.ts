@@ -587,6 +587,112 @@ describe('supporting primitives controller', () => {
     expect(parameters.swarmRequirementPayloadBytes).toBe('107')
   })
 
+  it('extracts objective from payload object when present', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+            parameters: {
+              staticKey: 'static-value',
+            },
+          },
+        }
+      }
+      return null
+    })
+    const payloadForObjective = {
+      objective: 'Align platform handoff policy and rollback checks',
+      acceptance: ['add feature gate', 'run canary check'],
+      scope: 'reliability',
+    }
+    const payloadForObjectiveString = JSON.stringify(payloadForObjective)
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-risk-handoff-3',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-333',
+                payload: payloadForObjective,
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(1)
+    const requirementRun = requirementRunPayloads[0] as {
+      metadata: Record<string, unknown>
+      spec: Record<string, unknown>
+    }
+    const parameters = (requirementRun.spec.parameters ?? {}) as Record<string, string>
+    expect(parameters.swarmRequirementSignal).toBe('torghut-risk-handoff-3')
+    expect(parameters.swarmRequirementDescription).toBeUndefined()
+    expect(parameters.swarmRequirementPayload).toBe(payloadForObjectiveString)
+    expect(parameters.objective).toBe(payloadForObjective.objective)
+    expect(parameters.swarmRequirementPayloadBytes).toBe(
+      String(new TextEncoder().encode(payloadForObjectiveString).length),
+    )
+  })
+
   it('uses objective payload truncation metadata when payload exceeds transfer cap', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
