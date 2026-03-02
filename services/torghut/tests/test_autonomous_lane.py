@@ -30,6 +30,7 @@ from app.trading.autonomy.policy_checks import (
 from app.trading.autonomy.phase_manifest_contract import (
     coerce_phase_status,
     build_runtime_and_rollback_governance_payloads,
+    build_phase_manifest_payload_with_runtime_and_rollback,
     build_rollback_proof_phase,
     build_runtime_governance_phase,
     required_slo_gate_ids,
@@ -3051,6 +3052,134 @@ class TestAutonomousLane(TestCase):
                 missing_evidence_bundle["rollback_proof_phase"]["status"],
                 "fail",
             )
+
+    def test_build_phase_manifest_payload_with_runtime_and_rollback_merges_runtime_and_rollback_stages(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_path = Path(tmpdir) / "rollback-evidence.json"
+            evidence_path.write_text("{}", encoding="utf-8")
+            phase_manifest = build_phase_manifest_payload_with_runtime_and_rollback(
+                run_id="run-legacy",
+                candidate_id="cand-legacy",
+                execution_context={
+                    "repository": "acme/torghut",
+                    "base": "main",
+                    "head": "legacy/run",
+                    "artifactPath": str(Path(tmpdir)),
+                },
+                requested_promotion_target="paper",
+                phase_timestamp="2026-01-01T00:00:00Z",
+                phase_payloads=[
+                    {
+                        "name": "gate-evaluation",
+                        "status": "pass",
+                        "artifact_refs": ["gates/gate-evaluation.json"],
+                    },
+                    {
+                        "name": "promotion-prerequisites",
+                        "status": "pass",
+                        "artifact_refs": ["gates/promotion-prerequisites.json"],
+                    },
+                    {
+                        "name": "rollback-readiness",
+                        "status": "pass",
+                        "artifact_refs": ["gates/rollback-readiness.json"],
+                    },
+                    {
+                        "name": "drift-gate",
+                        "status": "pass",
+                        "artifact_refs": ["gates/drift-gate.json"],
+                    },
+                    {
+                        "name": "paper-canary",
+                        "status": "pass",
+                        "artifact_refs": ["gates/paper-canary.json"],
+                    },
+                    {
+                        "name": "runtime-governance",
+                        "status": "pass",
+                        "artifact_refs": ["old/runtime.json"],
+                    },
+                    {
+                        "name": "rollback-proof",
+                        "status": "pass",
+                        "artifact_refs": ["old/rollback.json"],
+                    },
+                ],
+                governance_status="fail",
+                drift_status="drift_detected",
+                action_type="quarantine",
+                action_triggered=True,
+                rollback_triggered=True,
+                rollback_incident_evidence_path=str(evidence_path),
+                reasons=["drift_detected", "evidence_anomaly"],
+                evidence_artifact_refs=[str(evidence_path), "drift/evidence.json"],
+                observation_summary={"decision": "unit-test"},
+                artifact_refs=["artifact-root.json"],
+                created_at="2026-01-01T00:00:00Z",
+                updated_at="2026-01-01T00:00:01Z",
+            )
+
+            self.assertEqual(
+                [phase["name"] for phase in phase_manifest["phases"]],
+                list(_AUTONOMY_PHASE_ORDER),
+            )
+            self.assertEqual(phase_manifest["phases"][5]["status"], "fail")
+            self.assertEqual(phase_manifest["phases"][6]["status"], "pass")
+            self.assertIn(
+                {"from": "runtime-governance", "to": "rollback-proof", "status": "pass"},
+                phase_manifest["phase_transitions"],
+            )
+            self.assertEqual(
+                phase_manifest["runtime_governance"]["governance_status"],
+                "fail",
+            )
+            self.assertEqual(
+                phase_manifest["rollback_proof"]["rollback_incident_evidence_path"],
+                str(evidence_path),
+            )
+            self.assertIn(str(evidence_path), phase_manifest["artifact_refs"])
+
+    def test_build_phase_manifest_payload_with_runtime_and_rollback_fails_without_evidence(self) -> None:
+        phase_manifest = build_phase_manifest_payload_with_runtime_and_rollback(
+            run_id="run-legacy-fail",
+            candidate_id="cand-legacy-fail",
+            execution_context={"repository": "acme/torghut"},
+            requested_promotion_target="paper",
+            phase_timestamp="2026-01-01T00:00:00Z",
+            phase_payloads=[
+                {
+                    "name": "gate-evaluation",
+                    "status": "pass",
+                    "artifact_refs": [],
+                },
+                {"name": "promotion-prerequisites", "status": "pass"},
+                {"name": "rollback-readiness", "status": "pass"},
+                {"name": "drift-gate", "status": "pass"},
+                {"name": "paper-canary", "status": "pass"},
+            ],
+            governance_status="pass",
+            drift_status="drift_detected",
+            action_type="none",
+            action_triggered=False,
+            rollback_triggered=True,
+            rollback_incident_evidence_path="",
+            reasons=[],
+            evidence_artifact_refs=["evidence/metric.json"],
+            observation_summary=None,
+            artifact_refs=["artifact-root.json"],
+        )
+        self.assertEqual(phase_manifest["phases"][6]["status"], "fail")
+        self.assertEqual(phase_manifest["status"], "fail")
+        self.assertEqual(
+            phase_manifest["rollback_proof"]["rollback_incident_evidence"],
+            "",
+        )
+        self.assertIn(
+            {"from": "runtime-governance", "to": "rollback-proof", "status": "fail"},
+            phase_manifest["phase_transitions"],
+        )
 
     def test_build_rollback_proof_phase_fails_without_evidence(self) -> None:
         phase = build_rollback_proof_phase(

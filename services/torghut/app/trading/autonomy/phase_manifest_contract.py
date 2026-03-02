@@ -364,6 +364,106 @@ def build_runtime_and_rollback_governance_payloads(
     }
 
 
+def merge_runtime_and_rollback_phase_payloads(
+    phase_payloads: Sequence[Mapping[str, Any]],
+    *,
+    runtime_phase: Mapping[str, Any],
+    rollback_proof_phase: Mapping[str, Any],
+    phase_timestamp: datetime | str,
+) -> list[dict[str, Any]]:
+    phase_lookup: dict[str, dict[str, Any]] = {}
+    for raw_phase in phase_payloads:
+        phase = dict(raw_phase)
+        phase_name = str(phase.get("name", "")).strip()
+        if not phase_name:
+            continue
+        phase_lookup[phase_name] = phase
+
+    phase_lookup[str(runtime_phase.get("name", "runtime-governance"))] = dict(
+        runtime_phase
+    )
+    phase_lookup[str(rollback_proof_phase.get("name", "rollback-proof"))] = dict(
+        rollback_proof_phase
+    )
+
+    return normalize_phase_manifest_phases(
+        list(phase_lookup.values()),
+        phase_timestamp=phase_timestamp,
+    )
+
+
+def build_phase_manifest_payload_with_runtime_and_rollback(
+    *,
+    run_id: str,
+    candidate_id: str,
+    execution_context: Mapping[str, Any],
+    requested_promotion_target: str,
+    phase_payloads: Sequence[Mapping[str, Any]],
+    phase_timestamp: datetime | str,
+    governance_status: str | None,
+    drift_status: str,
+    action_type: str,
+    action_triggered: bool,
+    rollback_triggered: bool,
+    rollback_incident_evidence_path: str | None,
+    reasons: Any,
+    evidence_artifact_refs: Any,
+    observation_summary: Mapping[str, Any] | None,
+    artifact_refs: Any,
+    status: str | None = None,
+    created_at: datetime | str | None = None,
+    updated_at: datetime | None | str = None,
+    schema_version: str = AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
+    slo_contract_version: str = AUTONOMY_PHASE_MANIFEST_SLO_VERSION,
+) -> dict[str, Any]:
+    governance_bundle = build_runtime_and_rollback_governance_payloads(
+        requested_promotion_target=requested_promotion_target,
+        observed_at=phase_timestamp,
+        governance_status=governance_status,
+        drift_status=drift_status,
+        action_type=action_type,
+        action_triggered=action_triggered,
+        rollback_triggered=rollback_triggered,
+        rollback_incident_evidence_path=rollback_incident_evidence_path,
+        reasons=reasons,
+        evidence_artifact_refs=evidence_artifact_refs,
+    )
+
+    phase_payloads_with_governance = merge_runtime_and_rollback_phase_payloads(
+        phase_payloads,
+        runtime_phase=cast(Mapping[str, Any], governance_bundle["runtime_phase"]),
+        rollback_proof_phase=cast(
+            Mapping[str, Any],
+            governance_bundle["rollback_proof_phase"],
+        ),
+        phase_timestamp=phase_timestamp,
+    )
+
+    return build_phase_manifest_payload(
+        run_id=run_id,
+        candidate_id=candidate_id,
+        execution_context=execution_context,
+        requested_promotion_target=requested_promotion_target,
+        phase_timestamp=phase_timestamp,
+        status=status,
+        phase_payloads=phase_payloads_with_governance,
+        runtime_governance=cast(
+            Mapping[str, Any],
+            governance_bundle["runtime_governance"],
+        ),
+        rollback_proof=cast(
+            Mapping[str, Any],
+            governance_bundle["rollback_proof"],
+        ),
+        observation_summary=observation_summary,
+        artifact_refs=artifact_refs,
+        schema_version=schema_version,
+        slo_contract_version=slo_contract_version,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
+
+
 def normalize_phase_manifest_phases(
     phase_payloads: Sequence[Mapping[str, Any]],
     *,

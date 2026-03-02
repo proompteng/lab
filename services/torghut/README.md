@@ -146,7 +146,8 @@ uv run python scripts/evaluate_dspy_compile.py \
 - `build_runtime_and_rollback_governance_payloads(...)` produces all artifacts for the unified runtime governance + rollback proof stage:
   - `runtime_phase` (`runtime-governance`) and `rollback_proof_phase` (`rollback-proof`) phase payloads
   - `runtime_governance` and `rollback_proof` top-level manifest metadata
-- The shared builder applies the same evidence rules in both lane and scheduler paths:
+- `build_phase_manifest_payload_with_runtime_and_rollback(...)` is the single manifest builder used by both lane and scheduler paths:
+  - merges canonical runtime and rollback proof phases into the existing manifest phase list
   - rollback evidence is only attached when rollback is actually triggered
   - non-triggered rollback evidence references are dropped from rollback-proof
   - missing evidence while rollback is triggered fails `rollback-proof` via `slo_rollback_evidence_required_when_triggered`

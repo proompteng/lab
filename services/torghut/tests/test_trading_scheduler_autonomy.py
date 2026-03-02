@@ -1314,6 +1314,84 @@ class TestTradingSchedulerAutonomy(TestCase):
                 updated_manifest["phase_transitions"],
             )
 
+    def test_append_runtime_governance_adds_missing_runtime_and_rollback_phases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            manifest_path = Path(tmpdir) / "rollout" / "phase-manifest.json"
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_payload = {
+                "schema_version": "autonomy-phase-manifest-v1",
+                "run_id": "run-3",
+                "candidate_id": "cand-3",
+                "phases": [
+                    {
+                        "name": "gate-evaluation",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
+                    {
+                        "name": "promotion-prerequisites",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
+                    {
+                        "name": "rollback-readiness",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
+                    {"name": "drift-gate", "status": "pass", "artifact_refs": []},
+                    {"name": "paper-canary", "status": "pass", "artifact_refs": []},
+                ],
+                "artifact_refs": [str(Path(tmpdir) / "backtest" / "walkforward-results.json")],
+            }
+            manifest_path.write_text(
+                json.dumps(manifest_payload, indent=2), encoding="utf-8"
+            )
+
+            scheduler._append_runtime_governance_to_phase_manifest(
+                manifest_path=manifest_path,
+                requested_promotion_target="paper",
+                drift_governance_payload={
+                    "drift_status": "stable",
+                    "action": {"action_type": "none", "triggered": False},
+                    "detection": {"reason_codes": []},
+                },
+                now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            )
+
+            updated_manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                [phase["name"] for phase in updated_manifest["phases"]],
+                [
+                    "gate-evaluation",
+                    "promotion-prerequisites",
+                    "rollback-readiness",
+                    "drift-gate",
+                    "paper-canary",
+                    "runtime-governance",
+                    "rollback-proof",
+                ],
+            )
+            self.assertEqual(updated_manifest["phases"][5]["status"], "pass")
+            self.assertEqual(updated_manifest["phases"][6]["status"], "pass")
+            self.assertEqual(updated_manifest["runtime_governance"]["governance_status"], "pass")
+            self.assertEqual(updated_manifest["rollback_proof"]["rollback_incident_evidence"], "")
+            phase_transition = {
+                (transition.get("from"), transition.get("to")): transition.get("status")
+                for transition in updated_manifest["phase_transitions"]
+                if isinstance(transition, dict)
+            }
+            self.assertEqual(
+                phase_transition.get(("runtime-governance", "rollback-proof")),
+                "pass",
+            )
+
     def test_run_autonomy_cycle_appends_runtime_governance_with_rollback_trigger_and_state_evidence_path(
         self,
     ) -> None:

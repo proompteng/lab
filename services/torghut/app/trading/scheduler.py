@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, Optional, cast
+from typing import Any, Literal, Optional, Sequence, cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -83,10 +83,8 @@ from .llm.schema import MarketContextBundle
 from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
 from .autonomy.phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
-    build_phase_manifest_payload,
-    build_runtime_and_rollback_governance_payloads,
+    build_phase_manifest_payload_with_runtime_and_rollback,
     coerce_path_strings,
-    normalize_phase_manifest_phases,
 )
 from .route_metadata import coerce_route_text
 
@@ -5896,9 +5894,19 @@ class TradingScheduler:
             }
         )
 
-        governance_bundle = build_runtime_and_rollback_governance_payloads(
+        manifest_payload = build_phase_manifest_payload_with_runtime_and_rollback(
+            run_id=cast(str, manifest.get("run_id", "")),
+            candidate_id=cast(str, manifest.get("candidate_id", "")),
+            execution_context=cast(
+                Mapping[str, Any],
+                manifest.get("execution_context", {}),
+            ),
             requested_promotion_target=requested_promotion_target,
-            observed_at=now,
+            phase_timestamp=now,
+            phase_payloads=cast(
+                Sequence[Mapping[str, Any]],
+                manifest.get("phases", []),
+            ),
             governance_status=governance_status,
             drift_status=drift_status,
             action_type=action_type,
@@ -5909,53 +5917,15 @@ class TradingScheduler:
             ),
             reasons=reasons,
             evidence_artifact_refs=evidence_refs,
-        )
-
-        existing_phases = manifest.get("phases", [])
-        phase_lookup: dict[str, dict[str, Any]] = {}
-        if isinstance(existing_phases, list):
-            for raw_phase in cast(list[Any], existing_phases):
-                if not isinstance(raw_phase, dict):
-                    continue
-                phase = cast(dict[str, Any], raw_phase)
-                name = str(phase.get("name", "")).strip()
-                if name:
-                    phase_lookup[name] = dict(phase)
-        phase_lookup["runtime-governance"] = cast(
-            dict[str, Any], governance_bundle["runtime_phase"]
-        )
-        phase_lookup["rollback-proof"] = cast(
-            dict[str, Any], governance_bundle["rollback_proof_phase"]
-        )
-
-        ordered_phases = normalize_phase_manifest_phases(
-            list(phase_lookup.values()),
-            phase_timestamp=now,
-        )
-
-        manifest_payload = build_phase_manifest_payload(
-            run_id=manifest.get("run_id", ""),
-            candidate_id=manifest.get("candidate_id", ""),
-            execution_context=cast(Mapping[str, Any], manifest.get("execution_context", {})),
-            requested_promotion_target=requested_promotion_target,
-            phase_timestamp=now,
-            status=None,
-            phase_payloads=ordered_phases,
-            runtime_governance=cast(
-                Mapping[str, Any],
-                governance_bundle["runtime_governance"],
-            ),
-            rollback_proof=cast(
-                Mapping[str, Any],
-                governance_bundle["rollback_proof"],
-            ),
             observation_summary=cast(
-                Mapping[str, Any], manifest.get("observation_summary", {})
+                Mapping[str, Any],
+                manifest.get("observation_summary", {}),
             ),
             artifact_refs=[
                 *coerce_path_strings(manifest.get("artifact_refs", [])),
                 *evidence_refs,
             ],
+            status=None,
             created_at=cast(datetime | str, manifest.get("created_at")),
             updated_at=now,
         )
