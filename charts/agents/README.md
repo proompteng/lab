@@ -229,6 +229,47 @@ Set defaults for AgentRun and Schedule workload images when the CRD does not spe
 - `runtime.scheduleRunnerImage` → `JANGAR_SCHEDULE_RUNNER_IMAGE`
 - `runtime.scheduleServiceAccount` → `JANGAR_SCHEDULE_SERVICE_ACCOUNT`
 
+### Runner image release contract (GitOps)
+
+For production promotion, pin both the runner image and digest in:
+
+- `runner.image.repository`
+- `runner.image.tag`
+- `runner.image.digest`
+
+The release workflow calls `update-manifests.ts` with explicit `--runner-image-*` arguments and validates the
+runner image before writing manifests:
+
+- `docker image inspect --format '{{json .}}' <runnerImageRef>`
+- `docker run --rm --network none --entrypoint /usr/local/bin/agent-runner --help <runnerImageRef>`
+
+The workflow now executes this check in an explicit pass first and requires an explicit digest:
+
+- `bun run packages/scripts/src/jangar/update-manifests.ts --verify-runner-image --require-runner-image-digest true --verify-runner-image-only ...`
+
+Verification checks include:
+
+- Runner digest format (`sha256:<64-hex>`)
+- Platform match (`linux/<arch>`)
+- `agent-runner` entrypoint launch against `--help` under `--network none`
+
+If any check fails, promotion is blocked and manifest updates are not applied.
+
+The verify path is also executed again during manifest writes, so both control-plane and runner updates remain atomic
+in the same commit.
+
+Rollback for a bad runner promotion is done by reverting both image blocks in
+`argocd/applications/agents/values.yaml` (`image.*` and `runner.image.*`) to the previous digest/tag
+and allowing Argo CD to reconcile to the prior state. Keep the previous digest visible in history so rollback is auditable
+with:
+
+```bash
+git log -n 5 -- argocd/applications/agents/values.yaml
+git checkout <good-commit> -- argocd/applications/agents/values.yaml
+git add argocd/applications/agents/values.yaml
+git commit -m "Revert agents runner/control-plane image pin to known-good values"
+```
+
 ### Agent comms subjects (optional)
 
 Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:

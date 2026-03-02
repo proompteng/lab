@@ -6,7 +6,9 @@ Docs index: [README](../README.md)
 
 ## Overview
 
-The Agents chart supports image tags and optional digests for both the control plane and controllers. In production GitOps, digests are preferred for immutability. The chart currently concatenates `repo:tag@digest` when a digest is provided, but the operational contract (and failure modes) are not documented.
+The Agents chart supports image tags and optional digests for the control plane, controllers, and runner image.
+In production GitOps, digests are preferred for immutability. The chart currently concatenates `repo:tag@digest` when a digest
+is provided, and this contract now explicitly includes runner image release safety.
 
 ## Goals
 
@@ -20,10 +22,11 @@ The Agents chart supports image tags and optional digests for both the control p
 
 ## Current State
 
-- Values: `charts/agents/values.yaml` under `image.*`, `controlPlane.image.*`, `controllers.image.*`.
+- Values: `charts/agents/values.yaml` under `image.*`, `controlPlane.image.*`, `controllers.image.*`, and `runner.image.*`.
 - Template image rendering:
   - Control plane: `charts/agents/templates/deployment.yaml`
   - Controllers: `charts/agents/templates/deployment-controllers.yaml`
+  - Runner image is injected via `JANGAR_AGENT_RUNNER_IMAGE` from `runner.image.*`.
 - GitOps pins digests in `argocd/applications/agents/values.yaml`.
 
 ## Design
@@ -33,11 +36,20 @@ The Agents chart supports image tags and optional digests for both the control p
 - If `digest` is non-empty: render `repository:tag@digest`.
 - If `digest` is empty: render `repository:tag`.
 - Component-specific image blocks override the root `image.*` values for that component.
+- Runner image entries in GitOps should include `repository`, `tag`, and `digest` for immutable rollout.
 
 ### Production policy
 
 - Production profiles MUST set `digest` for all images.
 - `tag` remains required even when digest is set (for readability), but it is informational-only.
+
+### Runner rollout contract
+
+- Runner image pins should be explicit (`runner.image.repository`, `runner.image.tag`, `runner.image.digest`).
+- The release process must run `update-manifests.ts --verify-runner-image` so incompatible runner entrypoints/architectures
+  fail before values are changed.
+- For deterministic release safety, this check is executed as a dedicated
+  `--verify-runner-image-only` step in the release workflow before any manifest files are updated.
 
 ### Chart validation
 
@@ -64,7 +76,7 @@ Add optional enforcement:
 Rollback:
 
 - Disable `imagePolicy.requireDigest`.
-- Roll back values to prior digests; no template changes required.
+- Roll back `image.*`, `controlPlane.image.*`, and `runner.image.*` digests to the previous release; no template changes required.
 
 ## Validation
 

@@ -21,6 +21,49 @@ See also:
 1. `helm upgrade agents charts/agents -n agents`
 2. Confirm rollout: `kubectl -n agents rollout status deploy/agents`
 
+## Jangar image release contract (control plane + runner)
+
+Promotions are source-of-truth driven by:
+
+- `argocd/applications/agents/values.yaml` in Git
+- The promotion workflow output (`.github/workflows/jangar-release.yml`)
+- `update-manifests.ts` applying explicit values and optional runner validation
+
+### Contract
+
+- `image.repository` + `image.tag` + `image.digest` define the Jangar control-plane image pin.
+- `runner.image.repository` + `runner.image.tag` + `runner.image.digest` define the AgentRun/ToolRun runtime image pin.
+- The workflow executes an explicit guard pass with
+  `update-manifests.ts --verify-runner-image --require-runner-image-digest true --verify-runner-image-only`
+  using:
+  - candidate tag/digest from the release contract
+  - resolved target platform (`linux/<runner.arch>`)
+  - explicit entrypoint probe (`/usr/local/bin/agent-runner --help`)
+- Verification failures are hard: manifest updates are not written and no PR is created.
+- The workflow then writes both image families from the same candidate:
+  - control-plane image uses `image.*`
+  - runner image uses `runner.image.*` (`runnerImage*` CLI controls retained for explicitness)
+- Promotion fails before patching manifests when:
+  - the runner image cannot be inspected,
+  - the runner OS/architecture does not match target platform, or
+  - the runner binary cannot be executed for a smoke `--help` check.
+- The promotion is additionally rejected if the runner digest is missing or malformed when promotion mode is enabled.
+- When the guard passes, both manifest families are updated in one commit to avoid skew.
+
+### Rollback behavior
+
+Because both image groups are pinned by digest in GitOps values, rollback is a controlled values reversion:
+
+1. Revert `image` and `runner.image` blocks in `argocd/applications/agents/values.yaml` to the previous digest and tag.
+2. Let Argo CD apply the previous state, or for non-GitOps Helm installs use:
+   - `helm rollback agents <REV> -n agents`
+3. Reconcile and verify:
+   - `kubectl -n agents rollout status deploy/agents`
+   - `kubectl -n agents rollout status deploy/agents-controllers`
+4. Re-run one smoke AgentRun through `smoke-agents` if the platform was serving live runtime workloads.
+
+If a promotion attempt is blocked by compatibility checks, manifest updates are not written and no PR is opened.
+
 ## Rollback
 
 1. `helm rollback agents <REV> -n agents`

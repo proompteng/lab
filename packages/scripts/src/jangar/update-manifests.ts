@@ -11,9 +11,21 @@ import { execGit } from '../shared/git'
 
 const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/jangar'
+const defaultRunnerImageBinary = '/usr/local/bin/agent-runner'
 const defaultKustomizationPath = 'argocd/applications/jangar/kustomization.yaml'
 const defaultServiceManifestPath = 'argocd/applications/jangar/deployment.yaml'
 const defaultWorkerManifestPath = 'argocd/applications/jangar/jangar-worker-deployment.yaml'
+const dockerImagePlatformMap: Record<string, string> = {
+  x86_64: 'linux/amd64',
+  x64: 'linux/amd64',
+  amd64: 'linux/amd64',
+  arm64: 'linux/arm64',
+  aarch64: 'linux/arm64',
+}
+
+type SpawnSync = typeof Bun.spawnSync
+
+let spawnSyncImpl: SpawnSync = Bun.spawnSync
 
 export type UpdateManifestsOptions = {
   imageName: string
@@ -21,6 +33,14 @@ export type UpdateManifestsOptions = {
   digest?: string
   controlPlaneImageName?: string
   controlPlaneDigest?: string
+  runnerImageName?: string
+  runnerImageTag?: string
+  runnerImageDigest?: string
+  runnerImageBinary?: string
+  runnerImagePlatform?: string
+  verifyRunnerImage?: boolean
+  requireRunnerImageDigest?: boolean
+  verifyRunnerImageOnly?: boolean
   rolloutTimestamp: string
   kustomizationPath?: string
   serviceManifestPath?: string
@@ -35,6 +55,14 @@ type CliOptions = {
   digest?: string
   controlPlaneImageName?: string
   controlPlaneDigest?: string
+  runnerImageName?: string
+  runnerImageTag?: string
+  runnerImageDigest?: string
+  runnerImageBinary?: string
+  runnerImagePlatform?: string
+  verifyRunnerImage?: boolean
+  requireRunnerImageDigest?: boolean
+  verifyRunnerImageOnly?: boolean
   rolloutTimestamp?: string
   kustomizationPath?: string
   serviceManifestPath?: string
@@ -56,6 +84,138 @@ const normalizeDigest = (digest: string): string => {
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
   return null
+}
+
+const parseBoolean = (value: string): boolean => {
+  const normalized = value.trim().toLowerCase()
+  if (
+    normalized === '1' ||
+    normalized === 'true' ||
+    normalized === 'on' ||
+    normalized === 'yes' ||
+    normalized === 'y'
+  ) {
+    return true
+  }
+  if (
+    normalized === '0' ||
+    normalized === 'false' ||
+    normalized === 'off' ||
+    normalized === 'no' ||
+    normalized === 'n'
+  ) {
+    return false
+  }
+  throw new Error(`Invalid boolean value: ${value}`)
+}
+
+const setSpawnSync = (fn?: SpawnSync) => {
+  spawnSyncImpl = fn ?? Bun.spawnSync
+}
+
+const booleanFlagValues = new Set(['1', 'true', 'on', 'yes', 'y', '0', 'false', 'off', 'no', 'n'])
+
+const normalizePlatform = (platform?: string): string | undefined => {
+  if (!platform) return undefined
+  const trimmed = platform.trim().toLowerCase()
+  if (!trimmed) return undefined
+  if (trimmed.includes('/')) return trimmed
+  return dockerImagePlatformMap[trimmed]
+}
+
+const parseDockerPlatform = (platform: string): { os: string; architecture: string; variant?: string } => {
+  const normalized = normalizePlatform(platform)
+  if (!normalized) throw new Error(`Invalid docker platform: ${platform}`)
+  const parts = normalized.split('/')
+  if (parts.length < 2 || parts.length > 3) throw new Error(`Invalid docker platform: ${platform}`)
+  const [os, architecture, variant] = parts
+  return {
+    os,
+    architecture,
+    ...(variant ? { variant } : {}),
+  }
+}
+
+const mergeOutput = (payload: string | Uint8Array): string => String(payload).trim()
+
+const runDocker = (args: string[]) =>
+  spawnSyncImpl(['docker', ...args], { cwd: repoRoot, stdout: 'pipe', stderr: 'pipe' })
+
+const runnerImageRef = (options: { imageName: string; tag: string; digest?: string }) => {
+  const digestPart = options.digest ? normalizeDigest(options.digest) : ''
+  return `${options.imageName}:${options.tag}${digestPart ? `@${digestPart}` : ''}`
+}
+
+const validateRunnerImage = (options: {
+  imageName: string
+  tag: string
+  digest?: string
+  requireDigest?: boolean
+  binary: string
+  platform?: string
+}) => {
+  const imageRef = runnerImageRef(options)
+
+  if (options.requireDigest) {
+    if (!options.digest) {
+      throw new Error(`Runner image ${imageRef} requires an explicit digest before promotion`)
+    }
+    if (!/^sha256:[0-9a-f]{64}$/.test(options.digest)) {
+      throw new Error(`Runner image digest ${options.digest} is not a valid sha256 digest`)
+    }
+  }
+
+  const inspectResult = runDocker(['image', 'inspect', '--format', '{{json .}}', imageRef])
+  if (inspectResult.exitCode !== 0) {
+    throw new Error(`Unable to inspect runner image ${imageRef}: ${mergeOutput(inspectResult.stderr)}`)
+  }
+
+  try {
+    const parsed = JSON.parse(mergeOutput(inspectResult.stdout))
+    const imageConfig = (Array.isArray(parsed) ? parsed[0] : parsed) as {
+      os?: string
+      OS?: string
+      architecture?: string
+      Architecture?: string
+      Config?: Record<string, unknown> | null
+    }
+
+    const platform = options.platform ? parseDockerPlatform(options.platform) : undefined
+    const imageOs = imageConfig.os ?? imageConfig.OS
+    const imageArch = imageConfig.architecture ?? imageConfig.Architecture
+    if (platform && imageOs && imageArch && (imageOs !== platform.os || imageArch !== platform.architecture)) {
+      throw new Error(
+        `Runner image ${imageRef} is for ${imageOs}/${imageArch}, expected ${platform.os}/${platform.architecture}`,
+      )
+    }
+
+    if (!imageConfig.Config) {
+      throw new Error(`Runner image ${imageRef} has no container config`)
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error
+    }
+    throw new Error(`Failed to parse image config for ${imageRef}`)
+  }
+
+  const smokeTestArgs = ['run', '--rm', '--network', 'none']
+  if (options.platform) {
+    smokeTestArgs.push('--platform', options.platform)
+  }
+  smokeTestArgs.push('--entrypoint', options.binary, imageRef, '--help')
+  const smokeTest = runDocker(smokeTestArgs)
+  const stdout = mergeOutput(smokeTest.stdout)
+  const stderr = mergeOutput(smokeTest.stderr)
+
+  if (smokeTest.exitCode !== 0) {
+    const output = stdout || stderr || '<no output>'
+    throw new Error(
+      `Runner image runtime check failed for ${imageRef} with entrypoint ${options.binary} (exit ${smokeTest.exitCode}): ${output}`,
+    )
+  }
+
+  console.log(`Runner image runtime check passed for ${imageRef}`)
 }
 
 const updateKustomizationManifest = (
@@ -119,6 +279,9 @@ const updateAgentsValuesManifest = (
   digest: string,
   controlPlaneImageName?: string,
   controlPlaneDigest?: string,
+  runnerImageName?: string,
+  runnerImageTag?: string,
+  runnerImageDigest?: string,
 ): boolean => {
   const source = readFileSync(valuesPath, 'utf8')
   const parsed = YAML.parse(source)
@@ -132,9 +295,9 @@ const updateAgentsValuesManifest = (
 
   const runner = asRecord(doc.runner) ?? {}
   const runnerImage = asRecord(runner.image) ?? {}
-  runnerImage.repository = imageName
-  runnerImage.tag = tag
-  runnerImage.digest = digest
+  runnerImage.repository = runnerImageName || imageName
+  runnerImage.tag = runnerImageTag || tag
+  runnerImage.digest = runnerImageDigest || digest
   runner.image = runnerImage
   doc.runner = runner
 
@@ -166,11 +329,43 @@ const updateAgentsValuesManifest = (
 }
 
 export const updateJangarManifests = (options: UpdateManifestsOptions) => {
+  const digest = normalizeDigest(options.digest ?? inspectImageDigest(`${options.imageName}:${options.tag}`))
+  const controlPlaneDigest = options.controlPlaneDigest ? normalizeDigest(options.controlPlaneDigest) : undefined
+  const runnerImageTag = options.runnerImageTag ?? options.tag
+  const runnerImageDigest = options.runnerImageDigest ? normalizeDigest(options.runnerImageDigest) : digest
+  const runnerImageName = options.runnerImageName ?? options.imageName
+  const runnerImageBinary = options.runnerImageBinary ?? defaultRunnerImageBinary
+  const runnerImagePlatform = normalizePlatform(options.runnerImagePlatform)
+
+  if (options.verifyRunnerImage) {
+    validateRunnerImage({
+      imageName: runnerImageName,
+      tag: runnerImageTag,
+      digest: runnerImageDigest,
+      requireDigest: options.requireRunnerImageDigest,
+      binary: runnerImageBinary,
+      platform: runnerImagePlatform,
+    })
+  }
+
+  if (options.verifyRunnerImageOnly) {
+    return {
+      tag: options.tag,
+      digest,
+      controlPlaneDigest,
+      rolloutTimestamp: options.rolloutTimestamp,
+      changed: {
+        kustomization: false,
+        service: false,
+        worker: false,
+        agentsValues: false,
+      },
+    }
+  }
+
   const kustomizationPath = resolvePath(options.kustomizationPath ?? defaultKustomizationPath)
   const serviceManifestPath = resolvePath(options.serviceManifestPath ?? defaultServiceManifestPath)
   const workerManifestPath = resolvePath(options.workerManifestPath ?? defaultWorkerManifestPath)
-  const digest = normalizeDigest(options.digest ?? inspectImageDigest(`${options.imageName}:${options.tag}`))
-  const controlPlaneDigest = options.controlPlaneDigest ? normalizeDigest(options.controlPlaneDigest) : undefined
   const agentsValuesPath = options.agentsValuesPath ? resolvePath(options.agentsValuesPath) : null
 
   const kustomizationChanged = updateKustomizationManifest(kustomizationPath, options.imageName, options.tag, digest)
@@ -194,6 +389,9 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
         digest,
         options.controlPlaneImageName,
         controlPlaneDigest,
+        runnerImageName,
+        runnerImageTag,
+        runnerImageDigest,
       )
     : false
 
@@ -218,13 +416,21 @@ const parseArgs = (argv: string[]): CliOptions => {
     if (arg === '--help' || arg === '-h') {
       console.log(`Usage: bun run packages/scripts/src/jangar/update-manifests.ts [options]
 
-Options:
+  Options:
   --registry <value>
   --repository <value>
   --tag <value>
   --digest <value>
   --control-plane-image-name <value>
   --control-plane-digest <value>
+  --runner-image-name <value>
+  --runner-image-tag <value>
+  --runner-image-digest <value>
+  --require-runner-image-digest [true|false]
+  --runner-image-binary <value>
+  --runner-image-platform <linux/amd64|linux/arm64>
+  --verify-runner-image [true|false]
+  --verify-runner-image-only [true|false]
   --rollout-timestamp <ISO8601>
   --kustomization-path <path>
   --service-manifest-path <path>
@@ -238,12 +444,65 @@ Options:
     }
 
     const [flag, inlineValue] = arg.includes('=') ? arg.split(/=(.*)/s, 2) : [arg, undefined]
-    const value = inlineValue ?? argv[i + 1]
-    if (inlineValue === undefined) {
-      i += 1
+    const nextValue = argv[i + 1]
+    const nextValueLooksLikeValue = nextValue !== undefined && !nextValue.startsWith('--')
+
+    if (flag === '--verify-runner-image') {
+      if (inlineValue !== undefined) {
+        options.verifyRunnerImage = parseBoolean(inlineValue)
+        continue
+      }
+
+      if (nextValueLooksLikeValue && booleanFlagValues.has(nextValue.toLowerCase())) {
+        options.verifyRunnerImage = parseBoolean(nextValue)
+        i += 1
+        continue
+      }
+
+      options.verifyRunnerImage = true
+      continue
     }
-    if (value === undefined) {
+
+    if (flag === '--verify-runner-image-only') {
+      if (inlineValue !== undefined) {
+        options.verifyRunnerImageOnly = parseBoolean(inlineValue)
+        continue
+      }
+
+      if (nextValueLooksLikeValue && booleanFlagValues.has(nextValue.toLowerCase())) {
+        options.verifyRunnerImageOnly = parseBoolean(nextValue)
+        i += 1
+        continue
+      }
+
+      options.verifyRunnerImageOnly = true
+      continue
+    }
+
+    if (flag === '--require-runner-image-digest') {
+      if (inlineValue !== undefined) {
+        options.requireRunnerImageDigest = parseBoolean(inlineValue)
+        continue
+      }
+
+      if (nextValueLooksLikeValue && booleanFlagValues.has(nextValue.toLowerCase())) {
+        options.requireRunnerImageDigest = parseBoolean(nextValue)
+        i += 1
+        continue
+      }
+
+      options.requireRunnerImageDigest = true
+      continue
+    }
+
+    const expectsValue = true
+    const value = inlineValue ?? (expectsValue && nextValueLooksLikeValue ? nextValue : undefined)
+
+    if (expectsValue && value === undefined) {
       throw new Error(`Missing value for ${flag}`)
+    }
+    if (!inlineValue && expectsValue) {
+      i += 1
     }
 
     switch (flag) {
@@ -264,6 +523,21 @@ Options:
         break
       case '--control-plane-digest':
         options.controlPlaneDigest = value
+        break
+      case '--runner-image-name':
+        options.runnerImageName = value
+        break
+      case '--runner-image-tag':
+        options.runnerImageTag = value
+        break
+      case '--runner-image-digest':
+        options.runnerImageDigest = value
+        break
+      case '--runner-image-binary':
+        options.runnerImageBinary = value
+        break
+      case '--runner-image-platform':
+        options.runnerImagePlatform = value
         break
       case '--rollout-timestamp':
         options.rolloutTimestamp = value
@@ -303,6 +577,24 @@ export const main = (cliOptions?: CliOptions) => {
     digest,
     controlPlaneImageName: parsed.controlPlaneImageName ?? process.env.JANGAR_CONTROL_PLANE_IMAGE_NAME,
     controlPlaneDigest: parsed.controlPlaneDigest ?? process.env.JANGAR_CONTROL_PLANE_IMAGE_DIGEST,
+    runnerImageName: parsed.runnerImageName ?? process.env.JANGAR_RUNNER_IMAGE_NAME,
+    runnerImageTag: parsed.runnerImageTag ?? process.env.JANGAR_RUNNER_IMAGE_TAG,
+    runnerImageDigest: parsed.runnerImageDigest ?? process.env.JANGAR_RUNNER_IMAGE_DIGEST,
+    runnerImageBinary: parsed.runnerImageBinary ?? process.env.JANGAR_RUNNER_IMAGE_BINARY ?? defaultRunnerImageBinary,
+    runnerImagePlatform: parsed.runnerImagePlatform ?? process.env.JANGAR_RUNNER_IMAGE_PLATFORM,
+    verifyRunnerImage:
+      parsed.verifyRunnerImage ??
+      parseBoolean(process.env.JANGAR_VERIFY_RUNNER_IMAGE ?? process.env.JANGAR_RUNNER_IMAGE_VERIFY ?? 'false'),
+    requireRunnerImageDigest:
+      parsed.requireRunnerImageDigest ??
+      parseBoolean(
+        process.env.JANGAR_REQUIRE_RUNNER_IMAGE_DIGEST ?? process.env.JANGAR_RUNNER_IMAGE_REQUIRE_DIGEST ?? 'false',
+      ),
+    verifyRunnerImageOnly:
+      parsed.verifyRunnerImageOnly ??
+      parseBoolean(
+        process.env.JANGAR_VERIFY_RUNNER_IMAGE_ONLY ?? process.env.JANGAR_RUNNER_IMAGE_VERIFY_ONLY ?? 'false',
+      ),
     rolloutTimestamp,
     kustomizationPath: parsed.kustomizationPath ?? process.env.JANGAR_KUSTOMIZATION_PATH,
     serviceManifestPath: parsed.serviceManifestPath ?? process.env.JANGAR_SERVICE_MANIFEST,
@@ -329,4 +621,6 @@ export const __private = {
   updateKustomizationManifest,
   updateRolloutAnnotation,
   updateAgentsValuesManifest,
+  parseBoolean,
+  setSpawnSync,
 }
