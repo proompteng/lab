@@ -32,16 +32,18 @@ See also:
   - `helm template charts/agents --set-json 'controller.namespaces=["*","agents"]' --set rbac.clusterScoped=true` (expect fail: wildcard may not combine with specific namespaces)
   - `helm template charts/agents --set-json 'controller.namespaces="agents"'` (expect fail: non-array value)
   - `helm template charts/agents --set-json 'controller.namespaces=[" agents"]'` (expect fail: namespace entries cannot contain leading/trailing whitespace)
+  - `helm template charts/agents --set namespaceOverride=" agents" --set-json 'controller.namespaces=["agents"]'` (expect fail: namespaceOverride must be a valid namespace token)
+  - `helm template charts/agents --set namespaceOverride='' --set-json 'controller.namespaces=["agents"]' --set rbac.clusterScoped=false` (expect fail: namespaceOverride is empty)
   - `helm template charts/agents --set namespaceOverride=agents --set-json 'controller.namespaces=["agents-ci"]' --set rbac.clusterScoped=false` (expect fail: namespaced RBAC must target chart namespace)
-  - `helm template charts/agents --set-json 'controller.namespaces=["agents"]' --set rbac.clusterScoped=true` (expect success with namespaced list on Role)
+  - `helm template charts/agents --set-json 'controller.namespaces=["agents"]' --set rbac.clusterScoped=true` (expect success with cluster-scoped RBAC)
   - `helm template charts/agents --set-json 'controller.namespaces=["*"]' --set rbac.clusterScoped=true` (expect success with ClusterRole)
   - `helm template charts/agents --set-json 'orchestrationController.namespaces=["agents","agents-ci"]' --set rbac.clusterScoped=false` (expect fail: multi-namespace requires cluster-scoped RBAC)
   - `helm template charts/agents --set-json 'supportingController.namespaces=["agents","agents-ci"]' --set rbac.clusterScoped=false` (expect fail: multi-namespace requires cluster-scoped RBAC)
   - `helm template charts/agents --set namespaceOverride=agents --set-json 'orchestrationController.namespaces=["agents-ci"]' --set rbac.clusterScoped=false` (expect fail: namespaced RBAC must target chart namespace)
   - `helm template charts/agents --set-json 'orchestrationController.namespaces=["*","agents"]' --set rbac.clusterScoped=true` (expect fail: wildcard may not combine with specific namespaces)
   - `helm template charts/agents --set-json 'supportingController.namespaces=["*","agents"]' --set rbac.clusterScoped=true` (expect fail: wildcard may not combine with specific namespaces)
-  - `helm template charts/agents --set-json 'orchestrationController.namespaces=["*"]' --set rbac.clusterScoped=true` (expect success with namespaced controller and cluster-scoped RBAC)
-  - `helm template charts/agents --set-json 'supportingController.namespaces=["*"]' --set rbac.clusterScoped=true` (expect success with supporting controller and cluster-scoped RBAC)
+  - `helm template charts/agents --set-json 'orchestrationController.namespaces=["*"]' --set rbac.clusterScoped=true` (expect success with cluster-scoped RBAC)
+  - `helm template charts/agents --set-json 'supportingController.namespaces=["*"]' --set rbac.clusterScoped=true` (expect success with cluster-scoped RBAC)
 
 Validation command helper (example):
 
@@ -54,6 +56,8 @@ namespace_guardrails() {
     "helm template charts/agents --set-json 'controller.namespaces=[\"*\",\"agents\"]' --set rbac.clusterScoped=true" \
     "helm template charts/agents --set-json 'controller.namespaces=\"agents\"'" \
     "helm template charts/agents --set-json 'controller.namespaces=[\" agents\"]'" \
+    "helm template charts/agents --set namespaceOverride=\" agents\" --set-json 'controller.namespaces=[\"agents\"]'" \
+    "helm template charts/agents --set namespaceOverride='' --set-json 'controller.namespaces=[\"agents\"]' --set rbac.clusterScoped=false" \
     "helm template charts/agents --set namespaceOverride=agents --set-json 'controller.namespaces=[\"agents-ci\"]' --set rbac.clusterScoped=false" \
     "helm template charts/agents --set-json 'orchestrationController.namespaces=[\"agents\",\"agents-ci\"]' --set rbac.clusterScoped=false" \
     "helm template charts/agents --set-json 'supportingController.namespaces=[\"agents\",\"agents-ci\"]' --set rbac.clusterScoped=false" \

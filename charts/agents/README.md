@@ -113,6 +113,7 @@ Agent memory backends are configured separately via the `Memory` CRD.
 - Single namespace (namespaced RBAC): omit a scope list for release-namespace default or set exactly one namespace.
 - Multi-namespace: set any scope list with multiple namespaces and `rbac.clusterScoped=true`.
 - Wildcard: set any scope list to `["*"]` and `rbac.clusterScoped=true`.
+- Explicit single namespace with cluster-scoped RBAC: set `rbac.clusterScoped=true` when a scope list contains exactly one namespace but you still need cluster-level permissions.
 - Invalid combinations are rejected at render-time for all scope keys:
   - explicit empty list (`[]`)
   - wildcard (`"*"`) combined with any specific namespace
@@ -144,11 +145,12 @@ Note: The CRD schema hard-caps `status.artifacts` at 50 entries; controller-side
 
 #### Namespaced vs cluster-scoped install matrix
 
-| Install mode               | Scope list examples     | rbac.clusterScoped | RBAC scope                                              |
-| -------------------------- | ----------------------- | ------------------ | ------------------------------------------------------- |
-| Namespaced (single)        | omitted or `["agents"]` | `false`            | Role + RoleBinding in release namespace                 |
-| Multi-namespace (explicit) | `["team-a", "team-b"]`  | `true`             | ClusterRole + ClusterRoleBinding                        |
-| Wildcard (all namespaces)  | `["*"]`                 | `true`             | ClusterRole + ClusterRoleBinding (namespace list/watch) |
+| Install mode                      | Scope list examples     | rbac.clusterScoped | RBAC scope                                              |
+| --------------------------------- | ----------------------- | ------------------ | ------------------------------------------------------- |
+| Namespaced (single)               | omitted or `["agents"]` | `false`            | Role + RoleBinding in release namespace                 |
+| Single namespace (cluster-scoped) | `["agents"]`            | `true`             | ClusterRole + ClusterRoleBinding                        |
+| Multi-namespace (explicit)        | `["team-a", "team-b"]`  | `true`             | ClusterRole + ClusterRoleBinding                        |
+| Wildcard (all namespaces)         | `["*"]`                 | `true`             | ClusterRole + ClusterRoleBinding (namespace list/watch) |
 
 If you set all three scope keys, they must use the same RBAC mode so controller permissions stay aligned.
 
