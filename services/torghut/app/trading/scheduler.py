@@ -83,7 +83,12 @@ from .llm.schema import MarketContextBundle
 from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
 from .autonomy.phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
+    AUTONOMY_PASSING_MANIFEST_STATUSES,
+    build_rollback_proof_phase,
+    build_runtime_governance_phase,
+    coerce_path_strings,
     coerce_phase_status,
+    normalize_phase_manifest_phases,
     normalize_phase_transitions,
 )
 from .route_metadata import coerce_route_text
@@ -5767,7 +5772,7 @@ class TradingScheduler:
             return
         manifest = cast(dict[str, Any], manifest_raw)
 
-        def _to_items(raw: Any) -> list[Any]:
+        def _as_values(raw: Any) -> list[Any]:
             if isinstance(raw, list):
                 return cast(list[Any], raw)
             if isinstance(raw, tuple):
@@ -5776,53 +5781,18 @@ class TradingScheduler:
                 return list(cast(set[Any], raw))
             return []
 
-        def _coerce_strs(raw: Any) -> list[str]:
-            raw_items = _to_items(raw)
-            if not raw_items:
-                return []
-            return sorted(
-                {
-                    str(item).strip()
-                    for item in raw_items
-                    if str(item).strip()
-                }
-            )
-
-        def _coerce_path(raw: Any) -> str:
-            if not isinstance(raw, str):
-                return ""
-            return raw.strip()
-
-        def _coerce_reason_codes(raw: Any) -> list[str]:
-            raw_items = _to_items(raw)
-            if not raw_items:
-                return []
-            return sorted(
-                {
-                    str(item).strip()
-                    for item in raw_items
-                    if str(item).strip()
-                }
-            )
-
-        def _build_placeholder_phase(name: str) -> dict[str, Any]:
-            return {
-                "name": name,
-                "status": "skip",
-                "timestamp": now.isoformat(),
-                "observations": {"note": "stage not evaluated"},
-                "slo_gates": [],
-                "artifact_refs": [],
-            }
-
         drift_status = str(
             drift_governance_payload.get("drift_status")
             or self.state.drift_status
             or "skipped"
         ).strip().lower()
 
-        drift_reasons = _coerce_reason_codes(
-            drift_governance_payload.get("reasons", [])
+        drift_reasons = sorted(
+            {
+                str(reason).strip()
+                for reason in _as_values(drift_governance_payload.get("reasons", []))
+                if str(reason).strip()
+            }
         )
         action_payload = drift_governance_payload.get("action")
         detection_payload = drift_governance_payload.get("detection")
@@ -5830,8 +5800,12 @@ class TradingScheduler:
             action_payload_map = cast(dict[str, Any], action_payload)
             action_type = str(action_payload_map.get("action_type", "")).strip()
             action_triggered = bool(action_payload_map.get("triggered", False))
-            action_reasons = _coerce_reason_codes(
-                action_payload_map.get("reason_codes", [])
+            action_reasons = sorted(
+                {
+                    str(reason).strip()
+                    for reason in _as_values(action_payload_map.get("reason_codes", []))
+                    if str(reason).strip()
+                }
             )
         else:
             action_type = ""
@@ -5840,31 +5814,49 @@ class TradingScheduler:
 
         if isinstance(detection_payload, dict):
             detection_payload_map = cast(dict[str, Any], detection_payload)
-            detection_reasons = _coerce_reason_codes(
-                detection_payload_map.get("reason_codes", [])
+            detection_reasons = sorted(
+                {
+                    str(reason).strip()
+                    for reason in _as_values(
+                        detection_payload_map.get("reason_codes", [])
+                    )
+                    if str(reason).strip()
+                }
             )
         else:
             detection_reasons = []
 
         evidence_refs = [
-            _coerce_path(self.state.drift_last_detection_path),
-            _coerce_path(self.state.drift_last_action_path),
-            _coerce_path(self.state.drift_last_outcome_path),
-            _coerce_path(self.state.rollback_incident_evidence_path),
+            str(path).strip()
+            for path in [
+                self.state.drift_last_detection_path,
+                self.state.drift_last_action_path,
+                self.state.drift_last_outcome_path,
+                self.state.rollback_incident_evidence_path,
+            ]
+            if isinstance(path, str) and path.strip()
         ]
         artifact_refs_payload = drift_governance_payload.get("artifact_refs", [])
         if isinstance(artifact_refs_payload, (list, tuple, set)):
             evidence_refs.extend(
                 [
-                    _coerce_path(item)
-                    for item in _to_items(artifact_refs_payload)
-                    if _coerce_path(item)
+                    str(item).strip()
+                    for item in _as_values(artifact_refs_payload)
+                    if str(item).strip()
                 ]
             )
         evidence_refs = sorted({item for item in evidence_refs if item})
-        rollback_incident_evidence = _coerce_path(
-            drift_governance_payload.get("rollback_incident_evidence")
-        ) or _coerce_path(self.state.rollback_incident_evidence_path)
+        rollback_incident_evidence = (
+            str(drift_governance_payload.get("rollback_incident_evidence", "")).strip()
+            if isinstance(
+                drift_governance_payload.get("rollback_incident_evidence", ""), str
+            )
+            else ""
+        )
+        if not rollback_incident_evidence and isinstance(
+            self.state.rollback_incident_evidence_path, str
+        ):
+            rollback_incident_evidence = self.state.rollback_incident_evidence_path.strip()
         if rollback_incident_evidence:
             evidence_refs.append(rollback_incident_evidence)
         evidence_refs = sorted(set(evidence_refs))
@@ -5890,55 +5882,24 @@ class TradingScheduler:
             }
         )
 
-        governance_phase: dict[str, Any] = {
-            "name": "runtime-governance",
-            "status": governance_status,
-            "timestamp": now.isoformat(),
-            "observations": {
-                "requested_promotion_target": requested_promotion_target,
-                "drift_status": drift_status,
-                "action_type": action_type or None,
-                "action_triggered": action_triggered,
-                "rollback_triggered": rollback_triggered,
-            },
-            "slo_gates": [
-                {
-                    "id": "slo_runtime_rollback_not_triggered",
-                    "status": "pass" if not rollback_triggered else "fail",
-                    "threshold": False,
-                    "value": rollback_triggered,
-                },
-            ],
-            "reasons": reasons,
-            "artifact_refs": evidence_refs,
-        }
-
-        rollback_proof_status = (
-            "pass" if (not rollback_triggered or rollback_incident_evidence) else "fail"
+        governance_phase = build_runtime_governance_phase(
+            requested_promotion_target=requested_promotion_target,
+            observed_at=now,
+            governance_status=governance_status,
+            drift_status=drift_status,
+            action_type=action_type,
+            action_triggered=action_triggered,
+            rollback_triggered=rollback_triggered,
+            reasons=reasons,
+            artifact_refs=evidence_refs,
         )
-        rollback_proof_phase: dict[str, Any] = {
-            "name": "rollback-proof",
-            "status": rollback_proof_status,
-            "timestamp": now.isoformat(),
-            "slo_gates": [
-                {
-                    "id": "slo_rollback_evidence_required_when_triggered",
-                    "status": "pass" if not rollback_triggered else (
-                        "pass" if rollback_incident_evidence else "fail"
-                    ),
-                    "threshold": True,
-                    "value": bool(rollback_incident_evidence),
-                },
-            ],
-            "observations": {
-                "rollback_triggered": rollback_triggered,
-                "rollback_incident_evidence_path": rollback_incident_evidence,
-            },
-            "reasons": reasons,
-            "artifact_refs": (
-                [rollback_incident_evidence] if rollback_incident_evidence else []
-            ),
-        }
+        rollback_proof_phase = build_rollback_proof_phase(
+            observed_at=now,
+            rollback_triggered=rollback_triggered,
+            rollback_incident_evidence_path=rollback_incident_evidence,
+            reasons=reasons,
+            artifact_refs=[],
+        )
 
         existing_phases = manifest.get("phases", [])
         phase_lookup: dict[str, dict[str, Any]] = {}
@@ -5953,20 +5914,10 @@ class TradingScheduler:
         phase_lookup["runtime-governance"] = governance_phase
         phase_lookup["rollback-proof"] = rollback_proof_phase
 
-        ordered_phases: list[dict[str, Any]] = []
-        for name in _AUTONOMY_PHASE_ORDER:
-            phase_payload = phase_lookup.get(name)
-            if phase_payload is None:
-                ordered_phases.append(_build_placeholder_phase(name))
-                continue
-            phase_payload["name"] = name
-            phase_payload["status"] = coerce_phase_status(
-                phase_payload.get("status"), default="skip"
-            )
-            phase_payload["artifact_refs"] = _coerce_strs(
-                phase_payload.get("artifact_refs", [])
-            )
-            ordered_phases.append(phase_payload)
+        ordered_phases = normalize_phase_manifest_phases(
+            list(phase_lookup.values()),
+            phase_timestamp=now,
+        )
 
         manifest["phases"] = ordered_phases
         manifest["runtime_governance"] = {
@@ -5993,25 +5944,26 @@ class TradingScheduler:
                 else []
             ),
             "reasons": reasons,
-            "status": rollback_proof_status,
+            "status": rollback_proof_phase.get("status"),
         }
 
         manifest["status"] = (
-            "fail"
-            if any(
-                str(phase.get("status")) not in {"pass", "skipped", "skip"}
+            "pass"
+            if all(
+                coerce_phase_status(phase.get("status"), default="fail")
+                in AUTONOMY_PASSING_MANIFEST_STATUSES
                 for phase in ordered_phases
             )
-            else "pass"
+            else "fail"
         )
         manifest["phase_count"] = len(ordered_phases)
         manifest["updated_at"] = now.isoformat()
 
-        existing_artifact_refs = _coerce_strs(manifest.get("artifact_refs", []))
+        existing_artifact_refs = coerce_path_strings(manifest.get("artifact_refs", []))
         artifact_refs = [
             str(item)
             for phase in ordered_phases
-            for item in _coerce_strs(phase.get("artifact_refs", []))
+            for item in coerce_path_strings(phase.get("artifact_refs", []))
         ]
         artifact_refs.extend(evidence_refs)
         artifact_refs.extend(existing_artifact_refs)

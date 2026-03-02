@@ -78,7 +78,14 @@ from .policy_checks import (
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 from .phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
+    AUTONOMY_PHASE_MANIFEST_SLO_VERSION,
+    AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
+    AUTONOMY_PASSING_MANIFEST_STATUSES,
+    build_rollback_proof_phase,
+    build_runtime_governance_phase,
+    coerce_path_strings,
     coerce_phase_status,
+    normalize_phase_manifest_phases,
     normalize_phase_transitions,
 )
 
@@ -117,22 +124,6 @@ class _StageManifestRecord:
     inputs: dict[str, str] = field(default_factory=dict)
 
 
-def _readable_stage_iteration_number(artifact_root: Path) -> int:
-    pattern = re.compile(r"^iteration-(\d+)\.md$")
-    highest = 0
-    for item in artifact_root.glob("iteration-*.md"):
-        match = pattern.match(item.name)
-        if not match:
-            continue
-        try:
-            candidate = int(match.group(1))
-        except (TypeError, ValueError):
-            continue
-        if candidate > highest:
-            highest = candidate
-    return highest + 1
-
-
 def _write_stage_iteration_notes(
     *,
     artifact_root: Path,
@@ -149,29 +140,40 @@ def _write_stage_iteration_notes(
     head: str,
     priority_id: str | None,
 ) -> Path:
-    artifact_root.mkdir(parents=True, exist_ok=True)
-    iteration = _readable_stage_iteration_number(artifact_root)
-    notes_path = artifact_root / f"iteration-{iteration}.md"
+    notes_dir = artifact_root / "notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    iteration = _readable_notes_iteration_number(notes_dir)
+    if iteration > 1:
+        iteration -= 1
+    notes_path = notes_dir / f"iteration-{iteration}.md"
 
-    lines = [
-        f"# Autonomy lane iteration {iteration}",
+    if notes_path.exists():
+        lines = notes_path.read_text(encoding="utf-8").splitlines()
+        if lines and lines[-1]:
+            lines.append("")
+    else:
+        lines = [
+            f"# Autonomy lane iteration {iteration}",
+            "",
+            f"- run_id: {run_id}",
+            f"- candidate_id: {candidate_id}",
+            f"- promotion_target: {promotion_target}",
+            f"- recommendation_mode: {promotion_recommended_mode}",
+            f"- recommendation_action: {recommendation_action}",
+            f"- gate_allowed: {str(gate_allowed).lower()}",
+            f"- recommendation_reason_count: {recommendation_reason_count}",
+            "- repository: {0}".format(repository),
+            "- base: {0}".format(base),
+            "- head: {0}".format(head),
+        ]
+        if priority_id:
+            lines.append(f"- priority_id: {priority_id}")
+
+    lines.extend([
         "",
-        f"- run_id: {run_id}",
-        f"- candidate_id: {candidate_id}",
-        f"- promotion_target: {promotion_target}",
-        f"- recommendation_mode: {promotion_recommended_mode}",
-        f"- recommendation_action: {recommendation_action}",
-        f"- gate_allowed: {str(gate_allowed).lower()}",
-        f"- recommendation_reason_count: {recommendation_reason_count}",
-        "- repository: {0}".format(repository),
-        "- base: {0}".format(base),
-        "- head: {0}".format(head),
-    ]
-    if priority_id:
-        lines.append(f"- priority_id: {priority_id}")
-
-    lines.append("")
-    lines.append("## Gate and evidence summary")
+        "## Gate and evidence summary",
+        "",
+    ])
     lines.extend(f"- {reason}" for reason in promotion_reasons)
 
     notes_path.write_text("\n".join(lines), encoding="utf-8")
@@ -2076,7 +2078,7 @@ def run_autonomous_lane(
             recommendation_trace_id=recommendation_trace_id,
         )
         _write_stage_iteration_notes(
-            artifact_root=output_dir,
+            artifact_root=notes_root,
             run_id=run_id,
             candidate_id=candidate_id,
             promotion_target=promotion_target,
@@ -2293,9 +2295,6 @@ def _build_phase_manifest(
         if isinstance(drift_gate_check.get("artifact_refs", []), list)
         else []
     )
-    runtime_gate_status = coerce_phase_status(
-        runtime_governance.get("governance_status", "skipped")
-    )
     runtime_artifact_refs = _coerce_path_strings(
         runtime_governance.get("artifact_refs", [])
         if isinstance(runtime_governance.get("artifact_refs", []), list)
@@ -2312,10 +2311,23 @@ def _build_phase_manifest(
         rollback_proof_path = _coerce_str(
             rollback_proof.get("rollback_incident_evidence"), default=""
         )
-    rollback_proof_status = (
-        "pass"
-        if (not rollback_triggered)
-        else ("pass" if rollback_proof_path else "fail")
+    runtime_phase = build_runtime_governance_phase(
+        requested_promotion_target=requested_promotion_target,
+        observed_at=evaluated_at,
+        governance_status=runtime_governance.get("governance_status"),
+        drift_status=str(runtime_governance.get("drift_status", "unknown")),
+        action_type=str(runtime_governance.get("action_type", "")),
+        action_triggered=bool(runtime_governance.get("action_triggered", False)),
+        rollback_triggered=rollback_triggered,
+        reasons=list(runtime_governance.get("reasons", [])),
+        artifact_refs=runtime_artifact_refs,
+    )
+    rollback_proof_phase = build_rollback_proof_phase(
+        observed_at=evaluated_at,
+        rollback_triggered=rollback_triggered,
+        rollback_incident_evidence_path=rollback_proof_path,
+        reasons=list(rollback_proof.get("reasons", [])),
+        artifact_refs=[],
     )
     drift_gate_artifacts = sorted(
         {
@@ -2454,58 +2466,13 @@ def _build_phase_manifest(
             },
             "artifact_refs": ([str(patch_path)] if patch_path else []),
         },
-        {
-            "name": "runtime-governance",
-            "status": runtime_gate_status,
-            "timestamp": phase_timestamp,
-            "slo_gates": [
-                {
-                    "id": "slo_runtime_rollback_not_triggered",
-                    "status": "pass" if not rollback_triggered else "fail",
-                    "threshold": False,
-                    "value": rollback_triggered,
-                }
-            ],
-            "observations": {
-                "requested_promotion_target": requested_promotion_target,
-                "drift_status": str(runtime_governance.get("drift_status", "unknown")),
-                "action_type": str(runtime_governance.get("action_type", "")) or None,
-                "action_triggered": bool(runtime_governance.get("action_triggered", False)),
-                "rollback_triggered": rollback_triggered,
-            },
-            "required": {"required_items": ["drift_status", "rollback_triggered"]},
-            "artifact_refs": runtime_artifact_refs,
-            "reasons": list(runtime_governance.get("reasons", [])),
-        },
-        {
-            "name": "rollback-proof",
-            "status": rollback_proof_status,
-            "timestamp": phase_timestamp,
-            "slo_gates": [
-                {
-                    "id": "slo_rollback_evidence_required_when_triggered",
-                    "status": (
-                        "pass" if rollback_proof_path and rollback_triggered else "pass"
-                        if not rollback_triggered
-                        else "fail"
-                    ),
-                    "threshold": True,
-                    "value": bool(rollback_proof_path),
-                }
-            ],
-            "observations": {
-                "rollback_triggered": rollback_triggered,
-                "rollback_incident_evidence_path": rollback_proof_path or None,
-                "rollback_incident_evidence": rollback_proof_path or None,
-            },
-            "artifact_refs": [rollback_proof_path] if rollback_proof_path else [],
-            "reasons": list(rollback_proof.get("reasons", [])),
-        },
+        runtime_phase,
+        rollback_proof_phase,
     ]
 
     overall_pass = all(
         coerce_phase_status(phase.get("status"), default="fail")
-        in {"pass", "skipped", "skip"}
+        in AUTONOMY_PASSING_MANIFEST_STATUSES
         for phase in phase_summaries
     )
 
@@ -2533,47 +2500,14 @@ def _build_phase_manifest(
             str(output_dir / "rollout" / "phase-manifest.json"),
         }
     )
-    phase_transitions = normalize_phase_transitions(
+    phase_summaries = normalize_phase_manifest_phases(
         phase_summaries,
+        phase_timestamp=evaluated_at,
     )
-
-    canonical_phase_payloads = {
-        str(phase.get("name", "")).strip(): dict(phase)
-        for phase in phase_summaries
-        if str(phase.get("name", "")).strip() in _AUTONOMY_PHASE_ORDER
-    }
-    ordered_phase_summaries: list[dict[str, Any]] = []
-    for expected_name in _AUTONOMY_PHASE_ORDER:
-        phase_payload = canonical_phase_payloads.get(expected_name)
-        if phase_payload is None:
-            ordered_phase_summaries.append(
-                {
-                    "name": expected_name,
-                    "status": "skip",
-                    "timestamp": phase_timestamp,
-                    "observations": {"note": "stage not evaluated"},
-                    "slo_gates": [],
-                    "artifact_refs": [],
-                }
-            )
-            continue
-
-        normalized_phase = dict(phase_payload)
-        normalized_phase["name"] = expected_name
-        normalized_phase["status"] = coerce_phase_status(
-            normalized_phase.get("status"), default="skip"
-        )
-        normalized_phase["artifact_refs"] = _coerce_path_strings(
-            normalized_phase.get("artifact_refs", [])
-        )
-        normalized_phase.setdefault("slo_gates", [])
-        ordered_phase_summaries.append(normalized_phase)
-
-    phase_summaries = ordered_phase_summaries
     phase_transitions = normalize_phase_transitions(phase_summaries)
 
     return {
-        "schema_version": "autonomy-phase-manifest-v1",
+        "schema_version": AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
         "run_id": run_id,
         "candidate_id": candidate_id,
         "execution_context": {
@@ -2605,7 +2539,7 @@ def _build_phase_manifest(
                 if str(artifact_ref).strip()
             }
         ),
-        "slo_contract_version": "governance-slo-v1",
+        "slo_contract_version": AUTONOMY_PHASE_MANIFEST_SLO_VERSION,
     }
 
 
@@ -2631,15 +2565,7 @@ def _coerce_int(raw: Any, default: int = 0) -> int:
 
 
 def _coerce_path_strings(values: Any) -> list[str]:
-    if not isinstance(values, (list, tuple, set)):
-        return []
-    return sorted(
-        {
-            _coerce_str(value)
-            for value in values
-            if _coerce_str(value)
-        }
-    )
+    return coerce_path_strings(values)
 
 
 def _coerce_gate_phase_gates(raw_gates: Any) -> list[dict[str, Any]]:

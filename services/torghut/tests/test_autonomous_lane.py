@@ -27,7 +27,12 @@ from app.trading.autonomy.policy_checks import (
     PromotionPrerequisiteResult,
     RollbackReadinessResult,
 )
-from app.trading.autonomy.phase_manifest_contract import coerce_phase_status
+from app.trading.autonomy.phase_manifest_contract import (
+    coerce_phase_status,
+    build_rollback_proof_phase,
+    build_runtime_governance_phase,
+    normalize_phase_manifest_phases,
+)
 from app.trading.autonomy.gates import GateEvaluationReport, GateResult
 from app.trading.evaluation import WalkForwardDecision
 from app.trading.features import SignalFeatures
@@ -1490,7 +1495,7 @@ class TestAutonomousLane(TestCase):
                 governance_repository="proompteng/lab",
             )
 
-            notes_path = output_dir / "iteration-1.md"
+            notes_path = output_dir / "notes" / "iteration-1.md"
             self.assertTrue(notes_path.exists())
             note_body = notes_path.read_text(encoding="utf-8")
             self.assertIn(f"- run_id: {result.run_id}", note_body)
@@ -2892,6 +2897,61 @@ class TestAutonomousLane(TestCase):
             gate_transition_statuses = {phase["name"]: phase["status"] for phase in manifest["phases"]}
             self.assertEqual(gate_transition_statuses["runtime-governance"], "skipped")
             self.assertEqual(gate_transition_statuses["rollback-proof"], "pass")
+
+    def test_normalize_phase_manifest_phases_adds_missing_and_defaults(self) -> None:
+        manifest_phases = [
+            {"name": "runtime-governance", "status": "pass"},
+            {"name": "gate-evaluation", "status": "pass"},
+            {"name": "rollback-proof", "status": "invalid"},
+        ]
+        normalized = normalize_phase_manifest_phases(
+            manifest_phases,
+            phase_timestamp="2026-01-01T00:00:00Z",
+        )
+        self.assertEqual(
+            [phase["name"] for phase in normalized],
+            list(_AUTONOMY_PHASE_ORDER),
+        )
+        self.assertEqual(normalized[5]["status"], "pass")
+        self.assertEqual(normalized[6]["status"], "skipped")
+
+    def test_build_runtime_governance_phase_carries_gate_status_and_reasons(self) -> None:
+        phase = build_runtime_governance_phase(
+            requested_promotion_target="paper",
+            observed_at="2026-01-01T00:00:00Z",
+            governance_status="invalid",
+            drift_status="drift_detected",
+            action_type="quarantine",
+            action_triggered=True,
+            rollback_triggered=True,
+            reasons=[" evi", "", "evi"],
+            artifact_refs=["artifact.json"],
+        )
+        self.assertEqual(phase["status"], "skipped")
+        self.assertEqual(phase["artifact_refs"], ["artifact.json"])
+        self.assertEqual(phase["reasons"], ["evi"])
+        self.assertEqual(phase["slo_gates"][0]["id"], "slo_runtime_rollback_not_triggered")
+        self.assertEqual(phase["slo_gates"][0]["status"], "fail")
+
+    def test_build_rollback_proof_phase_fails_without_evidence(self) -> None:
+        phase = build_rollback_proof_phase(
+            observed_at="2026-01-01T00:00:00Z",
+            rollback_triggered=True,
+            rollback_incident_evidence_path="",
+            reasons=["triggered"],
+            artifact_refs=["artifact.json"],
+        )
+        self.assertEqual(phase["status"], "fail")
+        self.assertEqual(phase["artifact_refs"], ["artifact.json"])
+        self.assertEqual(
+            phase["slo_gates"][0],
+            {
+                "id": "slo_rollback_evidence_required_when_triggered",
+                "status": "fail",
+                "threshold": True,
+                "value": False,
+            },
+        )
 
     def test_build_phase_manifest_defaults_execution_context_artifact_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
