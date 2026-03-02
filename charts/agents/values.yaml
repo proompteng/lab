@@ -28,6 +28,11 @@ controlPlane:
     pullSecrets: []
   env:
     vars: {}
+  livenessProbe: {}
+  readinessProbe: {}
+  startupProbe: {}
+  lifecycle: {}
+  deploymentLifecycle: {}
 
 controllers:
   enabled: false
@@ -53,6 +58,11 @@ controllers:
   resources: {}
   env:
     vars: {}
+  livenessProbe: {}
+  readinessProbe: {}
+  startupProbe: {}
+  lifecycle: {}
+  deploymentLifecycle: {}
 
 runner:
   image:
@@ -178,6 +188,29 @@ readinessProbe:
   periodSeconds: 10
   timeoutSeconds: 2
   failureThreshold: 6
+
+startupProbe:
+  enabled: false
+  path: /health
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 30
+
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+deploymentLifecycle:
+  minReadySeconds: 0
+  progressDeadlineSeconds: 600
+  revisionHistoryLimit: 10
+
+lifecycle: {}
+
+terminationGracePeriodSeconds: 30
 
 podDisruptionBudget:
   enabled: false

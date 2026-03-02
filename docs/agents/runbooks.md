@@ -20,6 +20,11 @@ See also:
 
 1. `helm upgrade agents charts/agents -n agents`
 2. Confirm rollout: `kubectl -n agents rollout status deploy/agents`
+3. For probe/lifecycle/strategy changes, apply component-at-a-time:
+   - First land global values.
+   - Validate control-plane rollout.
+   - Then validate controllers rollout.
+4. If migration is not stable, roll back and remove component overrides first, then global adjustments.
 
 ## Rollback
 
