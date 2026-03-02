@@ -39,6 +39,46 @@ Load credentials from the `huly-api` Kubernetes secret via AgentRun `spec.secret
 
 Use `scripts/huly-api.py`.
 
+### Mandatory channel interaction loop
+
+For every mission stage, run this in order:
+
+1. Read recent channel history:
+
+```bash
+python3 skills/huly-api/scripts/huly-api.py \
+  --operation list-channel-messages \
+  --worker-id "${SWARM_AGENT_WORKER_ID}" \
+  --worker-identity "${SWARM_AGENT_IDENTITY}" \
+  --require-worker-token \
+  --channel "${ACTIVE_HULY_CHANNEL}" \
+  --limit 30
+```
+
+2. React to at least one relevant teammate message by posting a direct reply that references the message ID and decision impact:
+
+```bash
+python3 skills/huly-api/scripts/huly-api.py \
+  --operation post-channel-message \
+  --worker-id "${SWARM_AGENT_WORKER_ID}" \
+  --worker-identity "${SWARM_AGENT_IDENTITY}" \
+  --require-worker-token \
+  --channel "${ACTIVE_HULY_CHANNEL}" \
+  --message "Replying to message <messageId>: I picked up this requirement and I will implement X next."
+```
+
+3. Post a worker-authored stage update after completing the mission action:
+
+```bash
+python3 skills/huly-api/scripts/huly-api.py \
+  --operation post-channel-message \
+  --worker-id "${SWARM_AGENT_WORKER_ID}" \
+  --worker-identity "${SWARM_AGENT_IDENTITY}" \
+  --require-worker-token \
+  --channel "${ACTIVE_HULY_CHANNEL}" \
+  --message "${OWNER_UPDATE_MESSAGE}"
+```
+
 ### Mission-level sync (recommended)
 
 ```bash
@@ -52,6 +92,7 @@ python3 skills/huly-api/scripts/huly-api.py \
   --details "Includes evidence, risk deltas, and PR links" \
   --stage discover \
   --status running \
+  --message "${OWNER_UPDATE_MESSAGE}" \
   --project "DefaultProject" \
   --teamspace "PROOMPTENG" \
   --channel "general"
@@ -69,8 +110,9 @@ This creates/updates:
 python3 skills/huly-api/scripts/huly-api.py --operation create-issue --title "..." --mission-id "..."
 python3 skills/huly-api/scripts/huly-api.py --operation create-document --title "..." --mission-id "..."
 python3 skills/huly-api/scripts/huly-api.py --operation post-channel-message --message "..."
+python3 skills/huly-api/scripts/huly-api.py --operation list-channel-messages --channel "general" --limit 30
 python3 skills/huly-api/scripts/huly-api.py --operation account-info --worker-id "${SWARM_AGENT_WORKER_ID}" --require-worker-token
-python3 skills/huly-api/scripts/huly-api.py --operation verify-chat-access --worker-id "${SWARM_AGENT_WORKER_ID}" --worker-identity "${SWARM_AGENT_IDENTITY}" --require-worker-token --channel "general"
+python3 skills/huly-api/scripts/huly-api.py --operation verify-chat-access --worker-id "${SWARM_AGENT_WORKER_ID}" --worker-identity "${SWARM_AGENT_IDENTITY}" --require-worker-token --channel "general" --message "Hi team, I can post in this channel and I am starting this stage now."
 ```
 
 ### Raw HTTP mode (debug)
@@ -84,9 +126,11 @@ python3 skills/huly-api/scripts/huly-api.py --operation http --method GET --path
 - Every mission stage must publish artifacts to all three Huly modules: tasks, channels, and docs.
 - Each swarm agent should authenticate with its own Huly organization account (no shared actor credentials).
 - Always target Tracker `DefaultProject` issues and Docs `PROOMPTENG` teamspace unless a run explicitly overrides them.
+- Resolve `ACTIVE_HULY_CHANNEL` dynamically from runtime context (prefer `swarmRequirementChannel`, then `HULY_CHANNEL`, then default).
+- Read channel history before taking action, then react to relevant teammate messages with explicit follow-up replies.
 - Use `--require-worker-token` for dedicated-account checks so shared fallback tokens are rejected.
 - For strict identity mapping, set per-worker `HULY_EXPECTED_ACTOR_ID_<SWARM_AGENT_IDENTITY>` and use `--require-expected-actor-id`.
-- Run `verify-chat-access` before autonomous delivery stages to prove the worker account can write to `#general`.
+- Run `verify-chat-access` before autonomous delivery stages with a worker-authored `--message`.
 - Include `swarmAgentWorkerId` and `swarmAgentIdentity` in the issue/document/message body.
-- Keep channel updates concise and link issue/doc/PR/deploy evidence.
+- Keep channel updates concise, written by the worker, and linked to issue/doc/PR/deploy evidence.
 - If Huly auth fails, stop and return a clear unblock request instead of silently continuing.

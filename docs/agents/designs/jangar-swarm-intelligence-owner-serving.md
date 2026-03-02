@@ -3,6 +3,7 @@
 Status: Proposed (2026-03-01)
 
 Docs index: [README](../README.md)
+Execution runbook: [swarm-end-to-end-runbook](../swarm-end-to-end-runbook.md)
 
 ## Objective
 
