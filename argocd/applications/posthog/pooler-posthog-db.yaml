@@ -10,6 +10,9 @@ spec:
   type: rw
   pgbouncer:
     poolMode: transaction
+    pg_hba:
+      - "host all all 0.0.0.0/0 scram-sha-256"
+      - "host all all ::/0 scram-sha-256"
     parameters:
       default_pool_size: "20"
       max_client_conn: "1000"

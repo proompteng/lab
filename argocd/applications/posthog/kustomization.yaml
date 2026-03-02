@@ -13,6 +13,7 @@ resources:
   - secret-posthog.yaml
   - service-posthog-events.yaml
   - service-posthog-web.yaml
+  - service-ingestion-cdp-api.yaml
   - ingressroute-posthog.yaml
   - deployment-posthog-events.yaml
   - deployment-posthog-plugins.yaml

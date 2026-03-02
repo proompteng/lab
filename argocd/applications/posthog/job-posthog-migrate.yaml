@@ -2,31 +2,52 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: posthog-migrate
+  generateName: posthog-migrate-
   labels:
     "app.kubernetes.io/name": "posthog"
     "app.kubernetes.io/instance": "posthog"
   annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
+  backoffLimit: 5
   template:
     metadata:
-      name: posthog-migrate
       annotations:
         checksum/secrets.yaml: f419c0eca4937c746dd2c8a35e325c8a1f4558fc3956e8b05c1984e982e2f58c
       labels:
         app: posthog
         release: "posthog"
     spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
       restartPolicy: Never
       containers:
       - name: migrate-job
-        image: "posthog/posthog:release-1.43.1"
+        image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
         command:
           - /bin/sh
           - -c
           - |
-            set -e
-            python manage.py notify_helm_install || true
-            ./bin/migrate
+              set -e
+              python manage.py notify_helm_install || true
+              python - <<'PY'
+              import os
+              from clickhouse_driver import Client
+
+              client = Client(
+                  host=os.environ['CLICKHOUSE_HOST'],
+                  user=os.environ['CLICKHOUSE_USER'],
+                  password=os.environ['CLICKHOUSE_PASSWORD'],
+              )
+              client.execute(
+                  'CREATE VIEW IF NOT EXISTS system.crash_log AS '
+                  'SELECT event_date FROM system.error_log'
+              )
+              PY
+              ./bin/migrate
 
         env:
         # Kafka env variables        
@@ -52,7 +73,7 @@ spec:
         - name: SENTRY_DSN
           value: 
         - name: SITE_URL
-          value: "http://127.0.0.1:8000"
+          value: "https://posthog.proompteng.ai"
         - name: DEPLOYMENT
           value: self_managed
         # PostHog app settings        
@@ -77,12 +98,16 @@ spec:
           valueFrom:
             secretKeyRef:
               name: "posthog-db-app"
-              key: "postgresql-password"
+              key: "password"
         - name: USING_PGBOUNCER
           value: 'false'
+        - name: SKIP_SERVICE_VERSION_REQUIREMENTS
+          value: '1'
         - name: CLICKHOUSE_HOST
           value: "posthog-clickhouse.posthog.svc.cluster.local"
         - name: CLICKHOUSE_CLUSTER
+          value: "default"
+        - name: CLICKHOUSE_MIGRATIONS_CLUSTER
           value: "default"
         - name: CLICKHOUSE_DATABASE
           value: "default"
@@ -119,33 +144,27 @@ spec:
           value: "true"
         resources:
           {}
-      initContainers:        
+      initContainers:
         - name: wait-for-service-dependencies
-          image: ghcr.io/cloudnative-pg/postgresql:17.0
+          image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
           env:
+            - name: POSTHOG_POSTGRES_HOST
+              value: "posthog-db-rw.posthog.svc.cluster.local"
+            - name: POSTHOG_POSTGRES_PORT
+              value: "5432"
             - name: CLICKHOUSE_HOST
               value: "posthog-clickhouse.posthog.svc.cluster.local"
-            - name: CLICKHOUSE_CLUSTER
-              value: "default"
-            - name: CLICKHOUSE_DATABASE
-              value: "default"
-            - name: CLICKHOUSE_USER
-              value: "posthog"
-            - name: CLICKHOUSE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: "posthog-clickhouse-auth"
-                  key: "password"
-            - name: CLICKHOUSE_SECURE
-              value: "false"
-            - name: CLICKHOUSE_VERIFY
-              value: "false"
           command:
             - /bin/sh
             - -c
-            - >
-                until pg_isready -q -h "posthog-db-rw.$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).svc.cluster.local" -p 5432;
+            - |
+                until python -c 'import os, socket, sys; s=socket.socket(); s.settimeout(2); c=s.connect_ex((os.environ["POSTHOG_POSTGRES_HOST"], int(os.environ["POSTHOG_POSTGRES_PORT"]))); s.close(); sys.exit(c)';
                 do
                   echo "waiting for Postgres";
+                  sleep 1;
+                done
+                until python -c 'import os, socket, sys; s=socket.socket(); s.settimeout(2); c=s.connect_ex((os.environ["CLICKHOUSE_HOST"], 8123)); s.close(); sys.exit(c)';
+                do
+                  echo "waiting for ClickHouse HTTP";
                   sleep 1;
                 done
