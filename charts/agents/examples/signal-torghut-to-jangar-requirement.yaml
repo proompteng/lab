@@ -1,0 +1,18 @@
+apiVersion: signals.proompteng.ai/v1alpha1
+kind: Signal
+metadata:
+  name: torghut-risk-handoff-example
+  namespace: agents
+  labels:
+    swarm.proompteng.ai/type: requirement
+    swarm.proompteng.ai/from: torghut-quant
+    swarm.proompteng.ai/to: jangar-control-plane
+spec:
+  channel: huly://swarm-bridge/issues/TOR-REQ-001
+  description: Raise platform risk controls for market-open volatility regime.
+  payload:
+    priority: high
+    objective: tighten pre-trade limit enforcement and add runtime guardrails
+    acceptance:
+      - control-plane rollout to agents namespace
+      - torghut risk checks return healthy
