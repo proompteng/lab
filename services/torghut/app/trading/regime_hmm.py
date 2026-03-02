@@ -51,6 +51,7 @@ class HMMRegimeContext:
     schema_version: str
     regime_id: str
     posterior: dict[str, str]
+    posterior_valid: bool
     entropy: str
     entropy_band: str
     predicted_next: str
@@ -74,7 +75,9 @@ class HMMRegimeContext:
     @property
     def is_authoritative(self) -> bool:
         return (
-            self.has_regime
+            self.schema_version == HMM_CONTEXT_SCHEMA_VERSION
+            and self.has_regime
+            and self.posterior_valid
             and not self.guardrail.stale
             and not self.guardrail.fallback_to_defensive
             and not self.transition_shock
@@ -83,6 +86,10 @@ class HMMRegimeContext:
 
     @property
     def authority_reason(self) -> str | None:
+        if self.schema_version != HMM_CONTEXT_SCHEMA_VERSION:
+            return "invalid_schema_version"
+        if not self.posterior_valid:
+            return "invalid_posterior"
         if self.has_regime and not _REGIME_ID_RE.match(self.regime_id):
             return "invalid_regime_id"
         if self.transition_shock:
@@ -100,13 +107,21 @@ class HMMRegimeContext:
             "schema_version": self.schema_version,
             "regime_id": self.regime_id,
             "posterior": dict(self.posterior),
+            "hmm_state_posterior": dict(self.posterior),
             "entropy": self.entropy,
+            "hmm_entropy": self.entropy,
             "entropy_band": self.entropy_band,
+            "hmm_entropy_band": self.entropy_band,
             "predicted_next": self.predicted_next,
+            "hmm_predicted_next": self.predicted_next,
             "transition_shock": self.transition_shock,
+            "hmm_transition_shock": self.transition_shock,
             "duration_ms": self.duration_ms,
+            "hmm_duration_ms": self.duration_ms,
             "artifact": self.artifact.to_payload(),
+            "hmm_artifact": self.artifact.to_payload(),
             "guardrail": self.guardrail.to_payload(),
+            "hmm_guardrail": self.guardrail.to_payload(),
         }
 
     @classmethod
@@ -115,6 +130,7 @@ class HMMRegimeContext:
             schema_version=HMM_UNKNOWN_SCHEMA_VERSION,
             regime_id=HMM_UNKNOWN_REGIME_ID,
             posterior={},
+            posterior_valid=False,
             entropy=HMM_DEFAULT_ENTROPY,
             entropy_band="low",
             predicted_next=HMM_UNKNOWN_REGIME_ID,
@@ -189,6 +205,10 @@ def resolve_regime_context_authority_reason(context: HMMRegimeContext) -> str | 
     reason = context.authority_reason
     if reason in {"invalid_regime_id", "missing_regime"}:
         return "hmm_unknown"
+    if reason == "invalid_schema_version":
+        return "hmm_schema_version_invalid"
+    if reason == "invalid_posterior":
+        return "hmm_invalid_posterior"
     if reason in {"transition_shock", "stale", "fallback_to_defensive"}:
         return reason
     if reason is not None:
@@ -232,6 +252,8 @@ def _extract_context_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] | 
             return {str(k): v for k, v in regime_payload.items()}
     if _has_hmm_split_fields(regime_payload):
         return {
+            "schema_version": regime_payload.get("schema_version")
+            or regime_payload.get("schemaVersion"),
             "regime_id": regime_payload.get("hmm_regime_id"),
             "posterior": regime_payload.get("hmm_state_posterior"),
             "entropy": regime_payload.get("hmm_entropy"),
@@ -286,7 +308,7 @@ def _parse_context_map(payload: Mapping[str, Any]) -> HMMRegimeContext:
 
     regime_id = _normalize_regime_id(payload.get("regime_id") or payload.get("regimeId"))
     posterior_raw = payload.get("posterior")
-    posterior = _coerce_posterior(posterior_raw)
+    posterior, posterior_valid = _coerce_posterior(posterior_raw)
     entropy = _coerce_decimal_str(payload.get("entropy"))
     entropy_band_raw = payload.get("entropy_band") or payload.get("entropyBand")
     entropy_band = _coerce_entropy_band(entropy_band_raw, entropy)
@@ -309,6 +331,7 @@ def _parse_context_map(payload: Mapping[str, Any]) -> HMMRegimeContext:
         schema_version=schema_version,
         regime_id=regime_id,
         posterior=posterior,
+        posterior_valid=posterior_valid,
         entropy=entropy,
         entropy_band=entropy_band,
         predicted_next=predicted_next,
@@ -333,11 +356,13 @@ def _normalize_regime_id(raw: Any) -> str:
     return text
 
 
-def _coerce_posterior(raw: Any) -> dict[str, str]:
+def _coerce_posterior(raw: Any) -> tuple[dict[str, str], bool]:
     if not isinstance(raw, Mapping):
-        return {}
+        return {}, False
 
     payload = cast(Mapping[str, Any], raw)
+    parsed_any = False
+    valid = True
     posterior: dict[str, str] = {}
     for key, value in payload.items():
         key_value = _coerce_string(key)
@@ -345,8 +370,25 @@ def _coerce_posterior(raw: Any) -> dict[str, str]:
             continue
         if not key_value:
             continue
-        posterior[key_value] = _coerce_decimal_str(value)
-    return posterior
+        try:
+            posterior[key_value] = _coerce_posterior_probability(value)
+        except ValueError:
+            valid = False
+            continue
+        parsed_any = True
+
+    if not parsed_any:
+        valid = False
+    return posterior, valid
+
+
+def _coerce_posterior_probability(raw: Any) -> str:
+    try:
+        decimal_value = Decimal(str(raw))
+    except (ArithmeticError, ValueError, TypeError) as exc:
+        raise ValueError("posterior value must be a valid decimal") from exc
+    return str(decimal_value)
+
 
 
 def _coerce_decimal_str(raw: Any) -> str:

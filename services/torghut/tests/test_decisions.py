@@ -629,6 +629,8 @@ class TestDecisionEngine(TestCase):
                 'rsi14': Decimal('20'),
                 'price': Decimal('100'),
                 'hmm_regime_id': 'R2',
+                'schema_version': 'hmm_regime_context_v1',
+                'hmm_state_posterior': {'R2': '0.75'},
                 'hmm_entropy': '1.23',
                 'hmm_entropy_band': 'medium',
                 'hmm_predicted_next': 'R3',
@@ -655,8 +657,157 @@ class TestDecisionEngine(TestCase):
         self.assertIsInstance(regime_payload, dict)
         self.assertEqual(regime_payload.get('regime_id'), 'R2')
         self.assertEqual(regime_payload.get('artifact', {}).get('model_id'), 'hmm-regime-v1.2.0')
+        self.assertEqual(regime_payload.get('hmm_state_posterior'), {'R2': '0.75'})
+        self.assertEqual(regime_payload.get('hmm_entropy'), '1.23')
+        self.assertEqual(regime_payload.get('hmm_entropy_band'), 'medium')
+        self.assertEqual(regime_payload.get('hmm_predicted_next'), 'R3')
+        self.assertEqual(regime_payload.get('hmm_transition_shock'), False)
         self.assertEqual(params.get('regime_label'), 'r2')
         self.assertEqual(params.get('route_regime_label'), 'r2')
+
+    def test_decision_params_fallback_with_invalid_schema_version_preserves_lineage(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='regime-hmm-invalid-schema',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 27, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+                'schema_version': 'hmm_regime_context_v0',
+                'hmm_regime_id': 'R2',
+                'hmm_entropy': '1.23',
+                'hmm_entropy_band': 'medium',
+                'hmm_predicted_next': 'R3',
+                'hmm_artifact': {
+                    'model_id': 'hmm-regime-v1.2.0',
+                    'feature_schema': 'hmm-v1-feature-schema',
+                    'training_run_id': 'trn_2026-02-28',
+                },
+                'hmm_transition_shock': False,
+                'hmm_duration_ms': 14,
+                'regime_label': 'trend',
+            },
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        params = decisions[0].params
+        regime_payload = params.get('regime_hmm')
+        self.assertIsInstance(regime_payload, dict)
+        self.assertEqual(regime_payload.get('schema_version'), 'hmm_regime_context_v0')
+        self.assertEqual(regime_payload.get('artifact', {}).get('model_id'), 'hmm-regime-v1.2.0')
+        self.assertEqual(params.get('route_regime_label'), 'trend')
+        self.assertEqual(params.get('regime_label'), 'trend')
+
+    def test_decision_params_fallback_with_invalid_posterior_preserves_lineage(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='regime-hmm-invalid-posterior',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 27, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+                'schema_version': 'hmm_regime_context_v1',
+                'hmm_regime_id': 'R2',
+                'hmm_state_posterior': {'R2': 'not-a-decimal'},
+                'hmm_entropy': '1.23',
+                'hmm_entropy_band': 'medium',
+                'hmm_predicted_next': 'R3',
+                'hmm_artifact': {
+                    'model_id': 'hmm-regime-v1.2.0',
+                    'feature_schema': 'hmm-v1-feature-schema',
+                    'training_run_id': 'trn_2026-02-28',
+                },
+                'hmm_transition_shock': False,
+                'hmm_duration_ms': 14,
+                'regime_label': 'trend',
+            },
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        params = decisions[0].params
+        regime_payload = params.get('regime_hmm')
+        self.assertIsInstance(regime_payload, dict)
+        self.assertEqual(regime_payload.get('schema_version'), 'hmm_regime_context_v1')
+        self.assertEqual(regime_payload.get('artifact', {}).get('model_id'), 'hmm-regime-v1.2.0')
+        self.assertEqual(params.get('route_regime_label'), 'trend')
+        self.assertEqual(params.get('regime_label'), 'trend')
+
+    def test_decision_params_fallback_with_stale_regime_guardrail_preserves_lineage(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='regime-hmm-stale-preserves-lineage',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 1, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+                'schema_version': 'hmm_regime_context_v1',
+                'hmm_regime_id': 'R2',
+                'hmm_state_posterior': {'R2': '0.75'},
+                'hmm_entropy': '1.23',
+                'hmm_entropy_band': 'medium',
+                'hmm_predicted_next': 'R3',
+                'hmm_artifact': {
+                    'model_id': 'hmm-regime-v1.2.0',
+                    'feature_schema': 'hmm-v1-feature-schema',
+                    'training_run_id': 'trn_2026-03-01',
+                },
+                'hmm_guardrail': {'stale': True, 'fallback_to_defensive': False, 'reason': 'aging_output'},
+                'hmm_transition_shock': False,
+                'regime_label': 'trend',
+            },
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        params = decisions[0].params
+        regime_payload = params.get('regime_hmm')
+        self.assertIsInstance(regime_payload, dict)
+        self.assertEqual(regime_payload.get('schema_version'), 'hmm_regime_context_v1')
+        self.assertEqual(regime_payload.get('artifact', {}).get('model_id'), 'hmm-regime-v1.2.0')
+        self.assertEqual(
+            regime_payload.get('hmm_guardrail', {}).get('reason'),
+            'aging_output'
+        )
+        self.assertEqual(params.get('route_regime_label'), 'trend')
+        self.assertEqual(params.get('regime_label'), 'trend')
 
     def test_decision_regime_route_label_falls_back_to_explicit_regime_label(self) -> None:
         engine = DecisionEngine(price_fetcher=None)

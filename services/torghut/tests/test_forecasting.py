@@ -396,6 +396,8 @@ class TestForecastRouterV5(TestCase):
         signal = _signal()
         signal.payload['macd']['macd'] = '1.2'
         signal.payload['hmm_regime_id'] = 'R2'
+        signal.payload['schema_version'] = 'hmm_regime_context_v1'
+        signal.payload['hmm_state_posterior'] = {'R2': '0.75'}
         signal.payload['regime_label'] = 'trend'
         result = router.route_and_forecast(
             feature_vector=normalize_feature_vector_v3(signal),
@@ -486,7 +488,8 @@ class TestForecastRouterV5(TestCase):
         }
         feature_vector = normalize_feature_vector_v3(signal)
 
-        self.assertNotIn('hmm_transition_shock', feature_vector.values)
+        self.assertIn('hmm_transition_shock', feature_vector.values)
+        self.assertEqual(feature_vector.values.get('hmm_transition_shock'), True)
         self.assertEqual(feature_vector.values.get('route_regime_label'), 'mean_revert')
 
     def test_router_prefers_explicit_route_regime_label_hint_when_hmm_invalid(self) -> None:
