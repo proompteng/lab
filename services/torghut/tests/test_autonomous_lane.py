@@ -30,6 +30,12 @@ from app.trading.autonomy.policy_checks import (
 from app.trading.autonomy.phase_manifest_contract import coerce_phase_status
 from app.trading.autonomy.gates import GateEvaluationReport, GateResult
 from app.trading.evaluation import WalkForwardDecision
+from app.trading.parity import (
+    BENCHMARK_PARITY_REQUIRED_FAMILIES,
+    BENCHMARK_PARITY_REQUIRED_RUN_FIELDS,
+    BENCHMARK_PARITY_REQUIRED_SCORECARDS,
+    BENCHMARK_PARITY_SCHEMA_VERSION,
+)
 from app.trading.features import SignalFeatures
 from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.reporting import PromotionEvidenceSummary, PromotionRecommendation
@@ -223,9 +229,42 @@ class TestAutonomousLane(TestCase):
                 evidence["stress_metrics"]["artifact_ref"],
                 str(output_dir / "gates" / "stress-metrics-v1.json"),
             )
+            self.assertEqual(
+                evidence["benchmark_parity"]["artifact_ref"],
+                str(output_dir / "benchmarks" / "benchmark-parity-report-v1.json"),
+            )
             self.assertTrue(
                 (output_dir / "gates" / "stress-metrics-v1.json").exists()
             )
+            self.assertTrue(
+                (output_dir / "benchmarks" / "benchmark-parity-report-v1.json").exists()
+            )
+            self.assertEqual(
+                result.benchmark_parity_path,
+                output_dir / "benchmarks" / "benchmark-parity-report-v1.json",
+            )
+            benchmark_parity_payload = json.loads(
+                result.benchmark_parity_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                benchmark_parity_payload["schema_version"],
+                BENCHMARK_PARITY_SCHEMA_VERSION,
+            )
+            self.assertEqual(
+                set(BENCHMARK_PARITY_REQUIRED_SCORECARDS),
+                set(benchmark_parity_payload.get("scorecards", {}).keys()),
+            )
+            self.assertEqual(
+                set(BENCHMARK_PARITY_REQUIRED_FAMILIES),
+                {
+                    str(run.get("family"))
+                    for run in benchmark_parity_payload.get("benchmark_runs", [])
+                    if isinstance(run, dict)
+                },
+            )
+            for required_run in BENCHMARK_PARITY_REQUIRED_RUN_FIELDS:
+                for run in benchmark_parity_payload.get("benchmark_runs", []):
+                    self.assertIn(required_run, run)
             self.assertIn("janus_q", evidence)
             self.assertEqual(evidence["janus_q"]["event_car"]["count"], 3)
             self.assertEqual(evidence["janus_q"]["hgrm_reward"]["count"], 3)
@@ -285,6 +324,10 @@ class TestAutonomousLane(TestCase):
                 str(output_dir / "gates" / "stress-metrics-v1.json"),
                 actuation_payload["artifact_refs"],
             )
+            self.assertIn(
+                str(output_dir / "benchmarks" / "benchmark-parity-report-v1.json"),
+                actuation_payload["artifact_refs"],
+            )
 
     def test_lane_promotion_stress_artifact_ref_uses_output_dir_relative_path(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
@@ -327,8 +370,15 @@ class TestAutonomousLane(TestCase):
                     evidence["stress_metrics"]["artifact_ref"],
                     str(Path("gates") / "stress-metrics-v1.json"),
                 )
+                self.assertEqual(
+                    evidence["benchmark_parity"]["artifact_ref"],
+                    str(Path("benchmarks") / "benchmark-parity-report-v1.json"),
+                )
                 self.assertTrue(
                     (output_dir / "gates" / "stress-metrics-v1.json").exists()
+                )
+                self.assertTrue(
+                    (output_dir / "benchmarks" / "benchmark-parity-report-v1.json").exists()
                 )
             finally:
                 os.chdir(original_cwd)
@@ -1490,7 +1540,7 @@ class TestAutonomousLane(TestCase):
                 governance_repository="proompteng/lab",
             )
 
-            notes_path = output_dir / "iteration-1.md"
+            notes_path = output_dir / "notes" / "iteration-1.md"
             self.assertTrue(notes_path.exists())
             note_body = notes_path.read_text(encoding="utf-8")
             self.assertIn(f"- run_id: {result.run_id}", note_body)
