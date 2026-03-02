@@ -4814,9 +4814,11 @@ class TradingScheduler:
             phase_lineage = cast(dict[str, Any], phase_payload.get("phase_lineage"))
         raw_phase_trace = phase_lineage.get("stage_ids")
         if isinstance(raw_phase_trace, list):
-            phase_manifest_trace = [
-                str(item).strip() for item in raw_phase_trace if str(item).strip()
-            ]
+            phase_manifest_trace = []
+            for item in raw_phase_trace:
+                trace_id = str(item).strip()
+                if trace_id:
+                    phase_manifest_trace.append(trace_id)
         else:
             phase_manifest_trace = []
         provenance_raw = payload.get("provenance")
@@ -5650,8 +5652,6 @@ class TradingScheduler:
         if execution_context is not None:
             governance_payload["execution_context"] = dict(
                 execution_context
-                if isinstance(execution_context, Mapping)
-                else {}
             )
         try:
             return run_autonomous_lane(
@@ -5930,7 +5930,7 @@ class TradingScheduler:
 
         def _coerce_mapping(raw: Any) -> dict[str, Any]:
             if isinstance(raw, Mapping):
-                return cast(dict[str, Any], dict(raw))
+                return {str(key): value for key, value in raw.items()}
             return {}
 
         drift_status = str(

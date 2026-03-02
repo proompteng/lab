@@ -76,7 +76,6 @@ from .phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
     AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
     AUTONOMY_SLO_CONTRACT_VERSION,
-    AUTONOMY_PHASE_SLO_GATES,
     build_rollback_proof_phase_payload,
     build_runtime_governance_phase_payload,
     build_ordered_phase_summaries,
@@ -2142,13 +2141,14 @@ def _build_phase_manifest(
         "gates/recommendation": output_dir / "gates" / "promotion-recommendation.json",
         "rollout/phase-manifest.json": output_dir / "rollout" / "phase-manifest.json",
         "gates/gate-evaluation.json": gate_report_path,
-        "research/actuation-intent.json": (
-            Path(actuation_payload.get("artifact_path"))
-            if isinstance(actuation_payload, Mapping)
-            and isinstance(actuation_payload.get("artifact_path"), str)
-            else None
-        ),
+        "research/actuation-intent.json": None,
     }
+    if isinstance(actuation_payload, Mapping):
+        actuation_artifact_path = _coerce_str(actuation_payload.get("artifact_path"))
+        if actuation_artifact_path:
+            artifact_inputs["research/actuation-intent.json"] = Path(
+                actuation_artifact_path
+            )
     if canary_patch_path:
         artifact_inputs["gates/paper-candidate-patch"] = Path(canary_patch_path)
     phase_manifest_artifact_refs = sorted(

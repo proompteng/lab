@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from typing import Any
 
 AUTONOMY_PHASE_ORDER: tuple[str, ...] = (
     "gate-evaluation",
@@ -15,14 +15,12 @@ AUTONOMY_PHASE_ORDER: tuple[str, ...] = (
 AUTONOMY_PHASE_STATUS_DEFAULT = "skip"
 AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION = "torghut.autonomy.phase-manifest.v1"
 AUTONOMY_SLO_CONTRACT_VERSION = "governance-slo-v1"
-AUTONOMY_PHASE_SLO_GATES: dict[str, tuple[dict[str, Any], ...]] = cast(
-    dict[str, tuple[dict[str, Any], ...]],
-    {
-        "gate-evaluation": (
-            {"id": "slo_signal_count_minimum", "status": "pass", "threshold": 1},
-            {"id": "slo_decision_count_minimum", "status": "pass", "threshold": 1},
-            {"id": "slo_gate_evaluations_present"},
-        ),
+AUTONOMY_PHASE_SLO_GATES: dict[str, tuple[dict[str, Any], ...]] = {
+    "gate-evaluation": (
+        {"id": "slo_signal_count_minimum", "status": "pass", "threshold": 1},
+        {"id": "slo_decision_count_minimum", "status": "pass", "threshold": 1},
+        {"id": "slo_gate_evaluations_present"},
+    ),
     "promotion-prerequisites": (
         {"id": "slo_required_artifacts_present", "status": "pass", "threshold": 0},
     ),
@@ -51,8 +49,7 @@ AUTONOMY_PHASE_SLO_GATES: dict[str, tuple[dict[str, Any], ...]] = cast(
             "threshold": True,
         },
     ),
-    },
-)
+}
 AUTONOMY_MANIFEST_STATUSES: tuple[str, ...] = (
     "pass",
     "skip",
@@ -73,7 +70,7 @@ def _coerce_reason_values(raw: Any) -> list[str]:
         return []
     return [
         str(item).strip()
-        for item in cast(Sequence[Any], raw)
+        for item in raw
         if str(item).strip()
     ]
 
@@ -94,7 +91,7 @@ def build_runtime_governance_phase_payload(
     normalized_artifacts = sorted(
         {
             str(item).strip()
-            for item in cast(Sequence[Any], artifact_refs)
+            for item in artifact_refs
             if str(item).strip()
         }
     )
