@@ -224,7 +224,7 @@ describe('supporting primitives controller', () => {
     for (const call of apply.mock.calls) {
       const payload = call[0] as Record<string, unknown>
       expect(payload.kind).toBe('Schedule')
-      expect(payload.apiVersion).toBe('schedules.schedules.proompteng.ai/v1alpha1')
+      expect(payload.apiVersion).toBe('schedules.proompteng.ai/v1alpha1')
       const labels =
         payload?.metadata && typeof payload.metadata === 'object'
           ? (payload.metadata as Record<string, unknown>).labels
