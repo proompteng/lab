@@ -732,7 +732,6 @@ class TestLLMDSPyWorkflow(TestCase):
                     with self.assertRaisesRegex(
                         RuntimeError,
                         "dspy_promotion_gate_blocked:eval_report_reference_override_disallowed",
-                        "dspy_promotion_gate_blocked:eval_report_reference_override_disallowed",
                     ):
                         with Session(self.engine) as session:
                             orchestrate_dspy_agentrun_workflow(

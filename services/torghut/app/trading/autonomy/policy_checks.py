@@ -60,7 +60,6 @@ def evaluate_promotion_prerequisites(
     artifact_root: Path,
     now: datetime | None = None,
 ) -> PromotionPrerequisiteResult:
-    evaluation_at = now or datetime.now(timezone.utc)
     reasons: list[str] = []
     reason_details: list[dict[str, object]] = []
     if now is None:
@@ -817,11 +816,14 @@ def _evaluate_promotion_evidence(
         evidence=evidence,
         artifact_root=artifact_root,
         now=now,
-        promotion_target=promotion_target,
     )
-    reasons.extend(stress_reasons)
-    details.extend(stress_details)
-    refs.extend(stress_refs)
+    if _requires_stress_evidence(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        reasons.extend(stress_reasons)
+        details.extend(stress_details)
+        refs.extend(stress_refs)
 
     janus_reasons, janus_details, janus_refs = _evaluate_janus_evidence(
         policy_payload=policy_payload,
@@ -953,15 +955,6 @@ def _evaluate_fold_metrics_evidence(
     fold_raw = evidence.get("fold_metrics")
     fold_metrics = cast(dict[str, Any], fold_raw) if isinstance(fold_raw, dict) else {}
     fold_ref = str(fold_metrics.get("artifact_ref") or "").strip()
-    _append_evidence_artifact_reasons(
-        reasons=reasons,
-        reason_details=details,
-        evidence_name="fold_metrics",
-        artifact_root=artifact_root,
-        raw_ref=fold_ref,
-        policy_payload=policy_payload,
-        now=now,
-    )
     fold_count = _int_or_default(fold_metrics.get("count"), 0)
     min_fold_count = max(
         1,
