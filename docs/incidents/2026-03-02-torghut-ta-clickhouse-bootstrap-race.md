@@ -107,3 +107,64 @@ Primary root cause was startup-order fragility in TA ClickHouse schema initializ
 - TA env config model: `services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTaConfig.kt`
 - ClickHouse infra manifests: `argocd/applications/torghut/clickhouse/`
 - Keeper image pin: `argocd/applications/torghut/clickhouse/clickhouse-keeper.yaml`
+
+---
+
+## Follow-up Addendum: 2026-03-02 08:00Z Readiness Sweep
+
+### Additional Symptoms
+
+- `trading/status` showed:
+  - `signal_continuity.universe_fail_safe_blocked=true`
+  - `signal_continuity.universe_reason=jangar_payload_empty`
+  - `rollback.emergency_stop_active=true`
+- `GET /api/torghut/symbols` from in-cluster path returned an empty list.
+- `torghut` Postgres and TA ClickHouse tables had zero live rows (`trade_decisions=0`, `position_snapshots=0`, `ta_signals=0`, `ta_microbars=0`).
+
+### Additional Root Causes
+
+1. **Authoritative universe source empty**
+   - Jangar table `torghut_symbols` was empty, so `JANGAR_SYMBOLS_URL` resolved to `{"symbols":[]}`.
+   - Torghut’s universe fail-safe correctly blocked autonomy progression.
+
+2. **Emergency stop latched on non-recoverable reason**
+   - Once `universe_source_unavailable:*` was latched, emergency stop remained active until process reset.
+
+3. **WS bars backfill regression**
+   - After enabling backfill for overnight warmup, ws logs showed parsing failure:
+     - `Unexpected JSON token ... unknown key 'next_page_token'`
+     - payload shape: `{"bars":{},"next_page_token":null}`
+   - This prevented bars backfill from emitting any Kafka bars at startup.
+
+### Additional Live Actions Performed
+
+1. Seeded `jangar.torghut_symbols` from `torghut-ws-config.SYMBOLS` (9 symbols: `ARM,CRWD,GOOG,LRCX,MSFT,MU,NVDA,SNDK,TSM`).
+2. Verified Jangar symbols API immediately returned non-empty symbols.
+3. Restarted Torghut service pod to clear latched emergency-stop state.
+4. Confirmed post-restart:
+   - `universe_status=ok`
+   - `universe_fail_safe_blocked=false`
+   - `rollback.emergency_stop_active=false`
+5. Attempted non-destructive TA replay (`ta_replay_runner.py --mode apply`) to recover backlog; Argo CD reconciled TA config/restart nonce back to GitOps desired state.
+6. Patched ws config live with `ENABLE_BARS_BACKFILL=true` and restarted ws; observed parser exception on `next_page_token` (regression confirmed).
+
+### Durable Fixes Added in Repo (Addendum)
+
+1. Enabled bars backfill in Torghut ws GitOps config:
+   - `argocd/applications/torghut/ws/configmap.yaml`
+   - `ENABLE_BARS_BACKFILL: "true"`
+2. Fixed ws backfill response decoding to tolerate Alpaca pagination payloads:
+   - `services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderApp.kt`
+   - Explicit decode via app JSON parser (`ignoreUnknownKeys=true`) for backfill response.
+3. Added regression test:
+   - `services/dorvud/websockets/src/test/kotlin/ai/proompteng/dorvud/ws/ForwarderEndpointsTest.kt`
+   - Verifies payload containing `next_page_token` parses successfully.
+
+### Addendum Validation
+
+- Targeted test passed:
+  - `./gradlew :websockets:test --tests "ai.proompteng.dorvud.ws.ForwarderEndpointsTest"`
+- Live control-plane state after remediation:
+  - `universe_status=ok`, `universe_symbols_count=9`, `universe_fail_safe_blocked=false`, `emergency_stop_active=false`.
+- Remaining runtime note at addendum close:
+  - ClickHouse TA tables remained empty outside market hours until backfill parser fix is deployed.

@@ -34,6 +34,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -83,6 +84,17 @@ internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> =
     AlpacaMarketType.CRYPTO -> listOf("trades", "quotes", "bars")
   }
 
+@Serializable
+internal data class AlpacaBarsResponse(
+  val bars: JsonElement? = null,
+  val symbol: String? = null,
+)
+
+internal fun decodeAlpacaBarsResponse(
+  payload: String,
+  json: Json,
+): AlpacaBarsResponse = json.decodeFromString(payload)
+
 class ForwarderApp(
   private val config: ForwarderConfig,
   private val producerFactory: (ForwarderConfig) -> KafkaProducer<String, String> = { cfg -> buildProducer(cfg.kafka) },
@@ -112,7 +124,7 @@ class ForwarderApp(
   private val httpClient =
     HttpClient(CIO) {
       install(WebSockets)
-      install(ContentNegotiation) { json() }
+      install(ContentNegotiation) { json(this@ForwarderApp.json) }
     }
   private val metrics = ForwarderMetrics(Metrics.registry)
   private val reconnectBackoff = ReconnectBackoff(config.reconnectBaseMs, config.reconnectMaxMs)
@@ -760,12 +772,6 @@ class ForwarderApp(
     }
   }
 
-  @Serializable
-  private data class AlpacaBarsResponse(
-    val bars: JsonElement? = null,
-    val symbol: String? = null,
-  )
-
   private suspend fun fetchBackfillBars(symbols: List<String>): List<AlpacaBar> {
     if (symbols.isEmpty()) return emptyList()
     return symbols.chunked(config.subscribeBatchSize).flatMap { chunk ->
@@ -777,18 +783,21 @@ class ForwarderApp(
     if (symbols.isEmpty()) return emptyList()
     val url = alpacaBarsBackfillUrl(config)
 
-    val response: AlpacaBarsResponse =
-      httpClient
-        .get(url) {
-          parameter("symbols", symbols.joinToString(","))
-          parameter("timeframe", "1Min")
-          parameter("limit", "100")
-          if (alpacaBarsBackfillNeedsFeed(config)) {
-            parameter("feed", config.alpacaFeed)
-          }
-          header("APCA-API-KEY-ID", config.alpacaKeyId)
-          header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
-        }.body()
+    val response =
+      decodeAlpacaBarsResponse(
+        httpClient
+          .get(url) {
+            parameter("symbols", symbols.joinToString(","))
+            parameter("timeframe", "1Min")
+            parameter("limit", "100")
+            if (alpacaBarsBackfillNeedsFeed(config)) {
+              parameter("feed", config.alpacaFeed)
+            }
+            header("APCA-API-KEY-ID", config.alpacaKeyId)
+            header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
+          }.body(),
+        json,
+      )
 
     val barsElement = response.bars ?: return emptyList()
 
