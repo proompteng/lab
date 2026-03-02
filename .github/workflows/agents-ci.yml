@@ -144,7 +144,6 @@ jobs:
           AGENTS_NAMESPACE: agents-ci
           AGENTS_RELEASE_NAME: agents-ci
           AGENTS_VALUES_FILE: charts/agents/values-ci.yaml
-          AGENTS_DB_IMAGE: pgvector/pgvector:pg18-bookworm
           AGENTS_CREATE_NAMESPACE: 'true'
           AGENTS_DB_BOOTSTRAP: 'true'
           AGENTCTL_BIN: services/jangar/agentctl/dist/agentctl
