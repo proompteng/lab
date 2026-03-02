@@ -1524,6 +1524,10 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertEqual(notes_path.parent.name, "notes")
             self.assertEqual(notes_path.name, "iteration-1.md")
             self.assertEqual(
+                notes_path.parent,
+                Path(deps.call_kwargs["output_dir"]).parent / "notes",
+            )
+            self.assertEqual(
                 scheduler.state.last_autonomy_iteration,
                 1,
             )
