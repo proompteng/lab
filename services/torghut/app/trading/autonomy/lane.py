@@ -135,66 +135,6 @@ def _readable_iteration_number(notes_dir: Path) -> int:
     return iteration + 1
 
 
-def _readable_stage_iteration_number(artifact_root: Path) -> int:
-    pattern = re.compile(r"^iteration-(\d+)\.md$")
-    highest = 0
-    for item in artifact_root.glob("iteration-*.md"):
-        match = pattern.match(item.name)
-        if not match:
-            continue
-        try:
-            candidate = int(match.group(1))
-        except (TypeError, ValueError):
-            continue
-        if candidate > highest:
-            highest = candidate
-    return highest + 1
-
-
-def _write_stage_iteration_notes(
-    *,
-    artifact_root: Path,
-    run_id: str,
-    candidate_id: str,
-    promotion_target: PromotionTarget,
-    promotion_recommended_mode: PromotionTarget,
-    gate_allowed: bool,
-    recommendation_action: str,
-    recommendation_reason_count: int,
-    promotion_reasons: list[str],
-    repository: str,
-    base: str,
-    head: str,
-    priority_id: str | None,
-) -> Path:
-    artifact_root.mkdir(parents=True, exist_ok=True)
-    iteration = _readable_stage_iteration_number(artifact_root)
-    notes_path = artifact_root / f"iteration-{iteration}.md"
-
-    lines = [
-        f"# Autonomy lane iteration {iteration}",
-        "",
-        f"- run_id: {run_id}",
-        f"- candidate_id: {candidate_id}",
-        f"- promotion_target: {promotion_target}",
-        f"- recommendation_mode: {promotion_recommended_mode}",
-        f"- recommendation_action: {recommendation_action}",
-        f"- gate_allowed: {str(gate_allowed).lower()}",
-        f"- recommendation_reason_count: {recommendation_reason_count}",
-        "- repository: {0}".format(repository),
-        "- base: {0}".format(base),
-        "- head: {0}".format(head),
-    ]
-    if priority_id:
-        lines.append(f"- priority_id: {priority_id}")
-
-    lines.append("")
-    lines.append("## Gate and evidence summary")
-    lines.extend(f"- {reason}" for reason in promotion_reasons)
-
-    notes_path.write_text("\n".join(lines), encoding="utf-8")
-    return notes_path
-
 
 def _coerce_evidence_bool(value: object) -> bool | None:
     if isinstance(value, bool):
@@ -1545,24 +1485,31 @@ def run_autonomous_lane(
             | {str(phase_manifest_path)}
         )
 
-        candidate_generation_manifest_payload = json.loads(
-            candidate_generation_manifest_path.read_text(encoding="utf-8")
+        phase_lineage_stages = _coerce_mapping(
+            phase_manifest_payload.get("phase_lineage", {}).get("lineage_stages")
         )
-        evaluation_manifest_payload = json.loads(
-            evaluation_manifest_path.read_text(encoding="utf-8")
-        )
-        recommendation_manifest_payload = json.loads(
-            recommendation_manifest_path.read_text(encoding="utf-8")
-        )
+        computed_stage_trace_ids: dict[str, str] = {}
+        for stage_name, stage_payload in phase_lineage_stages.items():
+            if not isinstance(stage_payload, Mapping):
+                continue
+            normalized_stage_name = str(stage_name)
+            if normalized_stage_name in (
+                _AUTONOMY_STAGE_CANDIDATE_GENERATION,
+                _AUTONOMY_STAGE_EVALUATION,
+                _AUTONOMY_STAGE_RECOMMENDATION,
+            ):
+                computed_stage_trace_ids[normalized_stage_name] = str(
+                    _coerce_mapping(stage_payload).get("stage_trace_id", "")
+                )
         stage_trace_ids = {
             _AUTONOMY_STAGE_CANDIDATE_GENERATION: str(
-                candidate_generation_manifest_payload.get("stage_trace_id")
+                computed_stage_trace_ids.get(_AUTONOMY_STAGE_CANDIDATE_GENERATION, "")
             ),
             _AUTONOMY_STAGE_EVALUATION: str(
-                evaluation_manifest_payload.get("stage_trace_id")
+                computed_stage_trace_ids.get(_AUTONOMY_STAGE_EVALUATION, "")
             ),
             _AUTONOMY_STAGE_RECOMMENDATION: str(
-                recommendation_manifest_payload.get("stage_trace_id")
+                computed_stage_trace_ids.get(_AUTONOMY_STAGE_RECOMMENDATION, "")
             ),
         }
         stage_manifest_refs = {
@@ -1708,21 +1655,6 @@ def run_autonomous_lane(
             now=now,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
-        )
-        _write_stage_iteration_notes(
-            artifact_root=output_dir,
-            run_id=run_id,
-            candidate_id=candidate_id,
-            promotion_target=promotion_target,
-            promotion_recommended_mode=recommended_mode,
-            gate_allowed=promotion_allowed,
-            recommendation_action=promotion_recommendation.action,
-            recommendation_reason_count=len(promotion_reasons),
-            promotion_reasons=promotion_reasons,
-            repository=resolved_governance_repository,
-            base=resolved_governance_base,
-            head=governance_head_id,
-            priority_id=priority_id,
         )
 
         return AutonomousLaneResult(
@@ -2664,7 +2596,7 @@ def _normalize_governance_inputs(
     override_execution_context = _coerce_mapping(override_payload.get("execution_context"))
     runtime_governance = dict(
         {
-            "governance_status": "skipped",
+            "governance_status": "skip",
             "drift_status": "unknown",
             "rollback_triggered": False,
             "artifact_refs": [],
@@ -2808,7 +2740,7 @@ def _build_phase_manifest(
         else []
     )
     canary_status = "pass" if patch_path is not None else (
-        "fail" if requested_promotion_target == "paper" else "skipped"
+        "fail" if requested_promotion_target == "paper" else "skip"
     )
     canary_slo_status = canary_status
     canary_artifact_path = str(patch_path) if patch_path is not None else None
@@ -3104,7 +3036,7 @@ def _build_phase_manifest(
         "status": (
             "pass"
             if all(
-                coerce_phase_status(phase.get("status"), default="fail") in {"pass", "skipped", "skip"}
+                coerce_phase_status(phase.get("status"), default="fail") in {"pass", "skip"}
                 for phase in ordered_phase_summaries
             )
             else "fail"
