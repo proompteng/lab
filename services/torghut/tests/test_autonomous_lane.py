@@ -121,6 +121,7 @@ class TestAutonomousLane(TestCase):
         ]
 
         state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
+            metrics_payload={},
             decisions=decisions
         )
 
@@ -131,6 +132,7 @@ class TestAutonomousLane(TestCase):
 
     def test_gate_fragility_inputs_fail_closed_on_missing_or_invalid_values(self) -> None:
         state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
+            metrics_payload={},
             decisions=[]
         )
         self.assertEqual(state, "normal")
@@ -139,6 +141,7 @@ class TestAutonomousLane(TestCase):
         self.assertFalse(inputs_valid)
 
         state, score, stability, inputs_valid = _resolve_gate_fragility_inputs(
+            metrics_payload={},
             decisions=[
                 WalkForwardDecision(
                     decision=StrategyDecision(
