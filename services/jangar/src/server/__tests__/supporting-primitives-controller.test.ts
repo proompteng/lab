@@ -297,6 +297,31 @@ describe('supporting primitives controller', () => {
     expect(__test__.resolveWatchedResourceForKind('ConfigMap')).toBeNull()
   })
 
+  it('identifies swarm status-only modified events', () => {
+    const swarm = {
+      kind: 'Swarm',
+      metadata: { generation: 7 },
+      status: { observedGeneration: 7 },
+    }
+
+    expect(__test__.isSwarmStatusOnlyEvent('MODIFIED', swarm)).toBe(true)
+    expect(__test__.isSwarmStatusOnlyEvent('ADDED', swarm)).toBe(false)
+    expect(__test__.isSwarmStatusOnlyEvent('MODIFIED', { ...swarm, status: { observedGeneration: 6 } })).toBe(false)
+  })
+
+  it('throttles swarm status-only reconciles within the guard interval', () => {
+    const key = 'agents/Swarm/jangar-control-plane'
+    const startMs = 1_000
+
+    expect(__test__.shouldThrottleSwarmStatusReconcile(key, startMs)).toBe(false)
+    expect(
+      __test__.shouldThrottleSwarmStatusReconcile(key, startMs + __test__.SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS - 1),
+    ).toBe(true)
+    expect(
+      __test__.shouldThrottleSwarmStatusReconcile(key, startMs + __test__.SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS),
+    ).toBe(false)
+  })
+
   it('resolves startup gate from feature flags with env fallback default', async () => {
     const previousNodeEnv = process.env.NODE_ENV
     try {

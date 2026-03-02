@@ -67,6 +67,9 @@ const namespaceQueues = new Map<string, Promise<void>>()
 const queuedResourceKeysByNamespace = new Map<string, Map<string, { rerun: boolean }>>()
 const optionalCrdsReady = new Set<string>()
 const swarmUnfreezeTimers = new Map<string, NodeJS.Timeout>()
+const swarmStatusReconcileThrottleByKey = new Map<string, number>()
+
+const SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS = 30_000
 
 const nowIso = () => new Date().toISOString()
 
@@ -550,6 +553,28 @@ const resolveWatchedResourceForKind = (kind: string) => {
   if (kind === 'Workspace') return RESOURCE_MAP.Workspace
   if (kind === 'Artifact') return RESOURCE_MAP.Artifact
   return null
+}
+
+const asNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  return null
+}
+
+const isSwarmStatusOnlyEvent = (eventType: string | undefined, resource: Record<string, unknown>) => {
+  if (eventType !== 'MODIFIED') return false
+  if (asString(resource.kind) !== 'Swarm') return false
+  const generation = asNumber(readNested(resource, ['metadata', 'generation']))
+  const observedGeneration = asNumber(readNested(resource, ['status', 'observedGeneration']))
+  return generation !== null && observedGeneration !== null && generation === observedGeneration
+}
+
+const shouldThrottleSwarmStatusReconcile = (resourceKey: string, nowMs = Date.now()) => {
+  const last = swarmStatusReconcileThrottleByKey.get(resourceKey)
+  if (last !== undefined && nowMs - last < SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS) {
+    return true
+  }
+  swarmStatusReconcileThrottleByKey.set(resourceKey, nowMs)
+  return false
 }
 
 const applyResourceIfChanged = async (
@@ -2227,6 +2252,9 @@ const handleResourceEvent = (
   const resourceKind = asString(resource.kind) ?? 'Unknown'
   const resourceName = asString(readNested(resource, ['metadata', 'name'])) ?? 'unknown'
   const queueKey = `${resourceNamespace}/${resourceKind}/${resourceName}`
+  if (isSwarmStatusOnlyEvent(event.type, resource) && shouldThrottleSwarmStatusReconcile(queueKey)) {
+    return
+  }
   queueResourceTask(resourceNamespace, queueKey, async () => {
     const watchedResource = resolveWatchedResourceForKind(resourceKind)
     if (!watchedResource || !resourceName || resourceName === 'unknown') {
@@ -2453,6 +2481,7 @@ export const stopSupportingPrimitivesController = () => {
   watchHandles = []
   namespaceQueues.clear()
   queuedResourceKeysByNamespace.clear()
+  swarmStatusReconcileThrottleByKey.clear()
   started = false
   controllerState.started = false
 }
@@ -2460,9 +2489,12 @@ export const stopSupportingPrimitivesController = () => {
 export const __test__ = {
   applyResourceIfChanged,
   buildScheduleRunnerCommand,
+  isSwarmStatusOnlyEvent,
   reconcileTool,
   reconcileSwarm,
   resolveWatchedResourceForKind,
+  shouldThrottleSwarmStatusReconcile,
   shouldStartWithFeatureFlag,
+  SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS,
   SWARM_CRD_REFRESH_INTERVAL_MS,
 }
