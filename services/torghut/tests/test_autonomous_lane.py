@@ -1736,6 +1736,7 @@ class TestAutonomousLane(TestCase):
                 if result.actuation_intent_path
                 else "{}"
             )
+            lineage_root = candidate_spec["stage_lineage"]["root_lineage_hash"]
             with session_factory() as session:
                 candidate = session.execute(
                     select(ResearchCandidate).where(
