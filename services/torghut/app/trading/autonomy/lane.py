@@ -1,5 +1,5 @@
 """Deterministic autonomous lane: research -> gate evaluation -> paper candidate patch."""
-# pyright: reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
+# pyright: reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedFunction=false
 
 from __future__ import annotations
 
@@ -75,9 +75,13 @@ from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_reg
 from .phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
     AUTONOMY_PHASE_SLO_GATES,
+    AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
+    AUTONOMY_SLO_CONTRACT_VERSION,
     build_ordered_phase_summaries,
     coerce_phase_status,
     normalize_phase_transitions,
+    build_rollback_proof_phase_payload,
+    build_runtime_governance_phase_payload,
 )
 
 
@@ -1534,7 +1538,7 @@ def _prepare_lane_output_dirs(output_dir: Path) -> tuple[Path, Path, Path, Path,
     return research_dir, backtest_dir, gates_dir, paper_dir, rollout_dir, stages_dir
 
 
-def _normalize_governance_inputs(
+def _normalize_governance_inputs_legacy(
     governance_inputs: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     raw = governance_inputs if isinstance(governance_inputs, Mapping) else {}
@@ -1566,7 +1570,7 @@ def _normalize_governance_inputs(
     }
 
 
-def _coalesce_governance_context(
+def _coalesce_governance_context_legacy(
     *,
     governance_inputs: Mapping[str, Any] | None,
     governance_repository: str | None,
@@ -1624,7 +1628,7 @@ def _coalesce_governance_context(
     }
 
 
-def _build_phase_manifest(
+def _build_phase_manifest_legacy(
     *,
     run_id: str,
     candidate_id: str,
