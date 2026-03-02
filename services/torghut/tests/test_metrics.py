@@ -231,12 +231,17 @@ class TestTradingMetrics(TestCase):
                 "tca_summary": {
                     "order_count": 3,
                     "avg_slippage_bps": 12.5,
+                    "avg_abs_slippage_bps": 12.5,
                     "avg_shortfall_notional": 1.25,
+                    "avg_shortfall_notional_abs": 1.25,
                     "avg_churn_ratio": 0.4,
                     "avg_divergence_bps": 2.1,
+                    "avg_divergence_bps_abs": 2.1,
                     "avg_realized_shortfall_bps": 2.2,
+                    "avg_realized_shortfall_bps_abs": 2.2,
                     "avg_expected_shortfall_bps_p50": 4.4,
                     "avg_expected_shortfall_bps_p95": 6.6,
+                    "avg_calibration_error_bps": 2.2,
                     "expected_shortfall_coverage": 0.5,
                     "expected_shortfall_sample_count": 2,
                 },
@@ -244,10 +249,15 @@ class TestTradingMetrics(TestCase):
         )
         self.assertIn("torghut_trading_tca_order_count 3.0", payload)
         self.assertIn("torghut_trading_tca_avg_slippage_bps 12.5", payload)
+        self.assertIn("torghut_trading_tca_avg_abs_slippage_bps 12.5", payload)
         self.assertIn("torghut_trading_tca_avg_shortfall_notional 1.25", payload)
+        self.assertIn("torghut_trading_tca_avg_shortfall_notional_abs 1.25", payload)
         self.assertIn("torghut_trading_tca_avg_churn_ratio 0.4", payload)
         self.assertIn("torghut_trading_tca_avg_divergence_bps 2.1", payload)
+        self.assertIn("torghut_trading_tca_avg_divergence_bps_abs 2.1", payload)
+        self.assertIn("torghut_trading_tca_avg_calibration_error_bps 2.2", payload)
         self.assertIn("torghut_trading_tca_avg_realized_shortfall_bps 2.2", payload)
+        self.assertIn("torghut_trading_tca_avg_realized_shortfall_bps_abs 2.2", payload)
         self.assertIn("torghut_trading_tca_avg_expected_shortfall_bps_p50 4.4", payload)
         self.assertIn("torghut_trading_tca_avg_expected_shortfall_bps_p95 6.6", payload)
         self.assertIn("torghut_trading_tca_expected_shortfall_coverage 0.5", payload)
