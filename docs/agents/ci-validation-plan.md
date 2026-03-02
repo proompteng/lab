@@ -42,6 +42,7 @@ See also:
   - `helm template charts/agents --set-json 'supportingController.namespaces=["*"]' --set rbac.clusterScoped=true` (expect success with supporting controller and cluster-scoped RBAC)
 
 Validation command helper (example):
+
 ```bash
 namespace_guardrails() {
   for cmd in \
