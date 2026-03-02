@@ -5152,7 +5152,11 @@ class TradingScheduler:
         if not resolved_governance_base or resolved_governance_base == "unknown":
             resolved_governance_base = governance_base or "main"
         resolved_governance_head = str(execution_context.get("head", "").strip())
-        if not resolved_governance_head or resolved_governance_head == "unknown":
+        if governance_head is None and governance_inputs is None:
+            resolved_governance_head = (
+                f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
+            )
+        elif not resolved_governance_head or resolved_governance_head == "unknown":
             resolved_governance_head = (
                 governance_head
                 or f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"

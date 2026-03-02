@@ -318,11 +318,18 @@ class TestTradingSchedulerAutonomy(TestCase):
                 allow_live=False,
                 approval_token=None,
             )
-            with patch(
-                "app.trading.scheduler.run_autonomous_lane",
-                side_effect=self._fake_run_autonomous_lane(deps),
+            with patch.dict(
+                os.environ,
+                {
+                    "GITHUB_HEAD_REF": "codex/ci-head-ref",
+                    "GITHUB_REF_NAME": "ci-ref-name",
+                },
             ):
-                scheduler._run_autonomous_cycle()
+                with patch(
+                    "app.trading.scheduler.run_autonomous_lane",
+                    side_effect=self._fake_run_autonomous_lane(deps),
+                ):
+                    scheduler._run_autonomous_cycle()
 
             self.assertEqual(deps.call_kwargs["promotion_target"], "paper")
             self.assertIsNone(deps.call_kwargs["approval_token"])
