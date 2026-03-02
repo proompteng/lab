@@ -964,8 +964,11 @@ def run_autonomous_lane(
             code_version=code_version,
             runbook_validated=_is_runbook_valid(strategy_configmap_path),
         )
-        candidate_state_readiness = cast(
-            dict[str, Any], candidate_state_payload.get("rollbackReadiness", {})
+        candidate_state_readiness_raw = candidate_state_payload.get("rollbackReadiness", {})
+        candidate_state_readiness = (
+            candidate_state_readiness_raw
+            if isinstance(candidate_state_readiness_raw, dict)
+            else {}
         )
         gate_inputs = GateInputs(
             feature_schema_version=gate_policy.required_feature_schema_version,
@@ -2293,7 +2296,12 @@ def _build_actuation_intent_payload(
     rollback_evidence_links.extend(
         [str(item) for item in promotion_check.get("artifact_refs", [])]
     )
-    candidate_state_readiness = candidate_state_payload.get("rollbackReadiness", {})
+    candidate_state_readiness_raw = candidate_state_payload.get("rollbackReadiness", {})
+    candidate_state_readiness = (
+        candidate_state_readiness_raw
+        if isinstance(candidate_state_readiness_raw, dict)
+        else {}
+    )
     return {
         "schema_version": _ACTUATION_INTENT_SCHEMA_VERSION,
         "run_id": run_id,

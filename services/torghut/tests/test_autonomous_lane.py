@@ -1108,6 +1108,66 @@ class TestAutonomousLane(TestCase):
                     actuation_payload["gates"]["recommendation_reasons"],
                 )
 
+    def test_lane_blocks_promotion_when_candidate_readiness_is_malformed(
+        self,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+        strategy_configmap_path = (
+            Path(__file__).parent.parent.parent.parent
+            / "argocd"
+            / "applications"
+            / "torghut"
+            / "strategy-configmap.yaml"
+        )
+
+        def malformed_candidate_state(
+            candidate_id: str,
+            run_id: str,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            payload = {
+                "candidateId": candidate_id,
+                "runId": run_id,
+                "activeStage": "gate-evaluation",
+                "paused": False,
+                "datasetSnapshotRef": "signals_window",
+                "noSignalReason": None,
+                "runbookValidated": "unknown",
+            }
+            payload["rollbackReadiness"] = "malformed"
+            return payload
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "app.trading.autonomy.lane._build_candidate_state_payload",
+                side_effect=malformed_candidate_state,
+            ):
+                output_dir = Path(tmpdir) / "lane-malformed-readiness"
+                result = run_autonomous_lane(
+                    signals_path=fixture_path,
+                    strategy_config_path=strategy_config_path,
+                    gate_policy_path=gate_policy_path,
+                    output_dir=output_dir,
+                    promotion_target="paper",
+                    code_version="test-sha",
+                    strategy_configmap_path=strategy_configmap_path,
+                )
+
+                actuation_payload = json.loads(
+                    result.actuation_intent_path.read_text(encoding="utf-8")
+                )
+                self.assertFalse(actuation_payload["actuation_allowed"])
+                self.assertIn(
+                    "rollback_checks_missing_or_failed",
+                    actuation_payload["gates"]["recommendation_reasons"],
+                )
+
     def test_lane_blocks_promotion_when_candidate_rollbacks_are_stale(
         self,
     ) -> None:
