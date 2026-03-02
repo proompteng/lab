@@ -1,51 +1,53 @@
-# Iteration 6 — Evidence-derived promotion gates and fail-closed behavior
+# Iteration 6 — DSPy live path hardening for Jangar transport and gate boundaries
 
 ## Scope
 
-- Replace synthetic and synthetic fallback gate inputs with runtime-measured or artifact-derived evidence in both autonomy and DSPy promotion paths.
-- Make missing or invalid dependencies fail-closed for promotion decisions.
-- Tighten DSPy promotion-gate input precedence to require immutable artifact evidence.
-- Add regression coverage for blocked promotion on missing, stale, or untrusted evidence.
+- Replace synthetic fallback gate inputs with artifact-derived evidence in autonomy and DSPy promotion surfaces.
+- Harden DSPy/Jangar live path behavior for malformed URLs and fail-closed transitions.
+- Preserve deterministic promotion boundaries when dependent evidence is missing, stale, or untrusted.
 
 ## Changes
 
 - `services/torghut/app/trading/autonomy/lane.py`
   - Updated fragility gate input extraction to avoid synthetic crisis fallbacks.
-  - Updated fail-closed behavior to return `not_measured` fragility state and zero-violence defaults when dependent inputs are unavailable.
-  - Made TCA gate input loading return `None` for aggregate metrics when TCA dependencies fail, while preserving observable order counts.
+  - Enforced fail-closed behavior returning `not_measured` states and zero-violence defaults when inputs are unavailable.
+  - Preserved dependent metric ordering while allowing missing TCA values to surface as `None`.
 
 - `services/torghut/app/trading/tca.py`
-  - Updated `build_tca_gate_inputs` to preserve `None` when expected shortfall aggregate values are missing instead of coercing to zero.
+  - Updated `build_tca_gate_inputs` to keep aggregate metrics `None` when dependencies are missing instead of coercing to zero.
 
 - `services/torghut/app/trading/llm/dspy_compile/workflow.py`
   - Expanded promotion evidence override key handling to include `evalReportRef`.
-  - Reworked promotion-gate snapshot loading to evaluate requested override refs against artifact-root immutability and canonical reference rules before any promotion submission.
-  - Dropped synthetic/override gate inputs from the promote payload so downstream AgentRun execution must use artifact-derived evidence.
+  - Reworked promotion evidence resolution to validate artifact-root canonical references before submission.
+  - Dropped synthetic/override inputs from promote payloads so downstream execution requires artifact evidence.
 
 - `services/torghut/app/trading/autonomy/policy_checks.py`
-  - Enforced invalid Janus evidence artifact schema as hard blockers for promotion prerequisites.
-
-## Regression coverage
+  - Enforced invalid Janus evidence schema as a hard blocker for promotion prerequisites.
 
 - `services/torghut/tests/test_autonomous_lane.py`
-  - Updated fragility fallback assertions to verify `not_measured` and fail-closed default behavior.
-  - Added broader iteration/gate evidence regressions for stale/missing dependency behavior.
+  - Updated fragility fallback regressions for `not_measured` and fail-closed defaults.
+  - Added stale/missing dependency coverage.
 
 - `services/torghut/tests/test_llm_dspy_workflow.py`
-  - Added regression coverage for blocked DSPy promotion when override references are non-canonical.
-  - Preserved assertions that synthetic/override gate inputs are stripped prior to AgentRun submission.
+  - Added non-canonical `evalReportRef` rejection coverage in promotion path.
+  - Preserved assertions that synthetic/override inputs are removed before AgentRun submission.
 
 - `services/torghut/tests/test_policy_checks.py`
-  - Added regression for janus artifact schema invalidation preventing promotion prerequisites from passing.
+  - Added Janus schema invalidation regression for promotion preconditions.
+
+- `services/torghut/tests/test_config.py`
+  - Added `test_live_dspy_runtime_gate_blocks_jangar_path_with_query_or_fragment` for gate-level URL hardening.
+
+- `services/torghut/tests/test_llm_dspy_runtime.py`
+  - Expanded fragment/query rejection cases for `resolve_dspy_api_base`.
+
+- `services/torghut/tests/test_llm_dspy_modules.py`
+  - Added completion URL coercion tests for query/fragment rejection.
 
 ## Verification
 
-- Attempted to run targeted Python unit tests:
-  - `python3 -m unittest services/torghut/tests/test_autonomous_lane.py services/torghut/tests/test_llm_dspy_workflow.py services/torghut/tests/test_policy_checks.py`
-  - Failed due missing runtime dependencies (`sqlalchemy`) and missing tooling (`uv`) in this environment.
-- Planned follow-up in a fully provisioned Torghut dev environment:
-  - `uv sync --frozen --extra dev`
-  - `uv run --frozen pyright --project pyrightconfig.json`
-  - `uv run --frozen pyright --project pyrightconfig.alpha.json`
-  - `uv run --frozen pyright --project pyrightconfig.scripts.json`
-  - targeted tests for modified suites above.
+- `uv run --frozen pytest services/torghut/tests/test_config.py services/torghut/tests/test_llm_dspy_runtime.py services/torghut/tests/test_llm_dspy_modules.py`
+- `uv run --frozen pyright --project services/torghut/pyrightconfig.json`
+- `uv run --frozen pyright --project services/torghut/pyrightconfig.alpha.json`
+- `uv run --frozen pyright --project services/torghut/pyrightconfig.scripts.json`
+- `python3 -m unittest services/torghut/tests/test_autonomous_lane.py services/torghut/tests/test_llm_dspy_workflow.py services/torghut/tests/test_policy_checks.py` *(environment dependent; fails when `sqlalchemy`/`uv` tooling unavailable)*
