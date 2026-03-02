@@ -82,6 +82,14 @@ const buildEnv = (env?: Record<string, string | undefined>) =>
     Object.entries(env ? { ...process.env, ...env } : process.env).filter(([, value]) => value !== undefined),
   ) as Record<string, string>
 
+const parseJson = <T>(text: string): T | null => {
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    return null
+  }
+}
+
 const listPodNames = async (namespace: string) => {
   const result = await execCapture([
     'kubectl',
@@ -96,6 +104,155 @@ const listPodNames = async (namespace: string) => {
   return result.stdout.split(/\s+/).filter(Boolean)
 }
 
+const listPodsByLabel = async (namespace: string, labelSelector: string) => {
+  const result = await execCapture(['kubectl', '-n', namespace, 'get', 'pods', '-l', labelSelector, '-o', 'jsonpath={.items[*].metadata.name}'])
+  if (result.exitCode !== 0) return []
+  return result.stdout.split(/\s+/).filter(Boolean)
+}
+
+const summarizeDeploymentStatus = (deploymentName: string, deployment: { status?: { availableReplicas?: number; updatedReplicas?: number; conditions?: Array<{ type?: string; status?: string; reason?: string; message?: string }> }, spec?: { replicas?: number } }) => {
+  const available = deployment.status?.availableReplicas ?? 0
+  const updated = deployment.status?.updatedReplicas ?? 0
+  const desired = deployment.spec?.replicas ?? 0
+  const conditions = deployment.status?.conditions ?? []
+  const progressing = conditions.find((condition) => condition.type === 'Progressing')
+  const progressingStatus = progressing?.status ?? 'Unknown'
+  const progressingReason = progressing?.reason ? ` reason=${progressing.reason}` : ''
+  const progressingMessage = progressing?.message ? ` message=${progressing.message}` : ''
+  return `deployment=${deploymentName} available=${available}/${desired} updated=${updated}/${desired} progressing=${progressingStatus}${progressingReason}${progressingMessage}`
+}
+
+const collectPodFailureHints = async (namespace: string, labelSelector: string) => {
+  const result = await execCapture([
+    'kubectl',
+    '-n',
+    namespace,
+    'get',
+    'pods',
+    '-l',
+    labelSelector,
+    '-o',
+    'json',
+  ])
+  if (result.exitCode !== 0) return []
+  const podsData = parseJson<{
+    items?: Array<{
+      metadata?: { name?: string }
+      status?: {
+        phase?: string
+        reason?: string
+        containerStatuses?: Array<{
+          name?: string
+          state?: {
+            waiting?: { reason?: string; message?: string }
+            terminated?: { reason?: string; message?: string; exitCode?: number }
+          }
+        }>
+      }
+    }>
+  }>(result.stdout)
+  if (!podsData?.items) return []
+
+  const terminalReasons = new Set([
+    'ImagePullBackOff',
+    'ErrImagePull',
+    'CrashLoopBackOff',
+    'CreateContainerConfigError',
+    'CreateContainerError',
+    'InvalidImageName',
+    'RunContainerError',
+    'OOMKilled',
+  ])
+
+  const hints: string[] = []
+  for (const pod of podsData.items) {
+    const podName = pod.metadata?.name ?? '<unknown>'
+    if (pod.status?.reason) {
+      hints.push(`pod/${podName} reason=${pod.status.reason}`)
+    }
+
+    for (const container of pod.status?.containerStatuses ?? []) {
+      const containerName = container.name ?? '<unknown>'
+      const waitingReason = container.state?.waiting?.reason
+      if (waitingReason && terminalReasons.has(waitingReason)) {
+        const message = container.state?.waiting?.message ? ` message=${container.state.waiting.message}` : ''
+        hints.push(`pod/${podName} container/${containerName} waiting reason=${waitingReason}${message}`)
+      }
+
+      const terminatedReason = container.state?.terminated?.reason
+      if (terminatedReason && terminalReasons.has(terminatedReason)) {
+        const message = container.state?.terminated?.message ? ` message=${container.state.terminated.message}` : ''
+        const exitCode = container.state?.terminated?.exitCode
+        hints.push(
+          `pod/${podName} container/${containerName} terminated reason=${terminatedReason} exitCode=${exitCode ?? 'n/a'}${message}`,
+        )
+      }
+    }
+  }
+
+  return hints
+}
+
+const waitForDeploymentRollout = async (
+  namespace: string,
+  deploymentName: string,
+  timeoutMs: number,
+  dumpDiagnostics: () => Promise<void>,
+) => {
+  const start = Date.now()
+  const selector = `app=${deploymentName}`
+  let lastSummary = 'deployment not yet observed'
+  while (Date.now() - start < timeoutMs) {
+    const deploymentResult = await execCapture([
+      'kubectl',
+      '-n',
+      namespace,
+      'get',
+      'deploy',
+      deploymentName,
+      '-o',
+      'json',
+    ])
+    if (deploymentResult.exitCode === 0) {
+      const deployment = parseJson<{
+        status?: {
+          availableReplicas?: number
+          updatedReplicas?: number
+          conditions?: Array<{ type?: string; status?: string; reason?: string; message?: string }>
+        }
+        spec?: { replicas?: number }
+      }>(deploymentResult.stdout)
+      if (!deployment) {
+        lastSummary = 'deployment json parse failed'
+      } else {
+        const desiredReplicas = deployment.spec?.replicas ?? 0
+        const availableReplicas = deployment.status?.availableReplicas ?? 0
+        lastSummary = summarizeDeploymentStatus(deploymentName, deployment)
+        if (desiredReplicas === 0 || availableReplicas >= desiredReplicas) return
+
+        const progressingFailure = deployment.status?.conditions?.find(
+          (condition) => condition?.type === 'Progressing' && condition.status === 'False',
+        )
+        if (progressingFailure && progressingFailure.reason === 'ProgressDeadlineExceeded') {
+          await dumpDiagnostics()
+          fatal(`Deployment ${deploymentName} rollout failed due to: ${progressingFailure.reason}. ${progressingFailure.message ?? ''}`)
+        }
+      }
+    }
+
+    const terminalHints = await collectPodFailureHints(namespace, selector)
+    if (terminalHints.length > 0) {
+      await dumpDiagnostics()
+      fatal(`Deployment ${deploymentName} encountered terminal pod state:\n${terminalHints.join('\n')}`)
+    }
+
+    await sleep(1000)
+  }
+
+  await dumpDiagnostics()
+  fatal(`Timed out waiting for rollout of deployment ${deploymentName}.\nLast status: ${lastSummary}`)
+}
+
 const dumpNamespaceDiagnostics = async (namespace: string, releaseName: string) => {
   console.error(
     `\n[diagnostics] Dumping agents smoke test diagnostics for namespace=${namespace} release=${releaseName}`,
@@ -108,6 +265,21 @@ const dumpNamespaceDiagnostics = async (namespace: string, releaseName: string) 
   for (const pod of pods) {
     await runInherit(['kubectl', '-n', namespace, 'describe', 'pod', pod])
     await runInherit(['kubectl', '-n', namespace, 'logs', pod, '--all-containers=true', '--tail=200'])
+  }
+
+  await runInherit(['kubectl', '-n', namespace, 'get', 'events', '--sort-by=.metadata.creationTimestamp'])
+}
+
+const dumpPostgresDiagnostics = async (namespace: string, dbHost: string) => {
+  console.error(`\n[diagnostics] Dumping postgres diagnostics for namespace=${namespace} dbHost=${dbHost}`)
+
+  await runInherit(['kubectl', '-n', namespace, 'get', 'pods', '-l', `app=${dbHost}`, '-o', 'wide'])
+  await runInherit(['kubectl', '-n', namespace, 'describe', 'deployment', dbHost])
+
+  const podNames = await listPodsByLabel(namespace, `app=${dbHost}`)
+  for (const podName of podNames) {
+    await runInherit(['kubectl', '-n', namespace, 'describe', 'pod', podName])
+    await runInherit(['kubectl', '-n', namespace, 'logs', podName, '--all-containers=true', '--tail=200'])
   }
 
   await runInherit(['kubectl', '-n', namespace, 'get', 'events', '--sort-by=.metadata.creationTimestamp'])
@@ -224,6 +396,8 @@ const main = async () => {
   const workflowStepsExpectedEnv = process.env.AGENTS_WORKFLOW_STEPS_EXPECTED
   const timeoutFlag = process.env.AGENTS_TIMEOUT ?? '5m'
   const timeoutMs = parseDurationMs(timeoutFlag, 5 * 60 * 1000)
+  const dbTimeoutFlag = process.env.AGENTS_DB_TIMEOUT ?? timeoutFlag
+  const dbTimeoutMs = parseDurationMs(dbTimeoutFlag, timeoutMs)
   const createNamespace = parseBoolean(process.env.AGENTS_CREATE_NAMESPACE, true)
   const dbBootstrap = parseBoolean(process.env.AGENTS_DB_BOOTSTRAP, false)
   const dbUrl = process.env.AGENTS_DB_URL ?? ''
@@ -324,7 +498,9 @@ spec:
 `,
     )
 
-    await run('kubectl', ['-n', namespace, 'rollout', 'status', `deploy/${dbHost}`, `--timeout=${timeoutFlag}`])
+    await waitForDeploymentRollout(namespace, dbHost, dbTimeoutMs, async () => {
+      await dumpPostgresDiagnostics(namespace, dbHost)
+    })
 
     log('Ensuring required Postgres extensions for Jangar...')
     const podResult = await execCapture([
@@ -346,7 +522,7 @@ spec:
     // Jangar requires both pgvector (vector) and pgcrypto extensions.
     // Even after the pod is Ready, Postgres may still be finalizing startup; retry briefly.
     const extensionSql = 'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pgcrypto;'
-    const extensionDeadlineMs = 60_000
+    const extensionDeadlineMs = Math.min(5 * 60_000, dbTimeoutMs)
     const extensionStart = Date.now()
     while (Date.now() - extensionStart <= extensionDeadlineMs) {
       const exitCode = await runInherit([
