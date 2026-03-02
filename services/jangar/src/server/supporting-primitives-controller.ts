@@ -545,6 +545,7 @@ const SWARM_SCHEDULE_ANNOTATION_HULY_WORKSPACE = 'swarm.proompteng.ai/huly-works
 const SWARM_SCHEDULE_ANNOTATION_HULY_PROJECT = 'swarm.proompteng.ai/huly-project'
 const SWARM_SCHEDULE_ANNOTATION_HULY_SECRET = 'swarm.proompteng.ai/huly-secret'
 const SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF = 'swarm.proompteng.ai/huly-skill-ref'
+const SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT = 16_384
 const SWARM_DEFAULT_HULY_BASE_URL = (() => {
   const value = asString(process.env.JANGAR_SWARM_HULY_BASE_URL)?.trim()
   return value && value.length > 0 ? value : 'https://huly.proompteng.ai'
@@ -915,10 +916,19 @@ const isHulyChannel = (channel: string | null | undefined) => {
 const stringifyUnknown = (value: unknown) => {
   if (typeof value === 'string') return value
   try {
-    return JSON.stringify(value)
+    const result = JSON.stringify(value)
+    return result === undefined ? '' : result
   } catch {
     return ''
   }
+}
+
+const makeRequirementObjective = (description: string, payload: string) => {
+  const parts = [description, payload].filter((value) => value.length > 0)
+  if (parts.length === 0) return ''
+  const combined = parts.join('\n\n')
+  if (combined.length <= SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT) return combined
+  return `${combined.slice(0, SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT - 3)}...`
 }
 
 const normalizeParameterMap = (raw: unknown) => {
@@ -1596,8 +1606,10 @@ const reconcileSwarm = async (
       [SWARM_REQUIREMENT_ANNOTATION_SIGNAL]: signalName,
       [SWARM_SCHEDULE_ANNOTATION_IDENTITY]: requirementIdentity.identity,
     }
-    const payloadValue = stringifyUnknown(signalSpec.payload)
+    const rawPayloadValue = stringifyUnknown(signalSpec.payload)
+    const payloadValue = rawPayloadValue.slice(0, SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT)
     const description = asString(signalSpec.description)
+    const objectiveValue = makeRequirementObjective(description ?? '', payloadValue)
     const requirementParameters: Record<string, string> = {
       ...runtimeParameters,
       swarmRequirementId: requirementId,
@@ -1610,7 +1622,10 @@ const reconcileSwarm = async (
       requirementParameters.swarmRequirementDescription = description
     }
     if (payloadValue) {
-      requirementParameters.swarmRequirementPayload = payloadValue.slice(0, 16_384)
+      requirementParameters.swarmRequirementPayload = payloadValue
+    }
+    if (objectiveValue) {
+      requirementParameters.objective = objectiveValue
     }
 
     const targetKind = asString(requirementTemplate.kind)

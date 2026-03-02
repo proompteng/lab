@@ -382,6 +382,10 @@ describe('supporting primitives controller', () => {
                 payload: {
                   priority: 'high',
                   acceptance: 'deploy and verify policy',
+                  context: {
+                    source: 'torghut-quant',
+                    deadline: '2026-01-25T00:00:00Z',
+                  },
                 },
               },
             },
@@ -447,6 +451,19 @@ describe('supporting primitives controller', () => {
     expect(parameters.swarmRequirementChannel).toBe('huly://swarm-bridge/issues/TOR-123')
     expect(parameters.swarmRequirementSource).toBe('torghut-quant')
     expect(parameters.swarmRequirementTarget).toBe('jangar-control-plane')
+    expect(parameters.swarmRequirementDescription).toBe('Raise risk budget guardrails for market-open volatility')
+    const payload = parameters.swarmRequirementPayload ? JSON.parse(parameters.swarmRequirementPayload) : null
+    expect(payload).toEqual({
+      priority: 'high',
+      acceptance: 'deploy and verify policy',
+      context: {
+        source: 'torghut-quant',
+        deadline: '2026-01-25T00:00:00Z',
+      },
+    })
+    expect(parameters.objective).toBe(
+      'Raise risk budget guardrails for market-open volatility\n\n{"priority":"high","acceptance":"deploy and verify policy","context":{"source":"torghut-quant","deadline":"2026-01-25T00:00:00Z"}}',
+    )
     expect(parameters.swarmAgentWorkerId).toMatch(/^worker-/)
     expect(parameters.swarmAgentIdentity).toMatch(/^vw-/)
     expect(parameters.swarmAgentRole).toBe('implement')
@@ -464,6 +481,108 @@ describe('supporting primitives controller', () => {
     const conditions = Array.isArray(status.conditions) ? status.conditions : []
     const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge')
     expect(bridge?.status).toBe('True')
+  })
+
+  it('uses requirement payload as primary objective when description is missing', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-risk-handoff-2',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-222',
+                payload: {
+                  priority: 'critical',
+                  constraints: ['do not touch auth'],
+                  acceptance: ['add guardrail', 'run chaos test'],
+                },
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(1)
+    const requirementRun = requirementRunPayloads[0] as {
+      metadata: Record<string, unknown>
+      spec: Record<string, unknown>
+    }
+    const parameters = (requirementRun.spec.parameters ?? {}) as Record<string, string>
+    expect(parameters.swarmRequirementSignal).toBe('torghut-risk-handoff-2')
+    expect(parameters.swarmRequirementDescription).toBeUndefined()
+    expect(parameters.swarmRequirementPayload).toBe(
+      '{"priority":"critical","constraints":["do not touch auth"],"acceptance":["add guardrail","run chaos test"]}',
+    )
+    expect(parameters.objective).toBe(
+      '{"priority":"critical","constraints":["do not touch auth"],"acceptance":["add guardrail","run chaos test"]}',
+    )
   })
 
   it('rejects non-Huly requirement channels for cross-swarm implementation', async () => {
