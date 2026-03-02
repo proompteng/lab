@@ -385,7 +385,12 @@ Required Huly objects per mission:
 
 ### Virtual worker access bundle (all agents)
 
-Every agent identity (`vw-<swarm>-<role>`) must be provisioned with full module access to the Huly suite used here:
+Every agent identity uses a unique human coworker name and belongs to one of two swarm teams:
+
+- Jangar Engineering
+- Torghut Traders
+
+Each worker account must have full module access to the Huly suite used here:
 
 - Issues/project tracking
 - Chat
@@ -397,6 +402,9 @@ Production controls for these identities:
 
 - Short-lived API credentials issued by a central secret manager.
 - Rotation every 24h or on compromise signal.
+- Separate credential manifests per swarm team:
+  - `argocd/applications/agents/huly-api-jangar-sealedsecret.yaml`
+  - `argocd/applications/agents/huly-api-torghut-sealedsecret.yaml`
 - One token per agent identity stored as `HULY_API_TOKEN_<SWARM_AGENT_IDENTITY>` (or worker id equivalent).
 - One expected actor mapping per identity stored as `HULY_EXPECTED_ACTOR_ID_<SWARM_AGENT_IDENTITY>` and validated before mission writes.
 - Space/project permission templates applied automatically at creation time.

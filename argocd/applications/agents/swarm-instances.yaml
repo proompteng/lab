@@ -11,6 +11,7 @@ spec:
     - platform-reliability
     - platform-evolution
   objectives:
+    - operate as the Jangar Engineering team in Huly (tracker, chat, documents)
     - continuously discover and implement control-plane improvements
     - deliver Torghut platform requirements safely to production
   mode: lights-out
@@ -83,6 +84,7 @@ spec:
     - quant-research
     - autonomous-trading
   objectives:
+    - operate as the Torghut Traders team in Huly (tracker, chat, documents)
     - continuously discover and implement quant alpha and risk-control improvements
     - issue platform requirements to jangar-control-plane via Huly requirement channels
   mode: lights-out

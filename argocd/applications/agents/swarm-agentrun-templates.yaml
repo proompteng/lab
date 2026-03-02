@@ -23,12 +23,14 @@ spec:
     base: main
     head: codex/swarm-jangar-control-plane-discover
     issueNumber: swarm-jangar-control-plane-discover
-    issueTitle: Jangar swarm discover mission
+    issueTitle: Jangar Engineering discover mission
     swarmName: jangar-control-plane
     swarmStage: discover
     swarmAgentRole: discover
     swarmAgentWorkerId: worker-jangar-discover
-    swarmAgentIdentity: vw-jangar-control-plane-discover-worker-jangar-discover
+    swarmAgentIdentity: amina-reyes-jangar-discover
+    swarmHumanName: Amina Reyes
+    swarmTeamName: Jangar Engineering
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
@@ -42,7 +44,7 @@ spec:
     objective: continuously discover platform work for the Jangar control plane
   secrets:
     - codex-auth
-    - huly-api
+    - huly-api-jangar
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -69,12 +71,14 @@ spec:
     base: main
     head: codex/swarm-jangar-control-plane-plan
     issueNumber: swarm-jangar-control-plane-plan
-    issueTitle: Jangar swarm plan mission
+    issueTitle: Jangar Engineering plan mission
     swarmName: jangar-control-plane
     swarmStage: plan
     swarmAgentRole: plan
     swarmAgentWorkerId: worker-jangar-plan
-    swarmAgentIdentity: vw-jangar-control-plane-plan-worker-jangar-plan
+    swarmAgentIdentity: victor-chen-jangar-plan
+    swarmHumanName: Victor Chen
+    swarmTeamName: Jangar Engineering
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
@@ -88,7 +92,7 @@ spec:
     objective: produce executable plans for autonomous platform improvements
   secrets:
     - codex-auth
-    - huly-api
+    - huly-api-jangar
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -118,12 +122,14 @@ spec:
     base: main
     head: codex/swarm-jangar-control-plane
     issueNumber: swarm-jangar-control-plane
-    issueTitle: Jangar autonomous swarm implementation mission
+    issueTitle: Jangar Engineering autonomous implementation mission
     swarmName: jangar-control-plane
     swarmStage: implement
     swarmAgentRole: implement
     swarmAgentWorkerId: worker-jangar-implement
-    swarmAgentIdentity: vw-jangar-control-plane-implement-worker-jangar-implement
+    swarmAgentIdentity: elise-novak-jangar-implement
+    swarmHumanName: Elise Novak
+    swarmTeamName: Jangar Engineering
     objective: autonomously implement platform improvements and requirement handoffs from Torghut
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
@@ -143,7 +149,7 @@ spec:
   secrets:
     - github-token
     - codex-auth
-    - huly-api
+    - huly-api-jangar
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -170,12 +176,14 @@ spec:
     base: main
     head: codex/swarm-jangar-control-plane-verify
     issueNumber: swarm-jangar-control-plane-verify
-    issueTitle: Jangar swarm verify mission
+    issueTitle: Jangar Engineering verify mission
     swarmName: jangar-control-plane
     swarmStage: verify
     swarmAgentRole: verify
     swarmAgentWorkerId: worker-jangar-verify
-    swarmAgentIdentity: vw-jangar-control-plane-verify-worker-jangar-verify
+    swarmAgentIdentity: marco-silva-jangar-verify
+    swarmHumanName: Marco Silva
+    swarmTeamName: Jangar Engineering
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
@@ -189,7 +197,7 @@ spec:
     objective: verify runtime, delivery, and policy health for the control plane
   secrets:
     - codex-auth
-    - huly-api
+    - huly-api-jangar
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -216,12 +224,14 @@ spec:
     base: main
     head: codex/swarm-torghut-quant-discover
     issueNumber: swarm-torghut-quant-discover
-    issueTitle: Torghut swarm discover mission
+    issueTitle: Torghut Traders discover mission
     swarmName: torghut-quant
     swarmStage: discover
     swarmAgentRole: discover
     swarmAgentWorkerId: worker-torghut-discover
-    swarmAgentIdentity: vw-torghut-quant-discover-worker-torghut-discover
+    swarmAgentIdentity: tara-okoye-torghut-discover
+    swarmHumanName: Tara Okoye
+    swarmTeamName: Torghut Traders
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
@@ -235,7 +245,7 @@ spec:
     objective: discover alpha, execution, and risk-control opportunities for Torghut
   secrets:
     - codex-auth
-    - huly-api
+    - huly-api-torghut
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -262,12 +272,14 @@ spec:
     base: main
     head: codex/swarm-torghut-quant-plan
     issueNumber: swarm-torghut-quant-plan
-    issueTitle: Torghut swarm plan mission
+    issueTitle: Torghut Traders plan mission
     swarmName: torghut-quant
     swarmStage: plan
     swarmAgentRole: plan
     swarmAgentWorkerId: worker-torghut-plan
-    swarmAgentIdentity: vw-torghut-quant-plan-worker-torghut-plan
+    swarmAgentIdentity: gideon-park-torghut-plan
+    swarmHumanName: Gideon Park
+    swarmTeamName: Torghut Traders
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
@@ -281,7 +293,7 @@ spec:
     objective: plan regime-aware quant improvements with explicit risk controls
   secrets:
     - codex-auth
-    - huly-api
+    - huly-api-torghut
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -311,12 +323,14 @@ spec:
     base: main
     head: codex/swarm-torghut-quant
     issueNumber: swarm-torghut-quant
-    issueTitle: Torghut autonomous swarm implementation mission
+    issueTitle: Torghut Traders autonomous implementation mission
     swarmName: torghut-quant
     swarmStage: implement
     swarmAgentRole: implement
     swarmAgentWorkerId: worker-torghut-implement
-    swarmAgentIdentity: vw-torghut-quant-implement-worker-torghut-implement
+    swarmAgentIdentity: naomi-ibarra-torghut-implement
+    swarmHumanName: Naomi Ibarra
+    swarmTeamName: Torghut Traders
     objective: implement regime-aware quant and risk-control improvements via GitOps changes
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
@@ -336,7 +350,7 @@ spec:
   secrets:
     - github-token
     - codex-auth
-    - huly-api
+    - huly-api-torghut
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -363,12 +377,14 @@ spec:
     base: main
     head: codex/swarm-torghut-quant-verify
     issueNumber: swarm-torghut-quant-verify
-    issueTitle: Torghut swarm verify mission
+    issueTitle: Torghut Traders verify mission
     swarmName: torghut-quant
     swarmStage: verify
     swarmAgentRole: verify
     swarmAgentWorkerId: worker-torghut-verify
-    swarmAgentIdentity: vw-torghut-quant-verify-worker-torghut-verify
+    swarmAgentIdentity: julian-hart-torghut-verify
+    swarmHumanName: Julian Hart
+    swarmTeamName: Torghut Traders
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
@@ -382,4 +398,4 @@ spec:
     objective: verify strategy health, guardrails, and market-regime readiness
   secrets:
     - codex-auth
-    - huly-api
+    - huly-api-torghut
