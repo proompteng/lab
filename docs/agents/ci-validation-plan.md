@@ -30,6 +30,8 @@ See also:
   - `helm template charts/agents --set-json 'controller.namespaces=["*"]' --set rbac.clusterScoped=false` (expect fail: clusterScoped required)
   - `helm template charts/agents --set-json 'controller.namespaces=[]'` (expect fail: explicit empty list invalid)
   - `helm template charts/agents --set-json 'controller.namespaces=["*","agents"]' --set rbac.clusterScoped=true` (expect fail: wildcard may not combine with specific namespaces)
+  - `helm template charts/agents --set-json 'controller.namespaces="agents"'` (expect fail: non-array value)
+  - `helm template charts/agents --set-json 'controller.namespaces=[" agents"]'` (expect fail: namespace entries cannot contain leading/trailing whitespace)
   - `helm template charts/agents --set-json 'controller.namespaces=["agents"]' --set rbac.clusterScoped=true` (expect success with namespaced list on Role)
   - `helm template charts/agents --set-json 'controller.namespaces=["*"]' --set rbac.clusterScoped=true` (expect success with ClusterRole)
   - `helm template charts/agents --set-json 'orchestrationController.namespaces=["agents","agents-ci"]' --set rbac.clusterScoped=false` (expect fail: multi-namespace requires cluster-scoped RBAC)
@@ -47,6 +49,8 @@ namespace_guardrails() {
     "helm template charts/agents --set-json 'controller.namespaces=[\"*\"]' --set rbac.clusterScoped=false" \
     "helm template charts/agents --set-json 'controller.namespaces=[]'" \
     "helm template charts/agents --set-json 'controller.namespaces=[\"*\",\"agents\"]' --set rbac.clusterScoped=true" \
+    "helm template charts/agents --set-json 'controller.namespaces=\"agents\"'" \
+    "helm template charts/agents --set-json 'controller.namespaces=[\" agents\"]'" \
     "helm template charts/agents --set-json 'orchestrationController.namespaces=[\"agents\",\"agents-ci\"]' --set rbac.clusterScoped=false" \
     "helm template charts/agents --set-json 'supportingController.namespaces=[\"*\",\"agents\"]' --set rbac.clusterScoped=true"; do
     local output
