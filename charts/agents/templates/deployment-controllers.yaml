@@ -32,6 +32,16 @@
 {{- $resources := .Values.controllers.resources | default .Values.resources -}}
 {{- $autoscaling := .Values.controllers.autoscaling | default dict -}}
 {{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $controllersDeploymentStrategy := merge (deepCopy (.Values.deploymentStrategy | default dict)) (deepCopy (.Values.controllers.deploymentStrategy | default dict)) -}}
+{{- $controllersLivenessProbe := merge (deepCopy (.Values.livenessProbe | default dict)) (deepCopy (.Values.controllers.livenessProbe | default dict)) -}}
+{{- $controllersReadinessProbe := merge (deepCopy (.Values.readinessProbe | default dict)) (deepCopy (.Values.controllers.readinessProbe | default dict)) -}}
+{{- $controllersStartupProbe := merge (deepCopy (.Values.startupProbe | default dict)) (deepCopy (.Values.controllers.startupProbe | default dict)) -}}
+{{- $controllersLifecycle := merge (deepCopy (.Values.lifecycle | default dict)) (deepCopy (.Values.controllers.lifecycle | default dict)) -}}
+{{- $controllersDeploymentLifecycle := merge (deepCopy (.Values.deploymentLifecycle | default dict)) (deepCopy (.Values.controllers.deploymentLifecycle | default dict)) -}}
+{{- $controllersTerminationGracePeriodSeconds := .Values.terminationGracePeriodSeconds -}}
+{{- if hasKey .Values.controllers "terminationGracePeriodSeconds" }}
+{{-   $controllersTerminationGracePeriodSeconds = .Values.controllers.terminationGracePeriodSeconds }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -43,9 +53,22 @@ spec:
   {{- if not $autoscaling.enabled }}
   replicas: {{ $replicas }}
   {{- end }}
+{{- if $controllersDeploymentStrategy }}
+  strategy:
+{{ toYaml $controllersDeploymentStrategy | nindent 4 }}
+{{- end }}
   selector:
     matchLabels:
       {{- include "agents.controllersSelectorLabels" . | nindent 6 }}
+{{- if hasKey $controllersDeploymentLifecycle "minReadySeconds" }}
+  minReadySeconds: {{ $controllersDeploymentLifecycle.minReadySeconds }}
+{{- end }}
+{{- if hasKey $controllersDeploymentLifecycle "progressDeadlineSeconds" }}
+  progressDeadlineSeconds: {{ $controllersDeploymentLifecycle.progressDeadlineSeconds }}
+{{- end }}
+{{- if hasKey $controllersDeploymentLifecycle "revisionHistoryLimit" }}
+  revisionHistoryLimit: {{ $controllersDeploymentLifecycle.revisionHistoryLimit }}
+{{- end }}
   template:
     metadata:
       labels:
@@ -80,6 +103,9 @@ spec:
       {{- with .Values.securityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if ne $controllersTerminationGracePeriodSeconds nil }}
+      terminationGracePeriodSeconds: {{ $controllersTerminationGracePeriodSeconds }}
       {{- end }}
       containers:
         - name: {{ include "agents.controllersName" . }}
@@ -417,25 +443,39 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
-          {{- if .Values.livenessProbe.enabled }}
+          {{- if $controllersLifecycle }}
+          lifecycle:
+{{ toYaml $controllersLifecycle | nindent 12 }}
+          {{- end }}
+          {{- if $controllersStartupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ $controllersStartupProbe.path }}
+              port: http
+            initialDelaySeconds: {{ $controllersStartupProbe.initialDelaySeconds }}
+            periodSeconds: {{ $controllersStartupProbe.periodSeconds }}
+            timeoutSeconds: {{ $controllersStartupProbe.timeoutSeconds }}
+            failureThreshold: {{ $controllersStartupProbe.failureThreshold }}
+          {{- end }}
+          {{- if $controllersLivenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: {{ .Values.livenessProbe.path }}
+              path: {{ $controllersLivenessProbe.path }}
               port: http
-            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+            initialDelaySeconds: {{ $controllersLivenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $controllersLivenessProbe.periodSeconds }}
+            timeoutSeconds: {{ $controllersLivenessProbe.timeoutSeconds }}
+            failureThreshold: {{ $controllersLivenessProbe.failureThreshold }}
           {{- end }}
-          {{- if .Values.readinessProbe.enabled }}
+          {{- if $controllersReadinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: {{ .Values.readinessProbe.path }}
+              path: {{ $controllersReadinessProbe.path }}
               port: http
-            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+            initialDelaySeconds: {{ $controllersReadinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $controllersReadinessProbe.periodSeconds }}
+            timeoutSeconds: {{ $controllersReadinessProbe.timeoutSeconds }}
+            failureThreshold: {{ $controllersReadinessProbe.failureThreshold }}
           {{- end }}
           resources:
             {{- toYaml $resources | nindent 12 }}

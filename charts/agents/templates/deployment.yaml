@@ -9,6 +9,16 @@
 {{- $replicas := .Values.controlPlane.replicaCount | default .Values.replicaCount -}}
 {{- $resources := .Values.controlPlane.resources | default .Values.resources -}}
 {{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $controlPlaneDeploymentStrategy := merge (deepCopy (.Values.deploymentStrategy | default dict)) (deepCopy (.Values.controlPlane.deploymentStrategy | default dict)) -}}
+{{- $controlPlaneLivenessProbe := merge (deepCopy (.Values.livenessProbe | default dict)) (deepCopy (.Values.controlPlane.livenessProbe | default dict)) -}}
+{{- $controlPlaneReadinessProbe := merge (deepCopy (.Values.readinessProbe | default dict)) (deepCopy (.Values.controlPlane.readinessProbe | default dict)) -}}
+{{- $controlPlaneStartupProbe := merge (deepCopy (.Values.startupProbe | default dict)) (deepCopy (.Values.controlPlane.startupProbe | default dict)) -}}
+{{- $controlPlaneLifecycle := merge (deepCopy (.Values.lifecycle | default dict)) (deepCopy (.Values.controlPlane.lifecycle | default dict)) -}}
+{{- $controlPlaneDeploymentLifecycle := merge (deepCopy (.Values.deploymentLifecycle | default dict)) (deepCopy (.Values.controlPlane.deploymentLifecycle | default dict)) -}}
+{{- $controlPlaneTerminationGracePeriodSeconds := .Values.terminationGracePeriodSeconds -}}
+{{- if hasKey .Values.controlPlane "terminationGracePeriodSeconds" }}
+{{-   $controlPlaneTerminationGracePeriodSeconds = .Values.controlPlane.terminationGracePeriodSeconds }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,9 +30,22 @@ spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ $replicas }}
   {{- end }}
+{{- if $controlPlaneDeploymentStrategy }}
+  strategy:
+{{ toYaml $controlPlaneDeploymentStrategy | nindent 4 }}
+{{- end }}
   selector:
     matchLabels:
       {{- include "agents.selectorLabels" . | nindent 6 }}
+{{- if hasKey $controlPlaneDeploymentLifecycle "minReadySeconds" }}
+  minReadySeconds: {{ $controlPlaneDeploymentLifecycle.minReadySeconds }}
+{{- end }}
+{{- if hasKey $controlPlaneDeploymentLifecycle "progressDeadlineSeconds" }}
+  progressDeadlineSeconds: {{ $controlPlaneDeploymentLifecycle.progressDeadlineSeconds }}
+{{- end }}
+{{- if hasKey $controlPlaneDeploymentLifecycle "revisionHistoryLimit" }}
+  revisionHistoryLimit: {{ $controlPlaneDeploymentLifecycle.revisionHistoryLimit }}
+{{- end }}
   template:
     metadata:
       labels:
@@ -57,6 +80,9 @@ spec:
       {{- with .Values.securityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if ne $controlPlaneTerminationGracePeriodSeconds nil }}
+      terminationGracePeriodSeconds: {{ $controlPlaneTerminationGracePeriodSeconds }}
       {{- end }}
       containers:
         - name: {{ include "agents.name" . }}
@@ -450,25 +476,39 @@ spec:
               containerPort: {{ .Values.grpc.port }}
               protocol: TCP
             {{- end }}
-          {{- if .Values.livenessProbe.enabled }}
+          {{- if $controlPlaneLifecycle }}
+          lifecycle:
+{{ toYaml $controlPlaneLifecycle | nindent 12 }}
+          {{- end }}
+          {{- if $controlPlaneStartupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ $controlPlaneStartupProbe.path }}
+              port: http
+            initialDelaySeconds: {{ $controlPlaneStartupProbe.initialDelaySeconds }}
+            periodSeconds: {{ $controlPlaneStartupProbe.periodSeconds }}
+            timeoutSeconds: {{ $controlPlaneStartupProbe.timeoutSeconds }}
+            failureThreshold: {{ $controlPlaneStartupProbe.failureThreshold }}
+          {{- end }}
+          {{- if $controlPlaneLivenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: {{ .Values.livenessProbe.path }}
+              path: {{ $controlPlaneLivenessProbe.path }}
               port: http
-            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+            initialDelaySeconds: {{ $controlPlaneLivenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $controlPlaneLivenessProbe.periodSeconds }}
+            timeoutSeconds: {{ $controlPlaneLivenessProbe.timeoutSeconds }}
+            failureThreshold: {{ $controlPlaneLivenessProbe.failureThreshold }}
           {{- end }}
-          {{- if .Values.readinessProbe.enabled }}
+          {{- if $controlPlaneReadinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: {{ .Values.readinessProbe.path }}
+              path: {{ $controlPlaneReadinessProbe.path }}
               port: http
-            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+            initialDelaySeconds: {{ $controlPlaneReadinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $controlPlaneReadinessProbe.periodSeconds }}
+            timeoutSeconds: {{ $controlPlaneReadinessProbe.timeoutSeconds }}
+            failureThreshold: {{ $controlPlaneReadinessProbe.failureThreshold }}
           {{- end }}
           resources:
             {{- toYaml $resources | nindent 12 }}
