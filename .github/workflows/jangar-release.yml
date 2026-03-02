@@ -71,68 +71,12 @@ jobs:
           IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
-
-          MAIN_HEAD="$(git rev-parse origin/main)"
-          IMAGE="registry.ide-newton.ts.net/lab/jangar"
-          SOURCE_SHA=""
-          TAG=""
-          CONTRACT_DIGEST=""
-          PROMOTE="true"
-
-          if [ "${EVENT_NAME}" = "workflow_run" ]; then
-            CONTRACT_PATH=".artifacts/jangar/jangar-release-contract.json"
-            if [ ! -f "${CONTRACT_PATH}" ]; then
-              echo "Release contract artifact is missing at ${CONTRACT_PATH}"
-              exit 1
-            fi
-
-            SOURCE_SHA="$(bun run packages/scripts/src/jangar/release-contract.ts get --path "${CONTRACT_PATH}" --field sourceSha)"
-            TAG="$(bun run packages/scripts/src/jangar/release-contract.ts get --path "${CONTRACT_PATH}" --field tag)"
-            CONTRACT_DIGEST="$(bun run packages/scripts/src/jangar/release-contract.ts get --path "${CONTRACT_PATH}" --field digest)"
-            CONTRACT_IMAGE="$(bun run packages/scripts/src/jangar/release-contract.ts get --path "${CONTRACT_PATH}" --field image)"
-
-            if [ "${CONTRACT_IMAGE}" != "${IMAGE}" ]; then
-              echo "Release contract image mismatch: expected ${IMAGE}, got ${CONTRACT_IMAGE}"
-              exit 1
-            fi
-
-            if [ "${SOURCE_SHA}" != "${WORKFLOW_RUN_HEAD_SHA}" ]; then
-              echo "Release contract source SHA ${SOURCE_SHA} does not match workflow_run head ${WORKFLOW_RUN_HEAD_SHA}"
-              exit 1
-            fi
-
-            if [ "${SOURCE_SHA}" != "${MAIN_HEAD}" ]; then
-              echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; latest main is ${MAIN_HEAD}"
-              PROMOTE="false"
-            fi
-          else
-            if [ -n "${COMMIT_SHA_INPUT}" ]; then
-              SOURCE_SHA="${COMMIT_SHA_INPUT}"
-            else
-              SOURCE_SHA="${MAIN_HEAD}"
-            fi
-
-            if [ -n "${IMAGE_TAG_INPUT}" ]; then
-              TAG="${IMAGE_TAG_INPUT}"
-            else
-              TAG="${SOURCE_SHA:0:8}"
-            fi
-          fi
-
-          if [ "${PROMOTE}" = "true" ] && ! git cat-file -e "${SOURCE_SHA}^{commit}" >/dev/null 2>&1; then
-            echo "Source SHA ${SOURCE_SHA} is not present in local git history"
-            exit 1
-          fi
-
-          {
-            echo "main_head=${MAIN_HEAD}"
-            echo "source_sha=${SOURCE_SHA}"
-            echo "tag=${TAG}"
-            echo "contract_digest=${CONTRACT_DIGEST}"
-            echo "image=${IMAGE}"
-            echo "control_plane_image=registry.ide-newton.ts.net/lab/jangar-control-plane"
-            echo "promote=${PROMOTE}"
-          } >> "$GITHUB_OUTPUT"
+          bun run packages/scripts/src/jangar/resolve-release-metadata.ts \
+            --event-name "${EVENT_NAME}" \
+            --workflow-run-head-sha "${WORKFLOW_RUN_HEAD_SHA}" \
+            --commit-sha-input "${COMMIT_SHA_INPUT}" \
+            --image-tag-input "${IMAGE_TAG_INPUT}" \
+            --output "${GITHUB_OUTPUT}"
 
       - name: Checkout source revision
         if: steps.meta.outputs.promote == 'true'
