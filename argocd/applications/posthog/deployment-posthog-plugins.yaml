@@ -29,11 +29,11 @@ spec:
       serviceAccountName: posthog
       containers:
       - name: posthog-plugins
-        image: "posthog/posthog:0d2db99f795a0f6201f30ab833016c41c1271a5a"
+        image: "posthog/posthog-node:bf60774b71961a8674ca24ed1bd42bed4d670f72"
         imagePullPolicy: IfNotPresent
         command:
-          - ./bin/posthog-node
-          - --no-restart-loop
+          - node
+          - nodejs/dist/index.js
         ports:
         # Expose the port on which the healtchheck endpoint listens
         - containerPort: 6738
@@ -65,7 +65,7 @@ spec:
         
 
         - name: SITE_URL
-          value: "http://127.0.0.1:8000"
+          value: "https://posthog.proompteng.ai"
         - name: SENTRY_DSN
           value: 
         - name: DEPLOYMENT
@@ -136,7 +136,7 @@ spec:
             {}
       initContainers:        
         - name: wait-for-service-dependencies
-          image: "posthog/posthog:0d2db99f795a0f6201f30ab833016c41c1271a5a"
+          image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
           env:
             - name: POSTHOG_POSTGRES_HOST
               value: posthog-db-pooler
@@ -163,7 +163,7 @@ spec:
         
                         
         - name: wait-for-migrations
-          image: "posthog/posthog:0d2db99f795a0f6201f30ab833016c41c1271a5a"
+          image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
           command:
             - /bin/sh
             - -c

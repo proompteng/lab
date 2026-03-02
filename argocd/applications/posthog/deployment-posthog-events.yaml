@@ -28,7 +28,7 @@ spec:
       serviceAccountName: posthog
       containers:
       - name: posthog-events
-        image: "posthog/posthog:0d2db99f795a0f6201f30ab833016c41c1271a5a"
+        image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
         command:
           - ./bin/docker-server
         imagePullPolicy: IfNotPresent
@@ -58,7 +58,7 @@ spec:
         # statsd env variables        
 
         - name: SITE_URL
-          value: "http://127.0.0.1:8000"
+          value: "https://posthog.proompteng.ai"
         - name: DEPLOYMENT
           value: self_managed
         - name: SENTRY_DSN
@@ -66,6 +66,8 @@ spec:
         - name: DISABLE_SECURE_SSL_REDIRECT
           value: '1'
         - name: IS_BEHIND_PROXY
+          value: '1'
+        - name: TRUST_ALL_PROXIES
           value: '1'
         - name: POSTHOG_SKIP_MIGRATION_CHECKS
           value: 'true'
@@ -172,7 +174,7 @@ spec:
             {}
       initContainers:        
         - name: wait-for-service-dependencies
-          image: "posthog/posthog:0d2db99f795a0f6201f30ab833016c41c1271a5a"
+          image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
           env:
             - name: POSTHOG_POSTGRES_HOST
               value: posthog-db-pooler
@@ -199,7 +201,7 @@ spec:
         
                         
         - name: wait-for-migrations
-          image: "posthog/posthog:0d2db99f795a0f6201f30ab833016c41c1271a5a"
+          image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
           command:
             - /bin/sh
             - -c

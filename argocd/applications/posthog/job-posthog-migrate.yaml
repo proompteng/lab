@@ -27,7 +27,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: migrate-job
-        image: "posthog/posthog:0d2db99f795a0f6201f30ab833016c41c1271a5a"
+        image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
         command:
           - /bin/sh
           - -c
@@ -74,7 +74,7 @@ spec:
         - name: SENTRY_DSN
           value: 
         - name: SITE_URL
-          value: "http://127.0.0.1:8000"
+          value: "https://posthog.proompteng.ai"
         - name: DEPLOYMENT
           value: self_managed
         # PostHog app settings        
@@ -147,7 +147,7 @@ spec:
           {}
       initContainers:
         - name: wait-for-service-dependencies
-          image: "posthog/posthog:0d2db99f795a0f6201f30ab833016c41c1271a5a"
+          image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
           env:
             - name: POSTHOG_POSTGRES_HOST
               value: "posthog-db-rw.posthog.svc.cluster.local"
