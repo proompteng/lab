@@ -83,9 +83,13 @@ service:
 
 grpc:
   enabled: true
+  manageEnvVar: true
   port: 50051
   servicePort: 50051
   serviceType: ClusterIP
+
+validation:
+  reservedEnvKeysEnforced: false
 
 audit:
   sink:
