@@ -417,7 +417,7 @@ const main = async () => {
   const dbName = process.env.AGENTS_DB_NAME ?? 'agents'
   const dbHost = process.env.AGENTS_DB_HOST ?? `${releaseName}-postgres`
   const dbPort = process.env.AGENTS_DB_PORT ?? '5432'
-  const dbImage = process.env.AGENTS_DB_IMAGE ?? 'registry.ide-newton.ts.net/lab/vecteur:18-trixie'
+  const dbImage = process.env.AGENTS_DB_IMAGE ?? 'pgvector/pgvector:pg16'
   const agentctlBin = process.env.AGENTCTL_BIN ?? 'agentctl'
   const kubeconfigPath =
     process.env.AGENTCTL_KUBECONFIG ?? process.env.KUBECONFIG ?? resolve(homedir(), '.kube', 'config')
