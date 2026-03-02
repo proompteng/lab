@@ -155,7 +155,7 @@ spec:
             {}
       initContainers:        
         - name: wait-for-service-dependencies
-          image: busybox:1.34
+          image: ghcr.io/cloudnative-pg/postgresql:17.0
           env:
             - name: CLICKHOUSE_HOST
               value: "posthog-clickhouse.posthog.svc.cluster.local"
@@ -178,16 +178,11 @@ spec:
             - /bin/sh
             - -c
             - >
-                
-        
-                until (nc -vz "posthog-db-pooler.$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).svc.cluster.local" 5432);
+                until pg_isready -q -h "posthog-db-pooler.$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).svc.cluster.local" -p 5432;
                 do
-                    echo "waiting for Postgres pooler"; sleep 1;
+                  echo "waiting for Postgres pooler";
+                  sleep 1;
                 done
-        
-                
-        
-                
         
                         
         - name: wait-for-migrations
