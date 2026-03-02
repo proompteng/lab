@@ -21,6 +21,7 @@ class MicrostructureStateV5:
     fill_hazard: Decimal
     liquidity_regime: str
 
+
 @dataclass(frozen=True)
 class ExecutionAdviceV1:
     urgency_tier: str
@@ -85,7 +86,7 @@ def _normalize_deeplob_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] 
         payload,
         "feature_quality_status",
     )
-    if feature_quality_status is not None and feature_quality_status.lower() != "pass":
+    if feature_quality_status is None or feature_quality_status.strip().lower() != "pass":
         return None
 
     quality_schema = _coalesce_text(payload, "uncertainty_band")
@@ -103,9 +104,13 @@ def _normalize_deeplob_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] 
         regime = "normal"
 
     direction_probabilities = _coalesce_payload_value(payload, "direction_probabilities")
+    direction_map = (
+        cast(Mapping[str, Any], direction_probabilities)
+        if isinstance(direction_probabilities, Mapping)
+        else None
+    )
     order_flow_imbalance = _coalesce_numeric(payload, "order_flow_imbalance")
-    if order_flow_imbalance is None and isinstance(direction_probabilities, Mapping):
-        direction_map = cast(Mapping[str, Any], direction_probabilities)
+    if order_flow_imbalance is None and direction_map is not None:
         buy_side = _coalesce_numeric(direction_map, "buy", "up", "bullish")
         sell_side = _coalesce_numeric(direction_map, "sell", "down", "bearish")
         if buy_side is not None and sell_side is not None:

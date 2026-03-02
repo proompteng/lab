@@ -503,9 +503,48 @@ class TestDecisionEngine(TestCase):
         params = decisions[0].params
         micro = params.get('microstructure_state')
         assert isinstance(micro, dict)
-        self.assertEqual(micro.get('schema_version'), 'microstructure_signal_v1')
+        self.assertEqual(micro.get('schema_version'), 'microstructure_state_v1')
         self.assertEqual(micro.get('symbol'), 'AAPL')
         self.assertEqual(micro.get('liquidity_regime'), 'stressed')
+
+    def test_decision_params_omit_malformed_deeplob_bdlob_microstructure_signal(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='deep',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol='aapl',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'price': Decimal('100'),
+                'microstructure_signal': {
+                    'schema_version': 'microstructure_signal_v1',
+                    'symbol': 'aapl',
+                    'event_ts': '2026-01-01T00:00:00Z',
+                    'expected_spread_impact_bps': 'not-a-number',
+                    'depth_top5_usd': '900000',
+                    'direction_probabilities': {'up': '0.7', 'down': '0.3'},
+                    'latency_ms': 20,
+                    'liquidity_state': 'stressed',
+                    'feature_quality_status': 'pass',
+                    'uncertainty_band': 'high',
+                },
+            },
+            timeframe='1Min',
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+        self.assertEqual(len(decisions), 1)
+        params = decisions[0].params
+        self.assertIsNone(params.get('microstructure_state'))
 
     def test_decision_params_include_signal_seq(self) -> None:
         engine = DecisionEngine(price_fetcher=None)

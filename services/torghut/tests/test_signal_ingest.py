@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from unittest import TestCase
@@ -102,6 +103,46 @@ class TestSignalIngest(TestCase):
         self.assertEqual(signal.payload.get("ema12"), 351.2)
         self.assertEqual(signal.payload.get("ema26"), 349.9)
         self.assertEqual(signal.payload.get("vol_realized_w60s"), 0.009)
+
+    def test_parse_flat_row_merges_deeplob_microstructure_signal_v1(self) -> None:
+        ingestor = ClickHouseSignalIngestor(schema="flat", fast_forward_stale_cursor=False)
+        row = {
+            "ts": "2026-01-01T00:00:03Z",
+            "symbol": "MSFT",
+            "microstructure_signal_v1": json.dumps(
+                {
+                    "schema_version": "microstructure_signal_v1",
+                    "symbol": "msft",
+                    "horizon": "PT1S",
+                    "direction_probabilities": {
+                        "up": 0.7,
+                        "flat": 0.1,
+                        "down": 0.2,
+                    },
+                    "uncertainty_band": "high",
+                    "expected_spread_impact_bps": 14.0,
+                    "expected_slippage_bps": 9.2,
+                    "feature_quality_status": "pass",
+                    "artifact": {
+                        "model_id": "deeplob-bdlob-v1",
+                        "feature_schema_version": "microstructure_signal_v1",
+                        "training_run_id": "run-abc-123",
+                    },
+                }
+            ),
+        }
+        signal = ingestor.parse_row(row)
+        self.assertIsNotNone(signal)
+        assert signal is not None
+        self.assertIn("microstructure_signal", signal.payload)
+        microstructure = signal.payload.get("microstructure_signal")
+        self.assertIsInstance(microstructure, dict)
+        assert isinstance(microstructure, dict)
+        self.assertEqual(microstructure.get("schema_version"), "microstructure_signal_v1")
+        self.assertEqual(
+            microstructure.get("artifact", {}).get("model_id"),
+            "deeplob-bdlob-v1",
+        )
 
     def test_parse_flat_row_uses_vwap_as_price_fallback(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", fast_forward_stale_cursor=False)
@@ -207,6 +248,7 @@ class TestSignalIngest(TestCase):
         self.assertIn("signal_json, timeframe, price, close, spread", query)
         self.assertIn("ema12, ema26", query)
         self.assertIn("vol_realized_w60s", query)
+        self.assertIn("microstructure_signal_v1", query)
         self.assertIn("FROM torghut.ta_signals", query)
         self.assertIn("WHERE event_ts > toDateTime64", query)
         self.assertNotIn("payload", query)
@@ -283,6 +325,7 @@ class TestSignalIngest(TestCase):
         self.assertIn("signal_json, timeframe, price, close, spread", ingestor.last_query)
         self.assertIn("ema12, ema26", ingestor.last_query)
         self.assertIn("vol_realized_w60s", ingestor.last_query)
+        self.assertIn("microstructure_signal_v1", ingestor.last_query)
         self.assertIn("WHERE event_ts >= toDateTime64", ingestor.last_query)
         self.assertIn("AND event_ts <= toDateTime64", ingestor.last_query)
 

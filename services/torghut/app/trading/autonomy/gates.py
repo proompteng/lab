@@ -758,6 +758,8 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
     avg_tca_shortfall_abs = _decimal(inputs.tca_metrics.get("avg_shortfall_notional_abs"))
     if avg_tca_shortfall is None:
         reasons.append("tca_shortfall_missing")
+    elif avg_tca_shortfall_abs is None:
+        reasons.append("tca_shortfall_abs_missing")
     elif (
         (avg_tca_shortfall_abs if avg_tca_shortfall_abs is not None else abs(avg_tca_shortfall))
         > policy.gate2_max_tca_shortfall_notional
@@ -771,12 +773,12 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
         reasons.append("tca_realized_shortfall_bps_exceeds_maximum")
 
     avg_tca_divergence = _decimal(inputs.tca_metrics.get("avg_divergence_bps"))
-    avg_tca_divergence_abs = _decimal(
-        inputs.tca_metrics.get("avg_divergence_bps_abs")
-    ) or (abs(avg_tca_divergence) if avg_tca_divergence is not None else None)
-    if avg_tca_divergence_abs is None:
-        avg_tca_divergence_abs = Decimal("0")
-    if avg_tca_divergence_abs > policy.gate2_max_tca_divergence_bps:
+    avg_tca_divergence_abs = _decimal(inputs.tca_metrics.get("avg_divergence_bps_abs"))
+    if avg_tca_divergence is None:
+        reasons.append("tca_divergence_missing")
+    elif avg_tca_divergence_abs is None:
+        reasons.append("tca_divergence_abs_missing")
+    elif avg_tca_divergence_abs > policy.gate2_max_tca_divergence_bps:
         reasons.append("tca_divergence_bps_exceeds_maximum")
 
     expected_shortfall_coverage = _decimal(

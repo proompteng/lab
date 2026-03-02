@@ -299,7 +299,7 @@ def signal_declares_compatible_schema(signal: SignalEnvelope) -> bool:
         return True
     major = _extract_major_version(str(declared))
     if major is None:
-        return True
+        return False
     return major == 3
 
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import app.trading.features as feature_values
 from unittest import TestCase
+from unittest.mock import patch
 
 from app.trading.feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
 from app.trading.models import SignalEnvelope
@@ -68,6 +70,24 @@ class TestFeatureQuality(TestCase):
         self.assertGreater(report.duplicate_ratio, 0)
         self.assertGreater(report.staleness_ms_p95, 2_000)
         self.assertIn('duplicate_ratio_exceeds_threshold', report.reasons)
+        self.assertIn('feature_staleness_exceeds_budget', report.reasons)
+
+    def test_batch_fails_closed_on_malformed_staleness_ms(self) -> None:
+        signals = [
+            _signal(ts=datetime(2026, 1, 1, tzinfo=timezone.utc), seq=1),
+            _signal(ts=datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc), seq=2),
+        ]
+
+        def _corrupt(signal: SignalEnvelope) -> dict[str, object]:
+            values = feature_values.map_feature_values_v3(signal)
+            if signal.seq == 1:
+                values["staleness_ms"] = "n/a"
+            return values
+
+        with patch("app.trading.feature_quality.map_feature_values_v3", side_effect=_corrupt):
+            report = evaluate_feature_batch_quality(signals)
+
+        self.assertFalse(report.accepted)
         self.assertIn('feature_staleness_exceeds_budget', report.reasons)
 
     def test_batch_fails_closed_on_required_field_null_rate(self) -> None:

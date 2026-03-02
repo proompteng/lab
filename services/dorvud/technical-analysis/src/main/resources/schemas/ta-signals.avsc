@@ -72,6 +72,37 @@
         {"name": "w60s", "type": "double"}
       ]
     }], "default": null},
+    {"name": "microstructure_signal_v1", "type": ["null", {
+      "type": "record",
+      "name": "MicrostructureSignalV1",
+      "fields": [
+        {"name": "schema_version", "type": "string"},
+        {"name": "symbol", "type": "string"},
+        {"name": "horizon", "type": "string"},
+        {"name": "direction_probabilities", "type": {
+          "type": "record",
+          "name": "DirectionProbabilities",
+          "fields": [
+            {"name": "up", "type": "double"},
+            {"name": "flat", "type": "double"},
+            {"name": "down", "type": "double"}
+          ]
+        }},
+        {"name": "uncertainty_band", "type": "string"},
+        {"name": "expected_spread_impact_bps", "type": "double"},
+        {"name": "expected_slippage_bps", "type": "double"},
+        {"name": "feature_quality_status", "type": "string"},
+        {"name": "artifact", "type": {
+          "type": "record",
+          "name": "MicrostructureSignalArtifact",
+          "fields": [
+            {"name": "model_id", "type": "string"},
+            {"name": "feature_schema_version", "type": "string"},
+            {"name": "training_run_id", "type": "string"}
+          ]
+        }}
+      ]
+    }], "default": null},
     {"name": "version", "type": ["int", "null"], "default": 1}
   ]
 }
