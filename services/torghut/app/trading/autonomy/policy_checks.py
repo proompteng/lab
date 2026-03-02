@@ -1910,7 +1910,12 @@ def _list_from_any(value: Any) -> list[object]:
 def _as_list_of_dicts(value: object) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
-    return [cast(dict[str, Any], item) for item in value if isinstance(item, dict)]
+    values = cast(list[object], value)
+    result: list[dict[str, Any]] = []
+    for item in values:
+        if isinstance(item, dict):
+            result.append(cast(dict[str, Any], item))
+    return result
 
 
 def _list_count(value: Any) -> int:
