@@ -248,7 +248,7 @@
 {{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace (.Values.database.caSecret.name | trim)) true -}}
 {{- end -}}
 
-{{- if .Values.agentComms.nats.userSecret.name -}}
+{{- if and .Values.agentComms.enabled .Values.agentComms.nats.userSecret.name -}}
 {{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace (.Values.agentComms.nats.userSecret.name | trim)) true -}}
 {{- end -}}
 
