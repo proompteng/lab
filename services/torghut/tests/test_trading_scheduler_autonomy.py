@@ -459,6 +459,20 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertEqual(
                 deps.call_kwargs["governance_artifact_path"], str(run_output_dir)
             )
+            governance_inputs = cast(
+                dict[str, object], deps.call_kwargs["governance_inputs"]
+            )
+            execution_context = cast(
+                dict[str, object], governance_inputs["execution_context"]
+            )
+            self.assertEqual(
+                execution_context["artifactPath"],
+                str(governance_root),
+            )
+            self.assertEqual(execution_context["repository"], "acme/lab")
+            self.assertEqual(execution_context["base"], "release")
+            self.assertEqual(execution_context["head"], "manual-autonomy-head")
+            self.assertEqual(execution_context["priorityId"], "priority-123")
 
     def test_append_runtime_governance_to_phase_manifest_records_rollback_trigger(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
