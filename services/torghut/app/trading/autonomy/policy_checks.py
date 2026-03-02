@@ -1202,7 +1202,9 @@ def _append_evidence_artifact_reasons(
         )
         return
 
-    max_age_seconds = int(policy_payload.get("promotion_evidence_max_age_seconds", 0))
+    max_age_seconds = _int_or_default(
+        policy_payload.get("promotion_evidence_max_age_seconds"), 0
+    )
     if max_age_seconds > 0 and now is not None:
         try:
             artifact_mtime = datetime.fromtimestamp(

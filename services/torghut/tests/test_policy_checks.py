@@ -1265,6 +1265,49 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(promotion.allowed)
         self.assertIn("stress_metrics_artifact_ref_invalid", promotion.reasons)
 
+    def test_promotion_prerequisites_allow_when_stress_evidence_max_age_is_invalid(
+        self,
+    ) -> None:
+        now = datetime(2026, 2, 25, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            _write_janus_artifacts(root)
+            _write_stress_artifacts(root, generated_at=now.isoformat())
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_stress_evidence": True,
+                    "promotion_require_patch_targets": [],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_stress_max_age_hours": 24,
+                    "promotion_evidence_max_age_seconds": "3600s",
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+                now=now,
+            )
+
+        self.assertTrue(promotion.allowed)
+        self.assertNotIn("stress_metrics_evidence_stale", promotion.reasons)
+        self.assertNotIn("stress_metrics_artifact_ref_invalid", promotion.reasons)
+
     def test_promotion_prerequisites_fail_when_stress_evidence_ref_is_untrusted(
         self,
     ) -> None:
