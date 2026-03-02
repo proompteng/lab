@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/part-of: posthog
 spec:
   configuration:
+    profiles:
+      default/deduplicate_merge_projection_mode: drop
     users:
       posthog/password:
         valueFrom:
