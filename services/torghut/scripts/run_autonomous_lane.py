@@ -132,7 +132,6 @@ def main() -> int:
         else None,
         priority_id=args.priority_id,
         priorityId=args.priorityId,
-        design_doc=args.design_doc,
         promotion_target=args.promotion_target,
         strategy_configmap_path=args.strategy_configmap,
         code_version=_resolve_git_sha(),
