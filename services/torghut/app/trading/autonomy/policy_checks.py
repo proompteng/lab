@@ -1458,6 +1458,53 @@ def _evaluate_benchmark_parity_evidence(
         )
         return reasons, details, refs
 
+    if not str(payload.get("artifact_hash", "")).strip():
+        reasons.append("benchmark_parity_artifact_hash_missing")
+        details.append(
+            {
+                "reason": "benchmark_parity_artifact_hash_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    else:
+        expected_hash = hashlib.sha256(
+            json.dumps(
+                {key: value for key, value in payload.items() if key != "artifact_hash"},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        if str(payload.get("artifact_hash", "")).strip() != expected_hash:
+            reasons.append("benchmark_parity_artifact_hash_mismatch")
+            details.append(
+                {
+                    "reason": "benchmark_parity_artifact_hash_mismatch",
+                    "artifact_ref": str(artifact_path),
+                    "artifact_hash": str(payload.get("artifact_hash", "")),
+                    "expected_artifact_hash": expected_hash,
+                }
+            )
+
+    candidate_id = str(payload.get("candidate_id", "")).strip()
+    if not candidate_id:
+        reasons.append("benchmark_parity_candidate_id_missing")
+        details.append(
+            {
+                "reason": "benchmark_parity_candidate_id_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    baseline_candidate_id = str(payload.get("baseline_candidate_id", "")).strip()
+    if not baseline_candidate_id:
+        reasons.append("benchmark_parity_baseline_candidate_id_missing")
+        details.append(
+            {
+                "reason": "benchmark_parity_baseline_candidate_id_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
     schema_version = str(payload.get("schema_version", "")).strip()
     if schema_version != BENCHMARK_PARITY_SCHEMA_VERSION:
         reasons.append("benchmark_parity_schema_version_invalid")
@@ -1569,6 +1616,27 @@ def _evaluate_benchmark_parity_evidence(
         family = str(run.get("family", "")).strip().lower()
         if family:
             families_seen.add(family)
+
+        missing_required_run_fields: list[str] = []
+        for field in BENCHMARK_PARITY_REQUIRED_RUN_FIELDS:
+            if field in {"dataset_ref", "window_ref", "family", "run_hash"}:
+                if not str(run.get(field, "")).strip():
+                    missing_required_run_fields.append(field)
+            else:
+                value = run.get(field)
+                if not isinstance(value, dict) or not value:
+                    missing_required_run_fields.append(field)
+        if missing_required_run_fields:
+            reasons.append("benchmark_parity_run_missing_required_fields")
+            details.append(
+                {
+                    "reason": "benchmark_parity_run_missing_required_fields",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                    "missing_fields": missing_required_run_fields,
+                }
+            )
+            continue
 
         metrics = _as_dict(run.get("metrics"))
         violations = _as_dict(run.get("policy_violations"))
