@@ -83,6 +83,15 @@
           },
           "additionalProperties": false
         },
+        "deploymentLifecycle": {
+          "type": "object",
+          "properties": {
+            "minReadySeconds": { "type": "integer", "minimum": 0 },
+            "progressDeadlineSeconds": { "type": "integer", "minimum": 1 },
+            "revisionHistoryLimit": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
         "deploymentStrategy": {
           "type": "object",
           "properties": {
@@ -90,20 +99,11 @@
             "rollingUpdate": {
               "type": "object",
               "properties": {
-                "maxSurge": { "type": ["string", "integer"] },
-                "maxUnavailable": { "type": ["string", "integer"] }
+                "maxUnavailable": { "type": ["integer", "string"] },
+                "maxSurge": { "type": ["integer", "string"] }
               },
               "additionalProperties": false
             }
-          },
-          "additionalProperties": false
-        },
-        "deploymentLifecycle": {
-          "type": "object",
-          "properties": {
-            "minReadySeconds": { "type": "integer", "minimum": 0 },
-            "progressDeadlineSeconds": { "type": "integer", "minimum": 1 },
-            "revisionHistoryLimit": { "type": "integer", "minimum": 0 }
           },
           "additionalProperties": false
         },
@@ -201,8 +201,8 @@
             "rollingUpdate": {
               "type": "object",
               "properties": {
-                "maxSurge": { "type": ["string", "integer"] },
-                "maxUnavailable": { "type": ["string", "integer"] }
+                "maxUnavailable": { "type": ["integer", "string"] },
+                "maxSurge": { "type": ["integer", "string"] }
               },
               "additionalProperties": false
             }

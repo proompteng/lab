@@ -28,7 +28,6 @@ controlPlane:
     pullSecrets: []
   env:
     vars: {}
-  deploymentStrategy: {}
   livenessProbe: {}
   readinessProbe: {}
   startupProbe: {}
@@ -60,7 +59,6 @@ controllers:
   resources: {}
   env:
     vars: {}
-  deploymentStrategy: {}
   livenessProbe: {}
   readinessProbe: {}
   startupProbe: {}
