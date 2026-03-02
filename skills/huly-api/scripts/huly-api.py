@@ -391,8 +391,26 @@ def resolve_teamspace(context: HulyContext, teamspace_ref: str) -> dict[str, Any
     return spaces[0]
 
 
+def normalize_channel_ref(channel_ref: str) -> str:
+    value = channel_ref.strip()
+    if not value:
+        return ''
+    if value.startswith('huly://'):
+        parsed = urllib.parse.urlparse(value)
+        segments = [segment for segment in parsed.path.split('/') if segment]
+        if len(segments) >= 2 and segments[0] == 'channels':
+            return urllib.parse.unquote(segments[1]).strip()
+        return urllib.parse.unquote(parsed.path.strip('/')).strip()
+    if value.startswith('http://') or value.startswith('https://'):
+        decoded = urllib.parse.unquote(urllib.parse.urlparse(value).path)
+        marker = 'chunter:space:'
+        if marker in decoded:
+            return decoded.split(marker, 1)[1].split('|', 1)[0].strip().lower()
+    return value
+
+
 def resolve_channel(context: HulyContext, channel_ref: str) -> dict[str, Any]:
-    channel_ref = channel_ref.strip()
+    channel_ref = normalize_channel_ref(channel_ref)
     if channel_ref:
         for query in ({'_id': channel_ref}, {'name': channel_ref}):
             channels = find_all(context=context, class_name=CHANNEL_CLASS, query=query, options={'limit': 1})
@@ -650,6 +668,43 @@ def post_channel_message(
     }
 
 
+def list_channel_messages(
+    *,
+    context: HulyContext,
+    channel_ref: str,
+    limit: int,
+) -> dict[str, Any]:
+    channel = resolve_channel(context, channel_ref)
+    channel_id = str(channel.get('_id') or '')
+    channel_name = str(channel.get('name') or '')
+    if not channel_id:
+        raise RuntimeError('resolved channel is missing _id')
+
+    safe_limit = max(1, min(limit, 200))
+    messages = find_all(
+        context=context,
+        class_name=CHAT_MESSAGE_CLASS,
+        query={'space': channel_id},
+        options={'limit': safe_limit, 'sort': {'modifiedOn': -1}},
+    )
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        normalized.append(
+            {
+                'messageId': message.get('_id'),
+                'message': message.get('message', ''),
+                'createdBy': message.get('createdBy'),
+                'modifiedOn': message.get('modifiedOn'),
+            }
+        )
+    return {
+        'channelId': channel_id,
+        'channelName': channel_name,
+        'count': len(normalized),
+        'messages': normalized,
+    }
+
+
 def build_context(args: argparse.Namespace, *, for_platform_api: bool) -> HulyContext:
     base_url_raw = args.base_url.strip() or env_first('HULY_API_BASE_URL', 'HULY_BASE_URL')
     if not base_url_raw:
@@ -759,6 +814,11 @@ def run_account_info(args: argparse.Namespace) -> int:
 
 
 def run_verify_chat_access(args: argparse.Namespace) -> int:
+    chat_message = args.message.strip()
+    if not chat_message:
+        print('--message is required for verify-chat-access', file=sys.stderr)
+        return 2
+
     context = build_context(args, for_platform_api=True)
     account = fetch_account_info(context)
     actor_id = str(account.get('primarySocialId') or '').strip()
@@ -792,15 +852,6 @@ def run_verify_chat_access(args: argparse.Namespace) -> int:
         )
         return 1
 
-    worker_id = args.worker_id.strip() or env_if_set('SWARM_AGENT_WORKER_ID') or 'unknown-worker'
-    worker_identity = args.worker_identity.strip() or env_if_set('SWARM_AGENT_IDENTITY') or 'unknown-identity'
-    chat_message = args.message.strip() or (
-        '[swarm-chat-access-ok] '
-        f'worker={worker_id} '
-        f'identity={worker_identity} '
-        f'actorId={actor_id} '
-        f'tokenSource={context.token_source}'
-    )
     channel_result = post_channel_message(
         context=context,
         channel_ref=args.channel,
@@ -915,9 +966,18 @@ def run_post_channel_message(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_upsert_mission(args: argparse.Namespace) -> int:
+def run_list_channel_messages(args: argparse.Namespace) -> int:
     context = build_context(args, for_platform_api=True)
+    result = list_channel_messages(
+        context=context,
+        channel_ref=args.channel,
+        limit=args.limit,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
 
+
+def run_upsert_mission(args: argparse.Namespace) -> int:
     mission_id = args.mission_id.strip()
     if not mission_id:
         print('--mission-id is required for upsert-mission', file=sys.stderr)
@@ -932,6 +992,12 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
     if not summary:
         print('--summary is required for upsert-mission', file=sys.stderr)
         return 2
+    channel_message = args.message.strip()
+    if not channel_message:
+        print('--message is required for upsert-mission (worker-authored channel update)', file=sys.stderr)
+        return 2
+
+    context = build_context(args, for_platform_api=True)
 
     stage = args.stage.strip() or 'unknown'
     status = args.status.strip() or 'in-progress'
@@ -969,13 +1035,6 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
         mission_id=mission_id,
     )
 
-    channel_message = (
-        f'[{stage}] [{status}] mission={mission_id}\\n'
-        f'title={title}\\n'
-        f'summary={summary}\\n'
-        f'issueId={issue_result.get("issueId", "")} '
-        f'documentId={document_result.get("documentId", "")}'
-    )
     channel_result = post_channel_message(
         context=context,
         channel_ref=args.channel,
@@ -1006,6 +1065,7 @@ def build_parser() -> argparse.ArgumentParser:
             'create-issue',
             'create-document',
             'post-channel-message',
+            'list-channel-messages',
             'upsert-mission',
             'account-info',
             'verify-chat-access',
@@ -1062,6 +1122,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--status', default='', help='Mission status label for upsert-mission')
     parser.add_argument('--issue-status', default=DEFAULT_ISSUE_STATUS, help='Issue status id for task artifacts')
     parser.add_argument('--priority', type=int, default=0, help='Issue priority for task artifacts')
+    parser.add_argument('--limit', type=int, default=20, help='Result limit for list-channel-messages')
     parser.add_argument(
         '--expected-actor-id',
         default='',
@@ -1094,6 +1155,8 @@ def main() -> int:
             return run_create_document(args)
         if args.operation == 'post-channel-message':
             return run_post_channel_message(args)
+        if args.operation == 'list-channel-messages':
+            return run_list_channel_messages(args)
         if args.operation == 'upsert-mission':
             return run_upsert_mission(args)
         if args.operation == 'account-info':
