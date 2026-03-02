@@ -74,10 +74,43 @@
   "JANGAR_GRPC_HOST" $expectedGrpcHost
   "JANGAR_GRPC_PORT" $expectedGrpcPort
 }}
-{{- $controllersGrpcExpectedValues := dict -}}
-{{- $_ := set $controllersGrpcExpectedValues "JANGAR_GRPC_ENABLED" "0" -}}
-{{- $_ := set $controllersGrpcExpectedValues "JANGAR_GRPC_HOST" $expectedGrpcHost -}}
-{{- $_ := set $controllersGrpcExpectedValues "JANGAR_GRPC_PORT" $expectedGrpcPort -}}
+{{- $controllersGrpcExpectedValues := dict
+  "JANGAR_GRPC_ENABLED" "0"
+  "JANGAR_GRPC_HOST" "0.0.0.0"
+  "JANGAR_GRPC_PORT" $expectedGrpcPort
+}}
+{{- $controllersReservedEnvDefaults := dict
+  "JANGAR_MIGRATIONS" "skip"
+  "JANGAR_GRPC_ENABLED" "0"
+  "JANGAR_GRPC_HOST" "0.0.0.0"
+  "JANGAR_GRPC_PORT" $expectedGrpcPort
+  "JANGAR_CONTROL_PLANE_CACHE_ENABLED" "0"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED" "true"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS" "30"
+  "JANGAR_AGENTRUN_ARTIFACTS_MAX" (toString (.Values.controller.agentRunArtifacts.max | default 50))
+  "JANGAR_AGENTRUN_ARTIFACTS_STRICT" (toString (.Values.controller.agentRunArtifacts.strict | default false))
+}}
+
+{{- $controlPlaneResolvedEnvVars := deepCopy $controlPlaneEnvVars -}}
+{{- if $grpcManagedByChart }}
+{{- range $grpcEnvKey, $grpcEnvValue := $controlPlaneGrpcExpectedValues }}
+{{- $_ := set $controlPlaneResolvedEnvVars $grpcEnvKey $grpcEnvValue -}}
+{{- end }}
+{{- end -}}
+
+{{- $controllersSharedReservedEnvKeys := keys $controllersReservedEnvDefaults -}}
+{{- $controllersSharedEnvVars := deepCopy $globalEnvVars -}}
+{{- range $reservedKey := $controllersSharedReservedEnvKeys }}
+{{- $_ := unset $controllersSharedEnvVars $reservedKey -}}
+{{- end }}
+{{- $controllersResolvedEnvVars := merge (deepCopy $controllersSharedEnvVars) (deepCopy $controllersExplicitEnvVars) -}}
+{{- if $controllersEnabled }}
+{{- range $envVarName, $envVarValue := $controllersReservedEnvDefaults }}
+{{- if not (hasKey $controllersResolvedEnvVars $envVarName) }}
+{{- $_ := set $controllersResolvedEnvVars $envVarName $envVarValue -}}
+{{- end -}}
+{{- end }}
+{{- end }}
 
 {{- $validationInputs := list
   (dict
@@ -171,21 +204,18 @@
 {{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but env.vars and controllers.env.vars define conflicting values for %q: env.vars=%s, controllers.env.vars=%s. Set controllers.env.vars to match env.vars or remove it from env.vars." $grpcEnvKey (index $globalEnvVars $grpcEnvKey) (index $controllersExplicitEnvVars $grpcEnvKey)) -}}
 {{- end }}
 {{- end }}
+{{- if and (hasKey $controlPlaneEnvVars $grpcEnvKey) (hasKey $controlPlaneGrpcExpectedValues $grpcEnvKey) }}
+{{- if ne (toString (index $controlPlaneEnvVars $grpcEnvKey)) (toString (index $controlPlaneGrpcExpectedValues $grpcEnvKey)) }}
+{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but control-plane env values (env.vars + controlPlane.env.vars) set %q=%s, expected=%s when derived from grpc settings." $grpcEnvKey (index $controlPlaneEnvVars $grpcEnvKey) (index $controlPlaneGrpcExpectedValues $grpcEnvKey)) -}}
+{{- end }}
+{{- end }}
 {{- end }}
 
-{{- if and (hasKey $controlPlaneEnvVars "JANGAR_GRPC_ENABLED") (ne (toString (index $controlPlaneEnvVars "JANGAR_GRPC_ENABLED")) $expectedGrpcEnabled) }}
-{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but control-plane env values (env.vars + controlPlane.env.vars) set JANGAR_GRPC_ENABLED=%s which does not match grpc.enabled=%s." (toString (index $controlPlaneEnvVars "JANGAR_GRPC_ENABLED")) $expectedGrpcEnabled) -}}
-{{- end -}}
-{{- if and (hasKey $controlPlaneEnvVars "JANGAR_GRPC_HOST") (ne (toString (index $controlPlaneEnvVars "JANGAR_GRPC_HOST")) $expectedGrpcHost) }}
-{{- $errors = append $errors "grpc managed by chart is enabled (grpc.manageEnvVar=true), but control-plane env values (env.vars + controlPlane.env.vars) override JANGAR_GRPC_HOST. Remove the override or set grpc.manageEnvVar=false." -}}
-{{- end -}}
-{{- if and (hasKey $controlPlaneEnvVars "JANGAR_GRPC_PORT") (ne (toString (index $controlPlaneEnvVars "JANGAR_GRPC_PORT")) $expectedGrpcPort) }}
-{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but control-plane env values (env.vars + controlPlane.env.vars) set JANGAR_GRPC_PORT=%s which does not match grpc.port=%s." (toString (index $controlPlaneEnvVars "JANGAR_GRPC_PORT")) $expectedGrpcPort) -}}
-{{- end -}}
 {{- end -}}
 
 {{- if $reservedEnvKeysEnforced }}
-{{- $refSourceType := "secretRef" }}
+{{- $structuredEnvFromSources := list -}}
+
 {{- range $envSource := $envFromSecretRefs }}
 {{- if kindIs "map" $envSource }}
 {{- $refName := index $envSource "name" | default "anonymous" -}}
@@ -195,34 +225,10 @@
 {{- else if kindIs "string" (index $envSource "keys") }}
 {{- $refKeys = list (index $envSource "keys") -}}
 {{- end }}
-{{- range $refKeys }}
-{{- if and (kindIs "string" .) (has . $reservedEnvKeys) }}
-{{- if has . $controlPlaneReservedEnvKeys }}
-{{- if and $grpcManagedByChart (has . $grpcManagedKeys) (hasKey $controlPlaneGrpcExpectedValues .) }}
-{{- if and (hasKey $controlPlaneEnvVars .) (ne (toString (index $controlPlaneEnvVars .)) (toString (index $controlPlaneGrpcExpectedValues .))) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets managed control-plane key %q, but env.vars + controlPlane.env.vars resolve to %q; chart-managed values are %q when grpc.manageEnvVar=true. Set %q explicitly to %q in controlPlane.env.vars or env.vars." $refSourceType $refName . (index $controlPlaneEnvVars .) (index $controlPlaneGrpcExpectedValues .) . (index $controlPlaneGrpcExpectedValues .)) -}}
-{{- end }}
-{{- else if not (has . $grpcManagedKeys) }}
-{{- if not (hasKey $controlPlaneEnvVars .) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controlPlane.env.vars+env.vars does not explicitly set it; add it to controlPlane.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- if and $controllersEnabled (has . $controllersReservedEnvKeys) }}
-{{- if and (has . $grpcManagedKeys) (hasKey $controllersGrpcExpectedValues .) (hasKey $controllersEnvVars .) (ne (toString (index $controllersEnvVars .)) (toString (index $controllersGrpcExpectedValues .))) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets managed controllers key %q, but controllers.env.vars resolves to %q; chart-managed default is %q. Set controllers.env.vars.%q=%q to keep deterministic controller-owned precedence, or remove this key from the envFrom entry." $refSourceType $refName . (index $controllersEnvVars .) (index $controllersGrpcExpectedValues .) . (index $controllersGrpcExpectedValues .)) -}}
-{{- else if and $controllersEnabled (not (has . $grpcManagedKeys)) (not (hasKey $controllersEnvVars .)) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controllers.env.vars+env.vars does not explicitly set it; add it to controllers.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
-{{- end }}
-{{- if and $grpcManagedByChart (has . $grpcManagedKeys) (hasKey $controlPlaneEnvVars .) (hasKey $controllersEnvVars .) (ne (toString (index $controlPlaneEnvVars .)) (toString (index $controllersEnvVars .))) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets managed key %q, but control-plane and controllers maps disagree: env.vars + controlPlane.env.vars=%q, env.vars + controllers.env.vars=%q. Remove the envFrom entry or align both maps to avoid drift." $refSourceType $refName . (index $controlPlaneEnvVars .) (index $controllersEnvVars .)) -}}
-{{- end }}
-{{- end }}
-{{- end }}
+{{- $structuredEnvFromSources = append $structuredEnvFromSources (dict "type" "secretRef" "name" $refName "keys" $refKeys) -}}
 {{- end }}
 {{- end }}
 
-{{- $refSourceType = "configMapRef" }}
 {{- range $envSource := $envFromConfigMapRefs }}
 {{- if kindIs "map" $envSource }}
 {{- $refName := index $envSource "name" | default "anonymous" -}}
@@ -232,34 +238,55 @@
 {{- else if kindIs "string" (index $envSource "keys") }}
 {{- $refKeys = list (index $envSource "keys") -}}
 {{- end }}
-{{- range $refKeys }}
-{{- if and (kindIs "string" .) (has . $reservedEnvKeys) }}
-{{- if has . $controlPlaneReservedEnvKeys }}
-{{- if and $grpcManagedByChart (has . $grpcManagedKeys) (hasKey $controlPlaneGrpcExpectedValues .) }}
-{{- if and (hasKey $controlPlaneEnvVars .) (ne (toString (index $controlPlaneEnvVars .)) (toString (index $controlPlaneGrpcExpectedValues .))) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets managed control-plane key %q, but env.vars + controlPlane.env.vars resolve to %q; chart-managed values are %q when grpc.manageEnvVar=true. Set %q explicitly to %q in controlPlane.env.vars or env.vars." $refSourceType $refName . (index $controlPlaneEnvVars .) (index $controlPlaneGrpcExpectedValues .) . (index $controlPlaneGrpcExpectedValues .)) -}}
-{{- end }}
-{{- else if not (has . $grpcManagedKeys) }}
-{{- if not (hasKey $controlPlaneEnvVars .) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controlPlane.env.vars+env.vars does not explicitly set it; add it to controlPlane.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
+{{- $structuredEnvFromSources = append $structuredEnvFromSources (dict "type" "configMapRef" "name" $refName "keys" $refKeys) -}}
 {{- end }}
 {{- end }}
-{{- end }}
-{{- if and $controllersEnabled (has . $controllersReservedEnvKeys) }}
-{{- if and (has . $grpcManagedKeys) (hasKey $controllersGrpcExpectedValues .) (hasKey $controllersEnvVars .) (ne (toString (index $controllersEnvVars .)) (toString (index $controllersGrpcExpectedValues .))) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets managed controllers key %q, but controllers.env.vars resolves to %q; chart-managed default is %q. Set controllers.env.vars.%q=%q to keep deterministic controller-owned precedence, or remove this key from the envFrom entry." $refSourceType $refName . (index $controllersEnvVars .) (index $controllersGrpcExpectedValues .) . (index $controllersGrpcExpectedValues .)) -}}
-{{- else if and $controllersEnabled (not (has . $grpcManagedKeys)) (not (hasKey $controllersEnvVars .)) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets reserved key %q, but controllers.env.vars+env.vars does not explicitly set it; add it to controllers.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName .) -}}
-{{- end }}
-{{- if and $grpcManagedByChart (has . $grpcManagedKeys) (hasKey $controlPlaneEnvVars .) (hasKey $controllersEnvVars .) (ne (toString (index $controlPlaneEnvVars .)) (toString (index $controllersEnvVars .))) }}
-{{- $errors = append $errors (printf "envFrom %s %q sets managed key %q, but control-plane and controllers maps disagree: env.vars + controlPlane.env.vars=%q, env.vars + controllers.env.vars=%q. Remove the envFrom entry or align both maps to avoid drift." $refSourceType $refName . (index $controlPlaneEnvVars .) (index $controllersEnvVars .)) -}}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end -}}
 
+{{- $reservedEnvFromOwners := dict -}}
+{{- range $source := $structuredEnvFromSources }}
+{{- $refSourceType := index $source "type" -}}
+{{- $refName := index $source "name" -}}
+{{- range $refKey := index $source "keys" }}
+{{- if and (kindIs "string" $refKey) (has $refKey $reservedEnvKeys) }}
+{{- $owners := get $reservedEnvFromOwners $refKey | default (list) -}}
+{{- $owners = append $owners (printf "%s:%s" $refSourceType $refName) -}}
+{{- $_ := set $reservedEnvFromOwners $refKey $owners -}}
+
+{{- if has $refKey $controlPlaneReservedEnvKeys }}
+{{- if and $grpcManagedByChart (has $refKey $grpcManagedKeys) (hasKey $controlPlaneEnvVars $refKey) }}
+{{- if ne (toString (index $controlPlaneEnvVars $refKey)) (toString (index $controlPlaneGrpcExpectedValues $refKey)) }}
+{{- $errors = append $errors (printf "envFrom %q %q sets managed control-plane key %q, but env.vars + controlPlane.env.vars resolve to %q while chart-managed expected value is %q. Set %q explicitly to %q in controlPlane.env.vars or env.vars, or remove the managed key from this envFrom entry." $refSourceType $refName $refKey (index $controlPlaneEnvVars $refKey) (index $controlPlaneGrpcExpectedValues $refKey) $refKey (index $controlPlaneGrpcExpectedValues $refKey)) -}}
+{{- end }}
+{{- else if not (has $refKey $grpcManagedKeys) }}
+{{- if not (hasKey $controlPlaneResolvedEnvVars $refKey) }}
+{{- $errors = append $errors (printf "envFrom %q %q sets reserved key %q, but controlPlane.env.vars+env.vars does not explicitly set it; add it to controlPlane.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName $refKey) -}}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- if and $controllersEnabled (has $refKey $controllersReservedEnvKeys) }}
+{{- if and $grpcManagedByChart (has $refKey $grpcManagedKeys) }}
+{{- if ne (toString (index $controllersResolvedEnvVars $refKey)) (toString (index $controllersGrpcExpectedValues $refKey)) }}
+{{- $errors = append $errors (printf "envFrom %q %q sets managed controllers key %q, but controllers.env.vars resolves to %q. Chart-managed default is %q unless you explicitly set controllers.env.vars.%q. Keep reserved managed keys out of envFrom or set this exact value." $refSourceType $refName $refKey (index $controllersResolvedEnvVars $refKey) (index $controllersGrpcExpectedValues $refKey) $refKey) -}}
+{{- end }}
+{{- else if not (has $refKey $grpcManagedKeys) }}
+{{- if not (hasKey $controllersResolvedEnvVars $refKey) }}
+{{- $errors = append $errors (printf "envFrom %q %q sets reserved key %q, but controllers.env.vars+env.vars does not explicitly set it for controller execution. Add it to controllers.env.vars (reserved controller keys are controller-owned when controllers are enabled), or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName $refKey) -}}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- if and $controllersEnabled $grpcManagedByChart (has $refKey $grpcManagedKeys) (hasKey $controlPlaneEnvVars $refKey) (hasKey $controllersEnvVars $refKey) (ne (toString (index $controlPlaneEnvVars $refKey)) (toString (index $controllersEnvVars $refKey))) }}
+{{- $errors = append $errors (printf "envFrom %q %q sets managed key %q, but controlPlane env values (env.vars + controlPlane.env.vars) and controllers env values (env.vars + controllers.env.vars) disagree (control-plane=%q, controllers=%q). Remove this key from envFrom or align both component maps to deterministic values." $refSourceType $refName $refKey (index $controlPlaneEnvVars $refKey) (index $controllersEnvVars $refKey)) -}}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- range $envVarName, $refSourceList := $reservedEnvFromOwners }}
+{{- if gt (len $refSourceList) 1 }}
+{{- $errors = append $errors (printf "reserved envFrom key %q is declared in multiple envFrom sources (%s). Keep each reserved key in a single envFrom source for deterministic precedence." $envVarName (join ", " $refSourceList)) -}}
+{{- end }}
 {{- end }}
 {{- end }}
 

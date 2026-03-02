@@ -8,8 +8,7 @@ Docs index: [README](../README.md)
 
 The chart supports both explicit `env:` entries and Kubernetes `envFrom` imports.
 `env:` still wins for duplicate keys at runtime. To make configuration safe and
-predictable, chart rendering can validate structured `envFrom` keys against
-reserved key ownership and chart-managed defaults.
+predictable, chart rendering validates structured `envFrom` keys against reserved key ownership and chart-managed defaults.
 
 ## Contract
 
@@ -20,10 +19,12 @@ reserved key ownership and chart-managed defaults.
 - If a reserved key is listed in a structured `envFrom` reference, it must be
   pinned in the consuming component map when you are intentionally managing it:
   - control plane: `controlPlane.env.vars` or global `env.vars`
-  - controllers: `controllers.env.vars` or global `env.vars` (when `controllers.enabled=true`)
+  - controllers: `controllers.env.vars` (or chart-managed default when `controllers.enabled=true`)
 - Managed `JANGAR_GRPC_*` keys do not need explicit pinning when relying on chart defaults:
   - control plane: `JANGAR_GRPC_ENABLED={{ .Values.grpc.enabled }}`, `JANGAR_GRPC_HOST=0.0.0.0`, `JANGAR_GRPC_PORT={{ .Values.grpc.port }}`
   - controllers: `JANGAR_GRPC_ENABLED=0`, `JANGAR_GRPC_HOST=0.0.0.0`, `JANGAR_GRPC_PORT={{ .Values.grpc.port }}`
+- A reserved key may only be declared in one structured `envFrom` source across
+  `envFromSecretRefs` and `envFromConfigMapRefs`; duplicates are rejected to avoid order-dependent precedence.
 - `envFrom` can still be a string (legacy mode): `['existing-secret']`.
 - New structured mode enables safer metadata:
 
@@ -54,7 +55,7 @@ validation:
   deterministic values when `grpc.manageEnvVar=true`:
   - control plane: `JANGAR_GRPC_ENABLED={{ .Values.grpc.enabled }}`, `JANGAR_GRPC_HOST=0.0.0.0`, `JANGAR_GRPC_PORT={{ .Values.grpc.port }}`
   - controllers: `JANGAR_GRPC_ENABLED=0`, `JANGAR_GRPC_HOST=0.0.0.0`, `JANGAR_GRPC_PORT={{ .Values.grpc.port }}`
-- If both control-plane and controller component maps define managed `JANGAR_GRPC_*` and their values disagree, envFrom validation fails to prevent cross-component drift.
+- If both control-plane and controller component maps define managed `JANGAR_GRPC_*` and their resolved values disagree, envFrom validation fails to prevent cross-component drift.
 - If managed `JANGAR_GRPC_*` values are intentionally diverged, set
   `grpc.manageEnvVar=false` and control the values explicitly in each component.
 
@@ -80,5 +81,5 @@ validation:
 ## Failure modes and mitigations
 
 - Reserved key declared in `envFrom` without explicit override: rendering fails in validation mode.
-- Secret/config drift via broad key imports: represent imports with explicit key lists and keep
-  chart-managed values explicit.
+- Duplicate declarations of reserved keys across structured `envFrom` sources: rendering fails to avoid order-dependent imports.
+- Secret/config drift via broad key imports: represent imports with explicit key lists and keep chart-managed values explicit.

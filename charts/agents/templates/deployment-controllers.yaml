@@ -1,7 +1,22 @@
 {{- if .Values.controllers.enabled -}}
 {{- $controllersImage := .Values.controllers.image | default dict -}}
 {{- $controllersEnvVars := .Values.controllers.env.vars | default dict -}}
-{{- $envVars := merge (deepCopy (.Values.env.vars | default dict)) (deepCopy $controllersEnvVars) -}}
+{{- $sharedReservedControllersEnvVars := list
+  "JANGAR_MIGRATIONS"
+  "JANGAR_GRPC_ENABLED"
+  "JANGAR_GRPC_HOST"
+  "JANGAR_GRPC_PORT"
+  "JANGAR_CONTROL_PLANE_CACHE_ENABLED"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS"
+  "JANGAR_AGENTRUN_ARTIFACTS_MAX"
+  "JANGAR_AGENTRUN_ARTIFACTS_STRICT"
+}}
+{{- $controllersSharedEnvVars := deepCopy (.Values.env.vars | default dict) -}}
+{{- range $reservedKey := $sharedReservedControllersEnvVars }}
+{{- $_ := unset $controllersSharedEnvVars $reservedKey -}}
+{{- end }}
+{{- $envVars := merge $controllersSharedEnvVars (deepCopy $controllersEnvVars) -}}
 {{- if not (hasKey $envVars "JANGAR_MIGRATIONS") -}}
 {{- $_ := set $envVars "JANGAR_MIGRATIONS" "skip" -}}
 {{- end -}}
