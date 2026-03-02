@@ -813,15 +813,11 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
     elif avg_tca_calibration_error > policy.gate2_max_tca_calibration_error_bps:
         reasons.append("tca_calibration_error_exceeds_maximum")
 
-    if (
-        expected_shortfall_sample_count <= 0
-        and policy.gate2_min_tca_expected_shortfall_coverage > 0
-    ):
-        reasons.append("tca_expected_shortfall_calibration_coverage_missing")
-    elif expected_shortfall_coverage is None:
-        reasons.append("tca_expected_shortfall_calibration_coverage_missing")
-    elif expected_shortfall_coverage < policy.gate2_min_tca_expected_shortfall_coverage:
-        reasons.append("tca_expected_shortfall_calibration_coverage_below_threshold")
+    if policy.gate2_min_tca_expected_shortfall_coverage > 0:
+        if expected_shortfall_sample_count <= 0 or expected_shortfall_coverage is None:
+            reasons.append("tca_expected_shortfall_calibration_coverage_missing")
+        elif expected_shortfall_coverage < policy.gate2_min_tca_expected_shortfall_coverage:
+            reasons.append("tca_expected_shortfall_calibration_coverage_below_threshold")
 
     avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get("avg_churn_ratio"))
     if avg_tca_churn_ratio is None:
