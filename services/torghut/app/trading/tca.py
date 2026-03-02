@@ -218,29 +218,19 @@ def build_tca_gate_inputs(
     expected_shortfall_coverage = (
         Decimal(expected_count) / Decimal(order_count)
         if order_count > 0
-        else Decimal("0")
+        else None
     )
     return {
         "order_count": order_count,
-        "avg_slippage_bps": avg_slippage if avg_slippage is not None else Decimal("0"),
-        "avg_shortfall_notional": avg_shortfall
-        if avg_shortfall is not None
-        else Decimal("0"),
-        "avg_churn_ratio": avg_churn if avg_churn is not None else Decimal("0"),
-        "avg_divergence_bps": avg_divergence
-        if avg_divergence is not None
-        else Decimal("0"),
+        "avg_slippage_bps": avg_slippage,
+        "avg_shortfall_notional": avg_shortfall,
+        "avg_churn_ratio": avg_churn,
+        "avg_divergence_bps": avg_divergence,
         "expected_shortfall_sample_count": expected_count,
         "expected_shortfall_coverage": expected_shortfall_coverage,
-        "avg_expected_shortfall_bps_p50": avg_expected_shortfall_p50
-        if avg_expected_shortfall_p50 is not None
-        else Decimal("0"),
-        "avg_expected_shortfall_bps_p95": avg_expected_shortfall_p95
-        if avg_expected_shortfall_p95 is not None
-        else Decimal("0"),
-        "avg_realized_shortfall_bps": avg_realized_shortfall_bps
-        if avg_realized_shortfall_bps is not None
-        else Decimal("0"),
+        "avg_expected_shortfall_bps_p50": avg_expected_shortfall_p50,
+        "avg_expected_shortfall_bps_p95": avg_expected_shortfall_p95,
+        "avg_realized_shortfall_bps": avg_realized_shortfall_bps,
         "last_computed_at": last_computed_at,
     }
 
