@@ -7,7 +7,13 @@ from pathlib import Path
 from unittest import TestCase
 
 from app.trading.models import SignalEnvelope
-from app.trading.parity import run_feature_parity, write_feature_parity_report
+from app.trading.parity import (
+    BENCHMARK_PARITY_SCHEMA_VERSION,
+    build_benchmark_parity_report_v1,
+    run_feature_parity,
+    write_benchmark_parity_report_v1,
+    write_feature_parity_report,
+)
 
 
 class TestFeatureParity(TestCase):
@@ -44,3 +50,63 @@ class TestFeatureParity(TestCase):
             self.assertEqual(payload['accepted'], report.accepted)
             self.assertEqual(payload['checked_rows'], 1)
             self.assertEqual(payload['top_drift_fields'][0]['field'], 'price')
+
+    def test_benchmark_parity_report_supports_schema_and_generation(self) -> None:
+        report = build_benchmark_parity_report_v1(
+            candidate_id='cand-benchmark-parity',
+            baseline_candidate_id='baseline-legacy-macd-rsi',
+            signal_count=100,
+            candidate_decision_count=100,
+            baseline_decision_count=100,
+            candidate_trade_count=4,
+            baseline_trade_count=4,
+            candidate_confidence_calibration_error=0.01,
+            baseline_confidence_calibration_error=0.02,
+            candidate_policy_violation_rate=0.01,
+            baseline_policy_violation_rate=0.01,
+            candidate_adverse_regime_decision_quality_delta=0.0,
+            candidate_risk_veto_alignment_rate=0.99,
+            baseline_risk_veto_alignment_rate=1.0,
+            deterministic_gate_compatibility=True,
+            fallback_rate=0.01,
+            timeout_rate=0.01,
+        )
+
+        self.assertEqual(report.schema_version, BENCHMARK_PARITY_SCHEMA_VERSION)
+        self.assertEqual(report.overall_parity_status, 'pass')
+        payload = report.to_dict()
+        self.assertEqual(payload['candidate_id'], 'cand-benchmark-parity')
+        self.assertIn('ai_trader_like', payload['benchmark_runs'])
+
+    def test_benchmark_parity_report_detects_threshold_degradation(self) -> None:
+        report = build_benchmark_parity_report_v1(
+            candidate_id='cand-benchmark-parity-fail',
+            baseline_candidate_id='baseline-legacy-macd-rsi',
+            signal_count=100,
+            candidate_decision_count=10,
+            baseline_decision_count=100,
+            candidate_trade_count=4,
+            baseline_trade_count=4,
+            candidate_confidence_calibration_error=0.01,
+            baseline_confidence_calibration_error=0.01,
+            candidate_policy_violation_rate=0.5,
+            baseline_policy_violation_rate=0.01,
+            candidate_adverse_regime_decision_quality_delta=0.01,
+            candidate_risk_veto_alignment_rate=0.99,
+            baseline_risk_veto_alignment_rate=1.0,
+            deterministic_gate_compatibility=True,
+            fallback_rate=0.01,
+            timeout_rate=0.01,
+        )
+
+        self.assertEqual(report.overall_parity_status, 'fail')
+        self.assertIn('policy_violation_rate_delta', report.degradation_summary)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = write_benchmark_parity_report_v1(
+                report,
+                Path(tmpdir) / 'benchmark-parity-report-v1.json',
+            )
+            payload = json.loads(output_path.read_text(encoding='utf-8'))
+            self.assertEqual(payload['schema_version'], BENCHMARK_PARITY_SCHEMA_VERSION)
+            self.assertIn('benchmark_runs', payload)

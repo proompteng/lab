@@ -6,15 +6,113 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-import tempfile
 from tempfile import TemporaryDirectory
 from typing import Any, cast
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def _build_benchmark_parity_payload(
+    *, invalid: bool = False, threshold_breach: bool = False
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": "benchmark-parity-report-v1",
+        "candidate_id": "cand-dry-run",
+        "baseline_candidate_id": "baseline-legacy-macd-rsi",
+        "benchmark_runs": {
+            "ai_trader_like": {
+                "dataset_ref": "run:autonomous-lane",
+                "window_ref": "run:autonomy-harness",
+                "metrics": {
+                    "advisory_output_rate": 0.99 if threshold_breach else 1.0,
+                    "policy_violation_rate": 0.01,
+                    "baseline_advisory_output_rate": 1.0,
+                    "trade_count": 0,
+                    "baseline_trade_count": 0,
+                },
+                "slice_metrics": {
+                    "all": {
+                        "signal_count": 10,
+                        "decision_count": 10,
+                        "adverse_regime_decision_quality_delta": 0.0,
+                    }
+                },
+                "policy_violations": [],
+                "run_hash": "dry-run-ai-trader",
+            },
+            "gift_eval_like": {
+                "dataset_ref": "run:autonomous-lane",
+                "window_ref": "run:autonomy-harness",
+                "metrics": {
+                    "policy_violation_rate": 0.01,
+                    "baseline_policy_violation_rate": 0.01,
+                    "policy_violation_rate_delta": 0.0,
+                    "deterministic_gate_compatibility": "pass",
+                },
+                "slice_metrics": {
+                    "all": {
+                        "candidate_risk_veto_alignment_rate": 1.0,
+                        "baseline_risk_veto_alignment_rate": 1.0,
+                    }
+                },
+                "policy_violations": [],
+                "run_hash": "dry-run-gift",
+            },
+            "fev_bench_like": {
+                "dataset_ref": "run:autonomous-lane",
+                "window_ref": "run:autonomy-harness",
+                "metrics": {
+                    "fallback_rate": 0.01,
+                    "timeout_rate": 0.01,
+                    "confidence_calibration_error_delta": 0.0,
+                },
+                "slice_metrics": {
+                    "all": {
+                        "signal_count": 10,
+                        "trade_count": 0,
+                        "baseline_trade_count": 0,
+                        "candidate_adverse_regime_decision_quality_delta": 0.0,
+                    }
+                },
+                "policy_violations": [],
+                "run_hash": "dry-run-fev",
+            },
+        },
+        "scorecards": {
+            "decision_quality": {
+                "advisory_output_rate": 0.99 if threshold_breach else 1.0,
+                "baseline_advisory_output_rate": 1.0,
+                "adverse_regime_decision_quality_delta": 0.0,
+            },
+            "reasoning_quality": {
+                "deterministic_gate_compatibility": "pass",
+                "policy_violation_rate": 0.01,
+                "baseline_policy_violation_rate": 0.01,
+                "policy_violation_rate_delta": 0.0,
+            },
+            "event_forecast_quality": {
+                "fallback_rate": 0.01,
+                "timeout_rate": 0.01,
+                "confidence_calibration_error_delta": 0.0,
+            },
+        },
+        "overall_parity_status": "fail" if threshold_breach else "pass",
+        "degradation_summary": {
+            "policy_violation_rate_delta": 0.0,
+            "adverse_regime_decision_quality_delta": 0.0,
+            "risk_veto_alignment_delta": 0.0,
+            "confidence_calibration_error_delta": 0.0,
+        },
+        "artifact_hash": "dry-run-hash",
+        "created_at_utc": "2026-03-02T00:00:00Z",
+    }
+    if invalid:
+        payload["schema_version"] = "invalid-schema-version"
+    return payload
 
 def _json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -50,22 +148,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Use stale rollback dry-run timestamp to trigger readiness failure.",
     )
     parser.add_argument(
-        "--simulate-stress-metrics-missing",
+        "--simulate-missing-benchmark-parity-artifact",
         action="store_true",
         default=False,
-        help="Delete stress metrics artifact to prove evidence dependency enforcement.",
+        help="Delete benchmark parity artifact before checks to prove enforcement behavior.",
     )
     parser.add_argument(
-        "--simulate-stress-metrics-stale",
+        "--simulate-invalid-benchmark-parity-artifact",
         action="store_true",
         default=False,
-        help="Force stale stress metrics generated_at to trigger evidence staleness failure.",
+        help="Write malformed benchmark parity artifact to trigger schema validation failure.",
     )
     parser.add_argument(
-        "--simulate-stress-metrics-untrusted",
+        "--simulate-benchmark-parity-threshold-breach",
         action="store_true",
         default=False,
-        help="Use untrusted stress metrics artifact reference to trigger reference enforcement failure.",
+        help="Lower advisory output parity to trigger threshold breach on policy check.",
     )
     return parser
 
@@ -133,40 +231,24 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
+        (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+        if not args.simulate_missing_benchmark_parity_artifact:
+            (root / "benchmarks" / "benchmark-parity-report-v1.json").write_text(
+                json.dumps(
+                    _build_benchmark_parity_payload(
+                        invalid=args.simulate_invalid_benchmark_parity_artifact,
+                        threshold_breach=args.simulate_benchmark_parity_threshold_breach,
+                    ),
+                    sort_keys=True,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
             "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dry-run\n",
             encoding="utf-8",
         )
-        stress_artifact = {
-            "schema_version": "stress-metrics-v1",
-            "run_id": str(gate_report.get("run_id", "run-dry-run")),
-        }
-        promotion_evidence = gate_report.get("promotion_evidence")
-        if isinstance(promotion_evidence, dict):
-            stress_metrics = promotion_evidence.get("stress_metrics")
-            if isinstance(stress_metrics, dict):
-                if args.simulate_stress_metrics_untrusted:
-                    stress_metrics["artifact_ref"] = str(
-                        Path(tempfile.gettempdir())
-                        / "torghut-dry-run-stress-metrics-untrusted.json"
-                    )
-                stress_artifact["count"] = int(stress_metrics.get("count") or 0)
-                stress_artifact["items"] = list(stress_metrics.get("items") or [])
-                if args.simulate_stress_metrics_stale:
-                    stress_artifact["generated_at"] = (
-                        datetime.now(timezone.utc) - timedelta(hours=25)
-                    ).isoformat()
-                elif isinstance(stress_metrics.get("generated_at"), str):
-                    stress_artifact["generated_at"] = stress_metrics["generated_at"]
-        if "generated_at" not in stress_artifact:
-            stress_artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
-        (root / "gates" / "stress-metrics-v1.json").write_text(
-            json.dumps(stress_artifact, indent=2), encoding="utf-8"
-        )
-        if args.simulate_stress_metrics_missing:
-            stress_path = root / "gates" / "stress-metrics-v1.json"
-            if stress_path.exists():
-                stress_path.unlink()
 
         if args.simulate_missing_artifact:
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").unlink()
@@ -208,9 +290,9 @@ def main() -> int:
             "simulation": {
                 "missing_artifact": args.simulate_missing_artifact,
                 "stale_rollback": args.simulate_stale_rollback,
-                "missing_stress_metrics": args.simulate_stress_metrics_missing,
-                "stale_stress_metrics": args.simulate_stress_metrics_stale,
-                "untrusted_stress_metrics": args.simulate_stress_metrics_untrusted,
+                "missing_benchmark_parity_artifact": args.simulate_missing_benchmark_parity_artifact,
+                "invalid_benchmark_parity_artifact": args.simulate_invalid_benchmark_parity_artifact,
+                "benchmark_parity_threshold_breach": args.simulate_benchmark_parity_threshold_breach,
             },
         }
 

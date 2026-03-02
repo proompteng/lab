@@ -1050,6 +1050,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                     "GITHUB_BASE_REF": "release",
                     "GITHUB_HEAD_REF": "feature/abc-123",
                     "PRIORITY_ID": "42",
+                    "DESIGN_DOC": "docs/design/autonomy-cycle.md",
                 },
                 clear=False,
             ):
@@ -1071,6 +1072,10 @@ class TestTradingSchedulerAutonomy(TestCase):
                 str(Path(deps.call_kwargs.get("output_dir")).parent),
             )
             self.assertEqual(execution_context.get("priorityId"), "42")
+            self.assertEqual(
+                execution_context.get("designDoc"),
+                "docs/design/autonomy-cycle.md",
+            )
 
     def test_run_autonomous_cycle_writes_iteration_notes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

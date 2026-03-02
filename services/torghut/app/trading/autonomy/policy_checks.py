@@ -2,54 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
-import os
 import math
 from pathlib import Path
 from typing import Any, cast
-
-
-_PROFITABILITY_STAGE_ORDER: tuple[str, ...] = (
-    "research",
-    "validation",
-    "execution",
-    "governance",
-)
-
-_PROFITABILITY_STAGE_REQUIRED_CHECKS: dict[str, tuple[str, ...]] = {
-    "research": (
-        "candidate_spec_present",
-        "candidate_generation_manifest_present",
-        "walkforward_results_present",
-        "baseline_evaluation_report_present",
-    ),
-    "validation": (
-        "evaluation_report_present",
-        "profitability_benchmark_present",
-        "profitability_evidence_present",
-        "profitability_validation_present",
-    ),
-    "execution": (
-        "walkforward_results_present",
-        "evaluation_report_present",
-        "gate_evaluation_present",
-        "janus_event_car_present",
-        "janus_hgrm_reward_present",
-        "recalibration_report_present",
-        "gate_matrix_approval",
-        "drift_gate_approval",
-    ),
-    "governance": (
-        "rollback_ready",
-        "gate_report_present",
-        "candidate_spec_present",
-        "rollback_readiness_present",
-        "risk_controls_attestable",
-    ),
-}
 
 
 @dataclass(frozen=True)
@@ -99,15 +57,9 @@ def evaluate_promotion_prerequisites(
     candidate_state_payload: dict[str, Any],
     promotion_target: str,
     artifact_root: Path,
-    now: datetime | None = None,
 ) -> PromotionPrerequisiteResult:
     reasons: list[str] = []
     reason_details: list[dict[str, object]] = []
-    if now is None:
-        now = datetime.now(timezone.utc)
-    require_profitability_manifest = bool(
-        policy_payload.get("promotion_require_profitability_stage_manifest", False)
-    )
     profitability_required = _requires_profitability_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
@@ -116,7 +68,7 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
-    stress_required = _requires_stress_evidence(
+    benchmark_parity_required = _requires_benchmark_parity_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
@@ -125,8 +77,7 @@ def evaluate_promotion_prerequisites(
         promotion_target,
         include_profitability_artifacts=profitability_required,
         include_janus_artifacts=janus_required,
-        include_stress_artifacts=stress_required,
-        require_profitability_manifest=require_profitability_manifest,
+        include_benchmark_parity_artifacts=benchmark_parity_required,
     )
     missing_artifacts = [
         item for item in required_artifacts if not (artifact_root / item).exists()
@@ -184,8 +135,8 @@ def evaluate_promotion_prerequisites(
             policy_payload=policy_payload,
             artifact_root=artifact_root,
         )
-    if require_profitability_manifest:
-        _append_profitability_stage_manifest_reasons(
+    if benchmark_parity_required:
+        _append_benchmark_parity_evidence_reasons(
             reasons=reasons,
             reason_details=reason_details,
             policy_payload=policy_payload,
@@ -196,8 +147,6 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         gate_report_payload=gate_report_payload,
         promotion_target=promotion_target,
-        artifact_root=artifact_root,
-        now=now,
     )
     if evidence_reasons:
         reasons.extend(evidence_reasons)
@@ -435,358 +384,6 @@ def _append_run_id_mismatch_reasons(
     )
 
 
-def _append_profitability_stage_manifest_reasons(
-    *,
-    reasons: list[str],
-    reason_details: list[dict[str, object]],
-    policy_payload: dict[str, Any],
-    artifact_root: Path,
-) -> None:
-    manifest_relpath = str(
-        policy_payload.get(
-            "promotion_profitability_stage_manifest_artifact",
-            "profitability/profitability-stage-manifest-v1.json",
-        )
-    )
-    manifest_path = artifact_root / manifest_relpath
-    manifest_payload = _load_json_if_exists(manifest_path)
-    if manifest_payload is None:
-        if manifest_path.exists():
-            reasons.append("profitability_stage_manifest_invalid_json")
-            reason_details.append(
-                {
-                    "reason": "profitability_stage_manifest_invalid_json",
-                    "artifact_ref": str(manifest_path),
-                }
-            )
-        else:
-            reasons.append("profitability_stage_manifest_missing")
-            reason_details.append(
-                {
-                    "reason": "profitability_stage_manifest_missing",
-                    "artifact_ref": str(manifest_path),
-                }
-            )
-        return
-
-    schema_version = str(manifest_payload.get("schema_version", "")).strip()
-    if schema_version != "profitability-stage-manifest-v1":
-        reasons.append("profitability_stage_manifest_schema_version_invalid")
-        reason_details.append(
-            {
-                "reason": "profitability_stage_manifest_schema_version_invalid",
-                "artifact_ref": str(manifest_path),
-                "schema_version": schema_version,
-            }
-        )
-
-    candidate_id = str(manifest_payload.get("candidate_id", "")).strip()
-    if not candidate_id:
-        reasons.append("profitability_stage_manifest_candidate_id_missing")
-        reason_details.append(
-            {
-                "reason": "profitability_stage_manifest_candidate_id_missing",
-                "artifact_ref": str(manifest_path),
-            }
-        )
-
-    strategy_family = str(manifest_payload.get("strategy_family", "")).strip()
-    if not strategy_family:
-        reasons.append("profitability_stage_manifest_strategy_family_missing")
-        reason_details.append(
-            {
-                "reason": "profitability_stage_manifest_strategy_family_missing",
-                "artifact_ref": str(manifest_path),
-            }
-        )
-
-    run_context = _as_dict(manifest_payload.get("run_context"))
-    if not run_context:
-        reasons.append("profitability_stage_manifest_run_context_missing")
-        reason_details.append(
-            {
-                "reason": "profitability_stage_manifest_run_context_missing",
-                "artifact_ref": str(manifest_path),
-            }
-        )
-    elif not run_context.get("run_id"):
-        reasons.append("profitability_stage_manifest_run_context_incomplete")
-        reason_details.append(
-            {
-                "reason": "profitability_stage_manifest_run_context_incomplete",
-                "artifact_ref": str(manifest_path),
-            }
-        )
-
-    stages_raw = manifest_payload.get("stages")
-    stages = _as_dict(stages_raw)
-    if not stages:
-        reasons.append("profitability_stage_manifest_stages_missing")
-        reason_details.append(
-            {
-                "reason": "profitability_stage_manifest_stages_missing",
-                "artifact_ref": str(manifest_path),
-            }
-        )
-    else:
-        stage_names = tuple(name for name in _PROFITABILITY_STAGE_ORDER if name in stages)
-        required_stage_names = _PROFITABILITY_STAGE_ORDER
-        if stage_names != required_stage_names:
-            reasons.append("profitability_stage_manifest_stage_missing")
-            reason_details.append(
-                {
-                    "reason": "profitability_stage_manifest_stage_missing",
-                    "artifact_ref": str(manifest_path),
-                    "stages_present": sorted(stages.keys()),
-                }
-            )
-        if set(stages) != set(required_stage_names):
-            reasons.append("profitability_stage_manifest_stage_set_invalid")
-            reason_details.append(
-                {
-                    "reason": "profitability_stage_manifest_stage_set_invalid",
-                    "artifact_ref": str(manifest_path),
-                    "expected_stages": list(required_stage_names),
-                    "actual_stages": sorted(stages.keys()),
-                }
-            )
-        for stage_name in required_stage_names:
-            stage_payload = _as_dict(stages.get(stage_name))
-            if not stage_payload:
-                reasons.append("profitability_stage_manifest_stage_missing")
-                reason_details.append(
-                    {
-                        "reason": "profitability_stage_manifest_stage_missing",
-                        "artifact_ref": str(manifest_path),
-                        "stage": stage_name,
-                    }
-                )
-                continue
-
-            status = str(stage_payload.get("status", "")).strip()
-            if status not in {"pass", "fail"}:
-                reasons.append("profitability_stage_manifest_stage_status_invalid")
-                reason_details.append(
-                    {
-                        "reason": "profitability_stage_manifest_stage_status_invalid",
-                        "artifact_ref": str(manifest_path),
-                        "stage": stage_name,
-                        "status": status,
-                    }
-                )
-            for required_key in ("checks", "artifacts", "owner", "completed_at_utc"):
-                if required_key not in stage_payload:
-                    reasons.append("profitability_stage_manifest_stage_structure_invalid")
-                    reason_details.append(
-                        {
-                            "reason": "profitability_stage_manifest_stage_structure_invalid",
-                            "artifact_ref": str(manifest_path),
-                            "stage": stage_name,
-                            "required_key": required_key,
-                        }
-                    )
-            checks_payload = _as_list_of_dicts(stage_payload.get("checks"))
-            stage_checks: dict[str, str] = {}
-            for item in checks_payload:
-                check_name = str(item.get("check", "")).strip()
-                if not check_name:
-                    reasons.append("profitability_stage_manifest_stage_check_invalid")
-                    reason_details.append(
-                        {
-                            "reason": "profitability_stage_manifest_stage_check_invalid",
-                            "artifact_ref": str(manifest_path),
-                            "stage": stage_name,
-                        }
-                    )
-                    continue
-                check_status = str(item.get("status", "")).strip()
-                if check_status not in {"pass", "fail"}:
-                    reasons.append("profitability_stage_manifest_stage_check_status_invalid")
-                    reason_details.append(
-                        {
-                            "reason": "profitability_stage_manifest_stage_check_status_invalid",
-                            "artifact_ref": str(manifest_path),
-                            "stage": stage_name,
-                            "check": check_name,
-                        }
-                    )
-                    continue
-                stage_checks[check_name] = check_status
-            for required_check in _PROFITABILITY_STAGE_REQUIRED_CHECKS.get(
-                stage_name, ()
-            ):
-                if required_check not in stage_checks:
-                    reasons.append("profitability_stage_manifest_required_check_missing")
-                    reason_details.append(
-                        {
-                            "reason": "profitability_stage_manifest_required_check_missing",
-                            "artifact_ref": str(manifest_path),
-                            "stage": stage_name,
-                            "check": required_check,
-                        }
-                    )
-                    continue
-                if stage_checks[required_check] != "pass":
-                    reasons.append("profitability_stage_manifest_required_check_failed")
-                    reason_details.append(
-                        {
-                            "reason": "profitability_stage_manifest_required_check_failed",
-                            "artifact_ref": str(manifest_path),
-                            "stage": stage_name,
-                            "check": required_check,
-                        }
-                    )
-            artifacts = _as_dict(stage_payload.get("artifacts"))
-            if not artifacts:
-                continue
-            for artifact_payload_raw in artifacts.values():
-                artifact_payload = _as_dict(artifact_payload_raw)
-                artifact_ref = str(
-                    artifact_payload.get("path", "")
-                ).strip()
-                if not artifact_ref:
-                    continue
-                expected_sha = str(artifact_payload.get("sha256", "")).strip()
-                artifact_file = artifact_root / artifact_ref
-                if not artifact_file.exists():
-                    reasons.append("profitability_stage_manifest_artifact_missing")
-                    reason_details.append(
-                        {
-                            "reason": "profitability_stage_manifest_artifact_missing",
-                            "artifact_ref": str(artifact_file),
-                            "stage": stage_name,
-                        }
-                    )
-                    continue
-                if (
-                    artifact_file.suffix.lower() == ".json"
-                    and _load_json_if_exists(artifact_file) is None
-                ):
-                    reasons.append("profitability_stage_manifest_artifact_invalid_json")
-                    reason_details.append(
-                        {
-                            "reason": "profitability_stage_manifest_artifact_invalid_json",
-                            "artifact_ref": str(artifact_file),
-                            "stage": stage_name,
-                        }
-                    )
-                if expected_sha:
-                    actual_sha = _sha256_path(artifact_file)
-                    if expected_sha != actual_sha:
-                        reasons.append("profitability_stage_manifest_artifact_hash_mismatch")
-                        reason_details.append(
-                            {
-                                "reason": "profitability_stage_manifest_artifact_hash_mismatch",
-                                "artifact_ref": str(artifact_file),
-                                "stage": stage_name,
-                                "expected_sha256": expected_sha,
-                                "actual_sha256": actual_sha,
-                            }
-                        )
-
-    rollback_contract = manifest_payload.get("rollback_contract_ref")
-    if not rollback_contract:
-        reasons.append("profitability_stage_manifest_rollback_contract_ref_missing")
-        reason_details.append(
-            {
-                "reason": "profitability_stage_manifest_rollback_contract_ref_missing",
-                "artifact_ref": str(manifest_path),
-            }
-        )
-
-    content_hash = str(manifest_payload.get("content_hash", "")).strip()
-    if not content_hash:
-        reasons.append("profitability_stage_manifest_content_hash_missing")
-        reason_details.append(
-            {
-                "reason": "profitability_stage_manifest_content_hash_missing",
-                "artifact_ref": str(manifest_path),
-            }
-        )
-    else:
-        content_hash_payload = dict(manifest_payload)
-        content_hash_payload.pop("content_hash", None)
-        expected_content_hash = _sha256_json(content_hash_payload)
-        if content_hash != expected_content_hash:
-            reasons.append("profitability_stage_manifest_content_hash_mismatch")
-            reason_details.append(
-                {
-                    "reason": "profitability_stage_manifest_content_hash_mismatch",
-                    "artifact_ref": str(manifest_path),
-                    "content_hash": content_hash,
-                    "expected_content_hash": expected_content_hash,
-                }
-            )
-
-    overall_status = str(manifest_payload.get("overall_status", "")).strip()
-    if overall_status not in {"pass", "fail"}:
-        reasons.append("profitability_stage_manifest_overall_status_invalid")
-        reason_details.append(
-            {
-                "reason": "profitability_stage_manifest_overall_status_invalid",
-                "artifact_ref": str(manifest_path),
-                "overall_status": overall_status,
-            }
-        )
-
-    failure_reasons = _list_of_strings(manifest_payload.get("failure_reasons"))
-    if overall_status == "fail":
-        if not failure_reasons:
-            reasons.append("profitability_stage_manifest_failure_reasons_missing")
-            reason_details.append(
-                {
-                    "reason": "profitability_stage_manifest_failure_reasons_missing",
-                    "artifact_ref": str(manifest_path),
-                }
-            )
-
-    if overall_status in {"pass", "fail"} and stages:
-        stage_statuses: list[bool] = []
-        for stage_name in _PROFITABILITY_STAGE_ORDER:
-            stage_payload = _as_dict(stages.get(stage_name))
-            stage_statuses.append(str(stage_payload.get("status", "")).strip() == "pass")
-        expected_overall_status = (
-            "pass" if all(stage_statuses) else "fail"
-        )
-        if overall_status != expected_overall_status:
-            reasons.append("profitability_stage_manifest_overall_status_mismatch")
-            reason_details.append(
-                {
-                    "reason": "profitability_stage_manifest_overall_status_mismatch",
-                    "artifact_ref": str(manifest_path),
-                    "overall_status": overall_status,
-                    "calculated_overall_status": expected_overall_status,
-                }
-            )
-    ordered_stages = _PROFITABILITY_STAGE_ORDER
-    failure_encountered = False
-    for stage_name in ordered_stages:
-        stage_payload = _as_dict(stages.get(stage_name))
-        stage_status = str(stage_payload.get("status", "")).strip()
-        if stage_status != "pass":
-            failure_encountered = True
-            continue
-        if failure_encountered:
-            reasons.append("profitability_stage_manifest_stage_transition_violation")
-            reason_details.append(
-                {
-                    "reason": "profitability_stage_manifest_stage_transition_violation",
-                    "artifact_ref": str(manifest_path),
-                    "stage": stage_name,
-                }
-            )
-            break
-    if overall_status == "fail":
-        reasons.append("profitability_stage_manifest_stage_chain_not_passed")
-        reason_details.append(
-            {
-                "reason": "profitability_stage_manifest_stage_chain_not_passed",
-                "artifact_ref": str(manifest_path),
-                "failure_reasons": failure_reasons,
-            }
-        )
-
-
 def _append_profitability_evidence_reasons(
     *,
     reasons: list[str],
@@ -976,9 +573,7 @@ def evaluate_rollback_readiness(
         rollback = {}
 
     missing_checks = [
-        name
-        for name in required_checks
-        if _coerce_evidence_bool(rollback.get(name)) is not True
+        name for name in required_checks if not bool(rollback.get(name, False))
     ]
     if missing_checks:
         reasons.append("rollback_checks_missing_or_failed")
@@ -994,8 +589,8 @@ def evaluate_rollback_readiness(
         if current - dry_run_completed_at > timedelta(hours=max_age_hours):
             reasons.append("rollback_dry_run_stale")
 
-    if policy_payload.get("rollback_require_human_approval", True) and (
-        _coerce_evidence_bool(rollback.get("humanApproved")) is not True
+    if policy_payload.get("rollback_require_human_approval", True) and not bool(
+        rollback.get("humanApproved", False)
     ):
         reasons.append("rollback_human_approval_missing")
 
@@ -1016,8 +611,7 @@ def _required_artifacts_for_target(
     *,
     include_profitability_artifacts: bool,
     include_janus_artifacts: bool,
-    include_stress_artifacts: bool,
-    require_profitability_manifest: bool,
+    include_benchmark_parity_artifacts: bool,
 ) -> list[str]:
     base_raw = policy_payload.get(
         "promotion_required_artifacts",
@@ -1049,15 +643,6 @@ def _required_artifacts_for_target(
         for artifact in profitability_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
-    if require_profitability_manifest:
-        required.append(
-            str(
-                policy_payload.get(
-                    "promotion_profitability_stage_manifest_artifact",
-                    "profitability/profitability-stage-manifest-v1.json",
-                )
-            )
-        )
     if include_janus_artifacts:
         janus_artifacts_raw = policy_payload.get(
             "promotion_janus_required_artifacts",
@@ -1070,13 +655,13 @@ def _required_artifacts_for_target(
         for artifact in janus_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
-    if include_stress_artifacts:
-        stress_artifacts_raw = policy_payload.get(
-            "promotion_stress_required_artifacts",
-            ["gates/stress-metrics-v1.json"],
+    if include_benchmark_parity_artifacts:
+        benchmark_parity_artifacts_raw = policy_payload.get(
+            "promotion_benchmark_parity_required_artifacts",
+            ["benchmarks/benchmark-parity-report-v1.json"],
         )
-        stress_artifacts = _list_from_any(stress_artifacts_raw)
-        for artifact in stress_artifacts:
+        benchmark_parity_artifacts = _list_from_any(benchmark_parity_artifacts_raw)
+        for artifact in benchmark_parity_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
     return sorted(set(required))
@@ -1124,15 +709,17 @@ def _requires_janus_evidence(
     return promotion_target in required_targets
 
 
-def _requires_stress_evidence(
+def _requires_benchmark_parity_evidence(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
         return False
-    if not bool(policy_payload.get("promotion_require_stress_evidence", False)):
+    if not bool(policy_payload.get("gate6_require_benchmark_parity_evidence", False)):
+        return False
+    if not bool(policy_payload.get("promotion_require_benchmark_parity_evidence", True)):
         return False
     required_targets_raw = policy_payload.get(
-        "promotion_stress_required_targets", ["paper", "live"]
+        "promotion_benchmark_parity_required_targets", ["paper", "live"]
     )
     required_targets = [
         str(target)
@@ -1157,32 +744,6 @@ def _required_rollback_checks(policy_payload: dict[str, Any]) -> list[str]:
     return [str(item) for item in checks if isinstance(item, str)]
 
 
-def _normalize_artifact_path(
-    artifact_ref: str, *, artifact_root: Path
-) -> Path | None:
-    normalized_ref = str(artifact_ref).strip()
-    if not normalized_ref:
-        return None
-    if "://" in normalized_ref and not normalized_ref.startswith("file://"):
-        return None
-    normalized_ref = normalized_ref.removeprefix("file://")
-
-    candidate = Path(normalized_ref)
-    if not candidate.is_absolute():
-        candidate = artifact_root / candidate
-    try:
-        normalized_candidate = candidate.resolve()
-    except OSError:
-        return None
-    try:
-        normalized_root = artifact_root.resolve()
-    except OSError:
-        normalized_root = artifact_root
-    if not normalized_candidate.is_relative_to(normalized_root):
-        return None
-    return normalized_candidate
-
-
 def _required_throughput(policy_payload: dict[str, Any]) -> dict[str, int]:
     return {
         "min_signal_count": max(
@@ -1202,8 +763,6 @@ def _evaluate_promotion_evidence(
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
     promotion_target: str,
-    artifact_root: Path,
-    now: datetime | None = None,
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
     reasons: list[str] = []
     details: list[dict[str, object]] = []
@@ -1218,8 +777,6 @@ def _evaluate_promotion_evidence(
     fold_reasons, fold_details, fold_refs = _evaluate_fold_metrics_evidence(
         policy_payload=policy_payload,
         evidence=evidence,
-        artifact_root=artifact_root,
-        now=now,
     )
     reasons.extend(fold_reasons)
     details.extend(fold_details)
@@ -1228,23 +785,15 @@ def _evaluate_promotion_evidence(
     stress_reasons, stress_details, stress_refs = _evaluate_stress_metrics_evidence(
         policy_payload=policy_payload,
         evidence=evidence,
-        artifact_root=artifact_root,
-        now=now,
     )
-    if _requires_stress_evidence(
-        policy_payload=policy_payload,
-        promotion_target=promotion_target,
-    ):
-        reasons.extend(stress_reasons)
-        details.extend(stress_details)
-        refs.extend(stress_refs)
+    reasons.extend(stress_reasons)
+    details.extend(stress_details)
+    refs.extend(stress_refs)
 
     janus_reasons, janus_details, janus_refs = _evaluate_janus_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
         evidence=evidence,
-        artifact_root=artifact_root,
-        now=now,
     )
     reasons.extend(janus_reasons)
     details.extend(janus_details)
@@ -1258,176 +807,333 @@ def _evaluate_promotion_evidence(
     )
     reasons.extend(rationale_reasons)
     details.extend(rationale_details)
-
-    parity_reasons, parity_details, parity_refs = (
-        _evaluate_foundation_router_parity_evidence(
+    benchmark_parity_reasons, benchmark_parity_details, benchmark_parity_refs = (
+        _evaluate_benchmark_parity_evidence(
             policy_payload=policy_payload,
-            gate_report_payload=gate_report_payload,
-            artifact_root=artifact_root,
+            evidence=evidence,
             promotion_target=promotion_target,
         )
     )
-    reasons.extend(parity_reasons)
-    details.extend(parity_details)
-    refs.extend(parity_refs)
+    reasons.extend(benchmark_parity_reasons)
+    details.extend(benchmark_parity_details)
+    refs.extend(benchmark_parity_refs)
 
     return sorted(set(reasons)), details, sorted(set(refs))
 
 
-def _requires_foundation_router_parity(
-    *, policy_payload: dict[str, Any], promotion_target: str
-) -> bool:
-    if promotion_target == "shadow":
-        return False
-    return bool(policy_payload.get("promotion_require_foundation_router_parity", False))
+def _append_benchmark_parity_evidence_reasons(
+    *,
+    reasons: list[str],
+    reason_details: list[dict[str, object]],
+    policy_payload: dict[str, Any],
+    artifact_root: Path,
+) -> None:
+    artifact_relpath = str(
+        policy_payload.get(
+            "promotion_benchmark_parity_artifact",
+            "benchmarks/benchmark-parity-report-v1.json",
+        )
+    )
+    artifact_path = artifact_root / artifact_relpath
+    artifact_payload = _load_json_if_exists(artifact_path)
+    if artifact_payload is None:
+        reasons.append("benchmark_parity_report_missing")
+        reason_details.append(
+            {
+                "reason": "benchmark_parity_report_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+        return
+    artifact_reasons, artifact_details, _ = _evaluate_benchmark_parity_artifact_payload(
+        policy_payload=policy_payload,
+        artifact_payload=artifact_payload,
+        artifact_path=artifact_path,
+    )
+    reasons.extend(artifact_reasons)
+    reason_details.extend(artifact_details)
 
 
-def _evaluate_foundation_router_parity_evidence(
+def _evaluate_benchmark_parity_evidence(
     *,
     policy_payload: dict[str, Any],
-    gate_report_payload: dict[str, Any],
-    artifact_root: Path,
     promotion_target: str,
+    evidence: dict[str, Any],
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
-    if not _requires_foundation_router_parity(
+    if not _requires_benchmark_parity_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     ):
         return [], [], []
+    benchmark_parity_raw = evidence.get("benchmark_parity")
+    if not isinstance(benchmark_parity_raw, dict):
+        return (
+            ["benchmark_parity_evidence_missing"],
+            [{"reason": "benchmark_parity_evidence_missing"}],
+            [],
+        )
+    benchmark_parity = cast(dict[str, object], benchmark_parity_raw)
+    artifact_ref = benchmark_parity.get("artifact_ref")
+    evidence_ref = artifact_ref if isinstance(artifact_ref, str) else ""
+    evidence_ref = evidence_ref.strip()
+    if not evidence_ref:
+        return (
+            ["benchmark_parity_evidence_artifact_ref_missing"],
+            [{"reason": "benchmark_parity_evidence_artifact_ref_missing"}],
+            [],
+        )
 
+    expected_artifact = str(
+        policy_payload.get(
+            "promotion_benchmark_parity_artifact",
+            "benchmarks/benchmark-parity-report-v1.json",
+        )
+    )
+    if (
+        expected_artifact
+        and evidence_ref != expected_artifact
+        and policy_payload.get(
+            "promotion_benchmark_parity_require_evidence_artifact_match", True
+        )
+    ):
+        return (
+            ["benchmark_parity_evidence_artifact_ref_mismatch"],
+            [
+                {
+                    "reason": "benchmark_parity_evidence_artifact_ref_mismatch",
+                    "expected_artifact_ref": expected_artifact,
+                    "artifact_ref": evidence_ref,
+                }
+            ],
+            [evidence_ref],
+        )
+    return [], [], [evidence_ref]
+
+
+def _evaluate_benchmark_parity_artifact_payload(
+    *,
+    policy_payload: dict[str, Any],
+    artifact_payload: dict[str, Any],
+    artifact_path: Path,
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
     reasons: list[str] = []
     details: list[dict[str, object]] = []
-    refs: list[str] = []
+    refs: list[str] = [str(artifact_path)]
 
-    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
-    foundation = _as_dict(evidence.get("foundation_router_parity"))
-    evidence_ref = str(foundation.get("artifact_ref") or "").strip()
-    if not evidence_ref:
-        reasons.append("foundation_router_parity_artifact_ref_missing")
-        details.append({"reason": "foundation_router_parity_artifact_ref_missing"})
+    schema_version = str(
+        policy_payload.get(
+            "promotion_benchmark_parity_schema_version",
+            "benchmark-parity-report-v1",
+        )
+    )
+    if str(artifact_payload.get("schema_version", "")).strip() != schema_version:
+        reasons.append("benchmark_parity_schema_invalid")
+        details.append(
+            {
+                "reason": "benchmark_parity_schema_invalid",
+                "artifact_ref": str(artifact_path),
+                "expected_schema_version": schema_version,
+                "actual_schema_version": str(
+                    artifact_payload.get("schema_version", "")
+                ).strip(),
+            }
+        )
+        return reasons, details, refs
 
-    artifact_ref = (
-        evidence_ref
-        or str(
+    overall_status = str(artifact_payload.get("overall_parity_status", "")).strip().lower()
+    if overall_status != "pass":
+        reasons.append("benchmark_parity_status_not_pass")
+        details.append(
+            {
+                "reason": "benchmark_parity_status_not_pass",
+                "artifact_ref": str(artifact_path),
+                "overall_parity_status": overall_status,
+            }
+        )
+
+    required_families = [
+        str(item)
+        for item in _list_from_any(
             policy_payload.get(
-                "promotion_foundation_router_parity_artifact",
-                "gates/foundation-router-parity-report-v1.json",
+                "promotion_benchmark_parity_required_families",
+                [
+                    "ai_trader_like",
+                    "gift_eval_like",
+                    "fev_bench_like",
+                ],
             )
         )
-    ).strip()
-    artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
-    if artifact_path is None:
-        reasons.append("foundation_router_parity_artifact_ref_invalid")
+        if isinstance(item, str)
+    ]
+    benchmark_runs = _as_dict(artifact_payload.get("benchmark_runs"))
+    missing_families = [
+        family
+        for family in required_families
+        if not isinstance(benchmark_runs.get(family), dict)
+    ]
+    if missing_families:
+        reasons.append("benchmark_parity_required_family_missing")
         details.append(
             {
-                "reason": "foundation_router_parity_artifact_ref_invalid",
-                "artifact_ref": artifact_ref,
-            }
-        )
-        return reasons, details, refs
-
-    refs.append(str(artifact_path))
-    payload = _load_json_if_exists(artifact_path)
-    if payload is None:
-        reasons.append("foundation_router_parity_artifact_missing")
-        details.append(
-            {
-                "reason": "foundation_router_parity_artifact_missing",
+                "reason": "benchmark_parity_required_family_missing",
                 "artifact_ref": str(artifact_path),
-            }
-        )
-        return reasons, details, refs
-
-    overall_status = str(payload.get("overall_status", "")).strip()
-    if overall_status != "pass":
-        reasons.append("foundation_router_parity_overall_status_not_pass")
-        details.append(
-            {
-                "reason": "foundation_router_parity_overall_status_not_pass",
-                "artifact_ref": str(artifact_path),
-                "status": overall_status,
+                "required_families": required_families,
+                "missing_families": missing_families,
             }
         )
 
-    max_fallback_rate = _float_or_none(
-        _as_dict(payload.get("fallback_metrics")).get("fallback_rate")
+    scorecards = _as_dict(artifact_payload.get("scorecards"))
+    decision_quality = _as_dict(scorecards.get("decision_quality"))
+    reasoning_quality = _as_dict(scorecards.get("reasoning_quality"))
+    event_forecast_quality = _as_dict(scorecards.get("event_forecast_quality"))
+    degradation_summary = _as_dict(artifact_payload.get("degradation_summary"))
+
+    advisory_output_rate = _float_or_default(
+        decision_quality.get("advisory_output_rate"), 0.0
     )
-    fallback_threshold = _float_or_none(
+    min_advisory_output_rate = _float_or_default(
+        policy_payload.get("promotion_benchmark_parity_min_advisory_output_rate"),
+        0.995,
+    )
+    if advisory_output_rate < min_advisory_output_rate:
+        reasons.append("benchmark_parity_advisory_output_rate_below_minimum")
+        details.append(
+            {
+                "reason": "benchmark_parity_advisory_output_rate_below_minimum",
+                "artifact_ref": str(artifact_path),
+                "actual_advisory_output_rate": advisory_output_rate,
+                "minimum_advisory_output_rate": min_advisory_output_rate,
+            }
+        )
+
+    deterministic_gate_compatibility = str(
+        reasoning_quality.get("deterministic_gate_compatibility")
+    ).strip().lower()
+    if deterministic_gate_compatibility not in {"pass", "true"}:
+        reasons.append("benchmark_parity_deterministic_gate_compatibility_failed")
+        details.append(
+            {
+                "reason": (
+                    "benchmark_parity_deterministic_gate_compatibility_failed"
+                ),
+                "artifact_ref": str(artifact_path),
+                "deterministic_gate_compatibility": deterministic_gate_compatibility,
+            }
+        )
+
+    policy_violation_rate_delta = _float_or_default(
+        degradation_summary.get("policy_violation_rate_delta"), 0.0
+    )
+    max_policy_violation_delta = _float_or_default(
+        policy_payload.get("promotion_benchmark_parity_max_policy_violation_rate_delta"),
+        0.01,
+    )
+    if policy_violation_rate_delta > max_policy_violation_delta:
+        reasons.append("benchmark_parity_policy_violation_delta_exceeded")
+        details.append(
+            {
+                "reason": "benchmark_parity_policy_violation_delta_exceeded",
+                "artifact_ref": str(artifact_path),
+                "actual_policy_violation_rate_delta": policy_violation_rate_delta,
+                "maximum_policy_violation_rate_delta": max_policy_violation_delta,
+            }
+        )
+
+    fallback_rate = _float_or_default(
+        event_forecast_quality.get("fallback_rate"), 0.0
+    )
+    max_fallback_rate = _float_or_default(
+        policy_payload.get("promotion_benchmark_parity_max_fallback_rate"),
+        0.05,
+    )
+    if fallback_rate > max_fallback_rate:
+        reasons.append("benchmark_parity_fallback_rate_exceeded")
+        details.append(
+            {
+                "reason": "benchmark_parity_fallback_rate_exceeded",
+                "artifact_ref": str(artifact_path),
+                "actual_fallback_rate": fallback_rate,
+                "maximum_fallback_rate": max_fallback_rate,
+            }
+        )
+
+    timeout_rate = _float_or_default(
+        event_forecast_quality.get("timeout_rate"), 0.0
+    )
+    max_timeout_rate = _float_or_default(
+        policy_payload.get("promotion_benchmark_parity_max_timeout_rate"),
+        0.05,
+    )
+    if timeout_rate > max_timeout_rate:
+        reasons.append("benchmark_parity_timeout_rate_exceeded")
+        details.append(
+            {
+                "reason": "benchmark_parity_timeout_rate_exceeded",
+                "artifact_ref": str(artifact_path),
+                "actual_timeout_rate": timeout_rate,
+                "maximum_timeout_rate": max_timeout_rate,
+            }
+        )
+
+    adverse_regime_delta = _float_or_default(
+        degradation_summary.get("adverse_regime_decision_quality_delta"), 0.0
+    )
+    max_adverse_regime_delta = _float_or_default(
         policy_payload.get(
-            "promotion_router_parity_max_fallback_rate",
-            policy_payload.get("gate3_max_forecast_fallback_rate", 0.05),
-        )
+            "promotion_benchmark_parity_max_adverse_regime_decision_quality_delta",
+        ),
+        0.1,
     )
-    if max_fallback_rate is None:
-        reasons.append("foundation_router_parity_fallback_rate_missing")
+    if adverse_regime_delta > max_adverse_regime_delta:
+        reasons.append("benchmark_parity_adverse_regime_delta_exceeded")
         details.append(
             {
-                "reason": "foundation_router_parity_fallback_rate_missing",
+                "reason": "benchmark_parity_adverse_regime_delta_exceeded",
                 "artifact_ref": str(artifact_path),
-            }
-        )
-    elif fallback_threshold is not None and max_fallback_rate > fallback_threshold:
-        reasons.append("foundation_router_parity_fallback_rate_exceeds_threshold")
-        details.append(
-            {
-                "reason": "foundation_router_parity_fallback_rate_exceeds_threshold",
-                "artifact_ref": str(artifact_path),
-                "actual_fallback_rate": max_fallback_rate,
-                "maximum_fallback_rate": fallback_threshold,
+                "actual_adverse_regime_decision_quality_delta": adverse_regime_delta,
+                "maximum_adverse_regime_decision_quality_delta": max_adverse_regime_delta,
             }
         )
 
-    calibration_min = _float_or_none(
-        _as_dict(payload.get("calibration_metrics")).get("minimum")
+    risk_veto_alignment_delta = _float_or_default(
+        degradation_summary.get("risk_veto_alignment_delta"), 0.0
     )
-    min_calibration = _float_or_none(
-        policy_payload.get(
-            "promotion_router_parity_min_calibration_score",
-            policy_payload.get("gate3_min_forecast_calibration_score", 0.85),
-        )
+    max_risk_veto_alignment_delta = _float_or_default(
+        policy_payload.get("promotion_benchmark_parity_max_risk_veto_alignment_delta"),
+        0.1,
     )
-    if calibration_min is None:
-        reasons.append("foundation_router_parity_calibration_minimum_missing")
+    if risk_veto_alignment_delta > max_risk_veto_alignment_delta:
+        reasons.append("benchmark_parity_risk_veto_alignment_delta_exceeded")
         details.append(
             {
-                "reason": "foundation_router_parity_calibration_minimum_missing",
+                "reason": "benchmark_parity_risk_veto_alignment_delta_exceeded",
                 "artifact_ref": str(artifact_path),
-            }
-        )
-    elif min_calibration is not None and calibration_min < min_calibration:
-        reasons.append("foundation_router_parity_calibration_minimum_below_threshold")
-        details.append(
-            {
-                "reason": "foundation_router_parity_calibration_minimum_below_threshold",
-                "artifact_ref": str(artifact_path),
-                "actual_minimum_calibration": calibration_min,
-                "minimum_required": min_calibration,
+                "actual_risk_veto_alignment_delta": risk_veto_alignment_delta,
+                "maximum_risk_veto_alignment_delta": max_risk_veto_alignment_delta,
             }
         )
 
-    drift_max = _float_or_none(_as_dict(payload.get("drift_metrics")).get("max"))
-    max_drift = _float_or_none(
-        policy_payload.get(
-            "promotion_router_parity_max_drift",
-            policy_payload.get("gate6_max_calibration_error", 0.45),
-        )
+    confidence_calibration_error_delta = _float_or_default(
+        degradation_summary.get("confidence_calibration_error_delta"), 0.0
     )
-    if drift_max is None:
-        reasons.append("foundation_router_parity_drift_max_missing")
+    max_confidence_calibration_error_delta = _float_or_default(
+        policy_payload.get(
+            "promotion_benchmark_parity_max_confidence_calibration_error_delta"
+        ),
+        0.1,
+    )
+    if confidence_calibration_error_delta > max_confidence_calibration_error_delta:
+        reasons.append("benchmark_parity_confidence_calibration_error_delta_exceeded")
         details.append(
             {
-                "reason": "foundation_router_parity_drift_max_missing",
+                "reason": "benchmark_parity_confidence_calibration_error_delta_exceeded",
                 "artifact_ref": str(artifact_path),
-            }
-        )
-    elif max_drift is not None and drift_max > max_drift:
-        reasons.append("foundation_router_parity_drift_exceeds_threshold")
-        details.append(
-            {
-                "reason": "foundation_router_parity_drift_exceeds_threshold",
-                "artifact_ref": str(artifact_path),
-                "actual_max_drift": drift_max,
-                "maximum_drift": max_drift,
+                "actual_confidence_calibration_error_delta": (
+                    confidence_calibration_error_delta
+                ),
+                "maximum_confidence_calibration_error_delta": (
+                    max_confidence_calibration_error_delta
+                ),
             }
         )
 
@@ -1439,8 +1145,6 @@ def _evaluate_janus_evidence(
     policy_payload: dict[str, Any],
     promotion_target: str,
     evidence: dict[str, Any],
-    artifact_root: Path,
-    now: datetime | None = None,
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
     if not _requires_janus_evidence(
         policy_payload=policy_payload,
@@ -1461,16 +1165,6 @@ def _evaluate_janus_evidence(
 
     event_raw = janus.get("event_car")
     event_car = cast(dict[str, Any], event_raw) if isinstance(event_raw, dict) else {}
-    event_ref = str(event_car.get("artifact_ref") or "").strip()
-    _append_evidence_artifact_reasons(
-        reasons=reasons,
-        reason_details=details,
-        evidence_name="janus_event_car",
-        artifact_root=artifact_root,
-        raw_ref=event_ref,
-        policy_payload=policy_payload,
-        now=now,
-    )
     event_count = _int_or_default(event_car.get("count"), 0)
     min_event_count = max(
         1, _int_or_default(policy_payload.get("promotion_min_janus_event_count"), 1)
@@ -1484,22 +1178,13 @@ def _evaluate_janus_evidence(
                 "minimum_event_count": min_event_count,
             }
         )
+    event_ref = str(event_car.get("artifact_ref") or "").strip()
     if event_ref:
         refs.append(event_ref)
 
     reward_raw = janus.get("hgrm_reward")
     hgrm_reward = (
         cast(dict[str, Any], reward_raw) if isinstance(reward_raw, dict) else {}
-    )
-    reward_ref = str(hgrm_reward.get("artifact_ref") or "").strip()
-    _append_evidence_artifact_reasons(
-        reasons=reasons,
-        reason_details=details,
-        evidence_name="janus_hgrm_reward",
-        artifact_root=artifact_root,
-        raw_ref=reward_ref,
-        policy_payload=policy_payload,
-        now=now,
     )
     reward_count = _int_or_default(hgrm_reward.get("count"), 0)
     min_reward_count = max(
@@ -1514,6 +1199,7 @@ def _evaluate_janus_evidence(
                 "minimum_reward_count": min_reward_count,
             }
         )
+    reward_ref = str(hgrm_reward.get("artifact_ref") or "").strip()
     if reward_ref:
         refs.append(reward_ref)
 
@@ -1532,15 +1218,12 @@ def _evaluate_fold_metrics_evidence(
     *,
     policy_payload: dict[str, Any],
     evidence: dict[str, Any],
-    artifact_root: Path,
-    now: datetime | None = None,
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
     reasons: list[str] = []
     details: list[dict[str, object]] = []
     refs: list[str] = []
     fold_raw = evidence.get("fold_metrics")
     fold_metrics = cast(dict[str, Any], fold_raw) if isinstance(fold_raw, dict) else {}
-    fold_ref = str(fold_metrics.get("artifact_ref") or "").strip()
     fold_count = _int_or_default(fold_metrics.get("count"), 0)
     min_fold_count = max(
         1,
@@ -1555,6 +1238,7 @@ def _evaluate_fold_metrics_evidence(
                 "minimum_fold_count": min_fold_count,
             }
         )
+    fold_ref = str(fold_metrics.get("artifact_ref") or "").strip()
     if fold_ref:
         refs.append(fold_ref)
     return reasons, details, refs
@@ -1564,10 +1248,7 @@ def _evaluate_stress_metrics_evidence(
     *,
     policy_payload: dict[str, Any],
     evidence: dict[str, Any],
-    artifact_root: Path,
-    now: datetime | None = None,
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
-    now = now or datetime.now(timezone.utc)
     reasons: list[str] = []
     details: list[dict[str, object]] = []
     refs: list[str] = []
@@ -1575,107 +1256,11 @@ def _evaluate_stress_metrics_evidence(
     stress_metrics = (
         cast(dict[str, Any], stress_raw) if isinstance(stress_raw, dict) else {}
     )
-    stress_ref = str(stress_metrics.get("artifact_ref") or "").strip()
-    _append_evidence_artifact_reasons(
-        reasons=reasons,
-        reason_details=details,
-        evidence_name="stress_metrics",
-        artifact_root=artifact_root,
-        raw_ref=stress_ref,
-        policy_payload=policy_payload,
-        now=now,
-    )
     stress_count = _int_or_default(stress_metrics.get("count"), 0)
     min_stress_count = max(
         1,
         _int_or_default(policy_payload.get("promotion_min_stress_case_count"), 4),
     )
-    stress_ref = str(stress_metrics.get("artifact_ref") or "").strip()
-    artifact_ref_path = None
-    if stress_ref:
-        artifact_ref_path = _normalize_artifact_path(stress_ref, artifact_root=artifact_root)
-    if artifact_ref_path is None and stress_ref:
-        reasons.append("stress_metrics_evidence_ref_not_trusted")
-        details.append(
-            {
-                "reason": "stress_metrics_evidence_ref_not_trusted",
-                "artifact_ref": stress_ref,
-            }
-        )
-    if not stress_ref:
-        reasons.append("stress_metrics_evidence_artifact_ref_missing")
-        details.append({"reason": "stress_metrics_evidence_artifact_ref_missing"})
-        stress_payload = None
-    elif artifact_ref_path is None:
-        stress_payload = None
-    elif not artifact_ref_path.exists():
-        reasons.append("stress_metrics_evidence_artifact_missing")
-        details.append(
-            {
-                "reason": "stress_metrics_evidence_artifact_missing",
-                "artifact_ref": stress_ref,
-            }
-        )
-        stress_payload = None
-    else:
-        stress_payload = _load_json_if_exists(artifact_ref_path)
-        if stress_payload is None:
-            reasons.append("stress_metrics_evidence_artifact_invalid")
-            details.append(
-                {
-                    "reason": "stress_metrics_evidence_artifact_invalid",
-                    "artifact_ref": stress_ref,
-                }
-            )
-
-    if stress_payload is not None:
-        schema_version = str(stress_payload.get("schema_version") or "").strip()
-        if schema_version and schema_version != "stress-metrics-v1":
-            reasons.append("stress_metrics_evidence_schema_invalid")
-            details.append(
-                {
-                    "reason": "stress_metrics_evidence_schema_invalid",
-                    "artifact_ref": stress_ref,
-                    "actual_schema_version": schema_version,
-                    "expected_schema_version": "stress-metrics-v1",
-                }
-            )
-        items = _list_from_any(stress_payload.get("items"))
-        payload_count = _int_or_default(stress_payload.get("count"), len(items))
-        if payload_count < min_stress_count:
-            reasons.append("stress_metrics_evidence_insufficient")
-            details.append(
-                {
-                    "reason": "stress_metrics_evidence_insufficient",
-                    "actual_stress_case_count": payload_count,
-                    "minimum_stress_case_count": min_stress_count,
-                }
-            )
-        max_age_hours = max(
-            1, _int_or_default(policy_payload.get("promotion_stress_max_age_hours"), 24)
-        )
-        generated_at = _parse_datetime(
-            str(stress_payload.get("generated_at") or "").strip()
-        )
-        if generated_at is None:
-            reasons.append("stress_metrics_evidence_generated_at_missing")
-            details.append(
-                {
-                    "reason": "stress_metrics_evidence_generated_at_missing",
-                    "artifact_ref": stress_ref,
-                }
-            )
-        elif (now - generated_at).total_seconds() > max_age_hours * 3600:
-            reasons.append("stress_metrics_evidence_stale")
-            details.append(
-                {
-                    "reason": "stress_metrics_evidence_stale",
-                    "artifact_ref": stress_ref,
-                    "generated_at": str(stress_payload.get("generated_at") or ""),
-                    "max_age_hours": max_age_hours,
-                }
-            )
-
     if stress_count < min_stress_count:
         reasons.append("stress_metrics_evidence_insufficient")
         details.append(
@@ -1685,140 +1270,10 @@ def _evaluate_stress_metrics_evidence(
                 "minimum_stress_case_count": min_stress_count,
             }
         )
+    stress_ref = str(stress_metrics.get("artifact_ref") or "").strip()
     if stress_ref:
         refs.append(stress_ref)
     return reasons, details, refs
-
-
-def _append_evidence_artifact_reasons(
-    *,
-    reasons: list[str],
-    reason_details: list[dict[str, object]],
-    evidence_name: str,
-    artifact_root: Path,
-    raw_ref: str,
-    policy_payload: dict[str, Any],
-    now: datetime | None = None,
-) -> None:
-    artifact_ref = str(raw_ref or "").strip()
-    if not artifact_ref:
-        reasons.append(f"{evidence_name}_artifact_ref_missing")
-        reason_details.append(
-            {
-                "reason": f"{evidence_name}_artifact_ref_missing",
-                "artifact_name": evidence_name,
-            }
-        )
-        return
-
-    if artifact_ref.startswith("db:") or (
-        "://" in artifact_ref and not artifact_ref.startswith("file://")
-    ):
-        reasons.append(f"{evidence_name}_artifact_ref_untrusted")
-        reason_details.append(
-            {
-                "reason": f"{evidence_name}_artifact_ref_untrusted",
-                "artifact_name": evidence_name,
-                "artifact_ref": artifact_ref,
-            }
-        )
-        return
-
-    artifact_ref_for_path = artifact_ref.removeprefix("file://")
-    candidate_path = Path(artifact_ref_for_path)
-    if not candidate_path.is_absolute():
-        candidate_path = artifact_root / candidate_path
-    try:
-        artifact_path = candidate_path.resolve()
-    except (OSError, ValueError):
-        reasons.append(f"{evidence_name}_artifact_ref_invalid")
-        reason_details.append(
-            {
-                "reason": f"{evidence_name}_artifact_ref_invalid",
-                "artifact_name": evidence_name,
-                "artifact_ref": artifact_ref,
-            }
-        )
-        return
-
-    try:
-        artifact_root_path = artifact_root.resolve()
-    except OSError:
-        reasons.append(f"{evidence_name}_artifact_ref_invalid")
-        reason_details.append(
-            {
-                "reason": f"{evidence_name}_artifact_ref_invalid",
-                "artifact_name": evidence_name,
-                "artifact_ref": artifact_ref,
-            }
-        )
-        return
-
-    if not artifact_path.is_relative_to(artifact_root_path):
-        reasons.append(f"{evidence_name}_artifact_ref_outside_artifact_root")
-        reason_details.append(
-            {
-                "reason": f"{evidence_name}_artifact_ref_outside_artifact_root",
-                "artifact_name": evidence_name,
-                "artifact_ref": artifact_ref,
-            }
-        )
-        return
-
-    if not artifact_path.is_file():
-        reasons.append(f"{evidence_name}_artifact_missing")
-        reason_details.append(
-            {
-                "reason": f"{evidence_name}_artifact_missing",
-                "artifact_name": evidence_name,
-                "artifact_ref": artifact_ref,
-                "artifact_path": str(artifact_path),
-            }
-        )
-        return
-
-    if _load_json_if_exists(artifact_path) is None:
-        reasons.append(f"{evidence_name}_artifact_payload_invalid")
-        reason_details.append(
-            {
-                "reason": f"{evidence_name}_artifact_payload_invalid",
-                "artifact_name": evidence_name,
-                "artifact_path": str(artifact_path),
-            }
-        )
-        return
-
-    max_age_seconds = _int_or_default(
-        policy_payload.get("promotion_evidence_max_age_seconds"), 0
-    )
-    if max_age_seconds > 0 and now is not None:
-        try:
-            artifact_mtime = datetime.fromtimestamp(
-                os.path.getmtime(artifact_path),
-                tz=timezone.utc,
-            )
-        except OSError:
-            reasons.append(f"{evidence_name}_artifact_ref_invalid")
-            reason_details.append(
-                {
-                    "reason": f"{evidence_name}_artifact_ref_invalid",
-                    "artifact_name": evidence_name,
-                    "artifact_ref": artifact_ref,
-                }
-            )
-            return
-        age_seconds = (now - artifact_mtime).total_seconds()
-        if age_seconds > max_age_seconds:
-            reasons.append(f"{evidence_name}_artifact_stale")
-            reason_details.append(
-                {
-                    "reason": f"{evidence_name}_artifact_stale",
-                    "artifact_name": evidence_name,
-                    "artifact_path": str(artifact_path),
-                    "artifact_mtime": artifact_mtime.isoformat(),
-                    "max_age_seconds": max_age_seconds,
-                }
-            )
 
 
 def _evaluate_rationale_evidence(
@@ -1939,17 +1394,6 @@ def _list_from_any(value: Any) -> list[object]:
     return cast(list[object], value)
 
 
-def _as_list_of_dicts(value: object) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    values = cast(list[object], value)
-    result: list[dict[str, Any]] = []
-    for item in values:
-        if isinstance(item, dict):
-            result.append(cast(dict[str, Any], item))
-    return result
-
-
 def _list_count(value: Any) -> int:
     if not isinstance(value, list):
         return 0
@@ -1979,18 +1423,6 @@ def _load_json_if_exists(path: Path) -> dict[str, Any] | None:
     return cast(dict[str, Any], payload)
 
 
-def _sha256_path(path: Path) -> str:
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError:
-        return ""
-
-
-def _sha256_json(payload: object) -> str:
-    payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
-
-
 def _int_or_default(value: Any, default: int) -> int:
     if isinstance(value, bool):
         return int(value)
@@ -2004,23 +1436,6 @@ def _int_or_default(value: Any, default: int) -> int:
             except ValueError:
                 return default
     return default
-
-
-def _coerce_evidence_bool(value: object) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        if not math.isfinite(value):
-            return None
-        return value != 0
-    if value is None:
-        return None
-    normalized = str(value).strip().lower()
-    if normalized in {"true", "1", "yes", "on"}:
-        return True
-    if normalized in {"false", "0", "no", "off", ""}:
-        return False
-    return None
 
 
 def _float_or_default(value: Any, default: float) -> float:

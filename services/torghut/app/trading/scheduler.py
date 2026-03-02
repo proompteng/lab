@@ -2552,12 +2552,8 @@ class TradingPipeline:
         if not regime_context.is_authoritative:
             source = (
                 "regime_hmm_unknown_regime"
-                if regime_context.authority_reason
-                in {"invalid_regime_id", "missing_regime", "invalid_schema_version"}
+                if regime_context.authority_reason in {"invalid_regime_id", "missing_regime"}
                 else "regime_hmm_non_authoritative"
-            )
-            regime_context_authority_reason = resolve_regime_context_authority_reason(
-                regime_context
             )
             return RuntimeUncertaintyGate(
                 action="abstain",
@@ -2567,8 +2563,7 @@ class TradingPipeline:
                 reason=(
                     regime_fallback
                     if regime_fallback is not None
-                    else regime_context_authority_reason
-                    or "regime_hmm_non_authoritative"
+                    else regime_context.authority_reason or "regime_hmm_non_authoritative"
                 ),
             )
         return RuntimeUncertaintyGate(
@@ -5098,12 +5093,10 @@ class TradingScheduler:
             ),
             governance_artifact_path=str(run_output_dir),
             priority_id=priority_id,
-            design_doc=os.getenv("DESIGN_DOC"),
             artifact_root=artifact_root,
             execution_context=self._build_autonomy_execution_context(
                 artifact_root=artifact_root,
                 promotion_target=promotion_target,
-                design_doc=os.getenv("DESIGN_DOC"),
             ),
         )
         if result is None:
@@ -5156,7 +5149,6 @@ class TradingScheduler:
         *,
         artifact_root: Path,
         promotion_target: str,
-        design_doc: str | None = None,
     ) -> dict[str, str]:
         repository = (os.getenv("GITHUB_REPOSITORY") or "unknown").strip() or "unknown"
         base_ref = os.getenv("GITHUB_BASE_REF") or os.getenv("GITHUB_REF") or "unknown"
@@ -5168,14 +5160,18 @@ class TradingScheduler:
             or ("live" if promotion_target == "live" else "unknown")
         )
         priority_id = os.getenv("PRIORITY_ID") or os.getenv("CODEX_PRIORITY_ID") or ""
-        design_ref = design_doc if design_doc is not None else os.getenv("DESIGN_DOC", "")
+        design_doc = (
+            os.getenv("DESIGN_DOC")
+            or os.getenv("CODEX_DESIGN_DOC")
+            or ""
+        )
         return {
             "repository": repository,
             "base": base_ref,
             "head": head_ref,
             "artifactPath": str(artifact_root),
             "priorityId": priority_id,
-            "designDoc": design_ref.strip(),
+            "designDoc": design_doc,
         }
 
     def _record_autonomy_batch_state(
@@ -5498,7 +5494,6 @@ class TradingScheduler:
         governance_head: str | None = None,
         governance_artifact_path: str | None = None,
         priority_id: str | None = None,
-        design_doc: str | None = None,
         artifact_root: Path | None = None,
         execution_context: Mapping[str, str] | None = None,
     ) -> Any | None:
@@ -5526,7 +5521,6 @@ class TradingScheduler:
                 ).strip()
                 or str(run_output_dir),
                 priority_id=priority_id,
-                design_doc=design_doc,
                 governance_change="autonomous-promotion",
                 governance_reason=(
                     f"Autonomous recommendation for {promotion_target} target."

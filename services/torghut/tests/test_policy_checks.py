@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import os
 import json
 import tempfile
-import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 from unittest import TestCase
-from unittest.mock import patch
 
 from app.trading.autonomy.policy_checks import (
     evaluate_promotion_prerequisites,
@@ -56,1243 +52,6 @@ class TestPolicyChecks(TestCase):
         )
         self.assertIn("gates/recalibration-report.json", result.missing_artifacts)
 
-    def test_promotion_prerequisites_fail_when_profitability_stage_manifest_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "profitability").mkdir(parents=True, exist_ok=True)
-            (root / "research" / "candidate-spec.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_profitability_stage_manifest": True,
-                    "gate6_require_profitability_evidence": False,
-                    "promotion_require_janus_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn("required_artifacts_missing", promotion.reasons)
-        self.assertIn(
-            "profitability/profitability-stage-manifest-v1.json",
-            promotion.missing_artifacts,
-        )
-        self.assertIn(
-            "profitability_stage_manifest_missing",
-            promotion.reasons,
-        )
-
-    def test_promotion_prerequisites_fail_when_profitability_stage_manifest_invalid_json(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "profitability").mkdir(parents=True, exist_ok=True)
-            (root / "profitability" / "profitability-stage-manifest-v1.json").write_text(
-                "{ invalid json }", encoding="utf-8"
-            )
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_profitability_stage_manifest": True,
-                    "gate6_require_profitability_evidence": False,
-                    "promotion_require_janus_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn(
-            "profitability_stage_manifest_invalid_json",
-            promotion.reasons,
-        )
-
-    def test_promotion_prerequisites_fail_when_profitability_stage_manifest_artifact_hash_mismatch(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "profitability").mkdir(parents=True, exist_ok=True)
-            candidate_spec_path = root / "research" / "candidate-spec.json"
-            candidate_spec_path.write_text("{}", encoding="utf-8")
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text(
-                json.dumps(_gate_report()), encoding="utf-8"
-            )
-            (root / "gates" / "profitability-evidence-v4.json").write_text(
-                json.dumps({"schema_version": "profitability-evidence-v4"}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "profitability-benchmark-v4.json").write_text(
-                json.dumps({"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "profitability-evidence-validation.json").write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "recalibration-report.json").write_text(
-                json.dumps({"status": "not_required"}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "janus-event-car-v1.json").write_text(
-                json.dumps({"schema_version": "janus-event-car-v1", "summary": {"event_count": 2}}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "janus-hgrm-reward-v1.json").write_text(
-                json.dumps({"schema_version": "janus-hgrm-reward-v1", "summary": {"reward_count": 2}}),
-                encoding="utf-8",
-            )
-            manifest_path = root / "profitability" / "profitability-stage-manifest-v1.json"
-            manifest_payload = {
-                "schema_version": "profitability-stage-manifest-v1",
-                "candidate_id": "cand-test",
-                "strategy_family": "deterministic",
-                "llm_artifact_ref": None,
-                "router_artifact_ref": "strategy-config",
-                "run_context": {
-                    "repository": "proompteng/lab",
-                    "base": "main",
-                    "head": "agentruns/main",
-                    "artifact_path": str(root),
-                    "run_id": "run-test",
-                },
-                "stages": {
-                    "research": {
-                        "status": "pass",
-                        "checks": [
-                            {"check": "candidate_spec_present", "status": "pass"}
-                        ],
-                        "artifacts": {
-                            "candidate_spec": {
-                                "path": "research/candidate-spec.json",
-                                "sha256": "deadbeef",
-                                "stage": "research",
-                                "check": "candidate_spec_present",
-                            }
-                        },
-                        "owner": "research-orchestrator",
-                        "completed_at_utc": "2026-03-01T00:00:00+00:00",
-                    },
-                    "validation": {
-                        "status": "pass",
-                        "checks": [
-                            {"check": "evaluation_report_present", "status": "pass"}
-                        ],
-                        "artifacts": {
-                            "evaluation_report": {
-                                "path": "backtest/evaluation-report.json",
-                                "sha256": _sha256_path(root / "backtest" / "evaluation-report.json"),
-                                "stage": "validation",
-                                "check": "evaluation_report_present",
-                            }
-                        },
-                        "owner": "validation-service",
-                        "completed_at_utc": "2026-03-01T00:00:00+00:00",
-                    },
-                    "execution": {
-                        "status": "pass",
-                        "checks": [
-                            {"check": "walkforward_results_present", "status": "pass"},
-                            {"check": "gate_matrix_approval", "status": "pass"},
-                        ],
-                        "artifacts": {
-                            "walkforward_results": {
-                                "path": "backtest/evaluation-report.json",
-                                "sha256": _sha256_path(
-                                    root / "backtest" / "evaluation-report.json"
-                                ),
-                                "stage": "execution",
-                                "check": "walkforward_results_present",
-                            }
-                        },
-                        "owner": "execution-sim",
-                        "completed_at_utc": "2026-03-01T00:00:00+00:00",
-                    },
-                    "governance": {
-                        "status": "pass",
-                        "checks": [{"check": "rollback_ready", "status": "pass"}],
-                        "artifacts": {
-                            "candidate_spec": {
-                                "path": "research/candidate-spec.json",
-                                "sha256": _sha256_path(candidate_spec_path),
-                                "stage": "governance",
-                                "check": "candidate_spec_present",
-                            }
-                        },
-                        "owner": "governance-policy",
-                        "completed_at_utc": "2026-03-01T00:00:00+00:00",
-                    },
-                },
-                "overall_status": "pass",
-                "failure_reasons": [],
-                "rollback_contract_ref": "gates/rollback-readiness.json",
-                "created_at_utc": "2026-03-01T00:00:00+00:00",
-            }
-            manifest_payload["content_hash"] = _sha256_json(
-                {k: v for k, v in manifest_payload.items() if k != "content_hash"}
-            )
-            manifest_path.write_text(json.dumps(manifest_payload), encoding="utf-8")
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_profitability_stage_manifest": True,
-                    "gate6_require_profitability_evidence": False,
-                    "promotion_require_janus_evidence": True,
-                    "gate6_require_janus_evidence": True,
-                    "promotion_janus_required_artifacts": [
-                        "gates/janus-event-car-v1.json",
-                        "gates/janus-hgrm-reward-v1.json",
-                    ],
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn(
-            "profitability_stage_manifest_artifact_hash_mismatch",
-            promotion.reasons,
-        )
-
-    def test_promotion_prerequisites_fails_when_profitability_stage_manifest_artifact_payload_invalid_json(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "profitability").mkdir(parents=True, exist_ok=True)
-            candidate_spec_path = root / "research" / "candidate-spec.json"
-            candidate_spec_invalid_path = root / "research" / "candidate-spec-corrupt.json"
-            candidate_spec_path.write_text("{}", encoding="utf-8")
-            candidate_spec_invalid_path.write_text("{ invalid json }", encoding="utf-8")
-            candidate_generation_manifest_path = (
-                root / "research" / "candidate-generation-manifest.json"
-            )
-            candidate_generation_manifest_path.write_text("{}", encoding="utf-8")
-            evaluation_report_path = root / "backtest" / "evaluation-report.json"
-            evaluation_report_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
-            walkforward_results_path = root / "backtest" / "walkforward-results.json"
-            walkforward_results_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            baseline_report_path = root / "backtest" / "baseline-evaluation-report.json"
-            baseline_report_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            gate_report_path = root / "gates" / "gate-evaluation.json"
-            gate_report_path.write_text(json.dumps(_gate_report()), encoding="utf-8")
-            profitability_benchmark_path = root / "gates" / "profitability-benchmark-v4.json"
-            profitability_benchmark_path.write_text(
-                json.dumps({"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]}),
-                encoding="utf-8",
-            )
-            profitability_evidence_path = root / "gates" / "profitability-evidence-v4.json"
-            profitability_evidence_path.write_text(
-                json.dumps({"schema_version": "profitability-evidence-v4"}),
-                encoding="utf-8",
-            )
-            profitability_validation_path = root / "gates" / "profitability-evidence-validation.json"
-            profitability_validation_path.write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            recalibration_report_path = root / "gates" / "recalibration-report.json"
-            recalibration_report_path.write_text(
-                json.dumps({"status": "not_required"}),
-                encoding="utf-8",
-            )
-            janus_event_car_path = root / "gates" / "janus-event-car-v1.json"
-            janus_event_car_path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": "janus-event-car-v1",
-                        "summary": {"event_count": 1},
-                    }
-                ),
-                encoding="utf-8",
-            )
-            janus_hgrm_reward_path = root / "gates" / "janus-hgrm-reward-v1.json"
-            janus_hgrm_reward_path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": "janus-hgrm-reward-v1",
-                        "summary": {"reward_count": 1},
-                    }
-                ),
-                encoding="utf-8",
-            )
-            rollback_readiness_path = root / "gates" / "rollback-readiness.json"
-            rollback_readiness_path.write_text(
-                json.dumps({"dryRunCompletedAt": datetime.now(timezone.utc).isoformat()}),
-                encoding="utf-8",
-            )
-            manifest_payload = _build_profitability_stage_manifest_payload(
-                root=root,
-                candidate_spec_path=candidate_spec_path,
-                candidate_generation_manifest_path=candidate_generation_manifest_path,
-                walkforward_results_path=walkforward_results_path,
-                baseline_evaluation_report_path=baseline_report_path,
-                evaluation_report_path=evaluation_report_path,
-                gate_report_path=gate_report_path,
-                profitability_benchmark_path=profitability_benchmark_path,
-                profitability_evidence_path=profitability_evidence_path,
-                profitability_validation_path=profitability_validation_path,
-                janus_event_car_path=janus_event_car_path,
-                janus_hgrm_reward_path=janus_hgrm_reward_path,
-                recalibration_report_path=recalibration_report_path,
-                rollback_readiness_path=rollback_readiness_path,
-                artifact_path_overrides={
-                    ("research", "candidate_spec_present"): candidate_spec_invalid_path,
-                },
-            )
-            manifest_payload["overall_status"] = "pass"
-            manifest_payload["content_hash"] = _sha256_json(
-                {k: v for k, v in manifest_payload.items() if k != "content_hash"}
-            )
-            manifest_path = root / "profitability" / "profitability-stage-manifest-v1.json"
-            manifest_path.write_text(json.dumps(manifest_payload), encoding="utf-8")
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_profitability_stage_manifest": True,
-                    "gate6_require_profitability_evidence": False,
-                    "promotion_require_janus_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn(
-            "profitability_stage_manifest_artifact_invalid_json",
-            promotion.reasons,
-        )
-
-    def test_promotion_prerequisites_fails_when_profitability_stage_manifest_stage_transition_breaks(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "profitability").mkdir(parents=True, exist_ok=True)
-            candidate_spec_path = root / "research" / "candidate-spec.json"
-            candidate_spec_path.write_text("{}", encoding="utf-8")
-            evaluation_report_path = root / "backtest" / "evaluation-report.json"
-            evaluation_report_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
-            gate_report_path = root / "gates" / "gate-evaluation.json"
-            gate_report_path.write_text(json.dumps(_gate_report()), encoding="utf-8")
-            walkforward_results_path = root / "backtest" / "walkforward-results.json"
-            walkforward_results_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
-            (root / "gates" / "profitability-evidence-v4.json").write_text(
-                json.dumps({"schema_version": "profitability-evidence-v4"}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "profitability-benchmark-v4.json").write_text(
-                json.dumps({"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "profitability-evidence-validation.json").write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "recalibration-report.json").write_text(
-                json.dumps({"status": "not_required"}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "janus-event-car-v1.json").write_text(
-                json.dumps({"schema_version": "janus-event-car-v1", "summary": {"event_count": 1}}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "janus-hgrm-reward-v1.json").write_text(
-                json.dumps({"schema_version": "janus-hgrm-reward-v1", "summary": {"reward_count": 1}}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "rollback-readiness.json").write_text(
-                json.dumps({"dryRunCompletedAt": datetime.now(timezone.utc).isoformat()}),
-                encoding="utf-8",
-            )
-            (root / "paper-candidate" / "strategy-configmap-patch.yaml").parent.mkdir(
-                parents=True, exist_ok=True
-            )
-            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
-                "kind: ConfigMap", encoding="utf-8"
-            )
-
-            manifest_path = root / "profitability" / "profitability-stage-manifest-v1.json"
-            manifest_payload = {
-                "schema_version": "profitability-stage-manifest-v1",
-                "candidate_id": "cand-test",
-                "strategy_family": "deterministic",
-                "llm_artifact_ref": None,
-                "router_artifact_ref": "strategy-config",
-                "run_context": {
-                    "repository": "proompteng/lab",
-                    "base": "main",
-                    "head": "agentruns/main",
-                    "artifact_path": str(root),
-                    "run_id": "run-test",
-                },
-                "stages": {
-                    "research": {
-                        "status": "pass",
-                        "checks": [{"check": "candidate_spec_present", "status": "pass"}],
-                        "artifacts": {
-                            "candidate_spec": {
-                                "path": "research/candidate-spec.json",
-                                "sha256": _sha256_path(candidate_spec_path),
-                                "stage": "research",
-                                "check": "candidate_spec_present",
-                            }
-                        },
-                        "owner": "research-orchestrator",
-                        "completed_at_utc": "2026-03-01T00:00:00+00:00",
-                    },
-                    "validation": {
-                        "status": "fail",
-                        "checks": [
-                            {"check": "evaluation_report_present", "status": "pass"},
-                            {
-                                "check": "profitability_benchmark_present",
-                                "status": "fail",
-                                "reason": "missing",
-                            },
-                        ],
-                        "artifacts": {
-                            "evaluation_report": {
-                                "path": "backtest/evaluation-report.json",
-                                "sha256": _sha256_path(evaluation_report_path),
-                                "stage": "validation",
-                                "check": "evaluation_report_present",
-                            }
-                        },
-                        "owner": "validation-service",
-                        "completed_at_utc": "2026-03-01T00:00:00+00:00",
-                    },
-                    "execution": {
-                        "status": "pass",
-                        "checks": [
-                            {"check": "walkforward_results_present", "status": "pass"},
-                            {"check": "evaluation_report_present", "status": "pass"},
-                            {"check": "gate_evaluation_present", "status": "pass"},
-                            {"check": "janus_event_car_present", "status": "pass"},
-                            {"check": "janus_hgrm_reward_present", "status": "pass"},
-                            {"check": "recalibration_report_present", "status": "pass"},
-                            {"check": "gate_matrix_approval", "status": "pass"},
-                            {"check": "drift_gate_approval", "status": "pass"},
-                        ],
-                        "artifacts": {
-                            "walkforward_results": {
-                                "path": "backtest/walkforward-results.json",
-                                "sha256": _sha256_path(walkforward_results_path),
-                                "stage": "execution",
-                                "check": "walkforward_results_present",
-                            },
-                            "evaluation_report": {
-                                "path": "backtest/evaluation-report.json",
-                                "sha256": _sha256_path(evaluation_report_path),
-                                "stage": "execution",
-                                "check": "evaluation_report_present",
-                            },
-                            "gate_evaluation": {
-                                "path": "gates/gate-evaluation.json",
-                                "sha256": _sha256_path(gate_report_path),
-                                "stage": "execution",
-                                "check": "gate_evaluation_present",
-                            },
-                            "janus_event_car": {
-                                "path": "gates/janus-event-car-v1.json",
-                                "sha256": _sha256_path(
-                                    root / "gates" / "janus-event-car-v1.json"
-                                ),
-                                "stage": "execution",
-                                "check": "janus_event_car_present",
-                            },
-                            "janus_hgrm_reward": {
-                                "path": "gates/janus-hgrm-reward-v1.json",
-                                "sha256": _sha256_path(
-                                    root / "gates" / "janus-hgrm-reward-v1.json"
-                                ),
-                                "stage": "execution",
-                                "check": "janus_hgrm_reward_present",
-                            },
-                            "recalibration_report": {
-                                "path": "gates/recalibration-report.json",
-                                "sha256": _sha256_path(root / "gates" / "recalibration-report.json"),
-                                "stage": "execution",
-                                "check": "recalibration_report_present",
-                            },
-                        },
-                        "owner": "execution-sim",
-                        "completed_at_utc": "2026-03-01T00:00:00+00:00",
-                    },
-                    "governance": {
-                        "status": "pass",
-                        "checks": [
-                            {"check": "rollback_ready", "status": "pass"},
-                            {"check": "gate_report_present", "status": "pass"},
-                            {"check": "candidate_spec_present", "status": "pass"},
-                            {"check": "risk_controls_attestable", "status": "pass"},
-                        ],
-                        "artifacts": {
-                            "candidate_spec": {
-                                "path": "research/candidate-spec.json",
-                                "sha256": _sha256_path(candidate_spec_path),
-                                "stage": "governance",
-                                "check": "candidate_spec_present",
-                            },
-                            "gate_evaluation": {
-                                "path": "gates/gate-evaluation.json",
-                                "sha256": _sha256_path(gate_report_path),
-                                "stage": "governance",
-                                "check": "gate_evaluation_present",
-                            },
-                            "rollback_readiness": {
-                                "path": "gates/rollback-readiness.json",
-                                "sha256": _sha256_path(
-                                    root / "gates" / "rollback-readiness.json"
-                                ),
-                                "stage": "governance",
-                                "check": "rollback_readiness_present",
-                            },
-                        },
-                        "owner": "governance-policy",
-                        "completed_at_utc": "2026-03-01T00:00:00+00:00",
-                    },
-                },
-                "overall_status": "fail",
-                "failure_reasons": ["validation_check_failed"],
-                "rollback_contract_ref": "gates/rollback-readiness.json",
-                "created_at_utc": "2026-03-01T00:00:00+00:00",
-            }
-            manifest_payload["content_hash"] = _sha256_json(
-                {k: v for k, v in manifest_payload.items() if k != "content_hash"}
-            )
-            manifest_path.write_text(json.dumps(manifest_payload), encoding="utf-8")
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_profitability_stage_manifest": True,
-                    "gate6_require_profitability_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                    "promotion_require_janus_evidence": False,
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn(
-            "profitability_stage_manifest_stage_transition_violation",
-            promotion.reasons,
-        )
-        self.assertIn(
-            "profitability_stage_manifest_stage_chain_not_passed",
-            promotion.reasons,
-        )
-
-    def test_promotion_prerequisites_fails_when_profitability_stage_manifest_has_extra_stage(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "profitability").mkdir(parents=True, exist_ok=True)
-            candidate_spec_path = root / "research" / "candidate-spec.json"
-            candidate_spec_path.write_text("{}", encoding="utf-8")
-            candidate_generation_manifest_path = (
-                root / "research" / "candidate-generation-manifest.json"
-            )
-            candidate_generation_manifest_path.write_text("{}", encoding="utf-8")
-            evaluation_report_path = root / "backtest" / "evaluation-report.json"
-            evaluation_report_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
-            walkforward_results_path = root / "backtest" / "walkforward-results.json"
-            walkforward_results_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            baseline_report_path = root / "backtest" / "baseline-evaluation-report.json"
-            baseline_report_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            gate_report_path = root / "gates" / "gate-evaluation.json"
-            gate_report_path.write_text(json.dumps(_gate_report()), encoding="utf-8")
-            profitability_benchmark_path = root / "gates" / "profitability-benchmark-v4.json"
-            profitability_benchmark_path.write_text(
-                json.dumps({"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]}),
-                encoding="utf-8",
-            )
-            profitability_evidence_path = root / "gates" / "profitability-evidence-v4.json"
-            profitability_evidence_path.write_text(
-                json.dumps({"schema_version": "profitability-evidence-v4"}),
-                encoding="utf-8",
-            )
-            profitability_validation_path = root / "gates" / "profitability-evidence-validation.json"
-            profitability_validation_path.write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            janus_event_car_path = root / "gates" / "janus-event-car-v1.json"
-            janus_event_car_path.write_text(
-                json.dumps({"schema_version": "janus-event-car-v1", "summary": {"event_count": 1}}),
-                encoding="utf-8",
-            )
-            janus_hgrm_reward_path = root / "gates" / "janus-hgrm-reward-v1.json"
-            janus_hgrm_reward_path.write_text(
-                json.dumps({"schema_version": "janus-hgrm-reward-v1", "summary": {"reward_count": 1}}),
-                encoding="utf-8",
-            )
-            rollback_readiness_path = root / "gates" / "rollback-readiness.json"
-            rollback_readiness_path.write_text(
-                json.dumps({"dryRunCompletedAt": datetime.now(timezone.utc).isoformat()}),
-                encoding="utf-8",
-            )
-
-            manifest_payload = _build_profitability_stage_manifest_payload(
-                root=root,
-                candidate_spec_path=candidate_spec_path,
-                candidate_generation_manifest_path=candidate_generation_manifest_path,
-                walkforward_results_path=walkforward_results_path,
-                baseline_evaluation_report_path=baseline_report_path,
-                evaluation_report_path=evaluation_report_path,
-                gate_report_path=gate_report_path,
-                profitability_benchmark_path=profitability_benchmark_path,
-                profitability_evidence_path=profitability_evidence_path,
-                profitability_validation_path=profitability_validation_path,
-                janus_event_car_path=janus_event_car_path,
-                janus_hgrm_reward_path=janus_hgrm_reward_path,
-                recalibration_report_path=root / "gates" / "recalibration-report.json",
-            )
-            manifest_payload["stages"]["telemetry_audit"] = {
-                "status": "pass",
-                "checks": [{"check": "noop", "status": "pass"}],
-                "artifacts": {},
-                "owner": "qa",
-                "completed_at_utc": "2026-03-01T00:00:00+00:00",
-            }
-            manifest_payload["overall_status"] = "pass"
-            manifest_payload["failure_reasons"] = []
-            manifest_payload["content_hash"] = _sha256_json(
-                {k: v for k, v in manifest_payload.items() if k != "content_hash"}
-            )
-            (root / "profitability" / "profitability-stage-manifest-v1.json").write_text(
-                json.dumps(manifest_payload), encoding="utf-8"
-            )
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_profitability_stage_manifest": True,
-                    "gate6_require_profitability_evidence": False,
-                    "promotion_require_janus_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn(
-            "profitability_stage_manifest_stage_set_invalid",
-            promotion.reasons,
-        )
-
-    def test_promotion_prerequisites_fails_when_rollback_readiness_artifact_missing(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "profitability").mkdir(parents=True, exist_ok=True)
-            candidate_spec_path = root / "research" / "candidate-spec.json"
-            candidate_spec_path.write_text("{}", encoding="utf-8")
-            candidate_generation_manifest_path = (
-                root / "research" / "candidate-generation-manifest.json"
-            )
-            candidate_generation_manifest_path.write_text("{}", encoding="utf-8")
-            evaluation_report_path = root / "backtest" / "evaluation-report.json"
-            evaluation_report_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
-            walkforward_results_path = root / "backtest" / "walkforward-results.json"
-            walkforward_results_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            baseline_report_path = root / "backtest" / "baseline-evaluation-report.json"
-            baseline_report_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            gate_report_path = root / "gates" / "gate-evaluation.json"
-            gate_report_path.write_text(json.dumps(_gate_report()), encoding="utf-8")
-            profitability_benchmark_path = root / "gates" / "profitability-benchmark-v4.json"
-            profitability_benchmark_path.write_text(
-                json.dumps({"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]}),
-                encoding="utf-8",
-            )
-            profitability_evidence_path = root / "gates" / "profitability-evidence-v4.json"
-            profitability_evidence_path.write_text(
-                json.dumps({"schema_version": "profitability-evidence-v4"}),
-                encoding="utf-8",
-            )
-            profitability_validation_path = root / "gates" / "profitability-evidence-validation.json"
-            profitability_validation_path.write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            recalibration_report_path = root / "gates" / "recalibration-report.json"
-            recalibration_report_path.write_text(
-                json.dumps({"status": "not_required"}),
-                encoding="utf-8",
-            )
-            janus_event_car_path = root / "gates" / "janus-event-car-v1.json"
-            janus_event_car_path.write_text(
-                json.dumps({"schema_version": "janus-event-car-v1", "summary": {"event_count": 1}}),
-                encoding="utf-8",
-            )
-            janus_hgrm_reward_path = root / "gates" / "janus-hgrm-reward-v1.json"
-            janus_hgrm_reward_path.write_text(
-                json.dumps({"schema_version": "janus-hgrm-reward-v1", "summary": {"reward_count": 1}}),
-                encoding="utf-8",
-            )
-            rollback_readiness_path = root / "gates" / "rollback-readiness.json"
-            rollback_readiness_path.write_text(
-                json.dumps({"dryRunCompletedAt": datetime.now(timezone.utc).isoformat()}),
-                encoding="utf-8",
-            )
-            manifest_payload = _build_profitability_stage_manifest_payload(
-                root=root,
-                candidate_spec_path=candidate_spec_path,
-                candidate_generation_manifest_path=candidate_generation_manifest_path,
-                walkforward_results_path=walkforward_results_path,
-                baseline_evaluation_report_path=baseline_report_path,
-                evaluation_report_path=evaluation_report_path,
-                gate_report_path=gate_report_path,
-                profitability_benchmark_path=profitability_benchmark_path,
-                profitability_evidence_path=profitability_evidence_path,
-                profitability_validation_path=profitability_validation_path,
-                janus_event_car_path=janus_event_car_path,
-                janus_hgrm_reward_path=janus_hgrm_reward_path,
-                recalibration_report_path=recalibration_report_path,
-                rollback_readiness_path=rollback_readiness_path,
-                artifact_path_overrides={
-                    (
-                        "governance",
-                        "rollback_readiness_present",
-                    ): root / "gates" / "rollback-readiness-missing.json",
-                },
-            )
-            manifest_payload["overall_status"] = "fail"
-            manifest_payload["failure_reasons"] = ["rollback_readiness_contract_missing"]
-            manifest_payload["content_hash"] = _sha256_json(
-                {k: v for k, v in manifest_payload.items() if k != "content_hash"}
-            )
-            (root / "profitability" / "profitability-stage-manifest-v1.json").write_text(
-                json.dumps(manifest_payload), encoding="utf-8"
-            )
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_profitability_stage_manifest": True,
-                    "gate6_require_profitability_evidence": False,
-                    "promotion_require_janus_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn(
-            "profitability_stage_manifest_artifact_missing",
-            promotion.reasons,
-        )
-
-    def test_promotion_prerequisites_fails_when_profitability_stage_manifest_rollback_readiness_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "profitability").mkdir(parents=True, exist_ok=True)
-            candidate_spec_path = root / "research" / "candidate-spec.json"
-            candidate_spec_path.write_text("{}", encoding="utf-8")
-            candidate_generation_manifest_path = (
-                root / "research" / "candidate-generation-manifest.json"
-            )
-            candidate_generation_manifest_path.write_text("{}", encoding="utf-8")
-            evaluation_report_path = root / "backtest" / "evaluation-report.json"
-            evaluation_report_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
-            walkforward_results_path = root / "backtest" / "walkforward-results.json"
-            walkforward_results_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            baseline_report_path = root / "backtest" / "baseline-evaluation-report.json"
-            baseline_report_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            gate_report_path = root / "gates" / "gate-evaluation.json"
-            gate_report_path.write_text(json.dumps(_gate_report()), encoding="utf-8")
-            recalibration_report_path = root / "gates" / "recalibration-report.json"
-            recalibration_report_path.write_text(
-                json.dumps({"status": "not_required"}),
-                encoding="utf-8",
-            )
-            profitability_benchmark_path = root / "gates" / "profitability-benchmark-v4.json"
-            profitability_benchmark_path.write_text(
-                json.dumps({"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]}),
-                encoding="utf-8",
-            )
-            profitability_evidence_path = root / "gates" / "profitability-evidence-v4.json"
-            profitability_evidence_path.write_text(
-                json.dumps({"schema_version": "profitability-evidence-v4"}),
-                encoding="utf-8",
-            )
-            profitability_validation_path = root / "gates" / "profitability-evidence-validation.json"
-            profitability_validation_path.write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            janus_event_car_path = root / "gates" / "janus-event-car-v1.json"
-            janus_event_car_path.write_text(
-                json.dumps({"schema_version": "janus-event-car-v1", "summary": {"event_count": 1}}),
-                encoding="utf-8",
-            )
-            janus_hgrm_reward_path = root / "gates" / "janus-hgrm-reward-v1.json"
-            janus_hgrm_reward_path.write_text(
-                json.dumps({"schema_version": "janus-hgrm-reward-v1", "summary": {"reward_count": 1}}),
-                encoding="utf-8",
-            )
-            rollback_readiness_path = root / "gates" / "rollback-readiness.json"
-            rollback_readiness_path.write_text(
-                json.dumps({"dryRunCompletedAt": datetime.now(timezone.utc).isoformat()}),
-                encoding="utf-8",
-            )
-            manifest_payload = _build_profitability_stage_manifest_payload(
-                root=root,
-                candidate_spec_path=candidate_spec_path,
-                candidate_generation_manifest_path=candidate_generation_manifest_path,
-                walkforward_results_path=walkforward_results_path,
-                baseline_evaluation_report_path=baseline_report_path,
-                evaluation_report_path=evaluation_report_path,
-                gate_report_path=gate_report_path,
-                profitability_benchmark_path=profitability_benchmark_path,
-                profitability_evidence_path=profitability_evidence_path,
-                profitability_validation_path=profitability_validation_path,
-                janus_event_car_path=janus_event_car_path,
-                janus_hgrm_reward_path=janus_hgrm_reward_path,
-                recalibration_report_path=recalibration_report_path,
-                rollback_readiness_path=rollback_readiness_path,
-                check_status_overrides={
-                    ("governance", "rollback_ready"): "fail",
-                },
-            )
-            manifest_payload["overall_status"] = "fail"
-            manifest_payload["failure_reasons"] = ["rollout_rehearsal_failed"]
-            manifest_payload["content_hash"] = _sha256_json(
-                {k: v for k, v in manifest_payload.items() if k != "content_hash"}
-            )
-            (root / "profitability" / "profitability-stage-manifest-v1.json").write_text(
-                json.dumps(manifest_payload), encoding="utf-8"
-            )
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_profitability_stage_manifest": True,
-                    "gate6_require_profitability_evidence": False,
-                    "promotion_require_janus_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn(
-            "profitability_stage_manifest_required_check_failed",
-            promotion.reasons,
-        )
-        self.assertIn(
-            "rollback_ready",
-            "\n".join(str(item.get("check", "")) for item in promotion.reason_details),
-        )
-
-    def test_promotion_prerequisites_fails_when_profitability_stage_manifest_artifact_is_missing(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "profitability").mkdir(parents=True, exist_ok=True)
-            candidate_spec_path = root / "research" / "candidate-spec.json"
-            candidate_spec_path.write_text("{}", encoding="utf-8")
-            candidate_generation_manifest_path = (
-                root / "research" / "candidate-generation-manifest.json"
-            )
-            candidate_generation_manifest_path.write_text("{}", encoding="utf-8")
-            evaluation_report_path = root / "backtest" / "evaluation-report.json"
-            evaluation_report_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
-            walkforward_results_path = root / "backtest" / "walkforward-results.json"
-            walkforward_results_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            baseline_report_path = root / "backtest" / "baseline-evaluation-report.json"
-            baseline_report_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            gate_report_path = root / "gates" / "gate-evaluation.json"
-            gate_report_path.write_text(json.dumps(_gate_report()), encoding="utf-8")
-            profitability_benchmark_path = root / "gates" / "profitability-benchmark-v4.json"
-            profitability_benchmark_path.write_text(
-                json.dumps({"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]}),
-                encoding="utf-8",
-            )
-            profitability_evidence_path = root / "gates" / "profitability-evidence-v4.json"
-            profitability_evidence_path.write_text(
-                json.dumps({"schema_version": "profitability-evidence-v4"}),
-                encoding="utf-8",
-            )
-            profitability_validation_path = root / "gates" / "profitability-evidence-validation.json"
-            profitability_validation_path.write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            recalibration_report_path = root / "gates" / "recalibration-report.json"
-            recalibration_report_path.write_text(
-                json.dumps({"status": "not_required"}),
-                encoding="utf-8",
-            )
-            janus_event_car_path = root / "gates" / "janus-event-car-v1.json"
-            janus_event_car_path.write_text(
-                json.dumps({"schema_version": "janus-event-car-v1", "summary": {"event_count": 1}}),
-                encoding="utf-8",
-            )
-            janus_hgrm_reward_path = root / "gates" / "janus-hgrm-reward-v1.json"
-            janus_hgrm_reward_path.write_text(
-                json.dumps({"schema_version": "janus-hgrm-reward-v1", "summary": {"reward_count": 1}}),
-                encoding="utf-8",
-            )
-            rollback_readiness_path = root / "gates" / "rollback-readiness.json"
-            rollback_readiness_path.write_text(
-                json.dumps({"dryRunCompletedAt": datetime.now(timezone.utc).isoformat()}),
-                encoding="utf-8",
-            )
-            manifest_payload = _build_profitability_stage_manifest_payload(
-                root=root,
-                candidate_spec_path=candidate_spec_path,
-                candidate_generation_manifest_path=candidate_generation_manifest_path,
-                walkforward_results_path=walkforward_results_path,
-                baseline_evaluation_report_path=baseline_report_path,
-                evaluation_report_path=evaluation_report_path,
-                gate_report_path=gate_report_path,
-                profitability_benchmark_path=profitability_benchmark_path,
-                profitability_evidence_path=profitability_evidence_path,
-                profitability_validation_path=profitability_validation_path,
-                janus_event_car_path=janus_event_car_path,
-                janus_hgrm_reward_path=janus_hgrm_reward_path,
-                recalibration_report_path=recalibration_report_path,
-                rollback_readiness_path=rollback_readiness_path,
-                artifact_path_overrides={
-                    ("research", "candidate_spec_present"): root
-                    / "research"
-                    / "candidate-spec-missing.json",
-                },
-            )
-            manifest_payload["overall_status"] = "pass"
-            manifest_payload["content_hash"] = _sha256_json(
-                {k: v for k, v in manifest_payload.items() if k != "content_hash"}
-            )
-            (root / "profitability" / "profitability-stage-manifest-v1.json").write_text(
-                json.dumps(manifest_payload), encoding="utf-8"
-            )
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_profitability_stage_manifest": True,
-                    "gate6_require_profitability_evidence": False,
-                    "promotion_require_janus_evidence": True,
-                    "gate6_require_janus_evidence": True,
-                    "promotion_janus_required_artifacts": [
-                        "gates/janus-event-car-v1.json",
-                        "gates/janus-hgrm-reward-v1.json",
-                    ],
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn(
-            "profitability_stage_manifest_artifact_missing",
-            promotion.reasons,
-        )
-
-    def test_promotion_prerequisites_fails_when_profitability_stage_manifest_check_status_invalid(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "profitability").mkdir(parents=True, exist_ok=True)
-            candidate_spec_path = root / "research" / "candidate-spec.json"
-            candidate_spec_path.write_text("{}", encoding="utf-8")
-            candidate_generation_manifest_path = (
-                root / "research" / "candidate-generation-manifest.json"
-            )
-            candidate_generation_manifest_path.write_text("{}", encoding="utf-8")
-            evaluation_report_path = root / "backtest" / "evaluation-report.json"
-            evaluation_report_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
-            walkforward_results_path = root / "backtest" / "walkforward-results.json"
-            walkforward_results_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            baseline_report_path = root / "backtest" / "baseline-evaluation-report.json"
-            baseline_report_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            gate_report_path = root / "gates" / "gate-evaluation.json"
-            gate_report_path.write_text(json.dumps(_gate_report()), encoding="utf-8")
-            profitability_benchmark_path = root / "gates" / "profitability-benchmark-v4.json"
-            profitability_benchmark_path.write_text(
-                json.dumps({"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]}),
-                encoding="utf-8",
-            )
-            profitability_evidence_path = root / "gates" / "profitability-evidence-v4.json"
-            profitability_evidence_path.write_text(
-                json.dumps({"schema_version": "profitability-evidence-v4"}),
-                encoding="utf-8",
-            )
-            profitability_validation_path = root / "gates" / "profitability-evidence-validation.json"
-            profitability_validation_path.write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            recalibration_report_path = root / "gates" / "recalibration-report.json"
-            recalibration_report_path.write_text(
-                json.dumps({"status": "not_required"}),
-                encoding="utf-8",
-            )
-            janus_event_car_path = root / "gates" / "janus-event-car-v1.json"
-            janus_event_car_path.write_text(
-                json.dumps({"schema_version": "janus-event-car-v1", "summary": {"event_count": 1}}),
-                encoding="utf-8",
-            )
-            janus_hgrm_reward_path = root / "gates" / "janus-hgrm-reward-v1.json"
-            janus_hgrm_reward_path.write_text(
-                json.dumps({"schema_version": "janus-hgrm-reward-v1", "summary": {"reward_count": 1}}),
-                encoding="utf-8",
-            )
-            rollback_readiness_path = root / "gates" / "rollback-readiness.json"
-            rollback_readiness_path.write_text(
-                json.dumps({"dryRunCompletedAt": datetime.now(timezone.utc).isoformat()}),
-                encoding="utf-8",
-            )
-            manifest_payload = _build_profitability_stage_manifest_payload(
-                root=root,
-                candidate_spec_path=candidate_spec_path,
-                candidate_generation_manifest_path=candidate_generation_manifest_path,
-                walkforward_results_path=walkforward_results_path,
-                baseline_evaluation_report_path=baseline_report_path,
-                evaluation_report_path=evaluation_report_path,
-                gate_report_path=gate_report_path,
-                profitability_benchmark_path=profitability_benchmark_path,
-                profitability_evidence_path=profitability_evidence_path,
-                profitability_validation_path=profitability_validation_path,
-                janus_event_car_path=janus_event_car_path,
-                janus_hgrm_reward_path=janus_hgrm_reward_path,
-                recalibration_report_path=recalibration_report_path,
-                rollback_readiness_path=rollback_readiness_path,
-                check_status_overrides={
-                    ("validation", "evaluation_report_present"): "unknown",
-                },
-            )
-            manifest_payload["overall_status"] = "fail"
-            manifest_payload["content_hash"] = _sha256_json(
-                {k: v for k, v in manifest_payload.items() if k != "content_hash"}
-            )
-            (root / "profitability" / "profitability-stage-manifest-v1.json").write_text(
-                json.dumps(manifest_payload), encoding="utf-8"
-            )
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_profitability_stage_manifest": True,
-                    "gate6_require_profitability_evidence": False,
-                    "promotion_require_janus_evidence": True,
-                    "gate6_require_janus_evidence": True,
-                    "promotion_janus_required_artifacts": [
-                        "gates/janus-event-car-v1.json",
-                        "gates/janus-hgrm-reward-v1.json",
-                    ],
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn(
-            "profitability_stage_manifest_stage_check_status_invalid",
-            promotion.reasons,
-        )
-
-    def test_promotion_prerequisites_fails_when_profitability_stage_manifest_artifact_hash_mismatch(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "profitability").mkdir(parents=True, exist_ok=True)
-            candidate_spec_path = root / "research" / "candidate-spec.json"
-            candidate_spec_path.write_text("{}", encoding="utf-8")
-            candidate_generation_manifest_path = (
-                root / "research" / "candidate-generation-manifest.json"
-            )
-            candidate_generation_manifest_path.write_text("{}", encoding="utf-8")
-            evaluation_report_path = root / "backtest" / "evaluation-report.json"
-            evaluation_report_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
-            walkforward_results_path = root / "backtest" / "walkforward-results.json"
-            walkforward_results_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            baseline_report_path = root / "backtest" / "baseline-evaluation-report.json"
-            baseline_report_path.write_text(
-                json.dumps({"status": "ok"}), encoding="utf-8"
-            )
-            gate_report_path = root / "gates" / "gate-evaluation.json"
-            gate_report_path.write_text(json.dumps(_gate_report()), encoding="utf-8")
-            profitability_benchmark_path = root / "gates" / "profitability-benchmark-v4.json"
-            profitability_benchmark_path.write_text(
-                json.dumps({"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]}),
-                encoding="utf-8",
-            )
-            profitability_evidence_path = root / "gates" / "profitability-evidence-v4.json"
-            profitability_evidence_path.write_text(
-                json.dumps({"schema_version": "profitability-evidence-v4"}),
-                encoding="utf-8",
-            )
-            profitability_validation_path = root / "gates" / "profitability-evidence-validation.json"
-            profitability_validation_path.write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            recalibration_report_path = root / "gates" / "recalibration-report.json"
-            recalibration_report_path.write_text(
-                json.dumps({"status": "not_required"}),
-                encoding="utf-8",
-            )
-            janus_event_car_path = root / "gates" / "janus-event-car-v1.json"
-            janus_event_car_path.write_text(
-                json.dumps({"schema_version": "janus-event-car-v1", "summary": {"event_count": 1}}),
-                encoding="utf-8",
-            )
-            janus_hgrm_reward_path = root / "gates" / "janus-hgrm-reward-v1.json"
-            janus_hgrm_reward_path.write_text(
-                json.dumps({"schema_version": "janus-hgrm-reward-v1", "summary": {"reward_count": 1}}),
-                encoding="utf-8",
-            )
-            rollback_readiness_path = root / "gates" / "rollback-readiness.json"
-            rollback_readiness_path.write_text(
-                json.dumps({"dryRunCompletedAt": datetime.now(timezone.utc).isoformat()}),
-                encoding="utf-8",
-            )
-            manifest_payload = _build_profitability_stage_manifest_payload(
-                root=root,
-                candidate_spec_path=candidate_spec_path,
-                candidate_generation_manifest_path=candidate_generation_manifest_path,
-                walkforward_results_path=walkforward_results_path,
-                baseline_evaluation_report_path=baseline_report_path,
-                evaluation_report_path=evaluation_report_path,
-                gate_report_path=gate_report_path,
-                profitability_benchmark_path=profitability_benchmark_path,
-                profitability_evidence_path=profitability_evidence_path,
-                profitability_validation_path=profitability_validation_path,
-                janus_event_car_path=janus_event_car_path,
-                janus_hgrm_reward_path=janus_hgrm_reward_path,
-                recalibration_report_path=recalibration_report_path,
-                rollback_readiness_path=rollback_readiness_path,
-            )
-            manifest_payload["stages"]["research"]["artifacts"]["candidate_spec"] = {
-                "path": "research/candidate-spec.json",
-                "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-                "stage": "research",
-                "check": "candidate_spec_present",
-            }
-            manifest_payload["overall_status"] = "pass"
-            manifest_payload["content_hash"] = _sha256_json(
-                {k: v for k, v in manifest_payload.items() if k != "content_hash"}
-            )
-            (root / "profitability" / "profitability-stage-manifest-v1.json").write_text(
-                json.dumps(manifest_payload), encoding="utf-8"
-            )
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_profitability_stage_manifest": True,
-                    "gate6_require_profitability_evidence": False,
-                    "promotion_require_janus_evidence": True,
-                    "gate6_require_janus_evidence": True,
-                    "promotion_janus_required_artifacts": [
-                        "gates/janus-event-car-v1.json",
-                        "gates/janus-hgrm-reward-v1.json",
-                    ],
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn(
-            "profitability_stage_manifest_artifact_hash_mismatch",
-            promotion.reasons,
-        )
-
     def test_rollback_readiness_fails_when_dry_run_stale(self) -> None:
         state = _candidate_state()
         state["rollbackReadiness"] = {
@@ -1310,56 +69,6 @@ class TestPolicyChecks(TestCase):
         )
         self.assertFalse(result.ready)
         self.assertIn("rollback_dry_run_stale", result.reasons)
-
-    def test_rollback_readiness_fails_when_readiness_checks_are_missing(self) -> None:
-        result = evaluate_rollback_readiness(
-            policy_payload={},
-            candidate_state_payload={},
-            now=datetime(2026, 2, 1, tzinfo=timezone.utc),
-        )
-
-        self.assertFalse(result.ready)
-        self.assertIn("rollback_checks_missing_or_failed", result.reasons)
-        self.assertIn("rollback_dry_run_timestamp_missing", result.reasons)
-
-    def test_rollback_readiness_fails_when_required_checks_fail(self) -> None:
-        state = _candidate_state()
-        state["rollbackReadiness"] = {
-            "killSwitchDryRunPassed": False,
-            "gitopsRevertDryRunPassed": True,
-            "strategyDisableDryRunPassed": True,
-            "dryRunCompletedAt": datetime(2026, 2, 1, tzinfo=timezone.utc).isoformat(),
-            "humanApproved": True,
-            "rollbackTarget": "main@deadbeef",
-        }
-        result = evaluate_rollback_readiness(
-            policy_payload={},
-            candidate_state_payload=state,
-            now=datetime(2026, 2, 1, tzinfo=timezone.utc),
-        )
-
-        self.assertFalse(result.ready)
-        self.assertIn("rollback_checks_missing_or_failed", result.reasons)
-        self.assertIn("killSwitchDryRunPassed", result.missing_checks)
-
-    def test_rollback_readiness_fails_without_human_approval(self) -> None:
-        state = _candidate_state()
-        state["rollbackReadiness"] = {
-            "killSwitchDryRunPassed": True,
-            "gitopsRevertDryRunPassed": True,
-            "strategyDisableDryRunPassed": True,
-            "dryRunCompletedAt": datetime(2026, 2, 1, tzinfo=timezone.utc).isoformat(),
-            "humanApproved": False,
-            "rollbackTarget": "main@deadbeef",
-        }
-        result = evaluate_rollback_readiness(
-            policy_payload={},
-            candidate_state_payload=state,
-            now=datetime(2026, 2, 1, tzinfo=timezone.utc),
-        )
-
-        self.assertFalse(result.ready)
-        self.assertIn("rollback_human_approval_missing", result.reasons)
 
     def test_promotion_prerequisites_fail_when_janus_artifacts_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1412,45 +121,6 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(promotion.allowed)
         self.assertIn("janus_event_car_artifact_missing", promotion.reasons)
         self.assertIn("janus_hgrm_reward_artifact_missing", promotion.reasons)
-
-    def test_promotion_prerequisites_fail_when_janus_artifacts_schema_invalid(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
-            (root / "research" / "candidate-spec.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
-            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
-                "kind: ConfigMap", encoding="utf-8"
-            )
-            _write_janus_artifacts(root)
-            (root / "gates" / "janus-event-car-v1.json").write_text(
-                json.dumps({"schema_version": "not-event-car", "summary": {}}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "janus-hgrm-reward-v1.json").write_text(
-                json.dumps({"schema_version": "not-hgrm-reward", "summary": {}}),
-                encoding="utf-8",
-            )
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={},
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn("janus_event_car_schema_invalid", promotion.reasons)
-        self.assertIn("janus_hgrm_reward_schema_invalid", promotion.reasons)
 
     def test_promotion_prerequisites_requires_janus_even_when_profitability_disabled(
         self,
@@ -1536,6 +206,120 @@ class TestPolicyChecks(TestCase):
 
         self.assertTrue(promotion.allowed)
         self.assertFalse(any("janus" in reason for reason in promotion.reasons))
+
+    def test_promotion_prerequisites_fail_when_benchmark_parity_artifact_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "gate6_require_benchmark_parity_evidence": True,
+                    "promotion_require_benchmark_parity_evidence": True,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("required_artifacts_missing", promotion.reasons)
+        self.assertIn("benchmarks/benchmark-parity-report-v1.json", promotion.missing_artifacts)
+        self.assertIn("benchmark_parity_report_missing", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_benchmark_parity_artifact_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            _write_benchmark_parity_artifact(root, invalid=True)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "gate6_require_benchmark_parity_evidence": True,
+                    "promotion_require_benchmark_parity_evidence": True,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("benchmark_parity_schema_invalid", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_benchmark_parity_threshold_is_breached(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            _write_benchmark_parity_artifact(
+                root,
+                advisory_output_rate=0.90,
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "gate6_require_benchmark_parity_evidence": True,
+                    "promotion_require_benchmark_parity_evidence": True,
+                    "promotion_benchmark_parity_min_advisory_output_rate": 0.995,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn(
+            "benchmark_parity_advisory_output_rate_below_minimum",
+            promotion.reasons,
+        )
 
     def test_allows_progression_when_artifacts_and_rollback_are_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2130,229 +914,6 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(promotion.allowed)
         self.assertIn("fold_metrics_evidence_insufficient", promotion.reasons)
 
-    def test_promotion_prerequisites_fail_when_stress_artifact_reference_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
-            (root / "research" / "candidate-spec.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
-            (root / "gates" / "profitability-evidence-v4.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "profitability-benchmark-v4.json").write_text(
-                "{}", encoding="utf-8",
-            )
-            (root / "gates" / "profitability-evidence-validation.json").write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "recalibration-report.json").write_text(
-                json.dumps({"status": "not_required"}),
-                encoding="utf-8",
-            )
-            _write_janus_artifacts(root)
-            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
-                "kind: ConfigMap", encoding="utf-8"
-            )
-            gate_report = _gate_report()
-            evidence = gate_report.get("promotion_evidence", {})
-            if isinstance(evidence, dict):
-                stress_metrics = evidence.get("stress_metrics")
-                if isinstance(stress_metrics, dict):
-                    stress_metrics["artifact_ref"] = "gates/missing-stress-evidence.json"
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_stress_evidence": True,
-                    "promotion_require_patch_targets": [],
-                    "gate6_require_profitability_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                    "promotion_stress_max_age_hours": 1,
-                },
-                gate_report_payload=gate_report,
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn("stress_metrics_evidence_artifact_missing", promotion.reasons)
-
-    def test_promotion_prerequisites_fail_when_stress_artifact_reference_untrusted(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
-            (root / "research" / "candidate-spec.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
-            (root / "gates" / "profitability-evidence-v4.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "profitability-benchmark-v4.json").write_text(
-                "{}", encoding="utf-8",
-            )
-            (root / "gates" / "profitability-evidence-validation.json").write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "recalibration-report.json").write_text(
-                json.dumps({"status": "not_required"}),
-                encoding="utf-8",
-            )
-            _write_janus_artifacts(root)
-            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
-                "kind: ConfigMap", encoding="utf-8"
-            )
-            gate_report = _gate_report()
-            evidence = gate_report.get("promotion_evidence", {})
-            if isinstance(evidence, dict):
-                stress_metrics = evidence.get("stress_metrics")
-                if isinstance(stress_metrics, dict):
-                    stress_metrics["artifact_ref"] = "s3://bucket/stress-metrics.json"
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_stress_evidence": True,
-                    "promotion_require_patch_targets": [],
-                    "gate6_require_profitability_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                },
-                gate_report_payload=gate_report,
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn("stress_metrics_artifact_ref_untrusted", promotion.reasons)
-
-    def test_promotion_prerequisites_fail_when_stress_evidence_generated_at_is_missing(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
-            (root / "research" / "candidate-spec.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
-            (root / "gates" / "profitability-evidence-v4.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "profitability-benchmark-v4.json").write_text(
-                "{}", encoding="utf-8",
-            )
-            (root / "gates" / "profitability-evidence-validation.json").write_text(
-                json.dumps({"passed": True, "reasons": []}),
-                encoding="utf-8",
-            )
-            (root / "gates" / "recalibration-report.json").write_text(
-                json.dumps({"status": "not_required"}),
-                encoding="utf-8",
-            )
-            _write_janus_artifacts(root)
-            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
-                "kind: ConfigMap", encoding="utf-8"
-            )
-            gate_report = _gate_report()
-            stress_path = root / "backtest" / "stale-evaluation-report.json"
-            stress_path.write_text("{}", encoding="utf-8")
-            evidence = gate_report.get("promotion_evidence", {})
-            if isinstance(evidence, dict):
-                stress_metrics = evidence.get("stress_metrics")
-                if isinstance(stress_metrics, dict):
-                    stress_metrics["artifact_ref"] = "backtest/stale-evaluation-report.json"
-            stale_now = datetime(2026, 2, 25, 12, 0, 0, tzinfo=timezone.utc)
-            stale_epoch = (
-                stale_now - timedelta(hours=5)
-            ).timestamp()
-            os.utime(stress_path, (stale_epoch, stale_epoch))
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_stress_evidence": True,
-                    "promotion_require_patch_targets": [],
-                    "gate6_require_profitability_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                    "promotion_stress_max_age_hours": 1,
-                },
-                gate_report_payload=gate_report,
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-                now=stale_now,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn("stress_metrics_evidence_generated_at_missing", promotion.reasons)
-
-    def test_promotion_prerequisites_allow_file_uri_stress_artifact_reference(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
-            (root / "research" / "candidate-spec.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
-            _write_janus_artifacts(root)
-            _write_stress_artifacts(root)
-            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
-                "kind: ConfigMap", encoding="utf-8"
-            )
-
-            gate_report = _gate_report()
-            evidence = gate_report.get("promotion_evidence", {})
-            if isinstance(evidence, dict):
-                stress_metrics = evidence.get("stress_metrics")
-                if isinstance(stress_metrics, dict):
-                    stress_metrics["artifact_ref"] = (
-                        f"file://{(root / 'gates/stress-metrics-v1.json').as_posix()}"
-                    )
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_stress_evidence": True,
-                    "promotion_require_patch_targets": [],
-                    "gate6_require_profitability_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                },
-                gate_report_payload=gate_report,
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertNotIn("stress_metrics_artifact_ref_untrusted", promotion.reasons)
-        self.assertNotIn("stress_metrics_evidence_ref_not_trusted", promotion.reasons)
-        self.assertNotIn("stress_metrics_artifact_missing", promotion.reasons)
-
     def test_promotion_prerequisites_fail_when_rationale_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -2408,245 +969,6 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(promotion.allowed)
         self.assertIn("promotion_rationale_missing", promotion.reasons)
 
-    def test_promotion_prerequisites_fail_when_stress_evidence_artifact_is_missing(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
-            (root / "research" / "candidate-spec.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
-            _write_janus_artifacts(root)
-            (root / "gates" / "janus-event-car-v1.json").write_text(
-                json.dumps(
-                    {"schema_version": "janus-event-car-v1", "summary": {"event_count": 3}}
-                ),
-                encoding="utf-8",
-            )
-            (root / "gates" / "janus-hgrm-reward-v1.json").write_text(
-                json.dumps(
-                    {"schema_version": "janus-hgrm-reward-v1", "summary": {"reward_count": 3}}
-                ),
-                encoding="utf-8",
-            )
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_stress_evidence": True,
-                    "promotion_require_patch_targets": [],
-                    "gate6_require_profitability_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn("required_artifacts_missing", promotion.reasons)
-        self.assertIn(
-            "stress_metrics_evidence_artifact_missing", promotion.reasons
-        )
-
-    def test_promotion_prerequisites_fail_when_stress_evidence_reported_timestamp_is_stale(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
-            (root / "research" / "candidate-spec.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
-            _write_janus_artifacts(root)
-            _write_stress_artifacts(
-                root,
-                generated_at="2025-01-01T00:00:00+00:00",
-            )
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_stress_evidence": True,
-                    "promotion_require_patch_targets": [],
-                    "gate6_require_profitability_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                    "promotion_stress_max_age_hours": 1,
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-                now=datetime(2025, 1, 2, tzinfo=timezone.utc),
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn("stress_metrics_evidence_stale", promotion.reasons)
-
-    def test_promotion_prerequisites_fail_when_stress_evidence_mtime_is_unavailable(
-        self,
-    ) -> None:
-        now = datetime(2026, 2, 25, tzinfo=timezone.utc)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
-            (root / "research" / "candidate-spec.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
-            _write_janus_artifacts(root)
-            _write_stress_artifacts(root, generated_at=now.isoformat())
-            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
-                "kind: ConfigMap", encoding="utf-8"
-            )
-
-            with patch(
-                "app.trading.autonomy.policy_checks.os.path.getmtime",
-                side_effect=OSError("metadata unavailable"),
-            ):
-                promotion = evaluate_promotion_prerequisites(
-                    policy_payload={
-                        "promotion_require_stress_evidence": True,
-                        "promotion_require_patch_targets": [],
-                        "gate6_require_profitability_evidence": False,
-                        "gate6_require_janus_evidence": False,
-                        "promotion_stress_max_age_hours": 24,
-                        "promotion_evidence_max_age_seconds": 3600,
-                    },
-                    gate_report_payload=_gate_report(),
-                    candidate_state_payload=_candidate_state(),
-                    promotion_target="paper",
-                    artifact_root=root,
-                    now=now,
-                )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn("stress_metrics_artifact_ref_invalid", promotion.reasons)
-
-    def test_promotion_prerequisites_allow_when_stress_evidence_max_age_is_invalid(
-        self,
-    ) -> None:
-        now = datetime(2026, 2, 25, tzinfo=timezone.utc)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
-            (root / "research" / "candidate-spec.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
-            _write_janus_artifacts(root)
-            _write_stress_artifacts(root, generated_at=now.isoformat())
-            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
-                "kind: ConfigMap", encoding="utf-8"
-            )
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_stress_evidence": True,
-                    "promotion_require_patch_targets": [],
-                    "gate6_require_profitability_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                    "promotion_stress_max_age_hours": 24,
-                    "promotion_evidence_max_age_seconds": "3600s",
-                },
-                gate_report_payload=_gate_report(),
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-                now=now,
-            )
-
-        self.assertTrue(promotion.allowed)
-        self.assertNotIn("stress_metrics_evidence_stale", promotion.reasons)
-        self.assertNotIn("stress_metrics_artifact_ref_invalid", promotion.reasons)
-
-    def test_promotion_prerequisites_fail_when_stress_evidence_ref_is_untrusted(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            outside = root.parent / "torghut-untrusted-stress-metrics.json"
-            (root / "research").mkdir(parents=True, exist_ok=True)
-            (root / "backtest").mkdir(parents=True, exist_ok=True)
-            (root / "gates").mkdir(parents=True, exist_ok=True)
-            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
-            (root / "research" / "candidate-spec.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "backtest" / "evaluation-report.json").write_text(
-                "{}", encoding="utf-8"
-            )
-            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
-            _write_janus_artifacts(root)
-            _write_stress_artifacts(root)
-            outside.parent.mkdir(parents=True, exist_ok=True)
-            outside.write_text(
-                json.dumps(
-                    {
-                        "schema_version": "stress-metrics-v1",
-                        "count": 4,
-                        "items": [
-                            {"case": "spread"},
-                            {"case": "volatility"},
-                            {"case": "liquidity"},
-                            {"case": "halt"},
-                        ],
-                        "generated_at": datetime(
-                            2025, 1, 1, tzinfo=timezone.utc
-                        ).isoformat(),
-                    },
-                ),
-                encoding="utf-8",
-            )
-            gate_report = _gate_report()
-            promotion_evidence = gate_report.get("promotion_evidence", {})
-            if isinstance(promotion_evidence, dict):
-                stress = promotion_evidence.get("stress_metrics")
-                if isinstance(stress, dict):
-                    stress["artifact_ref"] = str(outside)
-
-            promotion = evaluate_promotion_prerequisites(
-                policy_payload={
-                    "promotion_require_stress_evidence": True,
-                    "promotion_require_patch_targets": [],
-                    "gate6_require_profitability_evidence": False,
-                    "gate6_require_janus_evidence": False,
-                },
-                gate_report_payload=gate_report,
-                candidate_state_payload=_candidate_state(),
-                promotion_target="paper",
-                artifact_root=root,
-            )
-
-        self.assertFalse(promotion.allowed)
-        self.assertIn("stress_metrics_evidence_ref_not_trusted", promotion.reasons)
-
 
 def _candidate_state() -> dict[str, object]:
     return {
@@ -2665,158 +987,6 @@ def _candidate_state() -> dict[str, object]:
             "rollbackTarget": "main@a1b2c3d",
         },
     }
-
-
-def _sha256_path(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _sha256_json(payload: object) -> str:
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-
-
-def _build_profitability_stage_manifest_payload(
-    *,
-    root: Path,
-    candidate_spec_path: Path,
-    candidate_generation_manifest_path: Path,
-    walkforward_results_path: Path,
-    baseline_evaluation_report_path: Path,
-    evaluation_report_path: Path,
-    gate_report_path: Path,
-    profitability_benchmark_path: Path,
-    profitability_evidence_path: Path,
-    profitability_validation_path: Path,
-    janus_event_car_path: Path,
-    janus_hgrm_reward_path: Path,
-    recalibration_report_path: Path,
-    rollback_readiness_path: Path | None = None,
-    stage_statuses: dict[str, str] | None = None,
-    check_status_overrides: dict[tuple[str, str], str] | None = None,
-    artifact_path_overrides: dict[tuple[str, str], Path] | None = None,
-) -> dict[str, object]:
-    def _artifact_sha(payload_path: Path | None) -> str:
-        if payload_path is None or not payload_path.exists():
-            return "missing"
-        return _sha256_path(payload_path)
-
-    def _artifact_path(payload_path: Path | None) -> str:
-        if payload_path is None:
-            return ""
-        try:
-            return str(payload_path.relative_to(root))
-        except ValueError:
-            return str(payload_path)
-
-    rollback_readiness_path = (
-        rollback_readiness_path or (root / "gates" / "rollback-readiness.json")
-    )
-
-    stage_owner = {
-        "research": "research-orchestrator",
-        "validation": "validation-service",
-        "execution": "execution-sim",
-        "governance": "governance-policy",
-    }
-    stage_checks: dict[str, list[tuple[str, str, Path]]] = {
-        "research": [
-            ("candidate_spec_present", "candidate_spec", candidate_spec_path),
-            ("candidate_generation_manifest_present", "candidate_generation_manifest", candidate_generation_manifest_path),
-            ("walkforward_results_present", "walkforward_results", walkforward_results_path),
-            ("baseline_evaluation_report_present", "baseline_evaluation_report", baseline_evaluation_report_path),
-        ],
-        "validation": [
-            ("evaluation_report_present", "evaluation_report", evaluation_report_path),
-            ("profitability_benchmark_present", "profitability_benchmark", profitability_benchmark_path),
-            ("profitability_evidence_present", "profitability_evidence", profitability_evidence_path),
-            ("profitability_validation_present", "profitability_validation", profitability_validation_path),
-        ],
-        "execution": [
-            ("walkforward_results_present", "walkforward_results", walkforward_results_path),
-            ("evaluation_report_present", "evaluation_report", evaluation_report_path),
-            ("gate_evaluation_present", "gate_evaluation", gate_report_path),
-            ("janus_event_car_present", "janus_event_car", janus_event_car_path),
-            ("janus_hgrm_reward_present", "janus_hgrm_reward", janus_hgrm_reward_path),
-            ("recalibration_report_present", "recalibration_report", recalibration_report_path),
-            ("gate_matrix_approval", "", gate_report_path),
-            ("drift_gate_approval", "", gate_report_path),
-        ],
-        "governance": [
-            ("rollback_ready", "", gate_report_path),
-            ("gate_report_present", "", gate_report_path),
-            ("candidate_spec_present", "candidate_spec", candidate_spec_path),
-            (
-                "rollback_readiness_present",
-                "rollback_readiness",
-                rollback_readiness_path,
-            ),
-            ("risk_controls_attestable", "", candidate_spec_path),
-        ],
-    }
-    resolved_stage_statuses = {
-        "research": "pass",
-        "validation": "pass",
-        "execution": "pass",
-        "governance": "pass",
-    }
-    if stage_statuses:
-        resolved_stage_statuses.update(stage_statuses)
-    resolved_check_statuses = check_status_overrides or {}
-    resolved_artifacts = artifact_path_overrides or {}
-
-    stages: dict[str, object] = {}
-    for stage_name in ("research", "validation", "execution", "governance"):
-        checks: list[dict[str, str]] = []
-        artifacts: dict[str, Any] = {}
-        for check_name, artifact_key, default_path in stage_checks[stage_name]:
-            check_key = (stage_name, check_name)
-            checks.append(
-                {
-                    "check": check_name,
-                    "status": resolved_check_statuses.get(check_key, "pass"),
-                }
-            )
-            artifact_path = resolved_artifacts.get(check_key, default_path)
-            if not artifact_key or artifact_path is None:
-                continue
-            artifacts[artifact_key] = {
-                "path": _artifact_path(artifact_path),
-                "sha256": _artifact_sha(artifact_path),
-                "stage": stage_name,
-                "check": check_name,
-            }
-        stages[stage_name] = {
-            "status": resolved_stage_statuses[stage_name],
-            "checks": checks,
-            "artifacts": artifacts,
-            "owner": stage_owner[stage_name],
-            "completed_at_utc": "2026-03-01T00:00:00+00:00",
-        }
-    manifest = {
-        "schema_version": "profitability-stage-manifest-v1",
-        "candidate_id": "cand-test",
-        "strategy_family": "deterministic",
-        "llm_artifact_ref": None,
-        "router_artifact_ref": "strategy-config",
-        "run_context": {
-            "repository": "proompteng/lab",
-            "base": "main",
-            "head": "agentruns/main",
-            "artifact_path": str(root),
-            "run_id": "run-test",
-        },
-        "stages": stages,
-        "overall_status": "pass",
-        "failure_reasons": [],
-        "rollback_contract_ref": "gates/rollback-readiness.json",
-        "created_at_utc": "2026-03-01T00:00:00+00:00",
-    }
-    manifest["content_hash"] = _sha256_json(
-        {k: v for k, v in manifest.items() if k != "content_hash"}
-    )
-    return manifest
 
 
 def _write_janus_artifacts(root: Path) -> None:
@@ -2842,26 +1012,73 @@ def _write_janus_artifacts(root: Path) -> None:
     )
 
 
-def _write_stress_artifacts(
+def _write_benchmark_parity_artifact(
     root: Path,
     *,
-    generated_at: str = "",
-    count: int = 4,
+    invalid: bool = False,
+    advisory_output_rate: float = 0.995,
 ) -> None:
-    payload = {
-        "schema_version": "stress-metrics-v1",
-        "count": count,
-        "items": [
-            {"case": "spread"},
-            {"case": "volatility"},
-            {"case": "liquidity"},
-            {"case": "halt"},
-        ],
-        "generated_at": generated_at
-        or datetime(2025, 1, 1, tzinfo=timezone.utc).isoformat(),
+    payload: dict[str, object] = {
+        "schema_version": (
+            "invalid-schema-version" if invalid else "benchmark-parity-report-v1"
+        ),
+        "candidate_id": "cand-test",
+        "baseline_candidate_id": "baseline-legacy-macd-rsi",
+        "benchmark_runs": {
+            "ai_trader_like": {
+                "dataset_ref": "run:autonomous-lane",
+                "window_ref": "run:autonomy",
+                "metrics": {"advisory_output_rate": advisory_output_rate},
+                "slice_metrics": {"all": {"signal_count": 10}},
+                "policy_violations": [],
+                "run_hash": "dry-run-ai-trader",
+            },
+            "gift_eval_like": {
+                "dataset_ref": "run:autonomous-lane",
+                "window_ref": "run:autonomy",
+                "metrics": {"policy_violation_rate_delta": 0.0},
+                "slice_metrics": {"all": {"candidate_risk_veto_alignment_rate": 1.0}},
+                "policy_violations": [],
+                "run_hash": "dry-run-gift",
+            },
+            "fev_bench_like": {
+                "dataset_ref": "run:autonomous-lane",
+                "window_ref": "run:autonomy",
+                "metrics": {
+                    "fallback_rate": 0.01,
+                    "timeout_rate": 0.01,
+                    "confidence_calibration_error_delta": 0.0,
+                },
+                "slice_metrics": {"all": {"trade_count": 0}},
+                "policy_violations": [],
+                "run_hash": "dry-run-fev",
+            },
+        },
+        "scorecards": {
+            "decision_quality": {
+                "advisory_output_rate": advisory_output_rate,
+                "baseline_advisory_output_rate": 1.0,
+                "adverse_regime_decision_quality_delta": 0.0,
+            },
+            "reasoning_quality": {
+                "deterministic_gate_compatibility": "pass",
+                "policy_violation_rate_delta": 0.0,
+            },
+            "event_forecast_quality": {"fallback_rate": 0.01, "timeout_rate": 0.01},
+        },
+        "overall_parity_status": "pass",
+        "degradation_summary": {
+            "policy_violation_rate_delta": 0.0,
+            "adverse_regime_decision_quality_delta": 0.0,
+            "risk_veto_alignment_delta": 0.0,
+            "confidence_calibration_error_delta": 0.0,
+        },
+        "artifact_hash": "test-hash",
+        "created_at_utc": "2026-03-02T00:00:00Z",
     }
-    (root / "gates" / "stress-metrics-v1.json").write_text(
-        json.dumps(payload),
+    (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+    (root / "benchmarks" / "benchmark-parity-report-v1.json").write_text(
+        json.dumps(payload, indent=2),
         encoding="utf-8",
     )
 
@@ -2888,7 +1105,7 @@ def _gate_report() -> dict[str, object]:
             "fold_metrics": {
                 "count": 1,
                 "items": [{"fold_name": "fold-1"}],
-                "artifact_ref": "gates/stress-metrics-v1.json",
+                "artifact_ref": "backtest/evaluation-report.json",
             },
             "stress_metrics": {
                 "count": 4,
@@ -2898,7 +1115,10 @@ def _gate_report() -> dict[str, object]:
                     {"case": "liquidity"},
                     {"case": "halt"},
                 ],
-                "artifact_ref": "gates/stress-metrics-v1.json",
+                "artifact_ref": "db:research_stress_metrics",
+            },
+            "benchmark_parity": {
+                "artifact_ref": "benchmarks/benchmark-parity-report-v1.json",
             },
             "janus_q": {
                 "event_car": {

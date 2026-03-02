@@ -27,6 +27,33 @@ data:
       "gate3_max_forecast_fallback_rate": "0.05",
       "gate3_max_forecast_latency_ms_p95": 200,
       "gate3_min_forecast_calibration_score": "0.85",
+      "gate6_require_janus_evidence": true,
+      "gate6_min_janus_event_count": 1,
+      "gate6_min_janus_reward_count": 1,
+      "gate6_require_benchmark_parity_evidence": true,
+      "promotion_require_benchmark_parity_evidence": true,
+      "promotion_benchmark_parity_required_targets": [
+        "paper",
+        "live"
+      ],
+      "promotion_benchmark_parity_artifact": "benchmarks/benchmark-parity-report-v1.json",
+      "promotion_benchmark_parity_required_artifacts": [
+        "benchmarks/benchmark-parity-report-v1.json"
+      ],
+      "promotion_benchmark_parity_required_families": [
+        "ai_trader_like",
+        "gift_eval_like",
+        "fev_bench_like"
+      ],
+      "promotion_benchmark_parity_schema_version": "benchmark-parity-report-v1",
+      "promotion_benchmark_parity_min_advisory_output_rate": "0.995",
+      "promotion_benchmark_parity_max_policy_violation_rate_delta": "0.01",
+      "promotion_benchmark_parity_max_fallback_rate": "0.05",
+      "promotion_benchmark_parity_max_timeout_rate": "0.05",
+      "promotion_benchmark_parity_max_adverse_regime_decision_quality_delta": "0.1",
+      "promotion_benchmark_parity_max_risk_veto_alignment_delta": "0.1",
+      "promotion_benchmark_parity_max_confidence_calibration_error_delta": "0.1",
+      "promotion_benchmark_parity_require_evidence_artifact_match": true,
       "gate5_live_enabled": false,
       "gate5_require_approval_token": true,
       "promotion_required_artifacts": [
