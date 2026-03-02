@@ -786,6 +786,12 @@ def _build_profitability_stage_manifest(
             "status": "pass" if rollback_check.ready else "fail",
         },
         {
+            "check": "rollback_readiness_present",
+            "status": "pass"
+            if bool(governance_artifacts.get("rollback_readiness")) or False
+            else "fail",
+        },
+        {
             "check": "gate_report_present",
             "status": "pass" if gate_report_path.exists() else "fail",
         },
@@ -1558,13 +1564,14 @@ def run_autonomous_lane(
             json.dumps(profitability_manifest_payload, indent=2),
             encoding="utf-8",
         )
-        policy_payload = {
-            **raw_gate_policy,
-            "promotion_require_profitability_stage_manifest": True,
-            "promotion_profitability_stage_manifest_artifact": _PROFITABILITY_STAGE_MANIFEST_PATH,
-        }
+        promotion_policy_payload = dict(raw_gate_policy)
+        promotion_policy_payload["promotion_require_profitability_stage_manifest"] = True
+        promotion_policy_payload.setdefault(
+            "promotion_profitability_stage_manifest_artifact",
+            _PROFITABILITY_STAGE_MANIFEST_PATH,
+        )
         promotion_check = evaluate_promotion_prerequisites(
-            policy_payload=policy_payload,
+            policy_payload=promotion_policy_payload,
             gate_report_payload=gate_report_payload,
             candidate_state_payload=candidate_state_payload,
             promotion_target=promotion_target,

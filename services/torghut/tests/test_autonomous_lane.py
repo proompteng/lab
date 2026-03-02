@@ -997,6 +997,69 @@ class TestAutonomousLane(TestCase):
             )
 
     @patch(
+        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+    )
+    def test_lane_forces_profitability_stage_manifest_requirement_for_policy_check(
+        self,
+        mock_promotion_prerequisites: object,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        call_payload: dict[str, object] = {}
+
+        def _mock_evaluate_promotion_prerequisites(
+            *,
+            policy_payload: dict[str, Any],
+            gate_report_payload: dict[str, Any],
+            candidate_state_payload: dict[str, Any],
+            promotion_target: str,
+            artifact_root: Path,
+        ) -> PromotionPrerequisiteResult:
+            call_payload["policy_payload"] = dict(policy_payload)
+            call_payload["artifact_root"] = str(artifact_root)
+            return PromotionPrerequisiteResult(
+                allowed=False,
+                reasons=["profitability_stage_manifest_stage_chain_not_passed"],
+                required_artifacts=[],
+                missing_artifacts=[],
+                reason_details=[],
+                artifact_refs=[],
+                required_throughput={"signal_count": 1, "decision_count": 1},
+                observed_throughput={"signal_count": 1, "decision_count": 1},
+            )
+
+        mock_promotion_prerequisites.side_effect = (
+            _mock_evaluate_promotion_prerequisites
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-manifest-enforced"
+            run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+        policy_payload = call_payload["policy_payload"]
+        assert isinstance(policy_payload, dict)
+        self.assertTrue(
+            policy_payload.get("promotion_require_profitability_stage_manifest")
+        )
+        self.assertEqual(
+            policy_payload.get("promotion_profitability_stage_manifest_artifact"),
+            "profitability/profitability-stage-manifest-v1.json",
+        )
+
+    @patch(
         "app.trading.autonomy.lane._evaluate_drift_promotion_gate",
         return_value={
             "allowed": False,

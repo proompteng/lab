@@ -46,6 +46,7 @@ _PROFITABILITY_STAGE_REQUIRED_CHECKS: dict[str, tuple[str, ...]] = {
         "rollback_ready",
         "gate_report_present",
         "candidate_spec_present",
+        "rollback_readiness_present",
         "risk_controls_attestable",
     ),
 }
@@ -537,6 +538,16 @@ def _append_profitability_stage_manifest_reasons(
                     "reason": "profitability_stage_manifest_stage_missing",
                     "artifact_ref": str(manifest_path),
                     "stages_present": sorted(stages.keys()),
+                }
+            )
+        if set(stages) != set(required_stage_names):
+            reasons.append("profitability_stage_manifest_stage_set_invalid")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_stage_set_invalid",
+                    "artifact_ref": str(manifest_path),
+                    "expected_stages": list(required_stage_names),
+                    "actual_stages": sorted(stages.keys()),
                 }
             )
         for stage_name in required_stage_names:
