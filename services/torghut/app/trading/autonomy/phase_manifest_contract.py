@@ -153,10 +153,10 @@ def build_phase_manifest_payload(
         "phase_count": len(normalized_phases),
         "phase_transitions": normalize_phase_transitions(normalized_phases),
         "status": normalized_status,
-        "observation_summary": cast(dict[str, Any], observation_summary or {}),
+        "observation_summary": observation_summary or {},
         "phases": normalized_phases,
-        "runtime_governance": cast(Mapping[str, Any], runtime_governance),
-        "rollback_proof": cast(Mapping[str, Any], rollback_proof),
+        "runtime_governance": runtime_governance,
+        "rollback_proof": rollback_proof,
         "artifact_refs": sorted(set(manifest_artifact_refs)),
         "slo_contract_version": slo_contract_version,
     }
