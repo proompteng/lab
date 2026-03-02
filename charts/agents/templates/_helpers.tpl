@@ -50,8 +50,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- if and .Values.database.createSecret.enabled .Values.database.url -}}
 {{- $dbSecretName := include "agents.databaseSecretName" . }}
-{{- $dbSecretAnnotationKey = printf "checksum-secret_%s_%s" $namespace $dbSecretName -}}
-{{- $annotations = set $annotations (printf "checksum-secret_%s_%s" $namespace $dbSecretName) (sha256sum .Values.database.url) -}}
+{{- $dbSecretAnnotationKey = include "agents.rolloutChecksumAnnotationKey" (dict "kind" "secret" "namespace" $namespace "name" $dbSecretName) -}}
+{{- $annotations = set $annotations $dbSecretAnnotationKey (sha256sum .Values.database.url) -}}
 {{- end -}}
 
 {{- range .Values.rolloutChecksums.secrets -}}
@@ -59,7 +59,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $checksum := .checksum | trim -}}
 {{- if and $secretName $checksum -}}
 {{- $secretNamespace := default $namespace .namespace -}}
-{{- $secretAnnotationKey := printf "checksum-secret_%s_%s" $secretNamespace $secretName -}}
+{{- $secretAnnotationKey := include "agents.rolloutChecksumAnnotationKey" (dict "kind" "secret" "namespace" $secretNamespace "name" $secretName) -}}
 {{- if ne $secretAnnotationKey $dbSecretAnnotationKey -}}
 {{- $annotations = set $annotations $secretAnnotationKey $checksum -}}
 {{- end -}}
@@ -71,7 +71,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $checksum := .checksum | trim -}}
 {{- if and $configMapName $checksum -}}
 {{- $configMapNamespace := default $namespace .namespace -}}
-{{- $annotations = set $annotations (printf "checksum-configmap_%s_%s" $configMapNamespace $configMapName) $checksum -}}
+{{- $configMapAnnotationKey := include "agents.rolloutChecksumAnnotationKey" (dict "kind" "configmap" "namespace" $configMapNamespace "name" $configMapName) -}}
+{{- $annotations = set $annotations $configMapAnnotationKey $checksum -}}
 {{- end -}}
 {{- end -}}
 
@@ -81,6 +82,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+
+{{- define "agents.rolloutChecksumAnnotationKey" -}}
+{{- $kind := .kind | trim -}}
+{{- $namespace := .namespace | default "" | trim -}}
+{{- $name := .name | default "" | trim -}}
+{{- $identityHash := sha256sum (printf "%s:%s/%s" $kind $namespace $name) | trunc 24 -}}
+{{- printf "agents.proompteng.ai/checksum-%s-%s" $kind $identityHash -}}
 {{- end -}}
 
 {{- define "agents.serviceAccountName" -}}

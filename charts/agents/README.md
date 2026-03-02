@@ -115,9 +115,17 @@ Control plane and controllers pods include rollout annotations only when `rollou
 Source-of-truth model:
 
 - Chart-owned DB secret path: when `database.createSecret.enabled=true`, the chart computes
-  `checksum-secret_<namespace>_<name>` from the literal `database.url` value.
+  `agents.proompteng.ai/checksum-secret-<hash>` from the literal `database.url` value.
 - Externally managed Secret/ConfigMap inputs: the chart does **not** read live resources at render
   time. You must supply checksum values from your external source of truth.
+
+Checksum annotation keys are deterministic and bounded:
+
+- `agents.proompteng.ai/checksum-secret-<hash>`
+- `agents.proompteng.ai/checksum-configmap-<hash>`
+
+The hash is computed from the referenced object identity (`kind`, `namespace`, `name`) so keys remain
+stable and always satisfy Kubernetes annotation key length constraints.
 
 The external inputs should be the exact same contract inputs that drive pod behavior. When
 `rolloutChecksums.enabled=true`, each source below that is in use becomes required in

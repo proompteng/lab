@@ -347,7 +347,7 @@
 {{- if and $secretName $secretNamespace -}}
 {{- $secretRef := printf "%s/%s" $secretNamespace $secretName -}}
 {{- if and $ownedDbSecretRef (eq $secretRef $ownedDbSecretRef) -}}
-{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d] cannot target %s because database.createSecret.enabled=true already owns checksum/secret/%s" $idx $secretRef $secretRef) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d] cannot target %s because database.createSecret.enabled=true already owns the rollout checksum annotation for %s" $idx $secretRef $secretRef) -}}
 {{- else -}}
 {{- $_ := set $configuredSecretRefs $secretRef true -}}
 {{- if hasKey $seenSecretRefs $secretRef -}}
