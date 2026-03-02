@@ -53,7 +53,6 @@ AUTONOMY_PHASE_SLO_GATES: dict[str, tuple[dict[str, Any], ...]] = {
 AUTONOMY_MANIFEST_STATUSES: tuple[str, ...] = (
     "pass",
     "skip",
-    "skipped",
     "fail",
 )
 

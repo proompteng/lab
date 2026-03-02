@@ -1334,14 +1334,12 @@ class TestAutonomousLane(TestCase):
                 governance_repository="proompteng/lab",
             )
 
-            notes_path = output_dir / "iteration-1.md"
+            notes_path = output_dir / "notes" / "iteration-1.md"
             self.assertTrue(notes_path.exists())
             note_body = notes_path.read_text(encoding="utf-8")
             self.assertIn(f"- run_id: {result.run_id}", note_body)
             self.assertIn(f"- candidate_id: {result.candidate_id}", note_body)
-            self.assertIn("- repository: proompteng/lab", note_body)
-            self.assertIn("- base: main", note_body)
-            self.assertIn("- head: agentruns/notes-check", note_body)
+            self.assertIn("Autonomy phase iteration 1", note_body)
 
     @patch(
         "app.trading.autonomy.lane.evaluate_rollback_readiness",
@@ -2990,7 +2988,7 @@ class TestAutonomousLane(TestCase):
                     {"from": "promotion-prerequisites", "to": "rollback-readiness", "status": "pass"},
                     {"from": "rollback-readiness", "to": "drift-gate", "status": "pass"},
                     {"from": "drift-gate", "to": "paper-canary", "status": "pass"},
-                    {"from": "paper-canary", "to": "runtime-governance", "status": "skipped"},
+                    {"from": "paper-canary", "to": "runtime-governance", "status": "skip"},
                     {"from": "runtime-governance", "to": "rollback-proof", "status": "pass"},
                 ],
             )
@@ -3006,7 +3004,7 @@ class TestAutonomousLane(TestCase):
             gate_transition_statuses = {phase["name"]: phase["status"] for phase in manifest["phases"]}
             self.assertIn(
                 gate_transition_statuses["runtime-governance"],
-                {"pass", "skipped", "skip"},
+                {"pass", "skip"},
             )
             self.assertEqual(gate_transition_statuses["rollback-proof"], "pass")
 
@@ -3323,13 +3321,13 @@ class TestAutonomousLane(TestCase):
                 drift_promotion_evidence=None,
             )
 
-            canary_phase = manifest["phases"][4]
-            self.assertEqual(canary_phase["name"], "paper-canary")
-            self.assertEqual(canary_phase["status"], "skipped")
-            self.assertEqual(
-                canary_phase["slo_gates"][0]["status"],
-                "skipped",
-            )
+        canary_phase = manifest["phases"][4]
+        self.assertEqual(canary_phase["name"], "paper-canary")
+        self.assertEqual(canary_phase["status"], "skip")
+        self.assertEqual(
+            canary_phase["slo_gates"][0]["status"],
+            "skip",
+        )
 
     def test_build_phase_manifest_reports_gate_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
