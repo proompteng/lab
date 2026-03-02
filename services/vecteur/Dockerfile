@@ -49,10 +49,12 @@ if [ ! -s "${PGDATA}/PG_VERSION" ]; then
   initdb "${initdb_args[@]}"
 
   [ -n "${pg_password_file}" ] && rm -f "${pg_password_file}"
-fi
 
-if [ "${POSTGRES_DB}" != "${POSTGRES_USER}" ]; then
-  createdb --owner="${POSTGRES_USER}" --encoding=UTF8 --template=template0 --if-not-exists "${POSTGRES_DB}"
+  if [ -n "${POSTGRES_DB}" ]; then
+    pg_ctl -D "${PGDATA}" -o "-p ${PGPORT} -c listen_addresses='*'" -w start
+    createdb --username="${POSTGRES_USER}" --owner="${POSTGRES_USER}" --encoding=UTF8 --template=template0 --if-not-exists "${POSTGRES_DB}"
+    pg_ctl -D "${PGDATA}" -m fast -w stop
+  fi
 fi
 
 exec postgres -D "${PGDATA}" -p "${PGPORT}" -c listen_addresses='*'
