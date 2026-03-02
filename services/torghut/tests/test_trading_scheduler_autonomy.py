@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import patch
 
