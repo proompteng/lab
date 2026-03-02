@@ -8,6 +8,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import tempfile
 from tempfile import TemporaryDirectory
 from typing import Any, cast
 
@@ -144,6 +145,11 @@ def main() -> int:
         if isinstance(promotion_evidence, dict):
             stress_metrics = promotion_evidence.get("stress_metrics")
             if isinstance(stress_metrics, dict):
+                if args.simulate_stress_metrics_untrusted:
+                    stress_metrics["artifact_ref"] = str(
+                        Path(tempfile.gettempdir())
+                        / "torghut-dry-run-stress-metrics-untrusted.json"
+                    )
                 stress_artifact["count"] = int(stress_metrics.get("count") or 0)
                 stress_artifact["items"] = list(stress_metrics.get("items") or [])
                 if args.simulate_stress_metrics_stale:

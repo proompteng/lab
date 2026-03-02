@@ -204,9 +204,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    artifact_root = Path(args.artifact_root.strip() or "").resolve()
-    if not str(artifact_root):
+    artifact_root_text = args.artifact_root.strip()
+    if not artifact_root_text:
         raise ValueError("artifact_root_required")
+    artifact_root = Path(artifact_root_text).resolve()
     lane_overrides = _build_lane_overrides(args)
 
     try:
