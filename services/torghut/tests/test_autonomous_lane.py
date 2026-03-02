@@ -29,6 +29,7 @@ from app.trading.autonomy.policy_checks import (
 )
 from app.trading.autonomy.phase_manifest_contract import (
     coerce_phase_status,
+    build_runtime_and_rollback_governance_payloads,
     build_rollback_proof_phase,
     build_runtime_governance_phase,
     required_slo_gate_ids,
@@ -2967,6 +2968,90 @@ class TestAutonomousLane(TestCase):
         self.assertEqual(phase["slo_gates"][0]["id"], "slo_runtime_rollback_not_triggered")
         self.assertEqual(phase["slo_gates"][0]["status"], "fail")
 
+    def test_build_runtime_and_rollback_governance_bundle_enforces_evidence_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_path = Path(tmpdir) / "rollback-evidence.json"
+            evidence_path.write_text("{}", encoding="utf-8")
+
+            triggered_bundle = build_runtime_and_rollback_governance_payloads(
+                requested_promotion_target="paper",
+                observed_at="2026-01-01T00:00:00Z",
+                governance_status="pass",
+                drift_status="drift_detected",
+                action_type="quarantine",
+                action_triggered=True,
+                rollback_triggered=True,
+                rollback_incident_evidence_path=str(evidence_path),
+                reasons=["rollback", "drift_detected"],
+                evidence_artifact_refs=[str(evidence_path), "drift/metric.json"],
+            )
+            self.assertEqual(
+                triggered_bundle["runtime_phase"]["status"],
+                "pass",
+            )
+            self.assertEqual(
+                triggered_bundle["rollback_proof_phase"]["status"],
+                "pass",
+            )
+            self.assertEqual(
+                triggered_bundle["runtime_governance"]["rollback_incident_evidence_path"],
+                str(evidence_path),
+            )
+            self.assertIn(
+                str(evidence_path),
+                triggered_bundle["rollback_proof"]["artifact_refs"],
+            )
+            self.assertEqual(
+                triggered_bundle["rollback_proof_phase"]["status"],
+                "pass",
+            )
+
+            untriggered_bundle = build_runtime_and_rollback_governance_payloads(
+                requested_promotion_target="paper",
+                observed_at="2026-01-01T00:00:00Z",
+                governance_status="pass",
+                drift_status="stable",
+                action_type="none",
+                action_triggered=False,
+                rollback_triggered=False,
+                rollback_incident_evidence_path=str(evidence_path),
+                reasons=[],
+                evidence_artifact_refs=[str(evidence_path)],
+            )
+            self.assertEqual(
+                untriggered_bundle["runtime_phase"]["status"],
+                "pass",
+            )
+            self.assertEqual(
+                untriggered_bundle["rollback_proof_phase"]["status"],
+                "pass",
+            )
+            self.assertEqual(
+                untriggered_bundle["rollback_proof"]["rollback_incident_evidence_path"],
+                "",
+            )
+            self.assertNotIn(
+                str(evidence_path),
+                untriggered_bundle["rollback_proof"]["artifact_refs"],
+            )
+
+            missing_evidence_bundle = build_runtime_and_rollback_governance_payloads(
+                requested_promotion_target="paper",
+                observed_at="2026-01-01T00:00:00Z",
+                governance_status="fail",
+                drift_status="drift_detected",
+                action_type="retrain",
+                action_triggered=True,
+                rollback_triggered=True,
+                rollback_incident_evidence_path="",
+                reasons=["drift_detected"],
+                evidence_artifact_refs=["drift/metric.json"],
+            )
+            self.assertEqual(
+                missing_evidence_bundle["rollback_proof_phase"]["status"],
+                "fail",
+            )
+
     def test_build_rollback_proof_phase_fails_without_evidence(self) -> None:
         phase = build_rollback_proof_phase(
             observed_at="2026-01-01T00:00:00Z",
@@ -3406,7 +3491,7 @@ class TestAutonomousLane(TestCase):
                 phases_by_name["runtime-governance"]["status"], "pass"
             )
             self.assertEqual(phases_by_name["rollback-proof"]["status"], "fail")
-            self.assertIsNone(rollback.get("rollback_incident_evidence"))
+            self.assertEqual(rollback.get("rollback_incident_evidence"), "")
             self.assertIn(
                 "slo_rollback_evidence_required_when_triggered",
                 {

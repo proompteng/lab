@@ -285,6 +285,85 @@ def build_rollback_proof_phase(
     }
 
 
+def build_runtime_and_rollback_governance_payloads(
+    *,
+    requested_promotion_target: str,
+    observed_at: datetime | str,
+    governance_status: str | None,
+    drift_status: str,
+    action_type: str,
+    action_triggered: bool,
+    rollback_triggered: bool,
+    rollback_incident_evidence_path: str | None,
+    reasons: Any,
+    evidence_artifact_refs: Any,
+) -> dict[str, Any]:
+    normalized_reasons = coerce_path_strings(reasons)
+    normalized_evidence_refs = coerce_path_strings(evidence_artifact_refs)
+    normalized_drift_status = _coerce_str(drift_status, default="unknown")
+    normalized_action_type = str(action_type or "").strip()
+    normalized_rollback_triggered = bool(rollback_triggered)
+    normalized_governance_status = coerce_phase_status(governance_status, default="skipped")
+    normalized_incident_evidence_input = _coerce_str(rollback_incident_evidence_path)
+    normalized_incident_evidence = (
+        normalized_incident_evidence_input
+        if normalized_rollback_triggered
+        else ""
+    )
+    rollback_proof_evidence_refs = normalized_evidence_refs
+    if not normalized_rollback_triggered and normalized_incident_evidence_input:
+        rollback_proof_evidence_refs = [
+            ref
+            for ref in rollback_proof_evidence_refs
+            if ref != normalized_incident_evidence_input
+        ]
+    runtime_phase = build_runtime_governance_phase(
+        requested_promotion_target=requested_promotion_target,
+        observed_at=observed_at,
+        governance_status=normalized_governance_status,
+        drift_status=normalized_drift_status,
+        action_type=normalized_action_type,
+        action_triggered=bool(action_triggered),
+        rollback_triggered=normalized_rollback_triggered,
+        reasons=normalized_reasons,
+        artifact_refs=normalized_evidence_refs,
+    )
+    rollback_proof_phase = build_rollback_proof_phase(
+        observed_at=observed_at,
+        rollback_triggered=normalized_rollback_triggered,
+        rollback_incident_evidence_path=normalized_incident_evidence,
+        reasons=normalized_reasons,
+        artifact_refs=rollback_proof_evidence_refs,
+    )
+
+    return {
+        "runtime_phase": runtime_phase,
+        "rollback_proof_phase": rollback_proof_phase,
+        "runtime_governance": {
+            "requested_promotion_target": requested_promotion_target,
+            "drift_status": normalized_drift_status,
+            "governance_status": normalized_governance_status,
+            "rollback_triggered": normalized_rollback_triggered,
+            "action_type": normalized_action_type or None,
+            "action_triggered": bool(action_triggered),
+            "rollback_incident_evidence_path": normalized_incident_evidence,
+            "rollback_incident_evidence": normalized_incident_evidence,
+            "artifact_refs": normalized_evidence_refs,
+            "reasons": normalized_reasons,
+            "status": runtime_phase.get("status"),
+        },
+        "rollback_proof": {
+            "requested_promotion_target": requested_promotion_target,
+            "rollback_triggered": normalized_rollback_triggered,
+            "rollback_incident_evidence_path": normalized_incident_evidence,
+            "rollback_incident_evidence": normalized_incident_evidence,
+            "artifact_refs": rollback_proof_phase.get("artifact_refs", []),
+            "reasons": normalized_reasons,
+            "status": rollback_proof_phase.get("status"),
+        },
+    }
+
+
 def normalize_phase_manifest_phases(
     phase_payloads: Sequence[Mapping[str, Any]],
     *,
@@ -332,16 +411,17 @@ def normalize_phase_manifest_phases(
         normalized_phase.setdefault("observations", {})
         phase_status = str(normalized_phase.get("status", "skipped"))
         existing_slo_gates = normalized_phase.get("slo_gates")
-        normalized_phase["slo_gates"] = (
-            list(existing_slo_gates)
-            if isinstance(existing_slo_gates, list)
-            else []
-        )
-        normalized_slo_gate_ids = {
-            str(gate.get("id", "")).strip()
-            for gate in normalized_phase["slo_gates"]
-            if isinstance(gate, Mapping) and str(gate.get("id", "")).strip()
-        }
+        normalized_slo_gates: list[Mapping[str, Any]] = []
+        if isinstance(existing_slo_gates, list):
+            for gate in cast(Sequence[object], existing_slo_gates):
+                if isinstance(gate, Mapping):
+                    normalized_slo_gates.append(cast(Mapping[str, Any], gate))
+        normalized_phase["slo_gates"] = normalized_slo_gates
+        normalized_slo_gate_ids: set[str] = set()
+        for gate in normalized_slo_gates:
+            gate_id = str(gate.get("id", "")).strip()
+            if gate_id:
+                normalized_slo_gate_ids.add(gate_id)
         required_gate_ids = required_slo_gate_ids(phase_name)
         for gate_id in required_gate_ids:
             if gate_id not in normalized_slo_gate_ids:

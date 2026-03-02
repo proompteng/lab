@@ -140,6 +140,18 @@ uv run python scripts/evaluate_dspy_compile.py \
 - Canonical flag inventory is in `argocd/applications/feature-flags/gitops/default/features.yaml` (`torghut_*` keys).
 - Migration and rollout runbook: `docs/torghut/feature-flags-rollout.md`.
 
+## Autonomy phase manifest contract (governance, canary, rollback)
+
+- Primary authority for rollout governance shape is in `app/trading/autonomy/phase_manifest_contract.py`.
+- `build_runtime_and_rollback_governance_payloads(...)` produces all artifacts for the unified runtime governance + rollback proof stage:
+  - `runtime_phase` (`runtime-governance`) and `rollback_proof_phase` (`rollback-proof`) phase payloads
+  - `runtime_governance` and `rollback_proof` top-level manifest metadata
+- The shared builder applies the same evidence rules in both lane and scheduler paths:
+  - rollback evidence is only attached when rollback is actually triggered
+  - non-triggered rollback evidence references are dropped from rollback-proof
+  - missing evidence while rollback is triggered fails `rollback-proof` via `slo_rollback_evidence_required_when_triggered`
+- Phase manifests should be treated as single-source governance evidence for promotion and rollback decisions; avoid manual duplicate assembly outside this helper.
+
 ## Deploy automation (main -> Argo CD)
 
 - `torghut-ci` validates code changes on PR and push.

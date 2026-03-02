@@ -82,8 +82,7 @@ from .phase_manifest_contract import (
     AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
     AUTONOMY_PASSING_MANIFEST_STATUSES,
     build_phase_manifest_payload,
-    build_rollback_proof_phase,
-    build_runtime_governance_phase,
+    build_runtime_and_rollback_governance_payloads,
     coerce_path_strings,
     coerce_phase_status,
     normalize_phase_manifest_phases,
@@ -2295,10 +2294,20 @@ def _build_phase_manifest(
         if isinstance(drift_gate_check.get("artifact_refs", []), list)
         else []
     )
-    runtime_artifact_refs = _coerce_path_strings(
-        runtime_governance.get("artifact_refs", [])
-        if isinstance(runtime_governance.get("artifact_refs", []), list)
-        else []
+    evidence_artifact_refs = []
+    evidence_artifact_refs.extend(
+        _coerce_path_strings(
+            runtime_governance.get("artifact_refs", [])
+            if isinstance(runtime_governance.get("artifact_refs", []), list)
+            else []
+        )
+    )
+    evidence_artifact_refs.extend(
+        _coerce_path_strings(
+            rollback_proof.get("artifact_refs", [])
+            if isinstance(rollback_proof.get("artifact_refs", []), list)
+            else []
+        )
     )
     rollback_triggered = bool(
         runtime_governance.get("rollback_triggered", False)
@@ -2311,7 +2320,7 @@ def _build_phase_manifest(
         rollback_proof_path = _coerce_str(
             rollback_proof.get("rollback_incident_evidence"), default=""
         )
-    runtime_phase = build_runtime_governance_phase(
+    governance_bundle = build_runtime_and_rollback_governance_payloads(
         requested_promotion_target=requested_promotion_target,
         observed_at=evaluated_at,
         governance_status=runtime_governance.get("governance_status"),
@@ -2319,16 +2328,19 @@ def _build_phase_manifest(
         action_type=str(runtime_governance.get("action_type", "")),
         action_triggered=bool(runtime_governance.get("action_triggered", False)),
         rollback_triggered=rollback_triggered,
-        reasons=list(runtime_governance.get("reasons", [])),
-        artifact_refs=runtime_artifact_refs,
-    )
-    rollback_proof_phase = build_rollback_proof_phase(
-        observed_at=evaluated_at,
-        rollback_triggered=rollback_triggered,
         rollback_incident_evidence_path=rollback_proof_path,
-        reasons=list(rollback_proof.get("reasons", [])),
-        artifact_refs=[],
+        reasons=[
+            *_coerce_path_strings(runtime_governance.get("reasons", [])),
+            *_coerce_path_strings(rollback_proof.get("reasons", [])),
+        ],
+        evidence_artifact_refs=evidence_artifact_refs,
     )
+    runtime_phase = cast(dict[str, Any], governance_bundle["runtime_phase"])
+    rollback_proof_phase = cast(
+        dict[str, Any], governance_bundle["rollback_proof_phase"]
+    )
+    runtime_governance = cast(Mapping[str, Any], governance_bundle["runtime_governance"])
+    rollback_proof = cast(Mapping[str, Any], governance_bundle["rollback_proof"])
     drift_gate_artifacts = sorted(
         {
             str(item)

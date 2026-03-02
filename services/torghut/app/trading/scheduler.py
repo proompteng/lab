@@ -84,8 +84,7 @@ from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
 from .autonomy.phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
     build_phase_manifest_payload,
-    build_rollback_proof_phase,
-    build_runtime_governance_phase,
+    build_runtime_and_rollback_governance_payloads,
     coerce_path_strings,
     normalize_phase_manifest_phases,
 )
@@ -5864,6 +5863,8 @@ class TradingScheduler:
                     ]
                 )
             evidence_refs = sorted({item for item in evidence_refs if item})
+        else:
+            evidence_refs = []
         rollback_incident_evidence = (
             str(drift_governance_payload.get("rollback_incident_evidence", "")).strip()
             if isinstance(
@@ -5877,9 +5878,6 @@ class TradingScheduler:
             and isinstance(self.state.rollback_incident_evidence_path, str)
         ):
             rollback_incident_evidence = self.state.rollback_incident_evidence_path.strip()
-        if rollback_incident_evidence:
-            evidence_refs.append(rollback_incident_evidence)
-        evidence_refs = sorted(set(evidence_refs))
 
         governance_status = (
             "fail"
@@ -5898,7 +5896,7 @@ class TradingScheduler:
             }
         )
 
-        governance_phase = build_runtime_governance_phase(
+        governance_bundle = build_runtime_and_rollback_governance_payloads(
             requested_promotion_target=requested_promotion_target,
             observed_at=now,
             governance_status=governance_status,
@@ -5906,15 +5904,11 @@ class TradingScheduler:
             action_type=action_type,
             action_triggered=action_triggered,
             rollback_triggered=rollback_triggered,
+            rollback_incident_evidence_path=(
+                rollback_incident_evidence if rollback_triggered else ""
+            ),
             reasons=reasons,
-            artifact_refs=evidence_refs,
-        )
-        rollback_proof_phase = build_rollback_proof_phase(
-            observed_at=now,
-            rollback_triggered=rollback_triggered,
-            rollback_incident_evidence_path=rollback_incident_evidence,
-            reasons=reasons,
-            artifact_refs=[],
+            evidence_artifact_refs=evidence_refs,
         )
 
         existing_phases = manifest.get("phases", [])
@@ -5927,8 +5921,12 @@ class TradingScheduler:
                 name = str(phase.get("name", "")).strip()
                 if name:
                     phase_lookup[name] = dict(phase)
-        phase_lookup["runtime-governance"] = governance_phase
-        phase_lookup["rollback-proof"] = rollback_proof_phase
+        phase_lookup["runtime-governance"] = cast(
+            dict[str, Any], governance_bundle["runtime_phase"]
+        )
+        phase_lookup["rollback-proof"] = cast(
+            dict[str, Any], governance_bundle["rollback_proof_phase"]
+        )
 
         ordered_phases = normalize_phase_manifest_phases(
             list(phase_lookup.values()),
@@ -5943,31 +5941,14 @@ class TradingScheduler:
             phase_timestamp=now,
             status=None,
             phase_payloads=ordered_phases,
-            runtime_governance={
-                "requested_promotion_target": requested_promotion_target,
-                "drift_status": drift_status,
-                "governance_status": governance_status,
-                "rollback_triggered": rollback_triggered,
-                "rollback_incident_evidence": rollback_incident_evidence,
-                "rollback_incident_evidence_path": rollback_incident_evidence,
-                "artifact_refs": evidence_refs,
-                "action_type": action_type,
-                "action_triggered": action_triggered,
-                "reasons": reasons,
-            },
-            rollback_proof={
-                "requested_promotion_target": requested_promotion_target,
-                "rollback_triggered": rollback_triggered,
-                "rollback_incident_evidence_path": rollback_incident_evidence,
-                "rollback_incident_evidence": rollback_incident_evidence,
-                "artifact_refs": (
-                    [rollback_incident_evidence]
-                    if rollback_incident_evidence
-                    else []
-                ),
-                "reasons": reasons,
-                "status": rollback_proof_phase.get("status"),
-            },
+            runtime_governance=cast(
+                Mapping[str, Any],
+                governance_bundle["runtime_governance"],
+            ),
+            rollback_proof=cast(
+                Mapping[str, Any],
+                governance_bundle["rollback_proof"],
+            ),
             observation_summary=cast(
                 Mapping[str, Any], manifest.get("observation_summary", {})
             ),

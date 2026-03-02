@@ -1511,6 +1511,98 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertEqual(updated_manifest["phases"][-1]["status"], "pass")
             self.assertEqual(updated_manifest["status"], "pass")
 
+    def test_append_runtime_governance_ignores_non_triggered_payload_rollback_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            explicit_evidence_path = Path(tmpdir) / "explicit-incident.json"
+            explicit_evidence_path.write_text(
+                json.dumps({"rollback": "expected_if_triggered"}),
+                encoding="utf-8",
+            )
+
+            manifest_path = Path(tmpdir) / "rollout" / "phase-manifest.json"
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_payload = {
+                "schema_version": "autonomy-phase-manifest-v1",
+                "run_id": "run-evidence-ignore",
+                "candidate_id": "cand-evidence-ignore",
+                "phases": [
+                    {
+                        "name": "gate-evaluation",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
+                    {
+                        "name": "promotion-prerequisites",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
+                    {
+                        "name": "rollback-readiness",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
+                    {"name": "drift-gate", "status": "pass", "artifact_refs": []},
+                    {"name": "paper-canary", "status": "pass", "artifact_refs": []},
+                    {
+                        "name": "runtime-governance",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
+                    {
+                        "name": "rollback-proof",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
+                ],
+                "runtime_governance": {"rollback_triggered": False},
+                "rollback_proof": {
+                    "rollback_triggered": False,
+                    "rollback_incident_evidence": "",
+                    "rollback_incident_evidence_path": "",
+                },
+                "artifact_refs": [],
+                "phase_count": 7,
+            }
+            manifest_path.write_text(
+                json.dumps(manifest_payload, indent=2),
+                encoding="utf-8",
+            )
+
+            scheduler._append_runtime_governance_to_phase_manifest(
+                manifest_path=manifest_path,
+                requested_promotion_target="paper",
+                drift_governance_payload={
+                    "drift_status": "stable",
+                    "reasons": [],
+                    "rollback_triggered": False,
+                    "rollback_incident_evidence": str(explicit_evidence_path),
+                    "action": {"action_type": "none", "triggered": False},
+                    "detection": {"reason_codes": []},
+                },
+                now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            )
+
+            updated_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(updated_manifest["status"], "pass")
+            self.assertEqual(
+                updated_manifest["rollback_proof"]["rollback_incident_evidence"],
+                "",
+            )
+            self.assertNotIn(
+                str(explicit_evidence_path),
+                updated_manifest["rollback_proof"]["artifact_refs"],
+            )
+            self.assertNotIn(
+                str(explicit_evidence_path),
+                updated_manifest["artifact_refs"],
+            )
+            self.assertEqual(updated_manifest["phases"][-1]["status"], "pass")
+
     def test_run_autonomy_cycle_appends_runtime_governance_with_canary_failure(
         self,
     ) -> None:
