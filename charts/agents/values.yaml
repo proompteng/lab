@@ -69,6 +69,7 @@ runner:
     digest: ''
     pullPolicy: IfNotPresent
     pullSecrets: []
+  requireDigest: false
 
 serviceAccount:
   create: true

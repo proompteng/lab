@@ -1,5 +1,7 @@
 {{- $errors := list -}}
 {{- $clusterScoped := .Values.rbac.clusterScoped | default false -}}
+{{- $runnerImage := .Values.runner.image | default (dict) -}}
+{{- $requireRunnerDigest := .Values.runner.requireDigest | default false -}}
 {{- $namespaceOverride := .Values.namespaceOverride | default "" -}}
 {{- if hasKey .Values "namespaceOverride" -}}
 {{- if not (kindIs "string" $namespaceOverride) -}}
@@ -404,6 +406,22 @@
 {{- if gt (len $rolloutEntryErrors) 0 -}}
 {{- $errors = append $errors (printf "%s" (join "\n" $rolloutEntryErrors)) -}}
 {{- end -}}
+{{- end -}}
+
+{{- if and (hasKey $runnerImage "tag") (empty $runnerImage.tag) -}}
+{{- $errors = append $errors "runner.image.tag must be set when runner.image.repository is configured." -}}
+{{- end -}}
+
+{{- if and (hasKey $runnerImage "digest") (ne $runnerImage.digest "") (not (regexMatch "^sha256:[0-9a-f]{64}$" $runnerImage.digest)) -}}
+{{- $errors = append $errors "runner.image.digest must be empty or a full sha256 digest (sha256:<64-hex>) for explicit runner image pinning." -}}
+{{- end -}}
+
+{{- if and $requireRunnerDigest (empty $runnerImage.digest) -}}
+{{- $errors = append $errors "runner.image.digest is required when runner.requireDigest is true." -}}
+{{- end -}}
+
+{{- if and $requireRunnerDigest (ne $runnerImage.digest "") (not (regexMatch "^sha256:[0-9a-f]{64}$" $runnerImage.digest)) -}}
+{{- $errors = append $errors "runner.image.digest must be a full sha256 digest (sha256:<64-hex>) when runner.requireDigest is true." -}}
 {{- end -}}
 
 {{- if gt (len $errors) 0 -}}

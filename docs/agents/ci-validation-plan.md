@@ -118,6 +118,43 @@ run_namespace_guardrails() {
 }
 ```
 
+## Runner Promotion Safety Checks
+
+- Before any Jangar release promotion, verify the candidate runner image is explicitly runnable on the promotion
+  runner architecture using the same smoke-path the release workflow uses:
+
+```bash
+JANGAR_RUNNER_IMAGE="registry.ide-newton.ts.net/lab/jangar"
+JANGAR_RUNNER_TAG="${TAG}"
+JANGAR_RUNNER_DIGEST="${DIGEST}"
+JANGAR_RUNNER_PLATFORM="linux/$(case "${RUNNER_ARCH}" in ARM64|arm64) echo arm64;; *) echo amd64;; esac)"
+
+repoRoot="$(git rev-parse --show-toplevel)"
+bun run "$repoRoot/packages/scripts/src/jangar/update-manifests.ts" \
+  --registry registry.ide-newton.ts.net \
+  --repository lab/jangar \
+  --tag "$JANGAR_RUNNER_TAG" \
+  --digest "$JANGAR_RUNNER_DIGEST" \
+  --runner-image-name "$JANGAR_RUNNER_IMAGE" \
+  --runner-image-tag "$JANGAR_RUNNER_TAG" \
+  --runner-image-digest "$JANGAR_RUNNER_DIGEST" \
+  --runner-image-platform "$JANGAR_RUNNER_PLATFORM" \
+  --require-runner-image-reference true \
+  --require-runner-image-digest true \
+  --verify-runner-image \
+  --verify-runner-image-only \
+  --rollout-timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+```
+
+- Any non-zero result from that runtime probe (including `agent-runner --help`) is a hard failure.
+- The release workflow runs this as a dedicated check before manifest writes in `jangar-release.yml`.
+- The guardrail requires `--require-runner-image-reference true` plus `--require-runner-image-digest true`, so promotion cannot proceed if:
+  - explicit runner reference values are not supplied (`--runner-image-name`, `--runner-image-tag`, and optionally `--runner-image-digest` with strict mode),
+  - the runner image digest is missing or malformed.
+- Chart-level guardrails for optional non-prod/prod hardening:
+  - Set `runner.requireDigest: true` in the agents values overlay to require a pinned runner digest by value validation.
+- The same command should be run in the release job context before opening the PR when extending or backfilling release artifacts.
+
 ## Integration Tests
 
 - in-cluster smoke test (ARC runners):

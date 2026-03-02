@@ -255,6 +255,7 @@
     "runner": {
       "type": "object",
       "properties": {
+        "requireDigest": { "type": "boolean" },
         "image": {
           "type": "object",
           "properties": {

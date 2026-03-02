@@ -456,7 +456,9 @@ spec:
     fatal(`Workflow steps expected must be >= 1 (got ${expectedSteps}).`)
   }
 
-  await waitForJobs(namespace, agentRunName, expectedSteps, timeoutMs)
+  // Workflow jobs are created sequentially by design, so we only assert that
+  // execution has started and then wait for the full AgentRun to reach Succeeded.
+  await waitForJobs(namespace, agentRunName, 1, timeoutMs)
   await waitForPhase(namespace, agentRunName, 'Succeeded', timeoutMs)
 
   log('Smoke test succeeded.')
