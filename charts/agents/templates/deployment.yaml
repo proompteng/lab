@@ -1,7 +1,12 @@
 {{- $controlPlaneImage := .Values.controlPlane.image | default dict -}}
 {{- $controlPlaneEnvVars := .Values.controlPlane.env.vars | default dict -}}
 {{- $envVars := merge (deepCopy (.Values.env.vars | default dict)) (deepCopy $controlPlaneEnvVars) -}}
-{{- $grpcManagedByChart := .Values.grpc.manageEnvVar | default true -}}
+{{- $grpcManagedByChart := true -}}
+{{- if hasKey .Values "grpc" -}}
+{{- if hasKey .Values.grpc "manageEnvVar" -}}
+{{- $grpcManagedByChart = .Values.grpc.manageEnvVar -}}
+{{- end -}}
+{{- end -}}
 {{- $imageRepo := $controlPlaneImage.repository | default .Values.image.repository -}}
 {{- $imageTag := $controlPlaneImage.tag | default .Values.image.tag -}}
 {{- $imageDigest := $controlPlaneImage.digest | default .Values.image.digest -}}

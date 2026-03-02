@@ -40,7 +40,12 @@
   "JANGAR_AGENTRUN_ARTIFACTS_MAX"
   "JANGAR_AGENTRUN_ARTIFACTS_STRICT"
 }}
-{{- $grpcManagedByChart := .Values.grpc.manageEnvVar | default true -}}
+{{- $grpcManagedByChart := true -}}
+{{- if hasKey .Values "grpc" -}}
+{{- if hasKey .Values.grpc "manageEnvVar" -}}
+{{- $grpcManagedByChart = .Values.grpc.manageEnvVar -}}
+{{- end -}}
+{{- end -}}
 {{- $expectedGrpcEnabled := ternary "true" "false" .Values.grpc.enabled -}}
 {{- $expectedGrpcHost := "0.0.0.0" -}}
 {{- $expectedGrpcPort := toString .Values.grpc.port -}}
