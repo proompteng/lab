@@ -113,6 +113,39 @@ class TestOrchestrationGuard(TestCase):
             result['reason'], 'stage_slo_gate_missing:gate6_profitability_evidence'
         )
 
+    def test_allows_transition_when_stage_slo_gate_uses_id_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact = Path(tmpdir) / 'report.json'
+            artifact.write_text(
+                json.dumps(
+                    {
+                        'gates': [
+                            {
+                                'id': 'gate6_profitability_evidence',
+                                'status': 'pass',
+                            }
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            result = evaluate_transition(
+                policy=self.policy,
+                state=self.state,
+                candidate_id='cand-abc123',
+                run_id='run-abc123',
+                from_stage='gate-evaluation',
+                to_stage='promotion-prerequisites',
+                previous_artifact=artifact,
+                previous_gate_passed=True,
+                risk_controls_passed=True,
+                execution_controls_passed=True,
+                mode='gitops',
+                emergency_ticket=None,
+            )
+        self.assertTrue(result['allowed'])
+        self.assertEqual(result['nextAction'], 'proceed')
+
     def test_blocks_mutable_stage_without_gitops_or_ticket(self) -> None:
         state: dict[str, Any] = {
             'candidateId': 'cand-abc123',

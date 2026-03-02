@@ -258,7 +258,9 @@ def _validate_stage_slo_gates(
     for raw_gate in gates_raw:
         if not isinstance(raw_gate, dict):
             continue
-        gate_id = str(raw_gate.get("gate_id") or "").strip()
+        gate_id = str(
+            raw_gate.get("gate_id") or raw_gate.get("id") or raw_gate.get("gateId")
+        ).strip()
         status = str(raw_gate.get("status") or "").strip()
         if gate_id:
             gate_status_by_id[gate_id] = status
