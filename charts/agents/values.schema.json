@@ -324,7 +324,7 @@
         "enabled": { "type": "boolean" },
         "manageEnvVar": {
           "type": "boolean",
-          "description": "When true (default), control-plane env values for JANGAR_GRPC_* are derived from grpc.* and explicit values in env.vars/controlPlane.env.vars must match these chart-managed targets."
+          "description": "When true (default), control-plane env values for JANGAR_GRPC_* are chart-owned and derived from grpc.*. Explicit values in env.vars/controlPlane.env.vars must match these targets; controllers can override in controllers.env.vars."
         },
         "port": { "type": "integer" },
         "servicePort": { "type": "integer" },
@@ -337,7 +337,7 @@
       "properties": {
         "reservedEnvKeysEnforced": {
           "type": "boolean",
-          "description": "Fail chart render if structured envFrom entries include reserved keys that are not explicitly pinned in the consuming component env maps with values matching chart-managed expectations."
+          "description": "Fail chart render if structured envFrom entries include reserved keys that do not match component ownership rules or managed expectations. For managed GRPC keys, envFrom is accepted only when merged env maps resolve to the same chart-managed value."
         }
       },
       "additionalProperties": false
@@ -615,10 +615,7 @@
               "name": { "type": "string", "description": "Secret name." },
               "optional": { "type": "boolean", "description": "Whether missing secret is non-fatal." },
               "keys": {
-                "oneOf": [
-                  { "type": "string" },
-                  { "type": "array", "items": { "type": "string" } }
-                ],
+                "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
                 "description": "Optional key list used by validation only. Only string entries matching reserved keys are validated."
               }
             },
@@ -640,10 +637,7 @@
               "name": { "type": "string", "description": "ConfigMap name." },
               "optional": { "type": "boolean", "description": "Whether missing ConfigMap is non-fatal." },
               "keys": {
-                "oneOf": [
-                  { "type": "string" },
-                  { "type": "array", "items": { "type": "string" } }
-                ],
+                "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
                 "description": "Optional key list used by validation only. Only string entries matching reserved keys are validated."
               }
             },

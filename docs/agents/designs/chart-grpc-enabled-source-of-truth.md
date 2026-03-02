@@ -28,12 +28,15 @@ The chart now treats gRPC for the control plane as chart-driven and deterministi
 - `grpc.manageEnvVar` (default `true`) controls whether the chart injects control-plane values for
   `JANGAR_GRPC_ENABLED`, `JANGAR_GRPC_HOST`, and `JANGAR_GRPC_PORT`.
 - `JANGAR_GRPC_*` in `env.vars` / `controlPlane.env.vars` / `controllers.env.vars` are treated as explicit overrides when
-  `grpc.manageEnvVar=true`; conflicting values must align or rendering fails.
+  `grpc.manageEnvVar=true` for control-plane ownership and controller defaults. For managed controller defaults, explicit pins are optional when you accept chart defaults.
 - `grpc.manageEnvVar=false` restores manual env-var ownership for control-plane gRPC keys.
 - Controllers are owned by `controllers.env.vars` (and shared `env.vars`) for chart-managed `JANGAR_GRPC_*` defaults: if you set
-  controller-side gRPC env vars there, those values become authoritative for controller behavior.
+  controller-side gRPC env vars there, those values become authoritative for controller behavior; otherwise defaults are deterministic:
+  - `JANGAR_GRPC_ENABLED=0`
+  - `JANGAR_GRPC_HOST=0.0.0.0`
+  - `JANGAR_GRPC_PORT=grpc.port`
 - In managed mode, structured `envFrom` entries that list managed `JANGAR_GRPC_*` keys are validated against these maps.
-  If a managed key is listed in envFrom, each consuming component map must pin a matching value (or use manual mode).
+  If a managed key is listed in envFrom, each consuming component map must pin a matching value only when you intentionally override chart defaults (or use manual mode).
 
 ## Migration guidance
 
@@ -46,7 +49,6 @@ The chart now treats gRPC for the control plane as chart-driven and deterministi
    ```
 
 2. Remove manual control-plane gRPC values once migrated:
-
    - `env.vars.JANGAR_GRPC_ENABLED`
    - `env.vars.JANGAR_GRPC_HOST` (if present)
    - `env.vars.JANGAR_GRPC_PORT` (if present)
@@ -55,7 +57,6 @@ The chart now treats gRPC for the control plane as chart-driven and deterministi
    - `controlPlane.env.vars.JANGAR_GRPC_PORT` (if present)
 
 3. For controller-side gRPC migration:
-
    - Keep `controllers.env.vars.JANGAR_GRPC_ENABLED` explicit only when non-zero behavior is intentional.
    - Leave it unset for the default chart-managed `JANGAR_GRPC_ENABLED=0`.
    - If structured `envFrom` lists managed gRPC keys, set matching values in the component map first and remove those keys from envFrom unless intended.
@@ -65,11 +66,11 @@ The chart now treats gRPC for the control plane as chart-driven and deterministi
 
 ## Runtime mapping
 
-| Values                               | Rendered object(s)                                                   | Effect |
-| ------------------------------------ | -------------------------------------------------------------------- | ------ |
-| `grpc.enabled=true`, `manageEnvVar=true` | `Service/agents-grpc`, `containerPort: grpc`, `JANGAR_GRPC_ENABLED=true` | Server exposes and listens on gRPC port. |
-| `grpc.enabled=false`, `manageEnvVar=true` | no gRPC service/port, `JANGAR_GRPC_ENABLED=false`                   | Server does not expose/listen. |
-| `manageEnvVar=false` | no chart-managed control-plane `JANGAR_GRPC_*` env vars are injected | Explicit control-plane env-var management must be complete. |
+| Values                                    | Rendered object(s)                                                       | Effect                                                      |
+| ----------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `grpc.enabled=true`, `manageEnvVar=true`  | `Service/agents-grpc`, `containerPort: grpc`, `JANGAR_GRPC_ENABLED=true` | Server exposes and listens on gRPC port.                    |
+| `grpc.enabled=false`, `manageEnvVar=true` | no gRPC service/port, `JANGAR_GRPC_ENABLED=false`                        | Server does not expose/listen.                              |
+| `manageEnvVar=false`                      | no chart-managed control-plane `JANGAR_GRPC_*` env vars are injected     | Explicit control-plane env-var management must be complete. |
 
 ## Validation
 
