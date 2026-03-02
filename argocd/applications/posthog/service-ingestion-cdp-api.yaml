@@ -12,6 +12,6 @@ spec:
     role: plugins
   ports:
     - name: http
-      port: 6738
+      port: 80
       targetPort: 6738
       protocol: TCP
