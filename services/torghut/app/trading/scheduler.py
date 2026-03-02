@@ -4757,12 +4757,12 @@ class TradingScheduler:
         if isinstance(phase_payload.get("phase_lineage"), dict):
             phase_lineage = cast(dict[str, Any], phase_payload.get("phase_lineage"))
         raw_phase_trace = phase_lineage.get("stage_ids")
+        phase_manifest_trace: list[str] = []
         if isinstance(raw_phase_trace, list):
-            phase_manifest_trace = [
-                str(item).strip() for item in raw_phase_trace if str(item).strip()
-            ]
-        else:
-            phase_manifest_trace = []
+            for item in cast(list[Any], raw_phase_trace):
+                stage_id = str(item).strip()
+                if stage_id:
+                    phase_manifest_trace.append(stage_id)
         provenance_raw = payload.get("provenance")
         provenance: dict[str, Any] = (
             cast(dict[str, Any], provenance_raw)

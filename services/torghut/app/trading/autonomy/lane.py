@@ -7,7 +7,7 @@ import hashlib
 import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -85,7 +85,11 @@ _ACTUATION_INTENT_SCHEMA_VERSION = "torghut.autonomy.actuation-intent.v1"
 _ACTUATION_CONFIRMATION_PHRASE = "ACTUATE_TORGHUT"
 _ACTUATION_INTENT_PATH = "gates/actuation-intent.json"
 _AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION = "torghut.autonomy.phase-manifest.v1"
+_AUTONOMY_STAGE_MANIFEST_SCHEMA_VERSION = "torghut.autonomy.stage-manifest.v1"
 _AUTONOMY_PHASE_MANIFEST_PATH = "phase-manifest.json"
+_AUTONOMY_STAGE_CANDIDATE_GENERATION = "candidate-generation"
+_AUTONOMY_STAGE_EVALUATION = "evaluation"
+_AUTONOMY_STAGE_RECOMMENDATION = "promotion-recommendation"
 _AUTONOMY_NOTES_DIR = "notes"
 _AUTONOMY_NOTE_PREFIX_PATTERN = re.compile(r"^iteration-(\d+)\.md$")
 _AUTONOMY_NOTES_PREFIX = "iteration-"
@@ -297,9 +301,16 @@ class AutonomousLaneResult:
     gate_report_path: Path
     actuation_intent_path: Path | None
     paper_patch_path: Path | None
+    candidate_spec_path: Path
+    candidate_generation_manifest_path: Path
+    evaluation_manifest_path: Path
+    recommendation_manifest_path: Path
+    recommendation_artifact_path: Path
     phase_manifest_path: Path
     gate_report_trace_id: str
     recommendation_trace_id: str
+    stage_trace_ids: dict[str, str] = field(default_factory=dict)
+    stage_lineage_root: str | None = None
 
 
 def upsert_autonomy_no_signal_run(
@@ -626,6 +637,13 @@ def run_autonomous_lane(
     gate_policy_path: Path,
     output_dir: Path,
     promotion_target: PromotionTarget = "paper",
+    repository: str | None = None,
+    base: str | None = None,
+    head: str | None = None,
+    artifact_path: str | Path | None = None,
+    priority_id: str | None = None,
+    artifactPath: str | Path | None = None,
+    priorityId: str | None = None,
     strategy_configmap_path: Path | None = None,
     code_version: str = "local",
     approval_token: str | None = None,
@@ -638,10 +656,6 @@ def run_autonomous_lane(
     governance_base: str = "main",
     governance_head: str | None = None,
     governance_artifact_path: str | None = None,
-    artifact_path: str | None = None,
-    artifactPath: str | None = None,
-    priority_id: str | None = None,
-    priorityId: str | None = None,
     governance_change: str = "autonomous-promotion",
     governance_reason: str | None = None,
 ) -> AutonomousLaneResult:
@@ -656,11 +670,27 @@ def run_autonomous_lane(
         signals_path, strategy_config_path, gate_policy_path, promotion_target
     )
     candidate_id = f"cand-{run_id[:12]}"
-    research_dir, backtest_dir, gates_dir, paper_dir, rollout_dir = (
+    research_dir, backtest_dir, gates_dir, paper_dir, rollout_dir, stages_dir = (
         _prepare_lane_output_dirs(output_dir)
     )
 
     now = evaluated_at or datetime.now(timezone.utc)
+    candidate_generation_manifest_path = (
+        stages_dir / f"{_AUTONOMY_STAGE_CANDIDATE_GENERATION}-manifest.json"
+    )
+    evaluation_manifest_path = (
+        stages_dir / f"{_AUTONOMY_STAGE_EVALUATION}-manifest.json"
+    )
+    recommendation_manifest_path = (
+        stages_dir / f"{_AUTONOMY_STAGE_RECOMMENDATION}-manifest.json"
+    )
+    recommendation_artifact_path = research_dir / "promotion-recommendation.json"
+    resolved_repository = repository
+    resolved_base = base
+    resolved_head = head
+    resolved_priority_id = priority_id if priority_id is not None else priorityId
+    resolved_artifact_path = artifact_path if artifact_path is not None else artifactPath
+
     runtime = StrategyRuntime(default_runtime_registry())
     walk_decisions: list[WalkForwardDecision] = []
     baseline_walk_decisions: list[WalkForwardDecision] = []
@@ -676,7 +706,6 @@ def run_autonomous_lane(
     gate_report_path = gates_dir / "gate-evaluation.json"
     promotion_check_path = gates_dir / "promotion-prerequisites.json"
     rollback_check_path = gates_dir / "rollback-readiness.json"
-    phase_manifest_path = output_dir / _AUTONOMY_PHASE_MANIFEST_PATH
     baseline_report_path = backtest_dir / "baseline-evaluation-report.json"
     profitability_benchmark_path = gates_dir / "profitability-benchmark-v4.json"
     profitability_evidence_path = gates_dir / "profitability-evidence-v4.json"
@@ -688,30 +717,43 @@ def run_autonomous_lane(
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     phase_manifest_path = rollout_dir / "phase-manifest.json"
     run_row = None
-    resolved_priority_id = (
-        priority_id if priority_id is not None else _coerce_str(priorityId)
+    execution_context_override: dict[str, Any] = {}
+    if resolved_repository is not None:
+        execution_context_override["repository"] = resolved_repository
+    if resolved_base is not None:
+        execution_context_override["base"] = resolved_base
+    if resolved_head is not None:
+        execution_context_override["head"] = resolved_head
+    if resolved_artifact_path is not None:
+        execution_context_override["artifactPath"] = _coerce_str(
+            resolved_artifact_path, default=""
+        )
+    if resolved_priority_id is not None:
+        execution_context_override["priorityId"] = resolved_priority_id
+    governance_artifact_override = _coerce_str(
+        governance_artifact_path, default=""
     )
-    governance_context = _coalesce_governance_context(
-        governance_inputs=governance_inputs,
-        governance_repository=governance_repository,
-        governance_base=governance_base,
-        governance_head=governance_head,
-        governance_artifact_path=(
-            governance_artifact_path or artifact_path or artifactPath
+    if not governance_artifact_override and resolved_artifact_path is not None:
+        governance_artifact_override = _coerce_str(
+            resolved_artifact_path, default=""
+        )
+    if governance_artifact_override:
+        execution_context_override["artifactPath"] = governance_artifact_override
+
+    governance_context = _normalize_governance_inputs(
+        governance_inputs,
+        governance_inputs_override=(
+            {"execution_context": execution_context_override}
+            if execution_context_override
+            else None
         ),
-        priority_id=resolved_priority_id,
-        now=now,
     )
-    governance_context = _normalize_governance_inputs(governance_context)
-    resolved_governance_repository = governance_context["execution_context"].get(
-        "repository"
+    notes_artifact_root = Path(
+        _coerce_str(
+            governance_context["execution_context"].get("artifactPath"),
+            default=str(output_dir),
+        )
     )
-    resolved_governance_base = governance_context["execution_context"].get("base")
-    resolved_governance_head = governance_context["execution_context"].get("head")
-    resolved_governance_priority_id = _coerce_str(
-        governance_context["execution_context"].get("priorityId")
-    )
-    promotion_recommendation_path = gates_dir / "promotion-recommendation.json"
 
     factory = session_factory or SessionLocal
     if persist_results:
@@ -1140,15 +1182,26 @@ def run_autonomous_lane(
         patch_path: Path | None = None
 
         raw_gate_policy = gate_policy_payload
-        patch_path = _resolve_paper_patch_path(
-            gate_report=gate_report,
-            strategy_configmap_path=strategy_configmap_path,
-            runtime_strategies=runtime_strategies,
-            candidate_id=candidate_id,
-            promotion_target=str(promotion_target),
-            force_pre_prerequisite=promotion_target == "paper",
-            paper_dir=paper_dir,
-        )
+        requested_promotion_target = str(promotion_target).strip().lower()
+        patch_targets = {"paper", "live"}
+        patch_targets_raw = raw_gate_policy.get("promotion_require_patch_targets")
+        if isinstance(patch_targets_raw, (list, tuple, set)):
+            patch_targets = {
+                str(item).strip().lower()
+                for item in patch_targets_raw
+                if str(item).strip()
+            }
+        should_resolve_patch = requested_promotion_target in patch_targets
+        if should_resolve_patch:
+            patch_path = _resolve_paper_patch_path(
+                gate_report=gate_report,
+                strategy_configmap_path=strategy_configmap_path,
+                runtime_strategies=runtime_strategies,
+                candidate_id=candidate_id,
+                promotion_target=requested_promotion_target,
+                force_pre_prerequisite=requested_promotion_target == "paper",
+                paper_dir=paper_dir,
+            )
         promotion_check = evaluate_promotion_prerequisites(
             policy_payload=raw_gate_policy,
             gate_report_payload=gate_report_payload,
@@ -1204,13 +1257,13 @@ def run_autonomous_lane(
             ],
         )
         promotion_allowed = promotion_recommendation.eligible
-        if patch_path is None and promotion_allowed:
+        if patch_path is None and promotion_allowed and should_resolve_patch:
             patch_path = _resolve_paper_patch_path(
                 gate_report=gate_report,
                 strategy_configmap_path=strategy_configmap_path,
                 runtime_strategies=runtime_strategies,
                 candidate_id=candidate_id,
-                promotion_target=promotion_target,
+                promotion_target=requested_promotion_target,
                 paper_dir=paper_dir,
             )
         promotion_reasons = promotion_recommendation.reasons
@@ -1225,6 +1278,25 @@ def run_autonomous_lane(
             "rationale_required": True,
             "rationale_reason_codes": promotion_reasons,
         }
+        recommendation_artifact_payload = {
+            "schema_version": "torghut.autonomy.promotion-recommendation.v1",
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "generated_at": now.isoformat(),
+            "promotion_target": promotion_target,
+            "recommended_mode": recommended_mode,
+            "promotion_recommendation": promotion_recommendation.to_payload(),
+            "artifact_refs": [
+                str(promotion_check_path),
+                str(rollback_check_path),
+                str(gate_report_path),
+                str(promotion_gate_path),
+            ],
+        }
+        recommendation_artifact_path.write_text(
+            json.dumps(recommendation_artifact_payload, indent=2),
+            encoding="utf-8",
+        )
         candidate_spec_path.write_text(
             json.dumps(research_spec, indent=2), encoding="utf-8"
         )
@@ -1337,10 +1409,40 @@ def run_autonomous_lane(
         gate_report_path.write_text(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
+        execution_context = cast(Mapping[str, Any], governance_context["execution_context"])
+        resolved_governance_repository = _coerce_str(
+            execution_context.get("repository"), default=governance_repository
+        )
+        if resolved_governance_repository == "unknown":
+            resolved_governance_repository = governance_repository
+        resolved_governance_base = _coerce_str(
+            execution_context.get("base"), default=governance_base
+        )
+        if resolved_governance_base == "unknown":
+            resolved_governance_base = governance_base
+        resolved_governance_head = _coerce_str(execution_context.get("head"))
+        governance_head_id = (
+            resolved_governance_head
+            if resolved_governance_head and resolved_governance_head != "unknown"
+            else (
+                governance_head
+                if governance_head
+                else f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
+            )
+        )
+        resolved_governance_artifact_path = _coerce_str(
+            execution_context.get("artifactPath"), default=str(output_dir)
+        )
+        resolved_priority_id = _coerce_str(
+            execution_context.get("priorityId"), default=""
+        )
+        if not resolved_priority_id:
+            resolved_priority_id = None
+
         actuation_allowed = (
-            bool(recommendation_trace_id)
-            and promotion_recommendation.eligible
-            and rollback_check.ready
+        bool(recommendation_trace_id)
+        and promotion_recommendation.eligible
+        and rollback_check.ready
         )
         actuation_intent_path = output_dir / _ACTUATION_INTENT_PATH
         actuation_intent_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1348,6 +1450,7 @@ def run_autonomous_lane(
             run_id=run_id,
             candidate_id=candidate_id,
             generated_at=now,
+            candidate_hash=candidate_hash,
             recommendation_trace_id=recommendation_trace_id,
             gate_report_trace_id=gate_report_trace_id,
             promotion_target=promotion_target,
@@ -1376,16 +1479,14 @@ def run_autonomous_lane(
             promotion_recommendation=promotion_recommendation,
             recommendations=promotion_reasons,
             phase_manifest_path=phase_manifest_path,
-            governance_repository=governance_repository,
-            governance_base=governance_base,
-            governance_head=governance_head
-            if governance_head
-            else f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}",
+            governance_repository=resolved_governance_repository,
+            governance_base=resolved_governance_base,
+            governance_head=governance_head_id,
             governance_artifact_path=(
-                governance_artifact_path or str(output_dir)
+                resolved_governance_artifact_path
             ).strip()
             or str(output_dir),
-            priority_id=priority_id,
+            priority_id=resolved_priority_id,
             governance_change=governance_change,
             governance_reason=(
                 governance_reason
@@ -1418,8 +1519,125 @@ def run_autonomous_lane(
         phase_manifest_path.write_text(
             json.dumps(phase_manifest_payload, indent=2), encoding="utf-8"
         )
+
+        candidate_generation_manifest_payload = json.loads(
+            candidate_generation_manifest_path.read_text(encoding="utf-8")
+        )
+        evaluation_manifest_payload = json.loads(
+            evaluation_manifest_path.read_text(encoding="utf-8")
+        )
+        recommendation_manifest_payload = json.loads(
+            recommendation_manifest_path.read_text(encoding="utf-8")
+        )
+        stage_trace_ids = {
+            _AUTONOMY_STAGE_CANDIDATE_GENERATION: str(
+                candidate_generation_manifest_payload.get("stage_trace_id")
+            ),
+            _AUTONOMY_STAGE_EVALUATION: str(
+                evaluation_manifest_payload.get("stage_trace_id")
+            ),
+            _AUTONOMY_STAGE_RECOMMENDATION: str(
+                recommendation_manifest_payload.get("stage_trace_id")
+            ),
+        }
+        stage_manifest_refs = {
+            _AUTONOMY_STAGE_CANDIDATE_GENERATION: str(
+                candidate_generation_manifest_path
+            ),
+            _AUTONOMY_STAGE_EVALUATION: str(evaluation_manifest_path),
+            _AUTONOMY_STAGE_RECOMMENDATION: str(recommendation_manifest_path),
+        }
+        stage_lineage_payload = {
+            "schema_version": "torghut.autonomy.stage-manifest.v1",
+            "root_lineage_hash": _coerce_str(
+                phase_manifest_payload.get("phase_lineage", {}).get("lineage_root")
+            ),
+            "lineage_tail": _coerce_str(
+                phase_manifest_payload.get("phase_lineage", {}).get("lineage_tail")
+            ),
+            "stage_ids": phase_manifest_payload.get("phase_lineage", {}).get(
+                "stage_ids", []
+            ),
+            "stages": _coerce_mapping(
+                phase_manifest_payload.get("phase_lineage", {}).get("lineage_stages")
+            ),
+            "stage_count": len(
+                _coerce_mapping(
+                    phase_manifest_payload.get("phase_lineage", {}).get("lineage_stages")
+                )
+            ),
+        }
+        replay_artifact_hashes = _artifact_hashes(
+            {
+                "evaluation_report": evaluation_report_path,
+                "walkforward_results": walk_results_path,
+                "gate_report": gate_report_path,
+                "promotion_check": promotion_check_path,
+                "rollback_check": rollback_check_path,
+                "promotion_gate": promotion_gate_path,
+                "profitability_benchmark": profitability_benchmark_path,
+                "profitability_evidence": profitability_evidence_path,
+                "profitability_validation": profitability_validation_path,
+                "janus_event_car": janus_event_car_path,
+                "janus_hgrm_reward": janus_hgrm_reward_path,
+                "recalibration_report": recalibration_report_path,
+                "candidate-generation": candidate_generation_manifest_path,
+                "evaluation": evaluation_manifest_path,
+                "promotion-recommendation": recommendation_manifest_path,
+                "candidate_generation_manifest": candidate_generation_manifest_path,
+                "evaluation_manifest": evaluation_manifest_path,
+                "recommendation_manifest": recommendation_manifest_path,
+                "recommendation_artifact": recommendation_artifact_path,
+                "promotion_recommendation": recommendation_artifact_path,
+            }
+        )
+        research_spec["artifacts"] = {
+            "candidate_spec": str(candidate_spec_path),
+            "evaluation_report": str(evaluation_report_path),
+            "walkforward_results": str(walk_results_path),
+            "gate_report": str(gate_report_path),
+            "promotion_check": str(promotion_check_path),
+            "rollback_check": str(rollback_check_path),
+            "promotion_gate": str(promotion_gate_path),
+            "profitability_benchmark": str(profitability_benchmark_path),
+            "profitability_evidence": str(profitability_evidence_path),
+            "profitability_validation": str(profitability_validation_path),
+            "janus_event_car": str(janus_event_car_path),
+            "janus_hgrm_reward": str(janus_hgrm_reward_path),
+            "recalibration_report": str(recalibration_report_path),
+            "actuation_intent": str(actuation_intent_path),
+            "candidate-generation": str(candidate_generation_manifest_path),
+            "evaluation": str(evaluation_manifest_path),
+            "promotion-recommendation": str(recommendation_manifest_path),
+            "candidate_generation_manifest": str(candidate_generation_manifest_path),
+            "evaluation_manifest": str(evaluation_manifest_path),
+            "recommendation_manifest": str(recommendation_manifest_path),
+            "promotion_recommendation": str(recommendation_artifact_path),
+            "recommendation_artifact": str(recommendation_artifact_path),
+        }
+        if patch_path is not None and patch_path.exists():
+            research_spec["artifacts"]["paper_patch"] = str(patch_path)
+        research_spec["stage_manifest_refs"] = stage_manifest_refs
+        research_spec["stage_trace_ids"] = stage_trace_ids
+        research_spec["stage_lineage"] = stage_lineage_payload
+        research_spec["replay_artifact_hashes"] = replay_artifact_hashes
+        actuation_intent_payload["candidate_hash"] = candidate_hash
+        research_spec["replay_artifact_hashes"] = replay_artifact_hashes
+        if patch_path is not None and patch_path.exists():
+            research_spec["artifacts"]["paper_patch"] = str(patch_path)
+        candidate_spec_path.write_text(
+            json.dumps(research_spec, indent=2), encoding="utf-8"
+        )
+        actuation_intent_payload["audit"]["stage_lineage"] = stage_lineage_payload
+        actuation_intent_payload["audit"]["replay_artifact_hashes"] = (
+            replay_artifact_hashes
+        )
+        actuation_intent_path.write_text(
+            json.dumps(actuation_intent_payload, indent=2), encoding="utf-8"
+        )
+
         _write_autonomy_iteration_notes(
-            artifact_root=output_dir,
+            artifact_root=notes_artifact_root,
             run_id=run_id,
             candidate_id=candidate_id,
             phase_manifest_payload=phase_manifest_payload,
@@ -1450,6 +1668,10 @@ def run_autonomous_lane(
             stress_metrics_count=stress_metrics_count,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
+            stage_trace_ids=stage_trace_ids,
+            stage_manifest_refs=stage_manifest_refs,
+            stage_lineage_payload=stage_lineage_payload,
+            replay_artifact_hashes=replay_artifact_hashes,
         )
         _mark_run_passed_if_requested(
             persist_results=persist_results,
@@ -1483,6 +1705,19 @@ def run_autonomous_lane(
             gate_report_path=gate_report_path,
             actuation_intent_path=actuation_intent_path,
             paper_patch_path=patch_path,
+            candidate_spec_path=candidate_spec_path,
+            candidate_generation_manifest_path=candidate_generation_manifest_path,
+            evaluation_manifest_path=evaluation_manifest_path,
+            recommendation_manifest_path=recommendation_manifest_path,
+            recommendation_artifact_path=recommendation_artifact_path,
+            stage_trace_ids=stage_trace_ids,
+            stage_lineage_root=(
+                _coerce_str(
+                    _coerce_mapping(phase_manifest_payload.get("phase_lineage", {})).get(
+                        "lineage_root"
+                    )
+                )
+            ),
             phase_manifest_path=phase_manifest_path,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
@@ -1498,16 +1733,24 @@ def run_autonomous_lane(
         raise RuntimeError(f"autonomous_lane_persistence_failed: {exc}") from exc
 
 
-def _prepare_lane_output_dirs(output_dir: Path) -> tuple[Path, Path, Path, Path, Path]:
+def _prepare_lane_output_dirs(output_dir: Path) -> tuple[Path, Path, Path, Path, Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     research_dir = output_dir / "research"
     backtest_dir = output_dir / "backtest"
     gates_dir = output_dir / "gates"
     paper_dir = output_dir / "paper-candidate"
     rollout_dir = output_dir / "rollout"
-    for path in (research_dir, backtest_dir, gates_dir, paper_dir, rollout_dir):
+    stages_dir = output_dir / "stages"
+    for path in (
+        research_dir,
+        backtest_dir,
+        gates_dir,
+        paper_dir,
+        rollout_dir,
+        stages_dir,
+    ):
         path.mkdir(parents=True, exist_ok=True)
-    return research_dir, backtest_dir, gates_dir, paper_dir, rollout_dir
+    return research_dir, backtest_dir, gates_dir, paper_dir, rollout_dir, stages_dir
 
 
 def _normalize_governance_inputs(
@@ -2092,6 +2335,8 @@ def _build_phase_manifest(
 
 
 def _coerce_str(raw: Any, default: str = "") -> str:
+    if isinstance(raw, Path):
+        raw = str(raw)
     if not isinstance(raw, str):
         return default
     return raw.strip() or default
@@ -2153,6 +2398,7 @@ def _build_actuation_intent_payload(
     run_id: str,
     candidate_id: str,
     generated_at: datetime,
+    candidate_hash: str | None,
     recommendation_trace_id: str,
     gate_report_trace_id: str,
     promotion_target: str,
@@ -2230,6 +2476,7 @@ def _build_actuation_intent_payload(
         "generated_for": "autonomous-lane",
         "promotion_target": promotion_target,
         "recommended_mode": recommended_mode,
+        "candidate_hash": candidate_hash,
         "governance": {
             "repository": governance_repository,
             "base": governance_base,
@@ -2297,8 +2544,10 @@ def _build_phase_stage_payload(
     parent_lineage_hash: str | None,
     parent_stage: str | None,
     created_at: datetime,
+    stage_output_dir: Path,
     extra_inputs: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, Any], str]:
+    stage_output_dir.mkdir(parents=True, exist_ok=True)
     stage_payload: dict[str, Any] = {
         "stage": stage,
         "stage_index": stage_index,
@@ -2335,6 +2584,33 @@ def _build_phase_stage_payload(
     stage_payload["lineage_hash"] = stage_payload_hash
     stage_payload["artifact_hashes"] = artifact_hashes
     stage_payload["artifact_count"] = len(artifact_hashes)
+    stage_manifest_path = stage_output_dir / f"{stage}-manifest.json"
+    stage_manifest = dict(stage_payload)
+    stage_manifest["schema_version"] = _AUTONOMY_STAGE_MANIFEST_SCHEMA_VERSION
+    stage_manifest["created_at"] = created_at.isoformat()
+    stage_manifest["input_artifacts"] = {
+        name: {
+            "path": str(path),
+            "sha256": _sha256_path(path),
+        }
+        for name, path in input_artifacts.items()
+        if path is not None and path.exists()
+    }
+    stage_manifest["output_artifacts"] = {
+        name: {
+            "path": str(path),
+            "sha256": _sha256_path(path),
+        }
+        for name, path in output_artifacts.items()
+        if path is not None and path.exists()
+    }
+    stage_manifest["stage_trace_id"] = stage_payload["stage_trace_id"]
+    stage_manifest["lineage_hash"] = stage_payload["lineage_hash"]
+    stage_manifest["artifact_hashes"] = stage_payload["artifact_hashes"]
+    stage_manifest["artifact_count"] = stage_payload["artifact_count"]
+    stage_manifest_path.write_text(
+        json.dumps(stage_manifest, indent=2), encoding="utf-8"
+    )
     return stage_payload, stage_payload_hash
 
 
@@ -2439,6 +2715,8 @@ def _build_phase_manifest(
         execution_context.get("artifactPath"),
         default=str(output_dir),
     )
+    stages_dir = output_dir / "stages"
+    stages_dir.mkdir(parents=True, exist_ok=True)
     phase_outputs = output_dir / "gates"
     candidate_spec_path = output_dir / "research" / "candidate-spec.json"
     evaluation_report_path = output_dir / "backtest" / "evaluation-report.json"
@@ -2844,6 +3122,16 @@ def _build_phase_manifest(
             "janus_hgrm_reward": str(janus_hgrm_reward_path),
             "recalibration_report": str(recalibration_report_path),
             "actuation_intent": str(actuation_intent_path),
+            "candidate-generation": str(output_dir / "stages" / "candidate-generation-manifest.json"),
+            "evaluation": str(output_dir / "stages" / "evaluation-manifest.json"),
+            "promotion-recommendation": str(
+                output_dir / "stages" / "promotion-recommendation-manifest.json"
+            ),
+            "candidate_generation_manifest": str(output_dir / "stages" / "candidate-generation-manifest.json"),
+            "evaluation_manifest": str(output_dir / "stages" / "evaluation-manifest.json"),
+            "recommendation_manifest": str(
+                output_dir / "stages" / "promotion-recommendation-manifest.json"
+            ),
         },
     }
 
@@ -2854,7 +3142,7 @@ def _build_phase_manifest(
     stage_parent_stage: str | None = None
 
     candidate_payload, candidate_lineage_hash = _build_phase_stage_payload(
-        stage="candidate-spec",
+        stage=_AUTONOMY_STAGE_CANDIDATE_GENERATION,
         stage_index=1,
         run_id=run_id,
         candidate_id=candidate_id,
@@ -2866,14 +3154,15 @@ def _build_phase_manifest(
         parent_lineage_hash=stage_parent_hash,
         parent_stage=stage_parent_stage,
         created_at=evaluated_at,
+        stage_output_dir=stages_dir,
         extra_inputs={"output_dir": str(output_dir)},
     )
     stage_records.append(candidate_payload)
     stage_parent_hash = candidate_lineage_hash
-    stage_parent_stage = "candidate-spec"
+    stage_parent_stage = _AUTONOMY_STAGE_CANDIDATE_GENERATION
 
     gate_payload, gate_lineage_hash = _build_phase_stage_payload(
-        stage="gate-evaluation",
+        stage=_AUTONOMY_STAGE_EVALUATION,
         stage_index=2,
         run_id=run_id,
         candidate_id=candidate_id,
@@ -2899,6 +3188,7 @@ def _build_phase_manifest(
         parent_lineage_hash=stage_parent_hash,
         parent_stage=stage_parent_stage,
         created_at=evaluated_at,
+        stage_output_dir=stages_dir,
         extra_inputs={
             "recommendation_trace_id": _coerce_str(
                 _coerce_mapping(gate_report_payload).get("recommendation_trace_id")
@@ -2910,10 +3200,10 @@ def _build_phase_manifest(
     )
     stage_records.append(gate_payload)
     stage_parent_hash = gate_lineage_hash
-    stage_parent_stage = "gate-evaluation"
+    stage_parent_stage = _AUTONOMY_STAGE_EVALUATION
 
     promotion_payload_stage, promotion_lineage_hash = _build_phase_stage_payload(
-        stage="promotion-prerequisites",
+        stage=_AUTONOMY_STAGE_RECOMMENDATION,
         stage_index=3,
         run_id=run_id,
         candidate_id=candidate_id,
@@ -2930,6 +3220,7 @@ def _build_phase_manifest(
         parent_lineage_hash=stage_parent_hash,
         parent_stage=stage_parent_stage,
         created_at=evaluated_at,
+        stage_output_dir=stages_dir,
         extra_inputs={
             "promotion_target": requested_promotion_target,
             "recommended_mode": recommended_mode,
@@ -2937,7 +3228,7 @@ def _build_phase_manifest(
     )
     stage_records.append(promotion_payload_stage)
     stage_parent_hash = promotion_lineage_hash
-    stage_parent_stage = "promotion-prerequisites"
+    stage_parent_stage = _AUTONOMY_STAGE_RECOMMENDATION
 
     rollback_payload_stage, rollback_lineage_hash = _build_phase_stage_payload(
         stage="rollback-readiness",
@@ -2957,6 +3248,7 @@ def _build_phase_manifest(
         parent_lineage_hash=stage_parent_hash,
         parent_stage=stage_parent_stage,
         created_at=evaluated_at,
+        stage_output_dir=stages_dir,
     )
     stage_records.append(rollback_payload_stage)
     stage_parent_hash = rollback_lineage_hash
@@ -2988,6 +3280,7 @@ def _build_phase_manifest(
         parent_lineage_hash=stage_parent_hash,
         parent_stage=stage_parent_stage,
         created_at=evaluated_at,
+        stage_output_dir=stages_dir,
     )
     stage_records.append(actuation_payload_stage)
     stage_parent_hash = actuation_lineage_hash
@@ -3007,6 +3300,7 @@ def _build_phase_manifest(
             parent_lineage_hash=stage_parent_hash,
             parent_stage=stage_parent_stage,
             created_at=evaluated_at,
+            stage_output_dir=stages_dir,
         )
         stage_records.append(paper_payload)
         stage_parent_hash = paper_lineage_hash
@@ -3076,13 +3370,15 @@ def _write_autonomy_iteration_notes(
     phase_lineage_map = _as_mapping(phase_lineage)
 
     lines = [
-        f"# Autonomy phase iteration {iteration}",
+        "# Autonomy phase iteration {}".format(iteration),
+        f"- Autonomous lane iteration {iteration}",
         "",
         f"- run_id: {run_id}",
         f"- candidate_id: {candidate_id}",
         f"- generated_at: {phase_manifest_payload.get('generated_at', '')}",
         f"- manifest_schema: {phase_manifest_payload.get('schema_version', '')}",
         f"- artifact_hash_count: {len(_as_mapping(phase_manifest_payload.get('artifact_hashes')).keys())}",
+        "- candidate-spec: research/candidate-spec.json",
         "",
         "## Stage lineage",
         f"- head: {phase_lineage_map.get('lineage_tail')}",
@@ -3204,6 +3500,10 @@ def _persist_run_outputs_if_requested(
     stress_metrics_count: int,
     gate_report_trace_id: str,
     recommendation_trace_id: str,
+    stage_trace_ids: dict[str, str],
+    stage_manifest_refs: dict[str, str],
+    stage_lineage_payload: dict[str, Any],
+    replay_artifact_hashes: dict[str, str],
 ) -> None:
     if not persist_results:
         return
@@ -3231,6 +3531,10 @@ def _persist_run_outputs_if_requested(
         stress_metrics_count=stress_metrics_count,
         gate_report_trace_id=gate_report_trace_id,
         recommendation_trace_id=recommendation_trace_id,
+        stage_trace_ids=stage_trace_ids,
+        stage_manifest_refs=stage_manifest_refs,
+        stage_lineage_payload=stage_lineage_payload,
+        replay_artifact_hashes=replay_artifact_hashes,
     )
 
 
@@ -3436,6 +3740,10 @@ def _persist_run_outputs(
     stress_metrics_count: int,
     gate_report_trace_id: str,
     recommendation_trace_id: str,
+    stage_trace_ids: dict[str, str],
+    stage_manifest_refs: dict[str, str],
+    stage_lineage_payload: dict[str, Any],
+    replay_artifact_hashes: dict[str, str],
 ) -> None:
     robustness_by_fold = {fold.fold_name: fold for fold in report.robustness.folds}
     effective_promotion_allowed = bool(promotion_allowed and actuation_allowed)
@@ -3496,6 +3804,10 @@ def _persist_run_outputs(
                 "actuation_intent_artifact": (
                     str(actuation_intent_path) if actuation_intent_path else None
                 ),
+                "stage_trace_ids": stage_trace_ids,
+                "stage_manifest_refs": stage_manifest_refs,
+                "stage_lineage": stage_lineage_payload,
+                "replay_artifact_hashes": replay_artifact_hashes,
             }
             recommended_mode = promotion_recommendation.recommended_mode
             lifecycle_payload = {
@@ -3606,6 +3918,10 @@ def _persist_run_outputs(
                 "actuation_intent_artifact": (
                     str(actuation_intent_path) if actuation_intent_path else None
                 ),
+                "stage_trace_ids": stage_trace_ids,
+                "stage_manifest_refs": stage_manifest_refs,
+                "stage_lineage": stage_lineage_payload,
+                "replay_artifact_hashes": replay_artifact_hashes,
             }
             challenger_decision = {
                 "decision_type": "promotion",
