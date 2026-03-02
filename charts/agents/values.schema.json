@@ -420,6 +420,7 @@
         },
         "namespaces": {
           "type": "array",
+          "minItems": 1,
           "uniqueItems": true,
           "items": {
             "type": "string",
@@ -696,7 +697,15 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
-        "namespaces": { "type": "array", "items": { "type": "string" } }
+        "namespaces": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "anyOf": [{ "const": "*" }, { "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" }]
+          }
+        }
       },
       "additionalProperties": false
     },
@@ -704,7 +713,15 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
-        "namespaces": { "type": "array", "items": { "type": "string" } }
+        "namespaces": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "anyOf": [{ "const": "*" }, { "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" }]
+          }
+        }
       },
       "additionalProperties": false
     },
@@ -895,6 +912,33 @@
     {
       "if": {
         "properties": {
+          "controller": {
+            "properties": {
+              "namespaces": {
+                "type": "array",
+                "contains": { "const": "*" }
+              }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["controller"]
+      },
+      "then": {
+        "properties": {
+          "controller": {
+            "properties": {
+              "namespaces": {
+                "maxItems": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "orchestrationController": {
             "properties": {
               "namespaces": { "type": "array", "minItems": 2 }
@@ -943,6 +987,33 @@
     {
       "if": {
         "properties": {
+          "orchestrationController": {
+            "properties": {
+              "namespaces": {
+                "type": "array",
+                "contains": { "const": "*" }
+              }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["orchestrationController"]
+      },
+      "then": {
+        "properties": {
+          "orchestrationController": {
+            "properties": {
+              "namespaces": {
+                "maxItems": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "supportingController": {
             "properties": {
               "namespaces": { "type": "array", "minItems": 2 }
@@ -986,6 +1057,33 @@
           }
         },
         "required": ["rbac"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "supportingController": {
+            "properties": {
+              "namespaces": {
+                "type": "array",
+                "contains": { "const": "*" }
+              }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["supportingController"]
+      },
+      "then": {
+        "properties": {
+          "supportingController": {
+            "properties": {
+              "namespaces": {
+                "maxItems": 1
+              }
+            }
+          }
+        }
       }
     }
   ]
