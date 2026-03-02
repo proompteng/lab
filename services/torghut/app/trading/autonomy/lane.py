@@ -87,6 +87,7 @@ _ACTUATION_INTENT_PATH = "gates/actuation-intent.json"
 _AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION = "torghut.autonomy.phase-manifest.v1"
 _AUTONOMY_STAGE_MANIFEST_SCHEMA_VERSION = "torghut.autonomy.stage-manifest.v1"
 _AUTONOMY_PHASE_MANIFEST_PATH = "phase-manifest.json"
+_AUTONOMY_PHASE_ORDER: tuple[str, ...] = tuple(AUTONOMY_PHASE_ORDER)
 _AUTONOMY_STAGE_CANDIDATE_GENERATION = "candidate-generation"
 _AUTONOMY_STAGE_EVALUATION = "evaluation"
 _AUTONOMY_STAGE_RECOMMENDATION = "promotion-recommendation"
@@ -1718,9 +1719,9 @@ def run_autonomous_lane(
             recommendation_action=promotion_recommendation.action,
             recommendation_reason_count=len(promotion_reasons),
             promotion_reasons=promotion_reasons,
-            repository=cast(str, resolved_governance_repository),
-            base=cast(str, resolved_governance_base),
-            head=cast(str, resolved_governance_head),
+            repository=resolved_governance_repository,
+            base=resolved_governance_base,
+            head=governance_head_id,
             priority_id=priority_id,
         )
 
