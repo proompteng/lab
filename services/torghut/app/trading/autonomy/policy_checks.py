@@ -845,7 +845,179 @@ def _evaluate_promotion_evidence(
     reasons.extend(rationale_reasons)
     details.extend(rationale_details)
 
+    parity_reasons, parity_details, parity_refs = (
+        _evaluate_foundation_router_parity_evidence(
+            policy_payload=policy_payload,
+            gate_report_payload=gate_report_payload,
+            artifact_root=artifact_root,
+            promotion_target=promotion_target,
+        )
+    )
+    reasons.extend(parity_reasons)
+    details.extend(parity_details)
+    refs.extend(parity_refs)
+
     return sorted(set(reasons)), details, sorted(set(refs))
+
+
+def _requires_foundation_router_parity(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    return bool(policy_payload.get("promotion_require_foundation_router_parity", False))
+
+
+def _evaluate_foundation_router_parity_evidence(
+    *,
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+    artifact_root: Path,
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    if not _requires_foundation_router_parity(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return [], [], []
+
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    refs: list[str] = []
+
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    foundation = _as_dict(evidence.get("foundation_router_parity"))
+    evidence_ref = str(foundation.get("artifact_ref") or "").strip()
+    if not evidence_ref:
+        reasons.append("foundation_router_parity_artifact_ref_missing")
+        details.append({"reason": "foundation_router_parity_artifact_ref_missing"})
+
+    artifact_ref = (
+        evidence_ref
+        or str(
+            policy_payload.get(
+                "promotion_foundation_router_parity_artifact",
+                "gates/foundation-router-parity-report-v1.json",
+            )
+        )
+    ).strip()
+    artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
+    if artifact_path is None:
+        reasons.append("foundation_router_parity_artifact_ref_invalid")
+        details.append(
+            {
+                "reason": "foundation_router_parity_artifact_ref_invalid",
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return reasons, details, refs
+
+    refs.append(str(artifact_path))
+    payload = _load_json_if_exists(artifact_path)
+    if payload is None:
+        reasons.append("foundation_router_parity_artifact_missing")
+        details.append(
+            {
+                "reason": "foundation_router_parity_artifact_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+        return reasons, details, refs
+
+    overall_status = str(payload.get("overall_status", "")).strip()
+    if overall_status != "pass":
+        reasons.append("foundation_router_parity_overall_status_not_pass")
+        details.append(
+            {
+                "reason": "foundation_router_parity_overall_status_not_pass",
+                "artifact_ref": str(artifact_path),
+                "status": overall_status,
+            }
+        )
+
+    max_fallback_rate = _float_or_none(
+        _as_dict(payload.get("fallback_metrics")).get("fallback_rate")
+    )
+    fallback_threshold = _float_or_none(
+        policy_payload.get(
+            "promotion_router_parity_max_fallback_rate",
+            policy_payload.get("gate3_max_forecast_fallback_rate", 0.05),
+        )
+    )
+    if max_fallback_rate is None:
+        reasons.append("foundation_router_parity_fallback_rate_missing")
+        details.append(
+            {
+                "reason": "foundation_router_parity_fallback_rate_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif fallback_threshold is not None and max_fallback_rate > fallback_threshold:
+        reasons.append("foundation_router_parity_fallback_rate_exceeds_threshold")
+        details.append(
+            {
+                "reason": "foundation_router_parity_fallback_rate_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_fallback_rate": max_fallback_rate,
+                "maximum_fallback_rate": fallback_threshold,
+            }
+        )
+
+    calibration_min = _float_or_none(
+        _as_dict(payload.get("calibration_metrics")).get("minimum")
+    )
+    min_calibration = _float_or_none(
+        policy_payload.get(
+            "promotion_router_parity_min_calibration_score",
+            policy_payload.get("gate3_min_forecast_calibration_score", 0.85),
+        )
+    )
+    if calibration_min is None:
+        reasons.append("foundation_router_parity_calibration_minimum_missing")
+        details.append(
+            {
+                "reason": "foundation_router_parity_calibration_minimum_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif min_calibration is not None and calibration_min < min_calibration:
+        reasons.append("foundation_router_parity_calibration_minimum_below_threshold")
+        details.append(
+            {
+                "reason": "foundation_router_parity_calibration_minimum_below_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_minimum_calibration": calibration_min,
+                "minimum_required": min_calibration,
+            }
+        )
+
+    drift_max = _float_or_none(_as_dict(payload.get("drift_metrics")).get("max"))
+    max_drift = _float_or_none(
+        policy_payload.get(
+            "promotion_router_parity_max_drift",
+            policy_payload.get("gate6_max_calibration_error", 0.45),
+        )
+    )
+    if drift_max is None:
+        reasons.append("foundation_router_parity_drift_max_missing")
+        details.append(
+            {
+                "reason": "foundation_router_parity_drift_max_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif max_drift is not None and drift_max > max_drift:
+        reasons.append("foundation_router_parity_drift_exceeds_threshold")
+        details.append(
+            {
+                "reason": "foundation_router_parity_drift_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_max_drift": drift_max,
+                "maximum_drift": max_drift,
+            }
+        )
+
+    return reasons, details, refs
 
 
 def _evaluate_janus_evidence(
