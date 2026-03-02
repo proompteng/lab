@@ -34,6 +34,7 @@ spec:
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
     hulyChannelName: general
+    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
     hulyTeamspaceName: PROOMPTENG
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
@@ -79,6 +80,7 @@ spec:
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
     hulyChannelName: general
+    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
     hulyTeamspaceName: PROOMPTENG
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
@@ -128,6 +130,7 @@ spec:
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
     hulyChannelName: general
+    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
     hulyTeamspaceName: PROOMPTENG
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
@@ -178,6 +181,7 @@ spec:
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
     hulyChannelName: general
+    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
     hulyTeamspaceName: PROOMPTENG
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
@@ -223,6 +227,7 @@ spec:
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
     hulyChannelName: general
+    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
     hulyTeamspaceName: PROOMPTENG
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
@@ -268,6 +273,7 @@ spec:
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
     hulyChannelName: general
+    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
     hulyTeamspaceName: PROOMPTENG
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
@@ -317,6 +323,7 @@ spec:
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
     hulyChannelName: general
+    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
     hulyTeamspaceName: PROOMPTENG
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
@@ -367,6 +374,7 @@ spec:
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
     hulyChannelName: general
+    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
     hulyTeamspaceName: PROOMPTENG
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"

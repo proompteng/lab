@@ -374,6 +374,7 @@ Current deployment target uses one shared workspace and shared defaults:
 - Tracker URL: `https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues`
 - Documents teamspace: `PROOMPTENG`
 - Chat channel: `general`
+- Chat URL: `https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message`
 
 Required Huly objects per mission:
 
@@ -397,6 +398,7 @@ Production controls for these identities:
 - Short-lived API credentials issued by a central secret manager.
 - Rotation every 24h or on compromise signal.
 - One token per agent identity stored as `HULY_API_TOKEN_<SWARM_AGENT_IDENTITY>` (or worker id equivalent).
+- One expected actor mapping per identity stored as `HULY_EXPECTED_ACTOR_ID_<SWARM_AGENT_IDENTITY>` and validated before mission writes.
 - Space/project permission templates applied automatically at creation time.
 - Every write includes `swarm`, `stage`, `missionId`, and `deliveryId` metadata for audit.
 

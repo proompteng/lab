@@ -78,6 +78,34 @@ def is_worker_scoped_token_source(source: str) -> bool:
     return source.startswith('HULY_API_TOKEN_')
 
 
+def resolve_expected_actor_id(args: argparse.Namespace) -> str:
+    explicit = args.expected_actor_id.strip()
+    if explicit:
+        return explicit
+
+    explicit_env_key = args.expected_actor_env_key.strip()
+    if explicit_env_key:
+        explicit_value = env_if_set(explicit_env_key)
+        if explicit_value:
+            return explicit_value
+
+    worker_identity = args.worker_identity.strip() or env_if_set('SWARM_AGENT_IDENTITY')
+    if worker_identity:
+        key = f'HULY_EXPECTED_ACTOR_ID_{normalize_token_key(worker_identity)}'
+        value = env_if_set(key)
+        if value:
+            return value
+
+    worker_id = args.worker_id.strip() or env_if_set('SWARM_AGENT_WORKER_ID')
+    if worker_id:
+        key = f'HULY_EXPECTED_ACTOR_ID_{normalize_token_key(worker_id)}'
+        value = env_if_set(key)
+        if value:
+            return value
+
+    return ''
+
+
 def resolve_token(args: argparse.Namespace) -> tuple[str, str]:
     explicit = args.token.strip()
     if explicit:
@@ -687,12 +715,26 @@ def run_account_info(args: argparse.Namespace) -> int:
     context = build_context(args, for_platform_api=True)
     account = fetch_account_info(context)
     actor_id = str(account.get('primarySocialId') or '').strip()
-    if args.expected_actor_id.strip() and actor_id != args.expected_actor_id.strip():
+    expected_actor_id = resolve_expected_actor_id(args)
+    if args.require_expected_actor_id and not expected_actor_id:
+        print(
+            json.dumps(
+                {
+                    'error': 'missing_expected_actor_id',
+                    'message': 'set --expected-actor-id or HULY_EXPECTED_ACTOR_ID_<WORKER>',
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    if expected_actor_id and actor_id != expected_actor_id:
         print(
             json.dumps(
                 {
                     'error': 'expected_actor_id_mismatch',
-                    'expectedActorId': args.expected_actor_id.strip(),
+                    'expectedActorId': expected_actor_id,
                     'actualActorId': actor_id,
                 },
                 indent=2,
@@ -705,11 +747,73 @@ def run_account_info(args: argparse.Namespace) -> int:
     output = {
         'workspaceId': context.workspace_id,
         'actorId': actor_id,
+        'expectedActorId': expected_actor_id,
         'tokenSource': context.token_source,
         'workerScopedToken': is_worker_scoped_token_source(context.token_source),
         'person': account.get('person'),
         'accountRole': account.get('role'),
         'workspaces': account.get('workspaces'),
+    }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
+def run_verify_chat_access(args: argparse.Namespace) -> int:
+    context = build_context(args, for_platform_api=True)
+    account = fetch_account_info(context)
+    actor_id = str(account.get('primarySocialId') or '').strip()
+
+    expected_actor_id = resolve_expected_actor_id(args)
+    if args.require_expected_actor_id and not expected_actor_id:
+        print(
+            json.dumps(
+                {
+                    'error': 'missing_expected_actor_id',
+                    'message': 'set --expected-actor-id or HULY_EXPECTED_ACTOR_ID_<WORKER>',
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    if expected_actor_id and actor_id != expected_actor_id:
+        print(
+            json.dumps(
+                {
+                    'error': 'expected_actor_id_mismatch',
+                    'expectedActorId': expected_actor_id,
+                    'actualActorId': actor_id,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    worker_id = args.worker_id.strip() or env_if_set('SWARM_AGENT_WORKER_ID') or 'unknown-worker'
+    worker_identity = args.worker_identity.strip() or env_if_set('SWARM_AGENT_IDENTITY') or 'unknown-identity'
+    chat_message = args.message.strip() or (
+        '[swarm-chat-access-ok] '
+        f'worker={worker_id} '
+        f'identity={worker_identity} '
+        f'actorId={actor_id} '
+        f'tokenSource={context.token_source}'
+    )
+    channel_result = post_channel_message(
+        context=context,
+        channel_ref=args.channel,
+        message=chat_message,
+    )
+    output = {
+        'workspaceId': context.workspace_id,
+        'actorId': actor_id,
+        'expectedActorId': expected_actor_id,
+        'tokenSource': context.token_source,
+        'workerScopedToken': is_worker_scoped_token_source(context.token_source),
+        'channelMessage': channel_result,
+        'message': chat_message,
     }
     print(json.dumps(output, indent=2, sort_keys=True))
     return 0
@@ -897,7 +1001,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--operation',
         default='http',
-        choices=['http', 'create-issue', 'create-document', 'post-channel-message', 'upsert-mission', 'account-info'],
+        choices=[
+            'http',
+            'create-issue',
+            'create-document',
+            'post-channel-message',
+            'upsert-mission',
+            'account-info',
+            'verify-chat-access',
+        ],
         help='Operation mode',
     )
 
@@ -955,6 +1067,16 @@ def build_parser() -> argparse.ArgumentParser:
         default='',
         help='When set, account-info fails unless current token resolves to this actor id',
     )
+    parser.add_argument(
+        '--expected-actor-env-key',
+        default='',
+        help='Env var key that contains expected actor id for this worker',
+    )
+    parser.add_argument(
+        '--require-expected-actor-id',
+        action='store_true',
+        help='Fail account/chat verification when expected actor id is not configured',
+    )
 
     return parser
 
@@ -976,6 +1098,8 @@ def main() -> int:
             return run_upsert_mission(args)
         if args.operation == 'account-info':
             return run_account_info(args)
+        if args.operation == 'verify-chat-access':
+            return run_verify_chat_access(args)
         print(f'unsupported operation: {args.operation}', file=sys.stderr)
         return 2
     except ValueError as error:
