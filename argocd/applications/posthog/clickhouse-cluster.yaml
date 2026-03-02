@@ -8,6 +8,14 @@ metadata:
     app.kubernetes.io/part-of: posthog
 spec:
   configuration:
+    files:
+      config.d/posthog-host-macros.xml: |
+        <clickhouse>
+          <macros>
+            <hostClusterType>online</hostClusterType>
+            <hostClusterRole>data</hostClusterRole>
+          </macros>
+        </clickhouse>
     users:
       posthog/password:
         valueFrom:
