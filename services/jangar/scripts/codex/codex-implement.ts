@@ -142,7 +142,17 @@ const isHulyRequirementChannel = (channel: string | undefined | null) => {
   if (!channel) {
     return false
   }
-  return channel.trim().toLowerCase().startsWith('huly://')
+  const normalized = channel.trim()
+  const lower = normalized.toLowerCase()
+  if (lower.startsWith('huly://')) {
+    return true
+  }
+  try {
+    const parsed = new URL(normalized)
+    return parsed.protocol.startsWith('http') && parsed.hostname.toLowerCase().includes('huly')
+  } catch {
+    return false
+  }
 }
 
 const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): RequirementMetadata => {

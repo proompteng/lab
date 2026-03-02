@@ -356,6 +356,36 @@ describe('runCodexImplementation', () => {
     expect(invocation?.prompt).toContain('Run prompt context:')
   }, 40_000)
 
+  it('uses cross-swarm requirement scope when channel is an HTTPS Huly URL', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm dispatch with full URL channel',
+      swarmRequirementChannel: 'https://huly.proompteng.ai/swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mv',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
+      swarmRequirementDescription: 'Validate Huly URL-based requirement handoff in jangar control plane.',
+      swarmRequirementPayload: '{"acceptance":["URL channels are treated as Huly requirements"],"priority":"high"}',
+      swarmRequirementPayloadBytes: '150',
+      swarmRequirementPayloadTruncated: false,
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toContain('Cross-swarm implementation requirement (primary scope):')
+    expect(invocation?.prompt).toContain('Channel: https://huly.proompteng.ai/swarm-bridge/issues/TORGHUT-1772426902')
+  }, 40_000)
+
   it('adds cross-swarm provenance fields to notify payload for Huly requirements', async () => {
     const payload = {
       prompt: 'Implementation prompt',
