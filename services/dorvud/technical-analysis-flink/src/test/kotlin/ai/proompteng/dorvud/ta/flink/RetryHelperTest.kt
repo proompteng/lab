@@ -3,9 +3,9 @@ package ai.proompteng.dorvud.ta.flink
 import org.slf4j.LoggerFactory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
-import kotlin.test.assertFailsWith
 
 class RetryHelperTest {
   private val logger = LoggerFactory.getLogger("retry-helper-test")

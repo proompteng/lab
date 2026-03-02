@@ -209,22 +209,22 @@ private fun ensureClickhouseSchema(config: FlinkTaConfig) {
     logger = logger,
     operationName = "ClickHouse schema",
   ) {
-      val properties = Properties()
-      config.clickhouseUsername?.let { properties["user"] = it }
-      config.clickhousePassword?.let { properties["password"] = it }
-      val connection =
-        if (properties.isEmpty) {
-          DriverManager.getConnection(adminUrl)
-        } else {
-          DriverManager.getConnection(adminUrl, properties)
-        }
+    val properties = Properties()
+    config.clickhouseUsername?.let { properties["user"] = it }
+    config.clickhousePassword?.let { properties["password"] = it }
+    val connection =
+      if (properties.isEmpty) {
+        DriverManager.getConnection(adminUrl)
+      } else {
+        DriverManager.getConnection(adminUrl, properties)
+      }
 
-      connection.use { conn ->
-        conn.createStatement().use { statement ->
-          statements.forEach { statement.execute(it) }
-        }
+    connection.use { conn ->
+      conn.createStatement().use { statement ->
+        statements.forEach { statement.execute(it) }
       }
     }
+  }
 
   logger.info("ClickHouse schema ensured.")
 }
