@@ -30,6 +30,7 @@ import {
 } from './lib/codex-utils'
 import { ensureFileDirectory } from './lib/fs'
 import { type CodexLogger, consoleLogger, createCodexLogger } from './lib/logger'
+import { runCodexProgressComment } from './codex-progress-comment'
 
 interface ImplementationEventPayload {
   prompt?: string
@@ -225,6 +226,119 @@ const buildCrossSwarmRequirementScopePrompt = (basePrompt: string, requirement: 
   lines.push('Run prompt context:', basePrompt)
 
   return lines.join('\n\n')
+}
+
+const isNumericIssueNumber = (value: string) => /^\d+$/.test(value.trim())
+
+const buildProgressComment = ({
+  repository,
+  issueNumber,
+  stage,
+  headBranch,
+  baseBranch,
+  phase,
+  prUrl,
+  lastAssistantMessage,
+  requirementMetadata,
+}: {
+  repository: string
+  issueNumber: string
+  stage: string
+  headBranch: string
+  baseBranch: string
+  phase: 'started' | 'completed' | 'failed'
+  prUrl?: string | null
+  lastAssistantMessage?: string | null
+  requirementMetadata?: RequirementMetadata
+}) => {
+  const lines = [
+    '<!-- codex:progress -->',
+    '## Codex implementation progress',
+    `- Repository: ${repository}`,
+    `- Issue: #${issueNumber}`,
+    `- Stage: ${stage}`,
+    `- Head: ${headBranch}`,
+    `- Base: ${baseBranch}`,
+    `- Phase: ${phase}`,
+    prUrl ? `- PR: ${prUrl}` : '- PR: n/a',
+    `- Updated: ${timestampUtc()}`,
+  ]
+
+  if (isHulyRequirementChannel(requirementMetadata?.channel)) {
+    const provenance = [
+      requirementMetadata?.id ? `- Requirement ID: ${requirementMetadata.id}` : null,
+      requirementMetadata?.signal ? `- Signal: ${requirementMetadata.signal}` : null,
+      requirementMetadata?.source ? `- Source: ${requirementMetadata.source}` : null,
+      requirementMetadata?.target ? `- Target: ${requirementMetadata.target}` : null,
+      requirementMetadata?.channel ? `- Channel: ${requirementMetadata.channel}` : null,
+      requirementMetadata?.objective ? `- Objective: ${requirementMetadata.objective}` : null,
+    ].filter((entry): entry is string => entry !== null)
+
+    if (provenance.length > 0) {
+      lines.push('', '### Cross-swarm requirement')
+      lines.push(...provenance)
+    }
+
+    if (requirementMetadata?.description) {
+      lines.push('', '### Requirement description', requirementMetadata.description)
+    }
+  }
+
+  if (lastAssistantMessage) {
+    lines.push(
+      '',
+      '### Last assistant message',
+      lastAssistantMessage.length > 1_200 ? `${lastAssistantMessage.slice(0, 1_200)}…` : lastAssistantMessage,
+    )
+  }
+
+  return `${lines.join('\n')}\n`
+}
+
+const postProgressComment = async ({
+  logger,
+  repository,
+  issueNumber,
+  stage,
+  headBranch,
+  baseBranch,
+  phase,
+  prUrl,
+  lastAssistantMessage,
+  requirementMetadata,
+}: {
+  logger: CodexLogger
+  repository: string
+  issueNumber: string
+  stage: string
+  headBranch: string
+  baseBranch: string
+  phase: 'started' | 'completed' | 'failed'
+  prUrl?: string | null
+  lastAssistantMessage?: string | null
+  requirementMetadata?: RequirementMetadata
+}) => {
+  if (!isNumericIssueNumber(issueNumber)) {
+    return
+  }
+
+  try {
+    await runCodexProgressComment({
+      body: buildProgressComment({
+        repository,
+        issueNumber,
+        stage,
+        headBranch,
+        baseBranch,
+        phase,
+        prUrl,
+        lastAssistantMessage,
+        requirementMetadata,
+      }),
+    })
+  } catch (error) {
+    logger.warn('Failed to publish Codex progress comment', error)
+  }
 }
 
 const sanitizeNullableString = (value: string | null | undefined) => {
@@ -1740,6 +1854,16 @@ export const runCodexImplementation = async (eventPath: string) => {
       run_id: channelRunId || undefined,
     },
   })
+  await postProgressComment({
+    logger,
+    repository,
+    issueNumber,
+    stage,
+    headBranch,
+    baseBranch,
+    phase: 'started',
+    requirementMetadata,
+  })
 
   const systemPromptPath = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_PATH))
   const payloadSystemPrompt = normalizeOptionalString(sanitizeNullableString(event.systemPrompt))
@@ -1844,6 +1968,8 @@ export const runCodexImplementation = async (eventPath: string) => {
   let resumeSessionId: string | undefined
   let capturedSessionId: string | undefined
   let runSucceeded = false
+  let lastAssistantMessage: string | null = null
+  let prUrl: string | null = null
 
   try {
     if (supportsResume) {
@@ -1909,7 +2035,6 @@ export const runCodexImplementation = async (eventPath: string) => {
 
     const maxSessionAttempts = parsePositiveIntEnv(process.env.CODEX_MAX_SESSION_ATTEMPTS, 3)
     let sessionResult: RunCodexSessionResult = { agentMessages: [], sessionId: undefined, exitCode: 0 }
-    let lastAssistantMessage: string | null = null
     const runSession = async (sessionPrompt: string) => {
       return await runCodexSession({
         stage: stage as Parameters<typeof runCodexSession>[0]['stage'],
@@ -2016,7 +2141,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     const prNumberRaw = await readOptionalTextFile(prNumberPath, logger)
     const prUrlRaw = await readOptionalTextFile(prUrlPath, logger)
     const prNumber = prNumberRaw ? parseOptionalPrNumber(prNumberRaw) : null
-    const prUrl = prUrlRaw ? prUrlRaw : null
+    prUrl = prUrlRaw ? prUrlRaw : null
     const headSha = commitSha ?? null
     try {
       await ensureFileDirectory(headShaPath)
@@ -2132,6 +2257,18 @@ export const runCodexImplementation = async (eventPath: string) => {
         iterationCycle,
       },
     })
+    await postProgressComment({
+      logger,
+      repository,
+      issueNumber,
+      stage,
+      headBranch,
+      baseBranch,
+      phase: 'completed',
+      prUrl,
+      lastAssistantMessage,
+      requirementMetadata,
+    })
 
     runSucceeded = true
     return {
@@ -2147,6 +2284,18 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
   } finally {
     if (!runSucceeded) {
+      await postProgressComment({
+        logger,
+        repository,
+        issueNumber,
+        stage,
+        headBranch,
+        baseBranch,
+        phase: 'failed',
+        prUrl,
+        lastAssistantMessage,
+        requirementMetadata,
+      })
       await publishNatsEvent(logger, {
         kind: 'run-gaps',
         content: 'Run failed before emitting gaps; inspect logs and artifacts.',

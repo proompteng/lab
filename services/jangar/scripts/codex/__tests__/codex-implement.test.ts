@@ -33,6 +33,20 @@ const bunUtils = vi.hoisted(() => ({
 
 vi.mock('bun', () => bunUtils)
 
+const progressCommentMocks = vi.hoisted(() => ({
+  runCodexProgressComment: vi.fn<
+    (options?: { args?: string[]; body?: string; stdin?: NodeJS.ReadableStream }) => Promise<{
+      action: 'help' | 'updated' | 'created'
+      commentId: string
+    }>
+  >(async () => ({
+    action: 'updated',
+    commentId: '123',
+  })),
+}))
+
+vi.mock('../codex-progress-comment', () => progressCommentMocks)
+
 const runnerMocks = vi.hoisted(() => ({
   runCodexSession: vi.fn<(options: RunCodexSessionOptions) => Promise<RunCodexSessionResult>>(async () => ({
     agentMessages: ['done'],
@@ -48,6 +62,7 @@ vi.mock('../lib/codex-runner', () => runnerMocks)
 const runCodexSessionMock = runnerMocks.runCodexSession
 const pushCodexEventsToLokiMock = runnerMocks.pushCodexEventsToLoki
 const buildDiscordChannelCommandMock = utilMocks.buildDiscordChannelCommand
+const runCodexProgressCommentMock = progressCommentMocks.runCodexProgressComment
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -148,6 +163,7 @@ describe('runCodexImplementation', () => {
       exitCode: 0,
       forcedTermination: false,
     }))
+    runCodexProgressCommentMock.mockReset()
     pushCodexEventsToLokiMock.mockReset()
     pushCodexEventsToLokiMock.mockImplementation(async () => {})
     buildDiscordChannelCommandMock.mockClear()
@@ -191,6 +207,71 @@ describe('runCodexImplementation', () => {
     const resumeMetadataRaw = await readFile(resumeMetadataPath, 'utf8')
     const resumeMetadata = JSON.parse(resumeMetadataRaw) as Record<string, unknown>
     expect(resumeMetadata.state).toBe('cleared')
+  }, 40_000)
+
+  it('posts progress comments at start and completion', async () => {
+    await runCodexImplementation(eventPath)
+
+    expect(runCodexProgressCommentMock).toHaveBeenCalledTimes(2)
+    const startBody = runCodexProgressCommentMock.mock.calls[0]?.[0]?.body
+    const completedBody = runCodexProgressCommentMock.mock.calls.at(-1)?.[0]?.body
+    expect(startBody).toContain('<!-- codex:progress -->')
+    expect(startBody).toContain('Phase: started')
+    expect(startBody).toContain('- Issue: #42')
+    expect(completedBody).toContain('Phase: completed')
+    expect(completedBody).toContain('### Last assistant message')
+    expect(completedBody).toContain('done')
+  }, 40_000)
+
+  it('includes cross-swarm provenance in progress comments', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm dispatch and implementation handoff',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mu',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
+      swarmRequirementPayload:
+        '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
+      swarmRequirementPayloadBytes: 142,
+      swarmRequirementPayloadTruncated: false,
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const completedBody = runCodexProgressCommentMock.mock.calls.at(-1)?.[0]?.body
+    expect(completedBody).toContain('### Cross-swarm requirement')
+    expect(completedBody).toContain('- Requirement ID: 00gcj8mu')
+    expect(completedBody).toContain('- Signal: torghut-to-jangar-e2e-1772426902')
+    expect(completedBody).toContain('- Source: torghut-quant')
+    expect(completedBody).toContain('- Target: jangar-control-plane')
+    expect(completedBody).toContain('- Channel: huly://swarm-bridge/issues/TORGHUT-1772426902')
+    expect(completedBody).toContain('### Requirement description')
+    expect(completedBody).toContain('End-to-end validation requirement from torghut swarm to jangar swarm.')
+  }, 40_000)
+
+  it('does not publish progress comments when issue number is non-numeric', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 'swarm-jangar-control-plane',
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    expect(runCodexProgressCommentMock).not.toHaveBeenCalled()
   }, 40_000)
 
   it('bootstraps the worktree checkout when the repository is missing', async () => {
