@@ -37,7 +37,10 @@ from .feature_quality import FeatureQualityThresholds, evaluate_feature_batch_qu
 from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor, SignalBatch
 from .llm import LLMReviewEngine, apply_policy
-from .llm.dspy_programs.runtime import DSPyRuntimeUnsupportedStateError
+from .llm.dspy_programs.runtime import (
+    DSPyReviewRuntime,
+    DSPyRuntimeUnsupportedStateError,
+)
 from .llm.guardrails import evaluate_llm_guardrails
 from .lean_lanes import LeanLaneManager
 from .market_context import (

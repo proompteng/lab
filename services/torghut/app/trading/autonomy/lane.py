@@ -1493,9 +1493,6 @@ def run_autonomous_lane(
                 or f"Autonomous recommendation for {promotion_target} target."
             ),
         )
-        actuation_intent_path.write_text(
-            json.dumps(actuation_intent_payload, indent=2), encoding="utf-8"
-        )
 
         phase_manifest_payload = _build_phase_manifest(
             run_id=run_id,
@@ -1518,6 +1515,14 @@ def run_autonomous_lane(
         )
         phase_manifest_path.write_text(
             json.dumps(phase_manifest_payload, indent=2), encoding="utf-8"
+        )
+        actuation_intent_payload["artifact_refs"] = sorted(
+            {
+                str(item)
+                for item in actuation_intent_payload.get("artifact_refs", [])
+                if str(item).strip()
+            }
+            | {str(phase_manifest_path)}
         )
 
         candidate_generation_manifest_payload = json.loads(
@@ -1622,6 +1627,7 @@ def run_autonomous_lane(
         research_spec["stage_lineage"] = stage_lineage_payload
         research_spec["replay_artifact_hashes"] = replay_artifact_hashes
         actuation_intent_payload["candidate_hash"] = candidate_hash
+        actuation_intent_payload["audit"]["stage_trace_ids"] = stage_trace_ids
         research_spec["replay_artifact_hashes"] = replay_artifact_hashes
         if patch_path is not None and patch_path.exists():
             research_spec["artifacts"]["paper_patch"] = str(patch_path)
