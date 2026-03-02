@@ -620,6 +620,10 @@ const normalizeHulyBaseUrl = (value: string | null | undefined) => {
   try {
     const url = new URL(trimmed)
     if (!url.hostname.toLowerCase().includes('huly')) return ''
+    // Frontend endpoints do not expose transactor REST routes in-cluster.
+    if (url.hostname.toLowerCase().startsWith('front.')) {
+      url.hostname = `transactor.${url.hostname.slice('front.'.length)}`
+    }
     const origin = `${url.protocol}//${url.host}`
     return origin.replace(/\/+$/, '')
   } catch {

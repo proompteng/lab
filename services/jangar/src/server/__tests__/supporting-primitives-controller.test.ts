@@ -288,6 +288,58 @@ describe('supporting primitives controller', () => {
     expect(status.stageStates).toBeTruthy()
   })
 
+  it('derives transactor huly api base url from front owner channel', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun || resource === RESOURCE_MAP.OrchestrationRun) {
+        return { items: [] }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'http://front.huly.svc.cluster.local' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const schedulePayload = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.kind === 'Schedule') as { metadata?: Record<string, unknown> } | undefined
+    expect(schedulePayload).toBeDefined()
+    const annotations = (schedulePayload?.metadata?.annotations ?? {}) as Record<string, string>
+    expect(annotations['swarm.proompteng.ai/huly-base-url']).toBe('http://transactor.huly.svc.cluster.local')
+  })
+
   it('dispatches Huly requirement signals into implement runs', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
