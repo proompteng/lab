@@ -283,6 +283,53 @@ class TestAutonomousLane(TestCase):
                 actuation_payload["artifact_refs"],
             )
 
+    def test_lane_promotion_stress_artifact_ref_uses_output_dir_relative_path(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+        strategy_configmap_path = (
+            Path(__file__).parent.parent.parent.parent
+            / "argocd"
+            / "applications"
+            / "torghut"
+            / "strategy-configmap.yaml"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_cwd = Path.cwd()
+            os.chdir(tmpdir)
+            try:
+                output_dir = Path("lane")
+                session_factory = self._empty_session_factory()
+                result = run_autonomous_lane(
+                    signals_path=fixture_path,
+                    strategy_config_path=strategy_config_path,
+                    gate_policy_path=gate_policy_path,
+                    output_dir=output_dir,
+                    promotion_target="paper",
+                    strategy_configmap_path=strategy_configmap_path,
+                    session_factory=session_factory,
+                    code_version="test-sha",
+                )
+                gate_payload = json.loads(
+                    result.gate_report_path.read_text(encoding="utf-8")
+                )
+                self.assertIn("promotion_evidence", gate_payload)
+                evidence = gate_payload["promotion_evidence"]
+                self.assertEqual(
+                    evidence["stress_metrics"]["artifact_ref"],
+                    str(Path("gates") / "stress-metrics-v1.json"),
+                )
+                self.assertTrue(
+                    (output_dir / "gates" / "stress-metrics-v1.json").exists()
+                )
+            finally:
+                os.chdir(original_cwd)
+
     def test_lane_progression_manifests_and_iteration_note(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
         strategy_config_path = (

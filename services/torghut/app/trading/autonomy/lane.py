@@ -1051,6 +1051,9 @@ def run_autonomous_lane(
         stress_metrics_path.write_text(
             json.dumps(stress_metrics_payload, indent=2), encoding="utf-8"
         )
+        stress_metrics_artifact_ref = str(stress_metrics_path)
+        if not output_dir.is_absolute():
+            stress_metrics_artifact_ref = str(stress_metrics_path.relative_to(output_dir))
         gate_report_payload = gate_report.to_payload()
         gate_report_payload["run_id"] = run_id
         gate_report_payload["throughput"] = {
@@ -1071,7 +1074,7 @@ def run_autonomous_lane(
             "stress_metrics": {
                 "count": len(stress_evidence),
                 "items": stress_evidence,
-                "artifact_ref": str(stress_metrics_path),
+                "artifact_ref": stress_metrics_artifact_ref,
             },
             "janus_q": {
                 "event_car": {
@@ -1290,7 +1293,7 @@ def run_autonomous_lane(
             "stress_metrics": {
                 "count": len(stress_evidence),
                 "items": stress_evidence,
-                "artifact_ref": str(stress_metrics_path),
+                "artifact_ref": stress_metrics_artifact_ref,
             },
             "janus_q": {
                 "event_car": {
