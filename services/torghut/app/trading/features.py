@@ -35,7 +35,11 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'hmm_entropy',
     'hmm_entropy_band',
     'hmm_regime_id',
+    'hmm_transition_shock',
     'hmm_guardrail',
+    'hmm_artifact_model_id',
+    'hmm_artifact_feature_schema',
+    'hmm_artifact_training_run_id',
     'route_regime_label',
     'staleness_ms',
 )
@@ -279,7 +283,11 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         'hmm_entropy': regime_context.entropy,
         'hmm_entropy_band': regime_context.entropy_band,
         'hmm_regime_id': regime_context.regime_id,
+        'hmm_transition_shock': regime_context.transition_shock,
         'hmm_guardrail': regime_context.guardrail.to_payload(),
+        'hmm_artifact_model_id': regime_context.artifact.model_id,
+        'hmm_artifact_feature_schema': regime_context.artifact.feature_schema,
+        'hmm_artifact_training_run_id': regime_context.artifact.training_run_id,
         'route_regime_label': _route_regime_label(payload, macd=macd, macd_signal=macd_signal),
         'staleness_ms': _staleness_ms(signal.event_ts, signal.ingest_ts),
     }

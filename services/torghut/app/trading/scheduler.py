@@ -2552,7 +2552,8 @@ class TradingPipeline:
         if not regime_context.is_authoritative:
             source = (
                 "regime_hmm_unknown_regime"
-                if regime_context.authority_reason in {"invalid_regime_id", "missing_regime"}
+                if regime_context.authority_reason
+                in {"invalid_regime_id", "missing_regime", "invalid_schema_version"}
                 else "regime_hmm_non_authoritative"
             )
             return RuntimeUncertaintyGate(

@@ -1215,6 +1215,44 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "regime_hmm_unknown_regime")
         self.assertEqual(gate.reason, "hmm_unknown")
 
+    def test_pipeline_runtime_regime_gate_invalid_schema_version_fails_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v0",
+                    "regime_id": "R2",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "stable"},
+                },
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_unknown_regime")
+        self.assertEqual(gate.reason, "hmm_schema_version_invalid")
+
     def test_pipeline_runtime_regime_gate_stale_hmm_is_fail_closed(self) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),

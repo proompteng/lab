@@ -143,6 +143,32 @@ class TestSchedulerRegimeResolution(TestCase):
             ('vol=mid|trend=up|liq=liquid', 'legacy', 'hmm_unknown'),
         )
 
+    def test_regime_resolution_falls_back_to_legacy_when_hmm_schema_version_invalid(self) -> None:
+        decision = StrategyDecision(
+            strategy_id='strategy-1',
+            symbol='AAPL',
+            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+            timeframe='1Min',
+            action='buy',
+            qty=Decimal('1'),
+            params={
+                'regime_label': 'trend',
+                'regime_hmm': {
+                    'schema_version': 'hmm_regime_context_v0',
+                    'regime_id': 'R2',
+                    'artifact': {'model_id': 'hmm-regime-v1.2.0'},
+                    'guardrail': {'reason': 'stable'},
+                },
+            },
+        )
+
+        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+
+        self.assertEqual(
+            source_regime_label,
+            ('trend', 'legacy', 'hmm_schema_version_invalid'),
+        )
+
     def test_regime_resolution_falls_back_to_legacy_when_hmm_transition_shock(self) -> None:
         decision = StrategyDecision(
             strategy_id='strategy-1',

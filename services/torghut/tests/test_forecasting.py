@@ -486,7 +486,8 @@ class TestForecastRouterV5(TestCase):
         }
         feature_vector = normalize_feature_vector_v3(signal)
 
-        self.assertNotIn('hmm_transition_shock', feature_vector.values)
+        self.assertIn('hmm_transition_shock', feature_vector.values)
+        self.assertEqual(feature_vector.values.get('hmm_transition_shock'), True)
         self.assertEqual(feature_vector.values.get('route_regime_label'), 'mean_revert')
 
     def test_router_prefers_explicit_route_regime_label_hint_when_hmm_invalid(self) -> None:

@@ -87,6 +87,37 @@ class TestFeatureContractV3(TestCase):
         self.assertEqual(fv.values['imbalance_spread'], Decimal('0.03'))
         self.assertEqual(fv.values['staleness_ms'], 2000)
 
+    def test_normalization_persists_hmm_transition_shock_and_artifact_lineage(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'hmm_regime_id': 'R2',
+                'hmm_transition_shock': True,
+                'hmm_entropy': '1.23',
+                'hmm_entropy_band': 'medium',
+                'hmm_predicted_next': 'R3',
+                'hmm_guardrail': {'stale': False, 'fallback_to_defensive': False},
+                'hmm_artifact': {
+                    'model_id': 'hmm-regime-v1.2.0',
+                    'feature_schema': 'hmm-v1-feature-schema',
+                    'training_run_id': 'trn_2026-02-28',
+                },
+                'macd': {'macd': '0.4', 'signal': '0.2'},
+                'rsi14': '55',
+                'price': '100',
+            },
+            seq=1,
+            source='fixture',
+        )
+
+        feature_vector = normalize_feature_vector_v3(signal)
+        self.assertTrue(feature_vector.values['hmm_transition_shock'])
+        self.assertEqual(feature_vector.values['hmm_artifact_model_id'], 'hmm-regime-v1.2.0')
+        self.assertEqual(feature_vector.values['hmm_artifact_feature_schema'], 'hmm-v1-feature-schema')
+        self.assertEqual(feature_vector.values['hmm_artifact_training_run_id'], 'trn_2026-02-28')
+
     def test_normalization_rejects_incompatible_schema_major(self) -> None:
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),

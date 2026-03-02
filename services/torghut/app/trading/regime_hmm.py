@@ -74,7 +74,8 @@ class HMMRegimeContext:
     @property
     def is_authoritative(self) -> bool:
         return (
-            self.has_regime
+            self.schema_version == HMM_CONTEXT_SCHEMA_VERSION
+            and self.has_regime
             and not self.guardrail.stale
             and not self.guardrail.fallback_to_defensive
             and not self.transition_shock
@@ -83,6 +84,8 @@ class HMMRegimeContext:
 
     @property
     def authority_reason(self) -> str | None:
+        if self.schema_version != HMM_CONTEXT_SCHEMA_VERSION:
+            return "invalid_schema_version"
         if self.has_regime and not _REGIME_ID_RE.match(self.regime_id):
             return "invalid_regime_id"
         if self.transition_shock:
@@ -189,6 +192,8 @@ def resolve_regime_context_authority_reason(context: HMMRegimeContext) -> str | 
     reason = context.authority_reason
     if reason in {"invalid_regime_id", "missing_regime"}:
         return "hmm_unknown"
+    if reason == "invalid_schema_version":
+        return "hmm_schema_version_invalid"
     if reason in {"transition_shock", "stale", "fallback_to_defensive"}:
         return reason
     if reason is not None:
