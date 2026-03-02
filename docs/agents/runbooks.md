@@ -48,7 +48,26 @@ The Application renders `argocd/applications/agents` (Helm + kustomize) and inst
 into the `agents` namespace using `argocd/applications/agents/values.yaml`.
 Update the values file with your Jangar image tag, database secret, and (optional) runner image via `runner.image.*`.
 The chart defaults `controller.jobTtlSecondsAfterFinished` to a safe value; set it to `0` to disable job cleanup.
+
 If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
+Guardrail rules that fail install-time validation:
+
+- Empty scope arrays (`[]`) for any of `controller.namespaces`, `orchestrationController.namespaces`,
+  `supportingController.namespaces`
+- `['*', ...]` combinations where `*` is mixed with a concrete namespace
+- Multiple namespaces with `rbac.clusterScoped=false`
+- Explicit single namespace values that do not match `namespaceOverride`/release namespace
+
+Run the namespace validation helper (from `docs/agents/ci-validation-plan.md`) before upgrading
+if changing any of these scope values. Example:
+
+```bash
+helm template charts/agents --set namespaceOverride=agents --set-json 'controller.namespaces=["agents"]' --set rbac.clusterScoped=false
+helm template charts/agents --set-json 'controller.namespaces=["*"]' --set rbac.clusterScoped=false
+helm template charts/agents --set-json 'controller.namespaces=[]'
+```
+
+If that helper is unavailable, run the full command list in the validation plan directly.
 
 GitOps rollout notes (native workflow runtime):
 

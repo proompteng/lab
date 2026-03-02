@@ -110,9 +110,68 @@ Agent memory backends are configured separately via the `Memory` CRD.
 
 ### Controller scope
 
-- Single namespace: default
-- Multi-namespace: set `controller.namespaces` and `rbac.clusterScoped=true`
-- Wildcard: set `controller.namespaces=["*"]` and `rbac.clusterScoped=true`
+- Single namespace (namespaced RBAC): omit a scope list for release-namespace default or set exactly one namespace.
+- Explicit scope lists must be arrays, and if the key is present the list must have at least one namespace.
+- Multi-namespace: set any scope list with multiple namespaces and `rbac.clusterScoped=true`.
+- Wildcard: set exactly one value `["*"]` and `rbac.clusterScoped=true`.
+- Explicit single namespace with cluster-scoped RBAC: set `rbac.clusterScoped=true` when a scope list contains exactly one namespace but you still need cluster-level permissions.
+- Invalid combinations are rejected at render-time for all scope keys:
+  - explicit empty list (`[]`)
+  - wildcard (`"*"`) combined with any specific namespace
+  - multi-namespace with `rbac.clusterScoped=false`
+  - single-namespace lists in namespaced mode that target a namespace different from the chart namespace
+    (`namespaceOverride`/`Release.Namespace`)
+  - invalid namespace tokens (for example `""`, `"  agents"`, `"*"` mixed with specific namespaces, uppercase values)
+
+For all scope keys:
+
+- `controller.namespaces`
+- `orchestrationController.namespaces`
+- `supportingController.namespaces`
+
+Do **not** set an explicit empty list (`[]`). Empty scope arrays are rejected by chart validation.
+
+`rbac.clusterScoped=false` is namespaced to `namespaceOverride` (falling back to `Release.Namespace`
+when unset). If any scope key is set explicitly to one namespace, that namespace must be the same chart namespace.
+
+Examples:
+
+```yaml
+# Valid: namespaced controllers
+controller:
+  namespaces:
+    - agents
+rbac:
+  clusterScoped: false
+
+# Valid: cluster-scoped controllers for one namespace
+controller:
+  namespaces:
+    - agents
+rbac:
+  clusterScoped: true
+
+# Valid: cluster-scoped controllers across namespaces
+controller:
+  namespaces:
+    - team-a
+    - team-b
+rbac:
+  clusterScoped: true
+
+# Invalid: render-time failures
+controller:
+  namespaces: []               # empty scope array
+rbac:
+  clusterScoped: false
+
+controller:
+  namespaces:
+    - teams
+    - '*'                     # wildcard mixed with a concrete namespace
+rbac:
+  clusterScoped: true
+```
 
 ### AgentRun status artifact limits
 
@@ -127,11 +186,14 @@ Note: The CRD schema hard-caps `status.artifacts` at 50 entries; controller-side
 
 #### Namespaced vs cluster-scoped install matrix
 
-| Install mode               | controller.namespaces  | rbac.clusterScoped | RBAC scope                                              |
-| -------------------------- | ---------------------- | ------------------ | ------------------------------------------------------- |
-| Namespaced (single)        | `[]` or `["agents"]`   | `false`            | Role + RoleBinding                                      |
-| Multi-namespace (explicit) | `["team-a", "team-b"]` | `true`             | ClusterRole + ClusterRoleBinding                        |
-| Wildcard (all namespaces)  | `["*"]`                | `true`             | ClusterRole + ClusterRoleBinding (namespace list/watch) |
+| Install mode                      | Scope list examples     | rbac.clusterScoped | RBAC scope                                              |
+| --------------------------------- | ----------------------- | ------------------ | ------------------------------------------------------- |
+| Namespaced (single)               | omitted or `["agents"]` | `false`            | Role + RoleBinding in release namespace                 |
+| Single namespace (cluster-scoped) | `["agents"]`            | `true`             | ClusterRole + ClusterRoleBinding                        |
+| Multi-namespace (explicit)        | `["team-a", "team-b"]`  | `true`             | ClusterRole + ClusterRoleBinding                        |
+| Wildcard (all namespaces)         | `["*"]`                 | `true`             | ClusterRole + ClusterRoleBinding (namespace list/watch) |
+
+If you set all three scope keys, they must use the same RBAC mode so controller permissions stay aligned.
 
 ### Default scheduling for job pods
 
@@ -432,6 +494,14 @@ controller:
     deprecatedTokenTypes:
       github:
         - pat
+
+orchestrationController:
+  namespaces:
+    - agents
+
+supportingController:
+  namespaces:
+    - agents
 
 rbac:
   clusterScoped: false

@@ -6,6 +6,8 @@ image:
   tag: latest
   pullPolicy: IfNotPresent
 
+namespaceOverride: agents
+
 service:
   type: ClusterIP
   port: 80
