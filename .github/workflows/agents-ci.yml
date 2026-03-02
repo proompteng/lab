@@ -139,14 +139,6 @@ jobs:
           kubectl_version: v1.29.4
           wait: 180s
 
-      - name: Build and load local pgvector image for smoke test
-        run: |
-          set -euo pipefail
-          IMAGE_NAME="registry.ide-newton.ts.net/lab/vecteur:ci-${{ github.run_id }}-${{ github.run_attempt }}"
-          docker build --platform linux/arm64 --build-arg PG_MAJOR=18 -t "${IMAGE_NAME}" services/vecteur
-          kind load docker-image "${IMAGE_NAME}" --name "${KIND_CLUSTER_NAME}"
-          echo "AGENTS_DB_IMAGE=${IMAGE_NAME}" >> "${GITHUB_ENV}"
-
       - name: Run agents integration smoke test
         env:
           AGENTS_NAMESPACE: agents-ci
