@@ -21,6 +21,13 @@ class TestOrchestrationGuard(TestCase):
         }
 
     def test_allows_valid_transition(self) -> None:
+        state: dict[str, Any] = {
+            'candidateId': 'cand-abc123',
+            'runId': 'run-abc123',
+            'activeStage': 'backtest-robustness',
+            'paused': False,
+            'failureCounts': {},
+        }
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact = Path(tmpdir) / 'report.json'
             artifact.write_text(
@@ -38,11 +45,11 @@ class TestOrchestrationGuard(TestCase):
             )
             result = evaluate_transition(
                 policy=self.policy,
-                state=self.state,
+                state=state,
                 candidate_id='cand-abc123',
                 run_id='run-abc123',
-                from_stage='gate-evaluation',
-                to_stage='promotion-prerequisites',
+                from_stage='backtest-robustness',
+                to_stage='gate-evaluation',
                 previous_artifact=artifact,
                 previous_gate_passed=True,
                 risk_controls_passed=True,
@@ -52,9 +59,16 @@ class TestOrchestrationGuard(TestCase):
             )
         self.assertTrue(result['allowed'])
         self.assertEqual(result['nextAction'], 'proceed')
-        self.assertEqual(result['lane'], 'lane-e')
+        self.assertEqual(result['lane'], 'lane-d')
 
     def test_blocks_transition_when_stage_slo_gate_fails(self) -> None:
+        state: dict[str, Any] = {
+            'candidateId': 'cand-abc123',
+            'runId': 'run-abc123',
+            'activeStage': 'backtest-robustness',
+            'paused': False,
+            'failureCounts': {},
+        }
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact = Path(tmpdir) / 'report.json'
             artifact.write_text(
@@ -72,11 +86,11 @@ class TestOrchestrationGuard(TestCase):
             )
             result = evaluate_transition(
                 policy=self.policy,
-                state=self.state,
+                state=state,
                 candidate_id='cand-abc123',
                 run_id='run-abc123',
-                from_stage='gate-evaluation',
-                to_stage='promotion-prerequisites',
+                from_stage='backtest-robustness',
+                to_stage='gate-evaluation',
                 previous_artifact=artifact,
                 previous_gate_passed=True,
                 risk_controls_passed=True,
@@ -91,16 +105,23 @@ class TestOrchestrationGuard(TestCase):
         )
 
     def test_blocks_transition_when_stage_slo_gate_is_missing(self) -> None:
+        state: dict[str, Any] = {
+            'candidateId': 'cand-abc123',
+            'runId': 'run-abc123',
+            'activeStage': 'backtest-robustness',
+            'paused': False,
+            'failureCounts': {},
+        }
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact = Path(tmpdir) / 'report.json'
             artifact.write_text(json.dumps({'gates': []}), encoding='utf-8')
             result = evaluate_transition(
                 policy=self.policy,
-                state=self.state,
+                state=state,
                 candidate_id='cand-abc123',
                 run_id='run-abc123',
-                from_stage='gate-evaluation',
-                to_stage='promotion-prerequisites',
+                from_stage='backtest-robustness',
+                to_stage='gate-evaluation',
                 previous_artifact=artifact,
                 previous_gate_passed=True,
                 risk_controls_passed=True,
@@ -114,6 +135,13 @@ class TestOrchestrationGuard(TestCase):
         )
 
     def test_allows_transition_when_stage_slo_gate_uses_id_key(self) -> None:
+        state: dict[str, Any] = {
+            'candidateId': 'cand-abc123',
+            'runId': 'run-abc123',
+            'activeStage': 'backtest-robustness',
+            'paused': False,
+            'failureCounts': {},
+        }
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact = Path(tmpdir) / 'report.json'
             artifact.write_text(
@@ -131,11 +159,11 @@ class TestOrchestrationGuard(TestCase):
             )
             result = evaluate_transition(
                 policy=self.policy,
-                state=self.state,
+                state=state,
                 candidate_id='cand-abc123',
                 run_id='run-abc123',
-                from_stage='gate-evaluation',
-                to_stage='promotion-prerequisites',
+                from_stage='backtest-robustness',
+                to_stage='gate-evaluation',
                 previous_artifact=artifact,
                 previous_gate_passed=True,
                 risk_controls_passed=True,
@@ -145,6 +173,58 @@ class TestOrchestrationGuard(TestCase):
             )
         self.assertTrue(result['allowed'])
         self.assertEqual(result['nextAction'], 'proceed')
+
+    def test_blocks_transition_when_to_stage_slo_gates_fail(self) -> None:
+        policy: dict[str, Any] = {
+            'stages': [
+                {
+                    'stage': 'source-stage',
+                    'lane': 'lane-a',
+                    'mutableAction': False,
+                    'requirePreviousArtifact': True,
+                    'requirePreviousGatePass': True,
+                    'stageSloGates': [{'gate_id': 'source_gate', 'requiredStatus': 'pass'}],
+                },
+                {
+                    'stage': 'target-stage',
+                    'lane': 'lane-b',
+                    'mutableAction': False,
+                    'requirePreviousArtifact': True,
+                    'requirePreviousGatePass': True,
+                    'stageSloGates': [{'gate_id': 'target_gate', 'requiredStatus': 'pass'}],
+                },
+            ],
+            'transitions': {'source-stage': ['target-stage']},
+        }
+        state: dict[str, Any] = {
+            'candidateId': 'cand-abc123',
+            'runId': 'run-abc123',
+            'activeStage': 'source-stage',
+            'paused': False,
+            'failureCounts': {},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact = Path(tmpdir) / 'report.json'
+            artifact.write_text(
+                json.dumps({'gates': [{'gate_id': 'source_gate', 'status': 'pass'}]}),
+                encoding='utf-8',
+            )
+            result = evaluate_transition(
+                policy=policy,
+                state=state,
+                candidate_id='cand-abc123',
+                run_id='run-abc123',
+                from_stage='source-stage',
+                to_stage='target-stage',
+                previous_artifact=artifact,
+                previous_gate_passed=True,
+                risk_controls_passed=True,
+                execution_controls_passed=True,
+                mode='gitops',
+                emergency_ticket=None,
+            )
+        self.assertFalse(result['allowed'])
+        self.assertEqual(result['reason'], 'stage_slo_gate_missing:target_gate')
 
     def test_blocks_mutable_stage_without_gitops_or_ticket(self) -> None:
         state: dict[str, Any] = {

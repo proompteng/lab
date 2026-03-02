@@ -328,12 +328,7 @@ def evaluate_transition(
     )
     if transition_error:
         return transition_error
-    source_stage = from_stage or active_stage
-
     stage_policy = stage_definitions[to_stage]
-    source_stage_policy = (
-        stage_definitions[source_stage] if source_stage is not None else None
-    )
     controls_error = _validate_stage_controls(
         stage_policy=stage_policy,
         previous_artifact=previous_artifact,
@@ -344,9 +339,7 @@ def evaluate_transition(
     if controls_error:
         return controls_error
     slo_error = _validate_stage_slo_gates(
-        stage_policy=source_stage_policy
-        if source_stage_policy is not None
-        else stage_policy,
+        stage_policy=stage_policy,
         previous_artifact=previous_artifact,
     )
     if slo_error:
