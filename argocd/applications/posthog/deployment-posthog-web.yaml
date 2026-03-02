@@ -1,0 +1,270 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: posthog-web
+  labels:
+    "app.kubernetes.io/name": "posthog"
+    "app.kubernetes.io/instance": "posthog"
+  annotations:
+spec:
+  selector:
+    matchLabels:
+        app: posthog
+        release: "posthog"
+        role: web
+  replicas: 1
+  template:
+    metadata:
+      annotations:
+        checksum/secrets.yaml: 2ecbce8859a89b02244995ae16d3349df330281a86db6fe93bc8df634289c73f
+      labels:
+        app: posthog
+        release: "posthog"
+        role: web
+    spec:
+      serviceAccountName: posthog
+      containers:
+      - name: posthog-web
+        image: "posthog/posthog:release-1.43.1"
+        command:
+          - ./bin/docker-server
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        env:
+        # Kafka env variables        
+        # Used by PostHog/plugin-server. There is no specific reason for the difference. Expected format: comma-separated list of "host:port"
+        - name: KAFKA_HOSTS
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+        # Used by PostHog/web. There is no specific reason for the difference. Expected format: comma-separated list of "kafka://host:port"
+        - name: KAFKA_URL
+          value: "kafka://kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+
+        # Object Storage env variables        
+        
+        
+
+        # Redis env variables        
+        
+        - name: POSTHOG_REDIS_HOST
+          value: posthog-redis.posthog.svc.cluster.local
+        
+        - name: POSTHOG_REDIS_PORT
+          value: "6379"
+
+        # statsd env variables        
+
+        - name: SITE_URL
+          value: "http://127.0.0.1:8000"
+        - name: DEPLOYMENT
+          value: self_managed
+        - name: SENTRY_DSN
+          value: 
+        - name: DISABLE_SECURE_SSL_REDIRECT
+          value: '1'
+        - name: IS_BEHIND_PROXY
+          value: '1'
+        # PostHog app settings        
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: posthog
+              key: posthog-secret
+        - name: SAML_ENTITY_ID
+          value: ""
+        - name: SAML_ACS_URL
+          value: ""
+        - name: SAML_X509_CERT
+          value: ""
+        - name: SAML_ATTR_PERMANENT_ID
+          value: ""
+        - name: SAML_ATTR_FIRST_NAME
+          value: ""
+        - name: SAML_ATTR_LAST_NAME
+          value: ""
+        - name: SAML_ATTR_EMAIL
+          value: ""
+        - name: PRIMARY_DB
+          value: clickhouse
+        
+        - name: POSTHOG_POSTGRES_HOST
+          value: posthog-db-pooler
+        - name: POSTHOG_POSTGRES_PORT
+          value: "5432"
+        - name: POSTHOG_DB_USER
+          value: "posthog"
+        - name: POSTHOG_DB_NAME
+          value: "posthog"
+        - name: POSTHOG_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: "posthog-db-app"
+              key: "postgresql-password"
+        - name: USING_PGBOUNCER
+          value: 'true'
+        - name: CLICKHOUSE_HOST
+          value: "posthog-clickhouse.posthog.svc.cluster.local"
+        - name: CLICKHOUSE_CLUSTER
+          value: "default"
+        - name: CLICKHOUSE_DATABASE
+          value: "default"
+        - name: CLICKHOUSE_USER
+          value: "posthog"
+        - name: CLICKHOUSE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: "posthog-clickhouse-auth"
+              key: "password"
+        - name: CLICKHOUSE_SECURE
+          value: "false"
+        - name: CLICKHOUSE_VERIFY
+          value: "false"
+        
+        - name: EMAIL_HOST
+          value: ""
+        - name: EMAIL_PORT
+          value: ""
+        - name: EMAIL_HOST_USER
+          value: ""
+        - name: EMAIL_HOST_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: posthog
+              key: "smtp-password"
+        - name: EMAIL_USE_TLS
+          value: "true"
+        - name: EMAIL_USE_SSL
+          value: "false"
+        - name: DEFAULT_FROM_EMAIL
+          value: 
+        - name: CAPTURE_INTERNAL_METRICS
+          value: "true"
+        - name: SOCIAL_AUTH_GOOGLE_OAUTH2_KEY
+          value: null
+        - name: SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET
+          value: null
+        - name: SOCIAL_AUTH_GOOGLE_OAUTH2_WHITELISTED_DOMAINS
+          value: posthog.com
+        livenessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /_health/
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 50
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 2
+        readinessProbe:
+          failureThreshold: 10
+          httpGet:
+            path: /_health/
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 50
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 2
+        resources:
+            {}
+      initContainers:        
+        - name: wait-for-service-dependencies
+          image: busybox:1.34
+          env:
+            - name: CLICKHOUSE_HOST
+              value: "posthog-clickhouse.posthog.svc.cluster.local"
+            - name: CLICKHOUSE_CLUSTER
+              value: "default"
+            - name: CLICKHOUSE_DATABASE
+              value: "default"
+            - name: CLICKHOUSE_USER
+              value: "posthog"
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "posthog-clickhouse-auth"
+                  key: "password"
+            - name: CLICKHOUSE_SECURE
+              value: "false"
+            - name: CLICKHOUSE_VERIFY
+              value: "false"
+          command:
+            - /bin/sh
+            - -c
+            - >
+                
+        
+                until (nc -vz "posthog-db-pooler.$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).svc.cluster.local" 5432);
+                do
+                    echo "waiting for Postgres pooler"; sleep 1;
+                done
+        
+                
+        
+                
+        
+                        
+        - name: wait-for-migrations
+          image: "posthog/posthog:release-1.43.1"
+          command:
+            - /bin/sh
+            - -c
+            - >
+                until (python manage.py migrate --check);
+                do
+                    echo "Waiting for database migrations to be completed"; sleep 1;
+                done
+          env:
+        
+          # PostgreSQL configuration
+          
+          - name: POSTHOG_POSTGRES_HOST
+            value: posthog-db-pooler
+          - name: POSTHOG_POSTGRES_PORT
+            value: "5432"
+          - name: POSTHOG_DB_USER
+            value: "posthog"
+          - name: POSTHOG_DB_NAME
+            value: "posthog"
+          - name: POSTHOG_DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: "posthog-db-app"
+                key: "postgresql-password"
+          - name: USING_PGBOUNCER
+            value: 'true'
+        
+          # Redis env variables  
+          
+          - name: POSTHOG_REDIS_HOST
+            value: posthog-redis.posthog.svc.cluster.local
+          
+          - name: POSTHOG_REDIS_PORT
+            value: "6379"
+        
+          # ClickHouse env variables
+          - name: CLICKHOUSE_HOST
+            value: "posthog-clickhouse.posthog.svc.cluster.local"
+          - name: CLICKHOUSE_CLUSTER
+            value: "default"
+          - name: CLICKHOUSE_DATABASE
+            value: "default"
+          - name: CLICKHOUSE_USER
+            value: "posthog"
+          - name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: "posthog-clickhouse-auth"
+                key: "password"
+          - name: CLICKHOUSE_SECURE
+            value: "false"
+          - name: CLICKHOUSE_VERIFY
+            value: "false"
+        
+          # PostHog app settings
+          
+          - name: SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: posthog
+                key: posthog-secret

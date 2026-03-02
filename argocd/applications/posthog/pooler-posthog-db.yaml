@@ -1,0 +1,15 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: posthog-db-pooler
+  namespace: posthog
+spec:
+  cluster:
+    name: posthog-db
+  instances: 1
+  type: rw
+  pgbouncer:
+    parameters:
+      pool_mode: transaction
+      default_pool_size: "20"
+      max_client_conn: "1000"

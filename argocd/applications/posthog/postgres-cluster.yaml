@@ -1,0 +1,19 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: posthog-db
+  namespace: posthog
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    storageClass: rook-ceph-block
+    size: 30Gi
+  bootstrap:
+    initdb:
+      database: posthog
+      owner: posthog
+      encoding: UTF8
+      dataChecksums: true
+  monitoring:
+    enablePodMonitor: true
