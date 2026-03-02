@@ -5,10 +5,7 @@
   "properties": {
     "nameOverride": { "type": "string" },
     "fullnameOverride": { "type": "string" },
-    "namespaceOverride": {
-      "type": "string",
-      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$|^$"
-    },
+    "namespaceOverride": { "type": "string" },
     "replicaCount": { "type": "integer", "minimum": 1 },
     "autoscaling": {
       "type": "object",
@@ -610,10 +607,7 @@
               "name": { "type": "string", "description": "Secret name." },
               "optional": { "type": "boolean", "description": "Whether missing secret is non-fatal." },
               "keys": {
-                "oneOf": [
-                  { "type": "string" },
-                  { "type": "array", "items": { "type": "string" } }
-                ],
+                "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
                 "description": "Optional key list used by validation only."
               }
             },
@@ -635,10 +629,7 @@
               "name": { "type": "string", "description": "ConfigMap name." },
               "optional": { "type": "boolean", "description": "Whether missing ConfigMap is non-fatal." },
               "keys": {
-                "oneOf": [
-                  { "type": "string" },
-                  { "type": "array", "items": { "type": "string" } }
-                ],
+                "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
                 "description": "Optional key list used by validation only."
               }
             },
@@ -666,11 +657,8 @@
         },
         "namespaces": {
           "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
           "items": {
-            "type": "string",
-            "anyOf": [{ "const": "*" }, { "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" }]
+            "type": "string"
           }
         },
         "concurrency": {
@@ -945,11 +933,8 @@
         "enabled": { "type": "boolean" },
         "namespaces": {
           "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
           "items": {
-            "type": "string",
-            "anyOf": [{ "const": "*" }, { "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" }]
+            "type": "string"
           }
         }
       },
@@ -961,11 +946,8 @@
         "enabled": { "type": "boolean" },
         "namespaces": {
           "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
           "items": {
-            "type": "string",
-            "anyOf": [{ "const": "*" }, { "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" }]
+            "type": "string"
           }
         }
       },
@@ -1106,231 +1088,5 @@
       "additionalProperties": false
     }
   },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "controller": {
-            "properties": {
-              "namespaces": { "type": "array", "minItems": 2 }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["controller"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "controller": {
-            "properties": {
-              "namespaces": { "type": "array", "contains": { "const": "*" } }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["controller"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "controller": {
-            "properties": {
-              "namespaces": {
-                "type": "array",
-                "contains": { "const": "*" }
-              }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["controller"]
-      },
-      "then": {
-        "properties": {
-          "controller": {
-            "properties": {
-              "namespaces": {
-                "maxItems": 1
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "orchestrationController": {
-            "properties": {
-              "namespaces": { "type": "array", "minItems": 2 }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["orchestrationController"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "orchestrationController": {
-            "properties": {
-              "namespaces": { "type": "array", "contains": { "const": "*" } }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["orchestrationController"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "orchestrationController": {
-            "properties": {
-              "namespaces": {
-                "type": "array",
-                "contains": { "const": "*" }
-              }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["orchestrationController"]
-      },
-      "then": {
-        "properties": {
-          "orchestrationController": {
-            "properties": {
-              "namespaces": {
-                "maxItems": 1
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "supportingController": {
-            "properties": {
-              "namespaces": { "type": "array", "minItems": 2 }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["supportingController"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "supportingController": {
-            "properties": {
-              "namespaces": { "type": "array", "contains": { "const": "*" } }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["supportingController"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "supportingController": {
-            "properties": {
-              "namespaces": {
-                "type": "array",
-                "contains": { "const": "*" }
-              }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["supportingController"]
-      },
-      "then": {
-        "properties": {
-          "supportingController": {
-            "properties": {
-              "namespaces": {
-                "maxItems": 1
-              }
-            }
-          }
-        }
-      }
-    }
-  ]
+  "allOf": []
 }
