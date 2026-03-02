@@ -962,7 +962,9 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(promotion.allowed)
         self.assertIn("stress_metrics_evidence_ref_not_trusted", promotion.reasons)
 
-    def test_promotion_prerequisites_fail_when_stress_evidence_is_stale(self) -> None:
+    def test_promotion_prerequisites_fail_when_stress_evidence_generated_at_is_missing(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / "research").mkdir(parents=True, exist_ok=True)
@@ -1024,7 +1026,7 @@ class TestPolicyChecks(TestCase):
             )
 
         self.assertFalse(promotion.allowed)
-        self.assertIn("stress_metrics_evidence_stale", promotion.reasons)
+        self.assertIn("stress_metrics_evidence_generated_at_missing", promotion.reasons)
 
     def test_promotion_prerequisites_fail_when_rationale_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1130,7 +1132,7 @@ class TestPolicyChecks(TestCase):
             "stress_metrics_evidence_artifact_missing", promotion.reasons
         )
 
-    def test_promotion_prerequisites_fail_when_stress_evidence_is_stale(
+    def test_promotion_prerequisites_fail_when_stress_evidence_reported_timestamp_is_stale(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
