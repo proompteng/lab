@@ -482,16 +482,12 @@ def _resolve_dspy_api_base() -> str:
         )
 
     base_path = (parsed.path or "/").rstrip("/")
-    for suffix in (_DSPY_OPENAI_CHAT_COMPLETIONS_PATH,):
-        if base_path.endswith(suffix):
-            base_path = base_path[: -len(suffix)]
-            break
-
-    if base_path == "":
-        base_path = ""
-
-    if not base_path.endswith(_DSPY_OPENAI_BASE_PATH):
-        base_path = f"{base_path}{_DSPY_OPENAI_BASE_PATH}"
+    if base_path in ("", "/"):
+        base_path = _DSPY_OPENAI_BASE_PATH
+    elif base_path == f"{_DSPY_OPENAI_BASE_PATH}{_DSPY_OPENAI_CHAT_COMPLETIONS_PATH}":
+        base_path = _DSPY_OPENAI_BASE_PATH
+    elif base_path != _DSPY_OPENAI_BASE_PATH:
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_invalid_path")
 
     normalized_base = f"{parsed.scheme}://{parsed.netloc}{base_path}"
     return normalized_base

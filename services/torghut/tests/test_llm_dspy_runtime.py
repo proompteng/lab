@@ -154,22 +154,22 @@ class TestLLMDSPyRuntime(TestCase):
 
             self.assertEqual(
                 _resolve_dspy_api_base(),
-                "http://jangar.example/openai/v1/chat/completions",
+                "http://jangar.example/openai/v1",
             )
             settings.jangar_base_url = "http://jangar.example/"
             self.assertEqual(
                 _resolve_dspy_api_base(),
-                "http://jangar.example/openai/v1/chat/completions",
+                "http://jangar.example/openai/v1",
             )
             settings.jangar_base_url = "http://jangar.example/openai/v1"
             self.assertEqual(
                 _resolve_dspy_api_base(),
-                "http://jangar.example/openai/v1/chat/completions",
+                "http://jangar.example/openai/v1",
             )
             settings.jangar_base_url = "http://jangar.example/openai/v1/chat/completions"
             self.assertEqual(
                 _resolve_dspy_api_base(),
-                "http://jangar.example/openai/v1/chat/completions",
+                "http://jangar.example/openai/v1",
             )
         finally:
             settings.jangar_base_url = original_base
@@ -183,7 +183,7 @@ class TestLLMDSPyRuntime(TestCase):
             settings.jangar_base_url = "http://jangar.example/openai/v1/chat/completions"
             self.assertEqual(
                 _resolve_dspy_api_base(),
-                "http://jangar.example/openai/v1/chat/completions",
+                "http://jangar.example/openai/v1",
             )
             settings.jangar_base_url = "http://jangar.example/openai/v1?x=y"
             with self.assertRaises(DSPyRuntimeUnsupportedStateError):
@@ -223,7 +223,7 @@ class TestLLMDSPyRuntime(TestCase):
             self.assertIsInstance(program, LiveDSPyCommitteeProgram)
             self.assertEqual(
                 program.api_completion_url,
-                "https://jangar.openai.local/openai/v1/chat/completions",
+                "https://jangar.openai.local/openai/v1",
             )
             self.assertIsNone(program.api_base)
             self.assertEqual(program.api_key, "test-key")
@@ -444,15 +444,17 @@ class TestLLMDSPyRuntime(TestCase):
             ),
         )
 
-        with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
-            with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
-                runtime.review(self._request())
+        try:
+            with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
+                with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
+                    runtime.review(self._request())
+        finally:
+            self._restore_live_runtime_gate(original_gate)
 
         self.assertIn(
-            "dspy_artifact_executor_unknown",
+            "dspy_active_mode_requires_dspy_live_executor",
             str(exc.exception),
         )
-        self._restore_live_runtime_gate(original_gate)
 
     def test_missing_artifact_executor_field_is_rejected(self) -> None:
         artifact_hash = "a" * 64
@@ -732,6 +734,9 @@ class TestLLMDSPyRuntime(TestCase):
     def test_live_runtime_uses_jangar_openai_base_in_program_init(self) -> None:
         original_base = settings.jangar_base_url
         settings.jangar_base_url = "https://jangar.example/"
+        original_gate = self._enable_live_runtime_gate(
+            jangar_base_url="https://jangar.example/openai/v1"
+        )
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,
@@ -754,11 +759,12 @@ class TestLLMDSPyRuntime(TestCase):
             def __init__(
                 self,
                 model_name: str,
+                api_completion_url: str | None = None,
                 api_base: str | None = None,
                 api_key: str | None = None,
             ) -> None:
                 init_calls["model_name"] = model_name
-                init_calls["api_base"] = api_base or ""
+                init_calls["api_base"] = api_base or api_completion_url or ""
                 init_calls["api_key"] = api_key or ""
 
             def run(self, _payload: Any) -> DSPyTradeReviewOutput:
@@ -785,4 +791,5 @@ class TestLLMDSPyRuntime(TestCase):
             )
             self.assertEqual(init_calls.get("model_name"), "openai/gpt-5.3-codex-spark")
         finally:
+            self._restore_live_runtime_gate(original_gate)
             settings.jangar_base_url = original_base

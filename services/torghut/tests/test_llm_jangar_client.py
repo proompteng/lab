@@ -213,7 +213,7 @@ class TestJangarRequestHeaders(unittest.TestCase):
         with self.assertRaises(RuntimeError) as exc:
             client._request_review_via_jangar(messages=[], temperature=0.2, max_tokens=16)
 
-        self.assertIn("jangar completion request failed (path): invalid", str(exc.exception))
+        self.assertIn("jangar completion request failed (invalid base URL)", str(exc.exception))
 
 
 class TestJangarCompletionEndpointResolution(unittest.TestCase):
