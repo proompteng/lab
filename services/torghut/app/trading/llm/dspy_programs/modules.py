@@ -150,7 +150,7 @@ class LiveDSPyCommitteeProgram:
         normalized_model = self.model_name.strip()
         if not normalized_model:
             raise RuntimeError("dspy_model_not_configured")
-        if not self.api_base:
+        if not self.api_base and not self.api_completion_url:
             raise RuntimeError("dspy_api_base_not_configured")
 
         lm_kwargs: dict[str, Any] = {
