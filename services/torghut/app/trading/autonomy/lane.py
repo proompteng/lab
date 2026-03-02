@@ -1030,8 +1030,15 @@ def run_autonomous_lane(
         phase_manifest_path.write_text(
             json.dumps(phase_manifest_payload, indent=2), encoding="utf-8"
         )
+        execution_context = _coerce_mapping(governance_context.get("execution_context"))
+        notes_artifact_path = Path(
+            _coerce_str(
+                execution_context.get("artifactPath"),
+                default=str(output_dir),
+            )
+        )
         _write_autonomy_iteration_notes(
-            artifact_root=output_dir,
+            artifact_root=notes_artifact_path,
             run_id=run_id,
             candidate_id=candidate_id,
             phase_manifest_payload=phase_manifest_payload,

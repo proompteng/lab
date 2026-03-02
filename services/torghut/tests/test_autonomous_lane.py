@@ -858,6 +858,43 @@ class TestAutonomousLane(TestCase):
             second_note_contents = notes[1].read_text(encoding="utf-8")
             self.assertIn("Autonomy phase iteration 2", second_note_contents)
 
+    def test_lane_iteration_notes_use_execution_context_artifact_path(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-output"
+            artifact_root = Path(tmpdir) / "artifact-root"
+            run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                governance_inputs={
+                    "execution_context": {
+                        "repository": "acme/torghut",
+                        "base": "main",
+                        "head": "paper-path",
+                        "artifactPath": str(artifact_root),
+                        "priorityId": "p1",
+                    }
+                },
+            )
+
+            notes = sorted((artifact_root / "notes").glob("iteration-*.md"))
+            self.assertEqual(len(notes), 1)
+            self.assertEqual(notes[0].name, "iteration-1.md")
+            notes_payload = notes[0].read_text(encoding="utf-8")
+            self.assertIn("Autonomy phase iteration 1", notes_payload)
+            self.assertFalse((output_dir / "notes").exists())
+
     def test_upsert_no_signal_run_records_skipped_research_run(self) -> None:
         strategy_config_path = (
             Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
