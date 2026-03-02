@@ -376,184 +376,6 @@ def _as_object_dict(value: object) -> dict[str, object]:
         return {}
     return {str(key): item for key, item in value.items()}
 
-def _stable_hash(payload: object) -> str:
-    payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
-
-
-def _artifact_hashes(artifacts: Mapping[str, Path | None]) -> dict[str, str]:
-    digests: dict[str, str] = {}
-    for key, artifact_path in artifacts.items():
-        if artifact_path is not None and artifact_path.exists():
-            digests[key] = _sha256_path(artifact_path)
-    return digests
-
-
-def _readable_notes_iteration_number(notes_dir: Path) -> int:
-    pattern = re.compile(r"^iteration-(\d+)\.md$")
-    highest = 0
-    for item in notes_dir.glob("iteration-*.md"):
-        match = pattern.match(item.name)
-        if not match:
-            continue
-        try:
-            candidate = int(match.group(1))
-        except (TypeError, ValueError):
-            continue
-        if candidate > highest:
-            highest = candidate
-    return highest + 1
-
-
-def _write_stage_manifest(
-    *,
-    stage: str,
-    stage_index: int,
-    stage_output_dir: Path,
-    run_id: str,
-    candidate_id: str,
-    lineage_parent_hash: str | None,
-    lineage_parent_stage: str | None,
-    inputs: dict[str, str],
-    input_artifacts: Mapping[str, Path | None],
-    output_artifacts: Mapping[str, Path | None],
-    created_at: datetime,
-) -> _StageManifestRecord:
-    stage_manifest = {
-        "schema_version": _AUTONOMY_LANE_SCHEMA_VERSION,
-        "stage": stage,
-        "stage_index": stage_index,
-        "run_id": run_id,
-        "candidate_id": candidate_id,
-        "created_at": created_at.isoformat(),
-        "inputs": dict(inputs),
-        "input_artifacts": {
-            key: {
-                "path": str(path),
-                "sha256": _sha256_path(path),
-            }
-            for key, path in input_artifacts.items()
-            if path is not None
-        },
-        "output_artifacts": {
-            key: {
-                "path": str(path),
-                "sha256": _sha256_path(path),
-            }
-            for key, path in output_artifacts.items()
-            if path is not None
-        },
-        "parent_lineage_hash": lineage_parent_hash,
-        "parent_stage": lineage_parent_stage,
-    }
-    stage_payload_hash = _stable_hash(stage_manifest)
-    stage_trace_id = stage_payload_hash[:24]
-    artifact_hashes = _artifact_hashes(output_artifacts)
-    record = _StageManifestRecord(
-        stage=stage,
-        stage_index=stage_index,
-        stage_trace_id=stage_trace_id,
-        lineage_hash=stage_payload_hash,
-        artifact_hashes=artifact_hashes,
-        stage_payload_hash=stage_payload_hash,
-        created_at=created_at.isoformat(),
-        parent_lineage_hash=lineage_parent_hash,
-        parent_stage=lineage_parent_stage,
-        inputs=dict(inputs),
-    )
-    stage_manifest["stage_trace_id"] = stage_trace_id
-    stage_manifest["lineage_hash"] = stage_payload_hash
-    stage_manifest["artifact_hashes"] = artifact_hashes
-    manifest_path = stage_output_dir / f"{stage}-manifest.json"
-    stage_manifest["artifact_count"] = len(artifact_hashes)
-    manifest_path.write_text(json.dumps(stage_manifest, indent=2), encoding="utf-8")
-    return record
-
-
-def _build_stage_lineage_payload(
-    stage_records: Sequence[_StageManifestRecord],
-    manifest_paths: Mapping[str, Path],
-) -> dict[str, Any]:
-    stages_payload: dict[str, Any] = {}
-    for record in stage_records:
-        manifest_path = manifest_paths.get(record.stage)
-        stages_payload[record.stage] = {
-            "index": record.stage_index,
-            "stage_trace_id": record.stage_trace_id,
-            "lineage_hash": record.lineage_hash,
-            "parent_stage": record.parent_stage,
-            "parent_lineage_hash": record.parent_lineage_hash,
-            "stage_payload_hash": record.stage_payload_hash,
-            "created_at": record.created_at,
-            "created_by": record.created_by,
-            "inputs": record.inputs,
-            "artifact_hashes": record.artifact_hashes,
-            "manifest_path": str(manifest_path) if manifest_path else None,
-        }
-    return {
-        "schema_version": _AUTONOMY_LANE_SCHEMA_VERSION,
-        "root_lineage_hash": stage_records[0].lineage_hash if stage_records else None,
-        "stages": stages_payload,
-    }
-
-
-def _write_iteration_notes(
-    *,
-    artifact_root: Path,
-    run_id: str,
-    candidate_id: str,
-    stage_records: Sequence[_StageManifestRecord],
-    repository: str | None,
-    base: str | None,
-    head: str | None,
-    priority_id: str | None,
-    phase_manifest_payload: dict[str, Any] | None = None,
-) -> Path:
-    notes_dir = artifact_root / "notes"
-    notes_dir.mkdir(parents=True, exist_ok=True)
-    iteration = _readable_notes_iteration_number(notes_dir)
-    notes_path = notes_dir / f"iteration-{iteration}.md"
-
-    lines = [
-        f"# Autonomous lane iteration {iteration}",
-        f"# Autonomy phase iteration {iteration}",
-        "",
-        f"- run_id: {run_id}",
-        f"- candidate_id: {candidate_id}",
-    ]
-    if repository:
-        lines.append(f"- repository: {repository}")
-    if base:
-        lines.append(f"- base: {base}")
-    if head:
-        lines.append(f"- head: {head}")
-    if priority_id:
-        lines.append(f"- priority_id: {priority_id}")
-
-    lines.extend(["", "## Stage progression", ""])
-    for record in stage_records:
-        lines.append(f"- {record.stage} (index {record.stage_index})")
-        lines.append(f"  - trace={record.stage_trace_id}")
-        if record.parent_stage:
-            lines.append(
-                f"  - parent: {record.parent_stage} (hash={record.parent_lineage_hash})"
-            )
-
-    if phase_manifest_payload:
-        lines.extend(["", "## Phase manifest", ""])
-        for phase in cast(list[Any], phase_manifest_payload.get("phases", [])):
-            if not isinstance(phase, dict):
-                continue
-            phase_name = str(phase.get("name", "")).strip()
-            phase_status = coerce_phase_status(phase.get("status"))
-            lines.append(f"- {phase_name}: {phase_status}")
-            artifact_refs = _coerce_path_strings(phase.get("artifact_refs", []))
-            if artifact_refs:
-                lines.append(f"  - artifact_refs: {len(artifact_refs)}")
-
-    notes_path.write_text("\n".join(lines), encoding="utf-8")
-    return notes_path
-
 def _extract_janus_q_metrics(
     summary: dict[str, object],
 ) -> tuple[int, int, bool, list[str]]:
@@ -3431,12 +3253,15 @@ def _resolve_paper_patch_path(
     elif gate_report.recommended_mode != "paper":
         return None
     resolved_configmap = strategy_configmap_path or _default_strategy_configmap_path()
-    return _write_paper_candidate_patch(
-        configmap_path=resolved_configmap,
-        runtime_strategies=runtime_strategies,
-        candidate_id=candidate_id,
-        output_path=paper_dir / "strategy-configmap-patch.yaml",
-    )
+    try:
+        return _write_paper_candidate_patch(
+            configmap_path=resolved_configmap,
+            runtime_strategies=runtime_strategies,
+            candidate_id=candidate_id,
+            output_path=paper_dir / "strategy-configmap-patch.yaml",
+        )
+    except Exception:
+        return None
 
 
 def _persist_run_outputs_if_requested(
