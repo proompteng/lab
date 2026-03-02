@@ -27,10 +27,12 @@ For controllers:
 2. `env.vars` is second.
 3. Chart-managed controller defaults are then applied only when the merged map does not set the key:
    - `JANGAR_MIGRATIONS=skip`
-   - `JANGAR_GRPC_ENABLED=0`
+   - `JANGAR_GRPC_ENABLED=0` (when `grpc.enabled=true`)
+   - `JANGAR_GRPC_HOST=0.0.0.0` (when `grpc.enabled=true`)
+   - `JANGAR_GRPC_PORT=<grpc.port>` (when `grpc.enabled=true`)
    - `JANGAR_CONTROL_PLANE_CACHE_ENABLED=0`
    - idempotency/artifact defaults when unset
-4. `env.vars` and `controllers.env.vars` must not disagree on managed `JANGAR_GRPC_*` keys when `grpc.manageEnvVar=true`.
+4. `env.vars`, `controlPlane.env.vars`, and `controllers.env.vars` are validated in managed mode for managed `JANGAR_GRPC_*` keys.
 5. Runtime defaults apply after render.
 
 ## Deterministic gRPC source-of-truth
@@ -49,11 +51,11 @@ For controllers:
 
 - `env:` still takes precedence at runtime over `envFrom`.
 - Structured `envFrom` entries can declare `keys` for reserved-key validation.
-- `validation.reservedEnvKeysEnforced=true` blocks rendering when a reserved key from `envFrom` is not explicitly
+- `validation.reservedEnvKeysEnforced=true` (default) blocks rendering when a reserved key from `envFrom` is not explicitly
   pinned in the component map used by the consuming deployment:
   - control plane: `controlPlane.env.vars` or `env.vars`
   - controllers: `controllers.env.vars`
-- For managed `JANGAR_GRPC_*` keys, `env.vars` and `controllers.env.vars` are treated as a single source of truth for validation.
+- For managed `JANGAR_GRPC_*` keys, `env.vars`, `controlPlane.env.vars`, and `controllers.env.vars` must align when envFrom declares them.
 - `envFrom` cannot be used as an undocumented source for managed chart keys: if keys are declared and
   `grpc.manageEnvVar=true`, the pinned component values must align with chart-managed expectations.
 

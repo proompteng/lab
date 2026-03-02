@@ -324,7 +324,7 @@
         "enabled": { "type": "boolean" },
         "manageEnvVar": {
           "type": "boolean",
-          "description": "When true, chart-managed JANGAR_GRPC_* values are derived from grpc.* and explicit managed values must align."
+          "description": "When true (default), control-plane env values for JANGAR_GRPC_* are derived from grpc.* and explicit values in env.vars/controlPlane.env.vars must match these chart-managed targets."
         },
         "port": { "type": "integer" },
         "servicePort": { "type": "integer" },
@@ -337,7 +337,7 @@
       "properties": {
         "reservedEnvKeysEnforced": {
           "type": "boolean",
-          "description": "Fail chart render if structured envFrom entries import reserved chart-managed env keys without matching values in the consuming component env maps."
+          "description": "Fail chart render if structured envFrom entries include reserved keys that are not explicitly pinned in the consuming component env maps with values matching chart-managed expectations."
         }
       },
       "additionalProperties": false
@@ -606,7 +606,7 @@
     "envFromSecretRefs": {
       "type": "array",
       "items": {
-        "description": "Optional envFrom references for shared credentials/settings. Use object form with keys to enable reserved-key validation.",
+        "description": "Optional envFrom references for shared credentials/settings. Use object form with `keys` to enable reserved-key validation.",
         "oneOf": [
           { "type": "string" },
           {
@@ -615,8 +615,11 @@
               "name": { "type": "string", "description": "Secret name." },
               "optional": { "type": "boolean", "description": "Whether missing secret is non-fatal." },
               "keys": {
-                "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
-                "description": "Optional key list used by validation only."
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "array", "items": { "type": "string" } }
+                ],
+                "description": "Optional key list used by validation only. Only string entries matching reserved keys are validated."
               }
             },
             "required": ["name"],
@@ -628,7 +631,7 @@
     "envFromConfigMapRefs": {
       "type": "array",
       "items": {
-        "description": "Optional envFrom references for shared config. Use object form with keys to enable reserved-key validation.",
+        "description": "Optional envFrom references for shared config. Use object form with `keys` to enable reserved-key validation.",
         "oneOf": [
           { "type": "string" },
           {
@@ -637,8 +640,11 @@
               "name": { "type": "string", "description": "ConfigMap name." },
               "optional": { "type": "boolean", "description": "Whether missing ConfigMap is non-fatal." },
               "keys": {
-                "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
-                "description": "Optional key list used by validation only."
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "array", "items": { "type": "string" } }
+                ],
+                "description": "Optional key list used by validation only. Only string entries matching reserved keys are validated."
               }
             },
             "required": ["name"],

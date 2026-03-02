@@ -223,11 +223,16 @@ defaults for a single run.
 Enable gRPC for agentctl or in-cluster clients:
 
 - `grpc.enabled=true`
-- `grpc.manageEnvVar=true` (default) keeps control-plane `JANGAR_GRPC_*` values chart-owned and deterministic
-- `grpc.manageEnvVar=false` if you want manual ownership in values
-- `env.vars` is merged into `controlPlane.env.vars`; if both define managed `JANGAR_GRPC_*`, render fails unless they match and match `grpc.*` managed defaults.
-- `env.vars` is merged into `controllers.env.vars`; if both define managed `JANGAR_GRPC_*`, render fails unless they match.
-- When chart-managed defaults run, explicit values in the merged env map always win for both control-plane and controller deployments.
+- `grpc.manageEnvVar=true` (default) keeps control-plane `JANGAR_GRPC_*` values chart-owned and deterministic.
+- `grpc.manageEnvVar=false` if you want manual ownership in values.
+- Source-of-truth for gRPC in managed mode:
+  - `JANGAR_GRPC_ENABLED` = `grpc.enabled`
+  - `JANGAR_GRPC_HOST` = `0.0.0.0`
+  - `JANGAR_GRPC_PORT` = `grpc.port`
+- `env.vars` is merged into `controlPlane.env.vars` with control-plane values winning.
+- `env.vars` is merged into `controllers.env.vars` with controllers values winning.
+- In managed mode, `env.vars` and `controlPlane.env.vars` must agree for all managed `JANGAR_GRPC_*` values or render fails.
+- Controllers default chart-owned values are applied only when no explicit `controllers.env.vars` value exists: `JANGAR_GRPC_ENABLED=0` (when grpc enabled), `JANGAR_GRPC_HOST`, `JANGAR_GRPC_PORT`.
 - Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token
 - For control-plane migration, remove manual `JANGAR_GRPC_*` settings from:
   - `env.vars`
@@ -247,9 +252,12 @@ envFromSecretRefs:
       - JANGAR_MIGRATIONS
 ```
 
-- Set `validation.reservedEnvKeysEnforced=true` to make Helm fail if reserved keys are imported by `envFrom` but not explicitly pinned in the consuming component map.
+- `validation.reservedEnvKeysEnforced=true` (default) makes Helm fail if reserved keys are imported by `envFrom` but not explicitly pinned in the consuming component map.
 - For control-plane keys, pin in `controlPlane.env.vars` or `env.vars`.
 - For controller keys, pin in `controllers.env.vars` (or `env.vars`) and ensure controllers are enabled when you add controller-only reserved keys.
+- For managed `JANGAR_GRPC_*` values, pinned values must match managed targets:
+  - control plane: `grpc.enabled`, `0.0.0.0`, and `grpc.port`
+  - controllers: defaults above unless you intentionally override.
 
 ### PodDisruptionBudget (availability)
 
