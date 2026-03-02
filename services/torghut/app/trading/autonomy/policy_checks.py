@@ -12,6 +12,45 @@ from pathlib import Path
 from typing import Any, cast
 
 
+_PROFITABILITY_STAGE_ORDER: tuple[str, ...] = (
+    "research",
+    "validation",
+    "execution",
+    "governance",
+)
+
+_PROFITABILITY_STAGE_REQUIRED_CHECKS: dict[str, tuple[str, ...]] = {
+    "research": (
+        "candidate_spec_present",
+        "candidate_generation_manifest_present",
+        "walkforward_results_present",
+        "baseline_evaluation_report_present",
+    ),
+    "validation": (
+        "evaluation_report_present",
+        "profitability_benchmark_present",
+        "profitability_evidence_present",
+        "profitability_validation_present",
+    ),
+    "execution": (
+        "walkforward_results_present",
+        "evaluation_report_present",
+        "gate_evaluation_present",
+        "janus_event_car_present",
+        "janus_hgrm_reward_present",
+        "recalibration_report_present",
+        "gate_matrix_approval",
+        "drift_gate_approval",
+    ),
+    "governance": (
+        "rollback_ready",
+        "gate_report_present",
+        "candidate_spec_present",
+        "risk_controls_attestable",
+    ),
+}
+
+
 @dataclass(frozen=True)
 class PromotionPrerequisiteResult:
     allowed: bool
@@ -480,8 +519,8 @@ def _append_profitability_stage_manifest_reasons(
             }
         )
     else:
-        stage_names = {str(name).strip().lower() for name in stages.keys()}
-        required_stage_names = {"research", "validation", "execution", "governance"}
+        stage_names = tuple(name for name in _PROFITABILITY_STAGE_ORDER if name in stages)
+        required_stage_names = _PROFITABILITY_STAGE_ORDER
         if stage_names != required_stage_names:
             reasons.append("profitability_stage_manifest_stage_missing")
             reason_details.append(
@@ -524,6 +563,57 @@ def _append_profitability_stage_manifest_reasons(
                             "artifact_ref": str(manifest_path),
                             "stage": stage_name,
                             "required_key": required_key,
+                        }
+                    )
+            checks_payload = _as_list_of_dicts(stage_payload.get("checks"))
+            stage_checks: dict[str, str] = {}
+            for item in checks_payload:
+                check_name = str(item.get("check", "")).strip()
+                if not check_name:
+                    reasons.append("profitability_stage_manifest_stage_check_invalid")
+                    reason_details.append(
+                        {
+                            "reason": "profitability_stage_manifest_stage_check_invalid",
+                            "artifact_ref": str(manifest_path),
+                            "stage": stage_name,
+                        }
+                    )
+                    continue
+                check_status = str(item.get("status", "")).strip()
+                if check_status not in {"pass", "fail"}:
+                    reasons.append("profitability_stage_manifest_stage_check_status_invalid")
+                    reason_details.append(
+                        {
+                            "reason": "profitability_stage_manifest_stage_check_status_invalid",
+                            "artifact_ref": str(manifest_path),
+                            "stage": stage_name,
+                            "check": check_name,
+                        }
+                    )
+                    continue
+                stage_checks[check_name] = check_status
+            for required_check in _PROFITABILITY_STAGE_REQUIRED_CHECKS.get(
+                stage_name, ()
+            ):
+                if required_check not in stage_checks:
+                    reasons.append("profitability_stage_manifest_required_check_missing")
+                    reason_details.append(
+                        {
+                            "reason": "profitability_stage_manifest_required_check_missing",
+                            "artifact_ref": str(manifest_path),
+                            "stage": stage_name,
+                            "check": required_check,
+                        }
+                    )
+                    continue
+                if stage_checks[required_check] != "pass":
+                    reasons.append("profitability_stage_manifest_required_check_failed")
+                    reason_details.append(
+                        {
+                            "reason": "profitability_stage_manifest_required_check_failed",
+                            "artifact_ref": str(manifest_path),
+                            "stage": stage_name,
+                            "check": required_check,
                         }
                     )
             artifacts = _as_dict(stage_payload.get("artifacts"))
@@ -620,7 +710,7 @@ def _append_profitability_stage_manifest_reasons(
 
     if overall_status in {"pass", "fail"} and stages:
         stage_statuses: list[bool] = []
-        for stage_name in ("research", "validation", "execution", "governance"):
+        for stage_name in _PROFITABILITY_STAGE_ORDER:
             stage_payload = _as_dict(stages.get(stage_name))
             stage_statuses.append(str(stage_payload.get("status", "")).strip() == "pass")
         expected_overall_status = (
@@ -636,7 +726,7 @@ def _append_profitability_stage_manifest_reasons(
                     "calculated_overall_status": expected_overall_status,
                 }
             )
-    ordered_stages = ("research", "validation", "execution", "governance")
+    ordered_stages = _PROFITABILITY_STAGE_ORDER
     failure_encountered = False
     for stage_name in ordered_stages:
         stage_payload = _as_dict(stages.get(stage_name))
@@ -1815,6 +1905,12 @@ def _list_from_any(value: Any) -> list[object]:
     if not isinstance(value, list):
         return []
     return cast(list[object], value)
+
+
+def _as_list_of_dicts(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [cast(dict[str, Any], item) for item in value if isinstance(item, dict)]
 
 
 def _list_count(value: Any) -> int:
