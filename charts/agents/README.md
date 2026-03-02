@@ -189,6 +189,44 @@ envFromSecretRefs:
 - For control-plane keys, pin in `controlPlane.env.vars` or `env.vars`.
 - For controller keys, pin in `controllers.env.vars` (or `env.vars`) and ensure controllers are enabled when you add controller-only reserved keys.
 
+### PodDisruptionBudget (availability)
+
+The chart exposes component-scoped disruption controls:
+
+- `podDisruptionBudget.*` applies to the control-plane `Deployment/agents`.
+- `controllers.podDisruptionBudget.*` applies to the controllers `Deployment/agents-controllers` and only takes effect when `controllers.enabled=true`.
+
+Example:
+
+```yaml
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+controllers:
+  enabled: true
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+```
+
+### Controller rollout strategy (rollout safety)
+
+During upgrades, controller availability is also controlled by `Deployment` strategy settings. Set
+`controllers.deploymentStrategy` when you need stricter availability behavior than the Kubernetes default.
+
+```yaml
+controllers:
+  enabled: true
+  deploymentStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+```
+
+For single-controller deployments this keeps at least one controller pod available throughout the rollout.
+
 ### Observability (Prometheus + Grafana)
 
 The chart ships a Prometheus scrape endpoint and an optional ServiceMonitor plus a Grafana dashboard ConfigMap.
@@ -403,6 +441,12 @@ grpc:
 
 podDisruptionBudget:
   enabled: true
+
+controllers:
+  enabled: true
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
 
 networkPolicy:
   enabled: true

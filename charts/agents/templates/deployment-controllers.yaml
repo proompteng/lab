@@ -40,6 +40,10 @@ metadata:
   labels:
     {{- include "agents.labels" . | nindent 4 }}
 spec:
+  {{- with .Values.controllers.deploymentStrategy }}
+  strategy:
+{{ toYaml . | nindent 4 }}
+  {{- end }}
   {{- if not $autoscaling.enabled }}
   replicas: {{ $replicas }}
   {{- end }}
