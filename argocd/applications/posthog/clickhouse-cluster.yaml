@@ -9,6 +9,51 @@ metadata:
 spec:
   configuration:
     files:
+      config.d/posthog-remote-servers.xml: |
+        <clickhouse>
+          <remote_servers>
+            <posthog>
+              <shard>
+                <replica>
+                  <host>posthog-clickhouse.posthog.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+              </shard>
+            </posthog>
+            <posthog_single_shard>
+              <shard>
+                <replica>
+                  <host>posthog-clickhouse.posthog.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+              </shard>
+            </posthog_single_shard>
+            <posthog_migrations>
+              <shard>
+                <replica>
+                  <host>posthog-clickhouse.posthog.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+              </shard>
+            </posthog_migrations>
+            <posthog_writable>
+              <shard>
+                <replica>
+                  <host>posthog-clickhouse.posthog.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+              </shard>
+            </posthog_writable>
+            <posthog_primary_replica>
+              <shard>
+                <replica>
+                  <host>posthog-clickhouse.posthog.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+              </shard>
+            </posthog_primary_replica>
+          </remote_servers>
+        </clickhouse>
       config.d/posthog-host-macros.xml: |
         <clickhouse>
           <macros>
