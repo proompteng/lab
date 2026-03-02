@@ -33,11 +33,19 @@ Promotions are source-of-truth driven by:
 
 - `image.repository` + `image.tag` + `image.digest` define the Jangar control-plane image pin.
 - `runner.image.repository` + `runner.image.tag` + `runner.image.digest` define the AgentRun/ToolRun runtime image pin.
-- The workflow writes both from the same candidate (with separate `runnerImage*` controls for explicitness).
+- The workflow executes an explicit guard pass with `update-manifests.ts --verify-runner-image --verify-runner-image-only`
+  using:
+  - candidate tag/digest from the release contract
+  - resolved target platform (`linux/<runner.arch>`)
+  - explicit entrypoint probe (`/usr/local/bin/agent-runner --help`)
+- The workflow then writes both image families from the same candidate:
+  - control-plane image uses `image.*`
+  - runner image uses `runner.image.*` (`runnerImage*` CLI controls retained for explicitness)
 - Promotion fails before patching manifests when:
   - the runner image cannot be inspected,
   - the runner OS/architecture does not match target platform, or
   - the runner binary cannot be executed for a smoke `--help` check.
+- When the guard passes, both manifest families are updated in one commit to avoid skew.
 
 ### Rollback behavior
 
@@ -51,7 +59,7 @@ Because both image groups are pinned by digest in GitOps values, rollback is a c
    - `kubectl -n agents rollout status deploy/agents-controllers`
 4. Re-run one smoke AgentRun through `smoke-agents` if the platform was serving live runtime workloads.
 
-If a promotion attempt is blocked by compatibility checks, no manifest changes are committed because manifest update is aborted.
+If a promotion attempt is blocked by compatibility checks, manifest updates are not written and no PR is opened.
 
 ## Rollback
 

@@ -207,6 +207,30 @@ jobs:
 
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
+      - name: Verify runner image runtime compatibility
+        if: steps.meta.outputs.promote == 'true'
+        id: runner_check
+        env:
+          JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          JANGAR_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+          JANGAR_IMAGE: ${{ steps.meta.outputs.image }}
+          JANGAR_RUNNER_IMAGE_PLATFORM: ${{ steps.meta.outputs.runner_platform }}
+        run: |
+          set -euo pipefail
+          TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          bun run packages/scripts/src/jangar/update-manifests.ts \
+            --tag "${JANGAR_IMAGE_TAG}" \
+            --digest "${JANGAR_IMAGE_DIGEST}" \
+            --runner-image-name "${JANGAR_IMAGE}" \
+            --runner-image-tag "${JANGAR_IMAGE_TAG}" \
+            --runner-image-digest "${JANGAR_IMAGE_DIGEST}" \
+            --runner-image-platform "${JANGAR_RUNNER_IMAGE_PLATFORM}" \
+            --runner-image-binary /usr/local/bin/agent-runner \
+            --verify-runner-image \
+            --verify-runner-image-only \
+            --rollout-timestamp "${TIMESTAMP}"
+          echo "passed=true" >> "$GITHUB_OUTPUT"
+
       - name: Update Jangar manifests
         if: steps.meta.outputs.promote == 'true'
         env:
@@ -272,7 +296,8 @@ jobs:
             - Runner image validated before manifest write:
               - image: `${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}@${{ steps.digest.outputs.digest }}`
               - platform: `${{ steps.meta.outputs.runner_platform }}`
-              - entrypoint probe: `agent-runner --help` via `update-manifests.ts`
+              - probe status: `${{ steps.runner_check.outputs.passed }}`
+              - entrypoint probe: `agent-runner --help` via `update-manifests.ts --verify-runner-image --verify-runner-image-only`
             - Updated API and worker rollout annotations
             - Updated `argocd/applications/agents/values.yaml` for automated sync to namespace `agents`
 

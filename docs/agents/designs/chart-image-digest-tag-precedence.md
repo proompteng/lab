@@ -48,6 +48,8 @@ is provided, and this contract now explicitly includes runner image release safe
 - Runner image pins should be explicit (`runner.image.repository`, `runner.image.tag`, `runner.image.digest`).
 - The release process must run `update-manifests.ts --verify-runner-image` so incompatible runner entrypoints/architectures
   fail before values are changed.
+- For deterministic release safety, this check is executed as a dedicated
+  `--verify-runner-image-only` step in the release workflow before any manifest files are updated.
 
 ### Chart validation
 

@@ -39,6 +39,7 @@ export type UpdateManifestsOptions = {
   runnerImageBinary?: string
   runnerImagePlatform?: string
   verifyRunnerImage?: boolean
+  verifyRunnerImageOnly?: boolean
   rolloutTimestamp: string
   kustomizationPath?: string
   serviceManifestPath?: string
@@ -59,6 +60,7 @@ type CliOptions = {
   runnerImageBinary?: string
   runnerImagePlatform?: string
   verifyRunnerImage?: boolean
+  verifyRunnerImageOnly?: boolean
   rolloutTimestamp?: string
   kustomizationPath?: string
   serviceManifestPath?: string
@@ -137,20 +139,9 @@ const mergeOutput = (payload: string | Uint8Array): string => String(payload).tr
 const runDocker = (args: string[]) =>
   spawnSyncImpl(['docker', ...args], { cwd: repoRoot, stdout: 'pipe', stderr: 'pipe' })
 
-const isRunnerImageIncompatible = (exitCode: number, stdout: string, stderr: string): boolean => {
-  if (exitCode === 126 || exitCode === 127) {
-    return true
-  }
-
-  const output = `${stdout} ${stderr}`.toLowerCase()
-  return (
-    output.includes('no such file or directory') ||
-    output.includes('not found') ||
-    output.includes('permission denied') ||
-    output.includes('exec format error') ||
-    output.includes('not executable') ||
-    output.includes('no such file')
-  )
+const runnerImageRef = (options: { imageName: string; tag: string; digest?: string }) => {
+  const digestPart = options.digest ? normalizeDigest(options.digest) : ''
+  return `${options.imageName}:${options.tag}${digestPart ? `@${digestPart}` : ''}`
 }
 
 const validateRunnerImage = (options: {
@@ -160,9 +151,7 @@ const validateRunnerImage = (options: {
   binary: string
   platform?: string
 }) => {
-  const tagPart = options.tag
-  const digestPart = options.digest ? normalizeDigest(options.digest) : ''
-  const imageRef = `${options.imageName}:${tagPart}${digestPart ? `@${digestPart}` : ''}`
+  const imageRef = runnerImageRef(options)
 
   const inspectResult = runDocker(['image', 'inspect', '--format', '{{json .}}', imageRef])
   if (inspectResult.exitCode !== 0) {
@@ -198,7 +187,7 @@ const validateRunnerImage = (options: {
     throw new Error(`Failed to parse image config for ${imageRef}`)
   }
 
-  const smokeTestArgs = ['run', '--rm']
+  const smokeTestArgs = ['run', '--rm', '--network', 'none']
   if (options.platform) {
     smokeTestArgs.push('--platform', options.platform)
   }
@@ -206,16 +195,15 @@ const validateRunnerImage = (options: {
   const smokeTest = runDocker(smokeTestArgs)
   const stdout = mergeOutput(smokeTest.stdout)
   const stderr = mergeOutput(smokeTest.stderr)
-  if (smokeTest.exitCode !== 0 && isRunnerImageIncompatible(smokeTest.exitCode, stdout, stderr)) {
-    throw new Error(
-      `Runner image compatibility check failed for ${imageRef} with entrypoint ${options.binary}: ${stdout || stderr}`,
-    )
-  }
+
   if (smokeTest.exitCode !== 0) {
-    console.log(
-      `[warn] Runner smoke test for ${options.binary} exited with code ${smokeTest.exitCode}; continuing as output did not indicate runtime breakage`,
+    const output = stdout || stderr || '<no output>'
+    throw new Error(
+      `Runner image runtime check failed for ${imageRef} with entrypoint ${options.binary} (exit ${smokeTest.exitCode}): ${output}`,
     )
   }
+
+  console.log(`Runner image runtime check passed for ${imageRef}`)
 }
 
 const updateKustomizationManifest = (
@@ -329,19 +317,15 @@ const updateAgentsValuesManifest = (
 }
 
 export const updateJangarManifests = (options: UpdateManifestsOptions) => {
-  const kustomizationPath = resolvePath(options.kustomizationPath ?? defaultKustomizationPath)
-  const serviceManifestPath = resolvePath(options.serviceManifestPath ?? defaultServiceManifestPath)
-  const workerManifestPath = resolvePath(options.workerManifestPath ?? defaultWorkerManifestPath)
   const digest = normalizeDigest(options.digest ?? inspectImageDigest(`${options.imageName}:${options.tag}`))
   const controlPlaneDigest = options.controlPlaneDigest ? normalizeDigest(options.controlPlaneDigest) : undefined
-  const agentsValuesPath = options.agentsValuesPath ? resolvePath(options.agentsValuesPath) : null
   const runnerImageTag = options.runnerImageTag ?? options.tag
   const runnerImageDigest = options.runnerImageDigest ? normalizeDigest(options.runnerImageDigest) : digest
   const runnerImageName = options.runnerImageName ?? options.imageName
   const runnerImageBinary = options.runnerImageBinary ?? defaultRunnerImageBinary
   const runnerImagePlatform = normalizePlatform(options.runnerImagePlatform)
 
-  if (agentsValuesPath && options.verifyRunnerImage) {
+  if (options.verifyRunnerImage) {
     validateRunnerImage({
       imageName: runnerImageName,
       tag: runnerImageTag,
@@ -350,6 +334,26 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
       platform: runnerImagePlatform,
     })
   }
+
+  if (options.verifyRunnerImageOnly) {
+    return {
+      tag: options.tag,
+      digest,
+      controlPlaneDigest,
+      rolloutTimestamp: options.rolloutTimestamp,
+      changed: {
+        kustomization: false,
+        service: false,
+        worker: false,
+        agentsValues: false,
+      },
+    }
+  }
+
+  const kustomizationPath = resolvePath(options.kustomizationPath ?? defaultKustomizationPath)
+  const serviceManifestPath = resolvePath(options.serviceManifestPath ?? defaultServiceManifestPath)
+  const workerManifestPath = resolvePath(options.workerManifestPath ?? defaultWorkerManifestPath)
+  const agentsValuesPath = options.agentsValuesPath ? resolvePath(options.agentsValuesPath) : null
 
   const kustomizationChanged = updateKustomizationManifest(kustomizationPath, options.imageName, options.tag, digest)
   const serviceChanged = updateRolloutAnnotation(
@@ -399,7 +403,7 @@ const parseArgs = (argv: string[]): CliOptions => {
     if (arg === '--help' || arg === '-h') {
       console.log(`Usage: bun run packages/scripts/src/jangar/update-manifests.ts [options]
 
-Options:
+  Options:
   --registry <value>
   --repository <value>
   --tag <value>
@@ -412,6 +416,7 @@ Options:
   --runner-image-binary <value>
   --runner-image-platform <linux/amd64|linux/arm64>
   --verify-runner-image [true|false]
+  --verify-runner-image-only [true|false]
   --rollout-timestamp <ISO8601>
   --kustomization-path <path>
   --service-manifest-path <path>
@@ -441,6 +446,22 @@ Options:
       }
 
       options.verifyRunnerImage = true
+      continue
+    }
+
+    if (flag === '--verify-runner-image-only') {
+      if (inlineValue !== undefined) {
+        options.verifyRunnerImageOnly = parseBoolean(inlineValue)
+        continue
+      }
+
+      if (nextValueLooksLikeValue && booleanFlagValues.has(nextValue.toLowerCase())) {
+        options.verifyRunnerImageOnly = parseBoolean(nextValue)
+        i += 1
+        continue
+      }
+
+      options.verifyRunnerImageOnly = true
       continue
     }
 
@@ -534,6 +555,11 @@ export const main = (cliOptions?: CliOptions) => {
     verifyRunnerImage:
       parsed.verifyRunnerImage ??
       parseBoolean(process.env.JANGAR_VERIFY_RUNNER_IMAGE ?? process.env.JANGAR_RUNNER_IMAGE_VERIFY ?? 'false'),
+    verifyRunnerImageOnly:
+      parsed.verifyRunnerImageOnly ??
+      parseBoolean(
+        process.env.JANGAR_VERIFY_RUNNER_IMAGE_ONLY ?? process.env.JANGAR_RUNNER_IMAGE_VERIFY_ONLY ?? 'false',
+      ),
     rolloutTimestamp,
     kustomizationPath: parsed.kustomizationPath ?? process.env.JANGAR_KUSTOMIZATION_PATH,
     serviceManifestPath: parsed.serviceManifestPath ?? process.env.JANGAR_SERVICE_MANIFEST,

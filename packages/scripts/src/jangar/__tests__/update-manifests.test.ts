@@ -208,6 +208,13 @@ describe('updateJangarManifests', () => {
     expect(__private.parseArgs(['--verify-runner-image', '--tag', 'new-tag']).verifyRunnerImage).toBe(true)
   })
 
+  it('parses runner image verification-only flag forms', () => {
+    expect(__private.parseArgs(['--verify-runner-image-only']).verifyRunnerImageOnly).toBe(true)
+    expect(__private.parseArgs(['--verify-runner-image-only', 'false']).verifyRunnerImageOnly).toBe(false)
+    expect(__private.parseArgs(['--verify-runner-image-only=false']).verifyRunnerImageOnly).toBe(false)
+    expect(__private.parseArgs(['--verify-runner-image-only', '--tag', 'new-tag']).verifyRunnerImageOnly).toBe(true)
+  })
+
   it('errors on invalid --verify-runner-image value', () => {
     expect(() => __private.parseArgs(['--verify-runner-image=maybe'])).toThrow('Invalid boolean value: maybe')
   })
@@ -272,8 +279,57 @@ describe('updateJangarManifests', () => {
 
     expect(calls).toEqual([
       `docker image inspect --format {{json .}} ${imageName}:agents-tag@sha256:agentsdigest`,
-      `docker run --rm --platform linux/amd64 --entrypoint /usr/local/bin/agent-runner ${imageName}:agents-tag@sha256:agentsdigest --help`,
+      `docker run --rm --network none --platform linux/amd64 --entrypoint /usr/local/bin/agent-runner ${imageName}:agents-tag@sha256:agentsdigest --help`,
     ])
+
+    rmSync(fixture.dir, { recursive: true, force: true })
+  })
+
+  it('throws when runner image smoke test exits non-zero regardless of error details', () => {
+    const fixture = createFixture()
+
+    const spawnMock = ((command, args) => {
+      const commandName =
+        typeof command === 'string'
+          ? command
+          : `${command.join(' ')} ${Array.isArray(args) ? args.join(' ') : ''}`.trim()
+      if (commandName.startsWith('docker image inspect')) {
+        const payload = {
+          os: 'linux',
+          architecture: 'amd64',
+          Config: {},
+        }
+        return {
+          exitCode: 0,
+          stdout: Buffer.from(JSON.stringify(payload)),
+          stderr: new Uint8Array(),
+        } as ReturnType<typeof Bun.spawnSync>
+      }
+
+      return {
+        exitCode: 1,
+        stdout: new Uint8Array(),
+        stderr: Buffer.from('unexpected argument: --help'),
+      } as ReturnType<typeof Bun.spawnSync>
+    }) as typeof Bun.spawnSync
+
+    __private.setSpawnSync(spawnMock)
+
+    expect(() =>
+      updateJangarManifests({
+        imageName,
+        tag: 'agents-tag',
+        digest: 'sha256:agentsdigest',
+        verifyRunnerImage: true,
+        runnerImagePlatform: 'linux/amd64',
+        runnerImageBinary: '/usr/local/bin/agent-runner',
+        rolloutTimestamp: '2026-02-20T09:25:00.000Z',
+        kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
+        serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
+        workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
+        agentsValuesPath: relative(repoRoot, fixture.agentsValuesPath),
+      }),
+    ).toThrow(/Runner image runtime check failed/)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -322,7 +378,73 @@ describe('updateJangarManifests', () => {
         workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
         agentsValuesPath: relative(repoRoot, fixture.agentsValuesPath),
       }),
-    ).toThrow(/Runner image compatibility check failed/)
+    ).toThrow(/Runner image runtime check failed/)
+
+    rmSync(fixture.dir, { recursive: true, force: true })
+  })
+
+  it('supports runner-image-only verification mode', () => {
+    const fixture = createFixture()
+
+    const calls: string[] = []
+    const spawnMock = ((command, args) => {
+      const commandName =
+        typeof command === 'string'
+          ? command
+          : `${command.join(' ')} ${Array.isArray(args) ? args.join(' ') : ''}`.trim()
+      calls.push(commandName)
+
+      if (commandName.startsWith('docker image inspect')) {
+        const payload = {
+          os: 'linux',
+          architecture: 'amd64',
+          Config: {},
+        }
+        return {
+          exitCode: 0,
+          stdout: Buffer.from(JSON.stringify(payload)),
+          stderr: new Uint8Array(),
+        } as ReturnType<typeof Bun.spawnSync>
+      }
+
+      return {
+        exitCode: 0,
+        stdout: Buffer.from('runner ok'),
+        stderr: new Uint8Array(),
+      } as ReturnType<typeof Bun.spawnSync>
+    }) as typeof Bun.spawnSync
+
+    __private.setSpawnSync(spawnMock)
+
+    const result = updateJangarManifests({
+      imageName,
+      tag: 'agents-tag',
+      digest: 'sha256:agentsdigest',
+      rolloutTimestamp: '2026-02-20T09:40:00.000Z',
+      verifyRunnerImage: true,
+      verifyRunnerImageOnly: true,
+      runnerImageName: imageName,
+      runnerImageTag: 'agents-tag',
+      runnerImageDigest: 'sha256:agentsdigest',
+      runnerImagePlatform: 'linux/amd64',
+      runnerImageBinary: '/usr/local/bin/agent-runner',
+      kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
+      serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
+      workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
+      agentsValuesPath: relative(repoRoot, fixture.agentsValuesPath),
+    })
+
+    expect(calls).toEqual([
+      `docker image inspect --format {{json .}} ${imageName}:agents-tag@sha256:agentsdigest`,
+      `docker run --rm --network none --platform linux/amd64 --entrypoint /usr/local/bin/agent-runner ${imageName}:agents-tag@sha256:agentsdigest --help`,
+    ])
+    expect(result.changed).toEqual({
+      kustomization: false,
+      service: false,
+      worker: false,
+      agentsValues: false,
+    })
+    expect(readFileSync(fixture.kustomizationPath, 'utf8')).toContain('newTag: "old-tag"')
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

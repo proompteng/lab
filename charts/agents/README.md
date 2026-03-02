@@ -238,12 +238,20 @@ For production promotion, pin both the runner image and digest in:
 - `runner.image.digest`
 
 The release workflow calls `update-manifests.ts` with explicit `--runner-image-*` arguments and validates the
-candidate runner image before writing manifests:
+runner image before writing manifests:
 
 - `docker image inspect --format '{{json .}}' <runnerImageRef>`
-- `docker run --entrypoint /usr/local/bin/agent-runner --help <runnerImageRef>`
+- `docker run --rm --network none --entrypoint /usr/local/bin/agent-runner --help <runnerImageRef>`
 
-If either check fails, the promotion step fails and manifest updates are not written.
+The workflow now executes this check in an explicit pass first:
+
+- `bun run packages/scripts/src/jangar/update-manifests.ts --verify-runner-image --verify-runner-image-only ...`
+
+If any check fails, promotion is blocked and manifest updates are not applied.
+
+Rollback for a bad runner promotion is done by reverting both image blocks in
+`argocd/applications/agents/values.yaml` (`image.*` and `runner.image.*`) to the previous digest/tag
+and allowing Argo CD to reconcile to the prior state.
 
 ### Agent comms subjects (optional)
 

@@ -48,10 +48,12 @@ bun run "$repoRoot/packages/scripts/src/jangar/update-manifests.ts" \
   --runner-image-digest "$JANGAR_RUNNER_DIGEST" \
   --runner-image-platform "$JANGAR_RUNNER_PLATFORM" \
   --verify-runner-image \
+  --verify-runner-image-only \
   --rollout-timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
-- Any failure to run `/usr/local/bin/agent-runner --help` in the image for the target platform should block promotion.
+- Any non-zero result from that runtime probe (including `agent-runner --help`) is a hard failure.
+- The release workflow runs this as a dedicated check before manifest writes in `jangar-release.yml`.
 
 ## Integration Tests
 
