@@ -72,6 +72,19 @@ spec:
             </warpstream_ingestion>
           </named_collections>
         </clickhouse>
+      config.d/posthog-crash-log.xml: |
+        <clickhouse>
+          <crash_log>
+            <database>system</database>
+            <table>crash_log</table>
+            <partition_by />
+            <flush_interval_milliseconds>1000</flush_interval_milliseconds>
+            <max_size_rows>1024</max_size_rows>
+            <reserved_size_rows>1024</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>512</buffer_size_rows_flush_threshold>
+            <flush_on_crash>true</flush_on_crash>
+          </crash_log>
+        </clickhouse>
     users:
       posthog/password:
         valueFrom:
