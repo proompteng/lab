@@ -49,6 +49,7 @@ from ..features import (
 from ..forecasting import build_default_forecast_router
 from ..llm.evaluation import build_llm_evaluation_metrics
 from ..models import SignalEnvelope
+from ..parity import build_benchmark_parity_report, write_benchmark_parity_report
 from ..reporting import (
     EvaluationReport,
     EvaluationReportConfig,
@@ -99,6 +100,7 @@ _STAGE_EVALUATION = "evaluation"
 _STAGE_RECOMMENDATION = "promotion-recommendation"
 _STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
+_BENCHMARK_PARITY_REPORT_PATH = "benchmarks/benchmark-parity-report-v1.json"
 _STAGE_PROFITABILITY = "profitability_stage_manifest"
 
 
@@ -115,67 +117,6 @@ class _StageManifestRecord:
     parent_lineage_hash: str | None = None
     parent_stage: str | None = None
     inputs: dict[str, str] = field(default_factory=dict)
-
-
-def _readable_stage_iteration_number(artifact_root: Path) -> int:
-    pattern = re.compile(r"^iteration-(\d+)\.md$")
-    highest = 0
-    for item in artifact_root.glob("iteration-*.md"):
-        match = pattern.match(item.name)
-        if not match:
-            continue
-        try:
-            candidate = int(match.group(1))
-        except (TypeError, ValueError):
-            continue
-        if candidate > highest:
-            highest = candidate
-    return highest + 1
-
-
-def _write_stage_iteration_notes(
-    *,
-    artifact_root: Path,
-    run_id: str,
-    candidate_id: str,
-    promotion_target: PromotionTarget,
-    promotion_recommended_mode: PromotionTarget,
-    gate_allowed: bool,
-    recommendation_action: str,
-    recommendation_reason_count: int,
-    promotion_reasons: list[str],
-    repository: str,
-    base: str,
-    head: str,
-    priority_id: str | None,
-) -> Path:
-    artifact_root.mkdir(parents=True, exist_ok=True)
-    iteration = _readable_stage_iteration_number(artifact_root)
-    notes_path = artifact_root / f"iteration-{iteration}.md"
-
-    lines = [
-        f"# Autonomy lane iteration {iteration}",
-        "",
-        f"- run_id: {run_id}",
-        f"- candidate_id: {candidate_id}",
-        f"- promotion_target: {promotion_target}",
-        f"- recommendation_mode: {promotion_recommended_mode}",
-        f"- recommendation_action: {recommendation_action}",
-        f"- gate_allowed: {str(gate_allowed).lower()}",
-        f"- recommendation_reason_count: {recommendation_reason_count}",
-        "- repository: {0}".format(repository),
-        "- base: {0}".format(base),
-        "- head: {0}".format(head),
-    ]
-    if priority_id:
-        lines.append(f"- priority_id: {priority_id}")
-
-    lines.append("")
-    lines.append("## Gate and evidence summary")
-    lines.extend(f"- {reason}" for reason in promotion_reasons)
-
-    notes_path.write_text("\n".join(lines), encoding="utf-8")
-    return notes_path
 
 
 def _coerce_evidence_bool(value: object) -> bool | None:
@@ -592,6 +533,7 @@ def _build_profitability_stage_manifest(
     gate_report_payload: dict[str, Any],
     gate_report_path: Path,
     profitability_benchmark_path: Path,
+    benchmark_parity_path: Path,
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
     janus_event_car_path: Path,
@@ -702,6 +644,7 @@ def _build_profitability_stage_manifest(
         ("walkforward_results_present", "walkforward_results", walkforward_results_path),
         ("evaluation_report_present", "evaluation_report", evaluation_report_path),
         ("gate_evaluation_present", "gate_evaluation", gate_report_path),
+        ("benchmark_parity_present", "benchmark_parity", benchmark_parity_path),
         ("janus_event_car_present", "janus_event_car", janus_event_car_path),
         ("janus_hgrm_reward_present", "janus_hgrm_reward", janus_hgrm_reward_path),
         ("recalibration_report_present", "recalibration_report", recalibration_report_path),
@@ -1010,6 +953,7 @@ def run_autonomous_lane(
     janus_event_car_path = gates_dir / "janus-event-car-v1.json"
     janus_hgrm_reward_path = gates_dir / "janus-hgrm-reward-v1.json"
     stress_metrics_path = gates_dir / _STRESS_METRICS_ARTIFACT_PATH
+    benchmark_parity_path = output_dir / _BENCHMARK_PARITY_REPORT_PATH
     recalibration_report_path = gates_dir / "recalibration-report.json"
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     profitability_manifest_path = output_dir / _PROFITABILITY_STAGE_MANIFEST_PATH
@@ -1132,17 +1076,19 @@ def run_autonomous_lane(
         )
         evaluation_report_path = backtest_dir / "evaluation-report.json"
         write_evaluation_report(report, evaluation_report_path)
+        baseline_candidate_id = "baseline-legacy-macd-rsi"
+        baseline_report_config = EvaluationReportConfig(
+            evaluation_start=signals[0].event_ts,
+            evaluation_end=signals[-1].event_ts,
+            signal_source=str(signals_path),
+            strategies=_to_orm_strategies(baseline_runtime_strategies),
+            run_id=f"{run_id}-baseline",
+            strategy_config_path=f"baseline:{baseline_candidate_id}@1.0.0",
+            git_sha=code_version,
+        )
         baseline_report = generate_evaluation_report(
             baseline_walk_results,
-            config=EvaluationReportConfig(
-                evaluation_start=signals[0].event_ts,
-                evaluation_end=signals[-1].event_ts,
-                signal_source=str(signals_path),
-                strategies=_to_orm_strategies(baseline_runtime_strategies),
-                run_id=f"{run_id}-baseline",
-                strategy_config_path="baseline:legacy_macd_rsi@1.0.0",
-                git_sha=code_version,
-            ),
+            config=baseline_report_config,
             promotion_target="shadow",
         )
         write_evaluation_report(baseline_report, baseline_report_path)
@@ -1212,7 +1158,7 @@ def run_autonomous_lane(
 
         benchmark = execute_profitability_benchmark_v4(
             candidate_id=candidate_id,
-            baseline_id="baseline-legacy-macd-rsi",
+            baseline_id=baseline_candidate_id,
             candidate_report_payload=report.to_payload(),
             baseline_report_payload=baseline_report.to_payload(),
             required_slice_keys=[
@@ -1224,6 +1170,12 @@ def run_autonomous_lane(
         profitability_benchmark_path.write_text(
             json.dumps(benchmark.to_payload(), indent=2), encoding="utf-8"
         )
+        benchmark_parity_report = build_benchmark_parity_report(
+            candidate_id=candidate_id,
+            baseline_candidate_id=baseline_candidate_id,
+            now=now,
+        )
+        write_benchmark_parity_report(benchmark_parity_report, benchmark_parity_path)
 
         confidence_values = _collect_confidence_values(walk_decisions)
         reproducibility_hashes = {
@@ -1239,7 +1191,7 @@ def run_autonomous_lane(
         profitability_evidence = build_profitability_evidence_v4(
             run_id=run_id,
             candidate_id=candidate_id,
-            baseline_id="baseline-legacy-macd-rsi",
+            baseline_id=baseline_candidate_id,
             candidate_report_payload=report.to_payload(),
             benchmark=benchmark,
             confidence_values=confidence_values,
@@ -1412,6 +1364,11 @@ def run_autonomous_lane(
         stress_metrics_artifact_ref = str(stress_metrics_path)
         if not output_dir.is_absolute():
             stress_metrics_artifact_ref = str(stress_metrics_path.relative_to(output_dir))
+        benchmark_parity_artifact_ref = str(benchmark_parity_path)
+        if not output_dir.is_absolute():
+            benchmark_parity_artifact_ref = str(
+                benchmark_parity_path.relative_to(output_dir)
+            )
         gate_report_payload = gate_report.to_payload()
         gate_report_payload["run_id"] = run_id
         gate_report_payload["throughput"] = {
@@ -1446,6 +1403,9 @@ def run_autonomous_lane(
                 "evidence_complete": janus_evidence_complete,
                 "reasons": janus_reasons,
             },
+            "benchmark_parity": {
+                "artifact_ref": benchmark_parity_artifact_ref,
+            },
             "promotion_rationale": {
                 "requested_target": promotion_target,
                 "gate_recommended_mode": gate_report.recommended_mode,
@@ -1477,6 +1437,7 @@ def run_autonomous_lane(
                 "evaluation_report": str(evaluation_report_path),
                 "baseline_evaluation_report": str(baseline_report_path),
                 "gate_report": str(gate_report_path),
+                "benchmark_parity": str(benchmark_parity_path),
                 "profitability_benchmark": str(profitability_benchmark_path),
                 "profitability_evidence": str(profitability_evidence_path),
                 "profitability_validation": str(profitability_validation_path),
@@ -1555,6 +1516,7 @@ def run_autonomous_lane(
                 profitability_benchmark_path=profitability_benchmark_path,
                 profitability_evidence_path=profitability_evidence_path,
                 profitability_validation_path=profitability_validation_path,
+                benchmark_parity_path=benchmark_parity_path,
                 janus_event_car_path=janus_event_car_path,
                 janus_hgrm_reward_path=janus_hgrm_reward_path,
                 recalibration_report_path=recalibration_report_path,
@@ -1653,6 +1615,7 @@ def run_autonomous_lane(
                     "reasons": gate_report.reasons,
                     "artifact_refs": [
                         str(gate_report_path),
+                        str(benchmark_parity_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
                         str(stress_metrics_path),
@@ -1675,6 +1638,7 @@ def run_autonomous_lane(
                         str(promotion_check_path),
                         str(rollback_check_path),
                         str(gate_report_path),
+                        str(benchmark_parity_path),
                         str(profitability_benchmark_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
@@ -1720,6 +1684,9 @@ def run_autonomous_lane(
                 "evidence_complete": janus_evidence_complete,
                 "reasons": janus_reasons,
             },
+            "benchmark_parity": {
+                "artifact_ref": benchmark_parity_artifact_ref,
+            },
             "promotion_rationale": {
                 "requested_target": promotion_target,
                 "gate_recommended_mode": gate_report.recommended_mode,
@@ -1741,6 +1708,7 @@ def run_autonomous_lane(
         gate_report_payload["provenance"] = {
             "gate_report_trace_id": gate_report_trace_id,
             "recommendation_trace_id": recommendation_trace_id,
+            "benchmark_parity_artifact": str(benchmark_parity_path),
             "profitability_benchmark_artifact": str(profitability_benchmark_path),
             "profitability_evidence_artifact": str(profitability_evidence_path),
             "profitability_validation_artifact": str(profitability_validation_path),
@@ -1774,6 +1742,7 @@ def run_autonomous_lane(
             output_artifacts={
                 "evaluation_report": evaluation_report_path,
                 "gate_evaluation": gate_report_path,
+                "benchmark_parity": benchmark_parity_path,
                 "profitability_benchmark": profitability_benchmark_path,
                 "profitability_evidence": profitability_evidence_path,
                 "profitability_validation": profitability_validation_path,
@@ -1810,6 +1779,7 @@ def run_autonomous_lane(
                         str(gate_report_path),
                         str(promotion_gate_path),
                         str(profitability_manifest_path),
+                        str(benchmark_parity_path),
                         str(profitability_benchmark_path),
                         str(profitability_validation_path),
                         str(janus_event_car_path),
@@ -1868,6 +1838,7 @@ def run_autonomous_lane(
             "evaluation_report": evaluation_report_path,
             "gate_report": gate_report_path,
             "profitability_stage_manifest": profitability_manifest_path,
+            "benchmark_parity": benchmark_parity_path,
             "profitability_benchmark": profitability_benchmark_path,
             "profitability_evidence": profitability_evidence_path,
             "profitability_validation": profitability_validation_path,
@@ -1983,6 +1954,7 @@ def run_autonomous_lane(
             profitability_benchmark_path=profitability_benchmark_path,
             profitability_evidence_path=profitability_evidence_path,
             profitability_validation_path=profitability_validation_path,
+            benchmark_parity_path=benchmark_parity_path,
             janus_event_car_path=janus_event_car_path,
             janus_hgrm_reward_path=janus_hgrm_reward_path,
             recalibration_report_path=recalibration_report_path,
@@ -2074,21 +2046,6 @@ def run_autonomous_lane(
             now=now,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
-        )
-        _write_stage_iteration_notes(
-            artifact_root=output_dir,
-            run_id=run_id,
-            candidate_id=candidate_id,
-            promotion_target=promotion_target,
-            promotion_recommended_mode=recommended_mode,
-            gate_allowed=promotion_allowed,
-            recommendation_action=promotion_recommendation.action,
-            recommendation_reason_count=len(promotion_reasons),
-            promotion_reasons=promotion_reasons,
-            repository=cast(str, resolved_governance_repository),
-            base=cast(str, resolved_governance_base),
-            head=cast(str, resolved_governance_head),
-            priority_id=priority_id,
         )
 
         return AutonomousLaneResult(
@@ -2522,6 +2479,7 @@ def _build_phase_manifest(
             str(output_dir / "gates" / "profitability-benchmark-v4.json"),
             str(output_dir / "gates" / "profitability-evidence-v4.json"),
             str(output_dir / "gates" / "profitability-evidence-validation.json"),
+            str(output_dir / "benchmarks" / "benchmark-parity-report-v1.json"),
             str(output_dir / "gates" / "janus-event-car-v1.json"),
             str(output_dir / "gates" / "janus-hgrm-reward-v1.json"),
             str(output_dir / "gates" / "promotion-evidence-gate.json"),
@@ -2694,6 +2652,7 @@ def _build_actuation_intent_payload(
     profitability_benchmark_path: Path,
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
+    benchmark_parity_path: Path,
     janus_event_car_path: Path,
     janus_hgrm_reward_path: Path,
     recalibration_report_path: Path,
@@ -2731,6 +2690,7 @@ def _build_actuation_intent_payload(
             str(profitability_manifest_path),
             str(promotion_recommendation_path),
             str(profitability_benchmark_path),
+            str(benchmark_parity_path),
             str(profitability_evidence_path),
             str(profitability_validation_path),
             str(janus_event_car_path),
