@@ -98,33 +98,34 @@ Component-specific override behavior:
   4. Repeat for the second component only after observing healthy rollout.
 
 Rollback order:
+
 - Remove per-component `deploymentStrategy`/`deploymentLifecycle` overrides first.
 - Revert global values second.
 - Then rollout a full rollback to restore previous behavior.
 
 Tradeoffs:
+
 - `maxUnavailable: 0` keeps control-plane availability high and is safer by default, but increases rollout duration.
 - `maxSurge: 1` speeds rollouts while usually staying within capacity; raise cautiously on constrained clusters.
 - Larger `progressDeadlineSeconds` helps long rollouts succeed but delays rollback signaling for stalled deployments.
 - Higher `revisionHistoryLimit` improves rollback/debug options but increases object history storage.
 
 Recommended staged order:
-  1. Set/verify global `deploymentStrategy` first.
-  2. If needed, roll out control-plane strategy/lifecycle override only.
-  3. Apply controllers strategy/lifecycle override only after control-plane behavior is observed stable.
 
-
+1. Set/verify global `deploymentStrategy` first.
+2. If needed, roll out control-plane strategy/lifecycle override only.
+3. Apply controllers strategy/lifecycle override only after control-plane behavior is observed stable.
 
 ## Config Mapping
 
-| Helm value                        | Rendered field                            | Intended behavior                                      |
-| --------------------------------- | ----------------------------------------- | ------------------------------------------------------ |
-| `deploymentStrategy`              | `Deployment.spec.strategy`                | Global default used if component overrides are absent. |
-| `controlPlane.deploymentStrategy` | `deploy/agents.spec.strategy`             | Component-specific override.                           |
-| `controllers.deploymentStrategy`  | `deploy/agents-controllers.spec.strategy` | Component-specific override.                           |
-| `deploymentLifecycle`             | `Deployment.spec.minReadySeconds`, `Deployment.spec.progressDeadlineSeconds`, `Deployment.spec.revisionHistoryLimit` | Global rollout lifecycle defaults. |
-| `controlPlane.deploymentLifecycle` | `deploy/agents.spec.minReadySeconds`, `deploy/agents.spec.progressDeadlineSeconds`, `deploy/agents.spec.revisionHistoryLimit` | Control-plane-specific lifecycle override. |
-| `controllers.deploymentLifecycle` | `deploy/agents-controllers.spec.minReadySeconds`, `deploy/agents-controllers.spec.progressDeadlineSeconds`, `deploy/agents-controllers.spec.revisionHistoryLimit` | Controllers-specific lifecycle override. |
+| Helm value                         | Rendered field                                                                                                                                                    | Intended behavior                                      |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `deploymentStrategy`               | `Deployment.spec.strategy`                                                                                                                                        | Global default used if component overrides are absent. |
+| `controlPlane.deploymentStrategy`  | `deploy/agents.spec.strategy`                                                                                                                                     | Component-specific override.                           |
+| `controllers.deploymentStrategy`   | `deploy/agents-controllers.spec.strategy`                                                                                                                         | Component-specific override.                           |
+| `deploymentLifecycle`              | `Deployment.spec.minReadySeconds`, `Deployment.spec.progressDeadlineSeconds`, `Deployment.spec.revisionHistoryLimit`                                              | Global rollout lifecycle defaults.                     |
+| `controlPlane.deploymentLifecycle` | `deploy/agents.spec.minReadySeconds`, `deploy/agents.spec.progressDeadlineSeconds`, `deploy/agents.spec.revisionHistoryLimit`                                     | Control-plane-specific lifecycle override.             |
+| `controllers.deploymentLifecycle`  | `deploy/agents-controllers.spec.minReadySeconds`, `deploy/agents-controllers.spec.progressDeadlineSeconds`, `deploy/agents-controllers.spec.revisionHistoryLimit` | Controllers-specific lifecycle override.               |
 
 ## Rollout Plan
 
