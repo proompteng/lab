@@ -106,7 +106,9 @@ spec:
         - name: SENTRY_DSN
           value: 
         - name: DEPLOYMENT
-          value: self_managed        
+          value: self_managed
+        - name: PLUGIN_SERVER_MODE
+          value: ingestion-v2
         - name: SECRET_KEY
           valueFrom:
             secretKeyRef:
