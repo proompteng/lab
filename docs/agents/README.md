@@ -16,6 +16,7 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - How to validate changes in CI: `ci-validation-plan.md`
 - How to install/upgrade/debug (ops): `runbooks.md`
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
+- Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Security baseline: `threat-model.md`
 - RBAC requirements: `rbac-matrix.md`
 - Production bar (non-negotiables): `production-readiness-design.md`
@@ -114,6 +115,7 @@ For env and gRPC source-of-truth changes in this branch:
 - [designs/approval-policy-gates.md](designs/approval-policy-gates.md)
 - [designs/artifact-storage-s3.md](designs/artifact-storage-s3.md)
 - [designs/artifacthub-oci-distribution.md](designs/artifacthub-oci-distribution.md)
+- [designs/autonomous-jangar-torghut-production-system.md](designs/autonomous-jangar-torghut-production-system.md)
 - [designs/audit-logging.md](designs/audit-logging.md)
 - [designs/branch-naming-conflict-strategy.md](designs/branch-naming-conflict-strategy.md)
 - [designs/budget-enforcement.md](designs/budget-enforcement.md)
