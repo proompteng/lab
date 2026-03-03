@@ -40,26 +40,11 @@ flags:
     description: Global trading enablement gate for Torghut runtime.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
-  - key: torghut_trading_live_enabled
-    name: Torghut Trading Live Enabled
-    description: Live-mode safety gate for Torghut trading runtime.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
   - key: torghut_trading_simulation_enabled
     name: Torghut Trading Simulation Enabled
     description: Enables historical simulation execution mode in Torghut runtime.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
-  - key: torghut_ws_crypto_enabled
-    name: Torghut WS Crypto Enabled
-    description: Enables crypto websocket market-data lane for Torghut rollout.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
-  - key: torghut_universe_crypto_enabled
-    name: Torghut Universe Crypto Enabled
-    description: Allows crypto symbols in the Torghut trading universe resolver.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
   - key: torghut_trading_crypto_enabled
     name: Torghut Trading Crypto Enabled
     description: Enables crypto-universe strategy and execution paths in Torghut.
@@ -85,11 +70,6 @@ flags:
     description: Enables scheduler-integrated strategy runtime path.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
-  - key: torghut_trading_strategy_runtime_fallback_legacy
-    name: Torghut Strategy Runtime Fallback Legacy
-    description: Enables fallback to legacy strategy runtime behavior.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
   - key: torghut_trading_feature_quality_enabled
     name: Torghut Trading Feature Quality Enabled
     description: Enables strict feature quality gate enforcement.

@@ -65,7 +65,6 @@ class TestLiveConfigManifestContract(TestCase):
     def test_live_pass_through_requires_explicit_approval_gate(self) -> None:
         env = _load_torghut_knative_env()
         env["TRADING_MODE"] = "live"
-        env["TRADING_LIVE_ENABLED"] = "true"
         fail_open_env = dict(env)
         fail_open_env["LLM_ROLLOUT_STAGE"] = "stage3"
         fail_open_env["LLM_FAIL_MODE"] = "pass_through"

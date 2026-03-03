@@ -17,15 +17,11 @@ logger = logging.getLogger(__name__)
 
 FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_enabled": "torghut_trading_enabled",
-    "trading_live_enabled": "torghut_trading_live_enabled",
-    "trading_ws_crypto_enabled": "torghut_ws_crypto_enabled",
-    "trading_universe_crypto_enabled": "torghut_universe_crypto_enabled",
     "trading_crypto_enabled": "torghut_trading_crypto_enabled",
     "trading_crypto_live_enabled": "torghut_trading_crypto_live_enabled",
     "trading_order_feed_enabled": "torghut_trading_order_feed_enabled",
     "trading_multi_account_enabled": "torghut_trading_multi_account_enabled",
     "trading_strategy_scheduler_enabled": "torghut_trading_strategy_scheduler_enabled",
-    "trading_strategy_runtime_fallback_legacy": "torghut_trading_strategy_runtime_fallback_legacy",
     "trading_feature_quality_enabled": "torghut_trading_feature_quality_enabled",
     "trading_autonomy_enabled": "torghut_trading_autonomy_enabled",
     "trading_autonomy_allow_live_promotion": "torghut_trading_autonomy_allow_live_promotion",
@@ -255,16 +251,17 @@ class Settings(BaseSettings):
     trading_mode: Literal["paper", "live"] = Field(
         default="paper", alias="TRADING_MODE"
     )
+    # Deprecated compatibility alias for TRADING_MODE.
     trading_live_enabled: bool = Field(default=False, alias="TRADING_LIVE_ENABLED")
     trading_ws_crypto_enabled: bool = Field(
         default=False,
         alias="TRADING_WS_CRYPTO_ENABLED",
-        description="Enable crypto websocket market-data path dependencies for trading.",
+        description="Deprecated compatibility alias for TRADING_CRYPTO_ENABLED.",
     )
     trading_universe_crypto_enabled: bool = Field(
         default=False,
         alias="TRADING_UNIVERSE_CRYPTO_ENABLED",
-        description="Allow slash-delimited crypto symbols in resolved trading universe.",
+        description="Deprecated compatibility alias for TRADING_CRYPTO_ENABLED.",
     )
     trading_crypto_enabled: bool = Field(
         default=False,
@@ -458,11 +455,6 @@ class Settings(BaseSettings):
         default=False,
         alias="TRADING_STRATEGY_SCHEDULER_ENABLED",
         description="Migration flag for scheduler-integrated strategy runtime path.",
-    )
-    trading_strategy_runtime_fallback_legacy: bool = Field(
-        default=True,
-        alias="TRADING_STRATEGY_RUNTIME_FALLBACK_LEGACY",
-        description="Fallback to legacy decision path when scheduler runtime yields no intents or errors.",
     )
     trading_strategy_runtime_circuit_errors: int = Field(
         default=3,
@@ -1199,25 +1191,7 @@ class Settings(BaseSettings):
     jangar_api_key: Optional[str] = Field(default=None, alias="JANGAR_API_KEY")
 
     llm_enabled: bool = Field(default=True, alias="LLM_ENABLED")
-    # Deprecated in the DSPy-only decision path. Kept for backward-compatible tooling.
-    llm_provider: Literal["jangar", "openai"] = Field(
-        default="openai", alias="LLM_PROVIDER"
-    )
     llm_model: str = Field(default="gpt-5.3-codex-spark", alias="LLM_MODEL")
-    # Used only when `LLM_PROVIDER=jangar` and the Jangar request fails.
-    # This should point at an OpenAI-compatible endpoint (e.g. vLLM, Ollama, llama.cpp server).
-    # Deprecated in the DSPy-only decision path. Kept for backward-compatible tooling.
-    llm_self_hosted_base_url: Optional[str] = Field(
-        default=None, alias="LLM_SELF_HOSTED_BASE_URL"
-    )
-    # Deprecated in the DSPy-only decision path. Kept for backward-compatible tooling.
-    llm_self_hosted_api_key: Optional[str] = Field(
-        default=None, alias="LLM_SELF_HOSTED_API_KEY"
-    )
-    # Deprecated in the DSPy-only decision path. Kept for backward-compatible tooling.
-    llm_self_hosted_model: Optional[str] = Field(
-        default=None, alias="LLM_SELF_HOSTED_MODEL"
-    )
     llm_prompt_version: str = Field(default="v1", alias="LLM_PROMPT_VERSION")
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=300, alias="LLM_MAX_TOKENS")
@@ -1368,10 +1342,6 @@ class Settings(BaseSettings):
         if not self.trading_feature_flags_url:
             return
 
-        trading_live_explicitly_set = (
-            "trading_live_enabled" in self.__pydantic_fields_set__
-        )
-
         endpoint = self.trading_feature_flags_url.strip().rstrip("/")
         if not endpoint:
             return
@@ -1403,17 +1373,6 @@ class Settings(BaseSettings):
                 )
                 break
 
-        if (
-            self.trading_mode == "paper"
-            and self.trading_live_enabled
-            and not trading_live_explicitly_set
-        ):
-            logger.warning(
-                "Feature flag override enabled trading live mode while TRADING_MODE=paper. "
-                "Normalizing TRADING_LIVE_ENABLED to false."
-            )
-            self.trading_live_enabled = False
-
     @staticmethod
     def _normalize_csv_setting(raw: str) -> str:
         return ",".join([item.strip() for item in raw.split(",") if item.strip()])
@@ -1433,18 +1392,52 @@ class Settings(BaseSettings):
                 raise ValueError(f"{name}[{key}] must be >= 0")
 
     def _apply_trading_defaults(self) -> None:
+        mode_explicit = "trading_mode" in self.model_fields_set
+        deprecated_live_explicit = "trading_live_enabled" in self.model_fields_set
+        if not mode_explicit and deprecated_live_explicit:
+            self.trading_mode = "live" if self.trading_live_enabled else "paper"
+        elif (
+            mode_explicit
+            and deprecated_live_explicit
+            and self.trading_live_enabled != (self.trading_mode == "live")
+        ):
+            logger.warning(
+                "Ignoring deprecated TRADING_LIVE_ENABLED because TRADING_MODE is set."
+            )
+        self.trading_live_enabled = self.trading_mode == "live"
+
+        crypto_explicit = "trading_crypto_enabled" in self.model_fields_set
+        deprecated_ws_explicit = "trading_ws_crypto_enabled" in self.model_fields_set
+        deprecated_universe_explicit = (
+            "trading_universe_crypto_enabled" in self.model_fields_set
+        )
+        if not crypto_explicit and (deprecated_ws_explicit or deprecated_universe_explicit):
+            ws_enabled = self.trading_ws_crypto_enabled if deprecated_ws_explicit else True
+            universe_enabled = (
+                self.trading_universe_crypto_enabled if deprecated_universe_explicit else True
+            )
+            self.trading_crypto_enabled = bool(ws_enabled and universe_enabled)
+        elif crypto_explicit and (
+            (deprecated_ws_explicit and self.trading_ws_crypto_enabled != self.trading_crypto_enabled)
+            or (
+                deprecated_universe_explicit
+                and self.trading_universe_crypto_enabled != self.trading_crypto_enabled
+            )
+        ):
+            logger.warning(
+                "Ignoring deprecated TRADING_WS_CRYPTO_ENABLED/TRADING_UNIVERSE_CRYPTO_ENABLED "
+                "because TRADING_CRYPTO_ENABLED is set."
+            )
+        self.trading_ws_crypto_enabled = self.trading_crypto_enabled
+        self.trading_universe_crypto_enabled = self.trading_crypto_enabled
+
         if "trading_account_label" not in self.model_fields_set:
             self.trading_account_label = self.trading_mode
-
-    def _apply_llm_provider_default(self) -> None:
-        if "llm_provider" not in self.model_fields_set and self.jangar_base_url:
-            self.llm_provider = "jangar"
 
     def _normalize_optional_url_settings(self) -> None:
         for field_name in (
             "jangar_base_url",
             "trading_market_context_url",
-            "llm_self_hosted_base_url",
             "trading_lean_runner_url",
         ):
             raw_value = cast(str | None, getattr(self, field_name))
@@ -1590,19 +1583,11 @@ class Settings(BaseSettings):
         self._normalize_correlation_symbol_groups()
         self._normalize_correlation_group_notional_caps()
 
-    def _validate_trading_mode_settings(self) -> None:
-        if self.trading_mode == "live" and not self.trading_live_enabled:
-            raise ValueError("TRADING_LIVE_ENABLED must be true when TRADING_MODE=live")
-        if self.trading_mode == "paper" and self.trading_live_enabled:
-            raise ValueError(
-                "TRADING_LIVE_ENABLED must be false when TRADING_MODE=paper"
-            )
-
     def _validate_trading_source_settings(self) -> None:
         if (
             self.trading_enabled
             or self.trading_autonomy_enabled
-            or self.trading_live_enabled
+            or self.trading_mode == "live"
         ) and self.trading_universe_source != "jangar":
             raise ValueError(
                 "TRADING_UNIVERSE_SOURCE must be 'jangar' when trading or autonomy is enabled"
@@ -1783,12 +1768,10 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: Any) -> None:
         self._apply_feature_flag_overrides()
         self._apply_trading_defaults()
-        self._validate_trading_mode_settings()
         self._normalize_optional_url_settings()
         self._normalize_optional_nullable_settings()
         self._normalize_trading_csv_settings()
         self._validate_trading_source_settings()
-        self._apply_llm_provider_default()
         self._normalize_llm_settings()
         self._validate_allocator_scalar_settings()
         self._validate_non_negative_map_values(

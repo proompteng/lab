@@ -113,12 +113,6 @@ def _append_trading_setting_reasons(
 ) -> None:
     if not settings.trading_enabled:
         reasons.append("trading_disabled")
-    if settings.trading_mode == "live" and not settings.trading_live_enabled:
-        reasons.append("live_trading_disabled")
-    if crypto_symbol and not settings.trading_ws_crypto_enabled:
-        reasons.append("crypto_ws_disabled")
-    if crypto_symbol and not settings.trading_universe_crypto_enabled:
-        reasons.append("crypto_universe_disabled")
     if crypto_symbol and not settings.trading_crypto_enabled:
         reasons.append("crypto_trading_disabled")
     if (

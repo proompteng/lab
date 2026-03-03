@@ -217,7 +217,6 @@ class TestDecisionEngine(TestCase):
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
             patch.object(settings, "trading_strategy_scheduler_enabled", True),
-            patch.object(settings, "trading_strategy_runtime_fallback_legacy", True),
         ):
             decisions = engine.evaluate(signal, [strategy])
             telemetry = engine.consume_runtime_telemetry()
@@ -288,7 +287,6 @@ class TestDecisionEngine(TestCase):
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
             patch.object(settings, "trading_strategy_scheduler_enabled", True),
-            patch.object(settings, "trading_strategy_runtime_fallback_legacy", False),
         ):
             decisions = engine.evaluate(
                 signal, [buy_strategy, sell_strategy, off_timeframe_strategy]
@@ -331,7 +329,6 @@ class TestDecisionEngine(TestCase):
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
             patch.object(settings, "trading_strategy_scheduler_enabled", True),
-            patch.object(settings, "trading_strategy_runtime_fallback_legacy", True),
         ):
             decisions = engine.evaluate(signal, [strategy])
             telemetry = engine.consume_runtime_telemetry()
@@ -375,7 +372,6 @@ class TestDecisionEngine(TestCase):
         with (
             patch.object(settings, 'trading_strategy_runtime_mode', 'scheduler_v3'),
             patch.object(settings, 'trading_strategy_scheduler_enabled', True),
-            patch.object(settings, 'trading_strategy_runtime_fallback_legacy', False),
             patch.object(settings, 'trading_forecast_router_enabled', True),
             patch.object(settings, 'trading_forecast_router_policy_path', None),
             patch.object(settings, 'trading_forecast_router_refinement_enabled', True),
@@ -1043,7 +1039,7 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(params.get('route_regime_label'), 'mean_revert')
         self.assertEqual(params.get('regime_label'), 'mean_revert')
 
-    def test_scheduler_runtime_mode_does_not_enable_without_migration_flag(self) -> None:
+    def test_scheduler_runtime_mode_does_not_enable_when_scheduler_disabled(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
             name='runtime-disabled-no-flag',
@@ -1068,7 +1064,6 @@ class TestDecisionEngine(TestCase):
         with (
             patch.object(settings, 'trading_strategy_runtime_mode', 'scheduler_v3'),
             patch.object(settings, 'trading_strategy_scheduler_enabled', False),
-            patch.object(settings, 'trading_strategy_runtime_fallback_legacy', True),
         ):
             decisions = engine.evaluate(signal, [strategy])
             telemetry = engine.consume_runtime_telemetry()

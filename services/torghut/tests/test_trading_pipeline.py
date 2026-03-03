@@ -731,7 +731,7 @@ class TestTradingPipeline(TestCase):
         self.assertTrue(decisions)
         self.assertEqual(decisions[0].params.get("price"), Decimal("101.5"))
 
-    def test_risk_engine_rejects_live_trading(self) -> None:
+    def test_risk_engine_ignores_deprecated_live_enabled_flag(self) -> None:
         from app import config
 
         original = {
@@ -772,8 +772,8 @@ class TestTradingPipeline(TestCase):
                     positions=[],
                     allowed_symbols={"AAPL"},
                 )
-            self.assertFalse(verdict.approved)
-            self.assertIn("live_trading_disabled", verdict.reasons)
+            self.assertTrue(verdict.approved)
+            self.assertNotIn("live_trading_disabled", verdict.reasons)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]

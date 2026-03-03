@@ -303,8 +303,6 @@ class TestRiskEngine(TestCase):
                 session, decision, self.strategy, account, positions, {"BTC/USD"}
             )
         self.assertFalse(verdict.approved)
-        self.assertIn("crypto_ws_disabled", verdict.reasons)
-        self.assertIn("crypto_universe_disabled", verdict.reasons)
         self.assertIn("crypto_trading_disabled", verdict.reasons)
 
     def test_crypto_live_trade_blocked_when_live_gate_disabled(self) -> None:

@@ -14,7 +14,6 @@ Use these environment variables to control rollout:
 
 - `TRADING_STRATEGY_RUNTIME_MODE=legacy|plugin_v3|scheduler_v3`
 - `TRADING_STRATEGY_SCHEDULER_ENABLED=true|false`
-- `TRADING_STRATEGY_RUNTIME_FALLBACK_LEGACY=true|false`
 - `TRADING_STRATEGY_RUNTIME_CIRCUIT_ERRORS=<int>`
 - `TRADING_STRATEGY_RUNTIME_CIRCUIT_COOLDOWN_SECONDS=<int>`
 
@@ -22,9 +21,9 @@ Recommended staged rollout:
 
 1. Set `TRADING_STRATEGY_RUNTIME_MODE=scheduler_v3`
 2. Keep `TRADING_STRATEGY_SCHEDULER_ENABLED=false` to verify configuration without behavioral change.
-3. Enable `TRADING_STRATEGY_SCHEDULER_ENABLED=true` with `TRADING_STRATEGY_RUNTIME_FALLBACK_LEGACY=true`.
+3. Enable `TRADING_STRATEGY_SCHEDULER_ENABLED=true`.
 4. Monitor runtime metrics (`strategy_*`, `intent_conflict_total`, fallback counters).
-5. Only consider `TRADING_STRATEGY_RUNTIME_FALLBACK_LEGACY=false` after stable soak.
+5. Legacy fallback remains deterministic when scheduler runtime emits no intents/errors.
 
 ## Safety Semantics
 

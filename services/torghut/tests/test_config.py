@@ -46,23 +46,28 @@ class TestConfig(TestCase):
         )
         self.assertEqual(settings.trading_universe_source, "static")
 
-    def test_rejects_live_mode_without_live_enabled(self) -> None:
-        with self.assertRaises(ValidationError):
-            Settings(
-                TRADING_MODE="live",
-                TRADING_LIVE_ENABLED=False,
-                TRADING_UNIVERSE_SOURCE="static",
-                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
-            )
+    def test_deprecated_live_enabled_sets_trading_mode_when_mode_not_provided(self) -> None:
+        settings = Settings(
+            TRADING_ENABLED=False,
+            TRADING_AUTONOMY_ENABLED=False,
+            TRADING_LIVE_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="jangar",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(settings.trading_mode, "live")
+        self.assertTrue(settings.trading_live_enabled)
 
-    def test_rejects_paper_mode_with_live_enabled(self) -> None:
-        with self.assertRaises(ValidationError):
-            Settings(
-                TRADING_MODE="paper",
-                TRADING_LIVE_ENABLED=True,
-                TRADING_UNIVERSE_SOURCE="static",
-                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
-            )
+    def test_trading_mode_wins_when_deprecated_live_enabled_conflicts(self) -> None:
+        settings = Settings(
+            TRADING_MODE="paper",
+            TRADING_ENABLED=False,
+            TRADING_AUTONOMY_ENABLED=False,
+            TRADING_LIVE_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="static",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(settings.trading_mode, "paper")
+        self.assertFalse(settings.trading_live_enabled)
 
     def test_rejects_strict_veto_with_pass_through_fail_mode(self) -> None:
         with self.assertRaises(ValidationError):
@@ -313,7 +318,6 @@ class TestConfig(TestCase):
         )
         self.assertEqual(settings.trading_strategy_runtime_mode, "scheduler_v3")
         self.assertFalse(settings.trading_strategy_scheduler_enabled)
-        self.assertTrue(settings.trading_strategy_runtime_fallback_legacy)
 
     def test_allocator_regime_maps_are_normalized(self) -> None:
         settings = Settings(
@@ -473,13 +477,10 @@ class TestConfig(TestCase):
             payload = json.loads(request.data.decode("utf-8"))
             key = payload.get("flagKey")
             values = {
-                "torghut_trading_live_enabled": False,
                 "torghut_trading_enabled": False,
                 "torghut_trading_emergency_stop_enabled": True,
                 "torghut_trading_execution_prefer_limit": False,
                 "torghut_trading_multi_account_enabled": True,
-                "torghut_ws_crypto_enabled": True,
-                "torghut_universe_crypto_enabled": True,
                 "torghut_trading_crypto_enabled": True,
                 "torghut_trading_crypto_live_enabled": True,
                 "torghut_llm_enabled": False,
@@ -493,8 +494,6 @@ class TestConfig(TestCase):
                 TRADING_EMERGENCY_STOP_ENABLED=False,
                 TRADING_EXECUTION_PREFER_LIMIT=True,
                 TRADING_MULTI_ACCOUNT_ENABLED=False,
-                TRADING_WS_CRYPTO_ENABLED=False,
-                TRADING_UNIVERSE_CRYPTO_ENABLED=False,
                 TRADING_CRYPTO_ENABLED=False,
                 TRADING_CRYPTO_LIVE_ENABLED=False,
                 LLM_ENABLED=True,
@@ -520,26 +519,14 @@ class TestConfig(TestCase):
             "http://feature-flags.feature-flags.svc.cluster.local:8013",
         )
 
-    def test_feature_flags_cannot_enable_live_in_paper_mode(self) -> None:
-        def _mock_urlopen(request, timeout):  # type: ignore[no-untyped-def]
-            payload = json.loads(request.data.decode("utf-8"))
-            key = payload.get("flagKey")
-            values = {
-                "torghut_trading_live_enabled": True,
-            }
-            return _MockFlagResponse({"enabled": values.get(key, False)})
-
-        with patch("app.config.urlopen", side_effect=_mock_urlopen):
-            settings = Settings(
-                TRADING_MODE="paper",
-                TRADING_AUTONOMY_ENABLED=False,
-                TRADING_ENABLED=False,
-                TRADING_UNIVERSE_SOURCE="static",
-                TRADING_FEATURE_FLAGS_ENABLED=True,
-                TRADING_FEATURE_FLAGS_URL="http://feature-flags.feature-flags.svc.cluster.local:8013/",
-                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
-            )
-
+    def test_deprecated_live_enabled_is_derived_from_trading_mode(self) -> None:
+        settings = Settings(
+            TRADING_MODE="paper",
+            TRADING_AUTONOMY_ENABLED=False,
+            TRADING_ENABLED=False,
+            TRADING_UNIVERSE_SOURCE="static",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
         self.assertEqual(settings.trading_mode, "paper")
         self.assertFalse(settings.trading_live_enabled)
 
@@ -653,6 +640,9 @@ class TestConfig(TestCase):
         }
         control_fields = {
             "trading_feature_flags_enabled",
+            "trading_live_enabled",
+            "trading_ws_crypto_enabled",
+            "trading_universe_crypto_enabled",
             "trading_lean_runner_healthcheck_enabled",
             "trading_lean_runner_require_healthy",
             "trading_lean_backtest_enabled",
