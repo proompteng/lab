@@ -124,7 +124,7 @@ Complete DSPy-only production decisioning path with explicit decommissioning of 
 1. Remove legacy runtime LLM call path from decision codepath.
 2. Enforce DSPy artifact/version locks for all live advisory decisions.
 3. Ensure committee/veto telemetry and promotion lineage coverage are complete.
-4. Add migration guard that blocks rollout if legacy toggles are still enabled.
+4. Add migration guard that blocks rollout if legacy toggles are still enabled. (Completed `2026-03-03`)
 
 ### Primary files
 

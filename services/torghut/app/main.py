@@ -94,6 +94,14 @@ def _env_or_none(name: str) -> str | None:
     return value or None
 
 
+def _assert_dspy_cutover_migration_guard() -> None:
+    allowed, reasons = settings.llm_dspy_cutover_migration_guard()
+    if allowed:
+        return
+    reason_summary = "|".join(reasons) if reasons else "unknown"
+    raise RuntimeError(f"dspy_cutover_migration_guard_failed:{reason_summary}")
+
+
 def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
     if not whitepaper_workflow_enabled() or not whitepaper_inngest_enabled():
         app.state.whitepaper_inngest_registered = False
@@ -210,6 +218,7 @@ async def lifespan(app: FastAPI):
         assert_runtime_gate_policy_contract(settings.trading_autonomy_gate_policy_path)
 
     if settings.trading_enabled:
+        _assert_dspy_cutover_migration_guard()
         await scheduler.start()
     if whitepaper_workflow_enabled():
         await whitepaper_worker.start()
