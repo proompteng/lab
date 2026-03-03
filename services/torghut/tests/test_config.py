@@ -360,6 +360,63 @@ class TestConfig(TestCase):
             {"megacap": 3000.0},
         )
 
+    def test_runtime_uncertainty_degrade_regime_maps_are_normalized(self) -> None:
+        settings = Settings(
+            TRADING_UNIVERSE_SOURCE="static",
+            TRADING_ENABLED=False,
+            TRADING_RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIERS_BY_REGIME={
+                " RiskOff ": 0.25
+            },
+            TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE_BY_REGIME={
+                " RiskOff ": 0.02
+            },
+            TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS_BY_REGIME={
+                " RiskOff ": 180
+            },
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(
+            settings.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime,
+            {"riskoff": 0.25},
+        )
+        self.assertEqual(
+            settings.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime,
+            {"riskoff": 0.02},
+        )
+        self.assertEqual(
+            settings.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime,
+            {"riskoff": 180},
+        )
+
+    def test_runtime_uncertainty_degrade_regime_maps_reject_invalid_values(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                TRADING_UNIVERSE_SOURCE="static",
+                TRADING_ENABLED=False,
+                TRADING_RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIERS_BY_REGIME={
+                    "riskoff": 1.2
+                },
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+        with self.assertRaises(ValidationError):
+            Settings(
+                TRADING_UNIVERSE_SOURCE="static",
+                TRADING_ENABLED=False,
+                TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE_BY_REGIME={
+                    "riskoff": -0.1
+                },
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+        with self.assertRaises(ValidationError):
+            Settings(
+                TRADING_UNIVERSE_SOURCE="static",
+                TRADING_ENABLED=False,
+                TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS_BY_REGIME={
+                    "riskoff": 120.5,
+                },
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
     def test_allocator_rejects_negative_strategy_budget_cap(self) -> None:
         with self.assertRaises(ValidationError):
             Settings(

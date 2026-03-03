@@ -2604,6 +2604,86 @@ class TestTradingPipeline(TestCase):
                 "trading_static_symbols_raw"
             ]
 
+    def test_runtime_uncertainty_gate_degrade_uses_regime_profile(self) -> None:
+        from app import config
+
+        original = {
+            "qty_multipliers":
+                config.settings.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime,
+            "max_participation_rates":
+                config.settings.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime,
+            "min_execution_seconds":
+                config.settings.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime,
+        }
+
+        config.settings.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime = {
+            "riskoff": 0.25,
+        }
+        config.settings.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime = {
+            "riskoff": 0.03,
+        }
+        config.settings.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime = {
+            "riskoff": 180,
+        }
+
+        try:
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            decision = StrategyDecision(
+                strategy_id="strategy",
+                symbol="AAPL",
+                event_ts=datetime.now(timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("20"),
+                params={
+                    "regime_gate": {
+                        "action": "pass",
+                        "regime_label": "riskoff",
+                    },
+                },
+            )
+
+            updated_decision, payload, reason = pipeline._apply_runtime_uncertainty_gate(
+                decision,
+                positions=[],
+            )
+
+            self.assertIsNone(reason)
+            self.assertEqual(payload.get("degrade_qty_multiplier"), "0.25")
+            self.assertEqual(
+                payload.get("max_participation_rate_override"), "0.03"
+            )
+            self.assertEqual(payload.get("min_execution_seconds"), 180)
+            self.assertEqual(
+                str(updated_decision.params["allocator"]["max_participation_rate_override"]),
+                "0.03",
+            )
+            self.assertEqual(updated_decision.params.get("execution_seconds"), 180)
+            self.assertEqual(payload.get("adjusted_qty"), "5")
+        finally:
+            config.settings.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime = original[
+                "qty_multipliers"
+            ]
+            config.settings.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime = original[
+                "max_participation_rates"
+            ]
+            config.settings.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime = original[
+                "min_execution_seconds"
+            ]
+
     def test_pipeline_runtime_uncertainty_uses_projected_positions_within_run(self) -> None:
         from app import config
 

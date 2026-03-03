@@ -981,6 +981,29 @@ class Settings(BaseSettings):
         alias="TRADING_ALLOCATOR_REGIME_CAPACITY_MULTIPLIERS",
         description="Regime->symbol capacity multiplier map used by allocator (JSON object).",
     )
+    trading_runtime_uncertainty_degrade_qty_multipliers_by_regime: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIERS_BY_REGIME",
+        description=(
+            "Regime->qty multiplier map used when runtime uncertainty gate selects degrade."
+        ),
+    )
+    trading_runtime_uncertainty_degrade_max_participation_rate_by_regime: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE_BY_REGIME",
+        description=(
+            "Regime->max participation override map used when runtime uncertainty gate "
+            "selects degrade."
+        ),
+    )
+    trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime: dict[str, float] = Field(
+        default_factory=dict,
+        alias="TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS_BY_REGIME",
+        description=(
+            "Regime->minimum execution seconds map used when runtime uncertainty "
+            "gate selects degrade."
+        ),
+    )
     trading_allocator_strategy_notional_caps: dict[str, float] = Field(
         default_factory=dict,
         alias="TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS",
@@ -1574,6 +1597,53 @@ class Settings(BaseSettings):
             normalized_correlation_caps
         )
 
+    @staticmethod
+    def _normalize_regime_keyed_float_map(values: dict[str, float]) -> dict[str, float]:
+        normalized: dict[str, float] = {}
+        for key, value in values.items():
+            normalized_key = str(key).strip().lower()
+            if not normalized_key:
+                continue
+            normalized[normalized_key] = value
+        return normalized
+
+    def _normalize_runtime_uncertainty_degrade_maps(self) -> None:
+        self.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime = (
+            self._normalize_regime_keyed_float_map(
+                self.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime
+            )
+        )
+        self.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime = (
+            self._normalize_regime_keyed_float_map(
+                self.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime
+            )
+        )
+        raw_execution = self._normalize_regime_keyed_float_map(
+            self.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime
+        )
+        normalized_execution: dict[str, float] = {}
+        for key, value in raw_execution.items():
+            if isinstance(value, bool):
+                raise ValueError(
+                    "TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS_BY_REGIME"
+                    f"[{key}] must be an integer"
+                )
+            if value < 0:
+                raise ValueError(
+                    "TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS_BY_REGIME"
+                    f"[{key}] must be >= 0"
+                )
+            execution_seconds = int(value)
+            if execution_seconds != value:
+                raise ValueError(
+                    "TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS_BY_REGIME"
+                    f"[{key}] must be an integer"
+                )
+            normalized_execution[key] = execution_seconds
+        self.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime = (
+            normalized_execution
+        )
+
     def _normalize_allocator_settings(self) -> None:
         self.trading_allocator_default_regime = (
             self.trading_allocator_default_regime.strip() or "neutral"
@@ -1674,6 +1744,37 @@ class Settings(BaseSettings):
             ),
         ):
             self._validate_non_negative_map_values(name, values)
+
+    def _validate_runtime_uncertainty_degrade_map_settings(self) -> None:
+        self._validate_non_negative_map_values(
+            "TRADING_RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIERS_BY_REGIME",
+            self.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime,
+        )
+        self._validate_non_negative_map_values(
+            "TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE_BY_REGIME",
+            self.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime,
+        )
+        for name, values in (
+            (
+                "TRADING_RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIERS_BY_REGIME",
+                self.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime,
+            ),
+            (
+                "TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE_BY_REGIME",
+                self.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime,
+            ),
+        ):
+            for key, value in values.items():
+                if value > 1:
+                    raise ValueError(f"{name}[{key}] must be <= 1")
+        for key, value in (
+            self.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime.items()
+        ):
+            if value < 0:
+                raise ValueError(
+                    "TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS_BY_REGIME"
+                    f"[{key}] must be >= 0"
+                )
 
     def _validate_fragility_settings(self) -> None:
         if not (
@@ -1779,7 +1880,9 @@ class Settings(BaseSettings):
             self.trading_allocator_regime_budget_multipliers,
         )
         self._normalize_allocator_settings()
+        self._normalize_runtime_uncertainty_degrade_maps()
         self._validate_allocator_map_settings()
+        self._validate_runtime_uncertainty_degrade_map_settings()
         self._validate_fragility_settings()
         self._validate_llm_settings()
 
