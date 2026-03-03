@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { runCommand } from './runner'
+import { withTemporalDefaults } from './shared'
 
 interface ParsedArgs {
   help: boolean
@@ -162,7 +163,7 @@ export const main = async () => {
     return 1
   }
 
-  const args = [
+  const args = withTemporalDefaults([
     'workflow',
     'cancel',
     '--workflow-id',
@@ -172,7 +173,7 @@ export const main = async () => {
     ...(parsed.output ? ['--output', parsed.output] : []),
     ...(parsed.reason ? ['--reason', parsed.reason] : []),
     ...parsed.passthrough,
-  ]
+  ])
 
   return await runCommand(parsed.temporalBinary, args)
 }

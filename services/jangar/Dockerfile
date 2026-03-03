@@ -439,6 +439,14 @@ COPY full/packages/temporal-bun-sdk ./packages/temporal-bun-sdk
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 RUN bun --cwd=packages/temporal-bun-sdk run build
 
+FROM tools AS cx-tools-build
+WORKDIR /app
+COPY json/ .
+RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
+  bun install --no-save --ignore-scripts --filter @proompteng/cx-tools
+COPY full/packages/cx-tools ./packages/cx-tools
+RUN bun --cwd=packages/cx-tools run build
+
 FROM tools AS tools-pty
 RUN --mount=type=cache,target=/var/cache/apt \
   --mount=type=cache,target=/var/lib/apt/lists \
@@ -529,6 +537,8 @@ COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/packag
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
+COPY --from=cx-tools-build /app/packages/cx-tools/package.json /app/packages/cx-tools/package.json
+COPY --from=cx-tools-build /app/packages/cx-tools/dist /app/packages/cx-tools/dist
 
 COPY --from=jangar-deps-prod /app/node_modules ./node_modules
 COPY --from=jangar-pty /tmp/node-pty/build /app/node_modules/node-pty/build
@@ -543,6 +553,12 @@ COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/serv
 WORKDIR /app
 COPY --from=jangar-build /app/services/bumba ./services/bumba
 WORKDIR /app/services/jangar
+RUN ln -sf /app/packages/cx-tools/dist/cli/cx-codex-run.js /usr/local/bin/cx-codex-run \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
+  && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
 
 ENV JANGAR_AGENTS_CONTROLLER_ENABLED=0 \
   JANGAR_ORCHESTRATION_CONTROLLER_ENABLED=0 \
@@ -562,6 +578,8 @@ COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/packag
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
+COPY --from=cx-tools-build /app/packages/cx-tools/package.json /app/packages/cx-tools/package.json
+COPY --from=cx-tools-build /app/packages/cx-tools/dist /app/packages/cx-tools/dist
 
 WORKDIR /app
 COPY --from=jangar-deps-prod /app/node_modules ./node_modules
@@ -577,6 +595,12 @@ COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/serv
 WORKDIR /app
 COPY --from=jangar-build /app/services/bumba ./services/bumba
 WORKDIR /app/services/jangar
+RUN ln -sf /app/packages/cx-tools/dist/cli/cx-codex-run.js /usr/local/bin/cx-codex-run \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
+  && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
 
 RUN mkdir -p /root/.codex
 COPY --from=jangar-build /app/services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { runCommand } from './runner'
+import { withTemporalDefaults } from './shared'
 
 interface ParsedArgs {
   help: boolean
@@ -231,19 +232,22 @@ export const main = async () => {
 
   try {
     const input = await parseInput(parsed)
-    const args = [
-      'workflow',
-      'start',
-      '--workflow-id',
-      parsed.workflowId,
-      '--workflow-type',
-      parsed.workflowType,
-      ...(parsed.namespace ? ['--namespace', parsed.namespace] : []),
-      ...(parsed.taskQueue ? ['--task-queue', parsed.taskQueue] : []),
-      ...(parsed.output ? ['--output', parsed.output] : []),
-      ...(input ? ['--input', input] : []),
-      ...parsed.passthrough,
-    ]
+    const args = withTemporalDefaults(
+      [
+        'workflow',
+        'start',
+        '--workflow-id',
+        parsed.workflowId,
+        '--workflow-type',
+        parsed.workflowType,
+        ...(parsed.namespace ? ['--namespace', parsed.namespace] : []),
+        ...(parsed.taskQueue ? ['--task-queue', parsed.taskQueue] : []),
+        ...(parsed.output ? ['--output', parsed.output] : []),
+        ...(input ? ['--input', input] : []),
+        ...parsed.passthrough,
+      ],
+      true,
+    )
 
     return await runCommand(parsed.temporalBinary, args)
   } catch (error) {

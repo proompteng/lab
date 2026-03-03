@@ -5,6 +5,7 @@
 - `cx-workflow-signal`: wrapper for `temporal workflow signal`.
 - `cx-workflow-query`: wrapper for `temporal workflow query`.
 - `cx-workflow-cancel`: wrapper for `temporal workflow cancel`.
-- TODO(jng-010c): Add optional `cx-log` tailer for workflow/activity logs.
+- `TEMPORAL_ADDRESS`, `TEMPORAL_HOST`, `TEMPORAL_GRPC_PORT`, `TEMPORAL_NAMESPACE`,
+  and `TEMPORAL_TASK_QUEUE` are optional defaults for temporal workflow wrappers.
 
-Artifacts are expected to build into `dist/` and be bundled into the Jangar image (see `docs/jangar/implementation-plan.md`).
+Artifacts are built into `dist/` and bundled into Jangar images.
