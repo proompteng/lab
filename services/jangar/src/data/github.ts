@@ -123,9 +123,9 @@ export type GithubWriteAudit = {
   actor: string | null
   requestId: string | null
   payload: Record<string, unknown>
-  response: Record<string, unknown> | null
+  response?: Record<string, unknown> | null
   success: boolean
-  error: string | null
+  error?: string | null
   receivedAt: string
 }
 
