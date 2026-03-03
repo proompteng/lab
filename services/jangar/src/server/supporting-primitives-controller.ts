@@ -729,7 +729,7 @@ const SWARM_DEFAULT_HULY_BASE_URL = (() => {
 })()
 const SWARM_DEFAULT_HULY_SECRET_NAME = (() => {
   const value = asString(process.env.JANGAR_SWARM_HULY_SECRET_NAME)?.trim()
-  return value && value.length > 0 ? value : 'huly-api'
+  return value && value.length > 0 ? value : ''
 })()
 const SWARM_DEFAULT_HULY_SKILL_REF = (() => {
   const value = asString(process.env.JANGAR_SWARM_HULY_SKILL_REF)?.trim()
