@@ -15,6 +15,8 @@ from .models import SignalEnvelope
 
 
 BENCHMARK_PARITY_SCHEMA_VERSION = "benchmark-parity-report-v1"
+BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION = "benchmark-parity-contract-v1"
+BENCHMARK_PARITY_RUN_SCHEMA_VERSION = "benchmark-parity-run-v1"
 BENCHMARK_PARITY_REQUIRED_SCORECARDS: tuple[str, ...] = (
     "decision_quality",
     "reasoning_quality",
@@ -55,6 +57,7 @@ def _build_benchmark_run(
     run_hash_seed = f"{family_seed}:run-hash"
     run_hash = hashlib.sha256(run_hash_seed.encode("utf-8")).hexdigest()
     return {
+        "schema_version": BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
         "dataset_ref": "benchmarks/external-labeled-stream-v1",
         "window_ref": now.strftime("%Y%m%dT%H%M%SZ"),
         "family": family,
@@ -229,6 +232,14 @@ def build_benchmark_parity_report(
         "schema_version": BENCHMARK_PARITY_SCHEMA_VERSION,
         "candidate_id": candidate_id,
         "baseline_candidate_id": baseline_candidate_id,
+        "contract": {
+            "schema_version": BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
+            "required_families": list(BENCHMARK_PARITY_REQUIRED_FAMILIES),
+            "required_scorecards": list(BENCHMARK_PARITY_REQUIRED_SCORECARDS),
+            "required_run_fields": list(BENCHMARK_PARITY_REQUIRED_RUN_FIELDS),
+            "hash_algorithm": "sha256",
+            "generation_mode": "deterministic_benchmark_parity_v1",
+        },
         "benchmark_runs": benchmark_runs,
         "scorecards": scorecards,
         "overall_parity_status": "pass" if scorecards_pass and runs_det else "degrade",
@@ -404,6 +415,8 @@ __all__ = [
     'run_feature_parity',
     'write_feature_parity_report',
     'BENCHMARK_PARITY_SCHEMA_VERSION',
+    'BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION',
+    'BENCHMARK_PARITY_RUN_SCHEMA_VERSION',
     'BENCHMARK_PARITY_REQUIRED_SCORECARDS',
     'BENCHMARK_PARITY_REQUIRED_FAMILIES',
     'BENCHMARK_PARITY_REQUIRED_RUN_FIELDS',

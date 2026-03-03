@@ -12,10 +12,12 @@ from pathlib import Path
 from typing import Any, cast
 
 from ..parity import (
+    BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
     BENCHMARK_PARITY_REQUIRED_FAMILIES,
-    BENCHMARK_PARITY_REQUIRED_SCORECARDS,
-    BENCHMARK_PARITY_SCHEMA_VERSION,
     BENCHMARK_PARITY_REQUIRED_RUN_FIELDS,
+    BENCHMARK_PARITY_REQUIRED_SCORECARDS,
+    BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
+    BENCHMARK_PARITY_SCHEMA_VERSION,
 )
 
 
@@ -1847,6 +1849,94 @@ def _evaluate_benchmark_parity_evidence(
             }
         )
 
+    contract = _as_dict(payload.get("contract"))
+    if not contract:
+        reasons.append("benchmark_parity_contract_missing")
+        details.append(
+            {
+                "reason": "benchmark_parity_contract_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    else:
+        contract_schema_version = str(contract.get("schema_version", "")).strip()
+        if contract_schema_version != BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION:
+            reasons.append("benchmark_parity_contract_schema_version_invalid")
+            details.append(
+                {
+                    "reason": "benchmark_parity_contract_schema_version_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "schema_version": contract_schema_version,
+                    "expected_schema_version": BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
+                }
+            )
+
+        required_families_contract = {
+            str(item).strip().lower()
+            for item in _list_from_any(contract.get("required_families"))
+            if str(item).strip()
+        }
+        if required_families_contract != set(BENCHMARK_PARITY_REQUIRED_FAMILIES):
+            reasons.append("benchmark_parity_contract_required_families_invalid")
+            details.append(
+                {
+                    "reason": "benchmark_parity_contract_required_families_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "required_families": sorted(required_families_contract),
+                    "expected_required_families": sorted(
+                        BENCHMARK_PARITY_REQUIRED_FAMILIES
+                    ),
+                }
+            )
+
+        required_scorecards_contract = {
+            str(item).strip().lower()
+            for item in _list_from_any(contract.get("required_scorecards"))
+            if str(item).strip()
+        }
+        if required_scorecards_contract != set(BENCHMARK_PARITY_REQUIRED_SCORECARDS):
+            reasons.append("benchmark_parity_contract_required_scorecards_invalid")
+            details.append(
+                {
+                    "reason": "benchmark_parity_contract_required_scorecards_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "required_scorecards": sorted(required_scorecards_contract),
+                    "expected_required_scorecards": sorted(
+                        BENCHMARK_PARITY_REQUIRED_SCORECARDS
+                    ),
+                }
+            )
+
+        required_run_fields_contract = {
+            str(item).strip()
+            for item in _list_from_any(contract.get("required_run_fields"))
+            if str(item).strip()
+        }
+        if required_run_fields_contract != set(BENCHMARK_PARITY_REQUIRED_RUN_FIELDS):
+            reasons.append("benchmark_parity_contract_required_run_fields_invalid")
+            details.append(
+                {
+                    "reason": "benchmark_parity_contract_required_run_fields_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "required_run_fields": sorted(required_run_fields_contract),
+                    "expected_required_run_fields": sorted(
+                        BENCHMARK_PARITY_REQUIRED_RUN_FIELDS
+                    ),
+                }
+            )
+
+        hash_algorithm = str(contract.get("hash_algorithm", "")).strip().lower()
+        if hash_algorithm != "sha256":
+            reasons.append("benchmark_parity_contract_hash_algorithm_invalid")
+            details.append(
+                {
+                    "reason": "benchmark_parity_contract_hash_algorithm_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "hash_algorithm": hash_algorithm,
+                    "expected_hash_algorithm": "sha256",
+                }
+            )
+
     if str(payload.get("overall_parity_status", "")).strip() != "pass":
         reasons.append("benchmark_parity_status_not_pass")
         details.append(
@@ -1946,6 +2036,19 @@ def _evaluate_benchmark_parity_evidence(
         family = str(run.get("family", "")).strip().lower()
         if family:
             families_seen.add(family)
+
+        run_schema_version = str(run.get("schema_version", "")).strip()
+        if run_schema_version != BENCHMARK_PARITY_RUN_SCHEMA_VERSION:
+            reasons.append("benchmark_parity_run_schema_version_invalid")
+            details.append(
+                {
+                    "reason": "benchmark_parity_run_schema_version_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                    "schema_version": run_schema_version,
+                    "expected_schema_version": BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
+                }
+            )
 
         missing_required_run_fields: list[str] = []
         for field in BENCHMARK_PARITY_REQUIRED_RUN_FIELDS:
