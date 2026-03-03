@@ -279,6 +279,39 @@ describe('runCodexImplementation', () => {
     expect(runCodexProgressCommentMock).not.toHaveBeenCalled()
   }, 40_000)
 
+  it('exports scalar event parameters as shell environment variables', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      symbol: 'NVDA',
+      domain: 'news',
+      asOfUtc: '2026-03-03T04:19:58.221Z',
+      reason: 'stale_snapshot',
+      callbackUrl: 'http://jangar.jangar.svc.cluster.local/api/torghut/market-context/ingest',
+      requestId: '6831f7d5-fef6-4eb5-b325-ad2d8eef56e9',
+    }
+    await writeFile(eventPath, JSON.stringify(payload), 'utf8')
+
+    await runCodexImplementation(eventPath)
+
+    expect(process.env.symbol).toBe('NVDA')
+    expect(process.env.SYMBOL).toBe('NVDA')
+    expect(process.env.CODEX_PARAM_SYMBOL).toBe('NVDA')
+    expect(process.env.domain).toBe('news')
+    expect(process.env.DOMAIN).toBe('news')
+    expect(process.env.asOfUtc).toBe('2026-03-03T04:19:58.221Z')
+    expect(process.env.AS_OF_UTC).toBe('2026-03-03T04:19:58.221Z')
+    expect(process.env.reason).toBe('stale_snapshot')
+    expect(process.env.REASON).toBe('stale_snapshot')
+    expect(process.env.callbackUrl).toBe('http://jangar.jangar.svc.cluster.local/api/torghut/market-context/ingest')
+    expect(process.env.CALLBACK_URL).toBe('http://jangar.jangar.svc.cluster.local/api/torghut/market-context/ingest')
+    expect(process.env.requestId).toBe('6831f7d5-fef6-4eb5-b325-ad2d8eef56e9')
+    expect(process.env.REQUEST_ID).toBe('6831f7d5-fef6-4eb5-b325-ad2d8eef56e9')
+  }, 40_000)
+
   it('bootstraps the worktree checkout when the repository is missing', async () => {
     const bootstrappedWorktree = join(workdir, 'fresh-worktree')
     process.env.WORKTREE = bootstrappedWorktree
