@@ -90,3 +90,17 @@ class TestPosthogObservability(TestCase):
 
         self.assertFalse(emitted)
         self.assertEqual(reason, 'queue_full')
+
+    def test_send_capture_request_returns_invalid_host_for_invalid_port(self) -> None:
+        with patch.object(
+            posthog_observability.settings,
+            'posthog_timeout_seconds',
+            0.25,
+        ):
+            emitted, reason = posthog_observability._send_capture_request(  # noqa: SLF001
+                'http://posthog-events.posthog.svc.cluster.local:abc/capture/',
+                {'event': 'torghut.runtime.loop_failed'},
+            )
+
+        self.assertFalse(emitted)
+        self.assertEqual(reason, 'invalid_host')

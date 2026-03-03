@@ -22,6 +22,8 @@ from app.models import (
     TradeDecision,
 )
 
+_MODEL_RISK_EVIDENCE_SCHEMA_VERSION = 'torghut.model-risk-evidence.v1'
+
 
 def _parse_iso8601_timestamp(raw: str, *, field_name: str) -> datetime:
     normalized = raw.strip()
@@ -203,6 +205,9 @@ def _load_model_risk_evidence_package(
         raise ValueError(
             f'model_risk_evidence_package_missing_keys:{",".join(missing)}'
         )
+    schema_version = str(payload_map.get('schema_version', '')).strip()
+    if schema_version != _MODEL_RISK_EVIDENCE_SCHEMA_VERSION:
+        raise ValueError('model_risk_evidence_package_schema_version_invalid')
     generated_at_raw = payload_map.get('generated_at')
     if not isinstance(generated_at_raw, str):
         raise ValueError('model_risk_evidence_package_generated_at_invalid')
@@ -210,10 +215,10 @@ def _load_model_risk_evidence_package(
         generated_at_raw,
         field_name='model_risk_evidence_package_generated_at',
     )
-    age_hours = max(
-        0.0,
-        (now - generated_at).total_seconds() / 3600.0,
-    )
+    age_delta_hours = (now - generated_at).total_seconds() / 3600.0
+    if age_delta_hours < 0:
+        raise ValueError('model_risk_evidence_package_generated_at_future')
+    age_hours = age_delta_hours
     if age_hours > max(1, int(max_age_hours)):
         raise ValueError('model_risk_evidence_package_stale')
 
@@ -273,7 +278,7 @@ def _load_model_risk_evidence_package(
         raise ValueError('model_risk_evidence_package_legacy_disposition_incomplete')
 
     return {
-        'schema_version': str(payload_map.get('schema_version', '')).strip(),
+        'schema_version': schema_version,
         'generated_at': generated_at.isoformat(),
         'age_hours': round(age_hours, 4),
         'promotion_gate_report_trace_id': gate_trace,

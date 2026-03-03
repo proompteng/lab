@@ -118,6 +118,10 @@ def _posthog_capture_url() -> tuple[str | None, str | None]:
         return None, 'invalid_host'
     if not parsed.hostname:
         return None, 'invalid_host'
+    try:
+        parsed.port
+    except ValueError:
+        return None, 'invalid_host'
     path = parsed.path.rstrip('/')
     capture_path = f'{path}/capture/' if path else '/capture/'
     if parsed.query:
@@ -132,12 +136,16 @@ def _send_capture_request(url: str, payload: dict[str, object]) -> tuple[bool, s
     hostname = parsed.hostname
     if hostname is None:
         return False, 'invalid_host'
+    try:
+        port = parsed.port
+    except ValueError:
+        return False, 'invalid_host'
     request_path = parsed.path or '/capture/'
     if parsed.query:
         request_path = f'{request_path}?{parsed.query}'
     connection = connection_type(
         hostname,
-        parsed.port,
+        port,
         timeout=max(float(settings.posthog_timeout_seconds), 0.1),
     )
     try:

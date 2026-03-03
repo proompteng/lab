@@ -225,3 +225,68 @@ class TestVerifyQuantReadiness(TestCase):
             path.write_text(json.dumps(payload), encoding='utf-8')
             with self.assertRaises(ValueError):
                 _load_model_risk_evidence_package(path, now=now, max_age_hours=24)
+
+    def test_load_model_risk_evidence_package_rejects_future_generated_at(self) -> None:
+        now = datetime(2026, 3, 3, 20, 0, tzinfo=timezone.utc)
+        future = now + timedelta(hours=2)
+        payload = {
+            'schema_version': 'torghut.model-risk-evidence.v1',
+            'generated_at': future.isoformat(),
+            'promotion': {
+                'gate_report_trace_id': 'gate-trace-1',
+                'recommendation_trace_id': 'rec-trace-1',
+            },
+            'rollback': {
+                'incident_evidence_complete': True,
+                'incident_evidence_path': '/tmp/rollback.json',
+            },
+            'drift': {
+                'evidence_continuity_passed': True,
+                'evidence_continuity_report_path': '/tmp/evidence.json',
+            },
+            'runbook_drill': {
+                'emergency_stop_rehearsed': True,
+                'rehearsal_at': now.isoformat(),
+            },
+            'legacy_gap_disposition': {
+                'signed_disposition_complete': True,
+                'mapping_path': 'docs/torghut/design-system/v6/14-legacy-gap-disposition-map-2026-03-03.md',
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / 'model-risk-evidence.json'
+            path.write_text(json.dumps(payload), encoding='utf-8')
+            with self.assertRaises(ValueError):
+                _load_model_risk_evidence_package(path, now=now, max_age_hours=24)
+
+    def test_load_model_risk_evidence_package_rejects_invalid_schema_version(self) -> None:
+        now = datetime(2026, 3, 3, 20, 0, tzinfo=timezone.utc)
+        payload = {
+            'schema_version': 'torghut.model-risk-evidence.v2',
+            'generated_at': now.isoformat(),
+            'promotion': {
+                'gate_report_trace_id': 'gate-trace-1',
+                'recommendation_trace_id': 'rec-trace-1',
+            },
+            'rollback': {
+                'incident_evidence_complete': True,
+                'incident_evidence_path': '/tmp/rollback.json',
+            },
+            'drift': {
+                'evidence_continuity_passed': True,
+                'evidence_continuity_report_path': '/tmp/evidence.json',
+            },
+            'runbook_drill': {
+                'emergency_stop_rehearsed': True,
+                'rehearsal_at': now.isoformat(),
+            },
+            'legacy_gap_disposition': {
+                'signed_disposition_complete': True,
+                'mapping_path': 'docs/torghut/design-system/v6/14-legacy-gap-disposition-map-2026-03-03.md',
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / 'model-risk-evidence.json'
+            path.write_text(json.dumps(payload), encoding='utf-8')
+            with self.assertRaises(ValueError):
+                _load_model_risk_evidence_package(path, now=now, max_age_hours=24)
