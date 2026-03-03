@@ -256,8 +256,11 @@ export const fetchGithubPullChecks = async (owner: string, repo: string, number:
 export const fetchGithubPullWriteActions = async (owner: string, repo: string, number: number) => {
   const response = await fetch(`/api/github/pulls/${owner}/${repo}/${number}/write-actions`)
   const payload = (await response.json().catch(() => null)) as GithubWriteAuditResponse | null
-  if (!response.ok || payload === null) {
-    return { ok: false, error: payload?.error ?? 'Failed to load write action audit trail' } as const
+  if (!response.ok) {
+    return { ok: false, error: 'Failed to load write action audit trail' } as const
+  }
+  if (payload === null) {
+    return { ok: false, error: 'Failed to load write action audit trail' } as const
   }
   if (!payload?.ok) {
     return { ok: false, error: payload?.error ?? 'Failed to load write action audit trail' } as const
