@@ -22,6 +22,7 @@ class ForwarderEndpointsTest {
       alpacaStreamUrl = "wss://stream.data.alpaca.markets/",
       alpacaBaseUrl = "https://data.alpaca.markets/",
       alpacaTradeStreamUrl = null,
+      alpacaMarketDataChannels = defaultAlpacaMarketDataChannels(marketType),
       jangarSymbolsUrl = "http://jangar/api/torghut/symbols",
       staticSymbols = emptyList(),
       symbolsPollIntervalMs = 30_000,

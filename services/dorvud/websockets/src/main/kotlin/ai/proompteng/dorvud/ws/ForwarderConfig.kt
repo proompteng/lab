@@ -21,6 +21,12 @@ enum class AlpacaMarketType {
   CRYPTO,
 }
 
+internal fun defaultAlpacaMarketDataChannels(marketType: AlpacaMarketType): List<String> =
+  when (marketType) {
+    AlpacaMarketType.EQUITY -> listOf("trades", "quotes", "bars", "updatedBars")
+    AlpacaMarketType.CRYPTO -> listOf("trades", "quotes", "bars")
+  }
+
 data class ForwarderConfig(
   val alpacaKeyId: String,
   val alpacaSecretKey: String,
@@ -30,6 +36,7 @@ data class ForwarderConfig(
   val alpacaStreamUrl: String,
   val alpacaBaseUrl: String,
   val alpacaTradeStreamUrl: String?,
+  val alpacaMarketDataChannels: List<String>,
   val jangarSymbolsUrl: String?,
   val staticSymbols: List<String>,
   val symbolsPollIntervalMs: Long,
@@ -81,6 +88,28 @@ data class ForwarderConfig(
         alpacaCryptoLocation !in setOf("us", "us-1", "eu-1")
       ) {
         error("ALPACA_CRYPTO_LOCATION must be one of: us, us-1, eu-1 when ALPACA_MARKET_TYPE=crypto")
+      }
+      val allowedChannels =
+        when (alpacaMarketType) {
+          AlpacaMarketType.EQUITY -> listOf("trades", "quotes", "bars", "updatedBars")
+          AlpacaMarketType.CRYPTO -> listOf("trades", "quotes", "bars")
+        }
+      val allowedByLower = allowedChannels.associateBy { it.lowercase() }
+      val channelOverride =
+        mergedEnv["ALPACA_MARKET_DATA_CHANNELS"]?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+      val alpacaMarketDataChannels =
+        when {
+          channelOverride == null -> defaultAlpacaMarketDataChannels(alpacaMarketType)
+          channelOverride.isEmpty() -> error("ALPACA_MARKET_DATA_CHANNELS must include at least one channel")
+          else -> channelOverride.map { raw -> allowedByLower[raw.lowercase()] ?: raw }.distinct()
+        }
+      val unknownChannels = alpacaMarketDataChannels.filterNot { it in allowedChannels }
+      if (unknownChannels.isNotEmpty()) {
+        val allowed = allowedChannels.sorted().joinToString(",")
+        error(
+          "ALPACA_MARKET_DATA_CHANNELS contains unsupported channel(s): ${unknownChannels.joinToString(",")} " +
+            "for market type ${alpacaMarketType.name.lowercase()} (allowed: $allowed)",
+        )
       }
 
       val jangarSymbolsUrl =
@@ -145,6 +174,7 @@ data class ForwarderConfig(
         alpacaStreamUrl = mergedEnv["ALPACA_STREAM_URL"] ?: "wss://stream.data.alpaca.markets",
         alpacaBaseUrl = mergedEnv["ALPACA_BASE_URL"] ?: "https://data.alpaca.markets",
         alpacaTradeStreamUrl = mergedEnv["ALPACA_TRADE_STREAM_URL"]?.trim()?.takeIf { it.isNotEmpty() },
+        alpacaMarketDataChannels = alpacaMarketDataChannels,
         jangarSymbolsUrl = jangarSymbolsUrl,
         staticSymbols = staticSymbols,
         symbolsPollIntervalMs = symbolsPollIntervalMs,

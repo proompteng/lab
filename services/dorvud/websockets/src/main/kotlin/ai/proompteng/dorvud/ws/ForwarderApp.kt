@@ -78,11 +78,7 @@ internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
 
 internal fun alpacaBarsBackfillNeedsFeed(config: ForwarderConfig): Boolean = config.alpacaMarketType == AlpacaMarketType.EQUITY
 
-internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> =
-  when (config.alpacaMarketType) {
-    AlpacaMarketType.EQUITY -> listOf("trades", "quotes", "bars", "updatedBars")
-    AlpacaMarketType.CRYPTO -> listOf("trades", "quotes", "bars")
-  }
+internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> = config.alpacaMarketDataChannels
 
 @Serializable
 internal data class AlpacaBarsResponse(
@@ -134,7 +130,7 @@ class ForwarderApp(
       scope.launch {
         logger.info {
           "dorvud-ws starting shard=${config.shardIndex}/${config.shardCount} " +
-            "jangarSymbolsUrl=${config.jangarSymbolsUrl}"
+            "jangarSymbolsUrl=${config.jangarSymbolsUrl} channels=${config.alpacaMarketDataChannels}"
         }
         val producer = producerFactory(config)
         val seq = SeqTracker()
