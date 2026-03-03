@@ -11,6 +11,13 @@ import math
 from pathlib import Path
 from typing import Any, cast
 
+from ..parity import (
+    BENCHMARK_PARITY_REQUIRED_FAMILIES,
+    BENCHMARK_PARITY_REQUIRED_SCORECARDS,
+    BENCHMARK_PARITY_SCHEMA_VERSION,
+    BENCHMARK_PARITY_REQUIRED_RUN_FIELDS,
+)
+
 
 _PROFITABILITY_STAGE_ORDER: tuple[str, ...] = (
     "research",
@@ -116,6 +123,10 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
+    benchmark_parity_required = _requires_benchmark_parity(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     stress_required = _requires_stress_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
@@ -125,6 +136,7 @@ def evaluate_promotion_prerequisites(
         promotion_target,
         include_profitability_artifacts=profitability_required,
         include_janus_artifacts=janus_required,
+        include_benchmark_parity_artifacts=benchmark_parity_required,
         include_stress_artifacts=stress_required,
         require_profitability_manifest=require_profitability_manifest,
     )
@@ -182,6 +194,14 @@ def evaluate_promotion_prerequisites(
             reasons=reasons,
             reason_details=reason_details,
             policy_payload=policy_payload,
+            artifact_root=artifact_root,
+        )
+    if benchmark_parity_required:
+        _append_benchmark_parity_evidence_reasons(
+            reasons=reasons,
+            reason_details=reason_details,
+            policy_payload=policy_payload,
+            gate_report_payload=gate_report_payload,
             artifact_root=artifact_root,
         )
     if require_profitability_manifest:
@@ -949,6 +969,63 @@ def _append_janus_evidence_reasons(
         )
 
 
+def _append_benchmark_parity_evidence_reasons(
+    *,
+    reasons: list[str],
+    reason_details: list[dict[str, object]],
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+    artifact_root: Path,
+) -> None:
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    benchmark_payload = _as_dict(evidence.get("benchmark_parity"))
+    evidence_ref = str(benchmark_payload.get("artifact_ref") or "").strip()
+    artifact_ref = _benchmark_parity_artifact_reference(
+        policy_payload=policy_payload,
+        gate_report_payload=gate_report_payload,
+    )
+    artifact_path = _normalize_artifact_path(
+        artifact_ref,
+        artifact_root=artifact_root,
+    )
+    if artifact_path is None:
+        if evidence_ref:
+            reasons.append("benchmark_parity_artifact_ref_invalid")
+            reason_details.append(
+                {
+                    "reason": "benchmark_parity_artifact_ref_invalid",
+                    "artifact_ref": evidence_ref,
+                }
+            )
+        else:
+            reasons.append("benchmark_parity_artifact_ref_invalid")
+            reason_details.append(
+                {
+                    "reason": "benchmark_parity_artifact_ref_invalid",
+                    "artifact_ref": artifact_ref,
+                }
+            )
+        return
+    parity_path = artifact_path
+    if not parity_path.exists():
+        reasons.append("benchmark_parity_artifact_missing")
+        reason_details.append(
+            {
+                "reason": "benchmark_parity_artifact_missing",
+                "artifact_ref": str(parity_path),
+            }
+        )
+        return
+    if _load_json_if_exists(parity_path) is None:
+        reasons.append("benchmark_parity_artifact_invalid_json")
+        reason_details.append(
+            {
+                "reason": "benchmark_parity_artifact_invalid_json",
+                "artifact_ref": str(parity_path),
+            }
+        )
+
+
 def _regime_slice_count(benchmark_payload: dict[str, Any]) -> int:
     regime_slices = 0
     for item in _list_from_any(benchmark_payload.get("slices")):
@@ -1016,6 +1093,7 @@ def _required_artifacts_for_target(
     *,
     include_profitability_artifacts: bool,
     include_janus_artifacts: bool,
+    include_benchmark_parity_artifacts: bool,
     include_stress_artifacts: bool,
     require_profitability_manifest: bool,
 ) -> list[str]:
@@ -1070,6 +1148,10 @@ def _required_artifacts_for_target(
         for artifact in janus_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
+    if include_benchmark_parity_artifacts:
+        benchmark_artifacts = _benchmark_parity_required_artifact_refs(policy_payload)
+        for artifact in benchmark_artifacts:
+            required.append(artifact)
     if include_stress_artifacts:
         stress_artifacts_raw = policy_payload.get(
             "promotion_stress_required_artifacts",
@@ -1080,6 +1162,44 @@ def _required_artifacts_for_target(
             if isinstance(artifact, str):
                 required.append(artifact)
     return sorted(set(required))
+
+
+def _benchmark_parity_required_artifact_refs(
+    policy_payload: dict[str, Any],
+) -> list[str]:
+    benchmark_artifacts_raw = policy_payload.get(
+        "promotion_benchmark_required_artifacts",
+        ["benchmarks/benchmark-parity-report-v1.json"],
+    )
+    benchmark_artifacts = [
+        str(artifact).strip()
+        for artifact in _list_from_any(benchmark_artifacts_raw)
+        if isinstance(artifact, str) and artifact.strip()
+    ]
+    if benchmark_artifacts:
+        return benchmark_artifacts
+
+    legacy_artifact = str(
+        policy_payload.get("promotion_benchmark_parity_artifact", "").strip()
+    )
+    if legacy_artifact:
+        return [legacy_artifact]
+
+    return ["benchmarks/benchmark-parity-report-v1.json"]
+
+
+def _benchmark_parity_artifact_reference(
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+) -> str:
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    benchmark_payload = _as_dict(evidence.get("benchmark_parity"))
+    evidence_ref = str(benchmark_payload.get("artifact_ref") or "").strip()
+    if evidence_ref:
+        return evidence_ref
+
+    required_artifacts = _benchmark_parity_required_artifact_refs(policy_payload)
+    return required_artifacts[0]
 
 
 def _requires_profitability_evidence(
@@ -1259,6 +1379,18 @@ def _evaluate_promotion_evidence(
     reasons.extend(rationale_reasons)
     details.extend(rationale_details)
 
+    benchmark_parity_reasons, benchmark_parity_details, benchmark_parity_refs = (
+        _evaluate_benchmark_parity_evidence(
+            policy_payload=policy_payload,
+            gate_report_payload=gate_report_payload,
+            artifact_root=artifact_root,
+            promotion_target=promotion_target,
+        )
+    )
+    reasons.extend(benchmark_parity_reasons)
+    details.extend(benchmark_parity_details)
+    refs.extend(benchmark_parity_refs)
+
     parity_reasons, parity_details, parity_refs = (
         _evaluate_foundation_router_parity_evidence(
             policy_payload=policy_payload,
@@ -1280,6 +1412,445 @@ def _requires_foundation_router_parity(
     if promotion_target == "shadow":
         return False
     return bool(policy_payload.get("promotion_require_foundation_router_parity", False))
+
+
+def _requires_benchmark_parity(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("promotion_require_benchmark_parity", False)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_benchmark_parity_required_targets",
+        ["paper", "live"],
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
+def _evaluate_benchmark_parity_evidence(
+    *,
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+    artifact_root: Path,
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    if not _requires_benchmark_parity(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return [], [], []
+
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    refs: list[str] = []
+
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    benchmark = _as_dict(evidence.get("benchmark_parity"))
+    evidence_ref = str(benchmark.get("artifact_ref") or "").strip()
+    artifact_ref = _benchmark_parity_artifact_reference(
+        policy_payload=policy_payload,
+        gate_report_payload=gate_report_payload,
+    )
+    artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
+    if artifact_path is None:
+        reasons.append("benchmark_parity_artifact_ref_invalid")
+        details.append(
+            {
+                "reason": "benchmark_parity_artifact_ref_invalid",
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return reasons, details, refs
+
+    refs.append(evidence_ref or str(artifact_path))
+    payload = _load_json_if_exists(artifact_path)
+    if payload is None:
+        reasons.append("benchmark_parity_artifact_invalid_json")
+        details.append(
+            {
+                "reason": "benchmark_parity_artifact_invalid_json",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+        return reasons, details, refs
+
+    if not str(payload.get("artifact_hash", "")).strip():
+        reasons.append("benchmark_parity_artifact_hash_missing")
+        details.append(
+            {
+                "reason": "benchmark_parity_artifact_hash_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    else:
+        expected_hash = hashlib.sha256(
+            json.dumps(
+                {key: value for key, value in payload.items() if key != "artifact_hash"},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        if str(payload.get("artifact_hash", "")).strip() != expected_hash:
+            reasons.append("benchmark_parity_artifact_hash_mismatch")
+            details.append(
+                {
+                    "reason": "benchmark_parity_artifact_hash_mismatch",
+                    "artifact_ref": str(artifact_path),
+                    "artifact_hash": str(payload.get("artifact_hash", "")),
+                    "expected_artifact_hash": expected_hash,
+                }
+            )
+
+    candidate_id = str(payload.get("candidate_id", "")).strip()
+    if not candidate_id:
+        reasons.append("benchmark_parity_candidate_id_missing")
+        details.append(
+            {
+                "reason": "benchmark_parity_candidate_id_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    baseline_candidate_id = str(payload.get("baseline_candidate_id", "")).strip()
+    if not baseline_candidate_id:
+        reasons.append("benchmark_parity_baseline_candidate_id_missing")
+        details.append(
+            {
+                "reason": "benchmark_parity_baseline_candidate_id_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    schema_version = str(payload.get("schema_version", "")).strip()
+    if schema_version != BENCHMARK_PARITY_SCHEMA_VERSION:
+        reasons.append("benchmark_parity_schema_version_invalid")
+        details.append(
+            {
+                "reason": "benchmark_parity_schema_version_invalid",
+                "artifact_ref": str(artifact_path),
+                "schema_version": schema_version,
+                "expected_schema_version": BENCHMARK_PARITY_SCHEMA_VERSION,
+            }
+        )
+
+    if str(payload.get("overall_parity_status", "")).strip() != "pass":
+        reasons.append("benchmark_parity_status_not_pass")
+        details.append(
+            {
+                "reason": "benchmark_parity_status_not_pass",
+                "artifact_ref": str(artifact_path),
+                "status": payload.get("overall_parity_status"),
+            }
+        )
+
+    scorecards = _as_dict(payload.get("scorecards"))
+    required_scorecards = tuple(
+        (name, scorecards.get(name))
+        for name in BENCHMARK_PARITY_REQUIRED_SCORECARDS
+    )
+    for scorecard_name, scorecard in required_scorecards:
+        scorecard_payload = _as_dict(scorecard)
+        card_status = str(scorecard_payload.get("status", "")).strip()
+        if not scorecard_payload:
+            reasons.append("benchmark_parity_scorecard_missing")
+            details.append(
+                {
+                    "reason": "benchmark_parity_scorecard_missing",
+                    "artifact_ref": str(artifact_path),
+                    "scorecard": scorecard_name,
+                }
+            )
+        elif card_status != "pass":
+            reasons.append("benchmark_parity_scorecard_not_pass")
+            details.append(
+                {
+                    "reason": "benchmark_parity_scorecard_not_pass",
+                    "artifact_ref": str(artifact_path),
+                    "scorecard": scorecard_name,
+                    "status": card_status,
+                }
+            )
+
+    benchmark_runs = _list_from_any(payload.get("benchmark_runs"))
+    if not benchmark_runs:
+        reasons.append("benchmark_parity_runs_missing")
+        details.append(
+            {
+                "reason": "benchmark_parity_runs_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+        return reasons, details, refs
+
+    min_advisory_output_rate = _float_or_none(
+        policy_payload.get("promotion_benchmark_parity_min_advisory_output_rate")
+    )
+    if min_advisory_output_rate is None:
+        min_advisory_output_rate = 0.995
+    max_policy_violation_degradation = _float_or_none(
+        policy_payload.get(
+            "promotion_benchmark_parity_max_policy_violation_rate_degradation"
+        )
+    )
+    if max_policy_violation_degradation is None:
+        max_policy_violation_degradation = 0.0
+    max_fallback_rate = _float_or_none(
+        policy_payload.get("promotion_benchmark_parity_max_fallback_rate")
+    )
+    if max_fallback_rate is None:
+        max_fallback_rate = 0.01
+    max_timeout_rate = _float_or_none(
+        policy_payload.get("promotion_benchmark_parity_max_timeout_rate")
+    )
+    if max_timeout_rate is None:
+        max_timeout_rate = 0.005
+    max_adverse_regime_degradation = _float_or_none(
+        policy_payload.get(
+            "promotion_benchmark_parity_max_adverse_regime_decision_quality_degradation"
+        )
+    )
+    if max_adverse_regime_degradation is None:
+        max_adverse_regime_degradation = 0.01
+    max_risk_veto_degradation = _float_or_none(
+        policy_payload.get(
+            "promotion_benchmark_parity_max_risk_veto_alignment_degradation"
+        )
+    )
+    if max_risk_veto_degradation is None:
+        max_risk_veto_degradation = 0.01
+    max_confidence_degradation = _float_or_none(
+        policy_payload.get(
+            "promotion_benchmark_parity_max_confidence_calibration_error_degradation"
+        )
+    )
+    if max_confidence_degradation is None:
+        max_confidence_degradation = 0.01
+
+    families_seen = set[str]()
+    required_families = set(BENCHMARK_PARITY_REQUIRED_FAMILIES)
+    for run in _as_list_of_dicts(benchmark_runs):
+        family = str(run.get("family", "")).strip().lower()
+        if family:
+            families_seen.add(family)
+
+        missing_required_run_fields: list[str] = []
+        for field in BENCHMARK_PARITY_REQUIRED_RUN_FIELDS:
+            if field in {"dataset_ref", "window_ref", "family", "run_hash"}:
+                if not str(run.get(field, "")).strip():
+                    missing_required_run_fields.append(field)
+            else:
+                value = run.get(field)
+                if not isinstance(value, dict) or not value:
+                    missing_required_run_fields.append(field)
+        if missing_required_run_fields:
+            reasons.append("benchmark_parity_run_missing_required_fields")
+            details.append(
+                {
+                    "reason": "benchmark_parity_run_missing_required_fields",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                    "missing_fields": missing_required_run_fields,
+                }
+            )
+            continue
+
+        metrics = _as_dict(run.get("metrics"))
+        violations = _as_dict(run.get("policy_violations"))
+
+        advisory_output_rate = _float_or_none(metrics.get("advisory_output_rate"))
+        if advisory_output_rate is None:
+            reasons.append("benchmark_parity_missing_advisory_output_rate")
+            details.append(
+                {
+                    "reason": "benchmark_parity_missing_advisory_output_rate",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                }
+            )
+        elif advisory_output_rate < min_advisory_output_rate:
+            reasons.append("benchmark_parity_advisory_output_rate_below_minimum")
+            details.append(
+                {
+                    "reason": "benchmark_parity_advisory_output_rate_below_minimum",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                    "actual_advisory_output_rate": advisory_output_rate,
+                    "minimum_advisory_output_rate": min_advisory_output_rate,
+                }
+            )
+
+        policy_violation_rate = _float_or_none(violations.get("rate"))
+        baseline_policy_violation_rate = _float_or_none(violations.get("baseline_rate"))
+        if policy_violation_rate is None or baseline_policy_violation_rate is None:
+            reasons.append("benchmark_parity_policy_violation_rate_missing")
+            details.append(
+                {
+                    "reason": "benchmark_parity_policy_violation_rate_missing",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                }
+            )
+        elif policy_violation_rate - baseline_policy_violation_rate > max_policy_violation_degradation:
+            reasons.append("benchmark_parity_policy_violation_rate_degraded")
+            details.append(
+                {
+                    "reason": "benchmark_parity_policy_violation_rate_degraded",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                    "actual_rate": policy_violation_rate,
+                    "baseline_rate": baseline_policy_violation_rate,
+                    "max_degradation": max_policy_violation_degradation,
+                }
+            )
+
+        fallback_rate = _float_or_none(violations.get("fallback_rate"))
+        if fallback_rate is None:
+            reasons.append("benchmark_parity_fallback_rate_missing")
+            details.append(
+                {
+                    "reason": "benchmark_parity_fallback_rate_missing",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                }
+            )
+        elif fallback_rate > max_fallback_rate:
+            reasons.append("benchmark_parity_fallback_rate_exceeds_threshold")
+            details.append(
+                {
+                    "reason": "benchmark_parity_fallback_rate_exceeds_threshold",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                    "actual_fallback_rate": fallback_rate,
+                    "maximum_fallback_rate": max_fallback_rate,
+                }
+            )
+
+        timeout_rate = _float_or_none(violations.get("timeout_rate"))
+        if timeout_rate is None:
+            reasons.append("benchmark_parity_timeout_rate_missing")
+            details.append(
+                {
+                    "reason": "benchmark_parity_timeout_rate_missing",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                }
+            )
+        elif timeout_rate > max_timeout_rate:
+            reasons.append("benchmark_parity_timeout_rate_exceeds_threshold")
+            details.append(
+                {
+                    "reason": "benchmark_parity_timeout_rate_exceeds_threshold",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                    "actual_timeout_rate": timeout_rate,
+                    "maximum_timeout_rate": max_timeout_rate,
+                }
+            )
+
+        if (
+            _coerce_evidence_bool(
+                violations.get("deterministic_gate_compatible")
+            )
+            is not True
+        ):
+            reasons.append("benchmark_parity_deterministic_gate_compatibility_failed")
+            details.append(
+                {
+                    "reason": "benchmark_parity_deterministic_gate_compatibility_failed",
+                    "artifact_ref": str(artifact_path),
+                    "family": family,
+                }
+            )
+
+    missing_families = sorted(required_families - families_seen)
+    if missing_families:
+        reasons.append("benchmark_parity_family_results_missing")
+        details.append(
+            {
+                "reason": "benchmark_parity_family_results_missing",
+                "artifact_ref": str(artifact_path),
+                "missing_families": missing_families,
+            }
+        )
+
+    degradation = _as_dict(payload.get("degradation_summary"))
+    adverse_regime = _as_dict(degradation.get("adverse_regime_decision_quality"))
+    risk_veto = _as_dict(degradation.get("risk_veto_alignment"))
+    confidence_error = _as_dict(degradation.get("confidence_calibration_error"))
+
+    adverse_regime_degradation = _float_or_none(adverse_regime.get("degradation"))
+    if adverse_regime_degradation is None:
+        reasons.append("benchmark_parity_adverse_regime_degradation_missing")
+        details.append(
+            {
+                "reason": "benchmark_parity_adverse_regime_degradation_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif adverse_regime_degradation > max_adverse_regime_degradation:
+        reasons.append("benchmark_parity_adverse_regime_degradation_exceeds_threshold")
+        details.append(
+            {
+                "reason": "benchmark_parity_adverse_regime_degradation_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_degradation": adverse_regime_degradation,
+                "maximum_degradation": max_adverse_regime_degradation,
+            }
+        )
+
+    risk_veto_degradation = _float_or_none(risk_veto.get("degradation"))
+    if risk_veto_degradation is None:
+        reasons.append("benchmark_parity_risk_veto_degradation_missing")
+        details.append(
+            {
+                "reason": "benchmark_parity_risk_veto_degradation_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif risk_veto_degradation > max_risk_veto_degradation:
+        reasons.append("benchmark_parity_risk_veto_degradation_exceeds_threshold")
+        details.append(
+            {
+                "reason": "benchmark_parity_risk_veto_degradation_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_degradation": risk_veto_degradation,
+                "maximum_degradation": max_risk_veto_degradation,
+            }
+        )
+
+    confidence_degradation = _float_or_none(confidence_error.get("degradation"))
+    if confidence_degradation is None:
+        reasons.append(
+            "benchmark_parity_confidence_calibration_error_degradation_missing"
+        )
+        details.append(
+            {
+                "reason": "benchmark_parity_confidence_calibration_error_degradation_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif confidence_degradation > max_confidence_degradation:
+        reasons.append(
+            "benchmark_parity_confidence_calibration_error_degradation_exceeds_threshold"
+        )
+        details.append(
+            {
+                "reason": "benchmark_parity_confidence_calibration_error_degradation_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_degradation": confidence_degradation,
+                "maximum_degradation": max_confidence_degradation,
+            }
+        )
+
+    return reasons, details, refs
 
 
 def _evaluate_foundation_router_parity_evidence(

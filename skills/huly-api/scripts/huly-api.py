@@ -1,16 +1,52 @@
 #!/usr/bin/env python3
-"""Minimal authenticated Huly API client for swarm agents."""
+"""Huly API helper for swarm agents.
+
+Supports two modes:
+- `--operation http`: raw authenticated HTTP call (backward compatible)
+- higher-level Huly operations for issues, channels, and documents via transactor API
+"""
+
+from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
-import re
+import secrets
 import sys
-import uuid
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from typing import Any
+
+ISSUE_CLASS = 'tracker:class:Issue'
+PROJECT_CLASS = 'tracker:class:Project'
+TEAMSPACE_CLASS = 'document:class:Teamspace'
+DOCUMENT_CLASS = 'document:class:Document'
+CHANNEL_CLASS = 'chunter:class:Channel'
+CHAT_MESSAGE_CLASS = 'chunter:class:ChatMessage'
+
+TX_CREATE_CLASS = 'core:class:TxCreateDoc'
+TX_UPDATE_CLASS = 'core:class:TxUpdateDoc'
+TX_SPACE = 'core:space:Tx'
+
+DEFAULT_ISSUE_STATUS = 'tracker:status:Backlog'
+DEFAULT_ISSUE_KIND = 'tracker:taskTypes:Issue'
+DEFAULT_DOCUMENT_PARENT = 'document:ids:NoParent'
+DEFAULT_RANK = '0|zzzzzz:'
+DEFAULT_TEAMSPACE = 'PROOMPTENG'
+
+
+@dataclass
+class HulyContext:
+    base_url: str
+    token: str
+    token_source: str
+    workspace_id: str
+    actor_id: str
+    timeout_seconds: int
 
 
 def env_first(*keys: str) -> str:
@@ -21,10 +57,87 @@ def env_first(*keys: str) -> str:
     return ''
 
 
-def join_url(base_url: str, path: str) -> str:
-    normalized_base = base_url.rstrip('/')
-    normalized_path = path if path.startswith('/') else f'/{path}'
-    return f'{normalized_base}{normalized_path}'
+def env_if_set(key: str) -> str:
+    return os.getenv(key, '').strip()
+
+
+def normalize_token_key(value: str) -> str:
+    parts: list[str] = []
+    for char in value.strip():
+        if char.isalnum():
+            parts.append(char.upper())
+        else:
+            parts.append('_')
+    normalized = ''.join(parts).strip('_')
+    while '__' in normalized:
+        normalized = normalized.replace('__', '_')
+    return normalized
+
+
+def is_worker_scoped_token_source(source: str) -> bool:
+    return source.startswith('HULY_API_TOKEN_')
+
+
+def resolve_expected_actor_id(args: argparse.Namespace) -> str:
+    explicit = args.expected_actor_id.strip()
+    if explicit:
+        return explicit
+
+    explicit_env_key = args.expected_actor_env_key.strip()
+    if explicit_env_key:
+        explicit_value = env_if_set(explicit_env_key)
+        if explicit_value:
+            return explicit_value
+
+    worker_identity = args.worker_identity.strip() or env_if_set('SWARM_AGENT_IDENTITY')
+    if worker_identity:
+        key = f'HULY_EXPECTED_ACTOR_ID_{normalize_token_key(worker_identity)}'
+        value = env_if_set(key)
+        if value:
+            return value
+
+    worker_id = args.worker_id.strip() or env_if_set('SWARM_AGENT_WORKER_ID')
+    if worker_id:
+        key = f'HULY_EXPECTED_ACTOR_ID_{normalize_token_key(worker_id)}'
+        value = env_if_set(key)
+        if value:
+            return value
+
+    return ''
+
+
+def resolve_token(args: argparse.Namespace) -> tuple[str, str]:
+    explicit = args.token.strip()
+    if explicit:
+        return explicit, 'cli'
+
+    token_env_key = args.token_env_key.strip()
+    if token_env_key:
+        candidate = env_if_set(token_env_key)
+        if candidate:
+            return candidate, token_env_key
+
+    worker_identity = args.worker_identity.strip() or env_if_set('SWARM_AGENT_IDENTITY')
+    if worker_identity:
+        key = f'HULY_API_TOKEN_{normalize_token_key(worker_identity)}'
+        candidate = env_if_set(key)
+        if candidate:
+            return candidate, key
+
+    worker_id = args.worker_id.strip() or env_if_set('SWARM_AGENT_WORKER_ID')
+    if worker_id:
+        key = f'HULY_API_TOKEN_{normalize_token_key(worker_id)}'
+        candidate = env_if_set(key)
+        if candidate:
+            return candidate, key
+
+    if args.require_worker_token:
+        return '', ''
+
+    fallback = env_first('HULY_API_TOKEN', 'HULY_TOKEN')
+    if fallback:
+        return fallback, 'HULY_API_TOKEN/HULY_TOKEN'
+    return '', ''
 
 
 def maybe_parse_json(value: str) -> Any:
@@ -44,774 +157,1019 @@ def parse_headers(raw_headers: list[str]) -> dict[str, str]:
     return headers
 
 
-def random_object_id(prefix: str = '') -> str:
-    random_suffix = uuid.uuid4().hex[:24]
-    return f'{prefix}{random_suffix}' if prefix else random_suffix
+def join_url(base_url: str, path: str) -> str:
+    normalized_base = base_url.rstrip('/')
+    normalized_path = path if path.startswith('/') else f'/{path}'
+    return f'{normalized_base}{normalized_path}'
 
 
-def slugify(value: str, fallback: str = 'mission', max_length: int = 72) -> str:
-    candidate = re.sub(r'[^a-z0-9-]+', '-', value.lower().strip().replace(' ', '-'))
-    candidate = re.sub(r'-+', '-', candidate).strip('-')
-    if not candidate:
-        candidate = fallback
-    if len(candidate) > max_length:
-        candidate = candidate[:max_length].strip('-')
-    return candidate
+def decode_jwt_payload(token: str) -> dict[str, Any]:
+    parts = token.split('.')
+    if len(parts) < 2:
+        return {}
+    payload = parts[1]
+    payload += '=' * ((4 - len(payload) % 4) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload.encode('utf-8')).decode('utf-8')
+        data = json.loads(decoded)
+        if isinstance(data, dict):
+            return data
+    except (ValueError, json.JSONDecodeError):
+        return {}
+    return {}
 
 
-def truncate(value: str, limit: int = 1800) -> str:
-    if not value:
+def normalize_api_base_url(base_url: str) -> str:
+    """Normalize API base URL for transactor-backed REST API.
+
+    Frontend service URLs do not expose `/api/v1/*` endpoints directly in-cluster.
+    Convert `front.<domain>` to `transactor.<domain>` when possible.
+    """
+
+    raw = base_url.strip().rstrip('/')
+    if not raw:
         return ''
-    if len(value) <= limit:
-        return value
-    if limit <= 3:
-        return value[:limit]
-    return f'{value[: limit - 3].rstrip()}...'
+
+    parsed = urllib.parse.urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return raw
+
+    hostname = parsed.hostname or ''
+    port = f':{parsed.port}' if parsed.port else ''
+    target_hostname = hostname
+
+    if hostname.lower().startswith('front.'):
+        target_hostname = f"transactor.{hostname[len('front.'):]}"
+
+    return f'{parsed.scheme}://{target_hostname}{port}'
 
 
-def coalesce(value: Any) -> str:
-    if value is None:
-        return ''
-    if isinstance(value, str):
-        return value.strip()
-    return str(value).strip()
-
-
-def is_huly_channel(channel: str) -> bool:
-    lowered = channel.lower().strip()
-    return lowered.startswith('huly://') or 'huly' in lowered
-
-
-def normalize_payload(value: Any) -> str:
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, sort_keys=True, indent=2)
-    return coalesce(value)
-
-
-def request_json(
-    base_url: str,
+def api_call(
+    *,
+    method: str,
+    url: str,
     token: str,
-    path: str,
-    method: str = 'GET',
-    payload: Any | None = None,
-    timeout_seconds: int = 30,
-    headers: dict[str, str] | None = None,
-) -> tuple[int, Any, str]:
-    request_headers = {
+    timeout_seconds: int,
+    data: Any | None = None,
+    extra_headers: dict[str, str] | None = None,
+) -> Any:
+    headers = {
         'Accept': 'application/json',
         'Authorization': f'Bearer {token}',
     }
-    if headers:
-        request_headers.update(headers)
+    if extra_headers:
+        headers.update(extra_headers)
 
     body = None
-    if payload is not None:
-        if isinstance(payload, (dict, list)):
-            body = json.dumps(payload).encode('utf-8')
-            request_headers.setdefault('Content-Type', 'application/json')
+    if data is not None:
+        if isinstance(data, (bytes, bytearray)):
+            body = bytes(data)
+        elif isinstance(data, str):
+            body = data.encode('utf-8')
         else:
-            body = str(payload).encode('utf-8')
-            request_headers.setdefault('Content-Type', 'text/plain; charset=utf-8')
+            body = json.dumps(data).encode('utf-8')
+            headers.setdefault('Content-Type', 'application/json')
 
-    request = urllib.request.Request(
-        url=join_url(base_url, path),
-        method=method,
-        headers=request_headers,
-        data=body,
-    )
+    request = urllib.request.Request(url=url, method=method.upper(), headers=headers, data=body)
 
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             raw_body = response.read().decode('utf-8', errors='replace')
             content_type = response.headers.get('Content-Type', '')
-            parsed = (
-                maybe_parse_json(raw_body)
-                if 'json' in content_type.lower()
-                else raw_body
-            )
-            return response.getcode(), parsed, raw_body
+            if 'json' in content_type.lower():
+                return maybe_parse_json(raw_body)
+            return raw_body
     except urllib.error.HTTPError as error:
-        raw_error = error.read().decode('utf-8', errors='replace')
-        raise RuntimeError(
-            json.dumps(
-                {
-                    'status': error.code,
-                    'reason': error.reason,
-                    'url': join_url(base_url, path),
-                    'body': maybe_parse_json(raw_error),
-                },
-                sort_keys=True,
-            )
-        ) from error
+        error_body = error.read().decode('utf-8', errors='replace')
+        details = {
+            'status': error.code,
+            'reason': error.reason,
+            'url': url,
+            'body': maybe_parse_json(error_body),
+        }
+        raise RuntimeError(json.dumps(details, sort_keys=True)) from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(f'request failed: {error.reason}') from error
 
 
 def find_all(
-    base_url: str,
-    token: str,
-    workspace: str,
-    cls: str,
-    query: dict[str, Any] | None = None,
-    limit: int = 1,
+    *,
+    context: HulyContext,
+    class_name: str,
+    query: dict[str, Any],
+    options: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    params = {'class': cls, 'limit': str(limit)}
-    if query:
-        params['query'] = json.dumps(query, separators=(',', ':'), sort_keys=True)
+    payload: dict[str, Any] = {
+        '_class': class_name,
+        'query': query,
+    }
+    if options:
+        payload['options'] = options
 
-    query_string = urllib.parse.urlencode(params, safe=':')
-    path = f'/api/v1/find-all/{workspace}?{query_string}'
-    _, result, _ = request_json(base_url, token, path, 'GET')
+    raw = api_call(
+        method='POST',
+        url=join_url(context.base_url, f'/api/v1/find-all/{context.workspace_id}'),
+        token=context.token,
+        timeout_seconds=context.timeout_seconds,
+        data=payload,
+    )
 
-    if isinstance(result, dict):
-        return result.get('value', []) or []
+    if isinstance(raw, dict) and isinstance(raw.get('value'), list):
+        value = raw['value']
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
     return []
 
 
-def find_first_by_field(
-    base_url: str,
-    token: str,
-    workspace: str,
-    cls: str,
-    field: str,
-    value: str,
-) -> dict[str, Any] | None:
-    matches = find_all(base_url, token, workspace, cls, query={field: value}, limit=1)
-    return matches[0] if matches else None
-
-
-def find_messages_for_channel(
-    base_url: str,
-    token: str,
-    workspace: str,
-    channel_id: str,
-) -> list[dict[str, Any]]:
-    return find_all(
-        base_url,
-        token,
-        workspace,
-        'chunter:class:ChatMessage',
-        query={'attachedTo': channel_id, 'collection': 'messages'},
-        limit=200,
+def submit_tx(*, context: HulyContext, payload: dict[str, Any]) -> Any:
+    return api_call(
+        method='POST',
+        url=join_url(context.base_url, f'/api/v1/tx/{context.workspace_id}'),
+        token=context.token,
+        timeout_seconds=context.timeout_seconds,
+        data=payload,
     )
 
 
-def send_tx(
-    base_url: str,
-    token: str,
-    workspace: str,
-    tx: dict[str, Any],
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def new_id() -> str:
+    return secrets.token_hex(12)
+
+
+def create_tx_create_doc(
+    *,
+    actor_id: str,
+    object_class: str,
+    object_space: str,
+    attributes: dict[str, Any],
+    object_id: str | None = None,
+    attached_to: str | None = None,
+    attached_to_class: str | None = None,
+    collection: str | None = None,
 ) -> dict[str, Any]:
-    path = f'/api/v1/tx/{workspace}'
-    status, result, _ = request_json(base_url, token, path, 'POST', tx)
-    if status >= 400:
-        raise RuntimeError(f'tx request failed ({status}): {result}')
-    if not isinstance(result, dict):
-        return {}
-    return result
-
-
-def resolve_tracker_project(base_url: str, token: str, workspace: str, ref: str) -> str:
-    if not ref:
-        raise ValueError('project missing: set --data.hulyProject or HULY_PROJECT')
-
-    direct = find_first_by_field(base_url, token, workspace, 'tracker:class:Project', '_id', ref)
-    if direct:
-        return direct.get('_id', ref)
-
-    if ':' in ref:
-        return ref
-
-    by_name = find_first_by_field(base_url, token, workspace, 'tracker:class:Project', 'name', ref)
-    if by_name:
-        return by_name.get('_id', ref)
-
-    by_title = find_first_by_field(base_url, token, workspace, 'tracker:class:Project', 'title', ref)
-    if by_title:
-        return by_title.get('_id', ref)
-
-    default_project = find_first_by_field(
-        base_url,
-        token,
-        workspace,
-        'tracker:class:Project',
-        '_id',
-        'tracker:project:DefaultProject',
-    )
-    if default_project:
-        return default_project.get('_id', 'tracker:project:DefaultProject')
-
-    fallback_project = find_first_by_field(
-        base_url,
-        token,
-        workspace,
-        'tracker:class:Project',
-        'name',
-        'Welcome to Huly!',
-    )
-    if fallback_project:
-        return fallback_project.get('_id', 'tracker:project:DefaultProject')
-
-    return ref
-
-
-def resolve_teamspace(base_url: str, token: str, workspace: str, ref: str) -> str:
-    if not ref:
-        raise ValueError('teamspace missing: set --data.hulyTeamspaceName or HULY_TEAMSPACE')
-
-    direct = find_first_by_field(base_url, token, workspace, 'document:class:Teamspace', '_id', ref)
-    if direct:
-        return direct.get('_id', ref)
-
-    by_title = find_first_by_field(base_url, token, workspace, 'document:class:Teamspace', 'title', ref)
-    if by_title:
-        return by_title.get('_id', ref)
-
-    by_name = find_first_by_field(base_url, token, workspace, 'document:class:Teamspace', 'name', ref)
-    if by_name:
-        return by_name.get('_id', ref)
-
-    return ref
-
-
-def resolve_channel(base_url: str, token: str, workspace: str, ref: str) -> str:
-    if not ref:
-        raise ValueError('channel missing: set --data.hulyChannelName or HULY_CHANNEL')
-
-    direct = find_first_by_field(base_url, token, workspace, 'chunter:class:Channel', '_id', ref)
-    if direct:
-        return direct.get('_id', ref)
-
-    by_name = find_first_by_field(base_url, token, workspace, 'chunter:class:Channel', 'name', ref)
-    if by_name:
-        return by_name.get('_id', ref)
-
-    return ref
-
-
-def next_issue_identifier(base_url: str, token: str, workspace: str, project_id: str) -> tuple[str, int]:
-    issues = find_all(
-        base_url,
-        token,
-        workspace,
-        'tracker:class:Issue',
-        query={'attachedTo': project_id},
-        limit=200,
-    )
-
-    highest = 9000
-    prefix = 'HULY'
-    for issue in issues:
-        identifier = coalesce(issue.get('identifier'))
-        match = re.match(r'([A-Za-z0-9_-]+)-(\d+)$', identifier)
-        if match:
-            prefix = match.group(1)
-            highest = max(highest, int(match.group(2)))
-
-    return f'{prefix}-{highest + 1}', highest + 1
-
-
-def build_mission_code(data: dict[str, Any]) -> tuple[str, str, str, str]:
-    swarm_name = coalesce(data.get('swarmName') or os.getenv('SWARM_NAME') or 'jangar')
-    stage = coalesce(data.get('stage') or data.get('swarmStage') or data.get('phase') or 'implement')
-    objective = coalesce(
-        data.get('objective')
-        or data.get('objectiveSummary')
-        or os.getenv('ISSUE_TITLE')
-        or os.getenv('CODEX_PROMPT')
-        or 'mission'
-    )
-
-    code = slugify(f'{swarm_name}-{stage}-{objective}', fallback='mission', max_length=58)
-    issue_title = f'[{slugify(swarm_name, fallback="swarm", max_length=24)}][{stage}] {truncate(objective, 90)}'
-    return code, issue_title, stage, objective
-
-
-def build_mission_scope(data: dict[str, Any]) -> tuple[str, str]:
-    requirement_channel = coalesce(data.get('swarmRequirementChannel'))
-    requirement_description = coalesce(data.get('swarmRequirementDescription'))
-    requirement_payload = data.get('swarmRequirementPayload')
-
-    if is_huly_channel(requirement_channel) and (requirement_description or requirement_payload):
-        return 'cross-swarm', normalize_payload(requirement_payload or requirement_description)
-
-    objective = coalesce(
-        data.get('objective')
-        or data.get('objectiveSummary')
-        or os.getenv('CODEX_PROMPT')
-        or 'No objective provided.'
-    )
-    return 'normal', objective
-
-
-def build_issue_description(
-    mission_code: str,
-    stage: str,
-    status: str,
-    scope_kind: str,
-    scope_text: str,
-    data: dict[str, Any],
-    worker_id: str,
-    worker_identity: str,
-) -> str:
-    objective_type = coalesce(data.get('objective') or data.get('objectiveSummary'))
-    lines = [
-        f'Mission `{mission_code}`',
-        '',
-        f'- Stage: {stage}',
-        f'- Status: {status}',
-        f'- Objective type: {scope_kind}',
-        '',
-        '## Summary',
-        truncate(scope_text, 1500),
-        '',
-        '## Execution Identity',
-        f'- swarmAgentWorkerId: `{worker_id}`',
-        f'- swarmAgentIdentity: `{worker_identity}`',
-        '',
-    ]
-
-    if scope_kind == 'cross-swarm':
-        lines.extend(
-            [
-                '## Cross-Swarm Requirement',
-                f'- Requirement source: `{coalesce(data.get("swarmRequirementSource") ) or "N/A"}`',
-                f'- Requirement target: `{coalesce(data.get("swarmRequirementTarget") ) or "N/A"}`',
-                f'- Requirement channel: `{coalesce(data.get("swarmRequirementChannel") ) or "N/A"}`',
-                f'- Requirement signal: `{coalesce(data.get("swarmRequirementSignal") ) or "N/A"}`',
-                f'- Requirement id: `{coalesce(data.get("swarmRequirementId") ) or "N/A"}`',
-                '',
-            ],
-        )
-
-    lines.extend(
-        [
-            '## Cross-links',
-            f'- Repository: {coalesce(data.get("repository") or os.getenv("REPOSITORY") or os.getenv("REPO") ) or "N/A"}',
-            f'- Branch: {coalesce(data.get("head") or os.getenv("HEAD_BRANCH") ) or "N/A"}',
-            f'- Base: {coalesce(data.get("base") or os.getenv("BASE_BRANCH") ) or "N/A"}',
-            f'- Objective: {objective_type or "N/A"}',
-        ]
-    )
-
-    return '\n'.join(lines)
-
-
-def build_document_body(
-    mission_code: str,
-    stage: str,
-    status: str,
-    scope_kind: str,
-    scope_text: str,
-    data: dict[str, Any],
-    worker_id: str,
-    worker_identity: str,
-) -> str:
-    title = coalesce(data.get('objective') or data.get('objectiveSummary') or 'Mission')
-
-    lines = [
-        f'# {mission_code} - {title}',
-        '',
-        f'**Stage:** {stage}',
-        f'**Status:** {status}',
-        f'**Scope source:** {scope_kind}',
-        '',
-        '## Summary',
-        truncate(scope_text, 1800),
-        '',
-        '## Execution Identity',
-        f'- `swarmAgentWorkerId`: `{worker_id}`',
-        f'- `swarmAgentIdentity`: `{worker_identity}`',
-        '',
-    ]
-
-    if scope_kind == 'cross-swarm':
-        lines.extend(
-            [
-                '## Requirement Provenance',
-                f'- **source**: {coalesce(data.get("swarmRequirementSource") ) or "N/A"}',
-                f'- **target**: {coalesce(data.get("swarmRequirementTarget") ) or "N/A"}',
-                f'- **channel**: {coalesce(data.get("swarmRequirementChannel") ) or "N/A"}',
-                f'- **signal**: {coalesce(data.get("swarmRequirementSignal") ) or "N/A"}',
-                f'- **id**: {coalesce(data.get("swarmRequirementId") ) or "N/A"}',
-                f'- **payload**: ```\n{truncate(normalize_payload(data.get("swarmRequirementPayload") or ""), 600)}\n```',
-                '',
-            ],
-        )
-
-    lines.extend(
-        [
-            '## References',
-            f'- Repository: {coalesce(data.get("repository") or os.getenv("REPOSITORY") or os.getenv("REPO") ) or "N/A"}',
-            f'- Owner channel: `{coalesce(data.get("ownerChannel") ) or coalesce(os.getenv("HULY_CHANNEL")) or "general"}`',
-            f'- Head: `{coalesce(data.get("head") or os.getenv("HEAD_BRANCH") ) or "N/A"}`',
-            f'- Base: `{coalesce(data.get("base") or os.getenv("BASE_BRANCH") ) or "N/A"}`',
-            '',
-            '## Huly Artifact IDs',
-            '- Issue ID: pending',
-            '- Document ID: pending',
-            '- Message ID: pending',
-            '',
-        ],
-    )
-
-    return '\n'.join(lines)
-
-
-def build_status_message(
-    mission_code: str,
-    issue: dict[str, Any] | None,
-    document: dict[str, Any] | None,
-    status: str,
-    stage: str,
-    data: dict[str, Any],
-    worker_id: str,
-    worker_identity: str,
-) -> str:
-    title = coalesce(data.get('objective') or data.get('objectiveSummary') or 'Mission')
-    req_channel = coalesce(data.get('swarmRequirementChannel') )
-    provenance = f'source={coalesce(data.get("swarmRequirementSource") )} target={coalesce(data.get("swarmRequirementTarget") )}'
-    if not req_channel:
-        provenance = 'source=n/a target=n/a'
-
-    return '\n'.join(
-        [
-            f'[{coalesce(data.get("swarmName") or "jangar")}][{status}] mission={mission_code}',
-            f'stage={stage}',
-            f'title={truncate(title, 120)}',
-            f'summary={truncate(coalesce(data.get("objective") or data.get("objectiveSummary") or ""), 260)}',
-            f'provenance={provenance}',
-            f'worker={worker_id}/{worker_identity}',
-            f'issueId={coalesce(issue.get("_id") if issue else "pending")}',
-            f'documentId={coalesce(document.get("_id") if document else "pending")}',
-        ],
-    )
-
-
-def find_channel_message_by_mission(
-    base_url: str,
-    token: str,
-    workspace: str,
-    channel_id: str,
-    mission_code: str,
-    issue_id: str | None = None,
-) -> dict[str, Any] | None:
-    messages = find_messages_for_channel(base_url, token, workspace, channel_id)
-    for message in messages:
-        message_text = coalesce(message.get('message'))
-        if f'mission={mission_code}' not in message_text:
-            continue
-        if issue_id and issue_id in message_text:
-            return message
-    for message in messages:
-        if f'mission={mission_code}' in coalesce(message.get('message')):
-            return message
-    return None
-
-
-def upsert_mission(base_url: str, token: str, workspace: str, data: dict[str, Any]) -> dict[str, Any]:
-    if not workspace:
-        raise ValueError('workspace missing: set --data.hulyWorkspace or HULY_WORKSPACE')
-
-    mission_code, issue_title, stage, objective = build_mission_code(data)
-    scope_kind, scope_text = build_mission_scope(data)
-    status = coalesce(data.get('status') or data.get('state') or 'running')
-
-    worker_id = coalesce(data.get('swarmAgentWorkerId') or os.getenv('SWARM_AGENT_WORKER_ID'))
-    worker_identity = coalesce(data.get('swarmAgentIdentity') or os.getenv('SWARM_AGENT_IDENTITY'))
-    if not worker_id:
-        worker_id = 'N/A'
-    if not worker_identity:
-        worker_identity = 'N/A'
-
-    project_ref = coalesce(data.get('hulyProject') or os.getenv('HULY_PROJECT') or os.getenv('HULY_PROJECT_ID'))
-    teamspace_ref = coalesce(data.get('hulyTeamspaceName') or os.getenv('HULY_TEAMSPACE') or os.getenv('HULY_TEAMSPACE_NAME'))
-    channel_name = coalesce(data.get('hulyChannelName') or os.getenv('HULY_CHANNEL') or 'general')
-
-    project_id = resolve_tracker_project(base_url, token, workspace, project_ref)
-    teamspace_id = resolve_teamspace(base_url, token, workspace, teamspace_ref)
-    channel_id = resolve_channel(base_url, token, workspace, channel_name)
-
-    issue_title_exact = issue_title
-    issue = find_first_by_field(
-        base_url,
-        token,
-        workspace,
-        'tracker:class:Issue',
-        'title',
-        issue_title_exact,
-    )
-    document = find_first_by_field(
-        base_url,
-        token,
-        workspace,
-        'document:class:Document',
-        'title',
-        issue_title_exact,
-    )
-
-    issue_description = build_issue_description(
-        mission_code,
-        stage,
-        status,
-        scope_kind,
-        scope_text,
-        data,
-        worker_id,
-        worker_identity,
-    )
-    document_content = build_document_body(
-        mission_code,
-        stage,
-        status,
-        scope_kind,
-        scope_text,
-        data,
-        worker_id,
-        worker_identity,
-    )
-
-    if issue:
-        issue_tx = {
-            '_class': 'core:class:TxUpdateDoc',
-            '_id': random_object_id(),
-            'space': 'core:space:Tx',
-            'objectId': issue['_id'],
-            'objectSpace': issue['space'],
-            'operations': {'title': issue_title_exact, 'description': issue_description},
-        }
-        send_tx(base_url, token, workspace, issue_tx)
-    else:
-        identifier, number = next_issue_identifier(base_url, token, workspace, project_id)
-        issue_tx = {
-            '_class': 'core:class:TxCreateDoc',
-            '_id': random_object_id(),
-            'space': 'core:space:Tx',
-            'objectClass': 'tracker:class:Issue',
-            'objectId': random_object_id(),
-            'objectSpace': project_id,
-            'collection': 'issues',
-            'attachedTo': project_id,
-            'attachedToClass': 'tracker:class:Project',
-            'attributes': {
-                'title': issue_title_exact,
-                'description': issue_description,
-                'status': 'tracker:status:Backlog',
-                'identifier': identifier,
-                'number': number,
-                'kind': 'tracker:taskTypes:Issue',
-                'assignee': None,
-                'component': None,
-                'estimation': 0,
-                'remainingTime': 0,
-                'reportedTime': 0,
-                'comments': 0,
-                'subIssues': 0,
-                'parents': [],
-                'childInfo': [],
-                'attachedTo': 'tracker:ids:NoParent',
-                'attachedToClass': 'tracker:class:Issue',
-                'collection': 'subIssues',
-                'dueDate': None,
-                'rank': '0|zzzzzz:',
-            },
-        }
-        send_tx(base_url, token, workspace, issue_tx)
-
-    if document:
-        document_tx = {
-            '_class': 'core:class:TxUpdateDoc',
-            '_id': random_object_id(),
-            'space': 'core:space:Tx',
-            'objectId': document['_id'],
-            'objectSpace': document['space'],
-            'operations': {'title': issue_title_exact, 'content': document_content},
-        }
-        send_tx(base_url, token, workspace, document_tx)
-    else:
-        document_tx = {
-            '_class': 'core:class:TxCreateDoc',
-            '_id': random_object_id(),
-            'space': 'core:space:Tx',
-            'objectClass': 'document:class:Document',
-            'objectId': random_object_id(),
-            'objectSpace': teamspace_id,
-            'attributes': {
-                'title': issue_title_exact,
-                'content': document_content,
-                'parent': 'document:ids:NoParent',
-                'rank': '0|zzzzzz:',
-            },
-        }
-        send_tx(base_url, token, workspace, document_tx)
-
-    issue = find_first_by_field(
-        base_url,
-        token,
-        workspace,
-        'tracker:class:Issue',
-        'title',
-        issue_title_exact,
-    )
-    document = find_first_by_field(
-        base_url,
-        token,
-        workspace,
-        'document:class:Document',
-        'title',
-        issue_title_exact,
-    )
-
-    status_message = build_status_message(
-        mission_code,
-        issue,
-        document,
-        status,
-        stage,
-        data,
-        worker_id,
-        worker_identity,
-    )
-
-    existing_message = find_channel_message_by_mission(
-        base_url,
-        token,
-        workspace,
-        channel_id,
-        mission_code,
-        coalesce(issue.get('_id') if issue else None),
-    )
-
-    if existing_message:
-        message_tx = {
-            '_class': 'core:class:TxUpdateDoc',
-            '_id': random_object_id(),
-            'space': 'core:space:Tx',
-            'objectId': existing_message['_id'],
-            'objectSpace': existing_message['space'],
-            'operations': {'message': status_message},
-        }
-    else:
-        message_tx = {
-            '_class': 'core:class:TxCreateDoc',
-            '_id': random_object_id(),
-            'space': 'core:space:Tx',
-            'objectClass': 'chunter:class:ChatMessage',
-            'objectId': random_object_id(),
-            'objectSpace': channel_id,
-            'collection': 'messages',
-            'attachedTo': channel_id,
-            'attachedToClass': 'chunter:class:Channel',
-            'attributes': {'message': status_message},
-        }
-
-    send_tx(base_url, token, workspace, message_tx)
-
-    message = find_channel_message_by_mission(
-        base_url,
-        token,
-        workspace,
-        channel_id,
-        mission_code,
-        coalesce(issue.get('_id') if issue else None),
-    )
-
+    tx: dict[str, Any] = {
+        '_id': new_id(),
+        '_class': TX_CREATE_CLASS,
+        'space': TX_SPACE,
+        'objectId': object_id or new_id(),
+        'objectClass': object_class,
+        'objectSpace': object_space,
+        'modifiedOn': now_ms(),
+        'modifiedBy': actor_id,
+        'createdBy': actor_id,
+        'attributes': attributes,
+    }
+    if attached_to:
+        tx['attachedTo'] = attached_to
+    if attached_to_class:
+        tx['attachedToClass'] = attached_to_class
+    if collection:
+        tx['collection'] = collection
+    return tx
+
+
+def create_tx_update_doc(
+    *,
+    actor_id: str,
+    object_class: str,
+    object_space: str,
+    object_id: str,
+    operations: dict[str, Any],
+) -> dict[str, Any]:
     return {
-        'operation': 'upsert-mission',
-        'missionCode': mission_code,
-        'issueId': coalesce(issue.get('_id') if issue else ''),
-        'documentId': coalesce(document.get('_id') if document else ''),
-        'messageId': coalesce(message.get('_id') if message else ''),
-        'issueTitle': issue_title_exact,
-        'status': status,
-        'stage': stage,
-        'objective': truncate(objective, 200),
-        'issueDescriptionPreview': truncate(issue_description, 120),
-        'documentPreview': truncate(document_content, 120),
-        'statusMessage': truncate(status_message, 200),
-        'requirementChannel': coalesce(data.get('swarmRequirementChannel')),
-        'requirementId': coalesce(data.get('swarmRequirementId')),
+        '_id': new_id(),
+        '_class': TX_UPDATE_CLASS,
+        'space': TX_SPACE,
+        'objectId': object_id,
+        'objectClass': object_class,
+        'objectSpace': object_space,
+        'modifiedOn': now_ms(),
+        'modifiedBy': actor_id,
+        'operations': operations,
     }
 
 
-def parse_payload(raw: str) -> dict[str, Any]:
-    payload = maybe_parse_json(raw)
-    if not isinstance(payload, dict):
-        raise ValueError('payload must be a JSON object')
-    return payload
+def resolve_project(context: HulyContext, project_ref: str) -> dict[str, Any]:
+    project_ref = project_ref.strip()
+    if project_ref:
+        for query in ({'_id': project_ref}, {'identifier': project_ref}, {'name': project_ref}):
+            projects = find_all(context=context, class_name=PROJECT_CLASS, query=query, options={'limit': 1})
+            if projects:
+                return projects[0]
+
+    projects = find_all(
+        context=context,
+        class_name=PROJECT_CLASS,
+        query={'archived': False},
+        options={'limit': 1, 'sort': {'modifiedOn': -1}},
+    )
+    if not projects:
+        raise RuntimeError('no tracker project found in workspace')
+    return projects[0]
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description='Call Huly API endpoints with bearer auth.')
-    parser.add_argument('--operation', default='', help='Special operation mode, e.g. upsert-mission')
-    parser.add_argument('--method', default='GET', help='HTTP method')
-    parser.add_argument('--path', required=False, default='/api/version', help='API path, for example /api/issues')
-    parser.add_argument('--data', default='', help='JSON payload string for write operations')
+def resolve_teamspace(context: HulyContext, teamspace_ref: str) -> dict[str, Any]:
+    teamspace_ref = teamspace_ref.strip()
+    if teamspace_ref:
+        for query in ({'_id': teamspace_ref}, {'name': teamspace_ref}):
+            spaces = find_all(context=context, class_name=TEAMSPACE_CLASS, query=query, options={'limit': 1})
+            if spaces:
+                return spaces[0]
+
+    spaces = find_all(
+        context=context,
+        class_name=TEAMSPACE_CLASS,
+        query={'archived': False},
+        options={'limit': 1, 'sort': {'modifiedOn': -1}},
+    )
+    if not spaces:
+        raise RuntimeError('no document teamspace found in workspace')
+    return spaces[0]
+
+
+def normalize_channel_ref(channel_ref: str) -> str:
+    value = channel_ref.strip()
+    if not value:
+        return ''
+    if value.startswith('huly://'):
+        parsed = urllib.parse.urlparse(value)
+        segments = [segment for segment in parsed.path.split('/') if segment]
+        if len(segments) >= 2 and segments[0] == 'channels':
+            return urllib.parse.unquote(segments[1]).strip()
+        return urllib.parse.unquote(parsed.path.strip('/')).strip()
+    if value.startswith('http://') or value.startswith('https://'):
+        decoded = urllib.parse.unquote(urllib.parse.urlparse(value).path)
+        marker = 'chunter:space:'
+        if marker in decoded:
+            return decoded.split(marker, 1)[1].split('|', 1)[0].strip().lower()
+    return value
+
+
+def resolve_channel(context: HulyContext, channel_ref: str) -> dict[str, Any]:
+    channel_ref = normalize_channel_ref(channel_ref)
+    if channel_ref:
+        for query in ({'_id': channel_ref}, {'name': channel_ref}):
+            channels = find_all(context=context, class_name=CHANNEL_CLASS, query=query, options={'limit': 1})
+            if channels:
+                return channels[0]
+
+    channels = find_all(
+        context=context,
+        class_name=CHANNEL_CLASS,
+        query={'archived': False},
+        options={'limit': 1, 'sort': {'modifiedOn': -1}},
+    )
+    if not channels:
+        raise RuntimeError('no chat channel found in workspace')
+    return channels[0]
+
+
+def latest_issue_number(context: HulyContext, project_id: str) -> int:
+    issues = find_all(
+        context=context,
+        class_name=ISSUE_CLASS,
+        query={'space': project_id},
+        options={'limit': 1, 'sort': {'number': -1}},
+    )
+    if not issues:
+        return 0
+    current = issues[0].get('number')
+    if isinstance(current, int):
+        return current
+    if isinstance(current, float):
+        return int(current)
+    return 0
+
+
+def find_issue_by_title(context: HulyContext, project_id: str, title: str) -> dict[str, Any] | None:
+    issues = find_all(
+        context=context,
+        class_name=ISSUE_CLASS,
+        query={'space': project_id, 'title': title},
+        options={'limit': 1},
+    )
+    if issues:
+        return issues[0]
+    return None
+
+
+def find_document_by_title(context: HulyContext, teamspace_id: str, title: str) -> dict[str, Any] | None:
+    docs = find_all(
+        context=context,
+        class_name=DOCUMENT_CLASS,
+        query={'space': teamspace_id, 'title': title},
+        options={'limit': 1},
+    )
+    if docs:
+        return docs[0]
+    return None
+
+
+def create_or_update_issue(
+    *,
+    context: HulyContext,
+    project_ref: str,
+    title: str,
+    body: str,
+    mission_id: str,
+    status: str,
+    priority: int,
+) -> dict[str, Any]:
+    project = resolve_project(context, project_ref)
+    project_id = str(project.get('_id') or '')
+    project_identifier = str(project.get('identifier') or '').strip()
+    if not project_id:
+        raise RuntimeError('resolved project is missing _id')
+
+    mission_title = f'[mission:{mission_id}] {title}' if mission_id else title
+    existing = find_issue_by_title(context, project_id, mission_title)
+    if existing:
+        issue_id = str(existing.get('_id') or '')
+        if not issue_id:
+            raise RuntimeError('resolved issue is missing _id')
+        operations: dict[str, Any] = {
+            'status': status,
+            'priority': priority,
+            'title': mission_title,
+        }
+        if body:
+            operations['description'] = body
+        tx = create_tx_update_doc(
+            actor_id=context.actor_id,
+            object_class=ISSUE_CLASS,
+            object_space=project_id,
+            object_id=issue_id,
+            operations=operations,
+        )
+        submit_tx(context=context, payload=tx)
+        return {
+            'action': 'updated',
+            'projectId': project_id,
+            'issueId': issue_id,
+            'issueTitle': mission_title,
+            'projectIdentifier': project_identifier,
+        }
+
+    next_number = latest_issue_number(context, project_id) + 1
+    identifier = f'{project_identifier}-{next_number}' if project_identifier else None
+
+    attributes: dict[str, Any] = {
+        'title': mission_title,
+        'status': status,
+        'number': next_number,
+        'kind': DEFAULT_ISSUE_KIND,
+        'priority': int(priority),
+        'comments': 0,
+        'subIssues': 0,
+        'reports': 0,
+        'estimation': 0,
+        'remainingTime': 0,
+        'reportedTime': 0,
+        'parents': [],
+        'childInfo': [],
+        'dueDate': None,
+        'assignee': None,
+        'component': None,
+        'rank': DEFAULT_RANK,
+        'attachedTo': 'tracker:ids:NoParent',
+        'attachedToClass': ISSUE_CLASS,
+        'collection': 'subIssues',
+    }
+    if identifier:
+        attributes['identifier'] = identifier
+    if body:
+        attributes['description'] = body
+
+    issue_id = new_id()
+    tx = create_tx_create_doc(
+        actor_id=context.actor_id,
+        object_class=ISSUE_CLASS,
+        object_space=project_id,
+        object_id=issue_id,
+        attached_to=project_id,
+        attached_to_class=PROJECT_CLASS,
+        collection='issues',
+        attributes=attributes,
+    )
+    submit_tx(context=context, payload=tx)
+
+    return {
+        'action': 'created',
+        'projectId': project_id,
+        'issueId': issue_id,
+        'issueTitle': mission_title,
+        'projectIdentifier': project_identifier,
+        'issueNumber': next_number,
+        'issueIdentifier': identifier,
+    }
+
+
+def create_or_update_document(
+    *,
+    context: HulyContext,
+    teamspace_ref: str,
+    title: str,
+    body: str,
+    mission_id: str,
+) -> dict[str, Any]:
+    teamspace = resolve_teamspace(context, teamspace_ref)
+    teamspace_id = str(teamspace.get('_id') or '')
+    if not teamspace_id:
+        raise RuntimeError('resolved teamspace is missing _id')
+
+    mission_title = f'[mission:{mission_id}] {title}' if mission_id else title
+    existing = find_document_by_title(context, teamspace_id, mission_title)
+    if existing:
+        doc_id = str(existing.get('_id') or '')
+        if not doc_id:
+            raise RuntimeError('resolved document is missing _id')
+        operations: dict[str, Any] = {'title': mission_title}
+        if body:
+            operations['content'] = body
+        tx = create_tx_update_doc(
+            actor_id=context.actor_id,
+            object_class=DOCUMENT_CLASS,
+            object_space=teamspace_id,
+            object_id=doc_id,
+            operations=operations,
+        )
+        submit_tx(context=context, payload=tx)
+        return {
+            'action': 'updated',
+            'teamspaceId': teamspace_id,
+            'documentId': doc_id,
+            'documentTitle': mission_title,
+        }
+
+    attributes: dict[str, Any] = {
+        'title': mission_title,
+        'parent': DEFAULT_DOCUMENT_PARENT,
+        'rank': DEFAULT_RANK,
+    }
+    if body:
+        attributes['content'] = body
+
+    doc_id = new_id()
+    tx = create_tx_create_doc(
+        actor_id=context.actor_id,
+        object_class=DOCUMENT_CLASS,
+        object_space=teamspace_id,
+        object_id=doc_id,
+        attributes=attributes,
+    )
+    submit_tx(context=context, payload=tx)
+
+    return {
+        'action': 'created',
+        'teamspaceId': teamspace_id,
+        'documentId': doc_id,
+        'documentTitle': mission_title,
+    }
+
+
+def post_channel_message(
+    *,
+    context: HulyContext,
+    channel_ref: str,
+    message: str,
+) -> dict[str, Any]:
+    channel = resolve_channel(context, channel_ref)
+    channel_id = str(channel.get('_id') or '')
+    channel_name = str(channel.get('name') or '')
+    if not channel_id:
+        raise RuntimeError('resolved channel is missing _id')
+
+    message_id = new_id()
+    attributes = {
+        'message': message,
+        'attachments': 0,
+    }
+    tx = create_tx_create_doc(
+        actor_id=context.actor_id,
+        object_class=CHAT_MESSAGE_CLASS,
+        object_space=channel_id,
+        object_id=message_id,
+        attached_to=channel_id,
+        attached_to_class=CHANNEL_CLASS,
+        collection='messages',
+        attributes=attributes,
+    )
+    submit_tx(context=context, payload=tx)
+
+    return {
+        'action': 'created',
+        'channelId': channel_id,
+        'channelName': channel_name,
+        'messageId': message_id,
+    }
+
+
+def list_channel_messages(
+    *,
+    context: HulyContext,
+    channel_ref: str,
+    limit: int,
+) -> dict[str, Any]:
+    channel = resolve_channel(context, channel_ref)
+    channel_id = str(channel.get('_id') or '')
+    channel_name = str(channel.get('name') or '')
+    if not channel_id:
+        raise RuntimeError('resolved channel is missing _id')
+
+    safe_limit = max(1, min(limit, 200))
+    messages = find_all(
+        context=context,
+        class_name=CHAT_MESSAGE_CLASS,
+        query={'space': channel_id},
+        options={'limit': safe_limit, 'sort': {'modifiedOn': -1}},
+    )
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        normalized.append(
+            {
+                'messageId': message.get('_id'),
+                'message': message.get('message', ''),
+                'createdBy': message.get('createdBy'),
+                'modifiedOn': message.get('modifiedOn'),
+            }
+        )
+    return {
+        'channelId': channel_id,
+        'channelName': channel_name,
+        'count': len(normalized),
+        'messages': normalized,
+    }
+
+
+def build_context(args: argparse.Namespace, *, for_platform_api: bool) -> HulyContext:
+    base_url_raw = args.base_url.strip() or env_first('HULY_API_BASE_URL', 'HULY_BASE_URL')
+    if not base_url_raw:
+        raise RuntimeError('missing HULY_API_BASE_URL/HULY_BASE_URL')
+
+    token, token_source = resolve_token(args)
+    if not token:
+        if args.require_worker_token:
+            raise RuntimeError('missing worker-scoped HULY_API_TOKEN_<WORKER> credential')
+        raise RuntimeError('missing HULY_API_TOKEN/HULY_TOKEN')
+    if args.require_worker_token and not is_worker_scoped_token_source(token_source):
+        raise RuntimeError(
+            f'require-worker-token rejected token source "{token_source}"; expected HULY_API_TOKEN_<WORKER>'
+        )
+
+    base_url = normalize_api_base_url(base_url_raw) if for_platform_api else base_url_raw.rstrip('/')
+
+    workspace_id = args.workspace_id.strip() if args.workspace_id else ''
+    if not workspace_id:
+        workspace_id = env_first('HULY_WORKSPACE_ID')
+    if not workspace_id:
+        payload = decode_jwt_payload(token)
+        workspace_id = str(payload.get('workspace') or '').strip()
+    if not workspace_id and for_platform_api:
+        raise RuntimeError('missing workspace id; set --workspace-id or HULY_WORKSPACE_ID')
+
+    actor_id = args.actor_id.strip() if args.actor_id else ''
+    if not actor_id and for_platform_api:
+        account = api_call(
+            method='GET',
+            url=join_url(base_url, f'/api/v1/account/{workspace_id}'),
+            token=token,
+            timeout_seconds=args.timeout_seconds,
+        )
+        if isinstance(account, dict):
+            actor_id = str(account.get('primarySocialId') or '').strip()
+    if not actor_id and for_platform_api:
+        raise RuntimeError('unable to resolve Huly actor id from account info')
+
+    return HulyContext(
+        base_url=base_url,
+        token=token,
+        token_source=token_source,
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        timeout_seconds=args.timeout_seconds,
+    )
+
+
+def fetch_account_info(context: HulyContext) -> dict[str, Any]:
+    account = api_call(
+        method='GET',
+        url=join_url(context.base_url, f'/api/v1/account/{context.workspace_id}'),
+        token=context.token,
+        timeout_seconds=context.timeout_seconds,
+    )
+    if not isinstance(account, dict):
+        raise RuntimeError('invalid account response')
+    return account
+
+
+def run_account_info(args: argparse.Namespace) -> int:
+    context = build_context(args, for_platform_api=True)
+    account = fetch_account_info(context)
+    actor_id = str(account.get('primarySocialId') or '').strip()
+    expected_actor_id = resolve_expected_actor_id(args)
+    if args.require_expected_actor_id and not expected_actor_id:
+        print(
+            json.dumps(
+                {
+                    'error': 'missing_expected_actor_id',
+                    'message': 'set --expected-actor-id or HULY_EXPECTED_ACTOR_ID_<WORKER>',
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    if expected_actor_id and actor_id != expected_actor_id:
+        print(
+            json.dumps(
+                {
+                    'error': 'expected_actor_id_mismatch',
+                    'expectedActorId': expected_actor_id,
+                    'actualActorId': actor_id,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    output = {
+        'workspaceId': context.workspace_id,
+        'actorId': actor_id,
+        'expectedActorId': expected_actor_id,
+        'tokenSource': context.token_source,
+        'workerScopedToken': is_worker_scoped_token_source(context.token_source),
+        'person': account.get('person'),
+        'accountRole': account.get('role'),
+        'workspaces': account.get('workspaces'),
+    }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
+def run_verify_chat_access(args: argparse.Namespace) -> int:
+    chat_message = args.message.strip()
+    if not chat_message:
+        print('--message is required for verify-chat-access', file=sys.stderr)
+        return 2
+
+    context = build_context(args, for_platform_api=True)
+    account = fetch_account_info(context)
+    actor_id = str(account.get('primarySocialId') or '').strip()
+
+    expected_actor_id = resolve_expected_actor_id(args)
+    if args.require_expected_actor_id and not expected_actor_id:
+        print(
+            json.dumps(
+                {
+                    'error': 'missing_expected_actor_id',
+                    'message': 'set --expected-actor-id or HULY_EXPECTED_ACTOR_ID_<WORKER>',
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    if expected_actor_id and actor_id != expected_actor_id:
+        print(
+            json.dumps(
+                {
+                    'error': 'expected_actor_id_mismatch',
+                    'expectedActorId': expected_actor_id,
+                    'actualActorId': actor_id,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    channel_result = post_channel_message(
+        context=context,
+        channel_ref=args.channel,
+        message=chat_message,
+    )
+    output = {
+        'workspaceId': context.workspace_id,
+        'actorId': actor_id,
+        'expectedActorId': expected_actor_id,
+        'tokenSource': context.token_source,
+        'workerScopedToken': is_worker_scoped_token_source(context.token_source),
+        'channelMessage': channel_result,
+        'message': chat_message,
+    }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
+def run_http(args: argparse.Namespace) -> int:
+    if not args.path:
+        print('--path is required for --operation http', file=sys.stderr)
+        return 2
+
+    context = build_context(args, for_platform_api=False)
+
+    method = args.method.upper().strip() or 'GET'
+    url = join_url(context.base_url, args.path)
+
+    body = None
+    if args.data:
+        body = maybe_parse_json(args.data)
+
+    headers = parse_headers(args.header)
+    try:
+        response = api_call(
+            method=method,
+            url=url,
+            token=context.token,
+            timeout_seconds=context.timeout_seconds,
+            data=body,
+            extra_headers=headers,
+        )
+    except RuntimeError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+
+    if isinstance(response, (dict, list)):
+        print(json.dumps(response, indent=2, sort_keys=True))
+    else:
+        print(str(response))
+    return 0
+
+
+def run_create_issue(args: argparse.Namespace) -> int:
+    context = build_context(args, for_platform_api=True)
+    title = args.title.strip()
+    if not title:
+        print('--title is required for create-issue', file=sys.stderr)
+        return 2
+
+    mission_id = args.mission_id.strip()
+    body = args.body.strip()
+    status = args.issue_status.strip() or DEFAULT_ISSUE_STATUS
+
+    result = create_or_update_issue(
+        context=context,
+        project_ref=args.project,
+        title=title,
+        body=body,
+        mission_id=mission_id,
+        status=status,
+        priority=args.priority,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def run_create_document(args: argparse.Namespace) -> int:
+    context = build_context(args, for_platform_api=True)
+    title = args.title.strip()
+    if not title:
+        print('--title is required for create-document', file=sys.stderr)
+        return 2
+
+    mission_id = args.mission_id.strip()
+    body = args.body.strip()
+
+    result = create_or_update_document(
+        context=context,
+        teamspace_ref=args.teamspace,
+        title=title,
+        body=body,
+        mission_id=mission_id,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def run_post_channel_message(args: argparse.Namespace) -> int:
+    context = build_context(args, for_platform_api=True)
+    message = args.message.strip()
+    if not message:
+        print('--message is required for post-channel-message', file=sys.stderr)
+        return 2
+
+    result = post_channel_message(
+        context=context,
+        channel_ref=args.channel,
+        message=message,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def run_list_channel_messages(args: argparse.Namespace) -> int:
+    context = build_context(args, for_platform_api=True)
+    result = list_channel_messages(
+        context=context,
+        channel_ref=args.channel,
+        limit=args.limit,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def run_upsert_mission(args: argparse.Namespace) -> int:
+    mission_id = args.mission_id.strip()
+    if not mission_id:
+        print('--mission-id is required for upsert-mission', file=sys.stderr)
+        return 2
+
+    title = args.title.strip()
+    if not title:
+        print('--title is required for upsert-mission', file=sys.stderr)
+        return 2
+
+    summary = args.summary.strip()
+    if not summary:
+        print('--summary is required for upsert-mission', file=sys.stderr)
+        return 2
+    channel_message = args.message.strip()
+    if not channel_message:
+        print('--message is required for upsert-mission (worker-authored channel update)', file=sys.stderr)
+        return 2
+
+    context = build_context(args, for_platform_api=True)
+
+    stage = args.stage.strip() or 'unknown'
+    status = args.status.strip() or 'in-progress'
+    details = args.details.strip()
+
+    issue_body = summary
+    if details:
+        issue_body = f'{summary}\n\n{details}'
+
+    document_body = (
+        f'# {title}\n\n'
+        f'## Mission\n{mission_id}\n\n'
+        f'## Stage\n{stage}\n\n'
+        f'## Status\n{status}\n\n'
+        f'## Summary\n{summary}\n'
+    )
+    if details:
+        document_body += f'\n## Details\n{details}\n'
+
+    issue_result = create_or_update_issue(
+        context=context,
+        project_ref=args.project,
+        title=title,
+        body=issue_body,
+        mission_id=mission_id,
+        status=args.issue_status.strip() or DEFAULT_ISSUE_STATUS,
+        priority=args.priority,
+    )
+
+    document_result = create_or_update_document(
+        context=context,
+        teamspace_ref=args.teamspace,
+        title=title,
+        body=document_body,
+        mission_id=mission_id,
+    )
+
+    channel_result = post_channel_message(
+        context=context,
+        channel_ref=args.channel,
+        message=channel_message,
+    )
+
+    output = {
+        'missionId': mission_id,
+        'stage': stage,
+        'status': status,
+        'issue': issue_result,
+        'document': document_result,
+        'channelMessage': channel_result,
+        'apiBaseUrl': context.base_url,
+        'workspaceId': context.workspace_id,
+    }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description='Call Huly endpoints and mission helpers with bearer auth.')
+    parser.add_argument(
+        '--operation',
+        default='http',
+        choices=[
+            'http',
+            'create-issue',
+            'create-document',
+            'post-channel-message',
+            'list-channel-messages',
+            'upsert-mission',
+            'account-info',
+            'verify-chat-access',
+        ],
+        help='Operation mode',
+    )
+
+    # Shared auth/runtime flags.
     parser.add_argument('--token', default='', help='Override bearer token (defaults to env)')
+    parser.add_argument(
+        '--token-env-key',
+        default='',
+        help='Specific env var name containing bearer token (for per-worker accounts)',
+    )
+    parser.add_argument('--worker-id', default='', help='Worker id used to resolve per-worker token env vars')
+    parser.add_argument('--worker-identity', default='', help='Worker identity used to resolve per-worker token env vars')
+    parser.add_argument(
+        '--require-worker-token',
+        action='store_true',
+        help='Fail unless token was resolved from a worker-specific env var',
+    )
     parser.add_argument(
         '--base-url',
         default='',
         help='Override base URL (defaults to HULY_API_BASE_URL or HULY_BASE_URL)',
     )
-    parser.add_argument('--header', action='append', default=[], help='Extra header in key:value format')
+    parser.add_argument('--workspace-id', default='', help='Override workspace id (defaults to JWT payload or env)')
+    parser.add_argument('--actor-id', default='', help='Override actor id / primarySocialId')
     parser.add_argument('--timeout-seconds', type=int, default=30, help='Request timeout')
+
+    # Raw HTTP mode.
+    parser.add_argument('--method', default='GET', help='HTTP method for --operation http')
+    parser.add_argument('--path', default='', help='API path for --operation http, for example /api/version')
+    parser.add_argument('--data', default='', help='JSON payload for --operation http')
+    parser.add_argument('--header', action='append', default=[], help='Extra header in key:value format')
+
+    # Huly workspace objects.
+    parser.add_argument('--project', default=env_first('HULY_PROJECT'), help='Project identifier/name/id for tasks')
+    parser.add_argument(
+        '--teamspace',
+        default=env_first('HULY_TEAMSPACE') or DEFAULT_TEAMSPACE,
+        help='Teamspace name/id for documents',
+    )
+    parser.add_argument('--channel', default=env_first('HULY_CHANNEL') or 'general', help='Channel name/id for chat')
+
+    # Artifact payload.
+    parser.add_argument('--mission-id', default='', help='Mission id used for upsert and artifact titles')
+    parser.add_argument('--title', default='', help='Artifact title')
+    parser.add_argument('--body', default='', help='Body text for issue/document operations')
+    parser.add_argument('--message', default='', help='Chat message body for post-channel-message')
+    parser.add_argument('--summary', default='', help='Mission summary for upsert-mission')
+    parser.add_argument('--details', default='', help='Mission details for upsert-mission')
+    parser.add_argument('--stage', default='', help='Mission stage label for upsert-mission')
+    parser.add_argument('--status', default='', help='Mission status label for upsert-mission')
+    parser.add_argument('--issue-status', default=DEFAULT_ISSUE_STATUS, help='Issue status id for task artifacts')
+    parser.add_argument('--priority', type=int, default=0, help='Issue priority for task artifacts')
+    parser.add_argument('--limit', type=int, default=20, help='Result limit for list-channel-messages')
+    parser.add_argument(
+        '--expected-actor-id',
+        default='',
+        help='When set, account-info fails unless current token resolves to this actor id',
+    )
+    parser.add_argument(
+        '--expected-actor-env-key',
+        default='',
+        help='Env var key that contains expected actor id for this worker',
+    )
+    parser.add_argument(
+        '--require-expected-actor-id',
+        action='store_true',
+        help='Fail account/chat verification when expected actor id is not configured',
+    )
+
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
     args = parser.parse_args()
 
-    base_url = args.base_url.strip() or env_first('HULY_API_BASE_URL', 'HULY_BASE_URL')
-    if not base_url:
-        print('missing HULY_API_BASE_URL/HULY_BASE_URL', file=sys.stderr)
-        return 2
-
-    token = args.token.strip() or env_first('HULY_API_TOKEN', 'HULY_TOKEN')
-    if not token:
-        print('missing HULY_API_TOKEN/HULY_TOKEN', file=sys.stderr)
-        return 2
-
-    if args.operation == 'upsert-mission':
-        payload = parse_payload(args.data)
-        workspace = coalesce(
-            payload.get('hulyWorkspace')
-            or payload.get('workspace')
-            or os.getenv('HULY_WORKSPACE')
-            or os.getenv('HULY_WORKSPACE_ID')
-        )
-
-        try:
-            result = upsert_mission(base_url=base_url, token=token, workspace=workspace, data=payload)
-            print(json.dumps(result, indent=2, sort_keys=True))
-            return 0
-        except Exception as error:  # pragma: no cover - defensive exit path
-            print(f'upsert-mission failed: {error}', file=sys.stderr)
-            return 1
-
-    method = args.method.upper().strip() or 'GET'
-
-    payload = maybe_parse_json(args.data)
-    request_data = payload if args.data else None
-    request_headers = {
-        'Authorization': f'Bearer {token}',
-        'Accept': 'application/json',
-    }
-    request_headers.update(parse_headers(args.header))
-
     try:
-        status, parsed, _ = request_json(
-            base_url,
-            token,
-            args.path,
-            method,
-            payload=request_data,
-            timeout_seconds=args.timeout_seconds,
-            headers=request_headers,
-        )
-        if isinstance(parsed, (dict, list)):
-            print(json.dumps(parsed, indent=2, sort_keys=True))
-        else:
-            print(parsed)
-        return 0 if 200 <= status < 300 else 1
+        if args.operation == 'http':
+            return run_http(args)
+        if args.operation == 'create-issue':
+            return run_create_issue(args)
+        if args.operation == 'create-document':
+            return run_create_document(args)
+        if args.operation == 'post-channel-message':
+            return run_post_channel_message(args)
+        if args.operation == 'list-channel-messages':
+            return run_list_channel_messages(args)
+        if args.operation == 'upsert-mission':
+            return run_upsert_mission(args)
+        if args.operation == 'account-info':
+            return run_account_info(args)
+        if args.operation == 'verify-chat-access':
+            return run_verify_chat_access(args)
+        print(f'unsupported operation: {args.operation}', file=sys.stderr)
+        return 2
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
     except RuntimeError as error:
-        print(error, file=sys.stderr)
-        return 1
-    except urllib.error.URLError as error:
-        print(f'request failed: {error.reason}', file=sys.stderr)
+        print(str(error), file=sys.stderr)
         return 1
 
 

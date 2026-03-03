@@ -171,7 +171,7 @@ const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): Req
     return undefined
   }
 
-  const payload = resolve('swarmRequirementPayload')
+  const payload = resolve('swarmRequirementPayload', 'swarmRequirementPayload')
   let payloadObjective: string | undefined
   if (payload) {
     try {
@@ -196,7 +196,7 @@ const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): Req
     workerRole: resolve('swarmAgentRole', 'swarmAgentRole'),
     objective: payloadObjective ?? resolve('objective'),
     payload,
-    payloadBytes: resolve('swarmRequirementPayloadBytes'),
+    payloadBytes: resolve('swarmRequirementPayloadBytes', 'swarmRequirementPayloadBytes'),
     payloadTruncated: parseBool(parameters.swarmRequirementPayloadTruncated),
   }
 }

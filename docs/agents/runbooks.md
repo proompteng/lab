@@ -9,6 +9,7 @@ See also:
 - `README.md` (docs index)
 - `designs/handoff-common.md` (GitOps render + live verification commands)
 - `ci-validation-plan.md` (what to run before/after rollout)
+- `swarm-end-to-end-runbook.md` (dual-swarm Huly communication + e2e validation flow)
 
 ## Install
 
