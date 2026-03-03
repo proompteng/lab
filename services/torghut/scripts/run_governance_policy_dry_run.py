@@ -160,6 +160,7 @@ def main() -> int:
             "run_id": str(gate_report.get("run_id", "run-dry-run")),
         }
         promotion_evidence = gate_report.get("promotion_evidence")
+        hmm_posterior_payload: dict[str, Any] = {}
         if isinstance(promotion_evidence, dict):
             stress_metrics = promotion_evidence.get("stress_metrics")
             if isinstance(stress_metrics, dict):
@@ -181,6 +182,18 @@ def main() -> int:
                 contamination_registry = {}
                 promotion_evidence["contamination_registry"] = contamination_registry
             contamination_registry["artifact_ref"] = "gates/contamination-leakage-report-v1.json"
+            hmm_posterior = promotion_evidence.get("hmm_state_posterior")
+            if isinstance(hmm_posterior, dict):
+                hmm_posterior_payload = {
+                    str(key): value for key, value in hmm_posterior.items()
+                }
+            else:
+                promotion_evidence["hmm_state_posterior"] = {
+                    "artifact_ref": "gates/hmm-state-posterior-v1.json"
+                }
+            promotion_evidence["hmm_state_posterior"]["artifact_ref"] = (
+                "gates/hmm-state-posterior-v1.json"
+            )
         if "generated_at" not in stress_artifact:
             stress_artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
         (root / "gates" / "stress-metrics-v1.json").write_text(
@@ -247,6 +260,38 @@ def main() -> int:
             contamination_path = root / "gates" / "contamination-leakage-report-v1.json"
             if contamination_path.exists():
                 contamination_path.unlink()
+
+        hmm_artifact: dict[str, Any] = {
+            "schema_version": "hmm-state-posterior-v1",
+            "run_id": str(gate_report.get("run_id", "run-dry-run")),
+            "candidate_id": "cand-dry-run",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "samples_total": int(hmm_posterior_payload.get("samples_total") or 10),
+            "authoritative_samples": int(
+                hmm_posterior_payload.get("authoritative_samples") or 6
+            ),
+            "authoritative_sample_ratio": str(
+                hmm_posterior_payload.get("authoritative_sample_ratio") or "0.6"
+            ),
+            "transition_shock_samples": 0,
+            "stale_or_defensive_samples": 0,
+            "regime_counts": {"r2": 10},
+            "entropy_band_counts": {"medium": 10},
+            "guardrail_reason_counts": {"none": 10},
+            "posterior_mass_by_regime": {"r2": "6.0", "r1": "4.0"},
+            "top_regime_by_posterior_mass": "r2",
+            "source_lineage": {
+                "walkforward_results_artifact_ref": "backtest/evaluation-report.json",
+                "gate_policy_artifact_ref": "gates/gate-evaluation.json",
+                "decision_source": "walkforward_results",
+            },
+        }
+        hmm_artifact["artifact_hash"] = _stable_hash(
+            {key: value for key, value in hmm_artifact.items() if key != "artifact_hash"}
+        )
+        (root / "gates" / "hmm-state-posterior-v1.json").write_text(
+            json.dumps(hmm_artifact, indent=2), encoding="utf-8"
+        )
 
         if args.simulate_missing_artifact:
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").unlink()

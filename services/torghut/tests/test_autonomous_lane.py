@@ -245,6 +245,10 @@ class TestAutonomousLane(TestCase):
                 evidence["contamination_registry"]["artifact_ref"],
                 str(output_dir / "gates" / "contamination-leakage-report-v1.json"),
             )
+            self.assertEqual(
+                evidence["hmm_state_posterior"]["artifact_ref"],
+                str(output_dir / "gates" / "hmm-state-posterior-v1.json"),
+            )
             self.assertTrue(
                 (output_dir / "gates" / "stress-metrics-v1.json").exists()
             )
@@ -256,6 +260,19 @@ class TestAutonomousLane(TestCase):
                     output_dir / "gates" / "contamination-leakage-report-v1.json"
                 ).exists()
             )
+            self.assertTrue(
+                (output_dir / "gates" / "hmm-state-posterior-v1.json").exists()
+            )
+            hmm_state_posterior_payload = json.loads(
+                (output_dir / "gates" / "hmm-state-posterior-v1.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                hmm_state_posterior_payload["schema_version"],
+                "hmm-state-posterior-v1",
+            )
+            self.assertIn("source_lineage", hmm_state_posterior_payload)
             self.assertEqual(
                 result.benchmark_parity_path,
                 output_dir / "benchmarks" / "benchmark-parity-report-v1.json",
@@ -395,6 +412,10 @@ class TestAutonomousLane(TestCase):
                     evidence["contamination_registry"]["artifact_ref"],
                     str(Path("gates") / "contamination-leakage-report-v1.json"),
                 )
+                self.assertEqual(
+                    evidence["hmm_state_posterior"]["artifact_ref"],
+                    str(Path("gates") / "hmm-state-posterior-v1.json"),
+                )
                 self.assertTrue(
                     (output_dir / "gates" / "stress-metrics-v1.json").exists()
                 )
@@ -405,6 +426,9 @@ class TestAutonomousLane(TestCase):
                     (
                         output_dir / "gates" / "contamination-leakage-report-v1.json"
                     ).exists()
+                )
+                self.assertTrue(
+                    (output_dir / "gates" / "hmm-state-posterior-v1.json").exists()
                 )
             finally:
                 os.chdir(original_cwd)

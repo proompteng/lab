@@ -131,6 +131,143 @@ class TestPolicyChecks(TestCase):
             promotion.reasons,
         )
 
+    def test_promotion_prerequisites_fail_when_hmm_state_posterior_required_and_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            gate_report = _gate_report()
+            promotion_evidence = gate_report.get("promotion_evidence", {})
+            assert isinstance(promotion_evidence, dict)
+            promotion_evidence.pop("hmm_state_posterior", None)
+            (root / "gates" / "gate-evaluation.json").write_text(
+                json.dumps(gate_report),
+                encoding="utf-8",
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_hmm_state_posterior": True,
+                    "promotion_hmm_required_targets": ["paper", "live"],
+                    "promotion_hmm_required_artifacts": [
+                        "gates/hmm-state-posterior-v1.json"
+                    ],
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_profitability_stage_manifest": False,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "gate6_require_profitability_evidence": False,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("required_artifacts_missing", promotion.reasons)
+        self.assertIn(
+            "gates/hmm-state-posterior-v1.json",
+            promotion.missing_artifacts,
+        )
+        self.assertIn("hmm_state_posterior_artifact_ref_missing", promotion.reasons)
+
+    def test_promotion_prerequisites_accept_valid_hmm_state_posterior_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text(
+                json.dumps(_gate_report()),
+                encoding="utf-8",
+            )
+
+            hmm_artifact = root / "gates" / "hmm-state-posterior-v1.json"
+            hmm_payload = {
+                "schema_version": "hmm-state-posterior-v1",
+                "run_id": "run-test",
+                "candidate_id": "cand-test",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "samples_total": 5,
+                "authoritative_samples": 3,
+                "authoritative_sample_ratio": "0.6",
+                "transition_shock_samples": 0,
+                "stale_or_defensive_samples": 0,
+                "regime_counts": {"r2": 5},
+                "entropy_band_counts": {"medium": 5},
+                "guardrail_reason_counts": {"none": 5},
+                "posterior_mass_by_regime": {"r2": "4.2"},
+                "top_regime_by_posterior_mass": "r2",
+                "source_lineage": {
+                    "walkforward_results_artifact_ref": "backtest/walkforward-results.json",
+                    "gate_policy_artifact_ref": "gates/gate-evaluation.json",
+                    "decision_source": "walkforward_results",
+                },
+            }
+            hmm_payload["artifact_hash"] = _sha256_json(
+                {key: value for key, value in hmm_payload.items() if key != "artifact_hash"}
+            )
+            hmm_artifact.write_text(json.dumps(hmm_payload), encoding="utf-8")
+
+            gate_report = _gate_report()
+            promotion_evidence = gate_report.get("promotion_evidence", {})
+            assert isinstance(promotion_evidence, dict)
+            promotion_evidence["hmm_state_posterior"] = {
+                "artifact_ref": "gates/hmm-state-posterior-v1.json",
+                "schema_version": "hmm-state-posterior-v1",
+                "samples_total": 5,
+                "authoritative_samples": 3,
+                "authoritative_sample_ratio": "0.6",
+            }
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_hmm_state_posterior": True,
+                    "promotion_hmm_required_targets": ["paper", "live"],
+                    "promotion_hmm_required_artifacts": [
+                        "gates/hmm-state-posterior-v1.json"
+                    ],
+                    "promotion_hmm_min_authoritative_sample_ratio": "0.5",
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_profitability_stage_manifest": False,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "gate6_require_profitability_evidence": False,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertTrue(promotion.allowed)
+        self.assertNotIn("hmm_state_posterior_artifact_ref_missing", promotion.reasons)
+        self.assertIn(str(root / "gates" / "hmm-state-posterior-v1.json"), promotion.artifact_refs)
+
     def test_promotion_prerequisites_fail_when_profitability_stage_manifest_replay_contract_missing(
         self,
     ) -> None:
@@ -3687,6 +3824,7 @@ def _build_profitability_stage_manifest_payload(
     janus_event_car_path: Path,
     janus_hgrm_reward_path: Path,
     recalibration_report_path: Path,
+    hmm_state_posterior_path: Path | None = None,
     rollback_readiness_path: Path | None = None,
     stage_statuses: dict[str, str] | None = None,
     check_status_overrides: dict[tuple[str, str], str] | None = None,
@@ -3708,6 +3846,38 @@ def _build_profitability_stage_manifest_payload(
     rollback_readiness_path = (
         rollback_readiness_path or (root / "gates" / "rollback-readiness.json")
     )
+    if hmm_state_posterior_path is None:
+        hmm_state_posterior_path = root / "gates" / "hmm-state-posterior-v1.json"
+    if not hmm_state_posterior_path.exists():
+        hmm_state_posterior_path.parent.mkdir(parents=True, exist_ok=True)
+        hmm_payload: dict[str, object] = {
+            "schema_version": "hmm-state-posterior-v1",
+            "run_id": "run-test",
+            "candidate_id": "cand-test",
+            "generated_at": "2026-03-01T00:00:00+00:00",
+            "samples_total": 1,
+            "authoritative_samples": 0,
+            "authoritative_sample_ratio": "0",
+            "transition_shock_samples": 0,
+            "stale_or_defensive_samples": 0,
+            "regime_counts": {"unknown": 1},
+            "entropy_band_counts": {"low": 1},
+            "guardrail_reason_counts": {"none": 1},
+            "posterior_mass_by_regime": {"unknown": "1"},
+            "top_regime_by_posterior_mass": "unknown",
+            "source_lineage": {
+                "walkforward_results_artifact_ref": "backtest/walkforward-results.json",
+                "gate_policy_artifact_ref": "gates/gate-evaluation.json",
+                "decision_source": "walkforward_results",
+            },
+        }
+        hmm_payload["artifact_hash"] = _sha256_json(
+            {k: v for k, v in hmm_payload.items() if k != "artifact_hash"}
+        )
+        hmm_state_posterior_path.write_text(
+            json.dumps(hmm_payload),
+            encoding="utf-8",
+        )
 
     stage_owner = {
         "research": "research-orchestrator",
@@ -3732,6 +3902,7 @@ def _build_profitability_stage_manifest_payload(
             ("walkforward_results_present", "walkforward_results", walkforward_results_path),
             ("evaluation_report_present", "evaluation_report", evaluation_report_path),
             ("gate_evaluation_present", "gate_evaluation", gate_report_path),
+            ("hmm_state_posterior_present", "hmm_state_posterior", hmm_state_posterior_path),
             ("janus_event_car_present", "janus_event_car", janus_event_car_path),
             ("janus_hgrm_reward_present", "janus_hgrm_reward", janus_hgrm_reward_path),
             ("recalibration_report_present", "recalibration_report", recalibration_report_path),
@@ -3987,6 +4158,13 @@ def _gate_report() -> dict[str, object]:
                 "status": "pass",
                 "leakage_detected": False,
                 "leakage_rate": 0.0,
+            },
+            "hmm_state_posterior": {
+                "artifact_ref": "gates/hmm-state-posterior-v1.json",
+                "schema_version": "hmm-state-posterior-v1",
+                "samples_total": 12,
+                "authoritative_samples": 8,
+                "authoritative_sample_ratio": "0.6667",
             },
             "promotion_rationale": {
                 "requested_target": "paper",

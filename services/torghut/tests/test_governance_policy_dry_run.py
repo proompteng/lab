@@ -61,6 +61,13 @@ def _default_gate_report(now: datetime) -> dict[str, object]:
                 "leakage_detected": False,
                 "leakage_rate": 0.0,
             },
+            "hmm_state_posterior": {
+                "artifact_ref": "gates/hmm-state-posterior-v1.json",
+                "schema_version": "hmm-state-posterior-v1",
+                "samples_total": 10,
+                "authoritative_samples": 6,
+                "authoritative_sample_ratio": "0.6",
+            },
             "promotion_rationale": {
                 "requested_target": "paper",
                 "gate_recommended_mode": "paper",
