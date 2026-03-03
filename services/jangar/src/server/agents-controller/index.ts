@@ -572,6 +572,17 @@ const setStatus = async (
   for (const update of standardUpdates) {
     conditions = upsertCondition(conditions, update)
   }
+  if (kind === 'AgentRun' && phase) {
+    const normalizedPhase = phase.trim().toLowerCase()
+    if (normalizedPhase !== 'pending' && normalizedPhase !== 'queued') {
+      conditions = upsertCondition(conditions, {
+        type: 'Blocked',
+        status: 'False',
+        reason: 'NotBlocked',
+        message: '',
+      })
+    }
+  }
   const nextStatus = {
     ...nextStatusBase,
     updatedAt: nowIso(),
