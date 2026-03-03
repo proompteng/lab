@@ -55,6 +55,55 @@ class HulyApiFormattingTests(unittest.TestCase):
         self.assertIn('status: running', provenance)
         self.assertIn('swarmAgentWorkerId: worker-1', provenance)
         self.assertIn('swarmAgentIdentity: agent-abc', provenance)
+    def test_parser_includes_upsert_context_args(self):
+        parser = self.module.build_parser()
+        operation = parser._option_string_actions['--operation']
+        self.assertIn('upsert-mission', operation.choices)
+        for option in ['--tracker-url', '--swarm-name', '--swarm-human-name', '--swarm-team-name']:
+            self.assertIn(option, parser._option_string_actions)
+
+    def test_upsert_mission_context_metadata(self):
+        parser = self.module.build_parser()
+        args = parser.parse_args(
+            [
+                '--swarm-name',
+                'jangar-control-plane',
+                '--swarm-human-name',
+                'Ava Runner',
+                '--swarm-team-name',
+                'Swarm Team',
+                '--worker-id',
+                'WORKER_JANGAR_IMPLEMENT',
+                '--worker-identity',
+                'WORKER_JANGAR_IMPLEMENT',
+                '--tracker-url',
+                'https://example-tracker.local',
+            ]
+        )
+        metadata = self.module.build_upsert_mission_metadata(args=args)
+        self.assertEqual(
+            metadata,
+            {
+                'swarm': 'jangar-control-plane',
+                'human': 'Ava Runner',
+                'team': 'Swarm Team',
+                'workerId': 'WORKER_JANGAR_IMPLEMENT',
+                'workerIdentity': 'WORKER_JANGAR_IMPLEMENT',
+                'trackerUrl': 'https://example-tracker.local',
+            },
+        )
+        self.assertEqual(
+            self.module.build_upsert_mission_context_section(metadata=metadata).strip(),
+            '## Mission context\n'
+            '- Owner: Ava Runner (Swarm Team)\n'
+            '- Worker: WORKER_JANGAR_IMPLEMENT/WORKER_JANGAR_IMPLEMENT\n'
+            '- Tracker: https://example-tracker.local\n'
+            '- Swarm: jangar-control-plane',
+        )
+        self.assertEqual(
+            self.module.build_upsert_mission_context_message(metadata=metadata),
+            'Ava Runner (Swarm Team) | WORKER_JANGAR_IMPLEMENT/WORKER_JANGAR_IMPLEMENT | https://example-tracker.local',
+        )
 
     def test_verify_chat_access_requires_message(self):
         parser = self.module.build_parser()

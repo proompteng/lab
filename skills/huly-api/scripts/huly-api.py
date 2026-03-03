@@ -37,6 +37,7 @@ DEFAULT_ISSUE_KIND = 'tracker:taskTypes:Issue'
 DEFAULT_DOCUMENT_PARENT = 'document:ids:NoParent'
 DEFAULT_RANK = '0|zzzzzz:'
 DEFAULT_TEAMSPACE = 'PROOMPTENG'
+DEFAULT_TRACKER_URL = 'https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues'
 
 
 @dataclass
@@ -72,6 +73,112 @@ def normalize_token_key(value: str) -> str:
     while '__' in normalized:
         normalized = normalized.replace('__', '_')
     return normalized
+
+
+def resolve_worker_identity(args: argparse.Namespace) -> str:
+    worker_identity = args.worker_identity.strip() if args.worker_identity else ''
+    if worker_identity:
+        return worker_identity
+    return env_if_set('SWARM_AGENT_IDENTITY')
+
+
+def resolve_worker_id(args: argparse.Namespace) -> str:
+    worker_id = args.worker_id.strip() if args.worker_id else ''
+    if worker_id:
+        return worker_id
+    return env_if_set('SWARM_AGENT_WORKER_ID')
+
+
+def build_upsert_mission_metadata(*, args: argparse.Namespace) -> dict[str, str]:
+    worker_id = resolve_worker_id(args)
+    worker_identity = resolve_worker_identity(args)
+    human_name = args.swarm_human_name.strip() if args.swarm_human_name else ''
+    team_name = args.swarm_team_name.strip() if args.swarm_team_name else ''
+    swarm_name = args.swarm_name.strip() if args.swarm_name else ''
+    tracker_url = args.tracker_url.strip() if args.tracker_url else ''
+
+    if not human_name:
+        human_name = 'Worker'
+    if not team_name:
+        team_name = 'Swarm Team'
+    if not tracker_url:
+        tracker_url = DEFAULT_TRACKER_URL
+
+    metadata: dict[str, str] = {}
+    if swarm_name:
+        metadata['swarm'] = swarm_name
+    if human_name:
+        metadata['human'] = human_name
+        metadata['team'] = team_name
+    if worker_id:
+        metadata['workerId'] = worker_id
+    if worker_identity:
+        metadata['workerIdentity'] = worker_identity
+    if tracker_url:
+        metadata['trackerUrl'] = tracker_url
+
+    return metadata
+
+
+def build_upsert_mission_context_section(*, metadata: dict[str, str], heading: str = 'Mission context') -> str:
+    if not metadata:
+        return ''
+
+    lines: list[str] = []
+    owner = metadata.get('human', '')
+    team = metadata.get('team', '')
+    if owner:
+        if team:
+            owner = f'{owner} ({team})'
+        lines.append(f'- Owner: {owner}')
+
+    if metadata.get('workerId') and metadata.get('workerIdentity'):
+        lines.append(f"- Worker: {metadata['workerId']}/{metadata['workerIdentity']}")
+    elif metadata.get('workerId'):
+        lines.append(f"- Worker: {metadata['workerId']}")
+    elif metadata.get('workerIdentity'):
+        lines.append(f"- Worker: {metadata['workerIdentity']}")
+
+    if metadata.get('trackerUrl'):
+        lines.append(f"- Tracker: {metadata['trackerUrl']}")
+    if metadata.get('swarm'):
+        lines.append(f"- Swarm: {metadata['swarm']}")
+
+    if not lines:
+        return ''
+
+    return f'## {heading}\n' + '\n'.join(lines)
+
+
+def build_upsert_mission_context_message(*, metadata: dict[str, str]) -> str:
+    if not metadata:
+        return ''
+
+    segments: list[str] = []
+    owner = metadata.get('human', '')
+    team = metadata.get('team', '')
+    if owner:
+        if team:
+            segments.append(f'{owner} ({team})')
+        else:
+            segments.append(owner)
+
+    worker_reference = ''
+    if metadata.get('workerId') and metadata.get('workerIdentity'):
+        worker_reference = f"{metadata['workerId']}/{metadata['workerIdentity']}"
+    elif metadata.get('workerId'):
+        worker_reference = metadata['workerId']
+    elif metadata.get('workerIdentity'):
+        worker_reference = metadata['workerIdentity']
+    if worker_reference:
+        segments.append(worker_reference)
+
+    if metadata.get('trackerUrl'):
+        segments.append(metadata['trackerUrl'])
+
+    if not segments:
+        return ''
+    return ' | '.join(segments)
 
 
 def is_worker_scoped_token_source(source: str) -> bool:
@@ -1047,12 +1154,17 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
         swarm_agent_worker_id=swarm_agent_worker_id,
         swarm_agent_identity=swarm_agent_identity,
     )
+    upsert_metadata = build_upsert_mission_metadata(args=args)
+    context_section = build_upsert_mission_context_section(metadata=upsert_metadata)
+    context_message = build_upsert_mission_context_message(metadata=upsert_metadata)
 
     issue_body = summary
     if details:
         issue_body = f'{summary}\n\n{details}'
     if metadata:
         issue_body = f'{issue_body}\n\n{metadata}'
+    if context_section:
+        issue_body = f'{issue_body}\n\n{context_section}'
 
     document_body = (
         f'# {title}\n\n'
@@ -1065,10 +1177,15 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
         document_body += f'\n## Details\n{details}\n'
     if metadata:
         document_body = f'{document_body}\n\n{metadata}'
+    if context_section:
+        document_body = f'{document_body}\n\n{context_section}'
 
+    channel_metadata = [metadata]
+    if context_message:
+        channel_metadata.append(context_message)
     channel_message_with_metadata = channel_message
-    if metadata:
-        channel_message_with_metadata = f'{channel_message}\n\n{metadata}'
+    if channel_metadata:
+        channel_message_with_metadata = f'{channel_message}\n\n' + '\n\n'.join(channel_metadata)
 
     issue_result = create_or_update_issue(
         context=context,
@@ -1163,6 +1280,22 @@ def build_parser() -> argparse.ArgumentParser:
         help='Teamspace name/id for documents',
     )
     parser.add_argument('--channel', default=env_first('HULY_CHANNEL') or 'general', help='Channel name/id for chat')
+    parser.add_argument(
+        '--tracker-url',
+        default=env_first('HULY_TRACKER_URL') or DEFAULT_TRACKER_URL,
+        help='Tracker URL included in mission artifacts',
+    )
+    parser.add_argument('--swarm-name', default=env_first('SWARM_NAME'), help='Human-friendly swarm name for mission context')
+    parser.add_argument(
+        '--swarm-human-name',
+        default=env_first('SWARM_HUMAN_NAME'),
+        help='Human-readable operator name for mission context',
+    )
+    parser.add_argument(
+        '--swarm-team-name',
+        default=env_first('SWARM_TEAM_NAME'),
+        help='Swarm team label for mission context',
+    )
 
     # Artifact payload.
     parser.add_argument('--mission-id', default='', help='Mission id used for upsert and artifact titles')
