@@ -3,14 +3,14 @@ package ai.proompteng.dorvud.ta.flink
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.producer.AvroSerde
 import ai.proompteng.dorvud.ta.stream.DirectionProbabilities
+import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.MicrostructureSignalArtifact
 import ai.proompteng.dorvud.ta.stream.MicrostructureSignalV1
-import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
+import kotlinx.serialization.json.Json
 import org.apache.flink.api.common.serialization.SerializerConfigImpl
 import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer
-import kotlinx.serialization.json.Json
 import java.io.ByteArrayOutputStream
 import java.io.ObjectOutputStream
 import java.time.Instant
