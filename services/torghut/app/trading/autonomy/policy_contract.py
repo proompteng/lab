@@ -11,6 +11,7 @@ _REQUIRED_BOOL_KEYS: tuple[str, ...] = (
     "promotion_require_profitability_stage_replay_contract",
     "promotion_require_benchmark_parity",
     "promotion_require_foundation_router_parity",
+    "promotion_require_deeplob_bdlob_contract",
     "promotion_require_hmm_state_posterior",
     "promotion_require_expert_router_registry",
     "promotion_require_janus_evidence",
@@ -24,11 +25,18 @@ _REQUIRED_STRING_KEYS: tuple[str, ...] = (
     "promotion_router_parity_max_fallback_rate",
     "promotion_router_parity_min_calibration_score",
     "promotion_router_parity_max_drift",
+    "promotion_deeplob_bdlob_min_feature_quality_pass_rate",
+    "promotion_deeplob_bdlob_min_prediction_quality_score",
+    "promotion_deeplob_bdlob_min_cost_adjusted_edge_bps",
+    "promotion_deeplob_bdlob_max_slippage_divergence_bps",
+    "promotion_deeplob_bdlob_min_fallback_reliability",
 )
 
 _REQUIRED_LIST_KEYS: tuple[str, ...] = (
     "promotion_foundation_router_parity_required_targets",
     "promotion_foundation_router_required_artifacts",
+    "promotion_deeplob_bdlob_required_targets",
+    "promotion_deeplob_bdlob_required_artifacts",
     "promotion_benchmark_required_artifacts",
     "promotion_hmm_required_artifacts",
     "promotion_expert_router_required_artifacts",

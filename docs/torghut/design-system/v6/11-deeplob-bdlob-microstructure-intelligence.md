@@ -6,10 +6,15 @@
 - Date: `2026-03-01`
 - Maturity: `production design`
 - Scope: production contract for integrating DeepLOB and BDLOB-style microstructure signals into Torghut prediction and execution policy
-- Implementation status: `Planned`
+- Implementation status: `Implemented` (Completed `2026-03-03`)
 - Evidence:
-  - `docs/torghut/design-system/v6/11-deeplob-bdlob-microstructure-intelligence.md` (design-level contract)
-- Rollout gap: Torghut has partial execution and regime controls but no production-ready DeepLOB/BDLOB feature-model-policy contract with fail-closed rollout.
+  - `services/torghut/app/trading/parity.py` (`deeplob-bdlob-report-v1` contract and deterministic artifact generator)
+  - `services/torghut/app/trading/autonomy/lane.py` (promotion evidence/provenance + profitability manifest wiring)
+  - `services/torghut/app/trading/autonomy/policy_checks.py` (fail-closed promotion gating for schema/version/thresholds)
+  - `services/torghut/config/autonomy-gates-v3.json`
+  - `argocd/applications/torghut/autonomy-gate-policy-configmap.yaml`
+  - `services/torghut/tests/test_policy_checks.py`
+- Rollout gap: Closed for the strict schema/version contract. Remaining Wave 5 work is advisor timeout/staleness fallback SLO closure.
 
 ## Objective
 

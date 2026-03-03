@@ -163,6 +163,7 @@ def main() -> int:
         hmm_posterior_payload: dict[str, Any] = {}
         expert_router_payload: dict[str, Any] = {}
         foundation_router_payload: dict[str, Any] = {}
+        deeplob_bdlob_payload: dict[str, Any] = {}
         if isinstance(promotion_evidence, dict):
             stress_metrics = promotion_evidence.get("stress_metrics")
             if isinstance(stress_metrics, dict):
@@ -224,6 +225,20 @@ def main() -> int:
                 }
             promotion_evidence["foundation_router_parity"]["artifact_ref"] = (
                 "router/foundation-router-parity-report-v1.json"
+            )
+            deeplob_bdlob_contract = promotion_evidence.get("deeplob_bdlob_contract")
+            if isinstance(deeplob_bdlob_contract, dict):
+                deeplob_bdlob_payload = {
+                    str(key): value
+                    for key, value in deeplob_bdlob_contract.items()
+                }
+            else:
+                deeplob_bdlob_payload = {}
+                promotion_evidence["deeplob_bdlob_contract"] = {
+                    "artifact_ref": "microstructure/deeplob-bdlob-report-v1.json"
+                }
+            promotion_evidence["deeplob_bdlob_contract"]["artifact_ref"] = (
+                "microstructure/deeplob-bdlob-report-v1.json"
             )
         if "generated_at" not in stress_artifact:
             stress_artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
@@ -445,6 +460,95 @@ def main() -> int:
         (root / "router").mkdir(parents=True, exist_ok=True)
         (root / "router" / "foundation-router-parity-report-v1.json").write_text(
             json.dumps(foundation_router_artifact, indent=2), encoding="utf-8"
+        )
+        (root / "microstructure").mkdir(parents=True, exist_ok=True)
+        for supporting_name in (
+            "lob-feature-quality-report.json",
+            "microstructure-model-metrics.json",
+            "tca-divergence-report.json",
+            "risk-gate-compatibility-report.json",
+        ):
+            (root / "microstructure" / supporting_name).write_text(
+                json.dumps({"status": "pass"}, indent=2),
+                encoding="utf-8",
+            )
+        deeplob_bdlob_artifact: dict[str, Any] = {
+            "schema_version": "deeplob-bdlob-report-v1",
+            "candidate_id": "cand-dry-run",
+            "feature_policy_version": str(
+                policy.get("required_feature_schema_version", "3.0.0")
+            ),
+            "contract": {
+                "schema_version": "deeplob-bdlob-contract-v1",
+                "required_supporting_artifacts": [
+                    "microstructure/lob-feature-quality-report.json",
+                    "microstructure/microstructure-model-metrics.json",
+                    "microstructure/tca-divergence-report.json",
+                    "microstructure/risk-gate-compatibility-report.json",
+                ],
+                "required_summary_fields": [
+                    "feature_quality_summary",
+                    "prediction_quality_summary",
+                    "execution_impact_summary",
+                    "cost_adjusted_outcomes",
+                    "fallback_summary",
+                ],
+                "hash_algorithm": "sha256",
+                "generation_mode": "deterministic_deeplob_bdlob_contract_v1",
+            },
+            "supporting_artifacts": [
+                "microstructure/lob-feature-quality-report.json",
+                "microstructure/microstructure-model-metrics.json",
+                "microstructure/tca-divergence-report.json",
+                "microstructure/risk-gate-compatibility-report.json",
+            ],
+            "feature_quality_summary": {
+                "pass_rate": float(
+                    policy.get("promotion_deeplob_bdlob_min_feature_quality_pass_rate", 0.99)
+                ),
+                "status": "pass",
+            },
+            "prediction_quality_summary": {
+                "score": float(
+                    policy.get("promotion_deeplob_bdlob_min_prediction_quality_score", 0.85)
+                ),
+                "status": "pass",
+            },
+            "execution_impact_summary": {
+                "slippage_divergence_bps": float(
+                    policy.get("promotion_deeplob_bdlob_max_slippage_divergence_bps", 1.0)
+                )
+                / 2.0,
+                "deterministic_gate_compatible": True,
+                "status": "pass",
+            },
+            "cost_adjusted_outcomes": {
+                "edge_bps": float(
+                    policy.get("promotion_deeplob_bdlob_min_cost_adjusted_edge_bps", 0.0)
+                )
+                + 0.5,
+                "status": "pass",
+            },
+            "fallback_summary": {
+                "reliability": float(
+                    policy.get("promotion_deeplob_bdlob_min_fallback_reliability", 0.99)
+                ),
+                "slo_pass": True,
+                "status": "pass",
+            },
+            "overall_status": str(deeplob_bdlob_payload.get("overall_status") or "pass"),
+            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        deeplob_bdlob_artifact["artifact_hash"] = _stable_hash(
+            {
+                key: value
+                for key, value in deeplob_bdlob_artifact.items()
+                if key != "artifact_hash"
+            }
+        )
+        (root / "microstructure" / "deeplob-bdlob-report-v1.json").write_text(
+            json.dumps(deeplob_bdlob_artifact, indent=2),
+            encoding="utf-8",
         )
 
         if args.simulate_missing_artifact:

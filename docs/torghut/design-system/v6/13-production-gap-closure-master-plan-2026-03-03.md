@@ -43,7 +43,7 @@ No promotion path may bypass these controls.
 5. `v6/07` HMM posterior state service + lineage are partial.
 6. `v6/09` external benchmark parity suite is implemented with fail-closed contract + coverage/calibration gating. (Completed `2026-03-03`)
 7. `v6/10` TimesFM parity contract is implemented with fail-closed promotion gating. (Completed `2026-03-03`)
-8. `v6/11` DeepLOB/BDLOB production contract is planned.
+8. `v6/11` DeepLOB/BDLOB production contract is implemented with fail-closed schema/version governance. (Completed `2026-03-03`)
 9. `v6/12` PostHog domain telemetry pipeline is planned.
 10. Remaining `v4`/`v5` advanced-doc deltas are largely not implemented and must be explicitly absorbed, superseded, or closed.
 
@@ -199,7 +199,7 @@ Productionize new model families with fail-closed rollout controls.
 ### Deliverables
 
 1. TimesFM router parity contract and fallback behavior. (Completed `2026-03-03`)
-2. DeepLOB/BDLOB feature-model-policy contract with strict schema/version enforcement.
+2. DeepLOB/BDLOB feature-model-policy contract with strict schema/version enforcement. (Completed `2026-03-03`)
 3. Advisor-timeout/staleness fallbacks validated for live safety.
 
 ### Primary files

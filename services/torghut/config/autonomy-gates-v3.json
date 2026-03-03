@@ -78,6 +78,16 @@
   "promotion_router_parity_min_calibration_score": "0.85",
   "promotion_router_parity_max_drift": "0.45",
   "promotion_router_parity_max_latency_ms_p95": 200,
+  "promotion_require_deeplob_bdlob_contract": true,
+  "promotion_deeplob_bdlob_required_targets": ["paper", "live"],
+  "promotion_deeplob_bdlob_required_artifacts": [
+    "microstructure/deeplob-bdlob-report-v1.json"
+  ],
+  "promotion_deeplob_bdlob_min_feature_quality_pass_rate": "0.99",
+  "promotion_deeplob_bdlob_min_prediction_quality_score": "0.85",
+  "promotion_deeplob_bdlob_min_cost_adjusted_edge_bps": "0.0",
+  "promotion_deeplob_bdlob_max_slippage_divergence_bps": "1.0",
+  "promotion_deeplob_bdlob_min_fallback_reliability": "0.99",
   "promotion_require_contamination_registry": true,
   "promotion_contamination_required_targets": ["paper", "live"],
   "promotion_contamination_required_artifacts": [

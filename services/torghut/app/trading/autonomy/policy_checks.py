@@ -19,6 +19,10 @@ from ..parity import (
     BENCHMARK_PARITY_REQUIRED_SCORECARDS,
     BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
     BENCHMARK_PARITY_SCHEMA_VERSION,
+    DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION,
+    DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS,
+    DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS,
+    DEEPLOB_BDLOB_SCHEMA_VERSION,
     FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION,
     FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS,
     FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS,
@@ -140,6 +144,10 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
+    deeplob_bdlob_contract_required = _requires_deeplob_bdlob_contract(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     contamination_registry_required = _requires_contamination_registry(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
@@ -163,6 +171,7 @@ def evaluate_promotion_prerequisites(
         include_janus_artifacts=janus_required,
         include_benchmark_parity_artifacts=benchmark_parity_required,
         include_foundation_router_parity_artifacts=foundation_router_parity_required,
+        include_deeplob_bdlob_artifacts=deeplob_bdlob_contract_required,
         include_contamination_artifacts=contamination_registry_required,
         include_stress_artifacts=stress_required,
         include_hmm_state_posterior_artifacts=hmm_state_posterior_required,
@@ -1242,6 +1251,7 @@ def _required_artifacts_for_target(
     include_janus_artifacts: bool,
     include_benchmark_parity_artifacts: bool,
     include_foundation_router_parity_artifacts: bool,
+    include_deeplob_bdlob_artifacts: bool,
     include_contamination_artifacts: bool,
     include_stress_artifacts: bool,
     include_hmm_state_posterior_artifacts: bool,
@@ -1308,6 +1318,12 @@ def _required_artifacts_for_target(
             policy_payload
         )
         for artifact in foundation_router_artifacts:
+            required.append(artifact)
+    if include_deeplob_bdlob_artifacts:
+        deeplob_bdlob_artifacts = _deeplob_bdlob_required_artifact_refs(
+            policy_payload
+        )
+        for artifact in deeplob_bdlob_artifacts:
             required.append(artifact)
     if include_contamination_artifacts:
         contamination_artifacts = _contamination_registry_required_artifact_refs(
@@ -1394,6 +1410,23 @@ def _foundation_router_required_artifact_refs(
     if legacy_artifact:
         return [legacy_artifact]
     return ["router/foundation-router-parity-report-v1.json"]
+
+
+def _deeplob_bdlob_required_artifact_refs(
+    policy_payload: dict[str, Any],
+) -> list[str]:
+    artifacts_raw = policy_payload.get(
+        "promotion_deeplob_bdlob_required_artifacts",
+        ["microstructure/deeplob-bdlob-report-v1.json"],
+    )
+    artifacts = [
+        str(artifact).strip()
+        for artifact in _list_from_any(artifacts_raw)
+        if isinstance(artifact, str) and artifact.strip()
+    ]
+    if artifacts:
+        return artifacts
+    return ["microstructure/deeplob-bdlob-report-v1.json"]
 
 
 def _contamination_registry_required_artifact_refs(
@@ -1751,6 +1784,18 @@ def _evaluate_promotion_evidence(
     details.extend(parity_details)
     refs.extend(parity_refs)
 
+    deeplob_reasons, deeplob_details, deeplob_refs = (
+        _evaluate_deeplob_bdlob_contract_evidence(
+            policy_payload=policy_payload,
+            gate_report_payload=gate_report_payload,
+            artifact_root=artifact_root,
+            promotion_target=promotion_target,
+        )
+    )
+    reasons.extend(deeplob_reasons)
+    details.extend(deeplob_details)
+    refs.extend(deeplob_refs)
+
     return sorted(set(reasons)), details, sorted(set(refs))
 
 
@@ -1763,6 +1808,27 @@ def _requires_foundation_router_parity(
         return False
     required_targets_raw = policy_payload.get(
         "promotion_foundation_router_parity_required_targets",
+        ["paper", "live"],
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
+def _requires_deeplob_bdlob_contract(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("promotion_require_deeplob_bdlob_contract", False)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_deeplob_bdlob_required_targets",
         ["paper", "live"],
     )
     required_targets = [
@@ -2702,6 +2768,392 @@ def _evaluate_foundation_router_parity_evidence(
                 "artifact_ref": str(artifact_path),
                 "actual_max_drift": drift_max,
                 "maximum_drift": max_drift,
+            }
+        )
+
+    return reasons, details, refs
+
+
+def _evaluate_deeplob_bdlob_contract_evidence(
+    *,
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+    artifact_root: Path,
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    if not _requires_deeplob_bdlob_contract(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return [], [], []
+
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    refs: list[str] = []
+
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    deeplob_bdlob = _as_dict(evidence.get("deeplob_bdlob_contract"))
+    evidence_ref = str(deeplob_bdlob.get("artifact_ref") or "").strip()
+    if not evidence_ref:
+        reasons.append("deeplob_bdlob_contract_artifact_ref_missing")
+        details.append({"reason": "deeplob_bdlob_contract_artifact_ref_missing"})
+
+    required_artifacts = _deeplob_bdlob_required_artifact_refs(policy_payload)
+    artifact_ref = (evidence_ref or required_artifacts[0]).strip()
+    artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
+    if artifact_path is None:
+        reasons.append("deeplob_bdlob_contract_artifact_ref_invalid")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_artifact_ref_invalid",
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return reasons, details, refs
+
+    refs.append(str(artifact_path))
+    payload = _load_json_if_exists(artifact_path)
+    if payload is None:
+        reasons.append("deeplob_bdlob_contract_artifact_missing")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_artifact_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+        return reasons, details, refs
+
+    artifact_hash = str(payload.get("artifact_hash", "")).strip()
+    if not artifact_hash:
+        reasons.append("deeplob_bdlob_contract_artifact_hash_missing")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_artifact_hash_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    else:
+        expected_hash = hashlib.sha256(
+            json.dumps(
+                {
+                    key: value
+                    for key, value in payload.items()
+                    if key != "artifact_hash"
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        if artifact_hash != expected_hash:
+            reasons.append("deeplob_bdlob_contract_artifact_hash_mismatch")
+            details.append(
+                {
+                    "reason": "deeplob_bdlob_contract_artifact_hash_mismatch",
+                    "artifact_ref": str(artifact_path),
+                    "artifact_hash": artifact_hash,
+                    "expected_artifact_hash": expected_hash,
+                }
+            )
+
+    candidate_id = str(payload.get("candidate_id", "")).strip()
+    if not candidate_id:
+        reasons.append("deeplob_bdlob_contract_candidate_id_missing")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_candidate_id_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    schema_version = str(payload.get("schema_version", "")).strip()
+    if schema_version != DEEPLOB_BDLOB_SCHEMA_VERSION:
+        reasons.append("deeplob_bdlob_contract_schema_version_invalid")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_schema_version_invalid",
+                "artifact_ref": str(artifact_path),
+                "schema_version": schema_version,
+                "expected_schema_version": DEEPLOB_BDLOB_SCHEMA_VERSION,
+            }
+        )
+
+    contract = _as_dict(payload.get("contract"))
+    if not contract:
+        reasons.append("deeplob_bdlob_contract_metadata_missing")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_metadata_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    else:
+        contract_schema = str(contract.get("schema_version", "")).strip()
+        if contract_schema != DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION:
+            reasons.append("deeplob_bdlob_contract_schema_metadata_version_invalid")
+            details.append(
+                {
+                    "reason": "deeplob_bdlob_contract_schema_metadata_version_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "schema_version": contract_schema,
+                    "expected_schema_version": DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION,
+                }
+            )
+
+        required_supporting_artifacts = {
+            str(item).strip()
+            for item in _list_from_any(contract.get("required_supporting_artifacts"))
+            if str(item).strip()
+        }
+        if required_supporting_artifacts != set(
+            DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS
+        ):
+            reasons.append("deeplob_bdlob_contract_required_supporting_artifacts_invalid")
+            details.append(
+                {
+                    "reason": "deeplob_bdlob_contract_required_supporting_artifacts_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "required_supporting_artifacts": sorted(
+                        required_supporting_artifacts
+                    ),
+                    "expected_supporting_artifacts": sorted(
+                        DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS
+                    ),
+                }
+            )
+
+        required_summary_fields = {
+            str(item).strip()
+            for item in _list_from_any(contract.get("required_summary_fields"))
+            if str(item).strip()
+        }
+        if required_summary_fields != set(DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS):
+            reasons.append("deeplob_bdlob_contract_required_summary_fields_invalid")
+            details.append(
+                {
+                    "reason": "deeplob_bdlob_contract_required_summary_fields_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "required_summary_fields": sorted(required_summary_fields),
+                    "expected_summary_fields": sorted(
+                        DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS
+                    ),
+                }
+            )
+
+        hash_algorithm = str(contract.get("hash_algorithm", "")).strip().lower()
+        if hash_algorithm != "sha256":
+            reasons.append("deeplob_bdlob_contract_hash_algorithm_invalid")
+            details.append(
+                {
+                    "reason": "deeplob_bdlob_contract_hash_algorithm_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "hash_algorithm": hash_algorithm,
+                }
+            )
+
+    supporting_artifacts = {
+        str(item).strip()
+        for item in _list_from_any(payload.get("supporting_artifacts"))
+        if str(item).strip()
+    }
+    missing_supporting_artifacts = sorted(
+        set(DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS) - supporting_artifacts
+    )
+    if missing_supporting_artifacts:
+        reasons.append("deeplob_bdlob_contract_supporting_artifacts_missing")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_supporting_artifacts_missing",
+                "artifact_ref": str(artifact_path),
+                "missing_supporting_artifacts": missing_supporting_artifacts,
+            }
+        )
+
+    missing_summary_fields = sorted(
+        [
+            field
+            for field in DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS
+            if not isinstance(payload.get(field), dict)
+        ]
+    )
+    if missing_summary_fields:
+        reasons.append("deeplob_bdlob_contract_summary_fields_missing")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_summary_fields_missing",
+                "artifact_ref": str(artifact_path),
+                "missing_summary_fields": missing_summary_fields,
+            }
+        )
+
+    overall_status = str(payload.get("overall_status", "")).strip()
+    if overall_status != "pass":
+        reasons.append("deeplob_bdlob_contract_overall_status_not_pass")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_overall_status_not_pass",
+                "artifact_ref": str(artifact_path),
+                "status": overall_status,
+            }
+        )
+
+    feature_quality_pass_rate = _float_or_none(
+        _as_dict(payload.get("feature_quality_summary")).get("pass_rate")
+    )
+    min_feature_quality_pass_rate = _float_or_none(
+        policy_payload.get("promotion_deeplob_bdlob_min_feature_quality_pass_rate")
+    )
+    if min_feature_quality_pass_rate is None:
+        min_feature_quality_pass_rate = 0.99
+    if feature_quality_pass_rate is None:
+        reasons.append("deeplob_bdlob_contract_feature_quality_pass_rate_missing")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_feature_quality_pass_rate_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif feature_quality_pass_rate < min_feature_quality_pass_rate:
+        reasons.append("deeplob_bdlob_contract_feature_quality_pass_rate_below_threshold")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_feature_quality_pass_rate_below_threshold",
+                "artifact_ref": str(artifact_path),
+                "feature_quality_pass_rate": feature_quality_pass_rate,
+                "minimum_feature_quality_pass_rate": min_feature_quality_pass_rate,
+            }
+        )
+
+    prediction_quality_score = _float_or_none(
+        _as_dict(payload.get("prediction_quality_summary")).get("score")
+    )
+    min_prediction_quality_score = _float_or_none(
+        policy_payload.get("promotion_deeplob_bdlob_min_prediction_quality_score")
+    )
+    if min_prediction_quality_score is None:
+        min_prediction_quality_score = 0.85
+    if prediction_quality_score is None:
+        reasons.append("deeplob_bdlob_contract_prediction_quality_score_missing")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_prediction_quality_score_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif prediction_quality_score < min_prediction_quality_score:
+        reasons.append("deeplob_bdlob_contract_prediction_quality_score_below_threshold")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_prediction_quality_score_below_threshold",
+                "artifact_ref": str(artifact_path),
+                "prediction_quality_score": prediction_quality_score,
+                "minimum_prediction_quality_score": min_prediction_quality_score,
+            }
+        )
+
+    cost_adjusted_edge_bps = _float_or_none(
+        _as_dict(payload.get("cost_adjusted_outcomes")).get("edge_bps")
+    )
+    min_cost_adjusted_edge_bps = _float_or_none(
+        policy_payload.get("promotion_deeplob_bdlob_min_cost_adjusted_edge_bps")
+    )
+    if min_cost_adjusted_edge_bps is None:
+        min_cost_adjusted_edge_bps = 0.0
+    if cost_adjusted_edge_bps is None:
+        reasons.append("deeplob_bdlob_contract_cost_adjusted_edge_missing")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_cost_adjusted_edge_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif cost_adjusted_edge_bps < min_cost_adjusted_edge_bps:
+        reasons.append("deeplob_bdlob_contract_cost_adjusted_edge_below_threshold")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_cost_adjusted_edge_below_threshold",
+                "artifact_ref": str(artifact_path),
+                "cost_adjusted_edge_bps": cost_adjusted_edge_bps,
+                "minimum_cost_adjusted_edge_bps": min_cost_adjusted_edge_bps,
+            }
+        )
+
+    slippage_divergence_bps = _float_or_none(
+        _as_dict(payload.get("execution_impact_summary")).get("slippage_divergence_bps")
+    )
+    max_slippage_divergence_bps = _float_or_none(
+        policy_payload.get("promotion_deeplob_bdlob_max_slippage_divergence_bps")
+    )
+    if max_slippage_divergence_bps is None:
+        max_slippage_divergence_bps = 1.0
+    if slippage_divergence_bps is None:
+        reasons.append("deeplob_bdlob_contract_slippage_divergence_missing")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_slippage_divergence_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif slippage_divergence_bps > max_slippage_divergence_bps:
+        reasons.append("deeplob_bdlob_contract_slippage_divergence_exceeds_threshold")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_slippage_divergence_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "slippage_divergence_bps": slippage_divergence_bps,
+                "maximum_slippage_divergence_bps": max_slippage_divergence_bps,
+            }
+        )
+
+    fallback_reliability = _float_or_none(
+        _as_dict(payload.get("fallback_summary")).get("reliability")
+    )
+    min_fallback_reliability = _float_or_none(
+        policy_payload.get("promotion_deeplob_bdlob_min_fallback_reliability")
+    )
+    if min_fallback_reliability is None:
+        min_fallback_reliability = 0.99
+    if fallback_reliability is None:
+        reasons.append("deeplob_bdlob_contract_fallback_reliability_missing")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_fallback_reliability_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif fallback_reliability < min_fallback_reliability:
+        reasons.append("deeplob_bdlob_contract_fallback_reliability_below_threshold")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_fallback_reliability_below_threshold",
+                "artifact_ref": str(artifact_path),
+                "fallback_reliability": fallback_reliability,
+                "minimum_fallback_reliability": min_fallback_reliability,
+            }
+        )
+
+    deterministic_gate_compatible = _coerce_evidence_bool(
+        _as_dict(payload.get("execution_impact_summary")).get(
+            "deterministic_gate_compatible"
+        )
+    )
+    if deterministic_gate_compatible is not True:
+        reasons.append("deeplob_bdlob_contract_deterministic_gate_compatibility_failed")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_deterministic_gate_compatibility_failed",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    fallback_slo_pass = _coerce_evidence_bool(
+        _as_dict(payload.get("fallback_summary")).get("slo_pass")
+    )
+    if fallback_slo_pass is False:
+        reasons.append("deeplob_bdlob_contract_fallback_slo_not_pass")
+        details.append(
+            {
+                "reason": "deeplob_bdlob_contract_fallback_slo_not_pass",
+                "artifact_ref": str(artifact_path),
             }
         )
 

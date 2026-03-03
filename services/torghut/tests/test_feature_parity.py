@@ -14,8 +14,14 @@ from app.trading.parity import (
     BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS,
     BENCHMARK_PARITY_REQUIRED_SCORECARDS,
     BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
+    DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION,
+    DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS,
+    DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS,
+    DEEPLOB_BDLOB_SCHEMA_VERSION,
     _benchmark_report_hash,
+    _deeplob_bdlob_report_hash,
     build_benchmark_parity_report,
+    build_deeplob_bdlob_report,
     run_feature_parity,
     write_feature_parity_report,
 )
@@ -105,3 +111,42 @@ class TestFeatureParity(TestCase):
             )
 
         self.assertEqual(report.get('artifact_hash'), _benchmark_report_hash(report))
+
+    def test_deeplob_bdlob_report_includes_standardized_contract(self) -> None:
+        now = datetime(2026, 3, 3, tzinfo=timezone.utc)
+        report = build_deeplob_bdlob_report(
+            candidate_id='cand-test',
+            feature_policy_version='3.0.0',
+            now=now,
+        )
+
+        self.assertEqual(report.get('schema_version'), DEEPLOB_BDLOB_SCHEMA_VERSION)
+
+        contract = report.get('contract')
+        self.assertIsInstance(contract, dict)
+        assert isinstance(contract, dict)
+        self.assertEqual(
+            contract.get('schema_version'),
+            DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION,
+        )
+        self.assertEqual(
+            contract.get('required_supporting_artifacts'),
+            list(DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS),
+        )
+        self.assertEqual(
+            contract.get('required_summary_fields'),
+            list(DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS),
+        )
+        self.assertEqual(contract.get('hash_algorithm'), 'sha256')
+
+        self.assertEqual(
+            report.get('supporting_artifacts'),
+            list(DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS),
+        )
+        for field_name in DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS:
+            self.assertIsInstance(report.get(field_name), dict)
+        self.assertEqual(report.get('overall_status'), 'pass')
+        self.assertEqual(
+            report.get('artifact_hash'),
+            _deeplob_bdlob_report_hash(report),
+        )
