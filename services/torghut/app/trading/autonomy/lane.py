@@ -842,6 +842,21 @@ def _build_profitability_stage_manifest(
     ) else "fail"
     failure_reasons = [item["check"] for stage in stage_payloads.values()
                        for item in stage["checks"] if item.get("status") == "fail"]
+    replay_contract_artifact_hashes: dict[str, str] = {}
+    for stage_payload in stage_payloads.values():
+        if not isinstance(stage_payload, dict):
+            continue
+        artifacts_raw = stage_payload.get("artifacts")
+        if not isinstance(artifacts_raw, dict):
+            continue
+        for artifact_payload_raw in artifacts_raw.values():
+            if not isinstance(artifact_payload_raw, dict):
+                continue
+            artifact_ref = str(artifact_payload_raw.get("path", "")).strip()
+            artifact_sha = str(artifact_payload_raw.get("sha256", "")).strip()
+            if not artifact_ref or not artifact_sha:
+                continue
+            replay_contract_artifact_hashes[artifact_ref] = artifact_sha
     payload: dict[str, Any] = {
         "schema_version": _PROFITABILITY_STAGE_MANIFEST_SCHEMA_VERSION,
         "candidate_id": candidate_id,
@@ -860,6 +875,13 @@ def _build_profitability_stage_manifest(
         "stages": stage_payloads,
         "overall_status": overall_status,
         "failure_reasons": failure_reasons,
+        "replay_contract": {
+            "artifact_hashes": replay_contract_artifact_hashes,
+            "contract_hash": _stable_hash(
+                {"artifact_hashes": replay_contract_artifact_hashes}
+            ),
+            "hash_algorithm": "sha256",
+        },
         "rollback_contract_ref": _manifest_relative_path(
             output_dir, output_dir / "gates" / "rollback-readiness.json"
         ),

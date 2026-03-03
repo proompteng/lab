@@ -709,6 +709,19 @@ def _append_profitability_stage_manifest_reasons(
                             }
                         )
 
+    if bool(
+        policy_payload.get(
+            "promotion_require_profitability_stage_replay_contract", False
+        )
+    ):
+        _append_profitability_stage_manifest_replay_contract_reasons(
+            reasons=reasons,
+            reason_details=reason_details,
+            manifest_payload=manifest_payload,
+            manifest_path=manifest_path,
+            stages=stages,
+        )
+
     rollback_contract = manifest_payload.get("rollback_contract_ref")
     if not rollback_contract:
         reasons.append("profitability_stage_manifest_rollback_contract_ref_missing")
@@ -810,6 +823,99 @@ def _append_profitability_stage_manifest_reasons(
                 "failure_reasons": failure_reasons,
             }
         )
+
+
+def _append_profitability_stage_manifest_replay_contract_reasons(
+    *,
+    reasons: list[str],
+    reason_details: list[dict[str, object]],
+    manifest_payload: dict[str, Any],
+    manifest_path: Path,
+    stages: dict[str, Any],
+) -> None:
+    replay_contract = _as_dict(manifest_payload.get("replay_contract"))
+    if not replay_contract:
+        reasons.append("profitability_stage_manifest_replay_contract_missing")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_replay_contract_missing",
+                "artifact_ref": str(manifest_path),
+            }
+        )
+        return
+
+    artifact_hashes_raw = _as_dict(replay_contract.get("artifact_hashes"))
+    artifact_hashes = {
+        str(key).strip(): str(value).strip()
+        for key, value in artifact_hashes_raw.items()
+        if str(key).strip() and str(value).strip()
+    }
+    if not artifact_hashes:
+        reasons.append("profitability_stage_manifest_replay_artifact_hashes_missing")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_replay_artifact_hashes_missing",
+                "artifact_ref": str(manifest_path),
+            }
+        )
+
+    contract_hash = str(replay_contract.get("contract_hash", "")).strip()
+    if not contract_hash:
+        reasons.append("profitability_stage_manifest_replay_contract_hash_missing")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_replay_contract_hash_missing",
+                "artifact_ref": str(manifest_path),
+            }
+        )
+    else:
+        expected_contract_hash = _sha256_json({"artifact_hashes": artifact_hashes})
+        if contract_hash != expected_contract_hash:
+            reasons.append("profitability_stage_manifest_replay_contract_hash_mismatch")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_replay_contract_hash_mismatch",
+                    "artifact_ref": str(manifest_path),
+                    "contract_hash": contract_hash,
+                    "expected_contract_hash": expected_contract_hash,
+                }
+            )
+
+    expected_stage_artifact_hashes: dict[str, str] = {}
+    for stage_name in _PROFITABILITY_STAGE_ORDER:
+        stage_payload = _as_dict(stages.get(stage_name))
+        stage_artifacts = _as_dict(stage_payload.get("artifacts"))
+        for artifact_payload_raw in stage_artifacts.values():
+            artifact_payload = _as_dict(artifact_payload_raw)
+            artifact_ref = str(artifact_payload.get("path", "")).strip()
+            expected_sha = str(artifact_payload.get("sha256", "")).strip()
+            if not artifact_ref or not expected_sha:
+                continue
+            expected_stage_artifact_hashes[artifact_ref] = expected_sha
+
+    for artifact_ref, expected_sha in sorted(expected_stage_artifact_hashes.items()):
+        replay_sha = artifact_hashes.get(artifact_ref, "")
+        if not replay_sha:
+            reasons.append("profitability_stage_manifest_replay_artifact_hash_missing")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_replay_artifact_hash_missing",
+                    "artifact_ref": str(manifest_path),
+                    "stage_artifact_ref": artifact_ref,
+                }
+            )
+            continue
+        if replay_sha != expected_sha:
+            reasons.append("profitability_stage_manifest_replay_artifact_hash_mismatch")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_replay_artifact_hash_mismatch",
+                    "artifact_ref": str(manifest_path),
+                    "stage_artifact_ref": artifact_ref,
+                    "replay_sha256": replay_sha,
+                    "expected_sha256": expected_sha,
+                }
+            )
 
 
 def _append_profitability_evidence_reasons(

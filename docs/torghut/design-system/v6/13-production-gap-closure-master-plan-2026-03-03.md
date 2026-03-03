@@ -96,7 +96,7 @@ Make profitability a hard system contract across research, validation, execution
 1. Enforce `profitability-stage-manifest-v1` generation and validation for all promotion targets.
 2. Require stage-level pass/fail checks and artifact hashes in promotion prerequisites.
 3. Implement contamination and leakage registry checks in promotion gate path.
-4. Add replay determinism checks for stage manifests.
+4. Add replay determinism checks for stage manifests. (Completed `2026-03-03`)
 
 ### Primary files
 
@@ -339,3 +339,4 @@ Program is complete only when all are true:
 3. Enable profitability-stage manifest enforcement in runtime policy.
 4. Add contamination registry checks to promotion prerequisites. (Completed `2026-03-03`)
 5. Publish rollout dashboard for Wave 0 and Wave 1 gates.
+6. Enforce profitability stage-manifest replay-hash contract checks. (Completed `2026-03-03`)
