@@ -1556,6 +1556,27 @@ def _requires_fold_evidence(
 ) -> bool:
     if promotion_target == "shadow":
         return False
+    if not bool(policy_payload.get("promotion_require_contamination_registry", False)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_contamination_required_targets",
+        ["paper", "live"],
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
+def _requires_fold_evidence(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
     if not bool(policy_payload.get("promotion_require_fold_evidence", False)):
         return False
     required_targets_raw = policy_payload.get(
@@ -1642,26 +1663,21 @@ def _evaluate_promotion_evidence(
     evidence = (
         cast(dict[str, Any], evidence_raw) if isinstance(evidence_raw, dict) else {}
     )
-    fold_reasons, fold_details, fold_refs = _evaluate_fold_metrics_evidence(
+    stress_required = _requires_stress_evidence(
         policy_payload=policy_payload,
-        evidence=evidence,
-        artifact_root=artifact_root,
-        now=now,
+        promotion_target=promotion_target,
     )
-    reasons.extend(fold_reasons)
-    details.extend(fold_details)
-    refs.extend(fold_refs)
-
+    fold_required = _requires_fold_evidence(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     stress_reasons, stress_details, stress_refs = _evaluate_stress_metrics_evidence(
         policy_payload=policy_payload,
         evidence=evidence,
         artifact_root=artifact_root,
         now=now,
     )
-    if _requires_stress_evidence(
-        policy_payload=policy_payload,
-        promotion_target=promotion_target,
-    ):
+    if stress_required:
         reasons.extend(stress_reasons)
         details.extend(stress_details)
         refs.extend(stress_refs)
