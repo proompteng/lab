@@ -7,7 +7,7 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Planned` (strict matrix status for this index file)
-- Implementation status (strict): `Implemented=0`, `Partial=5`, `Planned=7` of 12
+- Implementation status (strict): `Implemented=0`, `Partial=5`, `Planned=8` of 13
 - Evidence: `implementation-status-matrix-2026-02-21.md`
 - Evidence sync: `implementation-audit.md`
 - Rollout gap: child documents marked partial/planned in this pack are not yet represented by one closed phase in runtime.
@@ -43,6 +43,7 @@ This pack is positioned as the next architecture layer above:
 9. `09-external-benchmark-parity-suite-ai-trader-fev-gift.md`
 10. `10-timesfm-foundation-model-router-parity.md`
 11. `11-deeplob-bdlob-microstructure-intelligence.md`
+12. `12-posthog-agent-observability-and-error-tracking-production-design.md`
 
 ## Recommended Build Order
 
@@ -56,7 +57,8 @@ This pack is positioned as the next architecture layer above:
 8. `03-dspy-llm-decision-layer-over-jangar.md`
 9. `04-alpha-discovery-and-autonomous-improvement-pipeline.md`
 10. `06-production-rollout-operations-and-governance.md`
-11. `07-hmm-regime-state-and-autonomous-llm-control-plane-2026-02-28.md`
+11. `12-posthog-agent-observability-and-error-tracking-production-design.md`
+12. `07-hmm-regime-state-and-autonomous-llm-control-plane-2026-02-28.md`
 
 ## Why This Sequence
 
@@ -67,3 +69,4 @@ This pack is positioned as the next architecture layer above:
 - DSPy decision integration must be implemented on top of stable routing and deterministic gate interfaces.
 - Autonomous strategy evolution should only be promoted after evaluation and serving contracts are stable.
 - Production rollout and governance closes with explicit SLO, rollback, and incident controls.
+- PostHog observability design is sequenced late to instrument stable runtime paths and avoid telemetry contract churn.
