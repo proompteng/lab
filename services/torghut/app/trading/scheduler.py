@@ -62,6 +62,7 @@ from .reconcile import Reconciler
 from .risk import RiskEngine
 from .tca import AdaptiveExecutionPolicyDecision, derive_adaptive_execution_policy
 from .regime_hmm import (
+    HMMRegimeContext,
     resolve_regime_context_authority_reason,
     resolve_hmm_context,
     resolve_legacy_regime_label,
@@ -99,6 +100,12 @@ _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
 _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
 _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
 _RUNTIME_UNCERTAINTY_GATE_MAX_STALENESS_SECONDS = 15 * 60
+_RUNTIME_REGIME_CONFIDENCE_DEGRADE_BY_ENTROPY_BAND: dict[str, tuple[Decimal, Decimal]] = {
+    "low": (Decimal("0.65"), Decimal("0.45")),
+    "medium": (Decimal("0.75"), Decimal("0.55")),
+    "high": (Decimal("0.85"), Decimal("0.70")),
+}
+_RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS = (Decimal("0.75"), Decimal("0.55"))
 RuntimeUncertaintyGateAction = Literal["pass", "degrade", "abstain", "fail"]
 
 
@@ -2571,6 +2578,12 @@ class TradingPipeline:
                     or "regime_hmm_non_authoritative"
                 ),
             )
+        confidence_gate = self._resolve_runtime_regime_confidence_gate(
+            regime_context=regime_context,
+            regime_label=regime_label,
+        )
+        if confidence_gate is not None:
+            return confidence_gate
         return RuntimeUncertaintyGate(
             action="pass",
             source="regime_hmm",
@@ -2578,6 +2591,69 @@ class TradingPipeline:
             regime_label=regime_label or regime_context.regime_id,
             regime_stale=regime_stale,
         )
+
+    def _resolve_runtime_regime_confidence_gate(
+        self,
+        *,
+        regime_context: HMMRegimeContext,
+        regime_label: str | None,
+    ) -> RuntimeUncertaintyGate | None:
+        top_posterior_probability = self._extract_top_regime_posterior_probability(
+            regime_context.posterior
+        )
+        if top_posterior_probability is None:
+            return None
+
+        degrade_threshold, abstain_threshold = self._resolve_regime_confidence_thresholds(
+            regime_context.entropy_band
+        )
+        if top_posterior_probability < abstain_threshold:
+            return RuntimeUncertaintyGate(
+                action="abstain",
+                source="regime_hmm_confidence",
+                regime_action_source="regime_hmm",
+                regime_label=regime_label,
+                regime_stale=False,
+                reason="regime_hmm_confidence_too_low",
+            )
+        if top_posterior_probability < degrade_threshold:
+            return RuntimeUncertaintyGate(
+                action="degrade",
+                source="regime_hmm_confidence",
+                regime_action_source="regime_hmm",
+                regime_label=regime_label,
+                regime_stale=False,
+                reason="regime_hmm_confidence_is_uncertain",
+            )
+        return None
+
+    def _extract_top_regime_posterior_probability(
+        self,
+        posterior: Mapping[str, str],
+    ) -> Decimal | None:
+        top_probability = None
+        for raw_probability in posterior.values():
+            try:
+                parsed_probability = Decimal(raw_probability)
+            except (ArithmeticError, ValueError):
+                continue
+            if parsed_probability < 0 or parsed_probability > 1:
+                continue
+            if top_probability is None or parsed_probability > top_probability:
+                top_probability = parsed_probability
+        return top_probability
+
+    def _resolve_regime_confidence_thresholds(
+        self,
+        entropy_band: str,
+    ) -> tuple[Decimal, Decimal]:
+        degrade_threshold, abstain_threshold = (
+            _RUNTIME_REGIME_CONFIDENCE_DEGRADE_BY_ENTROPY_BAND.get(
+                entropy_band,
+                _RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS,
+            )
+        )
+        return max(degrade_threshold, abstain_threshold), abstain_threshold
 
     def _apply_runtime_uncertainty_gate(
         self,
