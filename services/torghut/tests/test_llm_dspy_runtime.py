@@ -43,6 +43,12 @@ class TestLLMDSPyRuntime(TestCase):
             "llm_effective_challenge_id": settings.llm_effective_challenge_id,
             "llm_shadow_completed_at": settings.llm_shadow_completed_at,
             "llm_model_version_lock": settings.llm_model_version_lock,
+            "llm_fail_mode_enforcement": settings.llm_fail_mode_enforcement,
+            "llm_fail_mode": settings.llm_fail_mode,
+            "llm_abstain_fail_mode": settings.llm_abstain_fail_mode,
+            "llm_escalate_fail_mode": settings.llm_escalate_fail_mode,
+            "llm_quality_fail_mode": settings.llm_quality_fail_mode,
+            "llm_shadow_mode": settings.llm_shadow_mode,
         }
         settings.llm_allowed_models_raw = settings.llm_model
         settings.llm_rollout_stage = "stage3"
@@ -50,6 +56,12 @@ class TestLLMDSPyRuntime(TestCase):
         settings.llm_effective_challenge_id = "dspy-runtime-challenge"
         settings.llm_shadow_completed_at = "2026-03-01T00:00:00Z"
         settings.llm_model_version_lock = settings.llm_model
+        settings.llm_fail_mode_enforcement = "strict_veto"
+        settings.llm_fail_mode = "veto"
+        settings.llm_abstain_fail_mode = "veto"
+        settings.llm_escalate_fail_mode = "veto"
+        settings.llm_quality_fail_mode = "veto"
+        settings.llm_shadow_mode = False
         settings.llm_dspy_runtime_mode = "active"
         settings.llm_dspy_artifact_hash = "a" * 64
         if jangar_base_url is not None:
@@ -92,6 +104,15 @@ class TestLLMDSPyRuntime(TestCase):
             str | None,
             original["llm_model_version_lock"],
         )
+        settings.llm_fail_mode_enforcement = cast(
+            str,
+            original["llm_fail_mode_enforcement"],
+        )
+        settings.llm_fail_mode = cast(str, original["llm_fail_mode"])
+        settings.llm_abstain_fail_mode = cast(str, original["llm_abstain_fail_mode"])
+        settings.llm_escalate_fail_mode = cast(str, original["llm_escalate_fail_mode"])
+        settings.llm_quality_fail_mode = cast(str, original["llm_quality_fail_mode"])
+        settings.llm_shadow_mode = cast(bool, original["llm_shadow_mode"])
 
     def _request(self) -> LLMReviewRequest:
         return LLMReviewRequest(
@@ -631,7 +652,19 @@ class TestLLMDSPyRuntime(TestCase):
 
     def test_active_readiness_accepts_dspy_live_executor(self) -> None:
         original_base = settings.jangar_base_url
+        original_fail_mode_enforcement = settings.llm_fail_mode_enforcement
+        original_fail_mode = settings.llm_fail_mode
+        original_abstain_fail_mode = settings.llm_abstain_fail_mode
+        original_escalate_fail_mode = settings.llm_escalate_fail_mode
+        original_quality_fail_mode = settings.llm_quality_fail_mode
+        original_shadow_mode = settings.llm_shadow_mode
         settings.jangar_base_url = "https://jangar.local/"
+        settings.llm_fail_mode_enforcement = "strict_veto"
+        settings.llm_fail_mode = "veto"
+        settings.llm_abstain_fail_mode = "veto"
+        settings.llm_escalate_fail_mode = "veto"
+        settings.llm_quality_fail_mode = "veto"
+        settings.llm_shadow_mode = False
         runtime = DSPyReviewRuntime(
             mode="active",
             artifact_hash="a" * 64,
@@ -654,11 +687,29 @@ class TestLLMDSPyRuntime(TestCase):
         self.assertTrue(is_ready)
         self.assertEqual(reasons, ())
         settings.jangar_base_url = original_base
+        settings.llm_fail_mode_enforcement = original_fail_mode_enforcement
+        settings.llm_fail_mode = original_fail_mode
+        settings.llm_abstain_fail_mode = original_abstain_fail_mode
+        settings.llm_escalate_fail_mode = original_escalate_fail_mode
+        settings.llm_quality_fail_mode = original_quality_fail_mode
+        settings.llm_shadow_mode = original_shadow_mode
 
     def test_resolve_dspy_api_base_uses_jangar_openai_endpoint(self) -> None:
         original_base = settings.jangar_base_url
+        original_fail_mode_enforcement = settings.llm_fail_mode_enforcement
+        original_fail_mode = settings.llm_fail_mode
+        original_abstain_fail_mode = settings.llm_abstain_fail_mode
+        original_escalate_fail_mode = settings.llm_escalate_fail_mode
+        original_quality_fail_mode = settings.llm_quality_fail_mode
+        original_shadow_mode = settings.llm_shadow_mode
         try:
             settings.jangar_base_url = "https://jangar.example/"
+            settings.llm_fail_mode_enforcement = "strict_veto"
+            settings.llm_fail_mode = "veto"
+            settings.llm_abstain_fail_mode = "veto"
+            settings.llm_escalate_fail_mode = "veto"
+            settings.llm_quality_fail_mode = "veto"
+            settings.llm_shadow_mode = False
             runtime = DSPyReviewRuntime(
                 mode="active",
                 artifact_hash="a" * 64,
@@ -703,6 +754,12 @@ class TestLLMDSPyRuntime(TestCase):
             )
         finally:
             settings.jangar_base_url = original_base
+            settings.llm_fail_mode_enforcement = original_fail_mode_enforcement
+            settings.llm_fail_mode = original_fail_mode
+            settings.llm_abstain_fail_mode = original_abstain_fail_mode
+            settings.llm_escalate_fail_mode = original_escalate_fail_mode
+            settings.llm_quality_fail_mode = original_quality_fail_mode
+            settings.llm_shadow_mode = original_shadow_mode
 
     def test_evaluate_live_readiness_blocks_without_jangar_api_base(self) -> None:
         original_base = settings.jangar_base_url

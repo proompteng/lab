@@ -3516,6 +3516,9 @@ class TestTradingPipeline(TestCase):
             "llm_enabled": config.settings.llm_enabled,
             "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_abstain_fail_mode": config.settings.llm_abstain_fail_mode,
+            "llm_escalate_fail_mode": config.settings.llm_escalate_fail_mode,
+            "llm_quality_fail_mode": config.settings.llm_quality_fail_mode,
             "llm_fail_open_live_approved": config.settings.llm_fail_open_live_approved,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
@@ -3533,6 +3536,9 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_enabled = True
         config.settings.llm_fail_mode = "veto"
         config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_abstain_fail_mode = "veto"
+        config.settings.llm_escalate_fail_mode = "veto"
+        config.settings.llm_quality_fail_mode = "veto"
         config.settings.llm_shadow_mode = False
         config.settings.llm_min_confidence = 0.0
         _set_llm_guardrails(config)
@@ -3602,6 +3608,9 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_fail_mode_enforcement = original[
                 "llm_fail_mode_enforcement"
             ]
+            config.settings.llm_abstain_fail_mode = original["llm_abstain_fail_mode"]
+            config.settings.llm_escalate_fail_mode = original["llm_escalate_fail_mode"]
+            config.settings.llm_quality_fail_mode = original["llm_quality_fail_mode"]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
@@ -3946,6 +3955,9 @@ class TestTradingPipeline(TestCase):
             "llm_enabled": config.settings.llm_enabled,
             "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_abstain_fail_mode": config.settings.llm_abstain_fail_mode,
+            "llm_escalate_fail_mode": config.settings.llm_escalate_fail_mode,
+            "llm_quality_fail_mode": config.settings.llm_quality_fail_mode,
             "llm_fail_open_live_approved": config.settings.llm_fail_open_live_approved,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
@@ -4103,6 +4115,9 @@ class TestTradingPipeline(TestCase):
             "llm_enabled": config.settings.llm_enabled,
             "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_abstain_fail_mode": config.settings.llm_abstain_fail_mode,
+            "llm_escalate_fail_mode": config.settings.llm_escalate_fail_mode,
+            "llm_quality_fail_mode": config.settings.llm_quality_fail_mode,
             "llm_fail_open_live_approved": config.settings.llm_fail_open_live_approved,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
@@ -4375,6 +4390,9 @@ class TestTradingPipeline(TestCase):
             "llm_enabled": config.settings.llm_enabled,
             "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_abstain_fail_mode": config.settings.llm_abstain_fail_mode,
+            "llm_escalate_fail_mode": config.settings.llm_escalate_fail_mode,
+            "llm_quality_fail_mode": config.settings.llm_quality_fail_mode,
             "llm_fail_open_live_approved": config.settings.llm_fail_open_live_approved,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
@@ -4399,6 +4417,9 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_enabled = True
         config.settings.llm_fail_mode = "veto"
         config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_abstain_fail_mode = "veto"
+        config.settings.llm_escalate_fail_mode = "veto"
+        config.settings.llm_quality_fail_mode = "veto"
         config.settings.llm_shadow_mode = False
         config.settings.llm_min_confidence = 0.0
         config.settings.llm_dspy_runtime_mode = "active"
@@ -4476,6 +4497,9 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_fail_mode_enforcement = original[
                 "llm_fail_mode_enforcement"
             ]
+            config.settings.llm_abstain_fail_mode = original["llm_abstain_fail_mode"]
+            config.settings.llm_escalate_fail_mode = original["llm_escalate_fail_mode"]
+            config.settings.llm_quality_fail_mode = original["llm_quality_fail_mode"]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]

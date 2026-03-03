@@ -2259,6 +2259,35 @@ class Settings(BaseSettings):
         ):
             reasons.append("llm_committee_mandatory_roles_invalid")
 
+        migration_allowed, migration_reasons = self.llm_dspy_cutover_migration_guard()
+        if not migration_allowed:
+            reasons.extend(migration_reasons)
+
+        return (not reasons, tuple(reasons))
+
+    def llm_dspy_cutover_migration_guard(self) -> tuple[bool, tuple[str, ...]]:
+        """Reject mixed legacy/DSPy posture when active cutover mode is requested."""
+
+        if self.llm_dspy_runtime_mode != "active":
+            return True, ()
+
+        reasons: list[str] = []
+        if self.llm_fail_mode_enforcement != "strict_veto":
+            reasons.append("dspy_cutover_requires_strict_veto_enforcement")
+        if self.llm_fail_mode != "veto":
+            reasons.append("dspy_cutover_requires_veto_fail_mode")
+        if self.llm_abstain_fail_mode != "veto":
+            reasons.append("dspy_cutover_requires_veto_abstain_fail_mode")
+        if self.llm_escalate_fail_mode != "veto":
+            reasons.append("dspy_cutover_requires_veto_escalate_fail_mode")
+        if self.llm_quality_fail_mode != "veto":
+            reasons.append("dspy_cutover_requires_veto_quality_fail_mode")
+        if self.llm_shadow_mode:
+            reasons.append("dspy_cutover_requires_shadow_mode_disabled")
+
+        for exception in self.llm_policy_exceptions:
+            reasons.append(f"dspy_cutover_policy_exception_{exception}")
+
         return (not reasons, tuple(reasons))
 
     @property

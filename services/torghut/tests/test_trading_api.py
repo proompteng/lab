@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import get_session
-from app.main import app
+from app.main import _assert_dspy_cutover_migration_guard, app
 from app.trading.scheduler import TradingScheduler
 from app.config import settings
 from app.models import (
@@ -145,6 +145,36 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["symbol"], "AAPL")
+
+    def test_dspy_cutover_migration_guard_assertion_raises_for_legacy_toggles(self) -> None:
+        original_runtime_mode = settings.llm_dspy_runtime_mode
+        original_fail_mode_enforcement = settings.llm_fail_mode_enforcement
+        original_fail_mode = settings.llm_fail_mode
+        original_abstain_fail_mode = settings.llm_abstain_fail_mode
+        original_escalate_fail_mode = settings.llm_escalate_fail_mode
+        original_quality_fail_mode = settings.llm_quality_fail_mode
+        original_shadow_mode = settings.llm_shadow_mode
+        settings.llm_dspy_runtime_mode = "active"
+        settings.llm_fail_mode_enforcement = "configured"
+        settings.llm_fail_mode = "veto"
+        settings.llm_abstain_fail_mode = "pass_through"
+        settings.llm_escalate_fail_mode = "veto"
+        settings.llm_quality_fail_mode = "veto"
+        settings.llm_shadow_mode = False
+        try:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "dspy_cutover_migration_guard_failed",
+            ):
+                _assert_dspy_cutover_migration_guard()
+        finally:
+            settings.llm_dspy_runtime_mode = original_runtime_mode
+            settings.llm_fail_mode_enforcement = original_fail_mode_enforcement
+            settings.llm_fail_mode = original_fail_mode
+            settings.llm_abstain_fail_mode = original_abstain_fail_mode
+            settings.llm_escalate_fail_mode = original_escalate_fail_mode
+            settings.llm_quality_fail_mode = original_quality_fail_mode
+            settings.llm_shadow_mode = original_shadow_mode
 
     @patch(
         "app.main.check_schema_current",

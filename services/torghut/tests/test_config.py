@@ -284,6 +284,7 @@ class TestConfig(TestCase):
             LLM_EFFECTIVE_CHALLENGE_ID="challenge-1",
             LLM_SHADOW_COMPLETED_AT="2026-03-01T00:00:00Z",
             LLM_MODEL_VERSION_LOCK="codex-5.3-spark@v1",
+            LLM_ABSTAIN_FAIL_MODE="veto",
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         allowed, reasons = settings.llm_dspy_live_runtime_gate()
@@ -304,11 +305,60 @@ class TestConfig(TestCase):
             LLM_EFFECTIVE_CHALLENGE_ID="challenge-1",
             LLM_SHADOW_COMPLETED_AT="2026-03-01T00:00:00Z",
             LLM_MODEL_VERSION_LOCK="codex-5.3-spark@v1",
+            LLM_ABSTAIN_FAIL_MODE="veto",
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         allowed, reasons = settings.llm_dspy_live_runtime_gate()
         self.assertTrue(allowed)
         self.assertNotIn("dspy_jangar_base_url_invalid", reasons)
+
+    def test_live_dspy_runtime_gate_blocks_legacy_fail_open_cutover_toggles(self) -> None:
+        settings = Settings(
+            TRADING_MODE="live",
+            TRADING_LIVE_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="jangar",
+            LLM_DSPY_RUNTIME_MODE="active",
+            LLM_DSPY_ARTIFACT_HASH="a" * 64,
+            JANGAR_BASE_URL="https://jangar.example/openai/v1",
+            LLM_ALLOWED_MODELS="codex-5.3-spark",
+            LLM_MODEL="codex-5.3-spark",
+            LLM_ROLLOUT_STAGE="stage3",
+            LLM_EVALUATION_REPORT="ok",
+            LLM_EFFECTIVE_CHALLENGE_ID="challenge-1",
+            LLM_SHADOW_COMPLETED_AT="2026-03-01T00:00:00Z",
+            LLM_MODEL_VERSION_LOCK="codex-5.3-spark@v1",
+            LLM_FAIL_MODE_ENFORCEMENT="configured",
+            LLM_FAIL_OPEN_LIVE_APPROVED=True,
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        allowed, reasons = settings.llm_dspy_live_runtime_gate()
+        self.assertFalse(allowed)
+        self.assertIn("dspy_cutover_requires_strict_veto_enforcement", reasons)
+        self.assertIn(
+            "dspy_cutover_policy_exception_configured_fail_mode_enabled",
+            reasons,
+        )
+
+    def test_dspy_cutover_migration_guard_passes_with_strict_controls(self) -> None:
+        settings = Settings(
+            TRADING_MODE="live",
+            TRADING_LIVE_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="jangar",
+            LLM_DSPY_RUNTIME_MODE="active",
+            LLM_DSPY_ARTIFACT_HASH="a" * 64,
+            LLM_FAIL_MODE_ENFORCEMENT="strict_veto",
+            LLM_FAIL_MODE="veto",
+            LLM_ABSTAIN_FAIL_MODE="veto",
+            LLM_ESCALATE_FAIL_MODE="veto",
+            LLM_QUALITY_FAIL_MODE="veto",
+            LLM_SHADOW_MODE=False,
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+
+        allowed, reasons = settings.llm_dspy_cutover_migration_guard()
+
+        self.assertTrue(allowed)
+        self.assertEqual(reasons, ())
 
     def test_strategy_runtime_defaults_move_to_scheduler_v3(self) -> None:
         settings = Settings(
