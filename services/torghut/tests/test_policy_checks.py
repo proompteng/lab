@@ -268,6 +268,89 @@ class TestPolicyChecks(TestCase):
         self.assertNotIn("hmm_state_posterior_artifact_ref_missing", promotion.reasons)
         self.assertIn(str(root / "gates" / "hmm-state-posterior-v1.json"), promotion.artifact_refs)
 
+    def test_promotion_prerequisites_fail_when_hmm_regime_quality_ratio_exceeds_threshold(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            gate_report = _gate_report()
+            (root / "gates" / "gate-evaluation.json").write_text(
+                json.dumps(gate_report),
+                encoding="utf-8",
+            )
+
+            hmm_artifact = root / "gates" / "hmm-state-posterior-v1.json"
+            hmm_payload = {
+                "schema_version": "hmm-state-posterior-v1",
+                "run_id": "run-test",
+                "candidate_id": "cand-test",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "samples_total": 10,
+                "authoritative_samples": 6,
+                "authoritative_sample_ratio": "0.6",
+                "transition_shock_samples": 4,
+                "stale_or_defensive_samples": 3,
+                "regime_counts": {"r2": 10},
+                "entropy_band_counts": {"medium": 10},
+                "guardrail_reason_counts": {"none": 7, "transition_shock": 3},
+                "posterior_mass_by_regime": {"r2": "6.0", "r1": "4.0"},
+                "top_regime_by_posterior_mass": "r2",
+                "source_lineage": {
+                    "walkforward_results_artifact_ref": "backtest/walkforward-results.json",
+                    "gate_policy_artifact_ref": "gates/gate-evaluation.json",
+                    "decision_source": "walkforward_results",
+                },
+            }
+            hmm_payload["artifact_hash"] = _sha256_json(
+                {key: value for key, value in hmm_payload.items() if key != "artifact_hash"}
+            )
+            hmm_artifact.write_text(json.dumps(hmm_payload), encoding="utf-8")
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_hmm_state_posterior": True,
+                    "promotion_hmm_required_targets": ["paper", "live"],
+                    "promotion_hmm_required_artifacts": [
+                        "gates/hmm-state-posterior-v1.json"
+                    ],
+                    "promotion_hmm_max_transition_shock_ratio": "0.2",
+                    "promotion_hmm_max_stale_or_defensive_ratio": "0.2",
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_profitability_stage_manifest": False,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "gate6_require_profitability_evidence": False,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn(
+            "hmm_state_posterior_transition_shock_ratio_exceeds_threshold",
+            promotion.reasons,
+        )
+        self.assertIn(
+            "hmm_state_posterior_stale_or_defensive_ratio_exceeds_threshold",
+            promotion.reasons,
+        )
+
     def test_promotion_prerequisites_fail_when_expert_router_registry_required_and_missing(
         self,
     ) -> None:
@@ -4413,6 +4496,8 @@ def _gate_report() -> dict[str, object]:
                 "samples_total": 12,
                 "authoritative_samples": 8,
                 "authoritative_sample_ratio": "0.6667",
+                "transition_shock_samples": 0,
+                "stale_or_defensive_samples": 0,
             },
             "expert_router_registry": {
                 "artifact_ref": "gates/expert-router-registry-v1.json",

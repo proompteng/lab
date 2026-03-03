@@ -1970,6 +1970,12 @@ def run_autonomous_lane(
                 "authoritative_sample_ratio": hmm_state_posterior_payload.get(
                     "authoritative_sample_ratio"
                 ),
+                "transition_shock_samples": hmm_state_posterior_payload.get(
+                    "transition_shock_samples"
+                ),
+                "stale_or_defensive_samples": hmm_state_posterior_payload.get(
+                    "stale_or_defensive_samples"
+                ),
                 "top_regime_by_posterior_mass": hmm_state_posterior_payload.get(
                     "top_regime_by_posterior_mass"
                 ),
@@ -2300,6 +2306,12 @@ def run_autonomous_lane(
                 ),
                 "authoritative_sample_ratio": hmm_state_posterior_payload.get(
                     "authoritative_sample_ratio"
+                ),
+                "transition_shock_samples": hmm_state_posterior_payload.get(
+                    "transition_shock_samples"
+                ),
+                "stale_or_defensive_samples": hmm_state_posterior_payload.get(
+                    "stale_or_defensive_samples"
                 ),
                 "top_regime_by_posterior_mass": hmm_state_posterior_payload.get(
                     "top_regime_by_posterior_mass"
