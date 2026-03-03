@@ -536,16 +536,17 @@ def _resolve_microstructure_state_payload(
     signal: SignalEnvelope,
 ) -> dict[str, Any] | None:
     payload = signal.payload
-    raw_state = payload.get("microstructure_state")
     raw_source = "microstructure_state"
-    if not isinstance(raw_state, dict):
+    raw_state = payload.get("microstructure_state")
+    state: dict[str, Any]
+    if isinstance(raw_state, dict):
+        state = dict(cast(dict[str, Any], raw_state))
+    else:
         raw_signal = payload.get("microstructure_signal")
         if not isinstance(raw_signal, dict):
             return None
-        raw_state = raw_signal
+        state = dict(cast(dict[str, Any], raw_signal))
         raw_source = "microstructure_signal"
-
-    state = dict(cast(dict[str, Any], raw_state))
     if "schema_version" not in state and raw_source == "microstructure_state":
         state["schema_version"] = "microstructure_state_v1"
     state["symbol"] = str(state.get("symbol") or signal.symbol).strip().upper()
