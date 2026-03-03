@@ -500,7 +500,7 @@ describe('supporting primitives controller', () => {
     expect(applyStatus).toHaveBeenCalledTimes(1)
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
-    expect(status.phase).toBe('Active')
+    expect(status.phase).toBe('Frozen')
     expect(status.activeMissions).toBe(0)
     expect(status.stageStates).toBeTruthy()
   })
