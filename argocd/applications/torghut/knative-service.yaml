@@ -298,6 +298,10 @@ spec:
               value: "0.55"
             - name: TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: "300"
+            - name: TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_THRESHOLD
+              value: "0.60"
+            - name: TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_MULTIPLIER
+              value: "0.70"
             - name: TRADING_EMERGENCY_STOP_ENABLED
               value: "true"
             - name: TRADING_ROLLBACK_SIGNAL_LAG_SECONDS_LIMIT

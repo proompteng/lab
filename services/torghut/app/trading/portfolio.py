@@ -15,6 +15,7 @@ from .fragility import (
     FragilityMonitorConfig,
     FragilityState,
 )
+from .regime_hmm import resolve_hmm_context
 from .models import StrategyDecision
 from .quantity_rules import (
     fractional_equities_enabled_for_trade,
@@ -35,6 +36,7 @@ ALLOCATOR_CLIP_GROSS_EXPOSURE = "allocator_clip_gross_exposure"
 ALLOCATOR_CLIP_STRATEGY_BUDGET = "allocator_clip_strategy_budget"
 ALLOCATOR_CLIP_SYMBOL_BUDGET = "allocator_clip_symbol_budget"
 ALLOCATOR_CLIP_CORRELATION_CAPACITY = "allocator_clip_correlation_capacity"
+ALLOCATOR_REGIME_LOW_CONFIDENCE = "allocator_regime_low_confidence"
 
 _SIZING_CAP_ZERO_REASON_BY_METHOD: dict[str, str] = {
     "cap_per_symbol_zero": "symbol_capacity_exhausted",
@@ -70,6 +72,8 @@ class AllocationConfig:
     symbol_correlation_groups: dict[str, str]
     regime_budget_multipliers: dict[str, Decimal]
     regime_capacity_multipliers: dict[str, Decimal]
+    regime_low_confidence_threshold: Decimal = Decimal("0.60")
+    regime_low_confidence_multiplier: Decimal = Decimal("0.70")
 
 
 @dataclass(frozen=True)
@@ -638,6 +642,20 @@ class PortfolioAllocator:
             base_budget_multiplier=base_budget_multiplier,
             base_capacity_multiplier=base_capacity_multiplier,
         )
+        (
+            confidence_multiplier,
+            regime_confidence,
+            low_confidence_applied,
+        ) = _resolve_regime_confidence_multiplier(
+            decision.params,
+            regime_label=normalized_regime,
+            threshold=self.config.regime_low_confidence_threshold,
+            low_confidence_multiplier=self.config.regime_low_confidence_multiplier,
+        )
+        effective_budget_multiplier *= confidence_multiplier
+        effective_capacity_multiplier *= confidence_multiplier
+        if low_confidence_applied:
+            reason_codes.append(ALLOCATOR_REGIME_LOW_CONFIDENCE)
         if fragility_adjustment.stability_mode_active and apply_fragility:
             reason_codes.append("allocator_stability_mode_active")
 
@@ -667,6 +685,8 @@ class PortfolioAllocator:
             portfolio_fragility_state=portfolio_fragility_state,
             effective_budget_multiplier=effective_budget_multiplier,
             effective_capacity_multiplier=effective_capacity_multiplier,
+            regime_confidence=regime_confidence,
+            regime_low_confidence_applied=low_confidence_applied,
         )
 
     def _effective_allocation_multipliers(
@@ -909,6 +929,8 @@ class PortfolioAllocator:
         portfolio_fragility_state: FragilityState,
         effective_budget_multiplier: Decimal,
         effective_capacity_multiplier: Decimal,
+        regime_confidence: Optional[Decimal],
+        regime_low_confidence_applied: bool,
     ) -> AllocationResult:
         unique_reason_codes = sorted(set(reason_codes))
         params = dict(decision.params)
@@ -923,6 +945,14 @@ class PortfolioAllocator:
             "approved_notional": _decimal_str(approved_notional),
             "status": "approved" if approved else "rejected",
             "clipped": clipped,
+            "regime_confidence": _decimal_str(regime_confidence),
+            "regime_low_confidence_threshold": _decimal_str(
+                self.config.regime_low_confidence_threshold
+            ),
+            "regime_low_confidence_multiplier": _decimal_str(
+                self.config.regime_low_confidence_multiplier
+            ),
+            "regime_low_confidence_applied": regime_low_confidence_applied,
             "reason_codes": unique_reason_codes,
             "correlation_group": correlation_group,
         }
@@ -1076,6 +1106,10 @@ class PortfolioAllocator:
                 "capacity_multiplier": _decimal_str(capacity_multiplier),
                 "requested_qty": str(decision.qty),
                 "approved_qty": str(decision.qty),
+                "regime_confidence": None,
+                "regime_low_confidence_threshold": None,
+                "regime_low_confidence_multiplier": None,
+                "regime_low_confidence_applied": False,
             }
         )
         current_allocator.update(fragility_adjustment.to_allocator_payload())
@@ -1138,6 +1172,14 @@ def allocator_from_settings(equity: Optional[Decimal]) -> PortfolioAllocator:
                 settings.trading_allocator_default_capacity_multiplier
             )
             or Decimal("1"),
+            regime_low_confidence_threshold=_optional_decimal(
+                settings.trading_allocator_regime_low_confidence_threshold
+            )
+            or Decimal("0.6"),
+            regime_low_confidence_multiplier=_optional_decimal(
+                settings.trading_allocator_regime_low_confidence_multiplier
+            )
+            or Decimal("0.7"),
             min_multiplier=_optional_decimal(settings.trading_allocator_min_multiplier)
             or Decimal("0"),
             max_multiplier=_optional_decimal(settings.trading_allocator_max_multiplier)
@@ -1449,6 +1491,52 @@ def _decimal_str(value: Optional[Decimal]) -> Optional[str]:
     return str(value)
 
 
+def _resolve_regime_confidence_multiplier(
+    params: Mapping[str, Any],
+    *,
+    regime_label: str,
+    threshold: Decimal,
+    low_confidence_multiplier: Decimal,
+) -> tuple[Decimal, Optional[Decimal], bool]:
+    try:
+        context = resolve_hmm_context(params)
+    except Exception:
+        return Decimal("1"), None, False
+
+    posterior_probabilities: dict[str, Decimal] = {}
+    for regime_id, probability in context.posterior.items():
+        normalized_regime_id = regime_id.strip().lower()
+        if not normalized_regime_id:
+            continue
+        parsed = _optional_decimal(probability)
+        if parsed is None:
+            continue
+        posterior_probabilities[normalized_regime_id] = parsed
+
+    candidates: list[str] = []
+    for candidate in (regime_label, context.regime_id):
+        if candidate:
+            candidates.append(candidate.strip().lower())
+    confidence: Optional[Decimal] = None
+    for candidate in candidates:
+        confidence = posterior_probabilities.get(candidate)
+        if confidence is not None:
+            break
+
+    if confidence is None:
+        return Decimal("1"), None, False
+
+    if confidence < Decimal("0") or confidence > Decimal("1"):
+        return Decimal("1"), None, False
+
+    apply_penalty = (
+        confidence < threshold and low_confidence_multiplier < Decimal("1")
+    )
+    if apply_penalty:
+        return low_confidence_multiplier, confidence, True
+    return Decimal("1"), confidence, False
+
+
 def _normalize_regime_label(value: str | None, *, default: str) -> str:
     if value is None:
         return default
@@ -1619,6 +1707,7 @@ __all__ = [
     "ALLOCATOR_REJECT_SYMBOL_BUDGET",
     "ALLOCATOR_REJECT_STRATEGY_BUDGET",
     "ALLOCATOR_REJECT_ZERO_QTY",
+    "ALLOCATOR_REGIME_LOW_CONFIDENCE",
     "AggregatedIntent",
     "AllocationConfig",
     "AllocationResult",

@@ -931,6 +931,16 @@ class Settings(BaseSettings):
         alias="TRADING_ALLOCATOR_DEFAULT_CAPACITY_MULTIPLIER",
         description="Default symbol-capacity multiplier when regime-specific override is absent.",
     )
+    trading_allocator_regime_low_confidence_threshold: float = Field(
+        default=0.60,
+        alias="TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_THRESHOLD",
+        description="Posterior confidence threshold below which low-confidence regime protection applies.",
+    )
+    trading_allocator_regime_low_confidence_multiplier: float = Field(
+        default=0.70,
+        alias="TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_MULTIPLIER",
+        description="Multiplier applied when regime confidence is below threshold.",
+    )
     trading_allocator_min_multiplier: float = Field(
         default=0.0,
         alias="TRADING_ALLOCATOR_MIN_MULTIPLIER",
@@ -1722,6 +1732,18 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "TRADING_ALLOCATOR_MAX_MULTIPLIER must be >= TRADING_ALLOCATOR_MIN_MULTIPLIER"
+            )
+        if not (
+            0 <= self.trading_allocator_regime_low_confidence_threshold <= 1
+        ):
+            raise ValueError(
+                "TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_THRESHOLD must be within [0, 1]"
+            )
+        if not (
+            0 <= self.trading_allocator_regime_low_confidence_multiplier <= 1
+        ):
+            raise ValueError(
+                "TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_MULTIPLIER must be within [0, 1]"
             )
 
     def _validate_allocator_map_settings(self) -> None:
