@@ -167,6 +167,12 @@ class OrderExecutor:
         )
         if pre_submit_error is not None:
             raise RuntimeError(json.dumps(pre_submit_error))
+        short_precheck_error = self._validate_short_sell_constraints(
+            execution_client,
+            request,
+        )
+        if short_precheck_error is not None:
+            raise RuntimeError(json.dumps(short_precheck_error))
 
         if retry_delays is None:
             retry_delays = []
@@ -550,6 +556,146 @@ class OrderExecutor:
             requested_qty=request.qty,
         )
 
+    def _validate_short_sell_constraints(
+        self,
+        execution_client: Any,
+        request: ExecutionRequest,
+    ) -> dict[str, Any] | None:
+        if request.side.strip().lower() != "sell":
+            return None
+        symbol = request.symbol.strip().upper()
+        if not symbol:
+            return None
+
+        position_qty = self._position_qty_for_symbol(execution_client, symbol)
+        if not self._is_short_increasing_sell(position_qty, request.qty):
+            return None
+
+        if not settings.trading_allow_shorts:
+            return {
+                "source": "local_pre_submit",
+                "code": "local_shorts_not_allowed",
+                "reject_reason": "short selling disabled by runtime policy",
+                "symbol": symbol,
+                "qty": str(request.qty),
+            }
+
+        strict_short_precheck = settings.trading_mode == "live"
+        account = self._get_account(execution_client)
+        if account is None:
+            if strict_short_precheck:
+                return {
+                    "source": "local_pre_submit",
+                    "code": "local_account_metadata_unavailable",
+                    "reject_reason": "account shorting eligibility metadata unavailable in live mode",
+                    "symbol": symbol,
+                    "qty": str(request.qty),
+                }
+        else:
+            shorting_enabled = account.get("shorting_enabled")
+            if isinstance(shorting_enabled, bool):
+                if not shorting_enabled:
+                    return {
+                        "source": "local_pre_submit",
+                        "code": "local_account_shorting_disabled",
+                        "reject_reason": "account shorting is disabled",
+                        "symbol": symbol,
+                        "qty": str(request.qty),
+                    }
+            elif strict_short_precheck:
+                return {
+                    "source": "local_pre_submit",
+                    "code": "local_account_shorting_status_unknown",
+                    "reject_reason": "account shorting eligibility unknown in live mode",
+                    "symbol": symbol,
+                    "qty": str(request.qty),
+                }
+
+        asset = self._get_asset(execution_client, symbol)
+        if asset is None:
+            if strict_short_precheck:
+                return {
+                    "source": "local_pre_submit",
+                    "code": "local_symbol_metadata_unavailable",
+                    "reject_reason": "asset shortability metadata unavailable in live mode",
+                    "symbol": symbol,
+                    "qty": str(request.qty),
+                }
+            return None
+
+        tradable = asset.get("tradable")
+        if isinstance(tradable, bool):
+            if not tradable:
+                return {
+                    "source": "local_pre_submit",
+                    "code": "local_symbol_not_tradable",
+                    "reject_reason": "symbol is not tradable",
+                    "symbol": symbol,
+                    "qty": str(request.qty),
+                }
+        elif strict_short_precheck:
+            return {
+                "source": "local_pre_submit",
+                "code": "local_symbol_tradability_unknown",
+                "reject_reason": "symbol tradability unknown in live mode",
+                "symbol": symbol,
+                "qty": str(request.qty),
+            }
+
+        shortable = asset.get("shortable")
+        if isinstance(shortable, bool):
+            if not shortable:
+                return {
+                    "source": "local_pre_submit",
+                    "code": "local_symbol_not_shortable",
+                    "reject_reason": "symbol is not shortable",
+                    "symbol": symbol,
+                    "qty": str(request.qty),
+                }
+        elif strict_short_precheck:
+            return {
+                "source": "local_pre_submit",
+                "code": "local_symbol_shortability_unknown",
+                "reject_reason": "symbol shortability unknown in live mode",
+                "symbol": symbol,
+                "qty": str(request.qty),
+            }
+
+        easy_to_borrow = asset.get("easy_to_borrow")
+        if isinstance(easy_to_borrow, bool):
+            if not easy_to_borrow:
+                return {
+                    "source": "local_pre_submit",
+                    "code": "local_symbol_not_easy_to_borrow",
+                    "reject_reason": "symbol is not easy-to-borrow",
+                    "symbol": symbol,
+                    "qty": str(request.qty),
+                }
+        elif strict_short_precheck:
+            return {
+                "source": "local_pre_submit",
+                "code": "local_symbol_borrow_status_unknown",
+                "reject_reason": "easy-to-borrow status unknown in live mode",
+                "symbol": symbol,
+                "qty": str(request.qty),
+            }
+
+        return None
+
+    @staticmethod
+    def _is_short_increasing_sell(
+        position_qty: Decimal | None,
+        request_qty: Decimal,
+    ) -> bool:
+        if request_qty <= 0:
+            return False
+        if position_qty is None:
+            # Position lookup can fail transiently; avoid false local rejects.
+            return False
+        if position_qty <= 0:
+            return True
+        return request_qty > position_qty
+
     @classmethod
     def _position_qty_for_symbol(
         cls,
@@ -627,6 +773,43 @@ class OrderExecutor:
             mapped = cast(Mapping[object, Any], position)
             normalized.append({str(key): value for key, value in mapped.items()})
         return normalized
+
+    @staticmethod
+    def _get_account(execution_client: Any) -> dict[str, Any] | None:
+        getter = getattr(execution_client, "get_account", None)
+        if not callable(getter):
+            return None
+        try:
+            account = getter()
+        except Exception as exc:
+            logger.warning("Failed to fetch account for short precheck: %s", exc)
+            return None
+        if not isinstance(account, Mapping):
+            return None
+        payload = cast(Mapping[object, Any], account)
+        return {str(key): value for key, value in payload.items()}
+
+    @staticmethod
+    def _get_asset(
+        execution_client: Any,
+        symbol: str,
+    ) -> dict[str, Any] | None:
+        getter = getattr(execution_client, "get_asset", None)
+        if not callable(getter):
+            return None
+        try:
+            asset = getter(symbol)
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch asset metadata for short precheck symbol=%s: %s",
+                symbol,
+                exc,
+            )
+            return None
+        if not isinstance(asset, Mapping):
+            return None
+        payload = cast(Mapping[object, Any], asset)
+        return {str(key): value for key, value in payload.items()}
 
 
 def _coerce_json(value: Any) -> dict[str, Any]:

@@ -146,6 +146,76 @@ class PositionLookupUnavailableHeldInventoryClient(PositionLookupUnavailableClie
         ]
 
 
+class AccountShortingDisabledClient(FakeAlpacaClient):
+    def get_account(self) -> dict[str, bool]:
+        return {"shorting_enabled": False}
+
+
+class SymbolNotShortableClient(FakeAlpacaClient):
+    def get_account(self) -> dict[str, bool]:
+        return {"shorting_enabled": True}
+
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, str | bool]:
+        return {
+            "symbol": symbol_or_asset_id,
+            "tradable": True,
+            "shortable": False,
+            "easy_to_borrow": False,
+        }
+
+
+class SymbolNotEasyToBorrowClient(FakeAlpacaClient):
+    def get_account(self) -> dict[str, bool]:
+        return {"shorting_enabled": True}
+
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, str | bool]:
+        return {
+            "symbol": symbol_or_asset_id,
+            "tradable": True,
+            "shortable": True,
+            "easy_to_borrow": False,
+        }
+
+
+class AccountMetadataUnavailableClient(FakeAlpacaClient):
+    def get_account(self) -> dict[str, bool]:
+        raise RuntimeError("account lookup unavailable")
+
+
+class AccountShortingUnknownClient(FakeAlpacaClient):
+    def get_account(self) -> dict[str, str]:
+        return {"status": "active"}
+
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, str | bool]:
+        return {
+            "symbol": symbol_or_asset_id,
+            "tradable": True,
+            "shortable": True,
+            "easy_to_borrow": True,
+        }
+
+
+class AssetMetadataUnavailableClient(FakeAlpacaClient):
+    def get_account(self) -> dict[str, bool]:
+        return {"shorting_enabled": True}
+
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, bool]:
+        _ = symbol_or_asset_id
+        raise RuntimeError("asset lookup unavailable")
+
+
+class AssetShortabilityUnknownClient(FakeAlpacaClient):
+    def get_account(self) -> dict[str, bool]:
+        return {"shorting_enabled": True}
+
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, str | bool]:
+        return {
+            "symbol": symbol_or_asset_id,
+            "tradable": True,
+            "easy_to_borrow": True,
+        }
+
+
 class TestOrderIdempotency(TestCase):
     def setUp(self) -> None:
         engine = create_engine('sqlite+pysqlite:///:memory:', future=True)
@@ -156,9 +226,11 @@ class TestOrderIdempotency(TestCase):
         self._orig_fractional_equities_enabled = (
             settings.trading_fractional_equities_enabled
         )
+        self._orig_trading_mode = settings.trading_mode
         settings.trading_multi_account_enabled = False
         settings.trading_allow_shorts = False
         settings.trading_fractional_equities_enabled = False
+        settings.trading_mode = "paper"
 
     def tearDown(self) -> None:
         settings.trading_multi_account_enabled = self._orig_multi_account_enabled
@@ -166,6 +238,7 @@ class TestOrderIdempotency(TestCase):
         settings.trading_fractional_equities_enabled = (
             self._orig_fractional_equities_enabled
         )
+        settings.trading_mode = self._orig_trading_mode
 
     def test_decision_hash_stable_for_same_intent(self) -> None:
         event_ts = datetime(2026, 2, 10, tzinfo=timezone.utc)
@@ -919,6 +992,336 @@ class TestOrderIdempotency(TestCase):
             payload = json.loads(str(context.exception))
             self.assertEqual(payload.get("source"), "local_pre_submit")
             self.assertEqual(payload.get("code"), "local_qty_below_min")
+
+    def test_submit_order_precheck_blocks_short_when_account_shorting_disabled(self) -> None:
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(
+                    session,
+                    AccountShortingDisabledClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "local_pre_submit")
+            self.assertEqual(payload.get("code"), "local_account_shorting_disabled")
+
+    def test_submit_order_precheck_blocks_short_when_symbol_not_shortable(self) -> None:
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(
+                    session,
+                    SymbolNotShortableClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "local_pre_submit")
+            self.assertEqual(payload.get("code"), "local_symbol_not_shortable")
+
+    def test_submit_order_precheck_blocks_short_when_symbol_not_easy_to_borrow(self) -> None:
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(
+                    session,
+                    SymbolNotEasyToBorrowClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "local_pre_submit")
+            self.assertEqual(payload.get("code"), "local_symbol_not_easy_to_borrow")
+
+    def test_submit_order_precheck_blocks_short_when_account_metadata_unavailable_live(self) -> None:
+        settings.trading_allow_shorts = True
+        settings.trading_mode = "live"
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(
+                    session,
+                    AccountMetadataUnavailableClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "local_pre_submit")
+            self.assertEqual(payload.get("code"), "local_account_metadata_unavailable")
+
+    def test_submit_order_precheck_blocks_short_when_account_shorting_status_unknown_live(
+        self,
+    ) -> None:
+        settings.trading_allow_shorts = True
+        settings.trading_mode = "live"
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(
+                    session,
+                    AccountShortingUnknownClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "local_pre_submit")
+            self.assertEqual(payload.get("code"), "local_account_shorting_status_unknown")
+
+    def test_submit_order_precheck_blocks_short_when_asset_metadata_unavailable_live(
+        self,
+    ) -> None:
+        settings.trading_allow_shorts = True
+        settings.trading_mode = "live"
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(
+                    session,
+                    AssetMetadataUnavailableClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "local_pre_submit")
+            self.assertEqual(payload.get("code"), "local_symbol_metadata_unavailable")
+
+    def test_submit_order_precheck_blocks_short_when_asset_shortability_unknown_live(
+        self,
+    ) -> None:
+        settings.trading_allow_shorts = True
+        settings.trading_mode = "live"
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(
+                    session,
+                    AssetShortabilityUnknownClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "local_pre_submit")
+            self.assertEqual(payload.get("code"), "local_symbol_shortability_unknown")
+
+    def test_submit_order_precheck_allows_short_when_asset_metadata_unavailable_paper(
+        self,
+    ) -> None:
+        settings.trading_allow_shorts = True
+        settings.trading_mode = "paper"
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            execution = executor.submit_order(
+                session,
+                AssetMetadataUnavailableClient(),
+                decision,
+                decision_row,
+                "paper",
+            )
+
+            self.assertIsNotNone(execution)
 
     def test_submit_order_precheck_allows_fractional_sell_when_position_lookup_unavailable(
         self,
