@@ -5,6 +5,12 @@ export type GithubReviewConfig = {
   reviewsWriteEnabled: boolean
   mergeWriteEnabled: boolean
   mergeForceEnabled: boolean
+  mergeHoldLabel: string | null
+  automergeBranchPrefixes: string[]
+  automergeRequiredCheckNames: string[]
+  automergeAllowedFilePrefixes: string[]
+  automergeBlockedFilePrefixes: string[]
+  automergeAllowedRiskClasses: string[]
 }
 
 const DEFAULT_GITHUB_API_BASE = 'https://api.github.com'
@@ -30,6 +36,14 @@ export const loadGithubReviewConfig = (): GithubReviewConfig => {
   const reviewsWriteEnabled = parseBool(process.env.JANGAR_GITHUB_REVIEWS_WRITE, true)
   const mergeWriteEnabled = parseBool(process.env.JANGAR_GITHUB_MERGE_WRITE, false)
   const mergeForceEnabled = parseBool(process.env.JANGAR_GITHUB_MERGE_FORCE, false)
+  const mergeHoldLabel = (process.env.JANGAR_GITHUB_MERGE_HOLD_LABEL ?? 'do-not-automerge').trim() || null
+  const automergeBranchPrefixes = parseList(process.env.JANGAR_GITHUB_AUTOMERGE_BRANCH_PREFIXES) || ['codex/swarm-']
+  const automergeRequiredCheckNames = parseList(process.env.JANGAR_GITHUB_AUTOMERGE_REQUIRED_CHECKS)
+  const automergeAllowedFilePrefixes = parseList(process.env.JANGAR_GITHUB_AUTOMERGE_ALLOWED_FILE_PREFIXES)
+  const automergeBlockedFilePrefixes = parseList(process.env.JANGAR_GITHUB_AUTOMERGE_BLOCKED_FILE_PREFIXES)
+  const automergeAllowedRiskClasses = parseList(process.env.JANGAR_GITHUB_AUTOMERGE_ALLOWED_RISK_CLASSES).map((value) =>
+    value.toLowerCase(),
+  )
 
   return {
     githubToken,
@@ -38,6 +52,12 @@ export const loadGithubReviewConfig = (): GithubReviewConfig => {
     reviewsWriteEnabled,
     mergeWriteEnabled,
     mergeForceEnabled,
+    mergeHoldLabel,
+    automergeBranchPrefixes,
+    automergeRequiredCheckNames,
+    automergeAllowedFilePrefixes,
+    automergeBlockedFilePrefixes,
+    automergeAllowedRiskClasses,
   }
 }
 

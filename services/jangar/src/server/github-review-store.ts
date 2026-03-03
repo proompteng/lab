@@ -138,6 +138,14 @@ export type GithubWriteAudit = {
   repository: string
   prNumber: number
   commitSha: string | null
+  missionId: string | null
+  stage: string | null
+  actionClass: string | null
+  riskClass: string | null
+  rolloutRef: string | null
+  rolloutStatus: string | null
+  rollbackRef: string | null
+  rollbackReason: string | null
   action: string
   actor: string | null
   requestId: string | null
@@ -263,6 +271,12 @@ export type GithubReviewStore = {
     receivedAt: string
   }) => Promise<void>
   insertWriteAudit: (input: GithubWriteAudit) => Promise<void>
+  listWriteAudits: (input: {
+    repository: string
+    prNumber: number
+    action?: string | string[]
+    limit?: number
+  }) => Promise<GithubWriteAudit[]>
   resolveThreadKey: (input: {
     repository: string
     prNumber: number
@@ -1300,6 +1314,14 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
         repository: input.repository,
         pr_number: input.prNumber,
         commit_sha: input.commitSha,
+        mission_id: input.missionId,
+        stage: input.stage,
+        action_class: input.actionClass,
+        risk_class: input.riskClass,
+        rollout_ref: input.rolloutRef,
+        rollout_status: input.rolloutStatus,
+        rollback_ref: input.rollbackRef,
+        rollback_reason: input.rollbackReason,
         received_at: input.receivedAt,
         action: input.action,
         actor: input.actor,
@@ -1310,6 +1332,69 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
         error: input.error ?? null,
       })
       .execute()
+  }
+
+  const listWriteAudits: GithubReviewStore['listWriteAudits'] = async (input) => {
+    await ready
+    const actionList = Array.isArray(input.action)
+      ? input.action
+      : typeof input.action === 'string'
+        ? input.action
+            .split(',')
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0)
+        : []
+    const rows = await db
+      .selectFrom('jangar_github.write_actions')
+      .select([
+        'repository',
+        'pr_number',
+        'commit_sha',
+        'mission_id',
+        'stage',
+        'action_class',
+        'risk_class',
+        'rollout_ref',
+        'rollout_status',
+        'rollback_ref',
+        'rollback_reason',
+        'action',
+        'actor',
+        'request_id',
+        'payload',
+        'response',
+        'success',
+        'error',
+        'received_at',
+      ])
+      .where('repository', '=', input.repository)
+      .where('pr_number', '=', input.prNumber)
+      .if(actionList.length > 0, (query) => query.where('action', 'in', actionList))
+      .orderBy('received_at', 'desc')
+      .limit(Math.min(Math.max(input.limit ?? 20, 1), 200))
+      .execute()
+
+    return rows.map((row) => ({
+      repository: row.repository,
+      prNumber: row.pr_number,
+      commitSha: row.commit_sha ?? null,
+      missionId: row.mission_id ?? null,
+      stage: row.stage ?? null,
+      actionClass: row.action_class ?? null,
+      riskClass: row.risk_class ?? null,
+      rolloutRef: row.rollout_ref ?? null,
+      rolloutStatus: row.rollout_status ?? null,
+      rollbackRef: row.rollback_ref ?? null,
+      rollbackReason: row.rollback_reason ?? null,
+      action: row.action,
+      actor: row.actor ?? null,
+      requestId: row.request_id ?? null,
+      payload: row.payload as Record<string, unknown>,
+      response: row.response ? (row.response as Record<string, unknown>) : null,
+      success: row.success,
+      error: row.error ?? null,
+      receivedAt: String(row.received_at),
+    }))
   }
 
   const resolveThreadKey: GithubReviewStore['resolveThreadKey'] = async (input) => {
@@ -1349,6 +1434,7 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
     updateMergeState,
     updateReviewDecision,
     insertWriteAudit,
+    listWriteAudits,
     resolveThreadKey,
   }
 }

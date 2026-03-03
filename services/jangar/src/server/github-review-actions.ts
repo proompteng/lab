@@ -44,6 +44,115 @@ const isMergeable = (mergeableState: string | null | undefined) => {
 
 const isChecksPassing = (status: string | null | undefined) => status === 'success'
 
+const isAutomergeBranch = (headRef: string | null | undefined, prefixes: string[]) => {
+  if (!headRef) return false
+  const branch = headRef.trim()
+  if (!branch) return false
+  return prefixes.some((prefix) => branch.startsWith(prefix))
+}
+
+const hasHoldLabel = (labels: string[] | undefined, holdLabel: string | null) => {
+  if (!holdLabel || !Array.isArray(labels)) return false
+  const normalized = holdLabel.trim().toLowerCase()
+  if (!normalized) return false
+  return labels.some((label) => String(label).trim().toLowerCase() === normalized)
+}
+
+const toPathPrefixList = (values: string[] | undefined | null): string[] => {
+  if (!Array.isArray(values)) return []
+  const normalized = values
+    .map((value) => String(value).trim().toLowerCase())
+    .filter((value) => value.length > 0)
+    .map((value) => (value.endsWith('/') ? value.slice(0, -1) : value))
+  return Array.from(new Set(normalized))
+}
+
+const parseRiskClass = (labels: string[] | undefined): string | null => {
+  if (!Array.isArray(labels)) return null
+  for (const label of labels) {
+    const raw = String(label).trim()
+    if (!raw) continue
+    const normalized = raw.toLowerCase()
+    if (!normalized.startsWith('risk:')) continue
+    const value = normalized.slice(5).trim()
+    if (!value) continue
+    return value
+  }
+  return null
+}
+
+const isAllowedByPrefix = (value: string, allowedPrefixes: string[]) => {
+  if (allowedPrefixes.length === 0) return true
+  const normalized = value.toLowerCase()
+  return allowedPrefixes.some((prefix) => {
+    if (!prefix) return false
+    return normalized === prefix || normalized.startsWith(`${prefix}/`)
+  })
+}
+
+const isBlockedByPrefix = (value: string, blockedPrefixes: string[]) => {
+  if (blockedPrefixes.length === 0) return false
+  const normalized = value.toLowerCase()
+  return blockedPrefixes.some((prefix) => {
+    if (!prefix) return false
+    return normalized === prefix || normalized.startsWith(`${prefix}/`)
+  })
+}
+
+const isRequiredChecksPassing = (args: {
+  checks: Array<{ commitSha: string; runs: Array<{ name?: unknown; status?: unknown; conclusion?: unknown }> }>
+  requiredCheckNames: string[]
+  headSha: string | null
+}) => {
+  const required = toPathPrefixList(args.requiredCheckNames)
+  if (required.length === 0) return { passed: true, missing: [] as string[] }
+
+  const runSet = new Set<string>(
+    args.checks
+      .filter((check) => !args.headSha || check.commitSha === args.headSha)
+      .flatMap((check) => {
+        return (check.runs ?? []).map((run) => {
+          const name = String(run.name ?? '').trim()
+          if (!name) return ''
+          return name.toLowerCase()
+        })
+      })
+      .filter((name) => name.length > 0),
+  )
+  const missing = required.filter((requiredCheck) => !runSet.has(requiredCheck))
+  if (missing.length > 0) return { passed: false, missing }
+
+  const matchedChecks = args.checks
+    .filter((check) => !args.headSha || check.commitSha === args.headSha)
+    .flatMap((check) => check.runs ?? [])
+    .filter((run) => typeof run.name === 'string')
+    .map((run) => {
+      const name = String(run.name).trim().toLowerCase()
+      const status = String(run.status ?? '')
+        .trim()
+        .toLowerCase()
+      const conclusion = String(run.conclusion ?? '')
+        .trim()
+        .toLowerCase()
+      return { name, status, conclusion, runName: String(run.name).trim() }
+    })
+
+  const failed = required.filter((requiredCheck) => {
+    const observed = matchedChecks.find((run) => run.name === requiredCheck)
+    if (!observed) return true
+    if (observed.status && observed.status !== 'completed') return true
+    if (observed.conclusion && observed.conclusion !== 'success') {
+      return observed.conclusion !== 'neutral' && observed.conclusion !== 'skipped'
+    }
+    return false
+  })
+
+  return {
+    passed: failed.length === 0,
+    missing: failed,
+  }
+}
+
 const isReviewPassing = (decision: string | null | undefined, unresolvedThreadsCount?: number | null) => {
   if (decision === 'changes_requested') return false
   if (typeof unresolvedThreadsCount === 'number' && unresolvedThreadsCount > 0) return false
@@ -76,6 +185,7 @@ export const submitPullRequestReview = async (
   const actor = auditContext.actor ?? null
   const requestId = auditContext.requestId ?? auditContext.correlationId ?? null
   const receivedAt = new Date().toISOString()
+  let riskClass: string | null = null
 
   try {
     const response = await github.submitReview({
@@ -107,6 +217,14 @@ export const submitPullRequestReview = async (
       repository,
       prNumber: input.number,
       commitSha: null,
+      missionId: null,
+      stage: null,
+      actionClass: null,
+      riskClass: null,
+      rolloutRef: null,
+      rolloutStatus: null,
+      rollbackRef: null,
+      rollbackReason: null,
       action: 'review_submit',
       actor,
       requestId,
@@ -144,6 +262,14 @@ export const submitPullRequestReview = async (
       repository,
       prNumber: input.number,
       commitSha: null,
+      missionId: null,
+      stage: null,
+      actionClass: null,
+      riskClass: null,
+      rolloutRef: null,
+      rolloutStatus: null,
+      rollbackRef: null,
+      rollbackReason: null,
       action: 'review_submit',
       actor,
       requestId,
@@ -241,6 +367,14 @@ export const resolvePullRequestThread = async (
       repository,
       prNumber: input.number,
       commitSha: null,
+      missionId: null,
+      stage: null,
+      actionClass: null,
+      riskClass: null,
+      rolloutRef: null,
+      rolloutStatus: null,
+      rollbackRef: null,
+      rollbackReason: null,
       action: input.resolve ? 'thread_resolve' : 'thread_unresolve',
       actor,
       requestId,
@@ -279,6 +413,14 @@ export const resolvePullRequestThread = async (
       repository,
       prNumber: input.number,
       commitSha: null,
+      missionId: null,
+      stage: null,
+      actionClass: null,
+      riskClass: null,
+      rolloutRef: null,
+      rolloutStatus: null,
+      rollbackRef: null,
+      rollbackReason: null,
       action: input.resolve ? 'thread_resolve' : 'thread_unresolve',
       actor,
       requestId,
@@ -347,6 +489,7 @@ export const mergePullRequest = async (
   const actor = auditContext.actor ?? null
   const requestId = auditContext.requestId ?? auditContext.correlationId ?? null
   const receivedAt = new Date().toISOString()
+  let riskClass: string | null = null
 
   try {
     const state = await store.getPull({ repository, prNumber: input.number })
@@ -359,8 +502,13 @@ export const mergePullRequest = async (
     const checksStatus = state.checks?.status ?? null
     const reviewDecision = state.review?.decision ?? null
     const unresolvedThreadsCount = state.review?.unresolvedThreadsCount ?? null
+    riskClass = parseRiskClass(pull.labels)
 
     const force = Boolean(input.force && config.mergeForceEnabled)
+    const isSwarmAutomerge = isAutomergeBranch(pull.headRef, config.automergeBranchPrefixes)
+    if (isSwarmAutomerge && hasHoldLabel(pull.labels, config.mergeHoldLabel)) {
+      throw new Error(`Merge blocked (${config.mergeHoldLabel ?? 'hold label'} present)`)
+    }
 
     if (!force) {
       if (pull.draft) {
@@ -374,6 +522,48 @@ export const mergePullRequest = async (
       }
       if (!isReviewPassing(reviewDecision, unresolvedThreadsCount)) {
         throw new Error(`Merge blocked (review: ${reviewDecision ?? 'unknown'})`)
+      }
+
+      if (isSwarmAutomerge) {
+        const requiredCheckResult = isRequiredChecksPassing({
+          checks: await store.listCheckStates({ repository, prNumber: input.number }),
+          requiredCheckNames: config.automergeRequiredCheckNames,
+          headSha: pull.headSha,
+        })
+        if (!requiredCheckResult.passed) {
+          throw new Error(`Merge blocked (required checks missing/failing: ${requiredCheckResult.missing.join(', ')})`)
+        }
+
+        const allowedPrefixes = toPathPrefixList(config.automergeAllowedFilePrefixes)
+        const blockedPrefixes = toPathPrefixList(config.automergeBlockedFilePrefixes)
+        const allowedRiskClasses = toPathPrefixList(config.automergeAllowedRiskClasses)
+
+        if (allowedRiskClasses.length > 0) {
+          if (!riskClass) {
+            throw new Error('Merge blocked (risk class missing)')
+          }
+          if (!allowedRiskClasses.includes(riskClass)) {
+            throw new Error(`Merge blocked (risk class '${riskClass}' not permitted)`)
+          }
+        }
+
+        const changedFiles = await store.listFiles({
+          repository,
+          prNumber: input.number,
+          commitSha: pull.headSha,
+        })
+        if (pull.changedFiles === 0 || changedFiles.length === 0) {
+          throw new Error('Merge blocked (empty diff)')
+        }
+        const disallowedFiles = changedFiles
+          .map((file) => file.path)
+          .filter((filePath) => typeof filePath === 'string' && filePath.length > 0)
+          .filter((filePath) => {
+            return !isAllowedByPrefix(filePath, allowedPrefixes) || isBlockedByPrefix(filePath, blockedPrefixes)
+          })
+        if (disallowedFiles.length > 0) {
+          throw new Error(`Merge blocked (files outside policy: ${disallowedFiles.slice(0, 5).join(', ')})`)
+        }
       }
     }
 
@@ -400,10 +590,83 @@ export const mergePullRequest = async (
       })) as Record<string, unknown>
     }
 
+    if (merged) {
+      const rolloutReference =
+        typeof (response as Record<string, unknown>).sha === 'string'
+          ? String((response as Record<string, unknown>).sha)
+          : pull.headSha
+      const rolloutPayload = {
+        action: 'rollout',
+        missionId: null,
+        stage: 'rollout',
+        reference: rolloutReference,
+        status: 'passed',
+        reason: null,
+        actor,
+        requestId,
+      }
+      void (async () => {
+        try {
+          await store.insertWriteAudit({
+            repository,
+            prNumber: input.number,
+            commitSha: rolloutReference,
+            missionId: null,
+            stage: 'rollout',
+            actionClass: 'autonomous',
+            riskClass,
+            rolloutRef: rolloutReference,
+            rolloutStatus: 'passed',
+            rollbackRef: null,
+            rollbackReason: null,
+            action: 'rollout',
+            actor,
+            requestId,
+            payload: rolloutPayload,
+            response: { merge: response as Record<string, unknown>, deleteBranch: deleteBranchResponse },
+            success: true,
+            receivedAt,
+          })
+          void emitAuditEventBestEffort({
+            entityType: 'GithubWriteAction',
+            entityId: randomUUID(),
+            eventType: 'github.rollout_reported',
+            context: auditContext,
+            details: {
+              repository,
+              prNumber: input.number,
+              action: 'rollout',
+              missionId: null,
+              stage: 'rollout',
+              reference: rolloutReference,
+              status: 'passed',
+              success: true,
+            },
+          })
+        } catch (error) {
+          console.error('[jangar][github] merge rollout evidence write failed', {
+            repository,
+            prNumber: input.number,
+            actor,
+            requestId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      })()
+    }
+
     await store.insertWriteAudit({
       repository,
       prNumber: input.number,
       commitSha: pull.headSha ?? null,
+      missionId: null,
+      stage: 'merge',
+      actionClass: 'autonomous',
+      riskClass,
+      rolloutRef: null,
+      rolloutStatus: null,
+      rollbackRef: null,
+      rollbackReason: null,
       action: 'merge',
       actor,
       requestId,
@@ -455,6 +718,14 @@ export const mergePullRequest = async (
       repository,
       prNumber: input.number,
       commitSha: pull?.headSha ?? null,
+      missionId: null,
+      stage: 'merge',
+      actionClass: 'autonomous',
+      riskClass,
+      rolloutRef: null,
+      rolloutStatus: null,
+      rollbackRef: null,
+      rollbackReason: null,
       action: 'merge',
       actor,
       requestId,
@@ -497,6 +768,158 @@ export const mergePullRequest = async (
       error: message,
     })
 
+    throw error
+  } finally {
+    await store.close()
+  }
+}
+
+type DeploymentAction = 'rollout' | 'rollback'
+
+const isDeploymentAction = (value: string): value is DeploymentAction => {
+  return value === 'rollout' || value === 'rollback'
+}
+
+const normalizeText = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+export const recordPullDeploymentAction = async (
+  request: Request,
+  input: {
+    owner: string
+    repo: string
+    number: number
+    action: string
+    missionId?: string | null
+    stage?: string | null
+    reference?: string | null
+    status?: string | null
+    reason?: string | null
+  },
+) => {
+  const config = getConfig()
+  const store = getStore()
+  const repository = `${input.owner}/${input.repo}`
+  requireRepoAllowed(repository, config)
+  requireWriteEnabled(config.mergeWriteEnabled, 'Merge')
+  requireToken(config)
+
+  const auditContext = resolveAuditContextFromRequest(request, {
+    source: 'github-review-actions',
+    repository,
+  })
+  const actor = auditContext.actor ?? null
+  const requestId = auditContext.requestId ?? auditContext.correlationId ?? null
+  const receivedAt = new Date().toISOString()
+  let action: DeploymentAction = 'rollout'
+  let missionId = normalizeText(input.missionId)
+  let stage = normalizeText(input.stage)
+  const reference = normalizeText(input.reference)
+  const status = normalizeText(input.status)
+  const reason = normalizeText(input.reason)
+
+  try {
+    const pullState = await store.getPull({ repository, prNumber: input.number })
+    const pull = pullState.pull
+    if (!pull) {
+      throw new Error('Pull request not found in stored state')
+    }
+
+    if (!isDeploymentAction(input.action)) {
+      throw new Error(`Invalid deployment action: ${input.action}`)
+    }
+    action = input.action
+    if (!stage) {
+      stage = action === 'rollback' ? 'rollback' : 'rollout'
+    }
+    if (action === 'rollout' && !reference) {
+      throw new Error('Rollout evidence requires a reference')
+    }
+    if (action === 'rollback' && !reason) {
+      throw new Error('Rollback evidence requires a reason')
+    }
+
+    const riskClass = parseRiskClass(pull.labels)
+
+    const payload = {
+      action,
+      missionId,
+      stage,
+      reference,
+      status,
+      reason,
+      actor,
+      requestId,
+    }
+    await store.insertWriteAudit({
+      repository,
+      prNumber: input.number,
+      commitSha: pull.headSha ?? null,
+      missionId,
+      stage,
+      actionClass: 'autonomous',
+      riskClass,
+      rolloutRef: action === 'rollout' ? reference : null,
+      rolloutStatus: action === 'rollout' ? status : null,
+      rollbackRef: action === 'rollback' ? reference : null,
+      rollbackReason: action === 'rollback' ? reason : null,
+      action,
+      actor,
+      requestId,
+      payload,
+      response: null,
+      success: true,
+      receivedAt,
+    })
+
+    const eventType = action === 'rollout' ? 'github.rollout_reported' : 'github.rollback_reported'
+    void emitAuditEventBestEffort({
+      entityType: 'GithubWriteAction',
+      entityId: randomUUID(),
+      eventType,
+      context: auditContext,
+      details: {
+        repository,
+        prNumber: input.number,
+        action,
+        missionId,
+        stage,
+        reference,
+        status,
+        success: true,
+      },
+    })
+
+    return { ok: true, action, missionId, stage, reference, status, reason }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const pullState = await store.getPull({ repository, prNumber: input.number }).catch(() => ({ pull: null }))
+    const pull = pullState.pull
+    const riskClass = parseRiskClass(pull?.labels)
+    await store.insertWriteAudit({
+      repository,
+      prNumber: input.number,
+      commitSha: pull?.headSha ?? null,
+      missionId,
+      stage,
+      actionClass: 'autonomous',
+      riskClass,
+      rolloutRef: action === 'rollout' ? reference : null,
+      rolloutStatus: action === 'rollout' ? status : null,
+      rollbackRef: action === 'rollback' ? reference : null,
+      rollbackReason: action === 'rollback' ? reason : null,
+      action,
+      actor,
+      requestId,
+      payload: { action, missionId, stage, reference, status, reason },
+      response: null,
+      success: false,
+      error: message,
+      receivedAt,
+    })
     throw error
   } finally {
     await store.close()

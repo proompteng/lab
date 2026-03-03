@@ -81,6 +81,10 @@
   "promotion_stress_required_artifacts": [
     "gates/stress-metrics-v1.json"
   ],
+  "promotion_require_fold_evidence": true,
+  "promotion_fold_required_artifacts": [
+    "gates/fold-metrics-v1.json"
+  ],
   "promotion_stress_max_age_hours": 24,
   "promotion_require_hmm_state_posterior": true,
   "promotion_hmm_required_targets": ["paper", "live"],

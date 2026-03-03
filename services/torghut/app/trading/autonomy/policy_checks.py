@@ -145,6 +145,10 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
+    fold_required = _requires_fold_evidence(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     required_artifacts = _required_artifacts_for_target(
         policy_payload,
         promotion_target,
@@ -155,6 +159,7 @@ def evaluate_promotion_prerequisites(
         include_stress_artifacts=stress_required,
         include_hmm_state_posterior_artifacts=hmm_state_posterior_required,
         include_expert_router_artifacts=expert_router_registry_required,
+        include_fold_artifacts=fold_required,
         require_profitability_manifest=require_profitability_manifest,
     )
     missing_artifacts = [
@@ -1233,6 +1238,7 @@ def _required_artifacts_for_target(
     include_stress_artifacts: bool,
     include_hmm_state_posterior_artifacts: bool,
     include_expert_router_artifacts: bool,
+    include_fold_artifacts: bool,
     require_profitability_manifest: bool,
 ) -> list[str]:
     base_raw = policy_payload.get(
@@ -1313,6 +1319,15 @@ def _required_artifacts_for_target(
         expert_router_artifacts = _expert_router_required_artifact_refs(policy_payload)
         for artifact in expert_router_artifacts:
             required.append(artifact)
+    if include_fold_artifacts:
+        fold_artifacts_raw = policy_payload.get(
+            "promotion_fold_required_artifacts",
+            ["gates/fold-metrics-v1.json"],
+        )
+        fold_artifacts = _list_from_any(fold_artifacts_raw)
+        for artifact in fold_artifacts:
+            if isinstance(artifact, str):
+                required.append(artifact)
     return sorted(set(required))
 
 
@@ -1536,6 +1551,26 @@ def _requires_contamination_registry(
     return promotion_target in required_targets
 
 
+def _requires_fold_evidence(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("promotion_require_fold_evidence", False)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_fold_required_targets", ["paper", "live"]
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
 def _required_rollback_checks(policy_payload: dict[str, Any]) -> list[str]:
     checks_raw = policy_payload.get(
         "rollback_required_checks",
@@ -1630,6 +1665,16 @@ def _evaluate_promotion_evidence(
         reasons.extend(stress_reasons)
         details.extend(stress_details)
         refs.extend(stress_refs)
+    if fold_required:
+        fold_reasons, fold_details, fold_refs = _evaluate_fold_metrics_evidence(
+            policy_payload=policy_payload,
+            evidence=evidence,
+            artifact_root=artifact_root,
+            now=now,
+        )
+        reasons.extend(fold_reasons)
+        details.extend(fold_details)
+        refs.extend(fold_refs)
 
     janus_reasons, janus_details, janus_refs = _evaluate_janus_evidence(
         policy_payload=policy_payload,
@@ -3098,22 +3143,62 @@ def _evaluate_fold_metrics_evidence(
     fold_raw = evidence.get("fold_metrics")
     fold_metrics = cast(dict[str, Any], fold_raw) if isinstance(fold_raw, dict) else {}
     fold_ref = str(fold_metrics.get("artifact_ref") or "").strip()
-    fold_count = _int_or_default(fold_metrics.get("count"), 0)
+    _append_evidence_artifact_reasons(
+        reasons=reasons,
+        reason_details=details,
+        evidence_name="fold_metrics",
+        artifact_root=artifact_root,
+        raw_ref=fold_ref,
+        policy_payload=policy_payload,
+        now=now,
+    )
     min_fold_count = max(
         1,
         _int_or_default(policy_payload.get("promotion_min_fold_metrics_count"), 1),
     )
-    if fold_count < min_fold_count:
+    fold_count = _int_or_default(fold_metrics.get("count"), 0)
+    effective_fold_count = fold_count
+    if fold_ref:
+        refs.append(fold_ref)
+        fold_payload_path = _normalize_artifact_path(fold_ref, artifact_root=artifact_root)
+        if fold_payload_path is not None:
+            fold_payload = _load_json_if_exists(fold_payload_path)
+            if fold_payload is None:
+                reasons.append("fold_metrics_evidence_artifact_invalid")
+                details.append(
+                    {
+                        "reason": "fold_metrics_evidence_artifact_invalid",
+                        "artifact_ref": fold_ref,
+                    }
+                )
+            else:
+                schema_version = str(fold_payload.get("schema_version", "")).strip()
+                if schema_version and schema_version != "fold-metrics-v1":
+                    reasons.append("fold_metrics_evidence_schema_invalid")
+                    details.append(
+                        {
+                            "reason": "fold_metrics_evidence_schema_invalid",
+                            "artifact_ref": fold_ref,
+                            "actual_schema_version": schema_version,
+                            "expected_schema_version": "fold-metrics-v1",
+                        }
+                    )
+                payload_count = _int_or_default(
+                    fold_payload.get("count"),
+                    len(_list_from_any(fold_payload.get("items"))),
+                )
+                effective_fold_count = payload_count
+
+    if effective_fold_count < min_fold_count:
         reasons.append("fold_metrics_evidence_insufficient")
         details.append(
             {
                 "reason": "fold_metrics_evidence_insufficient",
-                "actual_fold_count": fold_count,
+                "actual_fold_count": effective_fold_count,
                 "minimum_fold_count": min_fold_count,
             }
         )
-    if fold_ref:
-        refs.append(fold_ref)
+
     return reasons, details, refs
 
 
