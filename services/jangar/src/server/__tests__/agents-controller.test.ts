@@ -727,7 +727,7 @@ describe('agents controller reconcileAgentRun', () => {
         updatedAt: now,
       },
       created: false,
-    })
+    } as never)
     primitivesStoreMocks.store.assignAgentRunIdempotencyKey.mockResolvedValue({
       id: 'idempotency-market-1',
       namespace: 'agents',
@@ -739,7 +739,7 @@ describe('agents controller reconcileAgentRun', () => {
       terminalAt: null,
       createdAt: now,
       updatedAt: now,
-    })
+    } as never)
 
     const kube = buildKube({
       get: vi.fn(async (resource: string, name?: string) => {
