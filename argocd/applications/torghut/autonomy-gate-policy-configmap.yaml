@@ -99,6 +99,14 @@ data:
         "gates/hmm-state-posterior-v1.json"
       ],
       "promotion_hmm_min_authoritative_sample_ratio": "0.0",
+      "promotion_require_expert_router_registry": true,
+      "promotion_expert_router_required_targets": ["paper", "live"],
+      "promotion_expert_router_required_artifacts": [
+        "gates/expert-router-registry-v1.json"
+      ],
+      "promotion_expert_router_min_route_count": 1,
+      "promotion_expert_router_max_fallback_rate": "0.05",
+      "promotion_expert_router_max_expert_concentration": "0.85",
       "promotion_require_janus_evidence": true,
       "promotion_janus_event_car_artifact": "gates/janus-event-car-v1.json",
       "promotion_janus_hgrm_reward_artifact": "gates/janus-hgrm-reward-v1.json",

@@ -161,6 +161,7 @@ def main() -> int:
         }
         promotion_evidence = gate_report.get("promotion_evidence")
         hmm_posterior_payload: dict[str, Any] = {}
+        expert_router_payload: dict[str, Any] = {}
         if isinstance(promotion_evidence, dict):
             stress_metrics = promotion_evidence.get("stress_metrics")
             if isinstance(stress_metrics, dict):
@@ -193,6 +194,19 @@ def main() -> int:
                 }
             promotion_evidence["hmm_state_posterior"]["artifact_ref"] = (
                 "gates/hmm-state-posterior-v1.json"
+            )
+            expert_router_registry = promotion_evidence.get("expert_router_registry")
+            if isinstance(expert_router_registry, dict):
+                expert_router_payload = {
+                    str(key): value for key, value in expert_router_registry.items()
+                }
+            else:
+                expert_router_payload = {}
+                promotion_evidence["expert_router_registry"] = {
+                    "artifact_ref": "gates/expert-router-registry-v1.json"
+                }
+            promotion_evidence["expert_router_registry"]["artifact_ref"] = (
+                "gates/expert-router-registry-v1.json"
             )
         if "generated_at" not in stress_artifact:
             stress_artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
@@ -291,6 +305,70 @@ def main() -> int:
         )
         (root / "gates" / "hmm-state-posterior-v1.json").write_text(
             json.dumps(hmm_artifact, indent=2), encoding="utf-8"
+        )
+        expert_router_artifact: dict[str, Any] = {
+            "schema_version": "expert-router-registry-v1",
+            "run_id": str(gate_report.get("run_id", "run-dry-run")),
+            "candidate_id": "cand-dry-run",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "router_version": str(expert_router_payload.get("router_version") or "router-v1"),
+            "route_count": int(expert_router_payload.get("route_count") or 10),
+            "fallback_count": int(expert_router_payload.get("fallback_count") or 0),
+            "fallback_rate": str(expert_router_payload.get("fallback_rate") or "0"),
+            "max_expert_weight": str(expert_router_payload.get("max_expert_weight") or "0.62"),
+            "avg_expert_weights": {
+                "trend": "0.62",
+                "reversal": "0.14",
+                "breakout": "0.20",
+                "defensive": "0.04",
+            },
+            "top_expert_counts": {
+                "trend": 10,
+                "reversal": 0,
+                "breakout": 0,
+                "defensive": 0,
+            },
+            "concentration": {
+                "dominant_expert": "trend",
+                "dominant_expert_count": 10,
+                "max_expert_weight": str(
+                    expert_router_payload.get("max_expert_weight") or "0.62"
+                ),
+            },
+            "slo_feedback": {
+                "max_fallback_rate": str(
+                    policy.get("promotion_expert_router_max_fallback_rate", "0.05")
+                ),
+                "max_expert_concentration": str(
+                    policy.get(
+                        "promotion_expert_router_max_expert_concentration", "0.85"
+                    )
+                ),
+                "fallback_rate": str(expert_router_payload.get("fallback_rate") or "0"),
+                "max_observed_expert_weight": str(
+                    expert_router_payload.get("max_expert_weight") or "0.62"
+                ),
+                "fallback_slo_pass": True,
+                "concentration_slo_pass": True,
+                "overall_status": "pass",
+                "reasons": [],
+            },
+            "source_lineage": {
+                "walkforward_results_artifact_ref": "backtest/evaluation-report.json",
+                "hmm_state_posterior_artifact_ref": "gates/hmm-state-posterior-v1.json",
+                "gate_policy_artifact_ref": "gates/gate-evaluation.json",
+                "strategy_config_artifact_ref": "research/candidate-spec.json",
+            },
+        }
+        expert_router_artifact["artifact_hash"] = _stable_hash(
+            {
+                key: value
+                for key, value in expert_router_artifact.items()
+                if key != "artifact_hash"
+            }
+        )
+        (root / "gates" / "expert-router-registry-v1.json").write_text(
+            json.dumps(expert_router_artifact, indent=2), encoding="utf-8"
         )
 
         if args.simulate_missing_artifact:

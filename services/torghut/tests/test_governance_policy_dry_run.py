@@ -68,6 +68,15 @@ def _default_gate_report(now: datetime) -> dict[str, object]:
                 "authoritative_samples": 6,
                 "authoritative_sample_ratio": "0.6",
             },
+            "expert_router_registry": {
+                "artifact_ref": "gates/expert-router-registry-v1.json",
+                "schema_version": "expert-router-registry-v1",
+                "router_version": "router-v1",
+                "route_count": 10,
+                "fallback_count": 0,
+                "fallback_rate": "0",
+                "max_expert_weight": "0.62",
+            },
             "promotion_rationale": {
                 "requested_target": "paper",
                 "gate_recommended_mode": "paper",

@@ -102,6 +102,7 @@ _STAGE_RECOMMENDATION = "promotion-recommendation"
 _STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
 _CONTAMINATION_REGISTRY_ARTIFACT_PATH = "contamination-leakage-report-v1.json"
 _HMM_STATE_POSTERIOR_ARTIFACT_PATH = "gates/hmm-state-posterior-v1.json"
+_EXPERT_ROUTER_REGISTRY_ARTIFACT_PATH = "gates/expert-router-registry-v1.json"
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
 _BENCHMARK_PARITY_REPORT_PATH = "benchmarks/benchmark-parity-report-v1.json"
 _STAGE_PROFITABILITY = "profitability_stage_manifest"
@@ -678,6 +679,276 @@ def _build_hmm_state_posterior_payload(
     return payload
 
 
+def _decimal_or_zero(value: object) -> Decimal:
+    try:
+        decimal_value = Decimal(str(value))
+    except Exception:
+        return Decimal("0")
+    if decimal_value.is_nan() or decimal_value.is_infinite():
+        return Decimal("0")
+    return decimal_value
+
+
+def _normalize_expert_weights(weights: Mapping[str, Decimal]) -> dict[str, Decimal]:
+    total = Decimal("0")
+    for value in weights.values():
+        if value > 0:
+            total += value
+    if total <= 0:
+        return {
+            "trend": Decimal("0.05"),
+            "reversal": Decimal("0.05"),
+            "breakout": Decimal("0.10"),
+            "defensive": Decimal("0.80"),
+        }
+    return {
+        "trend": max(Decimal("0"), weights.get("trend", Decimal("0"))) / total,
+        "reversal": max(Decimal("0"), weights.get("reversal", Decimal("0"))) / total,
+        "breakout": max(Decimal("0"), weights.get("breakout", Decimal("0"))) / total,
+        "defensive": max(Decimal("0"), weights.get("defensive", Decimal("0"))) / total,
+    }
+
+
+def _build_expert_router_weights(
+    *,
+    regime_label: str,
+    context: Any,
+) -> tuple[dict[str, Decimal], bool]:
+    fallback_active = bool(
+        context.guardrail.fallback_to_defensive
+        or context.guardrail.stale
+        or context.transition_shock
+    )
+    if context.entropy_band == "high":
+        fallback_active = True
+    if fallback_active:
+        return (
+            _normalize_expert_weights(
+                {
+                    "trend": Decimal("0.05"),
+                    "reversal": Decimal("0.05"),
+                    "breakout": Decimal("0.10"),
+                    "defensive": Decimal("0.80"),
+                }
+            ),
+            True,
+        )
+
+    normalized_regime_label = regime_label.strip().lower()
+    if normalized_regime_label in {"r2", "trend", "trend_up"}:
+        return (
+            _normalize_expert_weights(
+                {
+                    "trend": Decimal("0.62"),
+                    "reversal": Decimal("0.14"),
+                    "breakout": Decimal("0.20"),
+                    "defensive": Decimal("0.04"),
+                }
+            ),
+            False,
+        )
+    if normalized_regime_label in {"r3", "breakout", "risk_on_breakout"}:
+        return (
+            _normalize_expert_weights(
+                {
+                    "trend": Decimal("0.24"),
+                    "reversal": Decimal("0.11"),
+                    "breakout": Decimal("0.55"),
+                    "defensive": Decimal("0.10"),
+                }
+            ),
+            False,
+        )
+    if normalized_regime_label in {"r1", "range", "mean_revert", "reversal"}:
+        return (
+            _normalize_expert_weights(
+                {
+                    "trend": Decimal("0.18"),
+                    "reversal": Decimal("0.55"),
+                    "breakout": Decimal("0.12"),
+                    "defensive": Decimal("0.15"),
+                }
+            ),
+            False,
+        )
+    if normalized_regime_label in {"r4", "r5", "stressed", "stress"}:
+        return (
+            _normalize_expert_weights(
+                {
+                    "trend": Decimal("0.08"),
+                    "reversal": Decimal("0.12"),
+                    "breakout": Decimal("0.10"),
+                    "defensive": Decimal("0.70"),
+                }
+            ),
+            False,
+        )
+
+    return (
+        _normalize_expert_weights(
+            {
+                "trend": Decimal("0.28"),
+                "reversal": Decimal("0.22"),
+                "breakout": Decimal("0.26"),
+                "defensive": Decimal("0.24"),
+            }
+        ),
+        False,
+    )
+
+
+def _build_expert_router_registry_payload(
+    *,
+    output_dir: Path,
+    run_id: str,
+    candidate_id: str,
+    now: datetime,
+    walk_decisions: Sequence[WalkForwardDecision],
+    walkforward_results_path: Path,
+    gate_policy_path: Path,
+    strategy_config_path: Path,
+    hmm_state_posterior_path: Path,
+    policy_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    expert_sums: dict[str, Decimal] = {
+        "trend": Decimal("0"),
+        "reversal": Decimal("0"),
+        "breakout": Decimal("0"),
+        "defensive": Decimal("0"),
+    }
+    top_expert_counts: dict[str, int] = {
+        "trend": 0,
+        "reversal": 0,
+        "breakout": 0,
+        "defensive": 0,
+    }
+    fallback_count = 0
+    max_expert_weight = Decimal("0")
+
+    for decision in walk_decisions:
+        params = decision.decision.params
+        context = resolve_hmm_context(params)
+        route_regime_label = str(
+            params.get("route_regime_label") or params.get("regime_label") or context.regime_id
+        )
+        weights, fallback_active = _build_expert_router_weights(
+            regime_label=route_regime_label,
+            context=context,
+        )
+        if fallback_active:
+            fallback_count += 1
+
+        top_expert = "defensive"
+        top_weight = Decimal("-1")
+        for expert_name in ("trend", "reversal", "breakout", "defensive"):
+            weight = weights.get(expert_name, Decimal("0"))
+            expert_sums[expert_name] = expert_sums[expert_name] + weight
+            if weight > top_weight:
+                top_weight = weight
+                top_expert = expert_name
+        top_expert_counts[top_expert] = top_expert_counts.get(top_expert, 0) + 1
+        if top_weight > max_expert_weight:
+            max_expert_weight = top_weight
+
+    route_count = len(walk_decisions)
+    if route_count > 0:
+        fallback_rate = Decimal(fallback_count) / Decimal(route_count)
+    else:
+        fallback_rate = Decimal("0")
+    if route_count > 0:
+        avg_expert_weights = {
+            expert: str(expert_sums[expert] / Decimal(route_count))
+            for expert in ("trend", "reversal", "breakout", "defensive")
+        }
+    else:
+        avg_expert_weights = {
+            "trend": "0",
+            "reversal": "0",
+            "breakout": "0",
+            "defensive": "0",
+        }
+
+    max_fallback_rate = _decimal_or_zero(
+        policy_payload.get("promotion_expert_router_max_fallback_rate")
+    )
+    if max_fallback_rate <= 0:
+        max_fallback_rate = Decimal("0.05")
+    max_concentration = _decimal_or_zero(
+        policy_payload.get("promotion_expert_router_max_expert_concentration")
+    )
+    if max_concentration <= 0:
+        max_concentration = Decimal("0.85")
+
+    fallback_slo_pass = fallback_rate <= max_fallback_rate
+    concentration_slo_pass = max_expert_weight <= max_concentration
+    reasons: list[str] = []
+    if not fallback_slo_pass:
+        reasons.append("fallback_rate_exceeds_threshold")
+    if not concentration_slo_pass:
+        reasons.append("expert_concentration_exceeds_threshold")
+    if route_count <= 0:
+        reasons.append("router_decisions_missing")
+
+    dominant_expert = "defensive"
+    dominant_expert_count = -1
+    for expert_name in ("trend", "reversal", "breakout", "defensive"):
+        count = top_expert_counts.get(expert_name, 0)
+        if count > dominant_expert_count:
+            dominant_expert = expert_name
+            dominant_expert_count = count
+
+    payload: dict[str, Any] = {
+        "schema_version": "expert-router-registry-v1",
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "generated_at": now.isoformat(),
+        "router_version": "router-v1",
+        "route_count": route_count,
+        "fallback_count": fallback_count,
+        "fallback_rate": str(fallback_rate),
+        "max_expert_weight": str(max_expert_weight),
+        "avg_expert_weights": avg_expert_weights,
+        "top_expert_counts": dict(sorted(top_expert_counts.items())),
+        "concentration": {
+            "dominant_expert": dominant_expert,
+            "dominant_expert_count": dominant_expert_count,
+            "max_expert_weight": str(max_expert_weight),
+        },
+        "slo_feedback": {
+            "max_fallback_rate": str(max_fallback_rate),
+            "max_expert_concentration": str(max_concentration),
+            "fallback_rate": str(fallback_rate),
+            "max_observed_expert_weight": str(max_expert_weight),
+            "fallback_slo_pass": fallback_slo_pass,
+            "concentration_slo_pass": concentration_slo_pass,
+            "overall_status": (
+                "pass"
+                if fallback_slo_pass and concentration_slo_pass and route_count > 0
+                else "fail"
+            ),
+            "reasons": reasons,
+        },
+        "source_lineage": {
+            "walkforward_results_artifact_ref": _manifest_relative_path(
+                output_dir, walkforward_results_path
+            ),
+            "hmm_state_posterior_artifact_ref": _manifest_relative_path(
+                output_dir, hmm_state_posterior_path
+            ),
+            "gate_policy_artifact_ref": _manifest_relative_path(
+                output_dir, gate_policy_path
+            ),
+            "strategy_config_artifact_ref": _manifest_relative_path(
+                output_dir, strategy_config_path
+            ),
+        },
+    }
+    payload["artifact_hash"] = _stable_hash(
+        {key: value for key, value in payload.items() if key != "artifact_hash"}
+    )
+    return payload
+
+
 def _build_profitability_stage_manifest(
     *,
     output_dir: Path,
@@ -700,6 +971,7 @@ def _build_profitability_stage_manifest(
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
     hmm_state_posterior_path: Path,
+    expert_router_registry_path: Path,
     janus_event_car_path: Path,
     janus_hgrm_reward_path: Path,
     recalibration_report_path: Path,
@@ -814,6 +1086,11 @@ def _build_profitability_stage_manifest(
             "hmm_state_posterior_present",
             "hmm_state_posterior",
             hmm_state_posterior_path,
+        ),
+        (
+            "expert_router_registry_present",
+            "expert_router_registry",
+            expert_router_registry_path,
         ),
         ("janus_event_car_present", "janus_event_car", janus_event_car_path),
         ("janus_hgrm_reward_present", "janus_hgrm_reward", janus_hgrm_reward_path),
@@ -990,6 +1267,9 @@ def _build_profitability_stage_manifest(
         "hmm_state_posterior_artifact_ref": _manifest_relative_path(
             output_dir, hmm_state_posterior_path
         ),
+        "expert_router_registry_artifact_ref": _manifest_relative_path(
+            output_dir, expert_router_registry_path
+        ),
         "run_context": {
             "repository": run_context.get("repository", "unknown"),
             "base": run_context.get("base", "main"),
@@ -1150,6 +1430,7 @@ def run_autonomous_lane(
     janus_hgrm_reward_path = gates_dir / "janus-hgrm-reward-v1.json"
     stress_metrics_path = gates_dir / _STRESS_METRICS_ARTIFACT_PATH
     hmm_state_posterior_path = output_dir / _HMM_STATE_POSTERIOR_ARTIFACT_PATH
+    expert_router_registry_path = output_dir / _EXPERT_ROUTER_REGISTRY_ARTIFACT_PATH
     benchmark_parity_path = output_dir / _BENCHMARK_PARITY_REPORT_PATH
     recalibration_report_path = gates_dir / "recalibration-report.json"
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
@@ -1190,6 +1471,7 @@ def run_autonomous_lane(
     manifest_paths: dict[str, Path] = {}
     stage_trace_ids: dict[str, str] = {}
     hmm_state_posterior_payload: dict[str, Any] = {}
+    expert_router_registry_payload: dict[str, Any] = {}
 
     factory = session_factory or SessionLocal
     if persist_results:
@@ -1388,6 +1670,24 @@ def run_autonomous_lane(
             now=now,
         )
         write_benchmark_parity_report(benchmark_parity_report, benchmark_parity_path)
+        gate_policy_payload = json.loads(gate_policy_path.read_text(encoding="utf-8"))
+        expert_router_registry_payload = _build_expert_router_registry_payload(
+            output_dir=output_dir,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            now=now,
+            walk_decisions=walk_decisions,
+            walkforward_results_path=walk_results_path,
+            gate_policy_path=gate_policy_path,
+            strategy_config_path=strategy_config_path,
+            hmm_state_posterior_path=hmm_state_posterior_path,
+            policy_payload=gate_policy_payload,
+        )
+        expert_router_registry_path.parent.mkdir(parents=True, exist_ok=True)
+        expert_router_registry_path.write_text(
+            json.dumps(expert_router_registry_payload, indent=2),
+            encoding="utf-8",
+        )
 
         confidence_values = _collect_confidence_values(walk_decisions)
         reproducibility_hashes = {
@@ -1396,6 +1696,7 @@ def run_autonomous_lane(
             "gate_policy": _sha256_path(gate_policy_path),
             "walkforward_results": _sha256_path(walk_results_path),
             "hmm_state_posterior": _sha256_path(hmm_state_posterior_path),
+            "expert_router_registry": _sha256_path(expert_router_registry_path),
             "candidate_report": _sha256_path(evaluation_report_path),
             "baseline_report": _sha256_path(baseline_report_path),
             "janus_event_car": _sha256_path(janus_event_car_path),
@@ -1414,6 +1715,7 @@ def run_autonomous_lane(
                 str(baseline_report_path),
                 str(walk_results_path),
                 str(hmm_state_posterior_path),
+                str(expert_router_registry_path),
                 str(signals_path),
                 str(strategy_config_path),
                 str(gate_policy_path),
@@ -1426,7 +1728,6 @@ def run_autonomous_lane(
             json.dumps(profitability_evidence_payload, indent=2), encoding="utf-8"
         )
 
-        gate_policy_payload = json.loads(gate_policy_path.read_text(encoding="utf-8"))
         profitability_thresholds = ProfitabilityEvidenceThresholdsV4.from_payload(
             _profitability_threshold_payload(gate_policy_payload)
         )
@@ -1456,6 +1757,7 @@ def run_autonomous_lane(
                 profitability_benchmark_path,
                 benchmark_parity_path,
                 hmm_state_posterior_path,
+                expert_router_registry_path,
             ],
         )
         contamination_registry_path.write_text(
@@ -1616,6 +1918,11 @@ def run_autonomous_lane(
             hmm_state_posterior_artifact_ref = str(
                 hmm_state_posterior_path.relative_to(output_dir)
             )
+        expert_router_registry_artifact_ref = str(expert_router_registry_path)
+        if not output_dir.is_absolute():
+            expert_router_registry_artifact_ref = str(
+                expert_router_registry_path.relative_to(output_dir)
+            )
         gate_report_payload = gate_report.to_payload()
         gate_report_payload["run_id"] = run_id
         gate_report_payload["throughput"] = {
@@ -1668,6 +1975,20 @@ def run_autonomous_lane(
                 ),
                 "artifact_hash": hmm_state_posterior_payload.get("artifact_hash"),
             },
+            "expert_router_registry": {
+                "artifact_ref": expert_router_registry_artifact_ref,
+                "schema_version": expert_router_registry_payload.get(
+                    "schema_version"
+                ),
+                "router_version": expert_router_registry_payload.get("router_version"),
+                "route_count": expert_router_registry_payload.get("route_count"),
+                "fallback_count": expert_router_registry_payload.get("fallback_count"),
+                "fallback_rate": expert_router_registry_payload.get("fallback_rate"),
+                "max_expert_weight": expert_router_registry_payload.get(
+                    "max_expert_weight"
+                ),
+                "artifact_hash": expert_router_registry_payload.get("artifact_hash"),
+            },
             "contamination_registry": {
                 "artifact_ref": contamination_registry_artifact_ref,
                 "status": contamination_registry_payload.get("status", "fail"),
@@ -1716,6 +2037,7 @@ def run_autonomous_lane(
                 "profitability_validation": str(profitability_validation_path),
                 "stress_metrics": str(stress_metrics_path),
                 "hmm_state_posterior": str(hmm_state_posterior_path),
+                "expert_router_registry": str(expert_router_registry_path),
                 "janus_event_car": str(janus_event_car_path),
                 "janus_hgrm_reward": str(janus_hgrm_reward_path),
                 "recalibration_report": str(recalibration_report_path),
@@ -1792,6 +2114,7 @@ def run_autonomous_lane(
                 profitability_evidence_path=profitability_evidence_path,
                 profitability_validation_path=profitability_validation_path,
                 hmm_state_posterior_path=hmm_state_posterior_path,
+                expert_router_registry_path=expert_router_registry_path,
                 benchmark_parity_path=benchmark_parity_path,
                 janus_event_car_path=janus_event_car_path,
                 janus_hgrm_reward_path=janus_hgrm_reward_path,
@@ -1896,6 +2219,7 @@ def run_autonomous_lane(
                         str(profitability_validation_path),
                         str(stress_metrics_path),
                         str(hmm_state_posterior_path),
+                        str(expert_router_registry_path),
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         str(recalibration_report_path),
@@ -1922,6 +2246,7 @@ def run_autonomous_lane(
                         str(profitability_validation_path),
                         str(stress_metrics_path),
                         str(hmm_state_posterior_path),
+                        str(expert_router_registry_path),
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         *[
@@ -1981,6 +2306,20 @@ def run_autonomous_lane(
                 ),
                 "artifact_hash": hmm_state_posterior_payload.get("artifact_hash"),
             },
+            "expert_router_registry": {
+                "artifact_ref": expert_router_registry_artifact_ref,
+                "schema_version": expert_router_registry_payload.get(
+                    "schema_version"
+                ),
+                "router_version": expert_router_registry_payload.get("router_version"),
+                "route_count": expert_router_registry_payload.get("route_count"),
+                "fallback_count": expert_router_registry_payload.get("fallback_count"),
+                "fallback_rate": expert_router_registry_payload.get("fallback_rate"),
+                "max_expert_weight": expert_router_registry_payload.get(
+                    "max_expert_weight"
+                ),
+                "artifact_hash": expert_router_registry_payload.get("artifact_hash"),
+            },
             "contamination_registry": {
                 "artifact_ref": contamination_registry_artifact_ref,
                 "status": contamination_registry_payload.get("status", "fail"),
@@ -2018,6 +2357,7 @@ def run_autonomous_lane(
             "profitability_evidence_artifact": str(profitability_evidence_path),
             "profitability_validation_artifact": str(profitability_validation_path),
             "hmm_state_posterior_artifact": str(hmm_state_posterior_path),
+            "expert_router_registry_artifact": str(expert_router_registry_path),
             "janus_event_car_artifact": str(janus_event_car_path),
             "janus_hgrm_reward_artifact": str(janus_hgrm_reward_path),
             "recalibration_artifact": str(recalibration_report_path),
@@ -2054,6 +2394,7 @@ def run_autonomous_lane(
                 "profitability_evidence": profitability_evidence_path,
                 "profitability_validation": profitability_validation_path,
                 "hmm_state_posterior": hmm_state_posterior_path,
+                "expert_router_registry": expert_router_registry_path,
                 "janus_event_car": janus_event_car_path,
                 "janus_hgrm_reward": janus_hgrm_reward_path,
                 "recalibration_report": recalibration_report_path,
@@ -2093,6 +2434,7 @@ def run_autonomous_lane(
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
                         str(hmm_state_posterior_path),
+                        str(expert_router_registry_path),
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         str(recalibration_report_path),
@@ -2154,6 +2496,7 @@ def run_autonomous_lane(
             "profitability_benchmark": profitability_benchmark_path,
             "profitability_evidence": profitability_evidence_path,
             "profitability_validation": profitability_validation_path,
+            "expert_router_registry": expert_router_registry_path,
             "janus_event_car": janus_event_car_path,
             "janus_hgrm_reward": janus_hgrm_reward_path,
             "recalibration_report": recalibration_report_path,

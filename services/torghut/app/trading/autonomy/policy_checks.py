@@ -44,6 +44,7 @@ _PROFITABILITY_STAGE_REQUIRED_CHECKS: dict[str, tuple[str, ...]] = {
         "evaluation_report_present",
         "gate_evaluation_present",
         "hmm_state_posterior_present",
+        "expert_router_registry_present",
         "janus_event_car_present",
         "janus_hgrm_reward_present",
         "recalibration_report_present",
@@ -140,6 +141,10 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
+    expert_router_registry_required = _requires_expert_router_registry(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     required_artifacts = _required_artifacts_for_target(
         policy_payload,
         promotion_target,
@@ -149,6 +154,7 @@ def evaluate_promotion_prerequisites(
         include_contamination_artifacts=contamination_registry_required,
         include_stress_artifacts=stress_required,
         include_hmm_state_posterior_artifacts=hmm_state_posterior_required,
+        include_expert_router_artifacts=expert_router_registry_required,
         require_profitability_manifest=require_profitability_manifest,
     )
     missing_artifacts = [
@@ -643,9 +649,21 @@ def _append_profitability_stage_manifest_reasons(
                     )
                     continue
                 stage_checks[check_name] = check_status
-            for required_check in _PROFITABILITY_STAGE_REQUIRED_CHECKS.get(
-                stage_name, ()
+            required_checks = list(
+                _PROFITABILITY_STAGE_REQUIRED_CHECKS.get(stage_name, ())
+            )
+            if (
+                stage_name == "execution"
+                and not bool(
+                    policy_payload.get("promotion_require_expert_router_registry", False)
+                )
             ):
+                required_checks = [
+                    check
+                    for check in required_checks
+                    if check != "expert_router_registry_present"
+                ]
+            for required_check in required_checks:
                 if required_check not in stage_checks:
                     reasons.append("profitability_stage_manifest_required_check_missing")
                     reason_details.append(
@@ -1214,6 +1232,7 @@ def _required_artifacts_for_target(
     include_contamination_artifacts: bool,
     include_stress_artifacts: bool,
     include_hmm_state_posterior_artifacts: bool,
+    include_expert_router_artifacts: bool,
     require_profitability_manifest: bool,
 ) -> list[str]:
     base_raw = policy_payload.get(
@@ -1289,6 +1308,10 @@ def _required_artifacts_for_target(
     if include_hmm_state_posterior_artifacts:
         hmm_artifacts = _hmm_state_posterior_required_artifact_refs(policy_payload)
         for artifact in hmm_artifacts:
+            required.append(artifact)
+    if include_expert_router_artifacts:
+        expert_router_artifacts = _expert_router_required_artifact_refs(policy_payload)
+        for artifact in expert_router_artifacts:
             required.append(artifact)
     return sorted(set(required))
 
@@ -1371,6 +1394,23 @@ def _hmm_state_posterior_required_artifact_refs(
     return ["gates/hmm-state-posterior-v1.json"]
 
 
+def _expert_router_required_artifact_refs(
+    policy_payload: dict[str, Any],
+) -> list[str]:
+    artifacts_raw = policy_payload.get(
+        "promotion_expert_router_required_artifacts",
+        ["gates/expert-router-registry-v1.json"],
+    )
+    artifacts = [
+        str(artifact).strip()
+        for artifact in _list_from_any(artifacts_raw)
+        if isinstance(artifact, str) and artifact.strip()
+    ]
+    if artifacts:
+        return artifacts
+    return ["gates/expert-router-registry-v1.json"]
+
+
 def _requires_hmm_state_posterior(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
@@ -1380,6 +1420,27 @@ def _requires_hmm_state_posterior(
         return False
     required_targets_raw = policy_payload.get(
         "promotion_hmm_required_targets",
+        ["paper", "live"],
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
+def _requires_expert_router_registry(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("promotion_require_expert_router_registry", False)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_expert_router_required_targets",
         ["paper", "live"],
     )
     required_targets = [
@@ -1602,6 +1663,18 @@ def _evaluate_promotion_evidence(
     reasons.extend(hmm_reasons)
     details.extend(hmm_details)
     refs.extend(hmm_refs)
+
+    expert_router_reasons, expert_router_details, expert_router_refs = (
+        _evaluate_expert_router_registry_evidence(
+            policy_payload=policy_payload,
+            gate_report_payload=gate_report_payload,
+            artifact_root=artifact_root,
+            promotion_target=promotion_target,
+        )
+    )
+    reasons.extend(expert_router_reasons)
+    details.extend(expert_router_details)
+    refs.extend(expert_router_refs)
 
     rationale_reasons, rationale_details = _evaluate_rationale_evidence(
         policy_payload=policy_payload,
@@ -2715,6 +2788,207 @@ def _evaluate_hmm_state_posterior_evidence(
             details.append(
                 {
                     "reason": "hmm_state_posterior_artifact_hash_mismatch",
+                    "artifact_ref": str(artifact_path),
+                    "artifact_hash": artifact_hash,
+                    "expected_artifact_hash": expected_hash,
+                }
+            )
+
+    return reasons, details, refs
+
+
+def _evaluate_expert_router_registry_evidence(
+    *,
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+    artifact_root: Path,
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    if not _requires_expert_router_registry(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return [], [], []
+
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    refs: list[str] = []
+
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    expert_router = _as_dict(evidence.get("expert_router_registry"))
+    evidence_ref = str(expert_router.get("artifact_ref") or "").strip()
+    if not evidence_ref:
+        reasons.append("expert_router_registry_artifact_ref_missing")
+        details.append({"reason": "expert_router_registry_artifact_ref_missing"})
+
+    required_artifacts = _expert_router_required_artifact_refs(policy_payload)
+    artifact_ref = (evidence_ref or required_artifacts[0]).strip()
+    artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
+    if artifact_path is None:
+        reasons.append("expert_router_registry_artifact_ref_invalid")
+        details.append(
+            {
+                "reason": "expert_router_registry_artifact_ref_invalid",
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return reasons, details, refs
+
+    refs.append(evidence_ref or str(artifact_path))
+    payload = _load_json_if_exists(artifact_path)
+    if payload is None:
+        reasons.append("expert_router_registry_artifact_invalid_json")
+        details.append(
+            {
+                "reason": "expert_router_registry_artifact_invalid_json",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+        return reasons, details, refs
+
+    schema_version = str(payload.get("schema_version", "")).strip()
+    if schema_version != "expert-router-registry-v1":
+        reasons.append("expert_router_registry_schema_version_invalid")
+        details.append(
+            {
+                "reason": "expert_router_registry_schema_version_invalid",
+                "artifact_ref": str(artifact_path),
+                "schema_version": schema_version,
+                "expected_schema_version": "expert-router-registry-v1",
+            }
+        )
+
+    if not str(payload.get("run_id", "")).strip():
+        reasons.append("expert_router_registry_run_id_missing")
+        details.append(
+            {
+                "reason": "expert_router_registry_run_id_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    if not str(payload.get("candidate_id", "")).strip():
+        reasons.append("expert_router_registry_candidate_id_missing")
+        details.append(
+            {
+                "reason": "expert_router_registry_candidate_id_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    route_count = _int_or_default(payload.get("route_count"), -1)
+    min_route_count = max(
+        1, _int_or_default(policy_payload.get("promotion_expert_router_min_route_count"), 1)
+    )
+    if route_count < min_route_count:
+        reasons.append("expert_router_registry_route_count_below_minimum")
+        details.append(
+            {
+                "reason": "expert_router_registry_route_count_below_minimum",
+                "artifact_ref": str(artifact_path),
+                "actual_route_count": route_count,
+                "minimum_route_count": min_route_count,
+            }
+        )
+
+    fallback_rate = _float_or_none(payload.get("fallback_rate"))
+    max_fallback_rate = _float_or_none(
+        policy_payload.get("promotion_expert_router_max_fallback_rate")
+    )
+    if max_fallback_rate is None:
+        max_fallback_rate = 0.05
+    if fallback_rate is None:
+        reasons.append("expert_router_registry_fallback_rate_missing")
+        details.append(
+            {
+                "reason": "expert_router_registry_fallback_rate_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif fallback_rate > max_fallback_rate:
+        reasons.append("expert_router_registry_fallback_rate_exceeds_threshold")
+        details.append(
+            {
+                "reason": "expert_router_registry_fallback_rate_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_fallback_rate": fallback_rate,
+                "maximum_fallback_rate": max_fallback_rate,
+            }
+        )
+
+    max_expert_weight = _float_or_none(payload.get("max_expert_weight"))
+    max_concentration = _float_or_none(
+        policy_payload.get("promotion_expert_router_max_expert_concentration")
+    )
+    if max_concentration is None:
+        max_concentration = 0.85
+    if max_expert_weight is None:
+        reasons.append("expert_router_registry_max_expert_weight_missing")
+        details.append(
+            {
+                "reason": "expert_router_registry_max_expert_weight_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif max_expert_weight > max_concentration:
+        reasons.append("expert_router_registry_expert_concentration_exceeds_threshold")
+        details.append(
+            {
+                "reason": "expert_router_registry_expert_concentration_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_max_expert_weight": max_expert_weight,
+                "maximum_expert_weight": max_concentration,
+            }
+        )
+
+    slo_feedback = _as_dict(payload.get("slo_feedback"))
+    overall_status = str(slo_feedback.get("overall_status") or "").strip()
+    if overall_status != "pass":
+        reasons.append("expert_router_registry_slo_feedback_not_pass")
+        details.append(
+            {
+                "reason": "expert_router_registry_slo_feedback_not_pass",
+                "artifact_ref": str(artifact_path),
+                "overall_status": overall_status,
+                "slo_reasons": _list_of_strings(slo_feedback.get("reasons")),
+            }
+        )
+
+    source_lineage = _as_dict(payload.get("source_lineage"))
+    walkforward_ref = str(
+        source_lineage.get("walkforward_results_artifact_ref") or ""
+    ).strip()
+    hmm_ref = str(source_lineage.get("hmm_state_posterior_artifact_ref") or "").strip()
+    gate_policy_ref = str(source_lineage.get("gate_policy_artifact_ref") or "").strip()
+    if not walkforward_ref or not hmm_ref or not gate_policy_ref:
+        reasons.append("expert_router_registry_source_lineage_incomplete")
+        details.append(
+            {
+                "reason": "expert_router_registry_source_lineage_incomplete",
+                "artifact_ref": str(artifact_path),
+                "walkforward_results_artifact_ref": walkforward_ref,
+                "hmm_state_posterior_artifact_ref": hmm_ref,
+                "gate_policy_artifact_ref": gate_policy_ref,
+            }
+        )
+
+    artifact_hash = str(payload.get("artifact_hash", "")).strip()
+    if not artifact_hash:
+        reasons.append("expert_router_registry_artifact_hash_missing")
+        details.append(
+            {
+                "reason": "expert_router_registry_artifact_hash_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    else:
+        expected_hash = _sha256_json(
+            {key: value for key, value in payload.items() if key != "artifact_hash"}
+        )
+        if artifact_hash != expected_hash:
+            reasons.append("expert_router_registry_artifact_hash_mismatch")
+            details.append(
+                {
+                    "reason": "expert_router_registry_artifact_hash_mismatch",
                     "artifact_ref": str(artifact_path),
                     "artifact_hash": artifact_hash,
                     "expected_artifact_hash": expected_hash,

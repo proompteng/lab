@@ -12,7 +12,7 @@
   - `services/torghut/app/trading/forecasting.py`
   - `services/torghut/app/trading/scheduler.py`
   - `services/torghut/app/trading/portfolio.py`
-- Rollout gap: no production expert-router artifact registry or concentration/fallback tuning SLO loop exists yet.
+- Rollout gap: expert-router artifact registry and concentration/fallback SLO loop artifacts are implemented in the autonomous lane (`2026-03-03`); remaining closure is wiring regime-quality outputs into promotion + drift governance decisions.
 
 ## Objective
 
