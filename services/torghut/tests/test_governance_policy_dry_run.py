@@ -85,6 +85,9 @@ def _default_gate_report(now: datetime) -> dict[str, object]:
             "deeplob_bdlob_contract": {
                 "artifact_ref": "microstructure/deeplob-bdlob-report-v1.json",
             },
+            "advisor_fallback_slo": {
+                "artifact_ref": "execution/advisor-fallback-slo-report-v1.json",
+            },
             "promotion_rationale": {
                 "requested_target": "paper",
                 "gate_recommended_mode": "paper",

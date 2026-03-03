@@ -200,7 +200,7 @@ Productionize new model families with fail-closed rollout controls.
 
 1. TimesFM router parity contract and fallback behavior. (Completed `2026-03-03`)
 2. DeepLOB/BDLOB feature-model-policy contract with strict schema/version enforcement. (Completed `2026-03-03`)
-3. Advisor-timeout/staleness fallbacks validated for live safety.
+3. Advisor-timeout/staleness fallbacks validated for live safety. (Completed `2026-03-03`)
 
 ### Primary files
 

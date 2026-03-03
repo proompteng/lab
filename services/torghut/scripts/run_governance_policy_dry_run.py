@@ -164,6 +164,7 @@ def main() -> int:
         expert_router_payload: dict[str, Any] = {}
         foundation_router_payload: dict[str, Any] = {}
         deeplob_bdlob_payload: dict[str, Any] = {}
+        advisor_fallback_payload: dict[str, Any] = {}
         if isinstance(promotion_evidence, dict):
             stress_metrics = promotion_evidence.get("stress_metrics")
             if isinstance(stress_metrics, dict):
@@ -239,6 +240,19 @@ def main() -> int:
                 }
             promotion_evidence["deeplob_bdlob_contract"]["artifact_ref"] = (
                 "microstructure/deeplob-bdlob-report-v1.json"
+            )
+            advisor_fallback_slo = promotion_evidence.get("advisor_fallback_slo")
+            if isinstance(advisor_fallback_slo, dict):
+                advisor_fallback_payload = {
+                    str(key): value for key, value in advisor_fallback_slo.items()
+                }
+            else:
+                advisor_fallback_payload = {}
+                promotion_evidence["advisor_fallback_slo"] = {
+                    "artifact_ref": "execution/advisor-fallback-slo-report-v1.json"
+                }
+            promotion_evidence["advisor_fallback_slo"]["artifact_ref"] = (
+                "execution/advisor-fallback-slo-report-v1.json"
             )
         if "generated_at" not in stress_artifact:
             stress_artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
@@ -548,6 +562,72 @@ def main() -> int:
         )
         (root / "microstructure" / "deeplob-bdlob-report-v1.json").write_text(
             json.dumps(deeplob_bdlob_artifact, indent=2),
+            encoding="utf-8",
+        )
+        (root / "execution").mkdir(parents=True, exist_ok=True)
+        advisor_fallback_artifact: dict[str, Any] = {
+            "schema_version": "advisor-fallback-slo-report-v1",
+            "candidate_id": "cand-dry-run",
+            "advisor_policy_version": str(policy.get("policy_version", "v3-gates-1")),
+            "contract": {
+                "schema_version": "advisor-fallback-slo-contract-v1",
+                "required_reasons": [
+                    "advisor_timeout",
+                    "advisor_state_stale",
+                    "advisor_advice_stale",
+                ],
+                "required_summary_fields": [
+                    "timeout_rate",
+                    "state_stale_rate",
+                    "advice_stale_rate",
+                    "safe_fallback_rate",
+                    "deterministic_policy_bypass_detected",
+                    "slo_pass",
+                ],
+                "hash_algorithm": "sha256",
+                "generation_mode": "deterministic_advisor_fallback_slo_v1",
+            },
+            "evaluated_samples": 600,
+            "fallback_reason_counts": {
+                "advisor_timeout": 2,
+                "advisor_state_stale": 3,
+                "advisor_advice_stale": 2,
+            },
+            "fallback_reason_rates": {
+                "timeout_rate": float(
+                    policy.get("promotion_advisor_fallback_max_timeout_rate", 0.005)
+                )
+                / 2.0,
+                "state_stale_rate": float(
+                    policy.get("promotion_advisor_fallback_max_state_stale_rate", 0.01)
+                )
+                / 2.0,
+                "advice_stale_rate": float(
+                    policy.get("promotion_advisor_fallback_max_advice_stale_rate", 0.01)
+                )
+                / 2.0,
+                "safe_fallback_rate": float(
+                    policy.get(
+                        "promotion_advisor_fallback_min_safe_fallback_rate",
+                        0.99,
+                    )
+                ),
+                "deterministic_policy_bypass_detected": False,
+                "slo_pass": True,
+                "status": "pass",
+            },
+            "overall_status": str(advisor_fallback_payload.get("overall_status") or "pass"),
+            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        advisor_fallback_artifact["artifact_hash"] = _stable_hash(
+            {
+                key: value
+                for key, value in advisor_fallback_artifact.items()
+                if key != "artifact_hash"
+            }
+        )
+        (root / "execution" / "advisor-fallback-slo-report-v1.json").write_text(
+            json.dumps(advisor_fallback_artifact, indent=2),
             encoding="utf-8",
         )
 

@@ -83,6 +83,15 @@
   "promotion_deeplob_bdlob_min_cost_adjusted_edge_bps": "0.0",
   "promotion_deeplob_bdlob_max_slippage_divergence_bps": "1.0",
   "promotion_deeplob_bdlob_min_fallback_reliability": "0.99",
+  "promotion_require_advisor_fallback_slo": true,
+  "promotion_advisor_fallback_required_targets": ["paper", "live"],
+  "promotion_advisor_fallback_required_artifacts": [
+    "execution/advisor-fallback-slo-report-v1.json"
+  ],
+  "promotion_advisor_fallback_max_timeout_rate": "0.005",
+  "promotion_advisor_fallback_max_state_stale_rate": "0.01",
+  "promotion_advisor_fallback_max_advice_stale_rate": "0.01",
+  "promotion_advisor_fallback_min_safe_fallback_rate": "0.99",
   "promotion_require_contamination_registry": true,
   "promotion_contamination_required_targets": ["paper", "live"],
   "promotion_contamination_required_artifacts": ["gates/contamination-leakage-report-v1.json"],

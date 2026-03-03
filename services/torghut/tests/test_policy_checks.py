@@ -4390,6 +4390,107 @@ class TestPolicyChecks(TestCase):
             any(reason.startswith("deeplob_bdlob_contract_") for reason in promotion.reasons)
         )
 
+    def test_promotion_prerequisites_fail_when_advisor_fallback_slo_artifact_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text("{}", encoding="utf-8")
+            gate_report = _gate_report()
+            (root / "gates" / "gate-evaluation.json").write_text(
+                json.dumps(gate_report),
+                encoding="utf-8",
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_advisor_fallback_slo": True,
+                    "promotion_advisor_fallback_required_targets": ["paper"],
+                    "promotion_advisor_fallback_required_artifacts": [
+                        "execution/advisor-fallback-slo-report-v1.json"
+                    ],
+                    "promotion_require_deeplob_bdlob_contract": False,
+                    "promotion_require_foundation_router_parity": False,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_hmm_state_posterior": False,
+                    "promotion_require_expert_router_registry": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("required_artifacts_missing", promotion.reasons)
+        self.assertIn("advisor_fallback_slo_artifact_missing", promotion.reasons)
+
+    def test_promotion_prerequisites_pass_with_valid_advisor_fallback_slo_contract(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text("{}", encoding="utf-8")
+            gate_report = _gate_report()
+            (root / "gates" / "gate-evaluation.json").write_text(
+                json.dumps(gate_report),
+                encoding="utf-8",
+            )
+            _write_advisor_fallback_slo_payload(root)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_advisor_fallback_slo": True,
+                    "promotion_advisor_fallback_required_targets": ["paper"],
+                    "promotion_advisor_fallback_required_artifacts": [
+                        "execution/advisor-fallback-slo-report-v1.json"
+                    ],
+                    "promotion_advisor_fallback_max_timeout_rate": 0.005,
+                    "promotion_advisor_fallback_max_state_stale_rate": 0.01,
+                    "promotion_advisor_fallback_max_advice_stale_rate": 0.01,
+                    "promotion_advisor_fallback_min_safe_fallback_rate": 0.99,
+                    "promotion_require_deeplob_bdlob_contract": False,
+                    "promotion_require_foundation_router_parity": False,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_hmm_state_posterior": False,
+                    "promotion_require_expert_router_registry": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertTrue(promotion.allowed)
+        self.assertFalse(
+            any(
+                reason.startswith("advisor_fallback_slo_")
+                for reason in promotion.reasons
+            )
+        )
+
 
 def _candidate_state() -> dict[str, object]:
     return {
@@ -4675,6 +4776,67 @@ def _write_deeplob_bdlob_payload(
         {key: value for key, value in payload.items() if key != "artifact_hash"}
     )
     artifact_path = root / "microstructure" / "deeplob-bdlob-report-v1.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+    return artifact_path
+
+
+def _write_advisor_fallback_slo_payload(
+    root: Path,
+    *,
+    schema_version: str = "advisor-fallback-slo-report-v1",
+    contract_schema_version: str = "advisor-fallback-slo-contract-v1",
+    timeout_rate: float = 0.002,
+    state_stale_rate: float = 0.003,
+    advice_stale_rate: float = 0.003,
+    safe_fallback_rate: float = 0.995,
+    deterministic_policy_bypass_detected: bool = False,
+    overall_status: str = "pass",
+) -> Path:
+    payload: dict[str, object] = {
+        "schema_version": schema_version,
+        "candidate_id": "cand-test",
+        "advisor_policy_version": "v3-gates-1",
+        "contract": {
+            "schema_version": contract_schema_version,
+            "required_reasons": [
+                "advisor_timeout",
+                "advisor_state_stale",
+                "advisor_advice_stale",
+            ],
+            "required_summary_fields": [
+                "timeout_rate",
+                "state_stale_rate",
+                "advice_stale_rate",
+                "safe_fallback_rate",
+                "deterministic_policy_bypass_detected",
+                "slo_pass",
+            ],
+            "hash_algorithm": "sha256",
+            "generation_mode": "deterministic_advisor_fallback_slo_v1",
+        },
+        "evaluated_samples": 600,
+        "fallback_reason_counts": {
+            "advisor_timeout": 2,
+            "advisor_state_stale": 3,
+            "advisor_advice_stale": 2,
+        },
+        "fallback_reason_rates": {
+            "timeout_rate": timeout_rate,
+            "state_stale_rate": state_stale_rate,
+            "advice_stale_rate": advice_stale_rate,
+            "safe_fallback_rate": safe_fallback_rate,
+            "deterministic_policy_bypass_detected": deterministic_policy_bypass_detected,
+            "slo_pass": True,
+            "status": "pass",
+        },
+        "overall_status": overall_status,
+        "created_at_utc": datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
+    }
+    payload["artifact_hash"] = _sha256_json(
+        {key: value for key, value in payload.items() if key != "artifact_hash"}
+    )
+    artifact_path = root / "execution" / "advisor-fallback-slo-report-v1.json"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text(json.dumps(payload), encoding="utf-8")
     return artifact_path
@@ -5128,6 +5290,9 @@ def _gate_report() -> dict[str, object]:
             },
             "deeplob_bdlob_contract": {
                 "artifact_ref": "microstructure/deeplob-bdlob-report-v1.json",
+            },
+            "advisor_fallback_slo": {
+                "artifact_ref": "execution/advisor-fallback-slo-report-v1.json",
             },
             "promotion_rationale": {
                 "requested_target": "paper",
