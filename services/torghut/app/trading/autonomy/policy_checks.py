@@ -145,10 +145,6 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
-    fold_required = _requires_fold_evidence(
-        policy_payload=policy_payload,
-        promotion_target=promotion_target,
-    )
     required_artifacts = _required_artifacts_for_target(
         policy_payload,
         promotion_target,
@@ -159,7 +155,6 @@ def evaluate_promotion_prerequisites(
         include_stress_artifacts=stress_required,
         include_hmm_state_posterior_artifacts=hmm_state_posterior_required,
         include_expert_router_artifacts=expert_router_registry_required,
-        include_fold_artifacts=fold_required,
         require_profitability_manifest=require_profitability_manifest,
     )
     missing_artifacts = [
@@ -1238,7 +1233,6 @@ def _required_artifacts_for_target(
     include_stress_artifacts: bool,
     include_hmm_state_posterior_artifacts: bool,
     include_expert_router_artifacts: bool,
-    include_fold_artifacts: bool,
     require_profitability_manifest: bool,
 ) -> list[str]:
     base_raw = policy_payload.get(
@@ -1319,17 +1313,7 @@ def _required_artifacts_for_target(
         expert_router_artifacts = _expert_router_required_artifact_refs(policy_payload)
         for artifact in expert_router_artifacts:
             required.append(artifact)
-    if include_fold_artifacts:
-        fold_artifacts_raw = policy_payload.get(
-            "promotion_fold_required_artifacts",
-            ["gates/fold-metrics-v1.json"],
-        )
-        fold_artifacts = _list_from_any(fold_artifacts_raw)
-        for artifact in fold_artifacts:
-            if isinstance(artifact, str):
-                required.append(artifact)
     return sorted(set(required))
-
 
 def _benchmark_parity_required_artifact_refs(
     policy_payload: dict[str, Any],
@@ -1556,7 +1540,7 @@ def _requires_fold_evidence(
 ) -> bool:
     if promotion_target == "shadow":
         return False
-    if not bool(policy_payload.get("promotion_require_fold_evidence", False)):
+    if not bool(policy_payload.get("promotion_require_fold_evidence", True)):
         return False
     required_targets_raw = policy_payload.get(
         "promotion_fold_required_targets",
