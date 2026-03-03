@@ -26,7 +26,7 @@ export const Route = createFileRoute('/torghut/symbols')({
 
 function TorghutSymbols() {
   const [items, setItems] = useState<SymbolItem[]>([])
-  const [assetClass, setAssetClass] = useState<'equity' | 'crypto'>('crypto')
+  const [assetClass, setAssetClass] = useState<'equity' | 'crypto'>('equity')
   const [symbolsText, setSymbolsText] = useState('')
   const [listStatus, setListStatus] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
@@ -124,8 +124,8 @@ function TorghutSymbols() {
               value={assetClass}
               onChange={(event) => setAssetClass(event.target.value === 'crypto' ? 'crypto' : 'equity')}
             >
-              <option value="crypto">crypto</option>
               <option value="equity">equity</option>
+              <option value="crypto">crypto</option>
             </select>
           </div>
         </div>
