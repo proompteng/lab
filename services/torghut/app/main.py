@@ -38,7 +38,10 @@ from .models import (
     WhitepaperRolloutTransition,
 )
 from .trading import TradingScheduler
-from .trading.autonomy import evaluate_evidence_continuity
+from .trading.autonomy import (
+    assert_runtime_gate_policy_contract,
+    evaluate_evidence_continuity,
+)
 from .trading.lean_lanes import LeanLaneManager
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.tca import build_tca_gate_inputs
@@ -202,6 +205,9 @@ async def lifespan(app: FastAPI):
         ensure_schema()
     except SQLAlchemyError as exc:  # pragma: no cover - defensive for startup only
         logger.warning("Database not reachable during startup: %s", exc)
+
+    if settings.trading_autonomy_enabled:
+        assert_runtime_gate_policy_contract(settings.trading_autonomy_gate_policy_path)
 
     if settings.trading_enabled:
         await scheduler.start()

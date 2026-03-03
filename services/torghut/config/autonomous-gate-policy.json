@@ -22,6 +22,17 @@
   "gate6_require_janus_evidence": true,
   "gate6_min_janus_event_count": 1,
   "gate6_min_janus_reward_count": 1,
+  "gate6_max_calibration_error": "0.45",
+  "gate7_target_coverage": "0.90",
+  "gate7_max_coverage_error_pass": "0.03",
+  "gate7_max_coverage_error_degrade": "0.05",
+  "gate7_max_coverage_error_abstain": "0.08",
+  "gate7_shift_score_degrade": "0.60",
+  "gate7_shift_score_abstain": "0.80",
+  "gate7_shift_score_fail": "0.95",
+  "gate7_max_interval_width_pass": "1.25",
+  "gate7_max_interval_width_degrade": "1.75",
+  "promotion_uncertainty_max_coverage_error": "0.03",
   "gate5_live_enabled": false,
   "gate5_require_approval_token": true,
   "promotion_required_artifacts": [
@@ -30,18 +41,17 @@
     "gates/gate-evaluation.json"
   ],
   "promotion_require_patch_targets": ["paper", "live"],
+  "promotion_profitability_required_artifacts": [
+    "gates/profitability-evidence-v4.json",
+    "gates/profitability-benchmark-v4.json",
+    "gates/profitability-evidence-validation.json",
+    "gates/recalibration-report.json"
+  ],
   "promotion_janus_required_targets": ["paper", "live"],
   "promotion_janus_required_artifacts": [
     "gates/janus-event-car-v1.json",
     "gates/janus-hgrm-reward-v1.json"
   ],
-  "promotion_require_stress_evidence": true,
-  "promotion_stress_required_targets": ["paper", "live"],
-  "promotion_stress_required_artifacts": [
-    "gates/stress-metrics-v1.json"
-  ],
-  "promotion_stress_max_age_hours": 24,
-  "promotion_require_janus_evidence": true,
   "promotion_require_benchmark_parity": true,
   "promotion_benchmark_parity_required_targets": ["paper", "live"],
   "promotion_benchmark_required_artifacts": [
@@ -54,12 +64,19 @@
   "promotion_benchmark_parity_max_adverse_regime_decision_quality_degradation": "0.01",
   "promotion_benchmark_parity_max_risk_veto_alignment_degradation": "0.01",
   "promotion_benchmark_parity_max_confidence_calibration_error_degradation": "0.01",
-  "promotion_require_profitability_stage_manifest": true,
-  "promotion_profitability_stage_manifest_artifact": "profitability/profitability-stage-manifest-v1.json",
+  "promotion_require_stress_evidence": true,
+  "promotion_stress_required_targets": ["paper", "live"],
+  "promotion_stress_required_artifacts": [
+    "gates/stress-metrics-v1.json"
+  ],
+  "promotion_stress_max_age_hours": 24,
+  "promotion_require_janus_evidence": true,
   "promotion_janus_event_car_artifact": "gates/janus-event-car-v1.json",
   "promotion_janus_hgrm_reward_artifact": "gates/janus-hgrm-reward-v1.json",
   "promotion_min_janus_event_count": 1,
   "promotion_min_janus_reward_count": 1,
+  "promotion_require_profitability_stage_manifest": true,
+  "promotion_profitability_stage_manifest_artifact": "profitability/profitability-stage-manifest-v1.json",
   "rollback_required_checks": ["killSwitchDryRunPassed", "gitopsRevertDryRunPassed", "strategyDisableDryRunPassed"],
   "rollback_dry_run_max_age_hours": 72,
   "rollback_require_human_approval": true

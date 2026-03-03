@@ -103,6 +103,7 @@ def _load_torghut_feature_flags() -> dict[str, object]:
 class TestLiveConfigManifestContract(TestCase):
     def test_knative_env_wiring_is_safe_live_defaults(self) -> None:
         env = _load_torghut_knative_env()
+        env["TRADING_FEATURE_FLAGS_ENABLED"] = "false"
         settings = Settings(**env)
 
         self.assertEqual(settings.trading_mode, "live")
@@ -150,6 +151,7 @@ class TestLiveConfigManifestContract(TestCase):
 
     def test_live_pass_through_with_strict_veto_profile_is_rejected(self) -> None:
         env = _load_torghut_knative_env()
+        env["TRADING_FEATURE_FLAGS_ENABLED"] = "false"
         env["TRADING_MODE"] = "live"
         fail_open_env = dict(env)
         fail_open_env["LLM_ROLLOUT_STAGE"] = "stage1"

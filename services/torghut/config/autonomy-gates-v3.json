@@ -75,6 +75,8 @@
   "promotion_janus_hgrm_reward_artifact": "gates/janus-hgrm-reward-v1.json",
   "promotion_min_janus_event_count": 1,
   "promotion_min_janus_reward_count": 1,
+  "promotion_require_profitability_stage_manifest": true,
+  "promotion_profitability_stage_manifest_artifact": "profitability/profitability-stage-manifest-v1.json",
   "rollback_required_checks": ["killSwitchDryRunPassed", "gitopsRevertDryRunPassed", "strategyDisableDryRunPassed"],
   "rollback_dry_run_max_age_hours": 72,
   "rollback_require_human_approval": true
