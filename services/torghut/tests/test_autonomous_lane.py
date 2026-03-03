@@ -241,11 +241,20 @@ class TestAutonomousLane(TestCase):
                 evidence["benchmark_parity"]["artifact_ref"],
                 str(output_dir / "benchmarks" / "benchmark-parity-report-v1.json"),
             )
+            self.assertEqual(
+                evidence["contamination_registry"]["artifact_ref"],
+                str(output_dir / "gates" / "contamination-leakage-report-v1.json"),
+            )
             self.assertTrue(
                 (output_dir / "gates" / "stress-metrics-v1.json").exists()
             )
             self.assertTrue(
                 (output_dir / "benchmarks" / "benchmark-parity-report-v1.json").exists()
+            )
+            self.assertTrue(
+                (
+                    output_dir / "gates" / "contamination-leakage-report-v1.json"
+                ).exists()
             )
             self.assertEqual(
                 result.benchmark_parity_path,
@@ -382,11 +391,20 @@ class TestAutonomousLane(TestCase):
                     evidence["benchmark_parity"]["artifact_ref"],
                     str(Path("benchmarks") / "benchmark-parity-report-v1.json"),
                 )
+                self.assertEqual(
+                    evidence["contamination_registry"]["artifact_ref"],
+                    str(Path("gates") / "contamination-leakage-report-v1.json"),
+                )
                 self.assertTrue(
                     (output_dir / "gates" / "stress-metrics-v1.json").exists()
                 )
                 self.assertTrue(
                     (output_dir / "benchmarks" / "benchmark-parity-report-v1.json").exists()
+                )
+                self.assertTrue(
+                    (
+                        output_dir / "gates" / "contamination-leakage-report-v1.json"
+                    ).exists()
                 )
             finally:
                 os.chdir(original_cwd)

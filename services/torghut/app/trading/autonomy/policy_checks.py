@@ -127,6 +127,10 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
+    contamination_registry_required = _requires_contamination_registry(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     stress_required = _requires_stress_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
@@ -137,6 +141,7 @@ def evaluate_promotion_prerequisites(
         include_profitability_artifacts=profitability_required,
         include_janus_artifacts=janus_required,
         include_benchmark_parity_artifacts=benchmark_parity_required,
+        include_contamination_artifacts=contamination_registry_required,
         include_stress_artifacts=stress_required,
         require_profitability_manifest=require_profitability_manifest,
     )
@@ -1094,6 +1099,7 @@ def _required_artifacts_for_target(
     include_profitability_artifacts: bool,
     include_janus_artifacts: bool,
     include_benchmark_parity_artifacts: bool,
+    include_contamination_artifacts: bool,
     include_stress_artifacts: bool,
     require_profitability_manifest: bool,
 ) -> list[str]:
@@ -1152,6 +1158,12 @@ def _required_artifacts_for_target(
         benchmark_artifacts = _benchmark_parity_required_artifact_refs(policy_payload)
         for artifact in benchmark_artifacts:
             required.append(artifact)
+    if include_contamination_artifacts:
+        contamination_artifacts = _contamination_registry_required_artifact_refs(
+            policy_payload
+        )
+        for artifact in contamination_artifacts:
+            required.append(artifact)
     if include_stress_artifacts:
         stress_artifacts_raw = policy_payload.get(
             "promotion_stress_required_artifacts",
@@ -1200,6 +1212,29 @@ def _benchmark_parity_artifact_reference(
 
     required_artifacts = _benchmark_parity_required_artifact_refs(policy_payload)
     return required_artifacts[0]
+
+
+def _contamination_registry_required_artifact_refs(
+    policy_payload: dict[str, Any],
+) -> list[str]:
+    contamination_artifacts_raw = policy_payload.get(
+        "promotion_contamination_required_artifacts",
+        ["gates/contamination-leakage-report-v1.json"],
+    )
+    contamination_artifacts = [
+        str(artifact).strip()
+        for artifact in _list_from_any(contamination_artifacts_raw)
+        if isinstance(artifact, str) and artifact.strip()
+    ]
+    if contamination_artifacts:
+        return contamination_artifacts
+
+    legacy_artifact = str(
+        policy_payload.get("promotion_contamination_artifact", "").strip()
+    )
+    if legacy_artifact:
+        return [legacy_artifact]
+    return ["gates/contamination-leakage-report-v1.json"]
 
 
 def _requires_profitability_evidence(
@@ -1253,6 +1288,27 @@ def _requires_stress_evidence(
         return False
     required_targets_raw = policy_payload.get(
         "promotion_stress_required_targets", ["paper", "live"]
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
+def _requires_contamination_registry(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("promotion_require_contamination_registry", False)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_contamination_required_targets",
+        ["paper", "live"],
     )
     required_targets = [
         str(target)
@@ -1369,6 +1425,18 @@ def _evaluate_promotion_evidence(
     reasons.extend(janus_reasons)
     details.extend(janus_details)
     refs.extend(janus_refs)
+
+    contamination_reasons, contamination_details, contamination_refs = (
+        _evaluate_contamination_registry_evidence(
+            policy_payload=policy_payload,
+            gate_report_payload=gate_report_payload,
+            artifact_root=artifact_root,
+            promotion_target=promotion_target,
+        )
+    )
+    reasons.extend(contamination_reasons)
+    details.extend(contamination_details)
+    refs.extend(contamination_refs)
 
     rationale_reasons, rationale_details = _evaluate_rationale_evidence(
         policy_payload=policy_payload,
@@ -2096,6 +2164,208 @@ def _evaluate_janus_evidence(
                 "reasons": _list_of_strings(janus.get("reasons")),
             }
         )
+    return reasons, details, refs
+
+
+def _evaluate_contamination_registry_evidence(
+    *,
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+    artifact_root: Path,
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    if not _requires_contamination_registry(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return [], [], []
+
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    refs: list[str] = []
+
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    contamination = _as_dict(evidence.get("contamination_registry"))
+    evidence_ref = str(contamination.get("artifact_ref") or "").strip()
+    required_artifacts = _contamination_registry_required_artifact_refs(policy_payload)
+    artifact_ref = (evidence_ref or required_artifacts[0]).strip()
+    artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
+    if artifact_path is None:
+        reasons.append("contamination_registry_artifact_ref_invalid")
+        details.append(
+            {
+                "reason": "contamination_registry_artifact_ref_invalid",
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return reasons, details, refs
+
+    refs.append(evidence_ref or str(artifact_path))
+    payload = _load_json_if_exists(artifact_path)
+    if payload is None:
+        reasons.append("contamination_registry_artifact_invalid_json")
+        details.append(
+            {
+                "reason": "contamination_registry_artifact_invalid_json",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+        return reasons, details, refs
+
+    schema_version = str(payload.get("schema_version", "")).strip()
+    if schema_version != "contamination-leakage-report-v1":
+        reasons.append("contamination_registry_schema_version_invalid")
+        details.append(
+            {
+                "reason": "contamination_registry_schema_version_invalid",
+                "artifact_ref": str(artifact_path),
+                "schema_version": schema_version,
+                "expected_schema_version": "contamination-leakage-report-v1",
+            }
+        )
+
+    status = str(payload.get("status", "")).strip()
+    if status != "pass":
+        reasons.append("contamination_registry_status_not_pass")
+        details.append(
+            {
+                "reason": "contamination_registry_status_not_pass",
+                "artifact_ref": str(artifact_path),
+                "status": status,
+            }
+        )
+
+    leakage_detected = _coerce_evidence_bool(payload.get("leakage_detected"))
+    if leakage_detected is not False:
+        reasons.append("contamination_registry_leakage_detected")
+        details.append(
+            {
+                "reason": "contamination_registry_leakage_detected",
+                "artifact_ref": str(artifact_path),
+                "leakage_detected": payload.get("leakage_detected"),
+            }
+        )
+    leakage_rate = _float_or_none(payload.get("leakage_rate"))
+    max_leakage_rate = _float_or_none(
+        policy_payload.get("promotion_contamination_max_leakage_rate")
+    )
+    if max_leakage_rate is None:
+        max_leakage_rate = 0.0
+    if leakage_rate is None:
+        reasons.append("contamination_registry_leakage_rate_missing")
+        details.append(
+            {
+                "reason": "contamination_registry_leakage_rate_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif leakage_rate > max_leakage_rate:
+        reasons.append("contamination_registry_leakage_rate_exceeds_threshold")
+        details.append(
+            {
+                "reason": "contamination_registry_leakage_rate_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_leakage_rate": leakage_rate,
+                "maximum_leakage_rate": max_leakage_rate,
+            }
+        )
+
+    temporal_integrity = _as_dict(payload.get("temporal_integrity"))
+    if (
+        _coerce_evidence_bool(temporal_integrity.get("event_time_ordering_passed"))
+        is not True
+    ):
+        reasons.append("contamination_registry_temporal_ordering_failed")
+        details.append(
+            {
+                "reason": "contamination_registry_temporal_ordering_failed",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    if _coerce_evidence_bool(temporal_integrity.get("embargo_windows_enforced")) is not True:
+        reasons.append("contamination_registry_embargo_controls_missing")
+        details.append(
+            {
+                "reason": "contamination_registry_embargo_controls_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    source_lineage = _as_dict(payload.get("source_lineage"))
+    if _coerce_evidence_bool(source_lineage.get("complete")) is not True:
+        reasons.append("contamination_registry_source_lineage_incomplete")
+        details.append(
+            {
+                "reason": "contamination_registry_source_lineage_incomplete",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    checks_index = {
+        str(item.get("check", "")).strip(): str(item.get("status", "")).strip()
+        for item in _as_list_of_dicts(payload.get("checks"))
+    }
+    required_checks_raw = policy_payload.get(
+        "promotion_contamination_required_checks",
+        [
+            "temporal_ordering",
+            "lineage_complete",
+            "leakage_absent",
+            "embargo_windows_enforced",
+        ],
+    )
+    required_checks = [
+        str(item).strip()
+        for item in _list_from_any(required_checks_raw)
+        if isinstance(item, str) and str(item).strip()
+    ]
+    for required_check in required_checks:
+        status_value = checks_index.get(required_check)
+        if status_value is None:
+            reasons.append("contamination_registry_required_check_missing")
+            details.append(
+                {
+                    "reason": "contamination_registry_required_check_missing",
+                    "artifact_ref": str(artifact_path),
+                    "check": required_check,
+                }
+            )
+            continue
+        if status_value != "pass":
+            reasons.append("contamination_registry_required_check_failed")
+            details.append(
+                {
+                    "reason": "contamination_registry_required_check_failed",
+                    "artifact_ref": str(artifact_path),
+                    "check": required_check,
+                    "status": status_value,
+                }
+            )
+
+    artifact_hash = str(payload.get("artifact_hash", "")).strip()
+    if not artifact_hash:
+        reasons.append("contamination_registry_artifact_hash_missing")
+        details.append(
+            {
+                "reason": "contamination_registry_artifact_hash_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    else:
+        expected_hash = _sha256_json(
+            {key: value for key, value in payload.items() if key != "artifact_hash"}
+        )
+        if artifact_hash != expected_hash:
+            reasons.append("contamination_registry_artifact_hash_mismatch")
+            details.append(
+                {
+                    "reason": "contamination_registry_artifact_hash_mismatch",
+                    "artifact_ref": str(artifact_path),
+                    "artifact_hash": artifact_hash,
+                    "expected_artifact_hash": expected_hash,
+                }
+            )
+
     return reasons, details, refs
 
 

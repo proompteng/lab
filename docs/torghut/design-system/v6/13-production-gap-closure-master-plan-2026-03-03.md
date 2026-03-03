@@ -6,7 +6,7 @@
 - Date: `2026-03-03`
 - Maturity: `production execution plan`
 - Scope: close all currently documented `Partial`/`Planned` gaps across the active Torghut autonomous quant stack and supporting v4/v5 dependencies.
-- Implementation status: `Planned`
+- Implementation status: `In progress`
 
 ## Objective
 
@@ -337,5 +337,5 @@ Program is complete only when all are true:
 1. Complete Wave 0 policy convergence PRs.
 2. Add policy parity tests and startup enforcement.
 3. Enable profitability-stage manifest enforcement in runtime policy.
-4. Add contamination registry checks to promotion prerequisites.
+4. Add contamination registry checks to promotion prerequisites. (Completed `2026-03-03`)
 5. Publish rollout dashboard for Wave 0 and Wave 1 gates.

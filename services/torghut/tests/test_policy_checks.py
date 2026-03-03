@@ -2651,6 +2651,106 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(promotion.allowed)
         self.assertIn("stress_metrics_evidence_ref_not_trusted", promotion.reasons)
 
+    def test_promotion_prerequisites_fail_when_contamination_registry_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            _write_janus_artifacts(root)
+            _write_stress_artifacts(root)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_patch_targets": ["paper"],
+                    "promotion_require_contamination_registry": True,
+                    "promotion_contamination_required_targets": ["paper"],
+                    "gate6_require_profitability_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("required_artifacts_missing", promotion.reasons)
+        self.assertIn("contamination_registry_artifact_invalid_json", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_contamination_registry_detects_leakage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            _write_janus_artifacts(root)
+            _write_stress_artifacts(root)
+            _write_contamination_registry_artifact(
+                root,
+                status="fail",
+                leakage_detected=True,
+                leakage_rate=0.05,
+                check_status_overrides={"leakage_absent": "fail"},
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_patch_targets": ["paper"],
+                    "promotion_require_contamination_registry": True,
+                    "promotion_contamination_required_targets": ["paper"],
+                    "promotion_contamination_max_leakage_rate": "0.0",
+                    "gate6_require_profitability_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("contamination_registry_status_not_pass", promotion.reasons)
+        self.assertIn("contamination_registry_leakage_detected", promotion.reasons)
+        self.assertIn(
+            "contamination_registry_leakage_rate_exceeds_threshold",
+            promotion.reasons,
+        )
+        self.assertIn(
+            "contamination_registry_required_check_failed",
+            promotion.reasons,
+        )
+
     def test_promotion_prerequisites_fail_when_benchmark_parity_artifact_is_missing(
         self,
     ) -> None:
@@ -3510,6 +3610,60 @@ def _write_stress_artifacts(
     )
 
 
+def _write_contamination_registry_artifact(
+    root: Path,
+    *,
+    status: str = "pass",
+    leakage_detected: bool = False,
+    leakage_rate: float = 0.0,
+    check_status_overrides: dict[str, str] | None = None,
+) -> None:
+    checks = {
+        "temporal_ordering": "pass",
+        "lineage_complete": "pass",
+        "leakage_absent": "pass",
+        "embargo_windows_enforced": "pass",
+    }
+    if check_status_overrides:
+        checks.update(check_status_overrides)
+    payload: dict[str, object] = {
+        "schema_version": "contamination-leakage-report-v1",
+        "run_id": "run-test",
+        "candidate_id": "cand-test",
+        "generated_at": datetime(2026, 3, 3, tzinfo=timezone.utc).isoformat(),
+        "status": status,
+        "leakage_detected": leakage_detected,
+        "leakage_rate": leakage_rate,
+        "temporal_integrity": {
+            "event_time_ordering_passed": True,
+            "embargo_windows_enforced": True,
+        },
+        "source_lineage": {
+            "complete": True,
+            "feature_sources": [
+                "research/candidate-spec.json",
+                "backtest/evaluation-report.json",
+            ],
+            "prompt_sources": [],
+        },
+        "checks": [
+            {"check": check_name, "status": check_status}
+            for check_name, check_status in checks.items()
+        ],
+        "artifact_refs": [
+            "research/candidate-spec.json",
+            "backtest/evaluation-report.json",
+        ],
+    }
+    payload["artifact_hash"] = _sha256_json(
+        {key: value for key, value in payload.items() if key != "artifact_hash"}
+    )
+    (root / "gates" / "contamination-leakage-report-v1.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+
 def _gate_report() -> dict[str, object]:
     return {
         "run_id": "run-test",
@@ -3555,6 +3709,12 @@ def _gate_report() -> dict[str, object]:
                 },
                 "evidence_complete": True,
                 "reasons": [],
+            },
+            "contamination_registry": {
+                "artifact_ref": "gates/contamination-leakage-report-v1.json",
+                "status": "pass",
+                "leakage_detected": False,
+                "leakage_rate": 0.0,
             },
             "promotion_rationale": {
                 "requested_target": "paper",

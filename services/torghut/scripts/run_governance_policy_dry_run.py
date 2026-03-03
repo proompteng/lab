@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -67,7 +68,24 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Use untrusted stress metrics artifact reference to trigger reference enforcement failure.",
     )
+    parser.add_argument(
+        "--simulate-contamination-missing",
+        action="store_true",
+        default=False,
+        help="Delete contamination registry artifact to prove contamination prerequisite enforcement.",
+    )
+    parser.add_argument(
+        "--simulate-contamination-failed",
+        action="store_true",
+        default=False,
+        help="Mark contamination registry status as failed to prove deterministic block behavior.",
+    )
     return parser
+
+
+def _stable_hash(payload: object) -> str:
+    payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
 
 def main() -> int:
@@ -158,6 +176,11 @@ def main() -> int:
                     ).isoformat()
                 elif isinstance(stress_metrics.get("generated_at"), str):
                     stress_artifact["generated_at"] = stress_metrics["generated_at"]
+            contamination_registry = promotion_evidence.get("contamination_registry")
+            if not isinstance(contamination_registry, dict):
+                contamination_registry = {}
+                promotion_evidence["contamination_registry"] = contamination_registry
+            contamination_registry["artifact_ref"] = "gates/contamination-leakage-report-v1.json"
         if "generated_at" not in stress_artifact:
             stress_artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
         (root / "gates" / "stress-metrics-v1.json").write_text(
@@ -167,6 +190,63 @@ def main() -> int:
             stress_path = root / "gates" / "stress-metrics-v1.json"
             if stress_path.exists():
                 stress_path.unlink()
+
+        contamination_artifact: dict[str, Any] = {
+            "schema_version": "contamination-leakage-report-v1",
+            "run_id": str(gate_report.get("run_id", "run-dry-run")),
+            "candidate_id": "cand-dry-run",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "status": "pass",
+            "leakage_detected": False,
+            "leakage_rate": 0.0,
+            "temporal_integrity": {
+                "event_time_ordering_passed": True,
+                "embargo_windows_enforced": True,
+            },
+            "source_lineage": {
+                "complete": True,
+                "feature_sources": [
+                    "research/candidate-spec.json",
+                    "backtest/evaluation-report.json",
+                    "gates/profitability-evidence-v4.json",
+                ],
+                "prompt_sources": [],
+            },
+            "checks": [
+                {"check": "temporal_ordering", "status": "pass"},
+                {"check": "lineage_complete", "status": "pass"},
+                {"check": "leakage_absent", "status": "pass"},
+                {"check": "embargo_windows_enforced", "status": "pass"},
+            ],
+            "artifact_refs": [
+                "research/candidate-spec.json",
+                "backtest/evaluation-report.json",
+            ],
+        }
+        if args.simulate_contamination_failed:
+            contamination_artifact["status"] = "fail"
+            contamination_artifact["leakage_detected"] = True
+            contamination_artifact["leakage_rate"] = 0.02
+            contamination_artifact["checks"] = [
+                {"check": "temporal_ordering", "status": "pass"},
+                {"check": "lineage_complete", "status": "pass"},
+                {"check": "leakage_absent", "status": "fail"},
+                {"check": "embargo_windows_enforced", "status": "pass"},
+            ]
+        contamination_artifact["artifact_hash"] = _stable_hash(
+            {
+                key: value
+                for key, value in contamination_artifact.items()
+                if key != "artifact_hash"
+            }
+        )
+        (root / "gates" / "contamination-leakage-report-v1.json").write_text(
+            json.dumps(contamination_artifact, indent=2), encoding="utf-8"
+        )
+        if args.simulate_contamination_missing:
+            contamination_path = root / "gates" / "contamination-leakage-report-v1.json"
+            if contamination_path.exists():
+                contamination_path.unlink()
 
         if args.simulate_missing_artifact:
             (root / "paper-candidate" / "strategy-configmap-patch.yaml").unlink()
@@ -211,6 +291,8 @@ def main() -> int:
                 "missing_stress_metrics": args.simulate_stress_metrics_missing,
                 "stale_stress_metrics": args.simulate_stress_metrics_stale,
                 "untrusted_stress_metrics": args.simulate_stress_metrics_untrusted,
+                "missing_contamination_registry": args.simulate_contamination_missing,
+                "failed_contamination_registry": args.simulate_contamination_failed,
             },
         }
 
