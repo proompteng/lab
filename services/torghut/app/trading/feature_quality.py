@@ -66,6 +66,7 @@ class FeatureQualityError(RuntimeError):
 @dataclass
 class _FeatureQualityScan:
     null_counts: dict[str, int]
+    malformed_staleness_count: int = 0
     seen_keys: set[tuple[datetime, str, int]] = dataclass_field(
         default_factory=lambda: set[tuple[datetime, str, int]]()
     )
@@ -142,8 +143,11 @@ def _scan_feature_batch(signals: list[SignalEnvelope]) -> _FeatureQualityScan:
                 scan.null_counts[field] += 1
 
         staleness_raw = values.get("staleness_ms")
-        staleness = int(staleness_raw) if isinstance(staleness_raw, (int, float)) else 0
-        scan.staleness_values.append(staleness)
+        staleness = _coerce_staleness_ms(staleness_raw)
+        if staleness is None:
+            scan.malformed_staleness_count += 1
+        else:
+            scan.staleness_values.append(staleness)
 
         key = (signal.event_ts, signal.symbol, signal.seq or 0)
         if key in scan.seen_keys:
@@ -168,6 +172,8 @@ def _derive_quality_reasons(
     reasons: list[str] = []
     if scan.non_monotonic_detected:
         reasons.append(REASON_NON_MONOTONIC)
+    if scan.malformed_staleness_count > 0:
+        reasons.append(REASON_STALENESS)
     if scan.schema_mismatch_total > 0:
         reasons.append(REASON_SCHEMA_MISMATCH)
     if any(
@@ -210,6 +216,21 @@ def _p95(values: list[int]) -> int:
     if not quantized:
         return max(values)
     return int(quantized[94])
+
+
+def _coerce_staleness_ms(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
 
 
 __all__ = [

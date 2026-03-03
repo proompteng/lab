@@ -197,6 +197,60 @@ class AvroSerde(
       record.put("vol_realized", r)
     }
 
+    env.payload.microstructureSignalV1?.let {
+      val schema =
+        signalsSchema
+          .getField("microstructure_signal_v1")
+          .schema()
+          .types
+          .first { it.type == Schema.Type.RECORD }
+      val signalRecord = GenericData.Record(schema)
+      signalRecord.put("schema_version", it.schemaVersion)
+      signalRecord.put("symbol", it.symbol)
+      signalRecord.put("horizon", it.horizon)
+
+      val directionSchema =
+        schema
+          .getField("direction_probabilities")
+          .schema()
+          .let { fieldSchema ->
+            if (fieldSchema.type == Schema.Type.RECORD) {
+              fieldSchema
+            } else {
+              fieldSchema.types.first { s -> s.type == Schema.Type.RECORD }
+            }
+          }
+      val directionRecord = GenericData.Record(directionSchema)
+      directionRecord.put("up", it.directionProbabilities.up)
+      directionRecord.put("flat", it.directionProbabilities.flat)
+      directionRecord.put("down", it.directionProbabilities.down)
+      signalRecord.put("direction_probabilities", directionRecord)
+
+      signalRecord.put("uncertainty_band", it.uncertaintyBand)
+      signalRecord.put("expected_spread_impact_bps", it.expectedSpreadImpactBps)
+      signalRecord.put("expected_slippage_bps", it.expectedSlippageBps)
+      signalRecord.put("feature_quality_status", it.featureQualityStatus)
+
+      val artifactSchema =
+        schema
+          .getField("artifact")
+          .schema()
+          .let { fieldSchema ->
+            if (fieldSchema.type == Schema.Type.RECORD) {
+              fieldSchema
+            } else {
+              fieldSchema.types.first { s -> s.type == Schema.Type.RECORD }
+            }
+          }
+      val artifactRecord = GenericData.Record(artifactSchema)
+      artifactRecord.put("model_id", it.artifact.modelId)
+      artifactRecord.put("feature_schema_version", it.artifact.featureSchemaVersion)
+      artifactRecord.put("training_run_id", it.artifact.trainingRunId)
+      signalRecord.put("artifact", artifactRecord)
+
+      record.put("microstructure_signal_v1", signalRecord)
+    }
+
     record.put("version", env.version)
     return record
   }

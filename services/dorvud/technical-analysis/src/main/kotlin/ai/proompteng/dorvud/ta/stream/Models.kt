@@ -67,6 +67,8 @@ data class TaSignalsPayload(
   val vwap: Vwap? = null,
   val imbalance: Imbalance? = null,
   val vol_realized: RealizedVol? = null,
+  @SerialName("microstructure_signal_v1")
+  val microstructureSignalV1: MicrostructureSignalV1? = null,
 )
 
 @Serializable
@@ -117,6 +119,42 @@ data class Imbalance(
 @Serializable
 data class RealizedVol(
   val w60s: Double,
+)
+
+@Serializable
+data class MicrostructureSignalV1(
+  @SerialName("schema_version")
+  val schemaVersion: String,
+  val symbol: String,
+  val horizon: String,
+  @SerialName("direction_probabilities")
+  val directionProbabilities: DirectionProbabilities,
+  @SerialName("uncertainty_band")
+  val uncertaintyBand: String,
+  @SerialName("expected_spread_impact_bps")
+  val expectedSpreadImpactBps: Double,
+  @SerialName("expected_slippage_bps")
+  val expectedSlippageBps: Double,
+  @SerialName("feature_quality_status")
+  val featureQualityStatus: String,
+  val artifact: MicrostructureSignalArtifact,
+)
+
+@Serializable
+data class DirectionProbabilities(
+  val up: Double,
+  val flat: Double,
+  val down: Double,
+)
+
+@Serializable
+data class MicrostructureSignalArtifact(
+  @SerialName("model_id")
+  val modelId: String,
+  @SerialName("feature_schema_version")
+  val featureSchemaVersion: String,
+  @SerialName("training_run_id")
+  val trainingRunId: String,
 )
 
 /** Helper to copy envelope with a new payload but the same metadata. */

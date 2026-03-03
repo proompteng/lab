@@ -54,6 +54,7 @@ FLAT_SIGNAL_COLUMNS = [
     "spread",
     "imbalance_bid_px",
     "imbalance_ask_px",
+    "microstructure_signal_v1",
 ]
 
 ENVELOPE_SIGNAL_COLUMNS = [
@@ -916,6 +917,7 @@ def _payload_from_flat_row(row: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     _merge_signal_json_payload(payload, row)
     _merge_macd_payload(payload, row)
+    _merge_microstructure_signal_payload(payload, row)
     _copy_row_values_if_missing(payload, row, ("rsi", "rsi14"))
     _copy_row_value_if_missing(payload, row, "ema")
     _copy_row_value_if_missing(payload, row, "vwap")
@@ -1011,6 +1013,22 @@ def _merge_imbalance_payload(payload: dict[str, Any], row: dict[str, Any]) -> No
         imbalance["spread"] = spread
 
 
+def _merge_microstructure_signal_payload(payload: dict[str, Any], row: dict[str, Any]) -> None:
+    signal_value = row.get("microstructure_signal_v1")
+    if signal_value is None:
+        return
+    if isinstance(signal_value, str):
+        try:
+            signal_value = json.loads(signal_value)
+        except json.JSONDecodeError:
+            return
+    if isinstance(signal_value, dict):
+        payload.setdefault("microstructure_signal", {})
+        payload["microstructure_signal"] = _merge_dict_payload(
+            payload.get("microstructure_signal"), cast(dict[str, Any], signal_value)
+        )
+
+
 def _copy_extended_ta_fields(payload: dict[str, Any], row: dict[str, Any]) -> None:
     # Preserve extended TA fields required by plugin_v3 strategy runtime.
     for key in (
@@ -1026,6 +1044,14 @@ def _copy_extended_ta_fields(payload: dict[str, Any], row: dict[str, Any]) -> No
         "vol_realized_w60s",
     ):
         _copy_row_value_if_missing(payload, row, key)
+
+
+def _merge_dict_payload(base: Any, updates: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    if isinstance(base, dict):
+        merged.update(cast(dict[str, Any], base))
+    merged.update(updates)
+    return merged
 
 
 def _next_signal_cursor_state(
@@ -1112,6 +1138,7 @@ def _select_columns(columns: set[str], time_column: str) -> list[str]:
         "spread",
         "imbalance_bid_px",
         "imbalance_ask_px",
+        "microstructure_signal_v1",
         "simulation_context",
         "dataset_event_id",
         "source_topic",

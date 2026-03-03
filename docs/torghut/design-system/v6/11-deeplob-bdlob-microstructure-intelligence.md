@@ -75,6 +75,17 @@ Execution integration:
 3. abstain or reduce notional on adverse-selection risk spikes.
 4. pass final decision through deterministic policy and risk gates.
 
+## Torghut execution consumption compatibility notes
+
+- Keep Torghut's current v3 feature path unchanged for existing strategies (`macd`, `rsi14`, `feature_schema_version`, etc.) so no current strategy/coverage regression is introduced.
+- Consume `microstructure_signal_v1` only as an additive payload in the same TA signal envelope:
+  - Gate downstream use behind `feature_quality_status == "pass"` and `schema_version == "microstructure_signal_v1"`.
+  - Derive execution modifiers from `uncertainty_band`, `expected_spread_impact_bps`, and `expected_slippage_bps`.
+  - Record all consumed values into execution artifacts for replay parity and auditability.
+- If `microstructure_signal_v1` is absent, malformed, or fails quality checks, execute with legacy deterministic policy/participation settings (no fallback dependency on LOB inference).
+- Preserve deterministic risk-gate behavior in Torghut by applying microstructure modifiers after existing policy checks and before order-size construction.
+- Map `MicrostructureSignalArtifact` fields into run artifacts with the same immutable artifact retention pattern used by `risk-gate-compatibility-report.json`.
+
 ## Canonical Artifact Set
 
 `<artifact_path>/microstructure/deeplob-bdlob-report-v1.json`
