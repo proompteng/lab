@@ -18,7 +18,7 @@
 - `services/torghut/tests/test_trading_pipeline.py`
 - `argocd/applications/torghut/knative-service.yaml`
 - `argocd/applications/feature-flags/gitops/default/features.yaml`
-- Cutover status: live runtime now enforces stage3 DSPy active posture with strict-veto fail-closed controls and feature-flag parity.
+- Cutover status: live runtime now enforces stage3 DSPy active posture with strict-veto fail-closed controls; runtime feature-flag overrides are disabled to prevent `feature-flags-state` drift from reintroducing legacy posture.
 
 ## Objective
 

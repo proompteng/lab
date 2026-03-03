@@ -78,7 +78,7 @@ spec:
             - name: TRADING_KILL_SWITCH_ENABLED
               value: "false"
             - name: TRADING_FEATURE_FLAGS_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_FEATURE_FLAGS_URL
               value: http://feature-flags.feature-flags.svc.cluster.local:8013
             - name: TRADING_FEATURE_FLAGS_TIMEOUT_MS
