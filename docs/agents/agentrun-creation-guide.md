@@ -85,6 +85,24 @@ Notes:
   Do not put TTL under `spec.runtime.config` unless a specific runtime explicitly documents it.
 - Keep `metadata.name` short enough for label propagation. The controller writes
   `agents.proompteng.ai/agent-run=<run-name>` labels, so names longer than 63 characters can fail reconciliation.
+- Prefer omitting `spec.workload.image` unless you intentionally pin a known-good runner image.
+
+## Runner Image Selection (Avoid Accidental Overrides)
+
+Image resolution order (highest first):
+
+1. `AgentRun.spec.workload.image`
+2. `JANGAR_AGENT_RUNNER_IMAGE`
+3. `JANGAR_AGENT_IMAGE`
+
+Safe default for normal runs:
+
+- Do not set `spec.workload.image`; let the controller-provided default image drive execution.
+
+Use per-run image pinning only when:
+
+- you are running a controlled canary/debug experiment, and
+- you have verified the exact image is compatible with the configured agent provider/runtime.
 
 ## Verify The Run Is Using The Spec Text
 
@@ -198,6 +216,7 @@ Do not use system prompt customization to compensate for an incorrect user promp
 - You assumed `${parameter}` placeholders were auto-expanded in prompt text without verifying `run.json.prompt`.
 - You used a head branch that conflicts with another active run (see `docs/agents/version-control-provider-design.md`).
 - Your `AgentRun.metadata.name` exceeded 63 chars and failed when propagated into Kubernetes label values.
+- You set `spec.workload.image` to a stale/incompatible image instead of inheriting controller defaults.
 - Required secrets were not allowlisted or not included in `spec.secrets`.
 - The repo is not in the allowlist configured for the controllers deployment.
 - You expected “followers not-ready” behavior without having implemented leader election in code and chart.

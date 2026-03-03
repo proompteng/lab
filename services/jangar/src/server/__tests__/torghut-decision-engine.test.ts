@@ -153,7 +153,11 @@ describe('torghut decision engine', () => {
 
   it('forwards llm review temperature and max_tokens to chat completion payload', async () => {
     let seenBody: unknown = null
+    let seenClientKindHeader: string | null = null
+    let hasOpenWebuiChatIdHeader = false
     vi.spyOn(chatServer, 'handleChatCompletion').mockImplementation(async (request: Request) => {
+      seenClientKindHeader = request.headers.get('x-jangar-client-kind')
+      hasOpenWebuiChatIdHeader = request.headers.has('x-openwebui-chat-id')
       seenBody = await request.json()
       const payload = [
         'data: {"choices":[{"delta":{"content":"{\\"verdict\\":\\"approve\\"}"}}]}',
@@ -187,5 +191,7 @@ describe('torghut decision engine', () => {
       temperature: 0.2,
       max_tokens: 321,
     })
+    expect(seenClientKindHeader).toBe('internal')
+    expect(hasOpenWebuiChatIdHeader).toBe(false)
   })
 })

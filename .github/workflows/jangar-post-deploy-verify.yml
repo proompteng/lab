@@ -27,7 +27,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -116,7 +116,7 @@ jobs:
           )
 
           if [ "${EVENT_NAME}" = "push" ]; then
-            ARGS+=(--expected-revision "${GITHUB_SHA}")
+            ARGS+=(--expected-revision "${GITHUB_SHA}" --expected-revision-mode ancestor)
           elif [ -n "${EXPECTED_REVISION_INPUT}" ]; then
             ARGS+=(--expected-revision "${EXPECTED_REVISION_INPUT}")
           fi

@@ -1,0 +1,114 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: codex-spark-review
+spec:
+  binary: /bin/bash
+  argsTemplate:
+    - -lc
+    - |-
+      set -o pipefail
+      STAGE="${WORKFLOW_STAGE:-${CODEX_STAGE:-}}"
+      BASE="${VCS_BASE_BRANCH:-main}"
+      CONFIG_PATH="/root/.codex/config.toml"
+
+      if [ ! -s "$CONFIG_PATH" ]; then
+        echo "missing or empty config file: $CONFIG_PATH" >&2
+        echo "expected a populated /root/.codex/config.toml" >&2
+        exit 1
+      fi
+
+      REPO_PATH="/workspace/lab"
+      if [ -d "$REPO_PATH/.git" ]; then
+        cd "$REPO_PATH"
+      else
+        git clone "https://github.com/${VCS_REPOSITORY}.git" "$REPO_PATH"
+        cd "$REPO_PATH"
+      fi
+
+      if [ -n "${VCS_HEAD_BRANCH:-}" ]; then
+        if ! git fetch origin "$VCS_HEAD_BRANCH"; then
+          git checkout -B "$VCS_HEAD_BRANCH" "origin/$BASE"
+        elif git rev-parse --verify --quiet "origin/$VCS_HEAD_BRANCH"; then
+          git checkout "$VCS_HEAD_BRANCH" || git checkout -B "$VCS_HEAD_BRANCH" "origin/$VCS_HEAD_BRANCH"
+        else
+          git checkout -B "$VCS_HEAD_BRANCH" "origin/$BASE"
+        fi
+      else
+        git checkout "$BASE"
+      fi
+
+      if [ "$STAGE" = "fix" ]; then
+        exec /usr/local/bin/agent-runner --spec /workspace/agent-runner.json
+      fi
+
+      mkdir -p /agentworkspace/.agentrun/codex-spark-review
+      codex review --base "$BASE" 2>&1 |
+      tee /agentworkspace/.agentrun/codex-spark-review/review-notes.md
+  envTemplate:
+    CODEX_LOG_LEVEL: info
+    NATS_URL: nats://nats.nats.svc.cluster.local:4222
+    AGENT_PROVIDER_PATH: /root/.codex/provider-codex-spark.json
+    WORKFLOW_STAGE: "{{inputs.stage}}"
+    CODEX_STAGE: "{{inputs.stage}}"
+    CODEX_CONFIG: /root/.codex/config.toml
+    HOME: /root
+  inputFiles:
+    - path: /root/.codex/config.toml
+      content: |-
+        model = "gpt-5.3-codex-spark"
+        model_reasoning_summary = "none"
+        model_reasoning_effort = "xhigh"
+        model_verbosity = "medium"
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
+        web_search = "live"
+        suppress_unstable_features_warning = true
+
+        [features]
+        undo = true
+        enable_request_compression = true
+        apply_patch_freeform = true
+        unified_exec = true
+        shell_snapshot = true
+        steer = true
+        multi_agent = true
+        child_agents_md = true
+        collaboration_modes = true
+        responses_websockets = false
+
+        [shell_environment_policy]
+        ignore_default_excludes = true
+
+        [projects."/workspace/lab"]
+        trust_level = "trusted"
+
+        [projects."/root"]
+        trust_level = "trusted"
+        [projects."/workspace"]
+        trust_level = "trusted"
+        [projects."/"]
+        trust_level = "trusted"
+        [projects."/agentworkspace"]
+        trust_level = "trusted"
+
+        [projects."/agentworkspace/lab"]
+        trust_level = "trusted"
+    - path: /root/.codex/provider-codex-spark.json
+      content: |-
+        {
+          "name": "codex-spark",
+          "binary": "/usr/local/bin/codex-implement",
+          "argsTemplate": [
+            "{{payloads.eventFilePath}}"
+          ],
+          "envTemplate": {
+            "WORKFLOW_STAGE": "{{inputs.stage}}",
+            "CODEX_STAGE": "{{inputs.stage}}"
+          }
+        }
+  outputArtifacts:
+    - name: runner-log
+      path: /agentworkspace/.agent/runner.log
+    - name: runner-status
+      path: /agentworkspace/.agent/status.json

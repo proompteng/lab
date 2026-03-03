@@ -14,14 +14,18 @@ from ..models import Strategy
 from .features import (
     FeatureNormalizationError,
     SignalFeatures,
-    extract_microstructure_features_v1,
     extract_signal_features,
     normalize_feature_vector_v3,
     optional_decimal,
 )
+from .microstructure import parse_microstructure_state
 from .forecasting import ForecastRoutingTelemetry, build_default_forecast_router
 from .models import SignalEnvelope, StrategyDecision
-from .regime_hmm import resolve_hmm_context, resolve_regime_route_label
+from .regime_hmm import (
+    HMM_UNKNOWN_REGIME_ID,
+    resolve_hmm_context,
+    resolve_regime_route_label,
+)
 from .prices import MarketSnapshot, PriceFetcher
 from .quantity_rules import (
     fractional_equities_enabled_for_trade,
@@ -442,8 +446,11 @@ def _build_params(
         params["forecast"] = forecast_contract
     if forecast_audit is not None:
         params["forecast_audit"] = forecast_audit
-    regime_context_payload, regime_route_label = _resolve_regime_context(signal, macd=macd, macd_signal=macd_signal)
-    params["regime_hmm"] = regime_context_payload
+    regime_context_payload, regime_route_label = _resolve_regime_context(
+        signal, macd=macd, macd_signal=macd_signal
+    )
+    if regime_context_payload:
+        params["regime_hmm"] = regime_context_payload
     if regime_route_label is not None:
         params["regime_label"] = regime_route_label
         params["route_regime_label"] = regime_route_label
@@ -461,6 +468,46 @@ def _build_params(
     return params
 
 
+def _has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
+    def _is_explicit_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, Mapping):
+            typed_mapping = cast(Mapping[Any, Any], value)
+            return any(_is_explicit_value(v) for v in typed_mapping.values())
+        if isinstance(value, str):
+            return bool(value.strip())
+        return True
+
+    for key in (
+        "regime_hmm",
+        "hmm_regime_context",
+        "hmm_context",
+        "regime_context",
+        "hmm_state_posterior",
+        "hmm_entropy",
+        "hmm_entropy_band",
+        "hmm_regime_id",
+        "hmm_predicted_next",
+        "hmm_transition_shock",
+        "hmm_duration_ms",
+        "hmm_artifact",
+        "hmm_guardrail",
+        "regime_id",
+        "posterior",
+        "entropy",
+        "entropy_band",
+        "predicted_next",
+        "transition_shock",
+        "duration_ms",
+        "artifact",
+        "guardrail",
+    ):
+        if _is_explicit_value(payload.get(key)):
+            return True
+    return False
+
+
 def _resolve_regime_context(
     signal: SignalEnvelope,
     macd: Decimal | None,
@@ -468,12 +515,22 @@ def _resolve_regime_context(
 ) -> tuple[dict[str, Any], str | None]:
     payload = signal.payload
     regime_context = resolve_hmm_context(payload)
+    if not _has_explicit_regime_context(payload):
+        regime_payload = regime_context.to_payload()
+        if regime_payload.get("regime_id") == HMM_UNKNOWN_REGIME_ID:
+            normalized_route_label = resolve_regime_route_label(
+                payload,
+                macd=macd,
+                macd_signal=macd_signal,
+            )
+            return {}, normalized_route_label
+
     route_regime_label = resolve_regime_route_label(
         cast(Mapping[str, Any], payload),
         macd=macd,
         macd_signal=macd_signal,
     )
-    normalized_route_label = route_regime_label.strip().lower() if route_regime_label else None
+    normalized_route_label = str(route_regime_label).strip().lower()
     return regime_context.to_payload(), normalized_route_label
 
 
@@ -482,22 +539,10 @@ def _resolve_microstructure_state_payload(
 ) -> dict[str, Any] | None:
     payload = signal.payload
     raw_state = payload.get("microstructure_state")
-    if isinstance(raw_state, dict):
-        state = dict(cast(dict[str, Any], raw_state))
-    else:
-        extracted = extract_microstructure_features_v1(signal)
-        state = {
-            "schema_version": extracted.schema_version,
-            "symbol": extracted.symbol,
-            "event_ts": extracted.event_ts.isoformat(),
-            "spread_bps": str(extracted.spread_bps),
-            "depth_top5_usd": str(extracted.depth_top5_usd),
-            "order_flow_imbalance": str(extracted.order_flow_imbalance),
-            "latency_ms_estimate": extracted.latency_ms_estimate,
-            "fill_hazard": str(extracted.fill_hazard),
-            "liquidity_regime": extracted.liquidity_regime,
-        }
+    if not isinstance(raw_state, dict):
+        return None
 
+    state = dict(cast(dict[str, Any], raw_state))
     state["schema_version"] = "microstructure_state_v1"
     state["symbol"] = str(state.get("symbol") or signal.symbol).strip().upper()
     if not state["symbol"]:
@@ -505,6 +550,11 @@ def _resolve_microstructure_state_payload(
     event_ts = state.get("event_ts")
     if event_ts is None:
         state["event_ts"] = signal.event_ts.isoformat()
+
+    parsed = parse_microstructure_state(state, expected_symbol=signal.symbol)
+    if parsed is None:
+        return None
+
     return state
 
 

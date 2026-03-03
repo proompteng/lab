@@ -64,6 +64,43 @@ def main() -> int:
         "--output-dir", type=Path, required=True, help="Artifact output directory."
     )
     parser.add_argument(
+        "--repository", type=str, default=None, help="Repository context for this run."
+    )
+    parser.add_argument("--base", type=str, default=None, help="Base reference.")
+    parser.add_argument(
+        "--head", type=str, default=None, help="Head reference."
+    )
+    parser.add_argument(
+        "--artifact-path",
+        type=Path,
+        default=None,
+        help="Optional artifact root for execution-context notes and governance artifact path.",
+    )
+    parser.add_argument(
+        "--artifactPath",
+        type=Path,
+        default=None,
+        help="CamelCase alias for --artifact-path",
+    )
+    parser.add_argument(
+        "--priority-id",
+        type=str,
+        default=None,
+        help="Priority identifier for lane execution and governance output.",
+    )
+    parser.add_argument(
+        "--priorityId",
+        type=str,
+        default=None,
+        help="CamelCase alias for --priority-id",
+    )
+    parser.add_argument(
+        "--design-doc",
+        type=str,
+        default=None,
+        help="Optional design document reference (for governance contract and evidence provenance).",
+    )
+    parser.add_argument(
         "--promotion-target", choices=("shadow", "paper", "live"), default="paper"
     )
     parser.add_argument(
@@ -84,6 +121,18 @@ def main() -> int:
         strategy_config_path=args.strategy_config,
         gate_policy_path=args.gate_policy,
         output_dir=args.output_dir,
+        repository=args.repository,
+        base=args.base,
+        head=args.head,
+        artifact_path=str(args.artifact_path)
+        if args.artifact_path is not None
+        else None,
+        artifactPath=str(args.artifactPath)
+        if args.artifactPath is not None
+        else None,
+        priority_id=args.priority_id,
+        priorityId=args.priorityId,
+        design_doc=args.design_doc,
         promotion_target=args.promotion_target,
         strategy_configmap_path=args.strategy_configmap,
         code_version=_resolve_git_sha(),
@@ -95,9 +144,23 @@ def main() -> int:
         "candidate_id": result.candidate_id,
         "output_dir": str(result.output_dir),
         "gate_report_path": str(result.gate_report_path),
+        "actuation_intent_path": str(result.actuation_intent_path)
+        if result.actuation_intent_path
+        else None,
         "paper_patch_path": str(result.paper_patch_path)
         if result.paper_patch_path
         else None,
+        "candidate_spec_path": str(result.candidate_spec_path),
+        "candidate_generation_manifest_path": str(
+            result.candidate_generation_manifest_path
+        ),
+        "evaluation_manifest_path": str(result.evaluation_manifest_path),
+        "recommendation_manifest_path": str(result.recommendation_manifest_path),
+        "profitability_manifest_path": str(result.profitability_manifest_path),
+        "recommendation_artifact_path": str(result.recommendation_artifact_path),
+        "benchmark_parity_path": str(result.benchmark_parity_path),
+        "stage_trace_ids": result.stage_trace_ids,
+        "stage_lineage_root": result.stage_lineage_root,
         "profitability_benchmark_path": str(
             result.output_dir / "gates" / "profitability-benchmark-v4.json"
         ),

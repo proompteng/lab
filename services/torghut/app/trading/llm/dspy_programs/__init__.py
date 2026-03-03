@@ -2,7 +2,12 @@
 
 from .adapters import dspy_output_to_llm_response, review_request_to_dspy_input
 from .modules import DSPyCommitteeProgram, HeuristicCommitteeProgram, LiveDSPyCommitteeProgram
-from .runtime import DSPyReviewRuntime, DSPyRuntimeError, DSPyRuntimeMetadata
+from .runtime import (
+    DSPyReviewRuntime,
+    DSPyRuntimeError,
+    DSPyRuntimeMetadata,
+    DSPyRuntimeUnsupportedStateError,
+)
 from .signatures import (
     DSPyCommitteeMemberOutput,
     DSPyCommitteeRole,
@@ -17,6 +22,7 @@ __all__ = [
     "DSPyCommitteeRole",
     "DSPyReviewRuntime",
     "DSPyRuntimeError",
+    "DSPyRuntimeUnsupportedStateError",
     "DSPyRuntimeMetadata",
     "DSPyTradeReviewInput",
     "DSPyTradeReviewOutput",

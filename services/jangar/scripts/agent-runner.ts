@@ -150,6 +150,9 @@ const parseArgs = () => {
   return result
 }
 
+export const resolveSpecPath = (parsedArgs: Partial<{ specPath: string }>, env: NodeJS.ProcessEnv = process.env) =>
+  parsedArgs.specPath || env.AGENT_RUNNER_SPEC_PATH || env.AGENT_RUN_SPEC || env.AGENT_SPEC_PATH || undefined
+
 const isRunSpec = (value: unknown): value is RunSpec => {
   if (!value || typeof value !== 'object') return false
   const record = value as Record<string, unknown>
@@ -203,7 +206,7 @@ const buildSpecFromRunSpec = (runSpec: RunSpec): AgentSpec => {
 
 const loadSpec = async () => {
   const { specPath, specEnv } = parseArgs()
-  const resolvedPath = specPath || process.env.AGENT_RUN_SPEC || process.env.AGENT_SPEC_PATH || undefined
+  const resolvedPath = resolveSpecPath({ specPath })
   if (resolvedPath) {
     const raw = await readFile(resolvedPath, 'utf8')
     const parsed = JSON.parse(raw) as AgentSpec | RunSpec
@@ -215,7 +218,9 @@ const loadSpec = async () => {
   const envKey = specEnv || process.env.AGENT_SPEC_ENV || 'AGENT_SPEC'
   const raw = process.env[envKey]
   if (!raw) {
-    throw new Error('Missing agent spec. Provide --spec <path> or set AGENT_SPEC.')
+    throw new Error(
+      'Missing agent spec. Provide --spec <path>, set AGENT_RUNNER_SPEC_PATH/AGENT_RUN_SPEC/AGENT_SPEC_PATH, or set AGENT_SPEC.',
+    )
   }
   const parsed = JSON.parse(raw) as AgentSpec | RunSpec
   if (isRunSpec(parsed)) {
@@ -527,7 +532,9 @@ const run = async () => {
   process.exit(exitCode)
 }
 
-run().catch((error) => {
-  console.error('agent-runner failed', error)
-  process.exit(1)
-})
+if (import.meta.main) {
+  run().catch((error) => {
+    console.error('agent-runner failed', error)
+    process.exit(1)
+  })
+}

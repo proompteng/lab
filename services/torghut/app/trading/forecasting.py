@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from .features import FeatureVectorV3, optional_decimal
-from .regime_hmm import resolve_hmm_context
+from .regime_hmm import resolve_hmm_context, resolve_regime_route_label
 
 
 def _empty_dict() -> dict[str, Any]:
@@ -43,6 +43,22 @@ def _coerce_horizon(value: str) -> str:
     if cleaned.endswith('Hour'):
         return f'{cleaned[:-4]}h'
     return cleaned
+
+
+def _coerce_model_family(value: str) -> str:
+    normalized = value.strip().lower().replace('-', '_').replace(' ', '_')
+    aliases = {
+        'timesfm': 'financial_tsfm',
+        'financial_tsfm': 'financial_tsfm',
+        'financialtsfm': 'financial_tsfm',
+        'financial_tsfm_v1': 'financial_tsfm',
+        'financial-tsfm-v1': 'financial_tsfm',
+        'baseline': 'baseline',
+        'deterministic_baseline': 'baseline',
+        'moment': 'moment',
+        'chronos': 'chronos',
+    }
+    return aliases.get(normalized, normalized)
 
 
 @dataclass(frozen=True)
@@ -403,7 +419,8 @@ class ForecastCalibrationStore:
         defaults_raw = payload.get('default_calibration_score_by_model_family')
         if isinstance(defaults_raw, dict):
             for family, score in cast(dict[str, Any], defaults_raw).items():
-                defaults[family] = _decimal_or_default(score, Decimal('0.90'))
+                normalized_family = _coerce_model_family(str(family))
+                defaults[normalized_family] = _decimal_or_default(score, Decimal('0.90'))
 
         overrides: dict[str, dict[str, Decimal]] = {}
         overrides_raw = payload.get('route_calibration_scores')
@@ -413,17 +430,20 @@ class ForecastCalibrationStore:
                     continue
                 normalized: dict[str, Decimal] = {}
                 for family, score in cast(dict[str, Any], family_map).items():
-                    normalized[family] = _decimal_or_default(score, Decimal('0.90'))
+                    normalized[_coerce_model_family(str(family))] = _decimal_or_default(
+                        score, Decimal('0.90')
+                    )
                 overrides[route_key] = normalized
 
         return cls(defaults_by_family=defaults, route_overrides=overrides)
 
     def score(self, *, route_key: str, model_family: str) -> Decimal:
+        canonical_model_family = _coerce_model_family(model_family)
         route_map = self.route_overrides.get(route_key, {})
-        if model_family in route_map:
-            return route_map[model_family]
-        if model_family in self.defaults_by_family:
-            return self.defaults_by_family[model_family]
+        if canonical_model_family in route_map:
+            return route_map[canonical_model_family]
+        if canonical_model_family in self.defaults_by_family:
+            return self.defaults_by_family[canonical_model_family]
         return Decimal('0.90')
 
 
@@ -592,21 +612,19 @@ class ForecastRouterV5:
         return ForecastRouterResult(contract=contract, audit=audit, telemetry=telemetry)
 
     def _resolve_regime(self, feature_vector: FeatureVectorV3) -> str:
-        context = resolve_hmm_context(feature_vector.values)
-        if context.has_regime:
-            return context.regime_id.lower()
-
-        explicit = feature_vector.values.get('route_regime_label')
-        if isinstance(explicit, str) and explicit.strip():
-            return explicit.strip().lower()
-        macd = optional_decimal(feature_vector.values.get('macd')) or Decimal('0')
-        signal = optional_decimal(feature_vector.values.get('macd_signal')) or Decimal('0')
-        spread = macd - signal
-        if spread >= Decimal('0.02'):
-            return 'trend'
-        if spread <= Decimal('-0.02'):
-            return 'mean_revert'
-        return 'range'
+        route_regime_label = feature_vector.values.get('route_regime_label')
+        if isinstance(route_regime_label, str):
+            normalized = route_regime_label.strip().lower()
+            if normalized:
+                return normalized
+        resolved_regime: str = resolve_regime_route_label(
+            feature_vector.values,
+            macd=optional_decimal(feature_vector.values.get('macd')),
+            macd_signal=optional_decimal(feature_vector.values.get('macd_signal')),
+        )
+        if resolved_regime == "unknown":
+            return "range"
+        return resolved_regime
 
     def _fallback_output(
         self,

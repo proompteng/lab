@@ -236,6 +236,14 @@ spec:
                       - /spec/template/spec/enableServiceLinks
                 automation: auto
                 enabled: "true"
+              - name: posthog
+                path: argocd/applications/posthog
+                namespace: posthog
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: manual
+                enabled: "true"
               - name: miel
                 path: argocd/applications/miel
                 namespace: miel

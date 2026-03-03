@@ -6,10 +6,11 @@
 - Date: `2026-02-27`
 - Maturity: `production design`
 - Scope: offline strategy and factor discovery pipeline that continuously improves live expert stack without unsafe online mutation
-- Implementation status: `Planned`
+- Implementation status: `Implemented`
 - Evidence:
   - `docs/torghut/design-system/v6/04-alpha-discovery-and-autonomous-improvement-pipeline.md` (design-level contract)
-- Rollout gap: candidate generation, evaluation, and promotion lanes are not yet present as explicit AgentRun workflows in `services/torghut` or `services/torghut/app`.
+- Rollout gap: deterministic lane execution for candidate generation, evaluation, and promotion recommendation is implemented in
+  `services/torghut/app/trading/alpha` and `services/torghut/app/trading/autonomy`; direct cluster mutation remains out-of-band.
 
 ## Objective
 
@@ -94,3 +95,23 @@ These lanes must emit machine-readable artifacts that link back to DSPy and rout
 1. End-to-end candidate lifecycle is fully automated through AgentRuns.
 2. All promoted strategies have immutable lineage and replayable evidence.
 3. Unsafe candidates are blocked before paper stage with explicit failure reasons.
+
+## Lane Execution Contract (Implemented)
+
+- Stage manifests are emitted for:
+  - `candidate-generation`
+  - `evaluation`
+  - `promotion-recommendation`
+- For each stage:
+  - Inputs and outputs are serialized as JSON artifacts.
+  - A stable manifest hash (`lineage_hash`) is derived from the full manifest payload.
+  - Parent lineage is threaded through `parent_lineage_hash` and `parent_stage`.
+  - A `stage_trace_id` is exposed for deterministic replay and audit joins.
+- Candidate specs persist:
+  - `stage_lineage` root + per-stage metadata.
+  - `stage_manifest_refs` for the three stage manifests.
+  - `stage_trace_ids` for deterministic traceability.
+  - `replay_artifact_hashes` for each replayable artifact used to reconstruct and validate evidence.
+- Fail-closed behavior:
+  - Gate/validation failure blocks recommendation and actuation.
+  - Notes remain written for iteration evidence and governance context (`repository`, `base`, `head`, `priority_id`) without mutating production state.

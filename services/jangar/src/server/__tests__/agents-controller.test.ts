@@ -1075,9 +1075,20 @@ describe('agents controller reconcileAgentRun', () => {
     const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
     const job = appliedResources.find((resource) => resource.kind === 'Job')
     const configMaps = appliedResources.filter((resource) => resource.kind === 'ConfigMap')
+    const specConfigMap = configMaps.find((resource) =>
+      Boolean((resource.data as Record<string, unknown> | undefined)?.['agent-runner.json']),
+    )
 
     expect(job).toBeTruthy()
     expect(configMaps).toHaveLength(2)
+    expect(specConfigMap).toBeTruthy()
+
+    const agentRunnerSpec = JSON.parse(
+      String((specConfigMap?.data as Record<string, unknown> | undefined)?.['agent-runner.json'] ?? '{}'),
+    ) as Record<string, unknown>
+    const payloads = (agentRunnerSpec.payloads ?? {}) as Record<string, unknown>
+    expect(payloads.eventFilePath).toBe('/workspace/run.json')
+    expect(payloads.eventBodyPath).toBe('/workspace/run.json')
 
     const jobLabels = (job?.metadata as Record<string, unknown> | undefined)?.labels as
       | Record<string, string>

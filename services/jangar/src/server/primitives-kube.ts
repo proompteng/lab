@@ -204,6 +204,7 @@ export const RESOURCE_MAP = {
   Signal: 'signals.signals.proompteng.ai',
   SignalDelivery: 'signaldeliveries.signals.proompteng.ai',
   Schedule: 'schedules.schedules.proompteng.ai',
+  Swarm: 'swarms.swarm.proompteng.ai',
   Artifact: 'artifacts.artifacts.proompteng.ai',
   Workspace: 'workspaces.workspaces.proompteng.ai',
 } as const

@@ -531,7 +531,10 @@ const runDefaultDecisionExecutor = async (input: DecisionExecutorInput): Promise
 
   const request = new Request('http://localhost/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-jangar-client-kind': 'internal',
+    },
     body: safeJsonStringify(payload),
     signal: input.signal,
   })

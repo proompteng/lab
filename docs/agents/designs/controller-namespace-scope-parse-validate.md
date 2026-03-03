@@ -6,7 +6,7 @@ Docs index: [README](../README.md)
 
 ## Overview
 
-Namespace scoping is a primary safety control for Agents controllers. The controllers accept a namespaces list via env vars (`JANGAR_AGENTS_CONTROLLER_NAMESPACES`, `JANGAR_PRIMITIVES_NAMESPACES`). Invalid JSON or ambiguous inputs can lead to unexpected reconciliation scope.
+Namespace scoping is a primary safety control for Agents controllers. The controllers accept a namespaces list via env vars (`JANGAR_AGENTS_CONTROLLER_NAMESPACES`, `JANGAR_PRIMITIVES_NAMESPACES`). Invalid JSON, explicit empty values, or ambiguous inputs can lead to unexpected reconciliation scope.
 
 This doc proposes strict parsing and validation rules plus chart-side guardrails.
 
@@ -38,9 +38,11 @@ Support exactly:
 
 ### Validation rules (fail-fast)
 
-- Empty list is invalid unless `rbac.clusterScoped=true` and wildcard `*` is explicitly present.
+- Empty list is invalid when any chart `*.namespaces` value is explicitly set.
 - Reject invalid JSON (do not silently fall back to CSV).
 - Reject namespaces with whitespace or invalid DNS label characters.
+- Reject wildcard `*` unless `rbac.clusterScoped=true`.
+- Reject chart render-time `controller.namespaces=[]` (and same for orchestration/supporting controllers) with clear errors.
 
 ### Observability
 

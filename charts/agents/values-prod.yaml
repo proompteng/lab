@@ -28,6 +28,8 @@ resources:
     cpu: '1'
     memory: 2Gi
 
+namespaceOverride: agents
+
 controller:
   namespaces:
     - agents

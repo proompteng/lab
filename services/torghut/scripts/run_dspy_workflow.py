@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+from pathlib import Path
 
 from app.config import settings
 from app.db import SessionLocal
@@ -26,7 +28,6 @@ def _build_lane_overrides(args: argparse.Namespace) -> dict[str, dict[str, str]]
     eval_report_ref = (
         args.eval_report_ref or f"{artifact_root}/eval/dspy-eval-report.json"
     )
-    artifact_hash = args.artifact_hash or f"{compile_result_ref}#artifactHash"
 
     overrides: dict[str, dict[str, str]] = {
         "dataset-build": {
@@ -44,15 +45,8 @@ def _build_lane_overrides(args: argparse.Namespace) -> dict[str, dict[str, str]]
         },
         "promote": {
             "evalReportRef": eval_report_ref,
-            "artifactHash": artifact_hash,
             "promotionTarget": args.promotion_target,
             "approvalRef": args.approval_ref,
-            "gateCompatibility": args.eval_gate_compatibility,
-            "schemaValidRate": f"{args.eval_schema_valid_rate:.6f}",
-            "deterministicCompatibility": (
-                "pass" if args.eval_deterministic_compatibility else "fail"
-            ),
-            "fallbackRate": f"{args.eval_fallback_rate:.6f}",
         },
     }
 
@@ -64,6 +58,61 @@ def _build_lane_overrides(args: argparse.Namespace) -> dict[str, dict[str, str]]
         }
 
     return overrides
+
+
+def _readable_iteration_number(artifact_root: Path) -> int:
+    pattern = re.compile(r"^iteration-(\d+)\.md$")
+    highest = 0
+    for item in artifact_root.glob("iteration-*.md"):
+        match = pattern.match(item.name)
+        if not match:
+            continue
+        try:
+            iteration = int(match.group(1))
+        except ValueError:
+            continue
+        if iteration > highest:
+            highest = iteration
+    return highest + 1
+
+
+def _write_iteration_report(
+    *,
+    artifact_root: Path,
+    repository: str,
+    base: str,
+    head: str,
+    run_prefix: str,
+    status: str,
+    responses: dict[str, dict[str, object]] | None = None,
+    priority_id: str | None = None,
+    error: str | None = None,
+) -> Path:
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    iteration = _readable_iteration_number(artifact_root)
+    notes_path = artifact_root / f"iteration-{iteration}.md"
+
+    lines = [
+        f"# DSPy workflow iteration {iteration}",
+        "",
+        f"- repository: {repository}",
+        f"- base: {base}",
+        f"- head: {head}",
+        f"- artifact_root: {artifact_root}",
+        f"- artifact_path: {artifact_root}",
+        f"- run_prefix: {run_prefix}",
+        f"- status: {status}",
+    ]
+    if priority_id:
+        lines.append(f"- priority_id: {priority_id}")
+    if responses:
+        lane_names = ", ".join(sorted(responses.keys()))
+        lines.append(f"- responses: {lane_names}")
+    if error:
+        lines.append(f"- error: {error}")
+
+    notes_path.write_text("\n".join(lines), encoding="utf-8")
+    return notes_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -81,6 +130,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--run-prefix", required=True, help="Stable run prefix for idempotency keys"
     )
+    parser.add_argument("--priority-id", default=None, help="Priority identifier")
     parser.add_argument(
         "--artifact-root", required=True, help="Artifact root path for lane outputs"
     )
@@ -128,38 +178,11 @@ def parse_args() -> argparse.Namespace:
         "--eval-report-ref", default="", help="Optional eval report artifact reference"
     )
     parser.add_argument(
-        "--artifact-hash", default="", help="Approved artifact hash (or hash reference)"
-    )
-    parser.add_argument(
         "--promotion-target",
         default="constrained_live",
         choices=["paper", "shadow", "constrained_live", "scaled_live"],
     )
     parser.add_argument("--approval-ref", default="risk-committee")
-    parser.add_argument(
-        "--eval-gate-compatibility",
-        default="pass",
-        choices=["pass", "fail"],
-        help="Eval gate compatibility evidence passed into promote lane.",
-    )
-    parser.add_argument(
-        "--eval-schema-valid-rate",
-        type=float,
-        default=0.995,
-        help="Eval schema valid rate evidence used for promotion gate enforcement.",
-    )
-    parser.add_argument(
-        "--eval-deterministic-compatibility",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Eval deterministic compatibility evidence used for promotion gate enforcement.",
-    )
-    parser.add_argument(
-        "--eval-fallback-rate",
-        type=float,
-        default=0.05,
-        help="Observed fallback rate evidence used for promotion gate enforcement.",
-    )
 
     parser.add_argument("--include-gepa-experiment", action="store_true")
     parser.add_argument("--gepa-baseline-ref", default="")
@@ -181,28 +204,58 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    artifact_root_text = args.artifact_root.strip()
+    if not artifact_root_text:
+        raise ValueError("artifact_root_required")
+    artifact_root = Path(artifact_root_text).resolve()
     lane_overrides = _build_lane_overrides(args)
 
-    with SessionLocal() as session:
-        responses = orchestrate_dspy_agentrun_workflow(
-            session,
-            base_url=args.base_url,
+    try:
+        with SessionLocal() as session:
+            responses = orchestrate_dspy_agentrun_workflow(
+                session,
+                base_url=args.base_url,
+                repository=args.repository,
+                base=args.base,
+                head=args.head,
+                artifact_root=str(artifact_root),
+                run_prefix=args.run_prefix,
+                auth_token=(args.auth_token.strip() or None),
+                issue_number=args.issue_number,
+                priority_id=(args.priority_id.strip() if args.priority_id else None),
+                lane_parameter_overrides=lane_overrides,
+                include_gepa_experiment=bool(args.include_gepa_experiment),
+                namespace=args.namespace,
+                agent_name=args.agent_name,
+                vcs_ref_name=args.vcs_ref_name,
+                secret_binding_ref=args.secret_binding_ref,
+                ttl_seconds_after_finished=max(int(args.ttl_seconds_after_finished), 0),
+                timeout_seconds=max(int(args.timeout_seconds), 1),
+            )
+
+        _write_iteration_report(
+            artifact_root=artifact_root,
             repository=args.repository,
             base=args.base,
             head=args.head,
-            artifact_root=args.artifact_root,
             run_prefix=args.run_prefix,
-            auth_token=(args.auth_token.strip() or None),
-            issue_number=args.issue_number,
-            lane_parameter_overrides=lane_overrides,
-            include_gepa_experiment=bool(args.include_gepa_experiment),
-            namespace=args.namespace,
-            agent_name=args.agent_name,
-            vcs_ref_name=args.vcs_ref_name,
-            secret_binding_ref=args.secret_binding_ref,
-            ttl_seconds_after_finished=max(int(args.ttl_seconds_after_finished), 0),
-            timeout_seconds=max(int(args.timeout_seconds), 1),
+            status="completed",
+            responses=responses,
+            priority_id=(args.priority_id.strip() if args.priority_id else None),
         )
+    except Exception as exc:
+        _write_iteration_report(
+            artifact_root=artifact_root,
+            repository=args.repository,
+            base=args.base,
+            head=args.head,
+            run_prefix=args.run_prefix,
+            status="failed",
+            responses=None,
+            priority_id=(args.priority_id.strip() if args.priority_id else None),
+            error=str(exc),
+        )
+        raise
 
     output = {
         "ok": True,
@@ -210,7 +263,9 @@ def main() -> int:
         "repository": args.repository,
         "base": args.base,
         "head": args.head,
-        "artifactRoot": args.artifact_root,
+        "artifactRoot": str(artifact_root),
+        "artifactPath": str(artifact_root),
+        "priorityId": (args.priority_id.strip() if args.priority_id else None),
         "includeGepaExperiment": bool(args.include_gepa_experiment),
         "responses": responses,
     }

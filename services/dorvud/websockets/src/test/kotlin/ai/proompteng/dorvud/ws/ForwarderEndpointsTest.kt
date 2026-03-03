@@ -3,9 +3,12 @@ package ai.proompteng.dorvud.ws
 import ai.proompteng.dorvud.platform.KafkaAuth
 import ai.proompteng.dorvud.platform.KafkaProducerSettings
 import ai.proompteng.dorvud.platform.KafkaTls
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class ForwarderEndpointsTest {
@@ -78,5 +81,19 @@ class ForwarderEndpointsTest {
     val cfg = baseConfig(AlpacaMarketType.CRYPTO).copy(alpacaCryptoLocation = "eu-1")
     assertEquals("wss://stream.data.alpaca.markets/v1beta3/crypto/eu-1", alpacaMarketDataStreamUrl(cfg))
     assertEquals("https://data.alpaca.markets/v1beta3/crypto/eu-1/bars", alpacaBarsBackfillUrl(cfg))
+  }
+
+  @Test
+  fun `bars backfill parser tolerates next page token`() {
+    val payload = """{"bars":{},"next_page_token":null}"""
+    val parsed =
+      decodeAlpacaBarsResponse(
+        payload,
+        Json {
+          ignoreUnknownKeys = true
+        },
+      )
+    val bars = assertNotNull(parsed.bars)
+    assertTrue(bars.jsonObject.isEmpty())
   }
 }

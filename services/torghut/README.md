@@ -252,7 +252,12 @@ uv run python scripts/run_autonomous_lane.py \
   --signals tests/fixtures/walkforward_signals.json \
   --strategy-config config/autonomous-strategy-sample.yaml \
   --gate-policy config/autonomous-gate-policy.json \
-  --output-dir artifacts/autonomy-lane
+  --output-dir artifacts/autonomy-lane \
+  --repository proompteng/lab \
+  --base main \
+  --head agentruns/torghut-autonomy \
+  --artifact-path artifacts/autonomy-lane \
+  --priority-id ARC-2000
 ```
 
 Outputs:
@@ -261,12 +266,52 @@ Outputs:
 - `artifacts/autonomy-lane/backtest/walkforward-results.json`
 - `artifacts/autonomy-lane/backtest/evaluation-report.json`
 - `artifacts/autonomy-lane/gates/gate-evaluation.json`
-- `artifacts/autonomy-lane/paper-candidate/strategy-configmap-patch.yaml` (only when paper gates pass)
+- `artifacts/autonomy-lane/gates/actuation-intent.json` (governed actuation payload with rollback-readiness evidence links)
+- `artifacts/autonomy-lane/paper-candidate/strategy-configmap-patch.yaml` (written when paper is recommended and paper patch preconditions pass)
 
 Safety defaults:
 
 - live promotions are blocked unless gate policy explicitly enables them and approval token requirements are satisfied.
 - LLM remains bounded/advisory; deterministic risk/firewall controls remain final authority.
+
+## v3 alpha discovery lane (offline)
+
+Deterministic search -> evaluation -> promotion recommendation pipeline:
+
+```bash
+cd services/torghut
+uv run python scripts/run_alpha_discovery_lane.py \
+  --train-csv /path/to/train-prices.csv \
+  --test-csv /path/to/test-prices.csv \
+  --output-dir artifacts/alpha-lane \
+  --artifact-path artifacts/alpha-lane \
+  --repository proompteng/lab \
+  --base main \
+  --head feature/alpha-discovery \
+  --priority-id ARC-1000 \
+  --lookbacks 20,40,60 \
+  --vol-lookbacks 10,20,40 \
+  --target-vols 0.0075,0.01,0.0125 \
+  --max-grosses 0.75,1.0 \
+  --promotion-target paper
+```
+
+Outputs:
+
+- `artifacts/alpha-lane/research/search-result.json`
+- `artifacts/alpha-lane/research/best-candidate.json`
+- `artifacts/alpha-lane/research/evaluation-report.json`
+- `artifacts/alpha-lane/research/recommendation.json`
+- `artifacts/alpha-lane/research/candidate-spec.json`
+- `artifacts/alpha-lane/stages/candidate-generation-manifest.json`
+- `artifacts/alpha-lane/stages/evaluation-manifest.json`
+- `artifacts/alpha-lane/stages/promotion-recommendation-manifest.json`
+- `artifacts/alpha-lane/notes/iteration-<n>.md` (appended per run)
+
+Fail-safe controls:
+
+- promotion decision is fail-closed: any gate failure marks the recommendation as denied.
+- evidence lineage and replay artifact hashes are persisted in `candidate-spec.json`.
 
 ## v3 orchestration guard CLI
 

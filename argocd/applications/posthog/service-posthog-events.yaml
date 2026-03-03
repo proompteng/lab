@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: posthog-events
+  labels:
+    "app.kubernetes.io/name": "posthog"
+    "app.kubernetes.io/instance": "posthog"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: posthog
+  selector:
+    app: posthog
+    role: events

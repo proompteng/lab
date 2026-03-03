@@ -1,0 +1,144 @@
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: posthog-clickhouse
+  namespace: posthog
+  labels:
+    app.kubernetes.io/name: posthog-clickhouse
+    app.kubernetes.io/part-of: posthog
+spec:
+  configuration:
+    files:
+      config.d/posthog-remote-servers.xml: |
+        <clickhouse>
+          <remote_servers>
+            <posthog>
+              <shard>
+                <replica>
+                  <host>posthog-clickhouse.posthog.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+              </shard>
+            </posthog>
+            <posthog_single_shard>
+              <shard>
+                <replica>
+                  <host>posthog-clickhouse.posthog.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+              </shard>
+            </posthog_single_shard>
+            <posthog_migrations>
+              <shard>
+                <replica>
+                  <host>posthog-clickhouse.posthog.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+              </shard>
+            </posthog_migrations>
+            <posthog_writable>
+              <shard>
+                <replica>
+                  <host>posthog-clickhouse.posthog.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+              </shard>
+            </posthog_writable>
+            <posthog_primary_replica>
+              <shard>
+                <replica>
+                  <host>posthog-clickhouse.posthog.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+              </shard>
+            </posthog_primary_replica>
+          </remote_servers>
+        </clickhouse>
+      config.d/posthog-host-macros.xml: |
+        <clickhouse>
+          <macros>
+            <hostClusterType>online</hostClusterType>
+            <hostClusterRole>data</hostClusterRole>
+          </macros>
+        </clickhouse>
+      config.d/posthog-kafka-named-collections.xml: |
+        <clickhouse>
+          <named_collections>
+            <msk_cluster>
+              <kafka_broker_list>kafka-kafka-bootstrap.kafka.svc.cluster.local:9093</kafka_broker_list>
+            </msk_cluster>
+            <warpstream_ingestion>
+              <kafka_broker_list>kafka-kafka-bootstrap.kafka.svc.cluster.local:9093</kafka_broker_list>
+            </warpstream_ingestion>
+          </named_collections>
+        </clickhouse>
+      config.d/posthog-crash-log.xml: |
+        <clickhouse>
+          <crash_log>
+            <database>system</database>
+            <table>crash_log</table>
+            <partition_by />
+            <flush_interval_milliseconds>1000</flush_interval_milliseconds>
+            <max_size_rows>1024</max_size_rows>
+            <reserved_size_rows>1024</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>512</buffer_size_rows_flush_threshold>
+            <flush_on_crash>true</flush_on_crash>
+          </crash_log>
+        </clickhouse>
+    users:
+      posthog/password:
+        valueFrom:
+          secretKeyRef:
+            name: posthog-clickhouse-auth
+            key: password
+      posthog/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      posthog/grants/query:
+        - 'GRANT SOURCES ON *.*'
+        - 'GRANT TABLE ENGINE ON *'
+        - 'GRANT CHECK, SHOW, SELECT, INSERT, ALTER, CREATE, DROP, UNDROP TABLE, TRUNCATE, OPTIMIZE, BACKUP, KILL QUERY, KILL TRANSACTION, MOVE PARTITION BETWEEN SHARDS, SYSTEM, dictGet, displaySecretsInShowAndSelect, INTROSPECTION, CLUSTER, FILE, URL, REMOTE, MONGO, REDIS, MYSQL, POSTGRES, SQLITE, ODBC, JDBC, HDFS, S3, HIVE, AZURE, KAFKA, NATS, RABBITMQ, SOURCES ON *.*'
+        - 'GRANT SET DEFINER ON *'
+        - 'GRANT CREATE DATABASE ON default.*'
+        - 'GRANT NAMED COLLECTION ON msk_cluster'
+        - 'GRANT NAMED COLLECTION ON warpstream_ingestion'
+    zookeeper:
+      nodes:
+        - host: keeper-posthog-keeper
+          port: 2181
+    clusters:
+      - name: default
+        layout:
+          shardsCount: 1
+          replicasCount: 1
+        templates:
+          podTemplate: chi-default
+          volumeClaimTemplate: chi-data
+  templates:
+    podTemplates:
+      - name: chi-default
+        spec:
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:25.12.5.44
+              resources:
+                requests:
+                  cpu: 1000m
+                  memory: 2Gi
+                limits:
+                  cpu: 2000m
+                  memory: 4Gi
+    volumeClaimTemplates:
+      - name: chi-data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 10Gi
+          storageClassName: rook-ceph-block
+  defaults:
+    templates:
+      podTemplate: chi-default
+      volumeClaimTemplate: chi-data

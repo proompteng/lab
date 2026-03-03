@@ -1,24 +1,23 @@
 dataset_id: torghut-trades-2025q4
 
 window:
-  profile: us_equities_regular
   trading_day: '2026-02-27'
   timezone: America/New_York
   start: '2026-02-27T14:30:00Z'
-  end: '2026-02-27T21:00:00Z'
-  min_coverage_minutes: 390
+  end: '2026-02-27T16:30:00Z'
+  min_coverage_minutes: 120
   strict_coverage_ratio: 0.95
 
 kafka:
-  bootstrap_servers: kafka-kafka-bootstrap.kafka:9092
-  runtime_bootstrap_servers: kafka-kafka-bootstrap.kafka:9092
+  bootstrap_servers: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+  runtime_bootstrap_servers: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
   security_protocol: SASL_PLAINTEXT
   sasl_mechanism: SCRAM-SHA-512
-  sasl_username: torghut-ws
+  sasl_username: kafka-codex-credentials
   sasl_password_env: TORGHUT_SIM_KAFKA_PASSWORD
   runtime_security_protocol: SASL_PLAINTEXT
   runtime_sasl_mechanism: SCRAM-SHA-512
-  runtime_sasl_username: torghut-ws
+  runtime_sasl_username: kafka-codex-credentials
   runtime_sasl_password_env: TORGHUT_SIM_KAFKA_PASSWORD
   default_partitions: 8
   replication_factor: 1
@@ -26,16 +25,18 @@ kafka:
 clickhouse:
   http_url: http://torghut-clickhouse.torghut.svc.cluster.local:8123
   username: torghut
+  password_env: TORGHUT_CLICKHOUSE_PASSWORD
   password_secret_name: torghut-clickhouse-auth
   password_secret_key: torghut_password
   secret_namespace: torghut
   simulation_database: torghut_sim_sim_2026_02_27_01
 
 postgres:
-  admin_dsn: postgresql://torghut:torghut@postgres-rw.torghut.svc.cluster.local:5432/postgres
-  simulation_dsn_template: postgresql://torghut:torghut@postgres-rw.torghut.svc.cluster.local:5432/{db}
-  runtime_simulation_dsn_template: postgresql://torghut:torghut@postgres-rw.torghut.svc.cluster.local:5432/{db}
-  migrations_command: uv run --frozen alembic upgrade heads
+  admin_dsn: postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/postgres
+  admin_dsn_password_env: TORGHUT_POSTGRES_PASSWORD
+  simulation_dsn_template: postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/{db}
+  runtime_simulation_dsn_template: postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/{db}
+  migrations_command: /opt/venv/bin/alembic upgrade heads
 
 runtime:
   namespace: torghut
@@ -45,10 +46,13 @@ runtime:
   output_root: artifacts/torghut/simulations
 
 replay:
-  pace_mode: accelerated
-  acceleration: 60
-  max_sleep_seconds: 5
+  pace_mode: max_throughput
+  acceleration: 1
+  max_sleep_seconds: 0
   auto_offset_reset: earliest
+  flush_every_records: 50000
+  flush_timeout_seconds: 60
+  final_flush_timeout_seconds: 180
   status_update_every_records: 25000
   status_update_every_seconds: 30
 

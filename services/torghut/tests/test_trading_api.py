@@ -107,6 +107,10 @@ class TestTradingApi(TestCase):
                 signed_qty=Decimal("1"),
                 slippage_bps=Decimal("100"),
                 shortfall_notional=Decimal("1"),
+                expected_shortfall_bps_p50=Decimal("3.5"),
+                expected_shortfall_bps_p95=Decimal("5.0"),
+                realized_shortfall_bps=Decimal("1.2"),
+                divergence_bps=Decimal("0.7"),
                 churn_qty=Decimal("0"),
                 churn_ratio=Decimal("0"),
             )
@@ -273,8 +277,25 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["summary"]["order_count"], 1)
+        self.assertEqual(payload["summary"]["expected_shortfall_sample_count"], 1)
+        self.assertAlmostEqual(
+            float(payload["summary"]["expected_shortfall_coverage"]), 1.0
+        )
         self.assertEqual(len(payload["rows"]), 1)
         self.assertEqual(payload["rows"][0]["symbol"], "AAPL")
+
+    def test_trading_status_includes_tca_calibration_summary(self) -> None:
+        response = self.client.get("/trading/status")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        tca_summary = payload["tca"]
+        self.assertEqual(tca_summary["order_count"], 1)
+        self.assertEqual(tca_summary["expected_shortfall_sample_count"], 1)
+        self.assertEqual(float(tca_summary["expected_shortfall_coverage"]), 1.0)
+        self.assertEqual(float(tca_summary["avg_expected_shortfall_bps_p50"]), 3.5)
+        self.assertEqual(float(tca_summary["avg_expected_shortfall_bps_p95"]), 5.0)
+        self.assertEqual(float(tca_summary["avg_realized_shortfall_bps"]), 1.2)
+        self.assertEqual(float(tca_summary["avg_divergence_bps"]), 0.7)
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
@@ -434,6 +455,7 @@ class TestTradingApi(TestCase):
             self.assertTrue(continuity["alert_active"])
             self.assertEqual(continuity["alert_reason"], "cursor_ahead_of_stream")
             self.assertEqual(continuity["alert_recovery_streak"], 1)
+            self.assertIsNone(payload["autonomy"]["last_actuation_intent"])
         finally:
             if original_scheduler is None:
                 del app.state.trading_scheduler
@@ -491,6 +513,28 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_trading_status_includes_last_actuation_intent(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        with TemporaryDirectory() as tmpdir:
+            actuation_path = Path(tmpdir) / "actuation-intent.json"
+            actuation_path.write_text(json.dumps({}), encoding="utf-8")
+            try:
+                scheduler = TradingScheduler()
+                scheduler.state.last_autonomy_actuation_intent = str(actuation_path)
+                app.state.trading_scheduler = scheduler
+                response = self.client.get("/trading/status")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json()["autonomy"]["last_actuation_intent"],
+                    str(actuation_path),
+                )
+            finally:
+                if original_scheduler is None:
+                    if hasattr(app.state, "trading_scheduler"):
+                        del app.state.trading_scheduler
+                else:
+                    app.state.trading_scheduler = original_scheduler
+
     def test_trading_autonomy_includes_no_signal_streak(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
         try:
@@ -504,6 +548,7 @@ class TestTradingApi(TestCase):
             payload = response.json()
             self.assertEqual(payload["no_signal_streak"], 7)
             self.assertEqual(payload["last_reason"], "cursor_ahead_of_stream")
+            self.assertIsNone(payload["last_actuation_intent"])
         finally:
             if original_scheduler is None:
                 del app.state.trading_scheduler
@@ -713,6 +758,36 @@ class TestTradingApi(TestCase):
                 ),
                 encoding="utf-8",
             )
+            actuation_path = root / "actuation-intent.json"
+            actuation_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.autonomy.actuation-intent.v1",
+                        "run_id": "run-demo",
+                        "candidate_id": "candidate-demo",
+                        "gates": {
+                            "recommendation_trace_id": "act-rec-trace-demo",
+                            "gate_report_trace_id": "act-gate-trace-demo",
+                            "promotion_allowed": True,
+                        },
+                        "artifact_refs": [str(root / "profitability-evidence-v4.json")],
+                        "audit": {
+                            "rollback_readiness_readout": {
+                                "kill_switch_dry_run_passed": True,
+                                "gitops_revert_dry_run_passed": True,
+                                "strategy_disable_dry_run_passed": False,
+                                "human_approved": False,
+                                "rollback_target": "rollback-target",
+                                "dry_run_completed_at": "",
+                            },
+                            "rollback_evidence_missing_checks": [
+                                "strategy_disable_dry_run_failed"
+                            ],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
             rollback_path.write_text(
                 json.dumps(
                     {
@@ -731,6 +806,7 @@ class TestTradingApi(TestCase):
                 scheduler.state.emergency_stop_active = True
                 scheduler.state.emergency_stop_reason = "signal_lag_exceeded:900"
                 scheduler.state.metrics.signal_continuity_promotion_block_total = 2
+                scheduler.state.last_autonomy_actuation_intent = str(actuation_path)
                 app.state.trading_scheduler = scheduler
 
                 response = self.client.get("/trading/profitability/runtime")
@@ -757,13 +833,30 @@ class TestTradingApi(TestCase):
                 )
                 self.assertEqual(
                     payload["gate_rollback_attribution"]["gate_report_trace_id"],
-                    "gate-trace-demo",
+                    "act-gate-trace-demo",
                 )
                 self.assertTrue(
                     payload["gate_rollback_attribution"][
                         "gate6_profitability_evidence"
                     ]["status"]
                     == "pass"
+                )
+                self.assertEqual(
+                    payload["gate_rollback_attribution"]["actuation_intent"][
+                        "artifact_path"
+                    ],
+                    str(actuation_path),
+                )
+                self.assertFalse(
+                    payload["gate_rollback_attribution"]["actuation_intent"][
+                        "actuation_allowed"
+                    ]
+                )
+                self.assertEqual(
+                    payload["gate_rollback_attribution"]["actuation_intent"][
+                        "rollback_readiness"
+                    ]["missing_checks"],
+                    ["strategy_disable_dry_run_failed"],
                 )
             finally:
                 if original_scheduler is None:

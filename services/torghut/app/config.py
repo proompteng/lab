@@ -6,6 +6,7 @@ import tempfile
 from functools import lru_cache
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
+import string
 from typing import Any, List, Literal, Optional, cast
 from urllib.parse import urlsplit
 
@@ -53,6 +54,13 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "llm_adjustment_approved": "torghut_llm_adjustment_approved",
 }
 
+_LLM_COMMITTEE_ROLES = {
+    "researcher",
+    "risk_critic",
+    "execution_critic",
+    "policy_judge",
+}
+
 
 class TradingAccountLane(BaseModel):
     """Runtime trading-account lane configuration."""
@@ -63,6 +71,18 @@ class TradingAccountLane(BaseModel):
     secret_key: Optional[str] = None
     base_url: Optional[str] = None
     enabled: bool = True
+
+
+@lru_cache(maxsize=1)
+def _dspy_bootstrap_artifact_hash() -> str | None:
+    try:
+        from .trading.llm.dspy_programs.runtime import DSPyReviewRuntime
+    except Exception:
+        return None
+    try:
+        return DSPyReviewRuntime.bootstrap_artifact_hash()
+    except Exception:
+        return None
 
 
 def _http_connection_for_url(
@@ -425,11 +445,12 @@ class Settings(BaseSettings):
     )
     trading_strategy_runtime_mode: Literal["legacy", "plugin_v3", "scheduler_v3"] = (
         Field(
-            default="legacy",
+            default="scheduler_v3",
             alias="TRADING_STRATEGY_RUNTIME_MODE",
             description=(
-                "Strategy runtime mode. legacy keeps current behavior; plugin_v3 enables plugin scaffolding; "
-                "scheduler_v3 enables scheduler integration behind migration flag."
+                "Strategy runtime mode. plugin_v3 enables plugin scaffolding; "
+                "scheduler_v3 uses scheduler integration with migration controls; "
+                "legacy keeps current behavior."
             ),
         )
     )
@@ -1300,7 +1321,7 @@ class Settings(BaseSettings):
         default="veto",
         alias="LLM_COMMITTEE_FAIL_CLOSED_VERDICT",
     )
-    # Deprecated runtime toggle; DSPy runtime path is always used by review engine.
+    # Runtime mode controls whether DSPy is used for review and what fallback contract applies.
     llm_dspy_runtime_mode: Literal["disabled", "shadow", "active"] = Field(
         default="disabled",
         alias="LLM_DSPY_RUNTIME_MODE",
@@ -1346,6 +1367,11 @@ class Settings(BaseSettings):
             return
         if not self.trading_feature_flags_url:
             return
+
+        trading_live_explicitly_set = (
+            "trading_live_enabled" in self.__pydantic_fields_set__
+        )
+
         endpoint = self.trading_feature_flags_url.strip().rstrip("/")
         if not endpoint:
             return
@@ -1376,6 +1402,17 @@ class Settings(BaseSettings):
                     flag_key,
                 )
                 break
+
+        if (
+            self.trading_mode == "paper"
+            and self.trading_live_enabled
+            and not trading_live_explicitly_set
+        ):
+            logger.warning(
+                "Feature flag override enabled trading live mode while TRADING_MODE=paper. "
+                "Normalizing TRADING_LIVE_ENABLED to false."
+            )
+            self.trading_live_enabled = False
 
     @staticmethod
     def _normalize_csv_setting(raw: str) -> str:
@@ -2039,6 +2076,88 @@ class Settings(BaseSettings):
             if item.strip()
         ]
 
+    def llm_dspy_live_runtime_gate(self) -> tuple[bool, tuple[str, ...]]:
+        normalized_stage = self._normalize_rollout_stage(self.llm_rollout_stage)
+        reasons: list[str] = []
+
+        if self.trading_mode != "live":
+            reasons.append("dspy_live_requires_live_trading_mode")
+        if self.llm_dspy_runtime_mode != "active":
+            reasons.append("dspy_live_runtime_mode_not_active")
+        if normalized_stage != "stage3":
+            reasons.append("dspy_live_rollout_stage_not_stage3")
+        if not self.jangar_base_url:
+            reasons.append("dspy_jangar_base_url_missing")
+        else:
+            parsed_base_url = urlsplit(self.jangar_base_url)
+            normalized_base_path = parsed_base_url.path.rstrip("/")
+            if not parsed_base_url.scheme:
+                reasons.append("dspy_jangar_base_url_invalid")
+            elif parsed_base_url.scheme not in {"http", "https"}:
+                reasons.append("dspy_jangar_base_url_invalid")
+            elif not parsed_base_url.hostname:
+                reasons.append("dspy_jangar_base_url_invalid")
+            elif (parsed_base_url.query or parsed_base_url.fragment):
+                reasons.append("dspy_jangar_base_url_invalid")
+            elif (
+                normalized_base_path
+                and normalized_base_path not in (
+                    "/openai/v1",
+                    "/openai/v1/chat/completions",
+                )
+            ):
+                reasons.append("dspy_jangar_base_url_invalid")
+
+        if not self.llm_dspy_artifact_hash:
+            reasons.append("dspy_artifact_hash_missing")
+        else:
+            normalized_hash = self.llm_dspy_artifact_hash.strip().lower()
+            if len(normalized_hash) != 64:
+                reasons.append("dspy_artifact_hash_invalid_length")
+            elif any(ch not in string.hexdigits for ch in normalized_hash):
+                reasons.append("dspy_artifact_hash_not_hex")
+            elif normalized_hash == (
+                _dspy_bootstrap_artifact_hash() or ""
+            ) and self.llm_dspy_runtime_mode == "active":
+                reasons.append("dspy_bootstrap_artifact_forbidden")
+
+        if not self.llm_allowed_models:
+            reasons.append("llm_model_inventory_missing")
+        elif self.llm_model not in self.llm_allowed_models:
+            reasons.append("llm_model_not_in_inventory")
+
+        if normalized_stage in {"stage2", "stage3"}:
+            if not self.llm_evaluation_report:
+                reasons.append("llm_evaluation_report_missing")
+            if not self.llm_effective_challenge_id:
+                reasons.append("llm_effective_challenge_missing")
+            if not self.llm_shadow_completed_at:
+                reasons.append("llm_shadow_completion_missing")
+            if not self.llm_model_version_lock:
+                reasons.append("llm_model_version_lock_missing")
+            elif not self._matches_model_version_lock(
+                self.llm_model, self.llm_model_version_lock
+            ):
+                reasons.append("llm_model_version_lock_mismatch")
+
+        if not self.llm_committee_enabled:
+            reasons.append("llm_committee_disabled")
+        if self.llm_committee_roles and not all(
+            role in _LLM_COMMITTEE_ROLES for role in self.llm_committee_roles
+        ):
+            reasons.append("llm_committee_roles_invalid")
+        if self.llm_committee_mandatory_roles and not all(
+            role in _LLM_COMMITTEE_ROLES for role in self.llm_committee_mandatory_roles
+        ):
+            reasons.append("llm_committee_mandatory_roles_invalid")
+
+        return (not reasons, tuple(reasons))
+
+    @property
+    def llm_dspy_live_runtime_allowed(self) -> bool:
+        allowed, _ = self.llm_dspy_live_runtime_gate()
+        return allowed
+
     @property
     def llm_live_fail_open_requested(self) -> bool:
         return self.llm_live_fail_open_requested_for_stage(self.llm_rollout_stage)
@@ -2088,6 +2207,17 @@ class Settings(BaseSettings):
         if stage.startswith("stage3"):
             return "stage3"
         return "stage3"
+
+    @staticmethod
+    def _matches_model_version_lock(model: str, version_lock: str) -> bool:
+        if not version_lock:
+            return False
+        if model == version_lock:
+            return True
+        if "@" in version_lock:
+            locked_model = version_lock.split("@", 1)[0].strip()
+            return bool(locked_model) and model == locked_model
+        return False
 
 
 def _validate_fragility_map(name: str, values: dict[str, float]) -> None:

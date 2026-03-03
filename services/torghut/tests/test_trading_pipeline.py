@@ -17,6 +17,10 @@ from app.trading.decisions import DecisionEngine
 from app.trading.execution import OrderExecutor
 from app.trading.firewall import OrderFirewall
 from app.trading.llm.review_engine import LLMReviewOutcome
+from app.trading.llm.dspy_programs.runtime import (
+    DSPyReviewRuntime,
+    DSPyRuntimeUnsupportedStateError,
+)
 from app.trading.llm.schema import (
     LLMDecisionContext,
     LLMPolicyContext,
@@ -328,6 +332,35 @@ class FakeLLMReviewEngine:
         )
 
 
+class CountingLLMReviewEngine(FakeLLMReviewEngine):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.review_calls = 0
+        super().__init__(*args, **kwargs)
+
+    def review(
+        self,
+        decision: StrategyDecision,
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        request: LLMReviewRequest | None = None,
+        portfolio: PortfolioSnapshot | None = None,
+        market: MarketSnapshot | None = None,
+        market_context: MarketContextBundle | None = None,
+        recent_decisions: list[RecentDecisionSummary] | None = None,
+    ) -> LLMReviewOutcome:
+        self.review_calls += 1
+        return super().review(
+            decision,
+            account=account,
+            positions=positions,
+            request=request,
+            portfolio=portfolio,
+            market=market,
+            market_context=market_context,
+            recent_decisions=recent_decisions,
+        )
+
+
 def _default_probabilities(verdict: str, confidence: float) -> dict[str, float]:
     labels = ["approve", "veto", "adjust", "abstain", "escalate"]
     selected = verdict if verdict in labels else "approve"
@@ -378,12 +411,15 @@ class TestTradingPipeline(TestCase):
         )
         from app import config
 
+        self._original_llm_enabled = config.settings.llm_enabled
         self._original_kill_switch = config.settings.trading_kill_switch_enabled
+        config.settings.llm_enabled = False
         config.settings.trading_kill_switch_enabled = False
 
     def tearDown(self) -> None:
         from app import config
 
+        config.settings.llm_enabled = self._original_llm_enabled
         config.settings.trading_kill_switch_enabled = self._original_kill_switch
 
     def test_pipeline_empty_signal_batch_commits_cursor(self) -> None:
@@ -1105,6 +1141,474 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "decision_regime_gate_invalid_action")
         self.assertEqual(gate.reason, "decision_regime_gate_invalid_action")
 
+    def test_pipeline_runtime_regime_gate_unknown_regime_without_label_fails_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "unknown",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "stable"},
+                },
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_unknown_regime")
+        self.assertEqual(gate.reason, "hmm_unknown")
+
+    def test_pipeline_runtime_regime_gate_invalid_regime_id_without_label_fails_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2-ish",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "legacy_bridge"},
+                },
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_unknown_regime")
+        self.assertEqual(gate.reason, "hmm_unknown")
+
+    def test_pipeline_runtime_regime_gate_invalid_schema_version_fails_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v0",
+                    "regime_id": "R2",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "stable"},
+                },
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_unknown_regime")
+        self.assertEqual(gate.reason, "hmm_schema_version_invalid")
+
+    def test_pipeline_runtime_regime_gate_invalid_posterior_fails_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "bad-probability", "R3": "0.5"},
+                    "entropy": "1.2",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "transition_shock": False,
+                    "guardrail": {"stale": False, "fallback_to_defensive": False},
+                },
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_non_authoritative")
+        self.assertEqual(gate.reason, "hmm_invalid_posterior")
+
+    def test_pipeline_runtime_regime_gate_invalid_schema_version_fails_closed_and_preserves_artifact_lineage(
+        self,
+    ) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v0",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.2",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {
+                        "model_id": "hmm-regime-v1.2.0",
+                        "feature_schema": "hmm-v1-feature-schema",
+                        "training_run_id": "run-2026-03-01",
+                    },
+                    "transition_shock": False,
+                    "guardrail": {"stale": False, "fallback_to_defensive": False},
+                },
+                "regime_label": "trend",
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_unknown_regime")
+        self.assertEqual(gate.reason, "hmm_schema_version_invalid")
+        self.assertIsNone(gate.regime_label)
+        regime_payload = decision.params.get("regime_hmm")
+        self.assertIsInstance(regime_payload, dict)
+        self.assertEqual(regime_payload.get("schema_version"), "hmm_regime_context_v0")
+        regime_artifact = regime_payload.get("artifact")
+        self.assertIsInstance(regime_artifact, dict)
+        self.assertEqual(regime_artifact.get("model_id"), "hmm-regime-v1.2.0")
+        self.assertEqual(regime_artifact.get("feature_schema"), "hmm-v1-feature-schema")
+        self.assertEqual(regime_artifact.get("training_run_id"), "run-2026-03-01")
+
+    def test_pipeline_runtime_regime_gate_invalid_posterior_fails_closed_and_preserves_artifact_lineage(
+        self,
+    ) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {
+                        "R2": "bad-probability",
+                        "R3": "0.5",
+                    },
+                    "entropy": "1.2",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {
+                        "model_id": "hmm-regime-v1.2.0",
+                        "feature_schema": "hmm-v1-feature-schema",
+                        "training_run_id": "run-2026-03-01",
+                    },
+                    "transition_shock": False,
+                    "guardrail": {"stale": False, "fallback_to_defensive": False},
+                },
+                "regime_label": "trend",
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_non_authoritative")
+        self.assertEqual(gate.reason, "hmm_invalid_posterior")
+        self.assertIsNone(gate.regime_label)
+        regime_payload = decision.params.get("regime_hmm")
+        self.assertIsInstance(regime_payload, dict)
+        self.assertEqual(regime_payload.get("schema_version"), "hmm_regime_context_v1")
+        regime_artifact = regime_payload.get("artifact")
+        self.assertIsInstance(regime_artifact, dict)
+        self.assertEqual(
+            regime_artifact.get("model_id"),
+            "hmm-regime-v1.2.0",
+        )
+
+    def test_pipeline_runtime_regime_gate_stale_hmm_is_fail_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "aging_output", "stale": True},
+                },
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_stale")
+        self.assertEqual(gate.reason, "aging_output")
+
+    def test_pipeline_runtime_regime_gate_stale_hmm_is_fail_closed_and_preserves_lineage(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {
+                        "model_id": "hmm-regime-v1.2.0",
+                        "feature_schema": "hmm-v1-feature-schema",
+                        "training_run_id": "run-2026-03-01",
+                    },
+                    "guardrail": {"reason": "aging_output", "stale": True},
+                },
+                "regime_label": "trend",
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_stale")
+        self.assertEqual(gate.reason, "aging_output")
+        self.assertEqual(gate.regime_label, "trend")
+        regime_payload = decision.params.get("regime_hmm")
+        self.assertIsInstance(regime_payload, dict)
+        self.assertEqual(regime_payload.get("schema_version"), "hmm_regime_context_v1")
+        regime_artifact = regime_payload.get("artifact")
+        self.assertIsInstance(regime_artifact, dict)
+        self.assertEqual(
+            regime_artifact.get("model_id"),
+            "hmm-regime-v1.2.0",
+        )
+    def test_pipeline_runtime_regime_gate_fallback_to_defensive_is_fail_closed(self) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"fallback_to_defensive": True},
+                },
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_stale")
+        self.assertEqual(gate.regime_label, "R2")
+        self.assertEqual(gate.reason, "fallback_to_defensive")
+
+    def test_pipeline_runtime_regime_gate_non_authoritative_regime_with_legacy_label_fails_closed(
+        self,
+    ) -> None:
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("10"),
+            params={
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "not-a-regime-id",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "transitioning"},
+                },
+                "regime_label": "trend",
+            },
+        )
+
+        gate = pipeline._resolve_runtime_regime_gate(decision)
+        self.assertEqual(gate.action, "abstain")
+        self.assertEqual(gate.source, "regime_hmm_unknown_regime")
+        self.assertEqual(gate.reason, "hmm_unknown")
+
     def test_pipeline_runtime_uncertainty_gate_report_parse_error_fails_closed(self) -> None:
         from app import config
 
@@ -1371,6 +1875,298 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+
+    def test_pipeline_runtime_regime_gate_stale_hmm_blocks_risk_increasing_entry_and_preserves_artifact_lineage(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with self.session_local() as session:
+                    strategy = Strategy(
+                        name="demo-stale-regime-lineage",
+                        description="runtime-regime-gate-stale",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["AAPL"],
+                        max_notional_per_trade=Decimal("1000"),
+                    )
+                    session.add(strategy)
+                    session.commit()
+
+                gate_path = Path(tmpdir) / "gate-report.json"
+                gate_path.write_text(
+                    '{"uncertainty_gate_action":"pass"}',
+                    encoding="utf-8",
+                )
+                signal = SignalEnvelope(
+                    event_ts=datetime.now(timezone.utc),
+                    symbol="AAPL",
+                    payload={
+                        "macd": {"macd": 1.2, "signal": 0.5},
+                        "rsi14": 25,
+                        "price": 100,
+                        "schema_version": "hmm_regime_context_v1",
+                        "regime_id": "R2",
+                        "posterior": {"R2": 0.75},
+                        "entropy": "1.23",
+                        "entropy_band": "medium",
+                        "predicted_next": "R3",
+                        "transition_shock": False,
+                        "duration_ms": 123,
+                        "artifact": {
+                            "model_id": "hmm-regime-v1.2.0",
+                            "feature_schema": "hmm-v1",
+                            "training_run_id": "run-2026-03-02",
+                        },
+                        "guardrail": {
+                            "stale": True,
+                            "fallback_to_defensive": False,
+                            "reason": "aging_output",
+                        },
+                    },
+                    timeframe="1Min",
+                )
+                state = TradingState(last_autonomy_gates=str(gate_path))
+                alpaca_client = FakeAlpacaClient()
+                pipeline = TradingPipeline(
+                    alpaca_client=alpaca_client,
+                    order_firewall=OrderFirewall(alpaca_client),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=alpaca_client,
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=state,
+                    account_label="paper",
+                    session_factory=self.session_local,
+                )
+
+                pipeline.run_once()
+
+                with self.session_local() as session:
+                    decisions = session.execute(select(TradeDecision)).scalars().all()
+                    self.assertEqual(len(decisions), 1)
+                    self.assertEqual(decisions[0].status, "rejected")
+                    decision_json = decisions[0].decision_json
+                    assert isinstance(decision_json, dict)
+                    self.assertIn(
+                        "runtime_uncertainty_gate_abstain_block_risk_increasing_entries",
+                        decision_json.get("risk_reasons", []),
+                    )
+                    params = decision_json.get("params")
+                    assert isinstance(params, dict)
+
+                    gate_payload = params.get("runtime_uncertainty_gate")
+                    assert isinstance(gate_payload, dict)
+                    self.assertEqual(gate_payload.get("action"), "abstain")
+                    self.assertEqual(
+                        gate_payload.get("source"),
+                        "regime_hmm_stale",
+                    )
+                    regime_gate = gate_payload.get("regime_gate")
+                    assert isinstance(regime_gate, dict)
+                    self.assertEqual(regime_gate.get("action"), "abstain")
+                    self.assertEqual(regime_gate.get("reason"), "aging_output")
+
+                    regime_payload = params.get("regime_hmm")
+                    self.assertIsInstance(regime_payload, dict)
+                    self.assertEqual(
+                        regime_payload.get("schema_version"),
+                        "hmm_regime_context_v1",
+                    )
+                    regime_artifact = regime_payload.get("artifact")
+                    self.assertIsInstance(regime_artifact, dict)
+                    self.assertEqual(regime_artifact.get("model_id"), "hmm-regime-v1.2.0")
+                    self.assertEqual(regime_artifact.get("feature_schema"), "hmm-v1")
+                    self.assertEqual(regime_artifact.get("training_run_id"), "run-2026-03-02")
+                    self.assertEqual(regime_payload.get("hmm_state_posterior"), {"R2": "0.75"})
+                    self.assertEqual(regime_payload.get("hmm_entropy"), "1.23")
+                    self.assertEqual(regime_payload.get("hmm_entropy_band"), "medium")
+                    self.assertEqual(regime_payload.get("hmm_transition_shock"), False)
+
+                self.assertEqual(len(alpaca_client.submitted), 0)
+                self.assertEqual(state.metrics.runtime_regime_gate_action_total.get("abstain"), 1)
+                self.assertEqual(state.metrics.runtime_regime_gate_blocked_total.get("abstain"), 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+
+    def test_pipeline_runtime_regime_gate_invalid_posterior_blocks_risk_increasing_entry_and_preserves_artifact_lineage(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with self.session_local() as session:
+                    strategy = Strategy(
+                        name="demo-invalid-posterior",
+                        description="runtime-regime-gate-invalid-posterior",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["AAPL"],
+                        max_notional_per_trade=Decimal("1000"),
+                    )
+                    session.add(strategy)
+                    session.commit()
+
+                gate_path = Path(tmpdir) / "gate-report.json"
+                gate_path.write_text(
+                    '{"uncertainty_gate_action":"pass"}',
+                    encoding="utf-8",
+                )
+                signal = SignalEnvelope(
+                    event_ts=datetime.now(timezone.utc),
+                    symbol="AAPL",
+                    payload={
+                        "macd": {"macd": 1.2, "signal": 0.5},
+                        "rsi14": 25,
+                        "price": 100,
+                        "schema_version": "hmm_regime_context_v1",
+                        "regime_id": "R2",
+                        "posterior": {"R2": "bad-posterior"},
+                        "entropy": "1.2",
+                        "entropy_band": "medium",
+                        "predicted_next": "R3",
+                        "transition_shock": False,
+                        "duration_ms": 123,
+                        "artifact": {
+                            "model_id": "hmm-regime-v1.2.0",
+                            "feature_schema": "hmm-v1",
+                            "training_run_id": "run-2026-03-02",
+                        },
+                        "guardrail": {
+                            "stale": False,
+                            "fallback_to_defensive": False,
+                        },
+                    },
+                    timeframe="1Min",
+                )
+                state = TradingState(last_autonomy_gates=str(gate_path))
+                alpaca_client = FakeAlpacaClient()
+                pipeline = TradingPipeline(
+                    alpaca_client=alpaca_client,
+                    order_firewall=OrderFirewall(alpaca_client),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=alpaca_client,
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=state,
+                    account_label="paper",
+                    session_factory=self.session_local,
+                )
+
+                pipeline.run_once()
+
+                with self.session_local() as session:
+                    decisions = session.execute(select(TradeDecision)).scalars().all()
+                    self.assertEqual(len(decisions), 1)
+                    self.assertEqual(decisions[0].status, "rejected")
+                    decision_json = decisions[0].decision_json
+                    assert isinstance(decision_json, dict)
+                    self.assertIn(
+                        "runtime_uncertainty_gate_abstain_block_risk_increasing_entries",
+                        decision_json.get("risk_reasons", []),
+                    )
+                    params = decision_json.get("params")
+                    assert isinstance(params, dict)
+
+                    gate_payload = params.get("runtime_uncertainty_gate")
+                    assert isinstance(gate_payload, dict)
+                    self.assertEqual(gate_payload.get("source"), "regime_hmm_non_authoritative")
+                    regime_gate = gate_payload.get("regime_gate")
+                    assert isinstance(regime_gate, dict)
+                    self.assertEqual(regime_gate.get("action"), "abstain")
+                    self.assertEqual(regime_gate.get("reason"), "hmm_invalid_posterior")
+
+                    regime_payload = params.get("regime_hmm")
+                    self.assertIsInstance(regime_payload, dict)
+                    self.assertEqual(
+                        regime_payload.get("schema_version"),
+                        "hmm_regime_context_v1",
+                    )
+                    regime_artifact = regime_payload.get("artifact")
+                    self.assertIsInstance(regime_artifact, dict)
+                    self.assertEqual(
+                        regime_artifact.get("model_id"),
+                        "hmm-regime-v1.2.0",
+                    )
+                    self.assertEqual(
+                        regime_artifact.get("feature_schema"),
+                        "hmm-v1",
+                    )
+                    self.assertEqual(
+                        regime_artifact.get("training_run_id"),
+                        "run-2026-03-02",
+                    )
+                    self.assertEqual(regime_payload.get("hmm_entropy"), "1.2")
+                    self.assertEqual(regime_payload.get("hmm_state_posterior"), {})
+                    self.assertEqual(regime_payload.get("hmm_entropy_band"), "medium")
+                    self.assertEqual(regime_payload.get("hmm_transition_shock"), False)
+
+                self.assertEqual(len(alpaca_client.submitted), 0)
+                self.assertEqual(state.metrics.runtime_regime_gate_action_total.get("abstain"), 1)
+                self.assertEqual(state.metrics.runtime_regime_gate_blocked_total.get("abstain"), 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_universe_source = original["trading_universe_source"]
             config.settings.trading_static_symbols_raw = original[
                 "trading_static_symbols_raw"
             ]
@@ -2252,6 +3048,8 @@ class TestTradingPipeline(TestCase):
                 recent_shortfall_notional=Decimal("4"),
                 effect_size_bps=Decimal("-8"),
                 degradation_bps=Decimal("8"),
+                expected_shortfall_coverage=Decimal("1"),
+                expected_shortfall_sample_count=12,
                 fallback_active=True,
                 fallback_reason="adaptive_policy_degraded",
                 prefer_limit=True,
@@ -2556,6 +3354,7 @@ class TestTradingPipeline(TestCase):
             "llm_enabled": config.settings.llm_enabled,
             "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_fail_open_live_approved": config.settings.llm_fail_open_live_approved,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
@@ -2985,6 +3784,7 @@ class TestTradingPipeline(TestCase):
             "llm_enabled": config.settings.llm_enabled,
             "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_fail_open_live_approved": config.settings.llm_fail_open_live_approved,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
@@ -3129,7 +3929,7 @@ class TestTradingPipeline(TestCase):
                 "llm_adjustment_approved"
             ]
 
-    def test_pipeline_llm_shadow_mode(self) -> None:
+    def test_pipeline_llm_unsupported_runtime_state_vetoes_decision(self) -> None:
         from app import config
 
         original = {
@@ -3139,18 +3939,26 @@ class TestTradingPipeline(TestCase):
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
-            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_fail_open_live_approved": config.settings.llm_fail_open_live_approved,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
         }
         config.settings.trading_enabled = True
-        config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
-        config.settings.llm_shadow_mode = True
+        config.settings.llm_fail_mode = "pass_through"
+        config.settings.llm_fail_mode_enforcement = "configured"
+        config.settings.llm_shadow_mode = False
         config.settings.llm_min_confidence = 0.0
+        _set_llm_guardrails(config)
 
         try:
             with self.session_local() as session:
@@ -3177,33 +3985,38 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
-            alpaca_client = FakeAlpacaClient()
+            config.settings.trading_mode = "paper"
+            config.settings.trading_live_enabled = False
             pipeline = TradingPipeline(
-                alpaca_client=alpaca_client,
-                order_firewall=OrderFirewall(alpaca_client),
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
                 executor=OrderExecutor(),
-                execution_adapter=alpaca_client,
+                execution_adapter=FakeAlpacaClient(),
                 reconciler=Reconciler(),
                 universe_resolver=UniverseResolver(),
                 state=TradingState(),
                 account_label="paper",
                 session_factory=self.session_local,
-                llm_review_engine=FakeLLMReviewEngine(verdict="veto"),
+                llm_review_engine=FakeLLMReviewEngine(
+                    error=DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled")
+                ),
             )
 
             pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
-                decisions = session.execute(select(TradeDecision)).scalars().all()
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
-                self.assertEqual(reviews[0].verdict, "veto")
-                self.assertEqual(decisions[0].status, "submitted")
-                self.assertEqual(len(executions), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
+                self.assertEqual(
+                    reviews[0].response_json.get("effective_verdict"), "veto"
+                )
+                self.assertEqual(len(executions), 0)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -3215,11 +4028,1407 @@ class TestTradingPipeline(TestCase):
                 "trading_static_symbols_raw"
             ]
             config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
             config.settings.llm_fail_mode_enforcement = original[
                 "llm_fail_mode_enforcement"
             ]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+
+    def test_pipeline_llm_unsupported_runtime_state_vetoes_decision_in_shadow_mode(
+        self,
+    ) -> None:
+        from app import config
+
+        class _UnavailableLiveRuntime:
+            def evaluate_live_readiness(self) -> tuple[bool, tuple[str, ...]]:
+                return False, ("dspy_runtime_disabled",)
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_fail_open_live_approved": config.settings.llm_fail_open_live_approved,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "jangar_base_url": config.settings.jangar_base_url,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_shadow_mode = True
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "active"
+        config.settings.jangar_base_url = "http://jangar.test"
+        config.settings.llm_dspy_artifact_hash = "a" * 64
+        config.settings.llm_rollout_stage = "stage3"
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            engine = CountingLLMReviewEngine(
+                error=DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled")
+            )
+            with patch(
+                "app.trading.scheduler.DSPyReviewRuntime.from_settings",
+                return_value=_UnavailableLiveRuntime(),
+            ):
+                pipeline = TradingPipeline(
+                    alpaca_client=FakeAlpacaClient(),
+                    order_firewall=OrderFirewall(FakeAlpacaClient()),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=FakeAlpacaClient(),
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=TradingState(),
+                    account_label="live",
+                    session_factory=self.session_local,
+                    llm_review_engine=engine,
+                )
+                pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
+                self.assertEqual(
+                    reviews[0].response_json.get("effective_verdict"), "veto"
+                )
+                self.assertEqual(len(executions), 0)
+                self.assertEqual(reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked")
+                self.assertEqual(engine.review_calls, 0)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original[
+                "llm_model_version_lock"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.jangar_base_url = original["jangar_base_url"]
+
+    def test_pipeline_llm_dspy_live_runtime_gate_allows_live_path(self) -> None:
+        from app import config
+
+        class _AvailableLiveRuntime:
+            def evaluate_live_readiness(self) -> tuple[bool, tuple[str, ...]]:
+                return True, ()
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_fail_open_live_approved": config.settings.llm_fail_open_live_approved,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "jangar_base_url": config.settings.jangar_base_url,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "active"
+        config.settings.jangar_base_url = "http://jangar.test"
+        config.settings.llm_dspy_artifact_hash = "a" * 64
+        config.settings.llm_rollout_stage = "stage3"
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            engine = CountingLLMReviewEngine()
+            with patch(
+                "app.trading.scheduler.DSPyReviewRuntime.from_settings",
+                return_value=_AvailableLiveRuntime(),
+            ):
+                pipeline = TradingPipeline(
+                    alpaca_client=FakeAlpacaClient(),
+                    order_firewall=OrderFirewall(FakeAlpacaClient()),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=FakeAlpacaClient(),
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=TradingState(),
+                    account_label="live",
+                    session_factory=self.session_local,
+                    llm_review_engine=engine,
+                )
+                pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "approve")
+                self.assertEqual(len(executions), 1)
+                self.assertEqual(engine.review_calls, 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.jangar_base_url = original["jangar_base_url"]
+
+    def test_pipeline_llm_dspy_live_runtime_readiness_blocked_without_dspy_live_artifact(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "jangar_base_url": config.settings.jangar_base_url,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "active"
+        config.settings.llm_dspy_artifact_hash = "a" * 64
+        config.settings.llm_rollout_stage = "stage3"
+        _set_llm_guardrails(config)
+
+        class _UnavailableLiveRuntime:
+            def evaluate_live_readiness(self) -> tuple[bool, tuple[str, ...]]:
+                return False, ("dspy_active_mode_requires_dspy_live_executor",)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            engine = CountingLLMReviewEngine()
+            with patch(
+                "app.trading.scheduler.DSPyReviewRuntime.from_settings",
+                return_value=_UnavailableLiveRuntime(),
+            ):
+                pipeline = TradingPipeline(
+                    alpaca_client=FakeAlpacaClient(),
+                    order_firewall=OrderFirewall(FakeAlpacaClient()),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=FakeAlpacaClient(),
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=TradingState(),
+                    account_label="live",
+                    session_factory=self.session_local,
+                    llm_review_engine=engine,
+                )
+                pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                )
+                self.assertEqual(len(executions), 0)
+                self.assertEqual(engine.review_calls, 0)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.jangar_base_url = original["jangar_base_url"]
+
+    def test_pipeline_llm_dspy_live_runtime_gate_blocks_when_stage_not_stage3(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "jangar_base_url": config.settings.jangar_base_url,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "active"
+        config.settings.jangar_base_url = "http://jangar.test"
+        config.settings.llm_dspy_artifact_hash = "a" * 64
+        config.settings.llm_rollout_stage = "stage2"
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            engine = CountingLLMReviewEngine()
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="live",
+                session_factory=self.session_local,
+                llm_review_engine=engine,
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
+                self.assertEqual(
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                )
+                self.assertEqual(len(executions), 0)
+                self.assertEqual(engine.review_calls, 0)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.jangar_base_url = original["jangar_base_url"]
+
+    def test_pipeline_llm_dspy_live_runtime_gate_blocked_in_live(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "jangar_base_url": config.settings.jangar_base_url,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "active"
+        config.settings.jangar_base_url = "http://jangar.test"
+        config.settings.llm_dspy_artifact_hash = "a" * 64
+        config.settings.llm_rollout_stage = "stage3"
+        _set_llm_guardrails(config)
+        config.settings.llm_model_version_lock = "mismatch-model:v2"
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            engine = CountingLLMReviewEngine()
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="live",
+                session_factory=self.session_local,
+                llm_review_engine=engine,
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
+                self.assertEqual(reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked")
+                self.assertEqual(len(executions), 0)
+                self.assertEqual(engine.review_calls, 0)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.jangar_base_url = original["jangar_base_url"]
+
+    def test_pipeline_llm_dspy_live_runtime_gate_blocks_malformed_artifact_hash(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "active"
+        config.settings.llm_dspy_artifact_hash = "not-a-valid-hex-hash"
+        config.settings.llm_rollout_stage = "stage3"
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            with patch("app.trading.scheduler.DSPyReviewRuntime.from_settings") as from_settings:
+                pipeline = TradingPipeline(
+                    alpaca_client=FakeAlpacaClient(),
+                    order_firewall=OrderFirewall(FakeAlpacaClient()),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=FakeAlpacaClient(),
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=TradingState(),
+                    account_label="live",
+                    session_factory=self.session_local,
+                )
+                pipeline.run_once()
+                from_settings.assert_not_called()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked")
+                self.assertEqual(len(executions), 0)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+
+    def test_pipeline_llm_dspy_live_runtime_gate_blocks_before_readiness_probe(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "active"
+        config.settings.llm_dspy_artifact_hash = "a" * 64
+        config.settings.llm_rollout_stage = "stage3"
+        _set_llm_guardrails(config)
+        config.settings.llm_model_version_lock = "mismatch-model:v2"
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            engine = CountingLLMReviewEngine()
+            with patch("app.trading.scheduler.DSPyReviewRuntime.from_settings") as from_settings:
+                pipeline = TradingPipeline(
+                    alpaca_client=FakeAlpacaClient(),
+                    order_firewall=OrderFirewall(FakeAlpacaClient()),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=FakeAlpacaClient(),
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=TradingState(),
+                    account_label="live",
+                    session_factory=self.session_local,
+                    llm_review_engine=engine,
+                )
+                pipeline.run_once()
+                from_settings.assert_not_called()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(
+                    reviews[0].rationale,
+                    "llm_dspy_live_runtime_gate_blocked",
+                )
+                self.assertEqual(len(executions), 0)
+                self.assertEqual(engine.review_calls, 0)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+
+    def test_pipeline_llm_dspy_live_runtime_gate_blocks_bootstrap_artifact_hash(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "jangar_base_url": config.settings.jangar_base_url,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "active"
+        config.settings.jangar_base_url = "http://jangar.test"
+        config.settings.llm_dspy_artifact_hash = DSPyReviewRuntime.bootstrap_artifact_hash()
+        config.settings.llm_rollout_stage = "stage3"
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            engine = CountingLLMReviewEngine()
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="live",
+                session_factory=self.session_local,
+                llm_review_engine=engine,
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked")
+                self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
+                self.assertEqual(len(executions), 0)
+                self.assertEqual(engine.review_calls, 0)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.jangar_base_url = original["jangar_base_url"]
+
+    def test_pipeline_llm_dspy_live_runtime_gate_blocks_without_jangar_base_url(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "jangar_base_url": config.settings.jangar_base_url,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "active"
+        config.settings.llm_dspy_artifact_hash = "a" * 64
+        config.settings.llm_rollout_stage = "stage3"
+        config.settings.jangar_base_url = None
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            engine = CountingLLMReviewEngine()
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="live",
+                session_factory=self.session_local,
+                llm_review_engine=engine,
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked")
+                self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
+                self.assertEqual(len(executions), 0)
+                self.assertEqual(engine.review_calls, 0)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.jangar_base_url = original["jangar_base_url"]
+
+    def test_pipeline_llm_dspy_unsupported_runtime_state_vetoes_in_live(self) -> None:
+        from app import config
+
+        class _UnavailableLiveRuntime:
+            def evaluate_live_readiness(self) -> tuple[bool, tuple[str, ...]]:
+                return False, ("dspy_runtime_disabled",)
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_fail_open_live_approved": config.settings.llm_fail_open_live_approved,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "jangar_base_url": config.settings.jangar_base_url,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "pass_through"
+        config.settings.llm_fail_mode_enforcement = "configured"
+        config.settings.llm_fail_open_live_approved = True
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "active"
+        config.settings.jangar_base_url = "http://jangar.test"
+        config.settings.llm_dspy_artifact_hash = "a" * 64
+        config.settings.llm_rollout_stage = "stage3"
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            engine = CountingLLMReviewEngine(
+                error=DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled")
+            )
+            with patch(
+                "app.trading.scheduler.DSPyReviewRuntime.from_settings",
+                return_value=_UnavailableLiveRuntime(),
+            ):
+                pipeline = TradingPipeline(
+                    alpaca_client=FakeAlpacaClient(),
+                    order_firewall=OrderFirewall(FakeAlpacaClient()),
+                    ingestor=FakeIngestor([signal]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=FakeAlpacaClient(),
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=TradingState(),
+                    account_label="live",
+                    session_factory=self.session_local,
+                    llm_review_engine=engine,
+                )
+                pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(
+                    reviews[0].rationale,
+                    "llm_dspy_live_runtime_gate_blocked",
+                )
+                self.assertEqual(len(executions), 0)
+                self.assertEqual(engine.review_calls, 0)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_fail_open_live_approved = original[
+                "llm_fail_open_live_approved"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.jangar_base_url = original["jangar_base_url"]
 
     def test_pipeline_llm_guardrails_force_shadow(self) -> None:
         from app import config

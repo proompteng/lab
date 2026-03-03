@@ -62,6 +62,7 @@
      - `research_stress_metrics`,
      - `research_promotions` when promotion gates pass/fail.
    - Add a nightly reconciliation check that verifies the full artifact chain for the latest lane IDs.
+   - Add governed actuation payload in `actuation-intent.json` with rollback readiness links and confirmation posture for live promotion.
 
 3. Strategy profitability signal (**Completed 2026-02-26**)
    - Runtime profitability slice is now exposed through `GET /trading/profitability/runtime`:

@@ -45,7 +45,7 @@ def _load_torghut_knative_env() -> dict[str, object]:
 
 
 class TestLiveConfigManifestContract(TestCase):
-    def test_knative_live_env_wiring_is_settings_valid(self) -> None:
+    def test_knative_env_wiring_is_safe_live_defaults(self) -> None:
         env = _load_torghut_knative_env()
         settings = Settings(**env)
 
@@ -54,6 +54,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(settings.llm_fail_mode, "pass_through")
         self.assertEqual(settings.llm_fail_mode_enforcement, "configured")
         self.assertTrue(settings.llm_live_fail_open_requested_for_stage("stage1"))
+        self.assertTrue(settings.llm_fail_open_live_approved)
         self.assertEqual(
             settings.llm_effective_fail_mode_for_current_rollout(), "pass_through"
         )
@@ -63,6 +64,8 @@ class TestLiveConfigManifestContract(TestCase):
 
     def test_live_pass_through_requires_explicit_approval_gate(self) -> None:
         env = _load_torghut_knative_env()
+        env["TRADING_MODE"] = "live"
+        env["TRADING_LIVE_ENABLED"] = "true"
         fail_open_env = dict(env)
         fail_open_env["LLM_ROLLOUT_STAGE"] = "stage3"
         fail_open_env["LLM_FAIL_MODE"] = "pass_through"

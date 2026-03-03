@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: posthog-clickhouse
+  namespace: posthog
+  labels:
+    app.kubernetes.io/name: posthog-clickhouse
+    app.kubernetes.io/part-of: posthog
+spec:
+  type: ClusterIP
+  selector:
+    clickhouse.altinity.com/chi: posthog-clickhouse
+    clickhouse.altinity.com/cluster: default
+  ports:
+    - name: native
+      port: 9000
+      targetPort: 9000
+    - name: http
+      port: 8123
+      targetPort: 8123
+    - name: metrics
+      port: 9363
+      targetPort: 9363

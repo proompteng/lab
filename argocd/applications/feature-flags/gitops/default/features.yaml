@@ -184,7 +184,7 @@ flags:
     name: Torghut Trading Market Context Required
     description: Requires market context for LLM reviews.
     type: BOOLEAN_FLAG_TYPE
-    enabled: true
+    enabled: false
   - key: torghut_llm_enabled
     name: Torghut LLM Enabled
     description: Global LLM review enablement for Torghut.
@@ -194,7 +194,7 @@ flags:
     name: Torghut LLM Fail Open Live Approved
     description: Approval gate for live fail-open behavior.
     type: BOOLEAN_FLAG_TYPE
-    enabled: false
+    enabled: true
   - key: torghut_llm_adjustment_allowed
     name: Torghut LLM Adjustment Allowed
     description: Allows LLM-generated quantity adjustments.

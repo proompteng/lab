@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestion-cdp-api
+  labels:
+    "app.kubernetes.io/name": "posthog"
+    "app.kubernetes.io/instance": "posthog"
+spec:
+  selector:
+    app: posthog
+    release: "posthog"
+    role: plugins
+  ports:
+    - name: http
+      port: 80
+      targetPort: 6738
+      protocol: TCP

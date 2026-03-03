@@ -796,6 +796,74 @@ describe('chat completions handler', () => {
     expect(opts?.threadId).toBe('thread-1')
   })
 
+  it('treats explicit internal clients as stateless even with openwebui chat IDs', async () => {
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed('thread-1')),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(null)),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string, _opts?: { threadId?: string }) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-internal',
+        'x-jangar-client-kind': 'internal',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        messages: [{ role: 'user', content: 'do something' }],
+        stream: true,
+      }),
+    })
+
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(request),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
+      ),
+    )
+
+    const text = await response.text()
+    expect(response.status).toBe(200)
+    expect(text).toContain('ok')
+    expect(threadState.getThreadId).not.toHaveBeenCalled()
+    expect(worktreeState.getWorktreeName).not.toHaveBeenCalled()
+    expect(transcriptState.getTranscript).not.toHaveBeenCalled()
+  })
+
   it('runs trade-execution requests statelessly in a dedicated torghut workspace', async () => {
     process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
     process.env.JANGAR_MODELS = 'gpt-5.3-codex'

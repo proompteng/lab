@@ -692,29 +692,81 @@ def _extract_execution_policy_context(
     decision_row: Optional[TradeDecision] = None,
 ) -> dict[str, Any]:
     execution_policy: Any = None
+    decision_json: Mapping[str, Any] = {}
+    decision_params: Mapping[str, Any] | None = None
     if decision_row is not None:
         decision_json = _coerce_json(decision_row.decision_json)
-        params_value = decision_json.get('params')
+        params_value = decision_json.get("params")
         if isinstance(params_value, Mapping):
-            params_map = cast(Mapping[str, Any], params_value)
-            execution_policy = params_map.get('execution_policy')
+            decision_params = cast(Mapping[str, Any], params_value)
+            execution_policy = decision_params.get("execution_policy")
+            execution_advisor = decision_params.get("execution_advisor")
+            execution_microstructure = decision_params.get("execution_microstructure")
+        else:
+            execution_advisor = None
+            execution_microstructure = None
+    else:
+        execution_advisor = None
+        execution_microstructure = None
     if not isinstance(execution_policy, Mapping):
-        execution_policy = decision.params.get('execution_policy')
-    if not isinstance(execution_policy, Mapping):
-        return {}
-    policy_map = cast(Mapping[str, Any], execution_policy)
-    adaptive = policy_map.get('adaptive')
+        execution_policy = decision.params.get("execution_policy")
+        execution_advisor = decision.params.get("execution_advisor")
+        execution_microstructure = decision.params.get("execution_microstructure")
+    if not isinstance(decision_params, Mapping):
+        decision_params = decision.params
+    policy_map: dict[str, Any] = {}
+    if isinstance(execution_policy, Mapping):
+        policy_map = {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], execution_policy).items()
+        }
+    adaptive = policy_map.get("adaptive")
     adaptive_payload: dict[str, Any] = {}
     if isinstance(adaptive, Mapping):
         adaptive_payload = {
             str(key): value for key, value in cast(Mapping[str, Any], adaptive).items()
         }
-    return {
+    has_explicit_advisor = isinstance(execution_advisor, Mapping) or isinstance(
+        decision_params.get("execution_advisor"), Mapping
+    )
+    has_explicit_microstructure = isinstance(
+        execution_microstructure, Mapping
+    ) or isinstance(decision_params.get("execution_microstructure"), Mapping)
+    if (
+        not policy_map
+        and not adaptive_payload
+        and not has_explicit_advisor
+        and not has_explicit_microstructure
+    ):
+        return {}
+    context: dict[str, Any] = {
         'selected_order_type': str(
             policy_map.get('selected_order_type') or decision.order_type
         ),
         'adaptive': adaptive_payload,
     }
+    if isinstance(execution_advisor, Mapping):
+        context["execution_advisor"] = {
+            str(key): value for key, value in cast(Mapping[str, Any], execution_advisor).items()
+        }
+    elif isinstance(decision_params.get("execution_advisor"), Mapping):
+        context["execution_advisor"] = {
+            str(key): value for key, value in cast(Mapping[str, Any], decision_params.get("execution_advisor")).items()
+        }
+
+    if isinstance(execution_microstructure, Mapping):
+        context["execution_microstructure"] = {
+            str(key): value
+            for key, value in cast(Mapping[str, Any], execution_microstructure).items()
+        }
+    elif isinstance(decision_params.get("execution_microstructure"), Mapping):
+        context["execution_microstructure"] = {
+            str(key): value
+            for key, value in cast(
+                Mapping[str, Any], decision_params.get("execution_microstructure")
+            ).items()
+        }
+    return context
 
 
 def _resolve_submission_simulation_context(

@@ -12,6 +12,7 @@ export type AgentPrimitiveKind =
   | 'Signal'
   | 'SignalDelivery'
   | 'Schedule'
+  | 'Swarm'
   | 'Artifact'
   | 'Workspace'
   | 'SecretBinding'

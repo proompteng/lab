@@ -142,6 +142,9 @@ AgentProvider defines how to invoke `/usr/local/bin/agent-runner`:
 - Render `argsTemplate` and `envTemplate` against resolved AgentRun + ImplementationSpec data.
 - Materialize `inputFiles` into the runtime workspace.
 - Collect `outputArtifacts` paths.
+- Payload key compatibility:
+  - prefer `payloads.eventFilePath` in provider `argsTemplate`,
+  - `payloads.eventBodyPath` is emitted as a compatibility alias to the same `/workspace/run.json` payload.
 
 Agent-runner spec (contract):
 

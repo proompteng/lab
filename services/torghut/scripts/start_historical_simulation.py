@@ -14,6 +14,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import socket
 import time
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -138,8 +139,59 @@ TRANSIENT_POSTGRES_ERROR_PATTERNS = (
     'terminating connection due to administrator command',
     'timeout expired',
 )
+VECTOR_EXTENSION_NAME = 'vector'
+POSTGRES_VECTOR_EXTENSION_PERMISSION_ERROR_MARKERS = (
+    'permission denied to create extension',
+    'must be superuser to create this extension',
+)
 TRANSIENT_POSTGRES_RETRY_ATTEMPTS = 8
 TRANSIENT_POSTGRES_RETRY_SLEEP_SECONDS = 0.5
+KAFKA_API_VERSION = (4, 1, 1)
+KAFKA_HOST_SUFFIX_FALLBACKS = (
+    '.kafka-kafka-brokers.kafka.svc.cluster.local',
+    '.kafka-kafka-brokers.kafka.svc',
+    '.kafka.svc.cluster.local',
+    '.kafka.svc',
+    '.svc.cluster.local',
+    '.svc',
+)
+_ORIGINAL_GETADDRINFO = socket.getaddrinfo
+
+
+def _kafka_host_candidates(host: str) -> list[str]:
+    host = host.strip()
+    if not host:
+        return []
+
+    candidates = [host]
+    if '.' not in host:
+        for suffix in KAFKA_HOST_SUFFIX_FALLBACKS:
+            candidates.append(f'{host}{suffix}')
+    return candidates
+
+
+def _getaddrinfo_with_kafka_fallback(
+    host: Any,
+    port: Any,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    if not isinstance(host, str):
+        return _ORIGINAL_GETADDRINFO(host, port, *args, **kwargs)
+
+    last_error: Exception | None = None
+    for candidate in _kafka_host_candidates(host):
+        try:
+            return _ORIGINAL_GETADDRINFO(candidate, port, *args, **kwargs)
+        except OSError as exc:  # pragma: no cover - exercised by kafka runtime path only
+            last_error = exc
+            continue
+    if last_error is None:
+        raise
+    raise last_error
+
+
+socket.getaddrinfo = _getaddrinfo_with_kafka_fallback
 
 
 @dataclass(frozen=True)
@@ -191,6 +243,8 @@ class KafkaRuntimeConfig:
             kwargs['sasl_plain_username'] = self.sasl_username
         if self.sasl_password:
             kwargs['sasl_plain_password'] = self.sasl_password
+        kwargs['api_version'] = KAFKA_API_VERSION
+        kwargs['api_version_auto_timeout_ms'] = 5000
         return kwargs
 
     def kafka_runtime_client_kwargs(self) -> dict[str, Any]:
@@ -209,6 +263,8 @@ class KafkaRuntimeConfig:
             kwargs['sasl_plain_username'] = self.runtime_username
         if self.runtime_password:
             kwargs['sasl_plain_password'] = self.runtime_password
+        kwargs['api_version'] = KAFKA_API_VERSION
+        kwargs['api_version_auto_timeout_ms'] = 5000
         return kwargs
 
 
@@ -548,6 +604,21 @@ def _build_kafka_runtime_config(manifest: Mapping[str, Any]) -> KafkaRuntimeConf
     if not bootstrap_servers:
         raise SystemExit('manifest.kafka.bootstrap_servers is required')
     runtime_bootstrap_servers = _as_text(kafka.get('runtime_bootstrap_servers')) or bootstrap_servers
+    security_protocol = _as_text(kafka.get('security_protocol'))
+    sasl_mechanism = _as_text(kafka.get('sasl_mechanism'))
+    sasl_username = _as_text(kafka.get('sasl_username'))
+    runtime_security_protocol = (
+        _as_text(kafka.get('runtime_security_protocol'))
+        or security_protocol
+    )
+    runtime_sasl_mechanism = (
+        _as_text(kafka.get('runtime_sasl_mechanism'))
+        or sasl_mechanism
+    )
+    runtime_sasl_username = (
+        _as_text(kafka.get('runtime_sasl_username'))
+        or sasl_username
+    )
     password = _as_text(kafka.get('sasl_password'))
     password_env = _as_text(kafka.get('sasl_password_env'))
     if password is None and password_env:
@@ -556,16 +627,29 @@ def _build_kafka_runtime_config(manifest: Mapping[str, Any]) -> KafkaRuntimeConf
     runtime_password_env = _as_text(kafka.get('runtime_sasl_password_env'))
     if runtime_password is None and runtime_password_env:
         runtime_password = _as_text(os.environ.get(runtime_password_env))
+    if runtime_password is None:
+        runtime_password = password
+    if runtime_security_protocol and runtime_security_protocol.upper().startswith('SASL'):
+        if not runtime_sasl_mechanism:
+            raise SystemExit('manifest.kafka.runtime_sasl_mechanism is required for SASL runtime')
+        if not runtime_sasl_username:
+            raise SystemExit('manifest.kafka.runtime_sasl_username is required for SASL runtime')
+        if not runtime_password:
+            raise SystemExit(
+                'manifest.kafka.runtime_sasl_password is missing for SASL runtime. '
+                'Set manifest.kafka.runtime_sasl_password_env/runtime_sasl_password '
+                'or fallback fields manifest.kafka.sasl_password_env/sasl_password'
+            )
     return KafkaRuntimeConfig(
         bootstrap_servers=bootstrap_servers,
-        security_protocol=_as_text(kafka.get('security_protocol')),
-        sasl_mechanism=_as_text(kafka.get('sasl_mechanism')),
-        sasl_username=_as_text(kafka.get('sasl_username')),
+        security_protocol=security_protocol,
+        sasl_mechanism=sasl_mechanism,
+        sasl_username=sasl_username,
         sasl_password=password,
         runtime_bootstrap_servers=runtime_bootstrap_servers,
-        runtime_security_protocol=_as_text(kafka.get('runtime_security_protocol')),
-        runtime_sasl_mechanism=_as_text(kafka.get('runtime_sasl_mechanism')),
-        runtime_sasl_username=_as_text(kafka.get('runtime_sasl_username')),
+        runtime_security_protocol=runtime_security_protocol,
+        runtime_sasl_mechanism=runtime_sasl_mechanism,
+        runtime_sasl_username=runtime_sasl_username,
         runtime_sasl_password=runtime_password,
     )
 
@@ -575,10 +659,15 @@ def _build_clickhouse_runtime_config(manifest: Mapping[str, Any]) -> ClickHouseR
     http_url = _as_text(clickhouse.get('http_url'))
     if not http_url:
         raise SystemExit('manifest.clickhouse.http_url is required')
+    password = _as_text(clickhouse.get('password'))
+    if password is None:
+        password_env = _as_text(clickhouse.get('password_env'))
+        if password_env:
+            password = _as_text(os.environ.get(password_env))
     return ClickHouseRuntimeConfig(
         http_url=http_url.rstrip('/'),
         username=_as_text(clickhouse.get('username')),
-        password=_as_text(clickhouse.get('password')),
+        password=password,
     )
 
 
@@ -608,6 +697,33 @@ def _replace_database_in_dsn(dsn: str, *, database: str, label: str) -> str:
     if not parsed.scheme or not parsed.netloc:
         raise SystemExit(f'{label} must be a valid URL')
     return parsed._replace(path='/' + quote_plus(database)).geturl()
+
+
+def _replace_password_in_dsn(dsn: str, *, password: str, label: str) -> str:
+    parsed = urlsplit(dsn)
+    if not parsed.scheme or not parsed.netloc:
+        raise RuntimeError(f'{label} must be a valid URL')
+    if parsed.username is None:
+        raise RuntimeError(f'{label} must include a username')
+
+    host = parsed.hostname
+    if host is None:
+        raise RuntimeError(f'{label} must include a hostname')
+    if parsed.port:
+        host = f'{host}:{parsed.port}'
+
+    return parsed._replace(netloc=f'{quote_plus(parsed.username)}:{quote_plus(password)}@{host}').geturl()
+
+
+def _ensure_dsn_password(dsn: str, *, password: str | None, label: str) -> str:
+    if password is None:
+        return dsn
+    parsed = urlsplit(dsn)
+    if parsed.password is not None:
+        return dsn
+    if parsed.username is None:
+        return dsn
+    return _replace_password_in_dsn(dsn, password=password, label=label)
 
 
 def _username_from_dsn(dsn: str) -> str | None:
@@ -647,10 +763,103 @@ def _normalize_migrations_command(command: str) -> str:
     normalized = command.strip()
     if not normalized:
         return normalized
+    uv_path = shutil.which('uv') or 'uv'
+    alembic_path = shutil.which('alembic') or 'alembic'
+    if normalized in {'uv', 'uv run --frozen alembic upgrade heads'}:
+        normalized = f'{uv_path} run --frozen {alembic_path} upgrade heads'
+    elif normalized.startswith('uv '):
+        if normalized.startswith('uv run --frozen alembic upgrade'):
+            normalized_tail = normalized[len('uv run --frozen alembic upgrade'):].lstrip()
+            if normalized_tail:
+                normalized = f'{uv_path} run --frozen {alembic_path} upgrade {normalized_tail}'
+            else:
+                normalized = f'{uv_path} run --frozen {alembic_path} upgrade'
+        else:
+            normalized = f'{uv_path} {normalized[len("uv "):]}'
+    elif normalized.startswith('alembic '):
+        normalized = f'{alembic_path} {normalized[len("alembic "):]}'
     return re.sub(
         r'\balembic\s+upgrade\s+head\b',
         'alembic upgrade heads',
         normalized,
+    )
+
+
+def _find_vector_extension_blocking_revision(repo_root: Path) -> str | None:
+    migrations_dir = repo_root / 'migrations' / 'versions'
+    if not migrations_dir.is_dir():
+        return None
+
+    revision_re = re.compile(r'^\s*revision\s*=\s*([\'"])(.*?)\1')
+    down_revision_re = re.compile(r'^\s*down_revision\s*=\s*([\'"])(.*?)\1')
+
+    vector_revision_targets: list[str] = []
+    for migration_file in sorted(migrations_dir.glob('*.py')):
+        try:
+            payload = migration_file.read_text(encoding='utf-8')
+        except OSError:
+            continue
+        lowered = payload.lower()
+        if 'create extension if not exists vector' not in lowered:
+            continue
+
+        revision = None
+        down_revision = None
+        for line in payload.splitlines():
+            if revision is None:
+                revision_match = revision_re.match(line)
+                if revision_match:
+                    revision = _as_text(revision_match.group(2))
+
+            if down_revision is None:
+                down_match = down_revision_re.match(line)
+                if down_match:
+                    down_revision = _as_text(down_match.group(2))
+
+            if revision is not None and down_revision is not None:
+                break
+
+        if revision is None:
+            continue
+
+        if down_revision in (None, 'None'):
+            return 'base'
+        vector_revision_targets.append(down_revision)
+
+    if not vector_revision_targets:
+        return None
+    return vector_revision_targets[0]
+
+
+def _replace_alembic_upgrade_target(command: str, target: str) -> str | None:
+    try:
+        tokens = shlex.split(command)
+    except Exception:
+        return None
+    try:
+        upgrade_index = tokens.index('upgrade')
+    except ValueError:
+        return None
+    if len(tokens) <= upgrade_index + 1:
+        return None
+    tokens[upgrade_index + 1] = target
+    return ' '.join(shlex.quote(item) for item in tokens)
+
+
+def _run_alembic_upgrade(
+    *,
+    command: str,
+    env: Mapping[str, str],
+    cwd: Path,
+    label: str = 'run_migrations',
+) -> None:
+    _run_with_transient_postgres_retry(
+        label=label,
+        operation=lambda: _run_command(
+            shlex.split(command),
+            cwd=cwd,
+            env=env,
+        ),
     )
 
 
@@ -661,8 +870,22 @@ def _build_postgres_runtime_config(
 ) -> PostgresRuntimeConfig:
     postgres = _as_mapping(manifest.get('postgres'))
     admin_dsn = _as_text(postgres.get('admin_dsn'))
+    admin_dsn_env = _as_text(postgres.get('admin_dsn_env'))
+    if admin_dsn is None and admin_dsn_env:
+        admin_dsn = _as_text(os.environ.get(admin_dsn_env))
     if not admin_dsn:
         raise SystemExit('manifest.postgres.admin_dsn is required')
+    admin_password = _as_text(postgres.get('admin_dsn_password'))
+    if admin_password is None:
+        admin_password_env = _as_text(postgres.get('admin_dsn_password_env'))
+        if admin_password_env:
+            admin_password = _as_text(os.environ.get(admin_password_env))
+    if admin_password:
+        admin_dsn = _replace_password_in_dsn(
+            admin_dsn,
+            password=admin_password,
+            label='manifest.postgres.admin_dsn',
+        )
 
     simulation_dsn = _as_text(postgres.get('simulation_dsn'))
     simulation_template = _as_text(postgres.get('simulation_dsn_template'))
@@ -670,6 +893,11 @@ def _build_postgres_runtime_config(
         simulation_dsn = simulation_template.replace('{db}', simulation_db)
     if simulation_dsn is None:
         simulation_dsn = _derive_simulation_dsn(admin_dsn, simulation_db)
+    simulation_dsn = _ensure_dsn_password(
+        simulation_dsn,
+        password=admin_password,
+        label='manifest.postgres.simulation_dsn',
+    )
     simulation_db = _database_name_from_dsn(
         simulation_dsn,
         label='manifest.postgres.simulation_dsn',
@@ -679,6 +907,11 @@ def _build_postgres_runtime_config(
     if runtime_simulation_dsn is None and runtime_template is not None:
         runtime_simulation_dsn = runtime_template.replace('{db}', simulation_db)
     if runtime_simulation_dsn is not None:
+        runtime_simulation_dsn = _ensure_dsn_password(
+            runtime_simulation_dsn,
+            password=admin_password,
+            label='manifest.postgres.runtime_simulation_dsn',
+        )
         runtime_db = _database_name_from_dsn(
             runtime_simulation_dsn,
             label='manifest.postgres.runtime_simulation_dsn',
@@ -839,6 +1072,19 @@ def _run_command(
 def _is_transient_postgres_error(error: Exception) -> bool:
     message = str(error).lower()
     return any(pattern in message for pattern in TRANSIENT_POSTGRES_ERROR_PATTERNS)
+
+
+def _is_vector_extension_create_permission_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return any(marker in message for marker in POSTGRES_VECTOR_EXTENSION_PERMISSION_ERROR_MARKERS)
+
+
+def _postgres_extension_exists(cursor: psycopg.Cursor, extension: str) -> bool:
+    cursor.execute(
+        'SELECT 1 FROM pg_extension WHERE extname = %s LIMIT 1',
+        (extension,)
+    )
+    return cursor.fetchone() is not None
 
 
 def _run_with_transient_postgres_retry(
@@ -1250,7 +1496,28 @@ def _update_run_state(
     state['last_status'] = status
     state['updated_at'] = event['at']
     _save_json(state_path, state)
+    print(
+        'RUN_STATE '
+        + json.dumps(
+            {
+                'at': event['at'],
+                'phase': phase,
+                'status': status,
+                'details': event.get('details', {}),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     return state
+
+
+def _log_script_event(message: str, **fields: Any) -> None:
+    if fields:
+        payload = ' '.join(f'{key}={value!r}' for key, value in fields.items())
+        print(f'RUN_LOG {message} {payload}', file=sys.stderr, flush=True)
+    else:
+        print(f'RUN_LOG {message}', file=sys.stderr, flush=True)
 
 
 def _ensure_directory(path: Path) -> None:
@@ -1542,7 +1809,23 @@ def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[
 
         with psycopg.connect(admin_simulation_dsn, autocommit=True) as conn:
             with conn.cursor() as cursor:
-                cursor.execute('CREATE EXTENSION IF NOT EXISTS vector')
+                has_vector_extension = _postgres_extension_exists(cursor, VECTOR_EXTENSION_NAME)
+                if not has_vector_extension:
+                    try:
+                        cursor.execute(
+                            sql.SQL('CREATE EXTENSION IF NOT EXISTS {}').format(
+                                sql.Identifier(VECTOR_EXTENSION_NAME)
+                            )
+                        )
+                        has_vector_extension = True
+                    except Exception as exc:
+                        if _is_vector_extension_create_permission_error(exc):
+                            if _postgres_extension_exists(cursor, VECTOR_EXTENSION_NAME):
+                                has_vector_extension = True
+                            else:
+                                has_vector_extension = False
+                        else:
+                            raise
                 if simulation_role:
                     cursor.execute(
                         sql.SQL('GRANT USAGE, CREATE ON SCHEMA public TO {}').format(
@@ -1563,7 +1846,7 @@ def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[
         return {
             'simulation_role': simulation_role,
             'grants_applied': grants_applied,
-            'vector_extension_checked': True,
+            'vector_extension_checked': has_vector_extension,
         }
 
     return cast(
@@ -1579,13 +1862,46 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     env = dict(os.environ)
     env['DB_DSN'] = config.torghut_runtime_dsn
-    _run_with_transient_postgres_retry(
-        label='run_migrations',
-        operation=lambda: _run_command(
-            shlex.split(config.migrations_command),
+
+    def _run(command: str) -> None:
+        _run_command(
+            shlex.split(command),
             cwd=repo_root,
             env=env,
-        ),
+        )
+
+    migration_error: Exception | None = None
+
+    try:
+        _run_with_transient_postgres_retry(
+            label='run_migrations',
+            operation=lambda: _run(config.migrations_command),
+        )
+        return
+    except RuntimeError as exc:
+        if not _is_vector_extension_create_permission_error(exc):
+            raise
+        migration_error = exc
+
+    fallback_revision = _find_vector_extension_blocking_revision(repo_root)
+    if fallback_revision is None:
+        raise RuntimeError(
+            'run_migrations_fallback_not_applicable: vector extension permission error occurred but '
+            'a migration target for a pre-vector revision could not be discovered'
+        ) from migration_error
+
+    fallback_command = _replace_alembic_upgrade_target(
+        command=config.migrations_command,
+        target=fallback_revision,
+    )
+    if fallback_command is None:
+        raise RuntimeError(
+            f'run_migrations_fallback_target_parse_failed: command={config.migrations_command} target={fallback_revision}'
+        ) from migration_error
+
+    _run_with_transient_postgres_retry(
+        label='run_migrations_fallback_pre_vector',
+        operation=lambda: _run(fallback_command),
     )
 
 
@@ -2242,6 +2558,14 @@ def _replay_dump(
     pace_mode = (_as_text(replay_cfg.get('pace_mode')) or 'max_throughput').lower()
     acceleration = float(replay_cfg.get('acceleration') or 60.0)
     max_sleep_seconds = float(replay_cfg.get('max_sleep_seconds') or 5.0)
+    status_update_every_records = max(
+        1,
+        _safe_int(replay_cfg.get('status_update_every_records'), default=25_000),
+    )
+    status_update_every_seconds = max(
+        1.0,
+        _safe_float(replay_cfg.get('status_update_every_seconds'), default=30.0),
+    )
     flush_every_records = max(1, _safe_int(replay_cfg.get('flush_every_records'), default=10_000))
     flush_timeout_seconds = max(1.0, _safe_float(replay_cfg.get('flush_timeout_seconds'), default=30.0))
     final_flush_timeout_seconds = max(
@@ -2256,6 +2580,7 @@ def _replay_dump(
     previous_ts_ms: int | None = None
     checksum = hashlib.sha256()
     replay_topic_overrides = 0
+    next_status_update_at = time.monotonic() + status_update_every_seconds
     try:
         with dump_path.open('r', encoding='utf-8') as handle:
             for line in handle:
@@ -2309,12 +2634,39 @@ def _replay_dump(
                 count += 1
                 count_by_topic[replay_topic] = count_by_topic.get(replay_topic, 0) + 1
                 previous_ts_ms = current_ts_ms
+                now = time.monotonic()
+                if (
+                    count % status_update_every_records == 0
+                    or now >= next_status_update_at
+                ):
+                    _update_run_state(
+                        resources=resources,
+                        phase='apply',
+                        status='running',
+                        details={
+                            'subphase': 'replay',
+                            'records': count,
+                            'records_by_topic': count_by_topic,
+                        },
+                    )
+                    next_status_update_at = now + status_update_every_seconds
                 if count % flush_every_records == 0:
                     _producer_flush_with_retry(
                         producer,
                         timeout_seconds=flush_timeout_seconds,
                         attempts=flush_retry_attempts,
                     )
+        _update_run_state(
+            resources=resources,
+            phase='apply',
+            status='running',
+            details={
+                'subphase': 'replay',
+                'records': count,
+                'records_by_topic': count_by_topic,
+                'flush_reason': 'completed',
+            },
+        )
         _producer_flush_with_retry(
             producer,
             timeout_seconds=final_flush_timeout_seconds,
@@ -2988,14 +3340,72 @@ def _render_report(payload: Mapping[str, Any], *, json_only: bool) -> None:
 def main() -> None:
     args = _parse_args()
     manifest_path = Path(args.dataset_manifest)
+    _log_script_event(
+        'starting_simulation',
+        mode=args.mode,
+        run_id=args.run_id,
+        dataset_manifest=str(manifest_path),
+        json_output=bool(args.json),
+        confirm_phrase_provided=bool(args.confirm),
+    )
     manifest = _load_manifest(manifest_path)
+    window = _as_mapping(manifest.get('window'))
+    _log_script_event(
+        'manifest_loaded',
+        dataset_id=_as_text(manifest.get('dataset_id')) or 'missing',
+        trading_day=_as_text(window.get('trading_day')),
+        start=_as_text(window.get('start')),
+        end=_as_text(window.get('end')),
+        min_coverage_minutes=_as_text(window.get('min_coverage_minutes')),
+        strict_coverage_ratio=window.get('strict_coverage_ratio'),
+    )
     resources = _build_resources(args.run_id, manifest)
+    _log_script_event(
+        'resources_built',
+        run_token=resources.run_token,
+        dataset_id=resources.dataset_id,
+        output_root=str(resources.output_root),
+        namespace=resources.namespace,
+        ta_configmap=resources.ta_configmap,
+        ta_deployment=resources.ta_deployment,
+    )
     kafka_config = _build_kafka_runtime_config(manifest)
+    _log_script_event(
+        'kafka_config_ready',
+        bootstrap_servers=kafka_config.bootstrap_servers,
+        runtime_bootstrap_servers=kafka_config.runtime_bootstrap,
+        security_protocol=kafka_config.security_protocol,
+        runtime_security_protocol=kafka_config.runtime_security,
+        sasl_mechanism=kafka_config.sasl_mechanism,
+        runtime_sasl_mechanism=kafka_config.runtime_sasl,
+        runtime_username_present=bool(kafka_config.runtime_username),
+        runtime_password_present=bool(kafka_config.runtime_password),
+    )
     clickhouse_config = _build_clickhouse_runtime_config(manifest)
+    _log_script_event(
+        'clickhouse_config_ready',
+        http_url=clickhouse_config.http_url,
+        username=clickhouse_config.username or 'none',
+        password_present=bool(clickhouse_config.password),
+    )
     argocd_config = _build_argocd_automation_config(manifest)
+    _log_script_event(
+        'argocd_config_ready',
+        manage_automation=argocd_config.manage_automation,
+        applicationset_name=argocd_config.applicationset_name,
+        app_name=argocd_config.app_name,
+        desired_mode_during_run=argocd_config.desired_mode_during_run,
+    )
     postgres_config = _build_postgres_runtime_config(
         manifest,
         simulation_db=f'torghut_sim_{resources.run_token}',
+    )
+    _log_script_event(
+        'postgres_config_ready',
+        admin_dsn=_redact_dsn_credentials(postgres_config.admin_dsn),
+        simulation_dsn=_redact_dsn_credentials(postgres_config.simulation_dsn),
+        simulation_db=postgres_config.simulation_db,
+        migration_command=postgres_config.migrations_command,
     )
 
     plan_report = _build_plan_report(
@@ -3008,10 +3418,12 @@ def main() -> None:
     )
 
     if args.mode == 'plan':
+        _log_script_event('plan_mode_start')
         _render_report(plan_report, json_only=args.json)
         return
 
     if args.mode == 'apply':
+        _log_script_event('apply_mode_start')
         if args.confirm != APPLY_CONFIRMATION_PHRASE:
             raise SystemExit(
                 f'--confirm must equal {APPLY_CONFIRMATION_PHRASE!r} when mode=apply'
@@ -3029,6 +3441,7 @@ def main() -> None:
         return
 
     if args.mode == 'report':
+        _log_script_event('report_mode_start')
         report = _report_simulation(
             resources=resources,
             manifest_path=manifest_path,
@@ -3046,6 +3459,7 @@ def main() -> None:
         return
 
     if args.mode == 'run':
+        _log_script_event('run_mode_start')
         if args.confirm != APPLY_CONFIRMATION_PHRASE:
             raise SystemExit(
                 f'--confirm must equal {APPLY_CONFIRMATION_PHRASE!r} when mode=run'

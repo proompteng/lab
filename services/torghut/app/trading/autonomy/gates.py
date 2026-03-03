@@ -47,7 +47,7 @@ class GateResult:
 class GateInputs:
     feature_schema_version: str
     required_feature_null_rate: Decimal
-    staleness_ms_p95: int
+    staleness_ms_p95: int | None
     symbol_coverage: int
     metrics: dict[str, Any]
     robustness: dict[str, Any]
@@ -58,6 +58,7 @@ class GateInputs:
     fragility_state: str = "elevated"
     fragility_score: Decimal = Decimal("0.5")
     stability_mode_active: bool = False
+    fragility_inputs_valid: bool = True
     operational_ready: bool = True
     runbook_validated: bool = True
     kill_switch_dry_run_passed: bool = True
@@ -85,6 +86,10 @@ class GatePolicyMatrix:
     gate2_max_tca_slippage_bps: Decimal = Decimal("25")
     gate2_max_tca_shortfall_notional: Decimal = Decimal("25")
     gate2_max_tca_churn_ratio: Decimal = Decimal("0.75")
+    gate2_max_tca_realized_shortfall_bps: Decimal = Decimal("25")
+    gate2_max_tca_divergence_bps: Decimal = Decimal("12")
+    gate2_max_tca_calibration_error_bps: Decimal = Decimal("12")
+    gate2_min_tca_expected_shortfall_coverage: Decimal = Decimal("0")
     gate2_max_fragility_score: Decimal = Decimal("0.85")
     gate2_max_fragility_state_rank: int = 2
     gate2_require_stability_mode_under_stress: bool = True
@@ -159,6 +164,19 @@ class GatePolicyMatrix:
             ),
             gate2_max_tca_churn_ratio=_decimal_or_default(
                 payload.get("gate2_max_tca_churn_ratio"), Decimal("0.75")
+            ),
+            gate2_max_tca_realized_shortfall_bps=_decimal_or_default(
+                payload.get("gate2_max_tca_realized_shortfall_bps"), Decimal("25")
+            ),
+            gate2_max_tca_divergence_bps=_decimal_or_default(
+                payload.get("gate2_max_tca_divergence_bps"), Decimal("12")
+            ),
+            gate2_max_tca_calibration_error_bps=_decimal_or_default(
+                payload.get("gate2_max_tca_calibration_error_bps"),
+                Decimal("12"),
+            ),
+            gate2_min_tca_expected_shortfall_coverage=_decimal_or_default(
+                payload.get("gate2_min_tca_expected_shortfall_coverage"), Decimal("0")
             ),
             gate2_max_fragility_score=_decimal_or_default(
                 payload.get("gate2_max_fragility_score"), Decimal("0.85")
@@ -277,6 +295,16 @@ class GatePolicyMatrix:
                 self.gate2_max_tca_shortfall_notional
             ),
             "gate2_max_tca_churn_ratio": str(self.gate2_max_tca_churn_ratio),
+            "gate2_max_tca_realized_shortfall_bps": str(
+                self.gate2_max_tca_realized_shortfall_bps
+            ),
+            "gate2_max_tca_divergence_bps": str(self.gate2_max_tca_divergence_bps),
+            "gate2_max_tca_calibration_error_bps": str(
+                self.gate2_max_tca_calibration_error_bps
+            ),
+            "gate2_min_tca_expected_shortfall_coverage": str(
+                self.gate2_min_tca_expected_shortfall_coverage
+            ),
             "gate2_max_fragility_score": str(self.gate2_max_fragility_score),
             "gate2_max_fragility_state_rank": self.gate2_max_fragility_state_rank,
             "gate2_require_stability_mode_under_stress": self.gate2_require_stability_mode_under_stress,
@@ -463,7 +491,9 @@ def _gate0_data_integrity(inputs: GateInputs, policy: GatePolicyMatrix) -> GateR
         reasons.append("schema_version_incompatible")
     if inputs.required_feature_null_rate > policy.gate0_max_null_rate:
         reasons.append("required_feature_null_rate_exceeds_threshold")
-    if inputs.staleness_ms_p95 > policy.gate0_max_staleness_ms:
+    if inputs.staleness_ms_p95 is None:
+        reasons.append("feature_staleness_missing")
+    elif inputs.staleness_ms_p95 > policy.gate0_max_staleness_ms:
         reasons.append("feature_staleness_exceeds_budget")
     if inputs.symbol_coverage < policy.gate0_min_symbol_coverage:
         reasons.append("symbol_coverage_below_minimum")
@@ -523,8 +553,10 @@ def _gate3_shadow_paper_quality(
     inputs: GateInputs, policy: GatePolicyMatrix
 ) -> GateResult:
     reasons: list[str] = []
-    llm_error_ratio = _decimal(inputs.llm_metrics.get("error_ratio")) or Decimal("0")
-    if llm_error_ratio > policy.gate3_max_llm_error_ratio:
+    llm_error_ratio = _decimal(inputs.llm_metrics.get("error_ratio"))
+    if llm_error_ratio is None:
+        reasons.append("llm_error_ratio_missing")
+    elif llm_error_ratio > policy.gate3_max_llm_error_ratio:
         reasons.append("llm_error_ratio_exceeds_threshold")
     fallback_rate = _decimal(inputs.forecast_metrics.get("fallback_rate"))
     if fallback_rate is None:
@@ -537,12 +569,13 @@ def _gate3_shadow_paper_quality(
     latency_ms_p95 = _decimal(inputs.forecast_metrics.get("inference_latency_ms_p95"))
     if latency_ms_p95 is None:
         reasons.append("forecast_inference_latency_p95_missing")
-    if (
-        latency_ms_p95 is not None
-        and latency_ms_p95 > Decimal(policy.gate3_max_forecast_latency_ms_p95)
+    if latency_ms_p95 is not None and latency_ms_p95 > Decimal(
+        policy.gate3_max_forecast_latency_ms_p95
     ):
         reasons.append("forecast_inference_latency_exceeds_threshold")
-    calibration_score_min = _decimal(inputs.forecast_metrics.get("calibration_score_min"))
+    calibration_score_min = _decimal(
+        inputs.forecast_metrics.get("calibration_score_min")
+    )
     if calibration_score_min is None:
         reasons.append("forecast_calibration_score_missing")
     if (
@@ -671,7 +704,9 @@ def _gate7_uncertainty_calibration(
         gate_id="gate7_uncertainty_calibration",
         status="pass" if action == "pass" else "fail",
         reasons=sorted(set(reasons)),
-        artifact_refs=[recalibration_artifact_ref] if recalibration_artifact_ref else [],
+        artifact_refs=[recalibration_artifact_ref]
+        if recalibration_artifact_ref
+        else [],
     )
     outcome = UncertaintyGateOutcome(
         action=action,
@@ -685,6 +720,8 @@ def _gate7_uncertainty_calibration(
 
 def _gate2_base_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
     reasons: list[str] = []
+    if not inputs.fragility_inputs_valid:
+        return ["fragility_inputs_invalid"]
     max_drawdown = _decimal(inputs.metrics.get("max_drawdown")) or Decimal("0")
     turnover_ratio = _decimal(inputs.metrics.get("turnover_ratio")) or Decimal("0")
     cost_bps = _decimal(inputs.metrics.get("cost_bps")) or Decimal("0")
@@ -709,24 +746,83 @@ def _gate2_base_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[st
 
 
 def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
-    tca_order_count = int(inputs.tca_metrics.get("order_count", 0))
+    order_count_raw = inputs.tca_metrics.get("order_count")
+    if order_count_raw is None:
+        return ["tca_order_count_missing"]
+
+    try:
+        tca_order_count = int(order_count_raw)
+    except (TypeError, ValueError):
+        return ["tca_order_count_invalid"]
+
     if tca_order_count <= 0:
-        return []
+        return ["tca_order_count_below_minimum"]
+
     reasons: list[str] = []
-    avg_tca_slippage = _decimal(inputs.tca_metrics.get("avg_slippage_bps")) or Decimal(
-        "0"
-    )
-    avg_tca_shortfall = _decimal(
-        inputs.tca_metrics.get("avg_shortfall_notional")
-    ) or Decimal("0")
-    avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get("avg_churn_ratio")) or Decimal(
-        "0"
-    )
-    if avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
+    avg_tca_slippage = _abs_decimal(inputs.tca_metrics.get("avg_abs_slippage_bps"))
+    if avg_tca_slippage is None:
+        avg_tca_slippage = _abs_decimal(inputs.tca_metrics.get("avg_slippage_bps"))
+    if avg_tca_slippage is None:
+        reasons.append("tca_slippage_missing")
+    elif avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
         reasons.append("tca_slippage_exceeds_maximum")
-    if avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
+
+    avg_tca_shortfall = _abs_decimal(
+        inputs.tca_metrics.get("avg_shortfall_notional_abs")
+    )
+    if avg_tca_shortfall is None:
+        avg_tca_shortfall = _abs_decimal(
+            inputs.tca_metrics.get("avg_shortfall_notional")
+        )
+    if avg_tca_shortfall is None:
+        reasons.append("tca_shortfall_missing")
+    elif avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
         reasons.append("tca_shortfall_exceeds_maximum")
-    if avg_tca_churn_ratio > policy.gate2_max_tca_churn_ratio:
+
+    expected_shortfall_coverage = _decimal(
+        inputs.tca_metrics.get("expected_shortfall_coverage")
+    )
+    expected_shortfall_sample_count = _int_or_default(
+        inputs.tca_metrics.get("expected_shortfall_sample_count"),
+        0,
+    )
+    avg_tca_realized_shortfall = _abs_decimal(
+        inputs.tca_metrics.get("avg_realized_shortfall_bps_abs")
+    )
+    if avg_tca_realized_shortfall is None:
+        avg_tca_realized_shortfall = _abs_decimal(
+            inputs.tca_metrics.get("avg_realized_shortfall_bps")
+        ) or Decimal("0")
+    if avg_tca_realized_shortfall > policy.gate2_max_tca_realized_shortfall_bps:
+        reasons.append("tca_realized_shortfall_bps_exceeds_maximum")
+
+    avg_tca_divergence = _abs_decimal(inputs.tca_metrics.get("avg_divergence_bps_abs"))
+    if avg_tca_divergence is None:
+        avg_tca_divergence = _abs_decimal(
+            inputs.tca_metrics.get("avg_divergence_bps")
+        ) or Decimal("0")
+    if avg_tca_divergence > policy.gate2_max_tca_divergence_bps:
+        reasons.append("tca_divergence_bps_exceeds_maximum")
+
+    avg_tca_calibration_error = _decimal(
+        inputs.tca_metrics.get("avg_calibration_error_bps")
+    )
+    if avg_tca_calibration_error is None:
+        if expected_shortfall_sample_count > 0:
+            reasons.append("tca_calibration_error_missing")
+    elif avg_tca_calibration_error > policy.gate2_max_tca_calibration_error_bps:
+        reasons.append("tca_calibration_error_exceeds_maximum")
+
+    if policy.gate2_min_tca_expected_shortfall_coverage > 0:
+        if expected_shortfall_sample_count <= 0 or expected_shortfall_coverage is None:
+            reasons.append("tca_expected_shortfall_calibration_coverage_missing")
+        elif expected_shortfall_coverage < policy.gate2_min_tca_expected_shortfall_coverage:
+            reasons.append("tca_expected_shortfall_calibration_coverage_below_threshold")
+
+    avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get("avg_churn_ratio"))
+    if avg_tca_churn_ratio is None:
+        reasons.append("tca_churn_ratio_missing")
+    elif avg_tca_churn_ratio > policy.gate2_max_tca_churn_ratio:
         reasons.append("tca_churn_ratio_exceeds_maximum")
     return reasons
 
@@ -737,9 +833,13 @@ def _gate6_early_result(
     promotion_target: PromotionTarget,
 ) -> GateResult | None:
     if promotion_target == "shadow":
-        return GateResult(gate_id="gate6_profitability_evidence", status="pass", reasons=[])
+        return GateResult(
+            gate_id="gate6_profitability_evidence", status="pass", reasons=[]
+        )
     if not policy.gate6_require_profitability_evidence:
-        return GateResult(gate_id="gate6_profitability_evidence", status="pass", reasons=[])
+        return GateResult(
+            gate_id="gate6_profitability_evidence", status="pass", reasons=[]
+        )
     if not inputs.profitability_evidence:
         return GateResult(
             gate_id="gate6_profitability_evidence",
@@ -776,9 +876,9 @@ def _gate6_threshold_reasons(
     )
     if regime_ratio < policy.gate6_min_regime_slice_pass_ratio:
         reasons.append("profitability_regime_slice_ratio_below_threshold")
-    return_over_drawdown = _decimal(risk_adjusted.get("return_over_drawdown")) or Decimal(
-        "0"
-    )
+    return_over_drawdown = _decimal(
+        risk_adjusted.get("return_over_drawdown")
+    ) or Decimal("0")
     if return_over_drawdown < policy.gate6_min_return_over_drawdown:
         reasons.append("profitability_return_over_drawdown_below_threshold")
 
@@ -939,6 +1039,13 @@ def _decimal(value: Any) -> Decimal | None:
     if not parsed.is_finite():
         return None
     return parsed
+
+
+def _abs_decimal(value: Any) -> Decimal | None:
+    parsed = _decimal(value)
+    if parsed is None:
+        return None
+    return abs(parsed)
 
 
 def _decimal_or_default(value: Any, default: Decimal) -> Decimal:

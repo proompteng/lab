@@ -12,6 +12,7 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Chart intent and scope (high-level design): `agents-helm-chart-design.md`
 - Creating AgentRuns safely (prompt precedence): `agentrun-creation-guide.md`
 - Launching workflow loops correctly (state reuse + checks): `agentrun-workflow-loop-launch-guide.md`
+- Running Codex Spark review/fix PR cycles: `codex-spark-review-cycle.md`
 - How to validate changes in CI: `ci-validation-plan.md`
 - How to install/upgrade/debug (ops): `runbooks.md`
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
@@ -30,6 +31,13 @@ When documents disagree, use this precedence order:
 5. “Draft/Partial” docs in `docs/agents/designs/` (proposals; may describe current behavior but are not always enforced).
 
 If you are changing behavior, update 1-3 first, then ensure 4-5 describe the resulting system accurately.
+
+For env and gRPC source-of-truth changes in this branch:
+- Update chart contracts in `charts/agents/templates/validation.yaml`.
+- Configure precedence and migration details in:
+  - `designs/chart-env-vars-merge-precedence.md`
+  - `designs/chart-envfrom-conflict-resolution.md`
+  - `designs/chart-grpc-enabled-source-of-truth.md`
 
 ## How The Docs Compose
 
@@ -75,6 +83,7 @@ If you are changing behavior, update 1-3 first, then ensure 4-5 describe the res
 ### Top-Level (`docs/agents/*.md`)
 
 - [agentrun-creation-guide.md](agentrun-creation-guide.md)
+- [codex-spark-review-cycle.md](codex-spark-review-cycle.md)
 - [agentrun-workflow-loop-launch-guide.md](agentrun-workflow-loop-launch-guide.md)
 - [agent-run-retention-design.md](agent-run-retention-design.md)
 - [agentctl-cli-design.md](agentctl-cli-design.md)
@@ -173,6 +182,7 @@ If you are changing behavior, update 1-3 first, then ensure 4-5 describe the res
 - [designs/implementation-contract-enforcement.md](designs/implementation-contract-enforcement.md)
 - [designs/integration-test-harness.md](designs/integration-test-harness.md)
 - [designs/jangar-quant-performance-control-plane.md](designs/jangar-quant-performance-control-plane.md)
+- [designs/jangar-swarm-intelligence-owner-serving.md](designs/jangar-swarm-intelligence-owner-serving.md)
 - [designs/jangar-trading-control-plan.md](designs/jangar-trading-control-plan.md)
 - [designs/jangar-torghut-live-analysis-playbook.md](designs/jangar-torghut-live-analysis-playbook.md)
 - [designs/job-gc-visibility.md](designs/job-gc-visibility.md)
