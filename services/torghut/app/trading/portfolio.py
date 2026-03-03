@@ -45,6 +45,13 @@ _SIZING_CAP_ZERO_REASON_BY_METHOD: dict[str, str] = {
     "cap_sell_inventory_zero": "sell_inventory_unavailable",
 }
 
+_SIZING_CAP_ZERO_REASON_BY_METHOD: dict[str, str] = {
+    "cap_per_symbol_zero": "symbol_capacity_exhausted",
+    "cap_gross_exposure_zero": "gross_exposure_capacity_exhausted",
+    "cap_net_exposure_zero": "net_exposure_capacity_exhausted",
+    "cap_sell_inventory_zero": "sell_inventory_unavailable",
+}
+
 
 @dataclass(frozen=True)
 class AggregatedIntent:
@@ -1267,10 +1274,10 @@ def fragility_monitor_from_settings() -> FragilityMonitor:
 def _config_from_settings(
     strategy: Strategy, equity: Optional[Decimal]
 ) -> PortfolioSizingConfig:
-    max_notional = _min_decimal(
-        _optional_decimal(strategy.max_notional_per_trade),
-        _optional_decimal(settings.trading_max_notional_per_trade),
-        _optional_decimal(settings.trading_portfolio_max_notional_per_symbol),
+    # Keep per-trade max-notional checks in RiskEngine; symbol caps should only
+    # come from dedicated portfolio concentration settings.
+    max_notional_per_symbol = _optional_decimal(
+        settings.trading_portfolio_max_notional_per_symbol
     )
     max_pct_equity = _min_decimal(
         _optional_decimal(strategy.max_position_pct_equity),
@@ -1300,7 +1307,7 @@ def _config_from_settings(
         volatility_floor=_optional_decimal(settings.trading_portfolio_volatility_floor)
         or Decimal("0"),
         max_positions=settings.trading_portfolio_max_positions,
-        max_notional_per_symbol=max_notional,
+        max_notional_per_symbol=max_notional_per_symbol,
         max_position_pct_equity=max_pct_equity,
         max_gross_exposure=gross_cap,
         max_net_exposure=net_cap,

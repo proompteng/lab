@@ -98,6 +98,8 @@ spec:
             - name: TRADING_ACCOUNTS_JSON
               value: >
                 [{"label":"PA3SX7FYNUTF","mode":"live","enabled":true}]
+            - name: TRADING_ALLOW_SHORTS
+              value: "true"
             - name: TRADING_SIGNAL_SOURCE
               value: clickhouse
             - name: TRADING_SIGNAL_TABLE

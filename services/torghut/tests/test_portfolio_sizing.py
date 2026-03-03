@@ -5,6 +5,7 @@ from decimal import Decimal
 from unittest import TestCase
 
 from app import config
+from app.models import Strategy
 from app.trading.models import StrategyDecision
 from app.trading.portfolio import (
     ALLOCATOR_CLIP_CORRELATION_CAPACITY,
@@ -20,6 +21,7 @@ from app.trading.portfolio import (
     PortfolioSizingConfig,
     PortfolioSizer,
     allocator_from_settings,
+    sizer_from_settings,
 )
 
 
@@ -1130,3 +1132,52 @@ class TestPortfolioSizing(TestCase):
         result = sizer.size(decision, account={"equity": "50000"}, positions=[])
         self.assertTrue(result.approved)
         self.assertEqual(result.decision.qty, Decimal("3"))
+
+    def test_sizer_from_settings_does_not_couple_per_trade_cap_to_symbol_capacity(
+        self,
+    ) -> None:
+        original_max_position_pct_equity = config.settings.trading_max_position_pct_equity
+        original_max_notional_per_symbol = (
+            config.settings.trading_portfolio_max_notional_per_symbol
+        )
+        config.settings.trading_max_position_pct_equity = None
+        config.settings.trading_portfolio_max_notional_per_symbol = None
+        try:
+            strategy = Strategy(
+                name="intraday-tsmom-profit-v2",
+                description="test",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="intraday_tsmom_v1",
+                max_notional_per_trade=Decimal("1000"),
+                max_position_pct_equity=Decimal("0.08"),
+            )
+            sizer = sizer_from_settings(strategy, Decimal("31069.96"))
+            decision = StrategyDecision(
+                strategy_id="s1",
+                symbol="GOOG",
+                event_ts=datetime(2026, 3, 3, tzinfo=timezone.utc),
+                timeframe="1Sec",
+                action="buy",
+                qty=Decimal("3"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("305.400178673442")},
+            )
+
+            result = sizer.size(
+                decision,
+                account={"equity": "31069.96"},
+                positions=[{"symbol": "GOOG", "qty": "7", "market_value": "2093"}],
+            )
+
+            self.assertTrue(result.approved)
+            self.assertGreater(result.decision.qty, Decimal("0"))
+            self.assertNotIn("symbol_capacity_exhausted", result.reasons)
+        finally:
+            config.settings.trading_max_position_pct_equity = (
+                original_max_position_pct_equity
+            )
+            config.settings.trading_portfolio_max_notional_per_symbol = (
+                original_max_notional_per_symbol
+            )
