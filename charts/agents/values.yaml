@@ -103,7 +103,7 @@ grpc:
   serviceType: ClusterIP
 
 validation:
-  reservedEnvKeysEnforced: false
+  reservedEnvKeysEnforced: true
 
 audit:
   sink:
