@@ -15,8 +15,40 @@ const featureFlagsMocks = vi.hoisted(() => ({
   resolveBooleanFeatureToggle: vi.fn(async () => true),
 }))
 
+const primitivesStoreMocks = vi.hoisted(() => {
+  const now = new Date().toISOString()
+  const store = {
+    ready: Promise.resolve(),
+    reserveAgentRunIdempotencyKey: vi.fn(async () => ({
+      record: {
+        id: 'idempotency-1',
+        namespace: 'agents',
+        agentName: 'agent-1',
+        idempotencyKey: 'default-key',
+        agentRunName: null,
+        agentRunUid: null,
+        terminalPhase: null,
+        terminalAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      created: true,
+    })),
+    assignAgentRunIdempotencyKey: vi.fn(async () => null),
+    markAgentRunIdempotencyKeyTerminal: vi.fn(async () => null),
+  }
+
+  return {
+    store,
+    createPrimitivesStore: vi.fn(() => store),
+  }
+})
+
 vi.mock('~/server/metrics', () => metricsMocks)
 vi.mock('~/server/feature-flags', () => featureFlagsMocks)
+vi.mock('~/server/primitives-store', () => ({
+  createPrimitivesStore: primitivesStoreMocks.createPrimitivesStore,
+}))
 
 const { recordReconcileDurationMs } = metricsMocks
 
@@ -676,6 +708,78 @@ describe('agents controller reconcileAgentRun', () => {
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'Blocked')
     expect(condition?.reason).toBe('ConcurrencyLimit')
+  })
+
+  it('reclaims stale idempotency reservations when canonical runs are missing', async () => {
+    const now = new Date().toISOString()
+    primitivesStoreMocks.createPrimitivesStore.mockClear()
+    primitivesStoreMocks.store.reserveAgentRunIdempotencyKey.mockResolvedValue({
+      record: {
+        id: 'idempotency-market-1',
+        namespace: 'agents',
+        agentName: 'agent-1',
+        idempotencyKey: 'market-key',
+        agentRunName: 'stale-run',
+        agentRunUid: 'stale-uid',
+        terminalPhase: null,
+        terminalAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      created: false,
+    } as never)
+    primitivesStoreMocks.store.assignAgentRunIdempotencyKey.mockResolvedValue({
+      id: 'idempotency-market-1',
+      namespace: 'agents',
+      agentName: 'agent-1',
+      idempotencyKey: 'market-key',
+      agentRunName: 'run-1',
+      agentRunUid: 'uid-run-1',
+      terminalPhase: null,
+      terminalAt: null,
+      createdAt: now,
+      updatedAt: now,
+    } as never)
+
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name?: string) => {
+        if (resource === RESOURCE_MAP.AgentRun && name === 'stale-run') return null
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        idempotencyKey: 'market-key',
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(findCondition(status, 'Duplicate')).toBeUndefined()
+    expect(primitivesStoreMocks.store.assignAgentRunIdempotencyKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        namespace: 'agents',
+        agentName: 'agent-1',
+        idempotencyKey: 'market-key',
+        agentRunName: 'run-1',
+      }),
+    )
+    expect(status.phase).toBe('Running')
   })
 
   it('marks AgentRun failed when provider is missing', async () => {
