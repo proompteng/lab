@@ -5229,11 +5229,30 @@ const reconcileAgentRun = async (
             canonicalRunName = assigned?.agentRunName ?? name
           }
 
+          let canonicalRun: Record<string, unknown> | null = null
           if (canonicalRunName && canonicalRunName !== name) {
-            const existing = await kube.get(RESOURCE_MAP.AgentRun, canonicalRunName, namespace)
-            const existingPhase = asString(readNested(existing, ['status', 'phase'])) ?? 'Pending'
+            canonicalRun = await kube.get(RESOURCE_MAP.AgentRun, canonicalRunName, namespace)
+            if (!canonicalRun) {
+              // Reclaim stale idempotency reservations when the canonical run was deleted.
+              const reassigned = await store.assignAgentRunIdempotencyKey({
+                namespace,
+                agentName,
+                idempotencyKey,
+                agentRunName: name,
+                agentRunUid: asString(metadata.uid) ?? null,
+              })
+              canonicalRunName = reassigned?.agentRunName ?? name
+              if (canonicalRunName && canonicalRunName !== name) {
+                canonicalRun = await kube.get(RESOURCE_MAP.AgentRun, canonicalRunName, namespace)
+              }
+            }
+          }
+
+          if (canonicalRunName && canonicalRunName !== name) {
+            const existingPhase = asString(readNested(canonicalRun, ['status', 'phase'])) ?? 'Pending'
             const duplicateReason =
-              existing && (existingPhase === 'Succeeded' || existingPhase === 'Failed' || existingPhase === 'Cancelled')
+              canonicalRun &&
+              (existingPhase === 'Succeeded' || existingPhase === 'Failed' || existingPhase === 'Cancelled')
                 ? 'IdempotencyKeyCompleted'
                 : 'IdempotencyKeyInUse'
             const updated = upsertCondition(conditions, {

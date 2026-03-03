@@ -27,6 +27,7 @@ controllers:
       JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME: nats-agents-credentials
       JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY: username
       JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY: password
+      JANGAR_AGENTS_CONTROLLER_QUEUE_REPO: "200"
 resources:
   requests:
     cpu: 200m

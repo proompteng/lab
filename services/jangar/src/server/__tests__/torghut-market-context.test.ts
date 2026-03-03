@@ -18,6 +18,7 @@ const restoreEnv = () => {
   delete process.env.JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS
+  delete process.env.JANGAR_MARKET_CONTEXT_NEWS_TRADING_HOURS_MAX_FRESHNESS_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS
   delete process.env.JANGAR_FEATURE_FLAGS_ENABLED
   delete process.env.JANGAR_FEATURE_FLAGS_URL
@@ -219,6 +220,124 @@ describe('torghut market context', () => {
     expect(health.domainHealth.find((d) => d.domain === 'news')?.state).toBe('error')
     expect(health.providerHealth.find((d) => d.provider === 'fundamentals')?.lastError).toBe('upstream timeout')
     expect(health.providerHealth.find((d) => d.provider === 'news')?.consecutiveFailures).toBe(1)
+  })
+
+  it('uses 10-minute news freshness during US regular trading hours', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL = 'https://fundamentals.test/context'
+    process.env.JANGAR_MARKET_CONTEXT_NEWS_URL = 'https://news.test/context'
+    process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS = '300'
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          asOfUtc: '2026-02-19T14:00:00.000Z',
+          sourceCount: 1,
+          qualityScore: 0.9,
+          payload: { peRatio: 28.1 },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          asOfUtc: '2026-02-19T14:58:00.000Z',
+          sourceCount: 2,
+          qualityScore: 0.8,
+          payload: { sentimentScore: 0.12 },
+        }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const context = await getTorghutMarketContext('AAPL', {
+      asOf: new Date('2026-02-19T15:05:00.000Z'),
+      client: {
+        queryJson: async <T>() => [{ event_ts: '2026-02-19 15:04:30.000', c: '210.02' }] as T[],
+      },
+    })
+
+    expect(context.domains.news.freshnessSeconds).toBe(420)
+    expect(context.domains.news.maxFreshnessSeconds).toBe(600)
+    expect(context.domains.news.state).toBe('ok')
+  })
+
+  it('applies 10-minute news freshness at the 16:00 ET close boundary', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL = 'https://fundamentals.test/context'
+    process.env.JANGAR_MARKET_CONTEXT_NEWS_URL = 'https://news.test/context'
+    process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS = '300'
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          asOfUtc: '2026-02-19T20:00:00.000Z',
+          sourceCount: 1,
+          qualityScore: 0.9,
+          payload: { peRatio: 28.1 },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          asOfUtc: '2026-02-19T20:53:00.000Z',
+          sourceCount: 2,
+          qualityScore: 0.8,
+          payload: { sentimentScore: 0.12 },
+        }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const context = await getTorghutMarketContext('AAPL', {
+      asOf: new Date('2026-02-19T21:00:00.000Z'),
+      client: {
+        queryJson: async <T>() => [{ event_ts: '2026-02-19 20:59:30.000', c: '210.02' }] as T[],
+      },
+    })
+
+    expect(context.domains.news.freshnessSeconds).toBe(420)
+    expect(context.domains.news.maxFreshnessSeconds).toBe(600)
+    expect(context.domains.news.state).toBe('ok')
+  })
+
+  it('keeps base news freshness outside US regular trading hours', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL = 'https://fundamentals.test/context'
+    process.env.JANGAR_MARKET_CONTEXT_NEWS_URL = 'https://news.test/context'
+    process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS = '300'
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          asOfUtc: '2026-02-19T21:00:00.000Z',
+          sourceCount: 1,
+          qualityScore: 0.9,
+          payload: { peRatio: 28.1 },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          asOfUtc: '2026-02-19T21:58:00.000Z',
+          sourceCount: 2,
+          qualityScore: 0.8,
+          payload: { sentimentScore: 0.12 },
+        }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const context = await getTorghutMarketContext('AAPL', {
+      asOf: new Date('2026-02-19T22:05:00.000Z'),
+      client: {
+        queryJson: async <T>() => [{ event_ts: '2026-02-19 22:04:30.000', c: '210.02' }] as T[],
+      },
+    })
+
+    expect(context.domains.news.freshnessSeconds).toBe(420)
+    expect(context.domains.news.maxFreshnessSeconds).toBe(300)
+    expect(context.domains.news.state).toBe('stale')
+    expect(context.domains.news.riskFlags).toContain('news_stale')
   })
 
   it('marks technical and regime domains as error when clickhouse is unavailable', async () => {
