@@ -291,7 +291,7 @@ describe('github review api routes', () => {
     const actions = {
       recordPullDeploymentAction: vi.fn(async () => ({
         ok: true,
-        action: 'rollout',
+        action: 'rollout' as const,
         missionId: 'mission-1',
         stage: 'rollout',
         reference: 'deploy/ref',
@@ -333,9 +333,10 @@ describe('github review api routes', () => {
       {
         recordPullDeploymentAction: vi.fn(async () => ({
           ok: true,
-          action: 'rollout',
+          action: 'rollout' as const,
           missionId: null,
           stage: 'rollout',
+          reference: null,
           status: null,
           reason: null,
         })),

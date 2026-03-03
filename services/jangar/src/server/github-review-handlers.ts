@@ -4,6 +4,7 @@ import {
   resolvePullRequestThread,
   submitPullRequestReview,
 } from '~/server/github-review-actions'
+import { type GithubWriteAudit } from '~/data/github'
 import { isGithubRepoAllowed, loadGithubReviewConfig } from '~/server/github-review-config'
 import { createGithubReviewStore } from '~/server/github-review-store'
 import { refreshWorktreeSnapshot, type WorktreeSnapshotResult } from '~/server/github-worktree-snapshot'
