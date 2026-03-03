@@ -3305,6 +3305,17 @@ class TradingPipeline:
             response_json["mrm_guardrails"] = list(guardrails.reasons)
         response_json["policy_resolution"] = policy_resolution
         response_json["guardrail_controls"] = _llm_guardrail_controls_snapshot()
+        committee_veto = _committee_trace_has_veto(response_json)
+        response_json["committee_veto_alignment"] = (
+            _build_committee_veto_alignment_payload(
+                committee_veto=committee_veto,
+                deterministic_veto=policy_outcome.verdict == "veto",
+            )
+        )
+        _attach_dspy_lineage(
+            response_json,
+            artifact_source="runtime_review",
+        )
         return response_json
 
     def _record_llm_committee_metrics(self, response_json: Mapping[str, Any]) -> None:
@@ -3361,6 +3372,12 @@ class TradingPipeline:
         policy_outcome: Any,
         guardrails: Any,
     ) -> tuple[StrategyDecision, Optional[str]]:
+        committee_veto = _committee_trace_has_veto(outcome.response_json)
+        if committee_veto:
+            self.state.metrics.record_llm_committee_veto_alignment(
+                committee_veto=True,
+                deterministic_veto=policy_outcome.verdict == "veto",
+            )
         if guardrails.shadow_mode:
             self.state.metrics.llm_shadow_total += 1
             if not settings.llm_shadow_mode:
@@ -3368,10 +3385,6 @@ class TradingPipeline:
             return decision, None
         if policy_outcome.verdict != "veto":
             return policy_outcome.decision, None
-        self.state.metrics.record_llm_committee_veto_alignment(
-            committee_veto=bool(outcome.response.committee),
-            deterministic_veto=True,
-        )
         return decision, policy_outcome.reason or "llm_veto"
 
     def _handle_llm_review_error(
@@ -3701,7 +3714,19 @@ class TradingPipeline:
         tokens_completion: Optional[int],
     ) -> None:
         request_payload = coerce_json_payload(request_json)
-        response_payload = coerce_json_payload(response_json)
+        response_payload_json = dict(response_json)
+        _attach_dspy_lineage(
+            response_payload_json,
+            artifact_source="runtime_persisted_review",
+        )
+        if not isinstance(response_payload_json.get("committee_veto_alignment"), Mapping):
+            response_payload_json["committee_veto_alignment"] = (
+                _build_committee_veto_alignment_payload(
+                    committee_veto=_committee_trace_has_veto(response_payload_json),
+                    deterministic_veto=verdict == "veto",
+                )
+            )
+        response_payload = coerce_json_payload(response_payload_json)
         risk_payload = coerce_json_payload(risk_flags)
         review = LLMDecisionReview(
             trade_decision_id=decision_row.id,
@@ -4146,6 +4171,104 @@ def _is_runtime_risk_increasing_entry(
 def _hash_payload(payload: dict[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _runtime_dspy_metadata(
+    *, artifact_source: str, error: str | None = None
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "mode": settings.llm_dspy_runtime_mode,
+        "program_name": settings.llm_dspy_program_name,
+        "signature_version": settings.llm_dspy_signature_version,
+        "artifact_hash": _normalize_optional_text(settings.llm_dspy_artifact_hash),
+        "artifact_source": artifact_source,
+    }
+    if error is not None and error.strip():
+        payload["error"] = error.strip()
+    return payload
+
+
+def _build_dspy_lineage(response_json: Mapping[str, Any]) -> dict[str, Any]:
+    payload = response_json.get("dspy")
+    dspy_payload: dict[str, Any] = {}
+    if isinstance(payload, Mapping):
+        dspy_payload = {
+            str(key): value for key, value in cast(Mapping[str, Any], payload).items()
+        }
+    mode = _normalize_optional_text(dspy_payload.get("mode")) or settings.llm_dspy_runtime_mode
+    program_name = _normalize_optional_text(dspy_payload.get("program_name")) or settings.llm_dspy_program_name
+    signature_version = _normalize_optional_text(dspy_payload.get("signature_version")) or settings.llm_dspy_signature_version
+    artifact_hash = _normalize_optional_text(dspy_payload.get("artifact_hash")) or _normalize_optional_text(
+        settings.llm_dspy_artifact_hash
+    )
+    artifact_source = _normalize_optional_text(dspy_payload.get("artifact_source")) or "runtime"
+    return {
+        "mode": mode,
+        "program_name": program_name,
+        "signature_version": signature_version,
+        "artifact_hash": artifact_hash,
+        "artifact_source": artifact_source,
+    }
+
+
+def _attach_dspy_lineage(
+    response_json: dict[str, Any],
+    *,
+    artifact_source: str,
+    error: str | None = None,
+) -> None:
+    payload = response_json.get("dspy")
+    if isinstance(payload, Mapping):
+        dspy_payload = {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
+        if _normalize_optional_text(dspy_payload.get("artifact_source")) is None:
+            dspy_payload["artifact_source"] = artifact_source
+        if error is not None and error.strip() and "error" not in dspy_payload:
+            dspy_payload["error"] = error.strip()
+        response_json["dspy"] = dspy_payload
+    else:
+        response_json["dspy"] = _runtime_dspy_metadata(
+            artifact_source=artifact_source,
+            error=error,
+        )
+    response_json["dspy_lineage"] = _build_dspy_lineage(response_json)
+
+
+def _committee_trace_has_veto(response_json: Mapping[str, Any]) -> bool:
+    committee_payload = response_json.get("committee")
+    if not isinstance(committee_payload, Mapping):
+        return False
+    committee_roles = cast(Mapping[str, Any], committee_payload).get("roles")
+    if not isinstance(committee_roles, Mapping):
+        return False
+    for role_payload in cast(Mapping[str, Any], committee_roles).values():
+        if not isinstance(role_payload, Mapping):
+            continue
+        verdict = _normalize_optional_text(cast(Mapping[str, Any], role_payload).get("verdict"))
+        if verdict == "veto":
+            return True
+    return False
+
+
+def _build_committee_veto_alignment_payload(
+    *,
+    committee_veto: bool,
+    deterministic_veto: bool,
+) -> dict[str, bool]:
+    return {
+        "committee_veto": committee_veto,
+        "deterministic_veto": deterministic_veto,
+        "aligned": (not committee_veto) or deterministic_veto,
+    }
 
 
 def _is_llm_stage_policy_violation(rollout_stage: str) -> bool:
