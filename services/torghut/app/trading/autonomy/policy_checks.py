@@ -15,6 +15,7 @@ from ..parity import (
     BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
     BENCHMARK_PARITY_REQUIRED_FAMILIES,
     BENCHMARK_PARITY_REQUIRED_RUN_FIELDS,
+    BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS,
     BENCHMARK_PARITY_REQUIRED_SCORECARDS,
     BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
     BENCHMARK_PARITY_SCHEMA_VERSION,
@@ -1907,6 +1908,34 @@ def _evaluate_benchmark_parity_evidence(
                 }
             )
 
+        required_scorecard_fields_contract = {
+            str(scorecard_name).strip(): tuple(
+                str(field).strip()
+                for field in _list_from_any(required_fields)
+                if str(field).strip()
+            )
+            for scorecard_name, required_fields in _as_dict(
+                contract.get("required_scorecard_fields")
+            ).items()
+            if str(scorecard_name).strip()
+        }
+        if required_scorecard_fields_contract != BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS:
+            reasons.append("benchmark_parity_contract_required_scorecard_fields_invalid")
+            details.append(
+                {
+                    "reason": "benchmark_parity_contract_required_scorecard_fields_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "required_scorecard_fields": {
+                        name: list(fields)
+                        for name, fields in required_scorecard_fields_contract.items()
+                    },
+                    "expected_required_scorecard_fields": {
+                        name: list(fields)
+                        for name, fields in BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS.items()
+                    },
+                }
+            )
+
         required_run_fields_contract = {
             str(item).strip()
             for item in _list_from_any(contract.get("required_run_fields"))
@@ -1974,6 +2003,23 @@ def _evaluate_benchmark_parity_evidence(
                     "status": card_status,
                 }
             )
+        missing_required_scorecard_fields = [
+            field
+            for field in BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS.get(
+                scorecard_name, ()
+            )
+            if field not in scorecard_payload
+        ]
+        if missing_required_scorecard_fields:
+            reasons.append("benchmark_parity_scorecard_missing_required_fields")
+            details.append(
+                {
+                    "reason": "benchmark_parity_scorecard_missing_required_fields",
+                    "artifact_ref": str(artifact_path),
+                    "scorecard": scorecard_name,
+                    "missing_fields": missing_required_scorecard_fields,
+                }
+            )
 
     benchmark_runs = _list_from_any(payload.get("benchmark_runs"))
     if not benchmark_runs:
@@ -2029,6 +2075,52 @@ def _evaluate_benchmark_parity_evidence(
     )
     if max_confidence_degradation is None:
         max_confidence_degradation = 0.01
+    max_scorecard_confidence_drift = _float_or_none(
+        policy_payload.get(
+            "promotion_benchmark_parity_max_scorecard_confidence_calibration_error_drift"
+        )
+    )
+    if max_scorecard_confidence_drift is None:
+        max_scorecard_confidence_drift = max_confidence_degradation
+    min_family_coverage_ratio = _float_or_none(
+        policy_payload.get("promotion_benchmark_parity_min_family_coverage_ratio")
+    )
+    if min_family_coverage_ratio is None:
+        min_family_coverage_ratio = 1.0
+
+    forecast_scorecard = _as_dict(scorecards.get("forecast_quality"))
+    forecast_confidence_error = _float_or_none(
+        forecast_scorecard.get("confidence_calibration_error")
+    )
+    forecast_confidence_error_baseline = _float_or_none(
+        forecast_scorecard.get("confidence_calibration_error_baseline")
+    )
+    if forecast_confidence_error is None or forecast_confidence_error_baseline is None:
+        reasons.append(
+            "benchmark_parity_scorecard_confidence_calibration_error_fields_missing"
+        )
+        details.append(
+            {
+                "reason": "benchmark_parity_scorecard_confidence_calibration_error_fields_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif (
+        forecast_confidence_error - forecast_confidence_error_baseline
+        > max_scorecard_confidence_drift
+    ):
+        reasons.append(
+            "benchmark_parity_scorecard_confidence_calibration_error_drift_exceeds_threshold"
+        )
+        details.append(
+            {
+                "reason": "benchmark_parity_scorecard_confidence_calibration_error_drift_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_confidence_calibration_error": forecast_confidence_error,
+                "baseline_confidence_calibration_error": forecast_confidence_error_baseline,
+                "maximum_drift": max_scorecard_confidence_drift,
+            }
+        )
 
     families_seen = set[str]()
     required_families = set(BENCHMARK_PARITY_REQUIRED_FAMILIES)
@@ -2187,6 +2279,31 @@ def _evaluate_benchmark_parity_evidence(
                 "reason": "benchmark_parity_family_results_missing",
                 "artifact_ref": str(artifact_path),
                 "missing_families": missing_families,
+            }
+        )
+    unexpected_families = sorted(families_seen - required_families)
+    if unexpected_families:
+        reasons.append("benchmark_parity_family_results_unexpected")
+        details.append(
+            {
+                "reason": "benchmark_parity_family_results_unexpected",
+                "artifact_ref": str(artifact_path),
+                "unexpected_families": unexpected_families,
+            }
+        )
+    family_coverage_ratio = (
+        (len(families_seen & required_families) / len(required_families))
+        if required_families
+        else 1.0
+    )
+    if family_coverage_ratio < min_family_coverage_ratio:
+        reasons.append("benchmark_parity_family_coverage_ratio_below_minimum")
+        details.append(
+            {
+                "reason": "benchmark_parity_family_coverage_ratio_below_minimum",
+                "artifact_ref": str(artifact_path),
+                "coverage_ratio": family_coverage_ratio,
+                "minimum_coverage_ratio": min_family_coverage_ratio,
             }
         )
 

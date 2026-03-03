@@ -61,9 +61,11 @@
   "promotion_benchmark_parity_max_policy_violation_rate_degradation": "0.05",
   "promotion_benchmark_parity_max_fallback_rate": "0.01",
   "promotion_benchmark_parity_max_timeout_rate": "0.005",
+  "promotion_benchmark_parity_min_family_coverage_ratio": "1.0",
   "promotion_benchmark_parity_max_adverse_regime_decision_quality_degradation": "0.01",
   "promotion_benchmark_parity_max_risk_veto_alignment_degradation": "0.01",
   "promotion_benchmark_parity_max_confidence_calibration_error_degradation": "0.01",
+  "promotion_benchmark_parity_max_scorecard_confidence_calibration_error_drift": "0.01",
   "promotion_require_contamination_registry": true,
   "promotion_contamination_required_targets": ["paper", "live"],
   "promotion_contamination_required_artifacts": [

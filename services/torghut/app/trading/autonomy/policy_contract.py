@@ -18,6 +18,8 @@ _REQUIRED_BOOL_KEYS: tuple[str, ...] = (
 
 _REQUIRED_STRING_KEYS: tuple[str, ...] = (
     "promotion_profitability_stage_manifest_artifact",
+    "promotion_benchmark_parity_min_family_coverage_ratio",
+    "promotion_benchmark_parity_max_scorecard_confidence_calibration_error_drift",
 )
 
 _REQUIRED_LIST_KEYS: tuple[str, ...] = (
