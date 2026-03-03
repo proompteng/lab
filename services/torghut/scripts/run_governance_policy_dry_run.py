@@ -162,6 +162,7 @@ def main() -> int:
         promotion_evidence = gate_report.get("promotion_evidence")
         hmm_posterior_payload: dict[str, Any] = {}
         expert_router_payload: dict[str, Any] = {}
+        foundation_router_payload: dict[str, Any] = {}
         if isinstance(promotion_evidence, dict):
             stress_metrics = promotion_evidence.get("stress_metrics")
             if isinstance(stress_metrics, dict):
@@ -207,6 +208,22 @@ def main() -> int:
                 }
             promotion_evidence["expert_router_registry"]["artifact_ref"] = (
                 "gates/expert-router-registry-v1.json"
+            )
+            foundation_router_parity = promotion_evidence.get(
+                "foundation_router_parity"
+            )
+            if isinstance(foundation_router_parity, dict):
+                foundation_router_payload = {
+                    str(key): value
+                    for key, value in foundation_router_parity.items()
+                }
+            else:
+                foundation_router_payload = {}
+                promotion_evidence["foundation_router_parity"] = {
+                    "artifact_ref": "router/foundation-router-parity-report-v1.json"
+                }
+            promotion_evidence["foundation_router_parity"]["artifact_ref"] = (
+                "router/foundation-router-parity-report-v1.json"
             )
         if "generated_at" not in stress_artifact:
             stress_artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
@@ -373,6 +390,61 @@ def main() -> int:
         )
         (root / "gates" / "expert-router-registry-v1.json").write_text(
             json.dumps(expert_router_artifact, indent=2), encoding="utf-8"
+        )
+        foundation_router_artifact: dict[str, Any] = {
+            "schema_version": "foundation-router-parity-report-v1",
+            "candidate_id": "cand-dry-run",
+            "router_policy_version": "forecast_router_policy_v1",
+            "contract": {
+                "schema_version": "foundation-router-parity-contract-v1",
+                "required_adapters": ["deterministic", "chronos", "timesfm"],
+                "required_slice_metrics": ["by_symbol", "by_horizon", "by_regime"],
+                "hash_algorithm": "sha256",
+                "generation_mode": "deterministic_foundation_router_parity_v1",
+            },
+            "adapters": ["deterministic", "chronos", "timesfm"],
+            "slice_metrics": {
+                "by_symbol": {"AAPL": {"status": "pass"}},
+                "by_horizon": {"1m": {"status": "pass"}},
+                "by_regime": {"trend": {"status": "pass"}},
+            },
+            "calibration_metrics": {
+                "minimum": float(
+                    policy.get("promotion_router_parity_min_calibration_score", 0.9)
+                ),
+            },
+            "latency_metrics": {
+                "p95_ms": int(
+                    policy.get("promotion_router_parity_max_latency_ms_p95", 200)
+                ),
+            },
+            "fallback_metrics": {
+                "fallback_rate": float(
+                    policy.get("promotion_router_parity_max_fallback_rate", 0.05)
+                )
+                / 2.0,
+            },
+            "drift_metrics": {
+                "max": float(policy.get("promotion_router_parity_max_drift", 0.45))
+                / 3.0,
+            },
+            "overall_status": "pass",
+            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        if foundation_router_payload.get("overall_status") is not None:
+            foundation_router_artifact["overall_status"] = str(
+                foundation_router_payload.get("overall_status")
+            )
+        foundation_router_artifact["artifact_hash"] = _stable_hash(
+            {
+                key: value
+                for key, value in foundation_router_artifact.items()
+                if key != "artifact_hash"
+            }
+        )
+        (root / "router").mkdir(parents=True, exist_ok=True)
+        (root / "router" / "foundation-router-parity-report-v1.json").write_text(
+            json.dumps(foundation_router_artifact, indent=2), encoding="utf-8"
         )
 
         if args.simulate_missing_artifact:

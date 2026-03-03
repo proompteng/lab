@@ -18,6 +18,10 @@ from app.trading.parity import (
     BENCHMARK_PARITY_REQUIRED_SCORECARDS,
     BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
     BENCHMARK_PARITY_SCHEMA_VERSION,
+    FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION,
+    FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS,
+    FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS,
+    FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION,
 )
 from app.trading.autonomy.policy_checks import (
     evaluate_promotion_prerequisites,
@@ -4117,6 +4121,175 @@ class TestPolicyChecks(TestCase):
         )
 
 
+    def test_promotion_prerequisites_fail_when_foundation_router_parity_artifact_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_foundation_router_parity": True,
+                    "promotion_foundation_router_parity_required_targets": ["paper"],
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_hmm_state_posterior": False,
+                    "promotion_require_expert_router_registry": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("required_artifacts_missing", promotion.reasons)
+        self.assertIn("foundation_router_parity_artifact_missing", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_foundation_router_parity_contract_is_invalid(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            _write_foundation_router_parity_payload(
+                root,
+                adapters=("deterministic", "chronos"),
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_foundation_router_parity": True,
+                    "promotion_foundation_router_parity_required_targets": ["paper"],
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_hmm_state_posterior": False,
+                    "promotion_require_expert_router_registry": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("foundation_router_parity_adapters_invalid", promotion.reasons)
+        self.assertIn(
+            "foundation_router_parity_contract_required_adapters_invalid",
+            promotion.reasons,
+        )
+
+    def test_promotion_prerequisites_fail_when_foundation_router_parity_latency_breaches_threshold(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            _write_foundation_router_parity_payload(
+                root,
+                latency_p95_ms=450,
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_foundation_router_parity": True,
+                    "promotion_foundation_router_parity_required_targets": ["paper"],
+                    "promotion_router_parity_max_latency_ms_p95": 200,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_hmm_state_posterior": False,
+                    "promotion_require_expert_router_registry": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn(
+            "foundation_router_parity_latency_p95_exceeds_threshold",
+            promotion.reasons,
+        )
+
+    def test_promotion_prerequisites_pass_with_valid_foundation_router_parity_artifact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text("{}", encoding="utf-8")
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            _write_foundation_router_parity_payload(root)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_foundation_router_parity": True,
+                    "promotion_foundation_router_parity_required_targets": ["paper"],
+                    "promotion_router_parity_max_fallback_rate": 0.05,
+                    "promotion_router_parity_min_calibration_score": 0.85,
+                    "promotion_router_parity_max_drift": 0.45,
+                    "promotion_router_parity_max_latency_ms_p95": 200,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_hmm_state_posterior": False,
+                    "promotion_require_expert_router_registry": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertTrue(promotion.allowed)
+        self.assertFalse(
+            any(reason.startswith("foundation_router_parity_") for reason in promotion.reasons)
+        )
+
+
 def _candidate_state() -> dict[str, object]:
     return {
         "candidateId": "cand-test",
@@ -4297,6 +4470,53 @@ def _recompute_benchmark_artifact_hash(payload: dict[str, object]) -> str:
     artifact_hash = _sha256_json(payload_without_hash)
     payload["artifact_hash"] = artifact_hash
     return artifact_hash
+
+
+def _write_foundation_router_parity_payload(
+    root: Path,
+    *,
+    schema_version: str = FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION,
+    contract_schema_version: str = FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION,
+    adapters: tuple[str, ...] = FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS,
+    required_slice_metrics: tuple[str, ...] = FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS,
+    fallback_rate: float = 0.01,
+    calibration_minimum: float = 0.9,
+    drift_max: float = 0.02,
+    latency_p95_ms: int = 120,
+    overall_status: str = "pass",
+) -> Path:
+    payload: dict[str, object] = {
+        "schema_version": schema_version,
+        "candidate_id": "cand-test",
+        "router_policy_version": "forecast_router_policy_v1",
+        "contract": {
+            "schema_version": contract_schema_version,
+            "required_adapters": list(adapters),
+            "required_slice_metrics": list(required_slice_metrics),
+            "hash_algorithm": "sha256",
+            "generation_mode": "deterministic_foundation_router_parity_v1",
+        },
+        "adapters": list(adapters),
+        "slice_metrics": {
+            "by_symbol": {"AAPL": {"status": "pass"}},
+            "by_horizon": {"1m": {"status": "pass"}},
+            "by_regime": {"trend": {"status": "pass"}},
+        },
+        "calibration_metrics": {"minimum": calibration_minimum},
+        "latency_metrics": {"p95_ms": latency_p95_ms},
+        "fallback_metrics": {"fallback_rate": fallback_rate},
+        "drift_metrics": {"max": drift_max},
+        "overall_status": overall_status,
+        "created_at_utc": datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
+        "artifact_hash": "",
+    }
+    payload["artifact_hash"] = _sha256_json(
+        {key: value for key, value in payload.items() if key != "artifact_hash"}
+    )
+    artifact_path = root / "router" / "foundation-router-parity-report-v1.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+    return artifact_path
 
 
 def _sha256_path(path: Path) -> str:
@@ -4741,6 +4961,9 @@ def _gate_report() -> dict[str, object]:
                 "fallback_count": 0,
                 "fallback_rate": "0",
                 "max_expert_weight": "0.62",
+            },
+            "foundation_router_parity": {
+                "artifact_ref": "router/foundation-router-parity-report-v1.json",
             },
             "promotion_rationale": {
                 "requested_target": "paper",

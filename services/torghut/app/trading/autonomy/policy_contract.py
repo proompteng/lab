@@ -10,6 +10,7 @@ _REQUIRED_BOOL_KEYS: tuple[str, ...] = (
     "promotion_require_profitability_stage_manifest",
     "promotion_require_profitability_stage_replay_contract",
     "promotion_require_benchmark_parity",
+    "promotion_require_foundation_router_parity",
     "promotion_require_hmm_state_posterior",
     "promotion_require_expert_router_registry",
     "promotion_require_janus_evidence",
@@ -20,9 +21,14 @@ _REQUIRED_STRING_KEYS: tuple[str, ...] = (
     "promotion_profitability_stage_manifest_artifact",
     "promotion_benchmark_parity_min_family_coverage_ratio",
     "promotion_benchmark_parity_max_scorecard_confidence_calibration_error_drift",
+    "promotion_router_parity_max_fallback_rate",
+    "promotion_router_parity_min_calibration_score",
+    "promotion_router_parity_max_drift",
 )
 
 _REQUIRED_LIST_KEYS: tuple[str, ...] = (
+    "promotion_foundation_router_parity_required_targets",
+    "promotion_foundation_router_required_artifacts",
     "promotion_benchmark_required_artifacts",
     "promotion_hmm_required_artifacts",
     "promotion_expert_router_required_artifacts",

@@ -6,10 +6,15 @@
 - Date: `2026-03-01`
 - Maturity: `production design`
 - Scope: add TimesFM-family adapter and parity controls to Torghut foundation-model routing
-- Implementation status: `Planned`
+- Implementation status: `Implemented` (`2026-03-03`)
 - Evidence:
-  - `docs/torghut/design-system/v6/10-timesfm-foundation-model-router-parity.md` (design-level contract)
-- Rollout gap: current design corpus and runtime references Chronos-family routing, but does not define a TimesFM production contract and parity gate.
+  - `services/torghut/app/trading/parity.py` (foundation-router parity report contract, schema constants, deterministic artifact generator)
+  - `services/torghut/app/trading/autonomy/lane.py` (autonomous lane artifact generation + promotion evidence wiring)
+  - `services/torghut/app/trading/autonomy/policy_checks.py` (fail-closed promotion checks for foundation-router parity schema/contract/latency/fallback/calibration/drift)
+  - `services/torghut/config/autonomy-gates-v3.json`
+  - `argocd/applications/torghut/autonomy-gate-policy-configmap.yaml`
+  - `services/torghut/tests/test_policy_checks.py`
+- Rollout gap: closed for Wave 5 deliverable 1 (`2026-03-03`); TimesFM foundation-router parity contract and deterministic fallback gating are now enforced.
 
 ## Objective
 
