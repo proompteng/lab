@@ -3,19 +3,20 @@
   "version": "0.0.0",
   "private": true,
   "bin": {
-    "cx-codex-run": "./dist/cx-codex-run.js",
-    "cx-workflow-cancel": "./dist/cx-workflow-cancel.js",
-    "cx-workflow-query": "./dist/cx-workflow-query.js",
-    "cx-workflow-signal": "./dist/cx-workflow-signal.js",
-    "cx-workflow-start": "./dist/cx-workflow-start.js"
+    "cx-codex-run": "./dist/cli/cx-codex-run.js",
+    "cx-workflow-cancel": "./dist/cli/cx-workflow-cancel.js",
+    "cx-workflow-query": "./dist/cli/cx-workflow-query.js",
+    "cx-workflow-signal": "./dist/cli/cx-workflow-signal.js",
+    "cx-workflow-start": "./dist/cli/cx-workflow-start.js"
   },
   "type": "module",
   "scripts": {
-    "build": "echo \"TODO(jng-010): build cx-tools binaries\"",
+    "build": "bun build src/cli/cx-codex-run.ts src/cli/cx-workflow-start.ts src/cli/cx-workflow-cancel.ts src/cli/cx-workflow-query.ts src/cli/cx-workflow-signal.ts --outdir dist --target node --sourcemap=none --minify",
     "lint": "bun run lint:oxlint || true",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
+  "dependencies": {},
   "devDependencies": {
     "bun-types": "^1.1.20",
     "typescript": "5.9.3"

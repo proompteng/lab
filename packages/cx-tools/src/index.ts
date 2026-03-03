@@ -1,5 +1,5 @@
-export const notImplemented = () => {
-  throw new Error('cx-tools not implemented')
-}
-
-// TODO(jng-010): export CLI entrypoints once implemented
+export { main as codexRun } from './cli/cx-codex-run'
+export { main as workflowStart } from './cli/cx-workflow-start'
+export { main as workflowCancel } from './cli/cx-workflow-cancel'
+export { main as workflowQuery } from './cli/cx-workflow-query'
+export { main as workflowSignal } from './cli/cx-workflow-signal'
