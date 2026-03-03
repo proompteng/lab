@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  buildRunSpecContext,
   buildRunSpec,
   makeName,
   normalizeLabelValue,
@@ -53,5 +54,19 @@ describe('agents controller job-runtime module', () => {
     expect(runSpec.artifacts).toEqual([{ name: 'artifact.log' }])
     expect(runSpec.vcs).toEqual({ repository: 'owner/repo' })
     expect(runSpec.systemPrompt).toBe('system prompt')
+  })
+
+  it('exposes parameters in template context under both parameters and inputs', () => {
+    const context = buildRunSpecContext(
+      { metadata: { name: 'run-1', uid: 'uid-1', namespace: 'agents' }, spec: {} },
+      { metadata: { name: 'agent-a' }, spec: {} },
+      { source: { provider: 'github' }, summary: 'Run summary' },
+      { stage: 'plan', task: 'validation' },
+      { spec: { type: 'postgres' }, connection: {} },
+      null,
+    )
+
+    expect(context.parameters).toEqual({ stage: 'plan', task: 'validation' })
+    expect(context.inputs).toEqual({ stage: 'plan', task: 'validation' })
   })
 })

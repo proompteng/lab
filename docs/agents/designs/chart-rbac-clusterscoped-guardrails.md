@@ -34,13 +34,13 @@ This doc defines guardrails in chart schema and controller startup validation.
 ### Guardrail matrix
 
 - If `rbac.clusterScoped=false`:
-  - `controller.namespaces` MUST be non-empty and MUST NOT include `\"*\"`.
+  - For each enabled controller, `*.namespaces` must be a non-empty explicit list and must NOT include `\"*\"`.
 - If `rbac.clusterScoped=true`:
-  - `controller.namespaces` MAY be wildcard `\"*\"` or a list (for partial scope), but RBAC remains cluster-wide.
+  - `*.namespaces` MAY be wildcard `\"*\"` or a non-empty list (for partial scope), but RBAC remains cluster-wide.
 
 ### Validation points
 
-- Chart render-time validation in `charts/agents/templates/validation.yaml`.
+- Chart render-time validation in `charts/agents/templates/validation.yaml` (including explicit `[]` rejection and namespace token validation).
 - Controller startup validation:
   - Log `clusterScoped` and resolved namespaces.
   - If `clusterScoped=false` but namespaces is empty: exit non-zero with actionable error.

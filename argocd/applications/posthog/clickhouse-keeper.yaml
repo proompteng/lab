@@ -21,7 +21,7 @@ spec:
         spec:
           containers:
             - name: clickhouse-keeper
-              image: clickhouse/clickhouse-keeper:24.3.5.46
+              image: clickhouse/clickhouse-keeper:25.12.5.44
               resources:
                 requests:
                   cpu: 250m

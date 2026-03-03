@@ -108,11 +108,168 @@ Provide one of:
 
 Agent memory backends are configured separately via the `Memory` CRD.
 
+### Deterministic rollout on config/secret changes
+
+Control plane and controllers pods include rollout annotations only when `rolloutChecksums.enabled=true`.
+
+Source-of-truth model:
+
+- Chart-owned DB secret path: when `database.createSecret.enabled=true`, the chart computes
+  `agents.proompteng.ai/checksum-secret-<hash>` from the literal `database.url` value.
+- Externally managed Secret/ConfigMap inputs: the chart does **not** read live resources at render
+  time. You must supply checksum values from your external source of truth.
+
+Checksum annotation keys are deterministic and bounded:
+
+- `agents.proompteng.ai/checksum-secret-<hash>`
+- `agents.proompteng.ai/checksum-configmap-<hash>`
+
+The hash is computed from the referenced object identity (`kind`, `namespace`, `name`) so keys remain
+stable and always satisfy Kubernetes annotation key length constraints.
+
+The external inputs should be the exact same contract inputs that drive pod behavior. When
+`rolloutChecksums.enabled=true`, each source below that is in use becomes required in
+`rolloutChecksums.secrets` / `rolloutChecksums.configMaps`.
+
+- `database.secretRef` / `database.createSecret` (database source of truth)
+- `database.caSecret` (Postgres CA certificate Secret)
+- `envFromSecretRefs` (Secret names injected via `envFrom`)
+- `envFromConfigMapRefs` (ConfigMap names injected via `envFrom`)
+- `env.secrets` (Secret key refs in `env.secrets`)
+- `env.config` (ConfigMap key refs in `env.config`)
+- `agentComms.nats.userSecret` (NATS credentials secret)
+
+Example:
+
+The chart always derives a checksum from an inline DB secret when `database.createSecret.enabled=true`
+because that secret content is chart-owned and deterministic.
+
+For other inputs, list the exact resources and checksums in values:
+
+- `rolloutChecksums.secrets`
+- `rolloutChecksums.configMaps`
+
+Example:
+
+```yaml
+rolloutChecksums:
+  enabled: true
+  secrets:
+    - name: agents-github-token-env
+      namespace: agents # optional when same as release namespace
+      checksum: 'd34db33f...' # 64-char sha256 hex from external source of truth
+  configMaps:
+    - name: agents-runtime-config
+      namespace: agents # optional when same as release namespace
+      checksum: 'a1b2c3d4...'
+```
+
+The chart merges these entries into pod annotations for both `Deployment/agents` and
+`Deployment/agents-controllers`.
+
+Operator workflow:
+
+1. Apply/update the external Secret/ConfigMap source in your GitOps-managed system.
+2. Compute a deterministic SHA-256 over the exact source payload your deployment depends on.
+3. Update `rolloutChecksums.secrets[]` or `.configMaps[]` and deploy via GitOps (helm/Argo CD).
+
+Example (external Secret payload hash):
+
+```bash
+kubectl -n agents get secret agents-github-token-env -o json |
+  jq -cS '{data: .data, binaryData: .binaryData}' |
+  sha256sum | awk '{print $1}'
+```
+
+Example (external ConfigMap payload hash):
+
+```bash
+kubectl -n agents get configmap agents-runtime-config -o json |
+  jq -cS '{data: .data, binaryData: .binaryData}' |
+  sha256sum | awk '{print $1}'
+```
+
+Source-payload hashing guidance:
+
+- Include keys in a stable JSON order (`jq -cS`) and include both `data` and `binaryData`
+  so the checksum reflects everything that can affect runtime behavior.
+- For key-by-key checksums, include only the same keys the pod reads; avoid hashing unrelated metadata.
+- If your source of truth is a declarative manifest (for example, ExternalSecret or Sealed Secret),
+  hash the source manifest object (not the rendered Kubernetes object) before applying.
+- In GitOps/ExternalSecrets flows, calculate the hash from the source-of-truth manifest committed in your secrets repo.
+
+Limitations:
+
+- For external secret/configmap managers (ESO/ExternalSecrets, external controllers, etc.), Helm cannot safely read live object payloads during template rendering, so checksum updates must be supplied explicitly.
+- Include every secret/configmap that affects container runtime behavior; unmanaged edits to referenced values without matching checksums will not trigger rollout.
+- Chart rendering fails when required external Secret/ConfigMap inputs used by this chart are not listed in `rolloutChecksums`.
+- Empty or invalid checksum values are rejected by values schema/validation.
+- Duplicate `namespace/name` entries in the same object type (`secrets` or `configMaps`) are rejected.
+
 ### Controller scope
 
-- Single namespace: default
-- Multi-namespace: set `controller.namespaces` and `rbac.clusterScoped=true`
-- Wildcard: set `controller.namespaces=["*"]` and `rbac.clusterScoped=true`
+- Single namespace (namespaced RBAC): omit a scope list for release-namespace default or set exactly one namespace.
+- Explicit scope lists must be arrays, and if the key is present the list must have at least one namespace.
+- Multi-namespace: set any scope list with multiple namespaces and `rbac.clusterScoped=true`.
+- Wildcard: set exactly one value `["*"]` and `rbac.clusterScoped=true`.
+- Explicit single namespace with cluster-scoped RBAC: set `rbac.clusterScoped=true` when a scope list contains exactly one namespace but you still need cluster-level permissions.
+- Invalid combinations are rejected at render-time for all scope keys:
+  - explicit empty list (`[]`)
+  - wildcard (`"*"`) combined with any specific namespace
+  - multi-namespace with `rbac.clusterScoped=false`
+  - single-namespace lists in namespaced mode that target a namespace different from the chart namespace
+    (`namespaceOverride`/`Release.Namespace`)
+  - invalid namespace tokens (for example `""`, `"  agents"`, `"*"` mixed with specific namespaces, uppercase values)
+
+For all scope keys:
+
+- `controller.namespaces`
+- `orchestrationController.namespaces`
+- `supportingController.namespaces`
+
+Do **not** set an explicit empty list (`[]`). Empty scope arrays are rejected by chart validation.
+
+`rbac.clusterScoped=false` is namespaced to `namespaceOverride` (falling back to `Release.Namespace`
+when unset). If any scope key is set explicitly to one namespace, that namespace must be the same chart namespace.
+
+Examples:
+
+```yaml
+# Valid: namespaced controllers
+controller:
+  namespaces:
+    - agents
+rbac:
+  clusterScoped: false
+
+# Valid: cluster-scoped controllers for one namespace
+controller:
+  namespaces:
+    - agents
+rbac:
+  clusterScoped: true
+
+# Valid: cluster-scoped controllers across namespaces
+controller:
+  namespaces:
+    - team-a
+    - team-b
+rbac:
+  clusterScoped: true
+
+# Invalid: render-time failures
+controller:
+  namespaces: []               # empty scope array
+rbac:
+  clusterScoped: false
+
+controller:
+  namespaces:
+    - teams
+    - '*'                     # wildcard mixed with a concrete namespace
+rbac:
+  clusterScoped: true
+```
 
 ### AgentRun status artifact limits
 
@@ -125,13 +282,35 @@ Configure via Helm values (mapped to controller env vars):
 
 Note: The CRD schema hard-caps `status.artifacts` at 50 entries; controller-side config can only reduce this.
 
+### Source-of-truth for env-var merges
+
+- **Control plane**
+  - `controlPlane.env.vars` wins over `env.vars` for control-plane env.
+  - `grpc.manageEnvVar=true` (default) injects managed `JANGAR_GRPC_*` values from `grpc.*`; explicit values that disagree with these settings fail validation.
+- **Controllers**
+  - `controllers.env.vars` has explicit precedence.
+  - `env.vars` contributes non-reserved keys and can provide defaults for non-managed values.
+  - Reserved controller defaults are applied only when not explicitly set in `controllers.env.vars`:
+    - `JANGAR_MIGRATIONS=skip`
+    - `JANGAR_GRPC_ENABLED=0`
+    - `JANGAR_GRPC_HOST=0.0.0.0`
+    - `JANGAR_GRPC_PORT=<grpc.port>`
+    - `JANGAR_CONTROL_PLANE_CACHE_ENABLED=0`
+    - `JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED=true`
+    - `JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS=30`
+    - `JANGAR_AGENTRUN_ARTIFACTS_MAX=<controller.agentRunArtifacts.max>`
+    - `JANGAR_AGENTRUN_ARTIFACTS_STRICT=<controller.agentRunArtifacts.strict>`
+
 #### Namespaced vs cluster-scoped install matrix
 
-| Install mode               | controller.namespaces  | rbac.clusterScoped | RBAC scope                                              |
-| -------------------------- | ---------------------- | ------------------ | ------------------------------------------------------- |
-| Namespaced (single)        | `[]` or `["agents"]`   | `false`            | Role + RoleBinding                                      |
-| Multi-namespace (explicit) | `["team-a", "team-b"]` | `true`             | ClusterRole + ClusterRoleBinding                        |
-| Wildcard (all namespaces)  | `["*"]`                | `true`             | ClusterRole + ClusterRoleBinding (namespace list/watch) |
+| Install mode                      | Scope list examples     | rbac.clusterScoped | RBAC scope                                              |
+| --------------------------------- | ----------------------- | ------------------ | ------------------------------------------------------- |
+| Namespaced (single)               | omitted or `["agents"]` | `false`            | Role + RoleBinding in release namespace                 |
+| Single namespace (cluster-scoped) | `["agents"]`            | `true`             | ClusterRole + ClusterRoleBinding                        |
+| Multi-namespace (explicit)        | `["team-a", "team-b"]`  | `true`             | ClusterRole + ClusterRoleBinding                        |
+| Wildcard (all namespaces)         | `["*"]`                 | `true`             | ClusterRole + ClusterRoleBinding (namespace list/watch) |
+
+If you set all three scope keys, they must use the same RBAC mode so controller permissions stay aligned.
 
 ### Default scheduling for job pods
 
@@ -161,16 +340,23 @@ defaults for a single run.
 Enable gRPC for agentctl or in-cluster clients:
 
 - `grpc.enabled=true`
-- `grpc.manageEnvVar=true` (default) keeps control-plane `JANGAR_GRPC_*` values chart-owned and deterministic
-- `grpc.manageEnvVar=false` if you want manual ownership in values
-- `env.vars` is merged into `controlPlane.env.vars`; if both define managed `JANGAR_GRPC_*`, render fails unless they match and match `grpc.*` managed defaults.
-- `env.vars` is merged into `controllers.env.vars`; if both define managed `JANGAR_GRPC_*`, render fails unless they match.
-- When chart-managed defaults run, explicit values in the merged env map always win for both control-plane and controller deployments.
-- Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token
+- `grpc.manageEnvVar=true` (default) keeps control-plane `JANGAR_GRPC_*` values chart-owned and deterministic.
+- `grpc.manageEnvVar=false` if you want manual ownership in values.
+- Source-of-truth for gRPC in managed mode:
+  - `JANGAR_GRPC_ENABLED` = `grpc.enabled`
+  - `JANGAR_GRPC_HOST` = `0.0.0.0`
+  - `JANGAR_GRPC_PORT` = `grpc.port`
+- Keep controller-side managed values at defaults unless intentionally overridden:
+  - `JANGAR_GRPC_ENABLED=0`
+  - `JANGAR_GRPC_HOST=0.0.0.0`
+  - `JANGAR_GRPC_PORT=<grpc.port>`
+- `env.vars` is merged into both component maps, but controller reserved keys are intentionally owned by `controllers.env.vars` (or chart defaults). For controllers, avoid putting reserved keys in `env.vars`.
+- In managed mode, `env.vars`, `controlPlane.env.vars`, and `controllers.env.vars` must agree on managed `JANGAR_GRPC_*` values or render fails.
+- Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token.
 - For control-plane migration, remove manual `JANGAR_GRPC_*` settings from:
   - `env.vars`
   - `controlPlane.env.vars`
-- Keep validation green by ensuring manual `JANGAR_GRPC_*` values align with managed expectations while `grpc.manageEnvVar=true`.
+- For controller migration, remove `JANGAR_GRPC_*` from `env.vars`; put overrides in `controllers.env.vars` when needed.
 
 ### envFrom reserved-key guardrails
 
@@ -185,9 +371,19 @@ envFromSecretRefs:
       - JANGAR_MIGRATIONS
 ```
 
-- Set `validation.reservedEnvKeysEnforced=true` to make Helm fail if reserved keys are imported by `envFrom` but not explicitly pinned in the consuming component map.
-- For control-plane keys, pin in `controlPlane.env.vars` or `env.vars`.
-- For controller keys, pin in `controllers.env.vars` (or `env.vars`) and ensure controllers are enabled when you add controller-only reserved keys.
+- `validation.reservedEnvKeysEnforced=true` (default) makes Helm fail if reserved keys are imported by `envFrom` in a way that conflicts with component ownership or managed expectations.
+- For control-plane keys, pin in `controlPlane.env.vars` or `env.vars` unless you rely on managed chart defaults:
+  - `JANGAR_GRPC_ENABLED` = `grpc.enabled`
+  - `JANGAR_GRPC_HOST` = `0.0.0.0`
+  - `JANGAR_GRPC_PORT` = `grpc.port`
+- For controller keys, pin in `controllers.env.vars` (or `env.vars` when not reserved/managed) when you intentionally diverge from defaults:
+  - `JANGAR_GRPC_ENABLED=0`
+  - `JANGAR_GRPC_HOST=0.0.0.0`
+  - `JANGAR_GRPC_PORT=<grpc.port>`
+  - `JANGAR_CONTROL_PLANE_CACHE_ENABLED=0`
+  - `JANGAR_AGENTRUN_IDEMPOTENCY_*`
+  - `JANGAR_AGENTRUN_ARTIFACTS_*`
+- A reserved key may only appear in one structured `envFrom` source across `envFromSecretRefs` and `envFromConfigMapRefs`. Duplicate declarations are rejected to prevent order-dependent behavior.
 
 ### PodDisruptionBudget (availability)
 
@@ -432,6 +628,14 @@ controller:
     deprecatedTokenTypes:
       github:
         - pat
+
+orchestrationController:
+  namespaces:
+    - agents
+
+supportingController:
+  namespaces:
+    - agents
 
 rbac:
   clusterScoped: false

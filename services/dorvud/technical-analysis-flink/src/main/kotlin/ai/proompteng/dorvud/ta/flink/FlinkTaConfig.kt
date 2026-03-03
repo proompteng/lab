@@ -42,6 +42,9 @@ data class FlinkTaConfig(
   val clickhouseInsertFlushMs: Long,
   val clickhouseInsertMaxRetries: Int,
   val clickhouseConnectionTimeoutSeconds: Int,
+  val clickhouseSchemaInitMaxRetries: Int,
+  val clickhouseSchemaInitRetryDelayMs: Long,
+  val clickhouseSchemaInitStrict: Boolean,
 ) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
@@ -122,6 +125,9 @@ data class FlinkTaConfig(
         clickhouseInsertFlushMs = envLong("TA_CLICKHOUSE_FLUSH_MS", 1_000),
         clickhouseInsertMaxRetries = envInt("TA_CLICKHOUSE_MAX_RETRIES", 3),
         clickhouseConnectionTimeoutSeconds = envInt("TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", 30),
+        clickhouseSchemaInitMaxRetries = envInt("TA_CLICKHOUSE_SCHEMA_INIT_MAX_RETRIES", 180),
+        clickhouseSchemaInitRetryDelayMs = envLong("TA_CLICKHOUSE_SCHEMA_INIT_RETRY_DELAY_MS", 2_000),
+        clickhouseSchemaInitStrict = envBool("TA_CLICKHOUSE_SCHEMA_INIT_STRICT", true),
       )
     }
   }

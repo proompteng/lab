@@ -8,6 +8,8 @@ service:
 database:
   url: postgresql://agents:agents@127.0.0.1:5432/agents?sslmode=disable
 
+namespaceOverride: agents
+
 controller:
   namespaces:
     - agents

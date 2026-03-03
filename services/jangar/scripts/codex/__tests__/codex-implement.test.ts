@@ -33,6 +33,20 @@ const bunUtils = vi.hoisted(() => ({
 
 vi.mock('bun', () => bunUtils)
 
+const progressCommentMocks = vi.hoisted(() => ({
+  runCodexProgressComment: vi.fn<
+    (options?: { args?: string[]; body?: string; stdin?: NodeJS.ReadableStream }) => Promise<{
+      action: 'help' | 'updated' | 'created'
+      commentId: string
+    }>
+  >(async () => ({
+    action: 'updated',
+    commentId: '123',
+  })),
+}))
+
+vi.mock('../codex-progress-comment', () => progressCommentMocks)
+
 const runnerMocks = vi.hoisted(() => ({
   runCodexSession: vi.fn<(options: RunCodexSessionOptions) => Promise<RunCodexSessionResult>>(async () => ({
     agentMessages: ['done'],
@@ -48,6 +62,7 @@ vi.mock('../lib/codex-runner', () => runnerMocks)
 const runCodexSessionMock = runnerMocks.runCodexSession
 const pushCodexEventsToLokiMock = runnerMocks.pushCodexEventsToLoki
 const buildDiscordChannelCommandMock = utilMocks.buildDiscordChannelCommand
+const runCodexProgressCommentMock = progressCommentMocks.runCodexProgressComment
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -148,6 +163,7 @@ describe('runCodexImplementation', () => {
       exitCode: 0,
       forcedTermination: false,
     }))
+    runCodexProgressCommentMock.mockReset()
     pushCodexEventsToLokiMock.mockReset()
     pushCodexEventsToLokiMock.mockImplementation(async () => {})
     buildDiscordChannelCommandMock.mockClear()
@@ -193,6 +209,76 @@ describe('runCodexImplementation', () => {
     expect(resumeMetadata.state).toBe('cleared')
   }, 40_000)
 
+  it('posts progress comments at start and completion', async () => {
+    await runCodexImplementation(eventPath)
+
+    expect(runCodexProgressCommentMock).toHaveBeenCalledTimes(2)
+    const startBody = runCodexProgressCommentMock.mock.calls[0]?.[0]?.body
+    const completedBody = runCodexProgressCommentMock.mock.calls.at(-1)?.[0]?.body
+    expect(startBody).toContain('<!-- codex:progress -->')
+    expect(startBody).toContain('Phase: started')
+    expect(startBody).toContain('- Issue: #42')
+    expect(completedBody).toContain('Phase: completed')
+    expect(completedBody).toContain('### Last assistant message')
+    expect(completedBody).toContain('done')
+  }, 40_000)
+
+  it('includes cross-swarm provenance in progress comments', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm dispatch and implementation handoff',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mu',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
+      swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
+      swarmRequirementPayload:
+        '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
+      swarmRequirementPayloadBytes: 142,
+      swarmRequirementPayloadTruncated: false,
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const completedBody = runCodexProgressCommentMock.mock.calls.at(-1)?.[0]?.body
+    expect(completedBody).toContain('### Cross-swarm requirement')
+    expect(completedBody).toContain('- Requirement ID: 00gcj8mu')
+    expect(completedBody).toContain('- Signal: torghut-to-jangar-e2e-1772426902')
+    expect(completedBody).toContain('- Source: torghut-quant')
+    expect(completedBody).toContain('- Target: jangar-control-plane')
+    expect(completedBody).toContain('- Channel: huly://swarm-bridge/issues/TORGHUT-1772426902')
+    expect(completedBody).toContain('### Requirement description')
+    expect(completedBody).toContain('End-to-end validation requirement from torghut swarm to jangar swarm.')
+    expect(completedBody).toContain('### Swarm executor')
+    expect(completedBody).toContain('- Worker ID: worker-0027jshz')
+    expect(completedBody).toContain('- Worker Identity: vw-jangar-control-plane-implement-worker-0027jshz')
+  }, 40_000)
+
+  it('does not publish progress comments when issue number is non-numeric', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 'swarm-jangar-control-plane',
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    expect(runCodexProgressCommentMock).not.toHaveBeenCalled()
+  }, 40_000)
+
   it('bootstraps the worktree checkout when the repository is missing', async () => {
     const bootstrappedWorktree = join(workdir, 'fresh-worktree')
     process.env.WORKTREE = bootstrappedWorktree
@@ -223,6 +309,237 @@ describe('runCodexImplementation', () => {
 
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
     expect(invocation?.prompt).not.toContain('IMPORTANT git + PR contract')
+  }, 40_000)
+
+  it('uses cross-swarm requirement scope when channel is Huly', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm dispatch and implementation handoff',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mu',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
+      swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
+      swarmRequirementPayload:
+        '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
+      swarmRequirementPayloadBytes: '142',
+      swarmRequirementPayloadTruncated: false,
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toContain('Cross-swarm implementation requirement (primary scope):')
+    expect(invocation?.prompt).toContain('Requirement ID: 00gcj8mu')
+    expect(invocation?.prompt).toContain('Signal: torghut-to-jangar-e2e-1772426902')
+    expect(invocation?.prompt).toContain('Source: torghut-quant')
+    expect(invocation?.prompt).toContain('Target: jangar-control-plane')
+    expect(invocation?.prompt).toContain(
+      'Description:\nEnd-to-end validation requirement from torghut swarm to jangar swarm.',
+    )
+    expect(invocation?.prompt).toContain(
+      'Payload:\n{\n  "acceptance": [\n    "run includes requirement provenance labels and parameters"\n  ],\n  "priority": "high"\n}',
+    )
+    expect(invocation?.prompt).toContain(
+      'Executor: Worker ID: worker-0027jshz | Worker Identity: vw-jangar-control-plane-implement-worker-0027jshz',
+    )
+    expect(invocation?.prompt).toContain('Objective: validate cross-swarm dispatch and implementation handoff')
+    expect(invocation?.prompt).toContain('Original request context:')
+  }, 40_000)
+
+  it('uses payload objective as cross-swarm primary objective', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'ignore this objective',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
+      swarmRequirementPayload:
+        '{"objective":"Payload objective should dominate","acceptance":["run uses requirement payload objective"]}',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toContain('Objective: Payload objective should dominate')
+    expect(invocation?.prompt).not.toContain('ignore this objective')
+    expect(invocation?.prompt).toContain(
+      'Description:\nEnd-to-end validation requirement from torghut swarm to jangar swarm.',
+    )
+  }, 40_000)
+
+  it('uses cross-swarm requirement scope when channel is an HTTPS Huly URL', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm dispatch with full URL channel',
+      swarmRequirementChannel: 'https://huly.proompteng.ai/swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mv',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
+      swarmRequirementDescription: 'Validate Huly URL-based requirement handoff in jangar control plane.',
+      swarmRequirementPayload: '{"acceptance":["URL channels are treated as Huly requirements"],"priority":"high"}',
+      swarmRequirementPayloadBytes: '150',
+      swarmRequirementPayloadTruncated: false,
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toContain('Cross-swarm implementation requirement (primary scope):')
+    expect(invocation?.prompt).toContain('Channel: https://huly.proompteng.ai/swarm-bridge/issues/TORGHUT-1772426902')
+  }, 40_000)
+
+  it('adds cross-swarm provenance fields to notify payload for Huly requirements', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm dispatch and implementation handoff',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mu',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
+      swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
+      swarmRequirementPayload:
+        '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
+      swarmRequirementPayloadBytes: 142,
+      swarmRequirementPayloadTruncated: false,
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as {
+      cross_swarm_requirement?: boolean
+      swarm_requirement?: Record<string, unknown>
+      swarmRequirementId?: string | null
+      swarmRequirementSignal?: string | null
+      swarmRequirementSource?: string | null
+      swarmRequirementTarget?: string | null
+      swarmRequirementChannel?: string | null
+      swarmRequirementObjective?: string | null
+      swarmRequirementPayload?: string | null
+      swarmAgentWorkerId?: string | null
+      swarmAgentIdentity?: string | null
+      swarmAgentRole?: string | null
+    }
+    expect(notify.cross_swarm_requirement).toBe(true)
+    expect(notify.swarm_requirement).toMatchObject({
+      id: '00gcj8mu',
+      signal: 'torghut-to-jangar-e2e-1772426902',
+      source: 'torghut-quant',
+      target: 'jangar-control-plane',
+      channel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      objective: 'validate cross-swarm dispatch and implementation handoff',
+      description: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
+      payload: '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
+      payloadBytes: '142',
+      payloadTruncated: false,
+    })
+    expect(notify.swarmRequirementId).toBe('00gcj8mu')
+    expect(notify.swarmRequirementSignal).toBe('torghut-to-jangar-e2e-1772426902')
+    expect(notify.swarmRequirementSource).toBe('torghut-quant')
+    expect(notify.swarmRequirementTarget).toBe('jangar-control-plane')
+    expect(notify.swarmRequirementChannel).toBe('huly://swarm-bridge/issues/TORGHUT-1772426902')
+    expect(notify.swarmRequirementObjective).toBe('validate cross-swarm dispatch and implementation handoff')
+    expect(notify.swarmRequirementPayload).toContain('"acceptance"')
+    expect(notify.swarmAgentWorkerId).toBe('worker-0027jshz')
+    expect(notify.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-0027jshz')
+    expect(notify.swarmAgentRole).toBeNull()
+  }, 40_000)
+
+  it('accepts worker identity metadata from parameters map', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      parameters: {
+        swarmRequirementId: '00gcj8mu',
+        swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+        swarmRequirementSource: 'torghut-quant',
+        swarmRequirementTarget: 'jangar-control-plane',
+        swarmRequirementDescription:
+          'Parameter-fed requirement payload should still be surfaced to run prompt and notifications.',
+        swarmAgentWorkerId: 'worker-params-0027jshz',
+        swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-params-0027jshz',
+      },
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const completedBody = runCodexProgressCommentMock.mock.calls.at(-1)?.[0]?.body
+    expect(completedBody).toContain('### Swarm executor')
+    expect(completedBody).toContain('- Worker ID: worker-params-0027jshz')
+    expect(completedBody).toContain('- Worker Identity: vw-jangar-control-plane-implement-worker-params-0027jshz')
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toContain(
+      'Executor: Worker ID: worker-params-0027jshz | Worker Identity: vw-jangar-control-plane-implement-worker-params-0027jshz',
+    )
+
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as {
+      swarmRequirementId?: string | null
+      swarmAgentWorkerId?: string | null
+      swarmAgentIdentity?: string | null
+    }
+    expect(notify.swarmRequirementId).toBe('00gcj8mu')
+    expect(notify.swarmAgentWorkerId).toBe('worker-params-0027jshz')
+    expect(notify.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-params-0027jshz')
+  }, 40_000)
+
+  it('does not apply cross-swarm prompt wrapping for non-Huly channels', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      swarmRequirementChannel: 'slack://channel-id',
+      swarmRequirementDescription: 'No Huly wrapping should occur.',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toBe('Implementation prompt')
   }, 40_000)
 
   it('forwards systemPrompt from the payload into runCodexSession', async () => {
@@ -397,6 +714,165 @@ describe('runCodexImplementation', () => {
     const expectedHash = createHash('sha256').update(systemPrompt, 'utf8').digest('hex')
     expect(attrs.systemPromptHash).toBe(expectedHash)
     expect(attrs.systemPrompt).toBeUndefined()
+  }, 40_000)
+
+  it('includes swarm agent identity in NATS run-started attrs', async () => {
+    const binDir = join(workdir, 'bin')
+    await mkdir(binDir, { recursive: true })
+
+    const capturePath = join(workdir, 'nats-publish-run-started-identity.jsonl')
+    process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH = capturePath
+    process.env.NATS_URL = 'nats://example'
+    process.env.PATH = `${binDir}:${process.env.PATH ?? ''}`
+
+    const publishScriptPath = join(binDir, 'codex-nats-publish')
+    await writeFile(
+      publishScriptPath,
+      [
+        '#!/usr/bin/env node',
+        'const { appendFileSync } = require("node:fs");',
+        'const path = process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH;',
+        'if (path) { appendFileSync(path, JSON.stringify(process.argv.slice(2)) + "\\n", "utf8"); }',
+        'process.exit(0);',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    await chmod(publishScriptPath, 0o755)
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mu',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
+      swarmRequirementPayload:
+        '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
+      swarmRequirementPayloadBytes: 142,
+      swarmRequirementPayloadTruncated: false,
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const captured = (await readFile(capturePath, 'utf8'))
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[])
+
+    const runStarted = captured.find((args) => {
+      const kindIndex = args.indexOf('--kind')
+      return kindIndex >= 0 && args[kindIndex + 1] === 'run-started'
+    })
+    expect(runStarted).toBeDefined()
+    if (!runStarted) {
+      throw new Error('Expected at least one run-started publish call')
+    }
+
+    const attrsIndex = runStarted.indexOf('--attrs-json')
+    expect(attrsIndex).toBeGreaterThan(-1)
+    const attrsRaw = runStarted[attrsIndex + 1]
+    expect(typeof attrsRaw).toBe('string')
+    const attrs = JSON.parse(attrsRaw ?? '{}') as Record<string, unknown>
+
+    expect(attrs.swarmAgentWorkerId).toBe('worker-0027jshz')
+    expect(attrs.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-0027jshz')
+  }, 40_000)
+
+  it('includes cross-swarm requirement metadata in NATS run-started attrs', async () => {
+    const binDir = join(workdir, 'bin')
+    await mkdir(binDir, { recursive: true })
+
+    const capturePath = join(workdir, 'nats-publish-run-started-requirement.jsonl')
+    process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH = capturePath
+    process.env.NATS_URL = 'nats://example'
+    process.env.PATH = `${binDir}:${process.env.PATH ?? ''}`
+
+    const publishScriptPath = join(binDir, 'codex-nats-publish')
+    await writeFile(
+      publishScriptPath,
+      [
+        '#!/usr/bin/env node',
+        'const { appendFileSync } = require("node:fs");',
+        'const path = process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH;',
+        'if (path) { appendFileSync(path, JSON.stringify(process.argv.slice(2)) + "\\n", "utf8"); }',
+        'process.exit(0);',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    await chmod(publishScriptPath, 0o755)
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm handoff visibility',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementId: '00gcj8mu',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'End-to-end requirement handoff validation.',
+      swarmRequirementPayload:
+        '{"acceptance":["publish swarm requirement metadata on all run events"],"priority":"high"}',
+      swarmRequirementPayloadBytes: '142',
+      swarmRequirementPayloadTruncated: false,
+      swarmRequirementObjective: 'validate cross-swarm handoff visibility',
+      swarmAgentWorkerId: 'worker-0027jshz',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
+      swarmAgentRole: 'implement',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const captured = (await readFile(capturePath, 'utf8'))
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[])
+
+    const runStarted = captured.find((args) => {
+      const kindIndex = args.indexOf('--kind')
+      return kindIndex >= 0 && args[kindIndex + 1] === 'run-started'
+    })
+    expect(runStarted).toBeDefined()
+    if (!runStarted) {
+      throw new Error('Expected at least one run-started publish call')
+    }
+
+    const attrsIndex = runStarted.indexOf('--attrs-json')
+    expect(attrsIndex).toBeGreaterThan(-1)
+    const attrsRaw = runStarted[attrsIndex + 1]
+    expect(typeof attrsRaw).toBe('string')
+    const attrs = JSON.parse(attrsRaw ?? '{}') as Record<string, unknown>
+
+    expect(attrs.swarmAgentWorkerId).toBe('worker-0027jshz')
+    expect(attrs.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-0027jshz')
+    expect(attrs.swarmAgentRole).toBe('implement')
+    expect(attrs.swarmRequirementId).toBe('00gcj8mu')
+    expect(attrs.swarmRequirementSignal).toBe('torghut-to-jangar-e2e-1772426902')
+    expect(attrs.swarmRequirementSource).toBe('torghut-quant')
+    expect(attrs.swarmRequirementTarget).toBe('jangar-control-plane')
+    expect(attrs.swarmRequirementChannel).toBe('huly://swarm-bridge/issues/TORGHUT-1772426902')
+    expect(attrs.swarmRequirementDescription).toBe('End-to-end requirement handoff validation.')
+    expect(attrs.swarmRequirementObjective).toBe('validate cross-swarm handoff visibility')
+    expect(attrs.swarmRequirementPayload).toContain('"acceptance"')
+    expect(attrs.swarmRequirementPayloadBytes).toBe('142')
+    expect(attrs.swarmRequirementPayloadTruncated).toBe(false)
   }, 40_000)
 
   it('includes PR metadata from artifact files and does not overwrite them', async () => {
