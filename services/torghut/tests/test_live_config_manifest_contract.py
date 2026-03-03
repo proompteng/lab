@@ -161,6 +161,7 @@ class TestLiveConfigManifestContract(TestCase):
             Settings(**fail_open_env)
 
         fail_open_env["LLM_FAIL_MODE_ENFORCEMENT"] = "configured"
+        fail_open_env["LLM_FAIL_OPEN_LIVE_APPROVED"] = "true"
         approved_settings = Settings(**fail_open_env)
         self.assertEqual(
             approved_settings.llm_effective_fail_mode_for_current_rollout(),
