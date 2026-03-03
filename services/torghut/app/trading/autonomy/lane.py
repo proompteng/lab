@@ -49,7 +49,12 @@ from ..features import (
 from ..forecasting import build_default_forecast_router
 from ..llm.evaluation import build_llm_evaluation_metrics
 from ..models import SignalEnvelope
-from ..parity import build_benchmark_parity_report, write_benchmark_parity_report
+from ..parity import (
+    build_benchmark_parity_report,
+    build_foundation_router_parity_report,
+    write_benchmark_parity_report,
+    write_foundation_router_parity_report,
+)
 from ..regime_hmm import HMM_UNKNOWN_REGIME_ID, resolve_hmm_context
 from ..reporting import (
     EvaluationReport,
@@ -105,6 +110,7 @@ _HMM_STATE_POSTERIOR_ARTIFACT_PATH = "gates/hmm-state-posterior-v1.json"
 _EXPERT_ROUTER_REGISTRY_ARTIFACT_PATH = "gates/expert-router-registry-v1.json"
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
 _BENCHMARK_PARITY_REPORT_PATH = "benchmarks/benchmark-parity-report-v1.json"
+_FOUNDATION_ROUTER_PARITY_REPORT_PATH = "router/foundation-router-parity-report-v1.json"
 _STAGE_PROFITABILITY = "profitability_stage_manifest"
 
 
@@ -231,6 +237,7 @@ class AutonomousLaneResult:
     paper_patch_path: Path | None
     phase_manifest_path: Path
     benchmark_parity_path: Path
+    foundation_router_parity_path: Path
     gate_report_trace_id: str
     recommendation_trace_id: str
     recommendation_artifact_path: Path
@@ -968,6 +975,7 @@ def _build_profitability_stage_manifest(
     profitability_benchmark_path: Path,
     contamination_registry_path: Path,
     benchmark_parity_path: Path,
+    foundation_router_parity_path: Path,
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
     hmm_state_posterior_path: Path,
@@ -1082,6 +1090,11 @@ def _build_profitability_stage_manifest(
         ("evaluation_report_present", "evaluation_report", evaluation_report_path),
         ("gate_evaluation_present", "gate_evaluation", gate_report_path),
         ("benchmark_parity_present", "benchmark_parity", benchmark_parity_path),
+        (
+            "foundation_router_parity_present",
+            "foundation_router_parity",
+            foundation_router_parity_path,
+        ),
         (
             "hmm_state_posterior_present",
             "hmm_state_posterior",
@@ -1432,6 +1445,7 @@ def run_autonomous_lane(
     hmm_state_posterior_path = output_dir / _HMM_STATE_POSTERIOR_ARTIFACT_PATH
     expert_router_registry_path = output_dir / _EXPERT_ROUTER_REGISTRY_ARTIFACT_PATH
     benchmark_parity_path = output_dir / _BENCHMARK_PARITY_REPORT_PATH
+    foundation_router_parity_path = output_dir / _FOUNDATION_ROUTER_PARITY_REPORT_PATH
     recalibration_report_path = gates_dir / "recalibration-report.json"
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     profitability_manifest_path = output_dir / _PROFITABILITY_STAGE_MANIFEST_PATH
@@ -1671,6 +1685,19 @@ def run_autonomous_lane(
         )
         write_benchmark_parity_report(benchmark_parity_report, benchmark_parity_path)
         gate_policy_payload = json.loads(gate_policy_path.read_text(encoding="utf-8"))
+        foundation_router_parity_report = build_foundation_router_parity_report(
+            candidate_id=candidate_id,
+            router_policy_version=str(
+                gate_policy_payload.get(
+                    "forecast_router_policy_version", "forecast_router_policy_v1"
+                )
+            ),
+            now=now,
+        )
+        write_foundation_router_parity_report(
+            foundation_router_parity_report,
+            foundation_router_parity_path,
+        )
         expert_router_registry_payload = _build_expert_router_registry_payload(
             output_dir=output_dir,
             run_id=run_id,
@@ -1695,6 +1722,7 @@ def run_autonomous_lane(
             "strategy_config": _sha256_path(strategy_config_path),
             "gate_policy": _sha256_path(gate_policy_path),
             "walkforward_results": _sha256_path(walk_results_path),
+            "foundation_router_parity": _sha256_path(foundation_router_parity_path),
             "hmm_state_posterior": _sha256_path(hmm_state_posterior_path),
             "expert_router_registry": _sha256_path(expert_router_registry_path),
             "candidate_report": _sha256_path(evaluation_report_path),
@@ -1756,6 +1784,7 @@ def run_autonomous_lane(
                 profitability_validation_path,
                 profitability_benchmark_path,
                 benchmark_parity_path,
+                foundation_router_parity_path,
                 hmm_state_posterior_path,
                 expert_router_registry_path,
             ],
@@ -1908,6 +1937,11 @@ def run_autonomous_lane(
             benchmark_parity_artifact_ref = str(
                 benchmark_parity_path.relative_to(output_dir)
             )
+        foundation_router_parity_artifact_ref = str(foundation_router_parity_path)
+        if not output_dir.is_absolute():
+            foundation_router_parity_artifact_ref = str(
+                foundation_router_parity_path.relative_to(output_dir)
+            )
         contamination_registry_artifact_ref = str(contamination_registry_path)
         if not output_dir.is_absolute():
             contamination_registry_artifact_ref = str(
@@ -1959,6 +1993,9 @@ def run_autonomous_lane(
             },
             "benchmark_parity": {
                 "artifact_ref": benchmark_parity_artifact_ref,
+            },
+            "foundation_router_parity": {
+                "artifact_ref": foundation_router_parity_artifact_ref,
             },
             "hmm_state_posterior": {
                 "artifact_ref": hmm_state_posterior_artifact_ref,
@@ -2037,6 +2074,7 @@ def run_autonomous_lane(
                 "baseline_evaluation_report": str(baseline_report_path),
                 "gate_report": str(gate_report_path),
                 "benchmark_parity": str(benchmark_parity_path),
+                "foundation_router_parity": str(foundation_router_parity_path),
                 "contamination_registry": str(contamination_registry_path),
                 "profitability_benchmark": str(profitability_benchmark_path),
                 "profitability_evidence": str(profitability_evidence_path),
@@ -2122,6 +2160,7 @@ def run_autonomous_lane(
                 hmm_state_posterior_path=hmm_state_posterior_path,
                 expert_router_registry_path=expert_router_registry_path,
                 benchmark_parity_path=benchmark_parity_path,
+                foundation_router_parity_path=foundation_router_parity_path,
                 janus_event_car_path=janus_event_car_path,
                 janus_hgrm_reward_path=janus_hgrm_reward_path,
                 recalibration_report_path=recalibration_report_path,
@@ -2297,6 +2336,9 @@ def run_autonomous_lane(
             "benchmark_parity": {
                 "artifact_ref": benchmark_parity_artifact_ref,
             },
+            "foundation_router_parity": {
+                "artifact_ref": foundation_router_parity_artifact_ref,
+            },
             "hmm_state_posterior": {
                 "artifact_ref": hmm_state_posterior_artifact_ref,
                 "schema_version": hmm_state_posterior_payload.get("schema_version"),
@@ -2364,6 +2406,7 @@ def run_autonomous_lane(
             "gate_report_trace_id": gate_report_trace_id,
             "recommendation_trace_id": recommendation_trace_id,
             "benchmark_parity_artifact": str(benchmark_parity_path),
+            "foundation_router_parity_artifact": str(foundation_router_parity_path),
             "contamination_registry_artifact": str(contamination_registry_path),
             "profitability_benchmark_artifact": str(profitability_benchmark_path),
             "profitability_evidence_artifact": str(profitability_evidence_path),
@@ -2401,6 +2444,7 @@ def run_autonomous_lane(
                 "evaluation_report": evaluation_report_path,
                 "gate_evaluation": gate_report_path,
                 "benchmark_parity": benchmark_parity_path,
+                "foundation_router_parity": foundation_router_parity_path,
                 "contamination_registry": contamination_registry_path,
                 "profitability_benchmark": profitability_benchmark_path,
                 "profitability_evidence": profitability_evidence_path,
@@ -2504,6 +2548,7 @@ def run_autonomous_lane(
             "gate_report": gate_report_path,
             "profitability_stage_manifest": profitability_manifest_path,
             "benchmark_parity": benchmark_parity_path,
+            "foundation_router_parity": foundation_router_parity_path,
             "contamination_registry": contamination_registry_path,
             "profitability_benchmark": profitability_benchmark_path,
             "profitability_evidence": profitability_evidence_path,
@@ -2622,6 +2667,7 @@ def run_autonomous_lane(
             profitability_evidence_path=profitability_evidence_path,
             profitability_validation_path=profitability_validation_path,
             benchmark_parity_path=benchmark_parity_path,
+            foundation_router_parity_path=foundation_router_parity_path,
             janus_event_car_path=janus_event_car_path,
             janus_hgrm_reward_path=janus_hgrm_reward_path,
             recalibration_report_path=recalibration_report_path,
@@ -2732,6 +2778,7 @@ def run_autonomous_lane(
             recommendation_manifest_path=manifest_paths[_STAGE_RECOMMENDATION],
             profitability_manifest_path=profitability_manifest_path,
             benchmark_parity_path=benchmark_parity_path,
+            foundation_router_parity_path=foundation_router_parity_path,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
             stage_trace_ids=stage_trace_ids,
@@ -3329,6 +3376,7 @@ def _build_actuation_intent_payload(
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
     benchmark_parity_path: Path,
+    foundation_router_parity_path: Path,
     janus_event_car_path: Path,
     janus_hgrm_reward_path: Path,
     recalibration_report_path: Path,
@@ -3367,6 +3415,7 @@ def _build_actuation_intent_payload(
             str(promotion_recommendation_path),
             str(profitability_benchmark_path),
             str(benchmark_parity_path),
+            str(foundation_router_parity_path),
             str(profitability_evidence_path),
             str(profitability_validation_path),
             str(janus_event_car_path),

@@ -77,6 +77,15 @@ data:
       "promotion_benchmark_parity_max_risk_veto_alignment_degradation": "0.01",
       "promotion_benchmark_parity_max_confidence_calibration_error_degradation": "0.01",
       "promotion_benchmark_parity_max_scorecard_confidence_calibration_error_drift": "0.01",
+      "promotion_require_foundation_router_parity": true,
+      "promotion_foundation_router_parity_required_targets": ["paper", "live"],
+      "promotion_foundation_router_required_artifacts": [
+        "router/foundation-router-parity-report-v1.json"
+      ],
+      "promotion_router_parity_max_fallback_rate": "0.05",
+      "promotion_router_parity_min_calibration_score": "0.85",
+      "promotion_router_parity_max_drift": "0.45",
+      "promotion_router_parity_max_latency_ms_p95": 200,
       "promotion_require_contamination_registry": true,
       "promotion_contamination_required_targets": ["paper", "live"],
       "promotion_contamination_required_artifacts": [

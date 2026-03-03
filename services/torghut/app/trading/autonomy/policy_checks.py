@@ -19,6 +19,10 @@ from ..parity import (
     BENCHMARK_PARITY_REQUIRED_SCORECARDS,
     BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
     BENCHMARK_PARITY_SCHEMA_VERSION,
+    FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION,
+    FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS,
+    FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS,
+    FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION,
 )
 
 
@@ -132,6 +136,10 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
+    foundation_router_parity_required = _requires_foundation_router_parity(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     contamination_registry_required = _requires_contamination_registry(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
@@ -154,6 +162,7 @@ def evaluate_promotion_prerequisites(
         include_profitability_artifacts=profitability_required,
         include_janus_artifacts=janus_required,
         include_benchmark_parity_artifacts=benchmark_parity_required,
+        include_foundation_router_parity_artifacts=foundation_router_parity_required,
         include_contamination_artifacts=contamination_registry_required,
         include_stress_artifacts=stress_required,
         include_hmm_state_posterior_artifacts=hmm_state_posterior_required,
@@ -1232,6 +1241,7 @@ def _required_artifacts_for_target(
     include_profitability_artifacts: bool,
     include_janus_artifacts: bool,
     include_benchmark_parity_artifacts: bool,
+    include_foundation_router_parity_artifacts: bool,
     include_contamination_artifacts: bool,
     include_stress_artifacts: bool,
     include_hmm_state_posterior_artifacts: bool,
@@ -1292,6 +1302,12 @@ def _required_artifacts_for_target(
     if include_benchmark_parity_artifacts:
         benchmark_artifacts = _benchmark_parity_required_artifact_refs(policy_payload)
         for artifact in benchmark_artifacts:
+            required.append(artifact)
+    if include_foundation_router_parity_artifacts:
+        foundation_router_artifacts = _foundation_router_required_artifact_refs(
+            policy_payload
+        )
+        for artifact in foundation_router_artifacts:
             required.append(artifact)
     if include_contamination_artifacts:
         contamination_artifacts = _contamination_registry_required_artifact_refs(
@@ -1355,6 +1371,29 @@ def _benchmark_parity_artifact_reference(
 
     required_artifacts = _benchmark_parity_required_artifact_refs(policy_payload)
     return required_artifacts[0]
+
+
+def _foundation_router_required_artifact_refs(
+    policy_payload: dict[str, Any],
+) -> list[str]:
+    foundation_artifacts_raw = policy_payload.get(
+        "promotion_foundation_router_required_artifacts",
+        ["router/foundation-router-parity-report-v1.json"],
+    )
+    foundation_artifacts = [
+        str(artifact).strip()
+        for artifact in _list_from_any(foundation_artifacts_raw)
+        if isinstance(artifact, str) and artifact.strip()
+    ]
+    if foundation_artifacts:
+        return foundation_artifacts
+
+    legacy_artifact = str(
+        policy_payload.get("promotion_foundation_router_parity_artifact", "").strip()
+    )
+    if legacy_artifact:
+        return [legacy_artifact]
+    return ["router/foundation-router-parity-report-v1.json"]
 
 
 def _contamination_registry_required_artifact_refs(
@@ -1720,7 +1759,20 @@ def _requires_foundation_router_parity(
 ) -> bool:
     if promotion_target == "shadow":
         return False
-    return bool(policy_payload.get("promotion_require_foundation_router_parity", False))
+    if not bool(policy_payload.get("promotion_require_foundation_router_parity", False)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_foundation_router_parity_required_targets",
+        ["paper", "live"],
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
 
 
 def _requires_benchmark_parity(
@@ -2403,15 +2455,8 @@ def _evaluate_foundation_router_parity_evidence(
         reasons.append("foundation_router_parity_artifact_ref_missing")
         details.append({"reason": "foundation_router_parity_artifact_ref_missing"})
 
-    artifact_ref = (
-        evidence_ref
-        or str(
-            policy_payload.get(
-                "promotion_foundation_router_parity_artifact",
-                "gates/foundation-router-parity-report-v1.json",
-            )
-        )
-    ).strip()
+    required_artifacts = _foundation_router_required_artifact_refs(policy_payload)
+    artifact_ref = (evidence_ref or required_artifacts[0]).strip()
     artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
     if artifact_path is None:
         reasons.append("foundation_router_parity_artifact_ref_invalid")
@@ -2434,6 +2479,110 @@ def _evaluate_foundation_router_parity_evidence(
             }
         )
         return reasons, details, refs
+
+    schema_version = str(payload.get("schema_version", "")).strip()
+    if schema_version != FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION:
+        reasons.append("foundation_router_parity_schema_version_invalid")
+        details.append(
+            {
+                "reason": "foundation_router_parity_schema_version_invalid",
+                "artifact_ref": str(artifact_path),
+                "actual_schema_version": schema_version,
+                "expected_schema_version": FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION,
+            }
+        )
+
+    contract = _as_dict(payload.get("contract"))
+    if not contract:
+        reasons.append("foundation_router_parity_contract_missing")
+        details.append(
+            {
+                "reason": "foundation_router_parity_contract_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    else:
+        contract_schema = str(contract.get("schema_version", "")).strip()
+        if contract_schema != FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION:
+            reasons.append("foundation_router_parity_contract_schema_version_invalid")
+            details.append(
+                {
+                    "reason": "foundation_router_parity_contract_schema_version_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "actual_schema_version": contract_schema,
+                    "expected_schema_version": FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION,
+                }
+            )
+
+        required_adapters = {
+            str(item).strip()
+            for item in _list_from_any(contract.get("required_adapters"))
+            if str(item).strip()
+        }
+        if required_adapters != set(FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS):
+            reasons.append("foundation_router_parity_contract_required_adapters_invalid")
+            details.append(
+                {
+                    "reason": "foundation_router_parity_contract_required_adapters_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "actual_required_adapters": sorted(required_adapters),
+                    "expected_required_adapters": sorted(
+                        FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS
+                    ),
+                }
+            )
+
+        required_slice_metrics = {
+            str(item).strip()
+            for item in _list_from_any(contract.get("required_slice_metrics"))
+            if str(item).strip()
+        }
+        if required_slice_metrics != set(FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS):
+            reasons.append(
+                "foundation_router_parity_contract_required_slice_metrics_invalid"
+            )
+            details.append(
+                {
+                    "reason": "foundation_router_parity_contract_required_slice_metrics_invalid",
+                    "artifact_ref": str(artifact_path),
+                    "actual_required_slice_metrics": sorted(required_slice_metrics),
+                    "expected_required_slice_metrics": sorted(
+                        FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS
+                    ),
+                }
+            )
+
+    adapters = {
+        str(item).strip()
+        for item in _list_from_any(payload.get("adapters"))
+        if str(item).strip()
+    }
+    if adapters != set(FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS):
+        reasons.append("foundation_router_parity_adapters_invalid")
+        details.append(
+            {
+                "reason": "foundation_router_parity_adapters_invalid",
+                "artifact_ref": str(artifact_path),
+                "actual_adapters": sorted(adapters),
+                "expected_adapters": sorted(FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS),
+            }
+        )
+
+    slice_metrics = _as_dict(payload.get("slice_metrics"))
+    missing_slice_metrics = [
+        key
+        for key in FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS
+        if not isinstance(slice_metrics.get(key), dict)
+    ]
+    if missing_slice_metrics:
+        reasons.append("foundation_router_parity_slice_metrics_missing")
+        details.append(
+            {
+                "reason": "foundation_router_parity_slice_metrics_missing",
+                "artifact_ref": str(artifact_path),
+                "missing_slice_metrics": sorted(missing_slice_metrics),
+            }
+        )
 
     overall_status = str(payload.get("overall_status", "")).strip()
     if overall_status != "pass":
@@ -2471,6 +2620,34 @@ def _evaluate_foundation_router_parity_evidence(
                 "artifact_ref": str(artifact_path),
                 "actual_fallback_rate": max_fallback_rate,
                 "maximum_fallback_rate": fallback_threshold,
+            }
+        )
+
+    latency_p95 = _float_or_none(
+        _as_dict(payload.get("latency_metrics")).get("p95_ms")
+    )
+    max_latency_p95 = _float_or_none(
+        policy_payload.get(
+            "promotion_router_parity_max_latency_ms_p95",
+            policy_payload.get("gate3_max_forecast_latency_ms_p95", 200),
+        )
+    )
+    if latency_p95 is None:
+        reasons.append("foundation_router_parity_latency_p95_missing")
+        details.append(
+            {
+                "reason": "foundation_router_parity_latency_p95_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif max_latency_p95 is not None and latency_p95 > max_latency_p95:
+        reasons.append("foundation_router_parity_latency_p95_exceeds_threshold")
+        details.append(
+            {
+                "reason": "foundation_router_parity_latency_p95_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_latency_p95_ms": latency_p95,
+                "maximum_latency_p95_ms": max_latency_p95,
             }
         )
 

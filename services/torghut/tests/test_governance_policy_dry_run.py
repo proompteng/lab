@@ -79,6 +79,9 @@ def _default_gate_report(now: datetime) -> dict[str, object]:
                 "fallback_rate": "0",
                 "max_expert_weight": "0.62",
             },
+            "foundation_router_parity": {
+                "artifact_ref": "router/foundation-router-parity-report-v1.json",
+            },
             "promotion_rationale": {
                 "requested_target": "paper",
                 "gate_recommended_mode": "paper",
