@@ -323,6 +323,18 @@ Each risk must have:
 3. rollback trigger,
 4. postmortem template link.
 
+### Program Risk Control Matrix (Closure Contract)
+
+| Risk                                                                | Detection signal (metric/SLO)                                                                                   | Owner                                                                                     | Rollback trigger                                                                         | Postmortem template link                                                              |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Policy/profile divergence between runtime and repository contracts. | `torghut_policy_parity_mismatch_total > 0` or readiness check fails `--control-plane-contract`.                 | Torghut platform oncall (`argocd/applications/torghut/**`, runtime config).               | Any non-zero parity mismatch in `main` or runtime check failure in rollout verification. | `docs/torghut/design-system/v3/full-loop/09-incident-kill-switch-recovery-runbook.md` |
+| Legacy path regression during DSPy cutover.                         | `torghut_legacy_llm_path_hits_total > 0` in paper/live windows, or DSPy artifact lock validation failures.      | Quant runtime owners (`services/torghut/app/trading/llm/**`).                             | Any observed legacy-path invocation outside approved test fixtures.                      | `docs/torghut/design-system/v3/full-loop/09-incident-kill-switch-recovery-runbook.md` |
+| Hidden contamination/leakage in dataset and benchmark harness.      | `torghut_contamination_guard_failures_total > 0` or parity/coverage gate fails in promotion checks.             | Research + evaluation owners (`services/torghut/app/trading/evaluation.py`, `parity.py`). | Contamination registry failure or missing benchmark parity package for promotion target. | `docs/torghut/design-system/v3/full-loop/09-incident-kill-switch-recovery-runbook.md` |
+| Drift false positives causing promotion starvation.                 | Drift false-positive rate exceeds SLO in `autonomy_drift` evidence package for two consecutive windows.         | Autonomy governance owners (`services/torghut/app/trading/autonomy/drift.py`).            | Drift false-positive rate breach with blocked promotion queue beyond SLO window.         | `docs/torghut/design-system/v3/full-loop/09-incident-kill-switch-recovery-runbook.md` |
+| Over-broad model-family rollout without canary containment.         | Canary breach signals (`advisor_timeout`, `advisor_staleness`, or model-family error budget) exceed thresholds. | Model rollout owners (`forecasting.py`, `microstructure.py`, `execution_policy.py`).      | Any canary SLO breach during paper/live promotion window.                                | `docs/torghut/design-system/v3/full-loop/09-incident-kill-switch-recovery-runbook.md` |
+
+Incident records implementing this template are tracked under `docs/incidents/` and must reference the triggered risk row above.
+
 ## Definition of Done (Program Complete)
 
 Program is complete only when all are true:
