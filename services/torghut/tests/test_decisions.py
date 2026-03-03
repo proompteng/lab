@@ -464,6 +464,101 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(fragility.get('fragility_state'), 'elevated')
         self.assertEqual(fragility.get('spread_acceleration'), Decimal('0.30'))
 
+    def test_decision_params_include_microstructure_signal_alias_payload(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='signal-alias',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol='aapl',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'microstructure_signal': {
+                    'schema_version': 'microstructure_signal_v1',
+                    'symbol': 'aapl',
+                    'event_ts': datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
+                    'horizon': 'PT1S',
+                    'uncertainty_band': 'high',
+                    'expected_spread_impact_bps': '14',
+                    'expected_slippage_bps': '9.2',
+                    'feature_quality_status': 'pass',
+                    'depth_top5_usd': '1200000',
+                    'direction_probabilities': {
+                        'up': '0.70',
+                        'flat': '0.10',
+                        'down': '0.20',
+                    },
+                    'liquidity_state': 'compressed',
+                    'artifact': {
+                        'model_id': 'deeplob-bdlob-v1',
+                        'feature_schema_version': 'microstructure_signal_v1',
+                        'training_run_id': 'run-abc-123',
+                    },
+                },
+            },
+            timeframe='1Min',
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        params = decisions[0].params
+        micro = params.get('microstructure_state')
+        assert isinstance(micro, dict)
+        self.assertEqual(micro.get('schema_version'), 'microstructure_signal_v1')
+        self.assertEqual(micro.get('symbol'), 'AAPL')
+        self.assertEqual(micro.get('liquidity_state'), 'compressed')
+
+    def test_decision_params_fallback_for_malformed_microstructure_signal(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name='signal-alias-fallback',
+            description=None,
+            enabled=True,
+            base_timeframe='1Min',
+            universe_type='static',
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol='aapl',
+            payload={
+                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
+                'rsi14': Decimal('20'),
+                'microstructure_signal': {
+                    'schema_version': 'microstructure_signal_v1',
+                    'symbol': 'aapl',
+                    'event_ts': '2026-01-01T00:00:00Z',
+                    'feature_quality_status': 'fail',
+                    'liquidity_state': 'compressed',
+                    'expected_spread_impact_bps': '14',
+                    'depth_top5_usd': '1200000',
+                    'direction_probabilities': {
+                        'up': '0.70',
+                        'flat': '0.10',
+                        'down': '0.20',
+                    },
+                },
+            },
+            timeframe='1Min',
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        self.assertNotIn('microstructure_state', decisions[0].params)
+
     def test_decision_params_do_not_synthesize_microstructure_without_explicit_payload(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(

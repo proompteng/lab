@@ -2,9 +2,13 @@ package ai.proompteng.dorvud.ta.flink
 
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.producer.AvroSerde
+import ai.proompteng.dorvud.ta.stream.DirectionProbabilities
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
+import ai.proompteng.dorvud.ta.stream.MicrostructureSignalArtifact
+import ai.proompteng.dorvud.ta.stream.MicrostructureSignalV1
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
+import kotlinx.serialization.json.Json
 import org.apache.flink.api.common.serialization.SerializerConfigImpl
 import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer
 import java.io.ByteArrayOutputStream
@@ -12,6 +16,7 @@ import java.io.ObjectOutputStream
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class SerializationSchemasTest {
@@ -55,6 +60,58 @@ class SerializationSchemasTest {
   @Test
   fun `avro serde is java-serializable`() {
     assertSerializable(serde)
+  }
+
+  @Test
+  fun `clickhouse signals insert statement includes microstructure payload column`() {
+    val sql = clickhouseSignalsInsertSql()
+    assertTrue(sql.contains("microstructure_signal_v1"))
+    assertEquals(29, sql.count { it == '?' })
+  }
+
+  @Test
+  fun `microstructure signal serializes deterministically for clickhouse`() {
+    val signal =
+      MicrostructureSignalV1(
+        schemaVersion = "microstructure_signal_v1",
+        symbol = "AAPL",
+        horizon = "1s",
+        directionProbabilities =
+          DirectionProbabilities(
+            up = 0.33,
+            flat = 0.34,
+            down = 0.33,
+          ),
+        uncertaintyBand = "medium",
+        expectedSpreadImpactBps = 1.23,
+        expectedSlippageBps = 2.34,
+        featureQualityStatus = "pass",
+        artifact =
+          MicrostructureSignalArtifact(
+            modelId = "model-a",
+            featureSchemaVersion = "v6/11",
+            trainingRunId = "run-a",
+          ),
+      )
+
+    val serialized = serializeMicrostructureSignalV1(signal)
+    assertNotNull(serialized)
+
+    val decoded = Json.decodeFromString<MicrostructureSignalV1>(serialized)
+    assertEquals(signal, decoded)
+  }
+
+  @Test
+  fun `ta signals clickhouse schema contains microstructure payload column`() {
+    val schema =
+      javaClass
+        .classLoader
+        ?.getResourceAsStream("ta-schema.sql")
+        ?.bufferedReader()
+        ?.readText()
+        ?.trim()
+    assertNotNull(schema)
+    assertTrue(schema.contains("microstructure_signal_v1 Nullable(String)"))
   }
 
   @Test

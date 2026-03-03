@@ -130,6 +130,8 @@ spec:
               value: all
             - name: TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED
               value: "false"
+            - name: TRADING_EXECUTION_ADVISOR_ENABLED
+              value: "false"
             - name: TRADING_CRYPTO_ENABLED
               value: "false"
             - name: TRADING_CRYPTO_LIVE_ENABLED

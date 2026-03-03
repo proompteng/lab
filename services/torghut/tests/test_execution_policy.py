@@ -392,6 +392,96 @@ class TestExecutionPolicy(TestCase):
         params_update = outcome.params_update()
         self.assertIn("execution_advisor", params_update)
 
+    def test_advisor_tightens_with_microstructure_signal_alias_payload(self) -> None:
+        config.settings.trading_execution_advisor_enabled = True
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "execution_advice": {
+                        "urgency_tier": "normal",
+                        "max_participation_rate": "0.05",
+                        "preferred_order_type": "limit",
+                        "adverse_selection_risk": "0.20",
+                    },
+                    "microstructure_signal": {
+                        "schema_version": "microstructure_signal_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "feature_quality_status": "pass",
+                        "expected_spread_impact_bps": "3.2",
+                        "depth_top5_usd": "1500000",
+                        "direction_probabilities": {
+                            "up": "0.10",
+                            "flat": "0.00",
+                            "down": "0.10",
+                        },
+                        "liquidity_state": "normal",
+                        "uncertainty_band": "low",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertTrue(outcome.microstructure_metadata["state_valid"])
+        self.assertTrue(outcome.advisor_metadata["applied"])
+        self.assertIsNone(outcome.advisor_metadata["fallback_reason"])
+
+    def test_advisor_falls_back_for_malformed_microstructure_signal_alias(
+        self,
+    ) -> None:
+        config.settings.trading_execution_advisor_enabled = True
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "execution_advice": {
+                        "urgency_tier": "normal",
+                        "max_participation_rate": "0.05",
+                        "preferred_order_type": "limit",
+                        "adverse_selection_risk": "0.20",
+                    },
+                    "microstructure_signal": {
+                        "schema_version": "microstructure_signal_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "feature_quality_status": "fail",
+                        "expected_spread_impact_bps": "3.2",
+                        "depth_top5_usd": "1500000",
+                        "direction_probabilities": {
+                            "up": "0.10",
+                            "flat": "0.00",
+                            "down": "0.10",
+                        },
+                        "liquidity_state": "normal",
+                        "uncertainty_band": "low",
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+        self.assertEqual(
+            outcome.microstructure_metadata["fallback_reason"],
+            "microstructure_state_unavailable",
+        )
+        self.assertFalse(outcome.advisor_metadata["applied"])
+        self.assertEqual(
+            outcome.advisor_metadata["fallback_reason"],
+            "advisor_missing_inputs",
+        )
+
     def test_advisor_timeout_falls_back_to_baseline(self) -> None:
         config.settings.trading_execution_advisor_enabled = True
         config.settings.trading_execution_advisor_timeout_ms = 10

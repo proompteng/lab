@@ -5,6 +5,7 @@ import ai.proompteng.dorvud.platform.Window
 import ai.proompteng.dorvud.ta.producer.AvroSerde
 import ai.proompteng.dorvud.ta.stream.AlpacaBarPayload
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
+import ai.proompteng.dorvud.ta.stream.MicrostructureSignalV1
 import ai.proompteng.dorvud.ta.stream.QuotePayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
 import ai.proompteng.dorvud.ta.stream.TaStatusPayload
@@ -12,6 +13,7 @@ import ai.proompteng.dorvud.ta.stream.TradePayload
 import ai.proompteng.dorvud.ta.stream.toMicroBarPayload
 import ai.proompteng.dorvud.ta.stream.withPayload
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner
 import org.apache.flink.api.common.eventtime.WatermarkStrategy
@@ -458,39 +460,7 @@ private fun clickhouseMicrobarSink(config: FlinkTaConfig): JdbcSink<Envelope<Mic
 }
 
 private fun clickhouseSignalSink(config: FlinkTaConfig): JdbcSink<Envelope<TaSignalsPayload>> {
-  val sql =
-    """
-    INSERT INTO ta_signals (
-      symbol,
-      event_ts,
-      seq,
-      ingest_ts,
-      is_final,
-      source,
-      window_size,
-      window_step,
-      window_start,
-      window_end,
-      version,
-      macd,
-      macd_signal,
-      macd_hist,
-      ema12,
-      ema26,
-      rsi14,
-      boll_mid,
-      boll_upper,
-      boll_lower,
-      vwap_session,
-      vwap_w5m,
-      imbalance_spread,
-      imbalance_bid_px,
-      imbalance_ask_px,
-      imbalance_bid_sz,
-      imbalance_ask_sz,
-      vol_realized_w60s
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """.trimIndent()
+  val sql = clickhouseSignalsInsertSql()
 
   return JdbcSink
     .builder<Envelope<TaSignalsPayload>>()
@@ -581,7 +551,48 @@ private fun signalsStatementBuilder(): JdbcStatementBuilder<Envelope<TaSignalsPa
     setNullableLong(statement, 26, payload.imbalance?.bid_sz?.toLong())
     setNullableLong(statement, 27, payload.imbalance?.ask_sz?.toLong())
     setNullableDouble(statement, 28, payload.vol_realized?.w60s)
+    setNullableString(statement, 29, serializeMicrostructureSignalV1(payload.microstructureSignalV1))
   }
+
+internal fun clickhouseSignalsInsertSql(): String =
+  """
+  INSERT INTO ta_signals (
+    symbol,
+    event_ts,
+    seq,
+    ingest_ts,
+    is_final,
+    source,
+    window_size,
+    window_step,
+    window_start,
+    window_end,
+    version,
+    macd,
+    macd_signal,
+    macd_hist,
+    ema12,
+    ema26,
+    rsi14,
+    boll_mid,
+    boll_upper,
+    boll_lower,
+    vwap_session,
+    vwap_w5m,
+    imbalance_spread,
+    imbalance_bid_px,
+    imbalance_ask_px,
+    imbalance_bid_sz,
+    imbalance_ask_sz,
+    vol_realized_w60s,
+    microstructure_signal_v1
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  """.trimIndent()
+
+private val microstructureSignalJson = Json { encodeDefaults = false }
+
+internal fun serializeMicrostructureSignalV1(signal: MicrostructureSignalV1?): String? =
+  signal?.let { microstructureSignalJson.encodeToString(it) }
 
 private fun parseInstant(value: String?): Instant? = value?.let { runCatching { Instant.parse(it) }.getOrNull() }
 
