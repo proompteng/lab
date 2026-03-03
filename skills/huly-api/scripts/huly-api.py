@@ -157,6 +157,31 @@ def parse_headers(raw_headers: list[str]) -> dict[str, str]:
     return headers
 
 
+def build_mission_provenance(
+    *,
+    mission_id: str,
+    stage: str,
+    status: str,
+    swarm_agent_worker_id: str = '',
+    swarm_agent_identity: str = '',
+) -> str:
+    lines: list[str] = []
+    if mission_id:
+        lines.append(f'- missionId: {mission_id}')
+    if stage:
+        lines.append(f'- stage: {stage}')
+    if status:
+        lines.append(f'- status: {status}')
+    if swarm_agent_worker_id:
+        lines.append(f'- swarmAgentWorkerId: {swarm_agent_worker_id}')
+    if swarm_agent_identity:
+        lines.append(f'- swarmAgentIdentity: {swarm_agent_identity}')
+
+    if not lines:
+        return ''
+    return '\n'.join(['### Mission Metadata', *lines])
+
+
 def join_url(base_url: str, path: str) -> str:
     normalized_base = base_url.rstrip('/')
     normalized_path = path if path.startswith('/') else f'/{path}'
@@ -1002,10 +1027,32 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
     stage = args.stage.strip() or 'unknown'
     status = args.status.strip() or 'in-progress'
     details = args.details.strip()
+    swarm_agent_worker_id = (
+        args.swarm_agent_worker_id.strip()
+        or args.worker_id.strip()
+        or env_first('SWARM_AGENT_WORKER_ID')
+        or ''
+    )
+    swarm_agent_identity = (
+        args.swarm_agent_identity.strip()
+        or args.worker_identity.strip()
+        or env_first('SWARM_AGENT_IDENTITY')
+        or ''
+    )
+
+    metadata = build_mission_provenance(
+        mission_id=mission_id,
+        stage=stage,
+        status=status,
+        swarm_agent_worker_id=swarm_agent_worker_id,
+        swarm_agent_identity=swarm_agent_identity,
+    )
 
     issue_body = summary
     if details:
         issue_body = f'{summary}\n\n{details}'
+    if metadata:
+        issue_body = f'{issue_body}\n\n{metadata}'
 
     document_body = (
         f'# {title}\n\n'
@@ -1016,6 +1063,12 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
     )
     if details:
         document_body += f'\n## Details\n{details}\n'
+    if metadata:
+        document_body = f'{document_body}\n\n{metadata}'
+
+    channel_message_with_metadata = channel_message
+    if metadata:
+        channel_message_with_metadata = f'{channel_message}\n\n{metadata}'
 
     issue_result = create_or_update_issue(
         context=context,
@@ -1038,7 +1091,7 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
     channel_result = post_channel_message(
         context=context,
         channel_ref=args.channel,
-        message=channel_message,
+        message=channel_message_with_metadata,
     )
 
     output = {
@@ -1122,6 +1175,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--status', default='', help='Mission status label for upsert-mission')
     parser.add_argument('--issue-status', default=DEFAULT_ISSUE_STATUS, help='Issue status id for task artifacts')
     parser.add_argument('--priority', type=int, default=0, help='Issue priority for task artifacts')
+    parser.add_argument(
+        '--swarm-agent-worker-id',
+        default='',
+        help='Optional worker id metadata for mission provenance',
+    )
+    parser.add_argument(
+        '--swarm-agent-identity',
+        default='',
+        help='Optional worker identity metadata for mission provenance',
+    )
     parser.add_argument('--limit', type=int, default=20, help='Result limit for list-channel-messages')
     parser.add_argument(
         '--expected-actor-id',
