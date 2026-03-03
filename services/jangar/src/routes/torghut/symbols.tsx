@@ -20,7 +20,7 @@ type SymbolItem = {
 }
 
 const EQUITY_SYMBOL_PATTERN = /^[A-Z][A-Z0-9.-]{0,11}$/
-const CRYPTO_SYMBOL_PATTERN = /^[A-Z0-9]{2,15}(?:[-/][A-Z0-9]{2,15})$/
+const CRYPTO_SYMBOL_PATTERN = /^[A-Z]{2,10}(?:[-/](?:USD|USDT|USDC|EUR|GBP|JPY|CAD|AUD|INR|BTC|ETH))$/
 
 const normalizeSymbol = (value: string) => value.trim().toUpperCase()
 
@@ -42,6 +42,7 @@ function TorghutSymbols() {
   const [listStatus, setListStatus] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [pendingDeleteSymbol, setPendingDeleteSymbol] = useState<string | null>(null)
   const symbolInputId = useId()
 
   const enabledCount = useMemo(() => items.filter((item) => item.enabled).length, [items])
@@ -200,6 +201,28 @@ function TorghutSymbols() {
     }
   }
 
+  const deleteSymbol = async (symbol: string) => {
+    setListStatus(null)
+    setPendingDeleteSymbol(symbol)
+    const previous = items
+    setItems((current) => current.filter((item) => item.symbol !== symbol))
+
+    try {
+      const res = await fetch(`/api/torghut/symbols/${encodeURIComponent(symbol)}?assetClass=${assetClass}`, {
+        method: 'DELETE',
+      })
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) throw new Error(payload?.error ?? `Failed to delete ${symbol} (${res.status})`)
+      setListStatus(`Deleted ${symbol}.`)
+    } catch (err: unknown) {
+      setItems(previous)
+      const message = err instanceof Error ? err.message : String(err)
+      setListStatus(message)
+    } finally {
+      setPendingDeleteSymbol(null)
+    }
+  }
+
   return (
     <main className="mx-auto w-full max-w-5xl space-y-6 p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -300,12 +323,13 @@ function TorghutSymbols() {
                 <th className="px-3 py-2 font-medium">Symbol</th>
                 <th className="px-3 py-2 font-medium">Asset</th>
                 <th className="px-3 py-2 font-medium text-right">Enabled</th>
+                <th className="px-3 py-2 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {items.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="px-3 py-6 text-center text-muted-foreground">
+                  <td colSpan={4} className="px-3 py-6 text-center text-muted-foreground">
                     No symbols yet. Add your first symbol to start tracking.
                   </td>
                 </tr>
@@ -324,6 +348,16 @@ function TorghutSymbols() {
                           className="h-6 w-6"
                         />
                       </label>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        className="rounded border border-red-500/40 px-2 py-1 text-xs text-red-200 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={pendingDeleteSymbol === item.symbol}
+                        onClick={() => void deleteSymbol(item.symbol)}
+                      >
+                        {pendingDeleteSymbol === item.symbol ? 'Deleting…' : 'Delete'}
+                      </button>
                     </td>
                   </tr>
                 ))

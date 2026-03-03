@@ -13,7 +13,8 @@ export type TorghutSymbol = {
 }
 
 const EQUITY_SYMBOL_PATTERN = /^[A-Z][A-Z0-9.-]{0,11}$/
-const CRYPTO_SYMBOL_PATTERN = /^[A-Z0-9]{2,15}(?:[-/][A-Z0-9]{2,15})$/
+const CRYPTO_QUOTE_ASSETS = ['USD', 'USDT', 'USDC', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'INR', 'BTC', 'ETH']
+const CRYPTO_SYMBOL_PATTERN = new RegExp(`^[A-Z]{2,10}(?:[-/](?:${CRYPTO_QUOTE_ASSETS.join('|')}))$`)
 
 const ensureSchema = async (db: Db) => {
   await ensureMigrations(db)
@@ -138,4 +139,26 @@ export const setTorghutSymbolEnabled = async ({
       updated_at: sql`now()`,
     })
     .execute()
+}
+
+export const deleteTorghutSymbol = async ({
+  db,
+  symbol,
+  assetClass,
+}: {
+  assetClass?: TorghutAssetClass
+  db: Db
+  symbol: string
+}) => {
+  await ensureSchema(db)
+
+  const normalized = normalizeTorghutSymbol(symbol)
+  let query = db.deleteFrom('torghut_symbols').where('symbol', '=', normalized)
+  if (assetClass) {
+    query = query.where('asset_class', '=', assetClass)
+  }
+
+  const result = await query.executeTakeFirst()
+  if (!result?.numDeletedRows) return 0
+  return typeof result.numDeletedRows === 'bigint' ? Number(result.numDeletedRows) : Number(result.numDeletedRows)
 }
