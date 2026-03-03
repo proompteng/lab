@@ -164,7 +164,7 @@ flags:
     name: Torghut Trading Allow Shorts
     description: Allows short-side trading intents.
     type: BOOLEAN_FLAG_TYPE
-    enabled: false
+    enabled: true
   - key: torghut_trading_fractional_equities_enabled
     name: Torghut Trading Fractional Equities Enabled
     description: Enables fractional equity quantities for long-side orders.
