@@ -75,6 +75,18 @@ data:
       "promotion_benchmark_parity_max_adverse_regime_decision_quality_degradation": "0.01",
       "promotion_benchmark_parity_max_risk_veto_alignment_degradation": "0.01",
       "promotion_benchmark_parity_max_confidence_calibration_error_degradation": "0.01",
+      "promotion_require_contamination_registry": true,
+      "promotion_contamination_required_targets": ["paper", "live"],
+      "promotion_contamination_required_artifacts": [
+        "gates/contamination-leakage-report-v1.json"
+      ],
+      "promotion_contamination_required_checks": [
+        "temporal_ordering",
+        "lineage_complete",
+        "leakage_absent",
+        "embargo_windows_enforced"
+      ],
+      "promotion_contamination_max_leakage_rate": "0.0",
       "promotion_require_stress_evidence": true,
       "promotion_stress_required_targets": ["paper", "live"],
       "promotion_stress_required_artifacts": [

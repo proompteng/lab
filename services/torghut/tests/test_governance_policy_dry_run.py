@@ -55,6 +55,12 @@ def _default_gate_report(now: datetime) -> dict[str, object]:
                 "evidence_complete": True,
                 "reasons": [],
             },
+            "contamination_registry": {
+                "artifact_ref": "gates/contamination-leakage-report-v1.json",
+                "status": "pass",
+                "leakage_detected": False,
+                "leakage_rate": 0.0,
+            },
             "promotion_rationale": {
                 "requested_target": "paper",
                 "gate_recommended_mode": "paper",
@@ -98,6 +104,19 @@ class TestGovernancePolicyDryRun(TestCase):
         self.assertFalse(output["promotion_progression_allowed"])
         reasons = output["promotion_prerequisites"]["reasons"]
         self.assertIn("stress_metrics_evidence_ref_not_trusted", reasons)
+
+    def test_dry_run_blocks_progression_when_contamination_registry_missing(self) -> None:
+        output = self._run_harness("--simulate-contamination-missing")
+        self.assertFalse(output["promotion_progression_allowed"])
+        reasons = output["promotion_prerequisites"]["reasons"]
+        self.assertIn("contamination_registry_artifact_invalid_json", reasons)
+
+    def test_dry_run_blocks_progression_when_contamination_registry_fails(self) -> None:
+        output = self._run_harness("--simulate-contamination-failed")
+        self.assertFalse(output["promotion_progression_allowed"])
+        reasons = output["promotion_prerequisites"]["reasons"]
+        self.assertIn("contamination_registry_status_not_pass", reasons)
+        self.assertIn("contamination_registry_leakage_detected", reasons)
 
     def test_dry_run_allows_progression_when_checks_pass(self) -> None:
         output = self._run_harness()
