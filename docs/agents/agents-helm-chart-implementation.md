@@ -350,8 +350,11 @@ Legacy compatibility: `agents.workflow.*` subjects are still accepted alongside 
 
 Support two modes:
 
-- **Namespaced** (default): Role/RoleBinding in the release namespace. Suitable when `controller.namespaces` is unset or contains only the release namespace.
-- **Cluster‑scoped** (optional): ClusterRole/ClusterRoleBinding when `controller.namespaces` includes multiple namespaces or `"*"`.
+- **Namespaced** (default): Role/RoleBinding in the release namespace. Suitable when each enabled
+  scope list (`controller.namespaces`, `orchestrationController.namespaces`,
+  `supportingController.namespaces`) is unset or contains only one namespace.
+- **Cluster‑scoped** (optional): ClusterRole/ClusterRoleBinding when any enabled scope list includes
+  multiple namespaces or `"*"`.
 
 Design note: Without cluster‑scoped RBAC, multi‑namespace reconciliation will fail.
 

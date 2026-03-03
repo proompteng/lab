@@ -335,6 +335,14 @@ export const buildMarketContextHeadRef = (params: {
   return `${prefix}/${params.domain}-${symbol}-${timestamp}-${entropy}`
 }
 
+export const buildMarketContextIssueNumber = (params: { domain: MarketContextProviderDomain; symbol: string }) => {
+  const digest = createHash('sha256').update(`${params.domain}:${params.symbol}`).digest('hex').slice(0, 10)
+  const parsed = BigInt(`0x${digest}`)
+  // Keep the value numeric and bounded so downstream tooling that expects an issue-like identifier can parse it.
+  const normalized = (parsed % 900_000_000n) + 100_000_000n
+  return String(normalized)
+}
+
 const resolveSettings = () => {
   const callbackBaseUrl =
     process.env.JANGAR_MARKET_CONTEXT_AGENT_CALLBACK_BASE_URL?.trim() || 'http://jangar.jangar.svc.cluster.local'
@@ -386,6 +394,7 @@ const resolveSettings = () => {
       process.env.JANGAR_MARKET_CONTEXT_AGENT_TTL_SECONDS,
       DEFAULT_AGENT_RUN_TTL_SECONDS,
     ),
+    agentIssueNumber: process.env.JANGAR_MARKET_CONTEXT_AGENT_ISSUE_NUMBER?.trim() || '',
     vcsMode,
     vcsRequired: parseBoolean(process.env.JANGAR_MARKET_CONTEXT_AGENT_VCS_REQUIRED, true),
     vcsRefName,
@@ -663,6 +672,8 @@ const dispatchDomainAgentRun = async (params: {
     reason: params.reason,
     callbackUrl: settings.callbackIngestUrl,
     requestId,
+    issueNumber:
+      settings.agentIssueNumber || buildMarketContextIssueNumber({ domain: params.domain, symbol: params.symbol }),
   }
 
   const runSpec: Record<string, unknown> = {

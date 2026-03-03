@@ -45,6 +45,22 @@ def _coerce_horizon(value: str) -> str:
     return cleaned
 
 
+def _coerce_model_family(value: str) -> str:
+    normalized = value.strip().lower().replace('-', '_').replace(' ', '_')
+    aliases = {
+        'timesfm': 'financial_tsfm',
+        'financial_tsfm': 'financial_tsfm',
+        'financialtsfm': 'financial_tsfm',
+        'financial_tsfm_v1': 'financial_tsfm',
+        'financial-tsfm-v1': 'financial_tsfm',
+        'baseline': 'baseline',
+        'deterministic_baseline': 'baseline',
+        'moment': 'moment',
+        'chronos': 'chronos',
+    }
+    return aliases.get(normalized, normalized)
+
+
 @dataclass(frozen=True)
 class ForecastInterval:
     p05: Decimal
@@ -403,7 +419,8 @@ class ForecastCalibrationStore:
         defaults_raw = payload.get('default_calibration_score_by_model_family')
         if isinstance(defaults_raw, dict):
             for family, score in cast(dict[str, Any], defaults_raw).items():
-                defaults[family] = _decimal_or_default(score, Decimal('0.90'))
+                normalized_family = _coerce_model_family(str(family))
+                defaults[normalized_family] = _decimal_or_default(score, Decimal('0.90'))
 
         overrides: dict[str, dict[str, Decimal]] = {}
         overrides_raw = payload.get('route_calibration_scores')
@@ -413,17 +430,20 @@ class ForecastCalibrationStore:
                     continue
                 normalized: dict[str, Decimal] = {}
                 for family, score in cast(dict[str, Any], family_map).items():
-                    normalized[family] = _decimal_or_default(score, Decimal('0.90'))
+                    normalized[_coerce_model_family(str(family))] = _decimal_or_default(
+                        score, Decimal('0.90')
+                    )
                 overrides[route_key] = normalized
 
         return cls(defaults_by_family=defaults, route_overrides=overrides)
 
     def score(self, *, route_key: str, model_family: str) -> Decimal:
+        canonical_model_family = _coerce_model_family(model_family)
         route_map = self.route_overrides.get(route_key, {})
-        if model_family in route_map:
-            return route_map[model_family]
-        if model_family in self.defaults_by_family:
-            return self.defaults_by_family[model_family]
+        if canonical_model_family in route_map:
+            return route_map[canonical_model_family]
+        if canonical_model_family in self.defaults_by_family:
+            return self.defaults_by_family[canonical_model_family]
         return Decimal('0.90')
 
 

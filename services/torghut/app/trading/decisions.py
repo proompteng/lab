@@ -14,12 +14,11 @@ from ..models import Strategy
 from .features import (
     FeatureNormalizationError,
     SignalFeatures,
-    extract_microstructure_features_v1,
     extract_signal_features,
     normalize_feature_vector_v3,
     optional_decimal,
 )
-from .microstructure import MicrostructureStateV5, parse_microstructure_state
+from .microstructure import parse_microstructure_state
 from .forecasting import ForecastRoutingTelemetry, build_default_forecast_router
 from .models import SignalEnvelope, StrategyDecision
 from .regime_hmm import (
@@ -474,8 +473,8 @@ def _has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
         if value is None:
             return False
         if isinstance(value, Mapping):
-            resolved_mapping = cast(dict[str, object], value)
-            return any(_is_explicit_value(v) for v in resolved_mapping.values())
+            typed_mapping = cast(Mapping[Any, Any], value)
+            return any(_is_explicit_value(v) for v in typed_mapping.values())
         if isinstance(value, str):
             return bool(value.strip())
         return True
@@ -540,69 +539,23 @@ def _resolve_microstructure_state_payload(
 ) -> dict[str, Any] | None:
     payload = signal.payload
     raw_state = payload.get("microstructure_state")
-    if raw_state is None:
-        raw_state = payload.get("microstructure_signal")
+    if not isinstance(raw_state, dict):
+        return None
 
-    if isinstance(raw_state, dict):
-        raw = cast(dict[str, Any], raw_state)
-        schema_version = str(raw.get("schema_version") or "").strip().lower()
-        if schema_version == "microstructure_signal_v1":
-            parsed_state = parse_microstructure_state(raw, expected_symbol=signal.symbol)
-            if parsed_state is None:
-                return None
-            return _microstructure_state_payload(parsed_state)
+    state = dict(cast(dict[str, Any], raw_state))
+    state["schema_version"] = "microstructure_state_v1"
+    state["symbol"] = str(state.get("symbol") or signal.symbol).strip().upper()
+    if not state["symbol"]:
+        state["symbol"] = signal.symbol.strip().upper()
+    event_ts = state.get("event_ts")
+    if event_ts is None:
+        state["event_ts"] = signal.event_ts.isoformat()
 
-        state = dict(raw)
-        if state.get("schema_version") == "microstructure_state_v1":
-            state.setdefault("liquidity_regime", state.get("liquidity_state"))
-            state["symbol"] = str(state.get("symbol") or signal.symbol).strip().upper()
-            if not state.get("symbol"):
-                state["symbol"] = signal.symbol.strip().upper()
-            if state.get("event_ts") is None:
-                state["event_ts"] = signal.event_ts.isoformat()
-            return state
+    parsed = parse_microstructure_state(state, expected_symbol=signal.symbol)
+    if parsed is None:
+        return None
 
-        if schema_version:
-            return None
-
-    else:
-        extracted = extract_microstructure_features_v1(signal)
-        state = {
-            "schema_version": extracted.schema_version,
-            "symbol": extracted.symbol,
-            "event_ts": extracted.event_ts.isoformat(),
-            "spread_bps": str(extracted.spread_bps),
-            "depth_top5_usd": str(extracted.depth_top5_usd),
-            "order_flow_imbalance": str(extracted.order_flow_imbalance),
-            "latency_ms_estimate": extracted.latency_ms_estimate,
-            "fill_hazard": str(extracted.fill_hazard),
-            "liquidity_regime": extracted.liquidity_regime,
-        }
-
-    if not state.get("schema_version"):
-        state["schema_version"] = "microstructure_state_v1"
-        state["symbol"] = str(state.get("symbol") or signal.symbol).strip().upper()
-        if not state["symbol"]:
-            state["symbol"] = signal.symbol.strip().upper()
-        event_ts = state.get("event_ts")
-        if event_ts is None:
-            state["event_ts"] = signal.event_ts.isoformat()
-        return state
     return state
-
-
-def _microstructure_state_payload(state: MicrostructureStateV5) -> dict[str, Any]:
-    return {
-        "schema_version": state.schema_version,
-        "symbol": state.symbol,
-        "event_ts": state.event_ts.isoformat(),
-        "spread_bps": str(state.spread_bps),
-        "depth_top5_usd": str(state.depth_top5_usd),
-        "order_flow_imbalance": str(state.order_flow_imbalance),
-        "latency_ms_estimate": state.latency_ms_estimate,
-        "fill_hazard": str(state.fill_hazard),
-        "liquidity_regime": state.liquidity_regime,
-    }
 
 
 def _resolve_execution_advice_payload(signal: SignalEnvelope) -> dict[str, Any] | None:

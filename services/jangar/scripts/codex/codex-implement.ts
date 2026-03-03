@@ -30,12 +30,14 @@ import {
 } from './lib/codex-utils'
 import { ensureFileDirectory } from './lib/fs'
 import { type CodexLogger, consoleLogger, createCodexLogger } from './lib/logger'
+import { runCodexProgressComment } from './codex-progress-comment'
 
 interface ImplementationEventPayload {
   prompt?: string
   systemPrompt?: string | null
   repository?: string
   issueNumber?: number | string
+  objective?: string
   issueTitle?: string | null
   issueBody?: string | null
   issueUrl?: string | null
@@ -49,6 +51,19 @@ interface ImplementationEventPayload {
   iterationCycle?: number | string | null
   iteration_cycle?: number | string | null
   iterations?: number | string | null
+  parameters?: Record<string, string | number | boolean>
+  swarmRequirementId?: string | null
+  swarmRequirementSignal?: string | null
+  swarmRequirementSource?: string | null
+  swarmRequirementTarget?: string | null
+  swarmRequirementChannel?: string | null
+  swarmRequirementDescription?: string | null
+  swarmRequirementPayload?: string | null
+  swarmRequirementPayloadBytes?: string | number | null
+  swarmRequirementPayloadTruncated?: string | boolean | null
+  swarmAgentWorkerId?: string | null
+  swarmAgentIdentity?: string | null
+  swarmAgentRole?: string | null
 }
 
 const readEventPayload = async (path: string): Promise<ImplementationEventPayload> => {
@@ -59,6 +74,321 @@ const readEventPayload = async (path: string): Promise<ImplementationEventPayloa
     throw new Error(
       `Failed to parse event payload at ${path}: ${error instanceof Error ? error.message : String(error)}`,
     )
+  }
+}
+
+type RequirementMetadata = {
+  id?: string
+  signal?: string
+  source?: string
+  target?: string
+  channel?: string
+  description?: string
+  objective?: string
+  payload?: string
+  payloadBytes?: string
+  payloadTruncated?: boolean
+  workerId?: string
+  workerIdentity?: string
+  workerRole?: string
+}
+
+const asStringMap = (value: Record<string, string | number | boolean> | undefined): Record<string, string> => {
+  if (!value) {
+    return {}
+  }
+  const output: Record<string, string> = {}
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (typeof rawValue === 'string') {
+      output[key] = rawValue
+    } else if (typeof rawValue === 'number' || typeof rawValue === 'boolean') {
+      output[key] = String(rawValue)
+    }
+  }
+  return output
+}
+
+const normalizeNullableStringValue = (value: string | null | undefined | number | boolean) => {
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+const parseBool = (value: string | boolean | number | null | undefined) => {
+  if (typeof value === 'boolean') {
+    return value
+  }
+  if (typeof value === 'number') {
+    return value !== 0
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+      return true
+    }
+    if (['0', 'false', 'no', 'off', ''].includes(normalized)) {
+      return false
+    }
+  }
+  return false
+}
+
+const isHulyRequirementChannel = (channel: string | undefined | null) => {
+  if (!channel) {
+    return false
+  }
+  const normalized = channel.trim()
+  const lower = normalized.toLowerCase()
+  if (lower.startsWith('huly://')) {
+    return true
+  }
+  try {
+    const parsed = new URL(normalized)
+    return parsed.protocol.startsWith('http') && parsed.hostname.toLowerCase().includes('huly')
+  } catch {
+    return false
+  }
+}
+
+const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): RequirementMetadata => {
+  const parameters = asStringMap(event.parameters)
+  const resolve = (primary: keyof ImplementationEventPayload, fallback?: string) => {
+    const primaryValue = normalizeNullableStringValue(event[primary] as string | null | undefined | number | boolean)
+    if (primaryValue) {
+      return primaryValue
+    }
+    if (fallback) {
+      const fallbackValue = normalizeNullableStringValue(parameters[fallback])
+      if (fallbackValue) {
+        return fallbackValue
+      }
+    }
+    return undefined
+  }
+
+  const payload = resolve('swarmRequirementPayload', 'swarmRequirementPayload')
+  let payloadObjective: string | undefined
+  if (payload) {
+    try {
+      const parsed = JSON.parse(payload)
+      if (parsed && typeof parsed === 'object' && typeof parsed.objective === 'string') {
+        payloadObjective = parsed.objective.trim()
+      }
+    } catch {
+      // ignore malformed JSON payloads
+    }
+  }
+
+  return {
+    id: resolve('swarmRequirementId', 'swarmRequirementId'),
+    signal: resolve('swarmRequirementSignal', 'swarmRequirementSignal'),
+    source: resolve('swarmRequirementSource', 'swarmRequirementSource'),
+    target: resolve('swarmRequirementTarget', 'swarmRequirementTarget'),
+    channel: resolve('swarmRequirementChannel', 'swarmRequirementChannel'),
+    description: resolve('swarmRequirementDescription', 'swarmRequirementDescription'),
+    workerId: resolve('swarmAgentWorkerId', 'swarmAgentWorkerId'),
+    workerIdentity: resolve('swarmAgentIdentity', 'swarmAgentIdentity'),
+    workerRole: resolve('swarmAgentRole', 'swarmAgentRole'),
+    objective: payloadObjective ?? resolve('objective'),
+    payload,
+    payloadBytes: resolve('swarmRequirementPayloadBytes', 'swarmRequirementPayloadBytes'),
+    payloadTruncated: parseBool(parameters.swarmRequirementPayloadTruncated),
+  }
+}
+
+const prettyRequirementPayload = (payload: string) => {
+  const trimmed = payload.trim()
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2)
+  } catch {
+    return trimmed
+  }
+}
+
+const buildCrossSwarmRequirementScopePrompt = (basePrompt: string, requirement: RequirementMetadata) => {
+  if (!isHulyRequirementChannel(requirement.channel)) {
+    return basePrompt
+  }
+
+  const provenance = [
+    requirement.id ? `Requirement ID: ${requirement.id}` : null,
+    requirement.signal ? `Signal: ${requirement.signal}` : null,
+    requirement.source ? `Source: ${requirement.source}` : null,
+    requirement.target ? `Target: ${requirement.target}` : null,
+    requirement.channel ? `Channel: ${requirement.channel}` : null,
+  ]
+    .filter((value): value is string => value !== null)
+    .join(' | ')
+
+  const lines = [
+    'Cross-swarm implementation requirement (primary scope):',
+    provenance.length > 0 ? provenance : 'Cross-swarm requirement received',
+  ]
+
+  if (requirement.objective) {
+    lines.push(`Objective: ${requirement.objective}`)
+  }
+
+  if (requirement.description) {
+    lines.push(`Description:\n${requirement.description}`)
+  }
+
+  if (requirement.payload) {
+    lines.push(`Payload:\n${prettyRequirementPayload(requirement.payload)}`)
+  }
+
+  if (requirement.workerId || requirement.workerIdentity || requirement.workerRole) {
+    const executorDetails = [
+      requirement.workerId ? `Worker ID: ${requirement.workerId}` : null,
+      requirement.workerIdentity ? `Worker Identity: ${requirement.workerIdentity}` : null,
+      requirement.workerRole ? `Worker Role: ${requirement.workerRole}` : null,
+    ]
+      .filter((entry): entry is string => entry !== null)
+      .join(' | ')
+    if (executorDetails) {
+      lines.push(`Executor: ${executorDetails}`)
+    }
+  }
+
+  if (requirement.description || requirement.payload || requirement.objective) {
+    if (basePrompt.length > 0) {
+      lines.push('Original request context:', basePrompt)
+    }
+  } else {
+    lines.push('Run prompt context:', basePrompt)
+  }
+
+  return lines.join('\n\n')
+}
+
+const isNumericIssueNumber = (value: string) => /^\d+$/.test(value.trim())
+
+const buildProgressComment = ({
+  repository,
+  issueNumber,
+  stage,
+  headBranch,
+  baseBranch,
+  phase,
+  prUrl,
+  lastAssistantMessage,
+  requirementMetadata,
+}: {
+  repository: string
+  issueNumber: string
+  stage: string
+  headBranch: string
+  baseBranch: string
+  phase: 'started' | 'completed' | 'failed'
+  prUrl?: string | null
+  lastAssistantMessage?: string | null
+  requirementMetadata?: RequirementMetadata
+}) => {
+  const lines = [
+    '<!-- codex:progress -->',
+    '## Codex implementation progress',
+    `- Repository: ${repository}`,
+    `- Issue: #${issueNumber}`,
+    `- Stage: ${stage}`,
+    `- Head: ${headBranch}`,
+    `- Base: ${baseBranch}`,
+    `- Phase: ${phase}`,
+    prUrl ? `- PR: ${prUrl}` : '- PR: n/a',
+    `- Updated: ${timestampUtc()}`,
+  ]
+
+  if (isHulyRequirementChannel(requirementMetadata?.channel)) {
+    const provenance = [
+      requirementMetadata?.id ? `- Requirement ID: ${requirementMetadata.id}` : null,
+      requirementMetadata?.signal ? `- Signal: ${requirementMetadata.signal}` : null,
+      requirementMetadata?.source ? `- Source: ${requirementMetadata.source}` : null,
+      requirementMetadata?.target ? `- Target: ${requirementMetadata.target}` : null,
+      requirementMetadata?.channel ? `- Channel: ${requirementMetadata.channel}` : null,
+      requirementMetadata?.objective ? `- Objective: ${requirementMetadata.objective}` : null,
+    ].filter((entry): entry is string => entry !== null)
+
+    if (provenance.length > 0) {
+      lines.push('', '### Cross-swarm requirement')
+      lines.push(...provenance)
+    }
+
+    if (requirementMetadata?.description) {
+      lines.push('', '### Requirement description', requirementMetadata.description)
+    }
+  }
+
+  if (requirementMetadata?.workerId || requirementMetadata?.workerIdentity || requirementMetadata?.workerRole) {
+    lines.push('', '### Swarm executor')
+    if (requirementMetadata?.workerId) {
+      lines.push(`- Worker ID: ${requirementMetadata.workerId}`)
+    }
+    if (requirementMetadata?.workerIdentity) {
+      lines.push(`- Worker Identity: ${requirementMetadata.workerIdentity}`)
+    }
+    if (requirementMetadata?.workerRole) {
+      lines.push(`- Worker Role: ${requirementMetadata.workerRole}`)
+    }
+  }
+
+  if (lastAssistantMessage) {
+    lines.push(
+      '',
+      '### Last assistant message',
+      lastAssistantMessage.length > 1_200 ? `${lastAssistantMessage.slice(0, 1_200)}…` : lastAssistantMessage,
+    )
+  }
+
+  return `${lines.join('\n')}\n`
+}
+
+const postProgressComment = async ({
+  logger,
+  repository,
+  issueNumber,
+  stage,
+  headBranch,
+  baseBranch,
+  phase,
+  prUrl,
+  lastAssistantMessage,
+  requirementMetadata,
+}: {
+  logger: CodexLogger
+  repository: string
+  issueNumber: string
+  stage: string
+  headBranch: string
+  baseBranch: string
+  phase: 'started' | 'completed' | 'failed'
+  prUrl?: string | null
+  lastAssistantMessage?: string | null
+  requirementMetadata?: RequirementMetadata
+}) => {
+  if (!isNumericIssueNumber(issueNumber)) {
+    return
+  }
+
+  try {
+    await runCodexProgressComment({
+      body: buildProgressComment({
+        repository,
+        issueNumber,
+        stage,
+        headBranch,
+        baseBranch,
+        phase,
+        prUrl,
+        lastAssistantMessage,
+        requirementMetadata,
+      }),
+    })
+  } catch (error) {
+    logger.warn('Failed to publish Codex progress comment', error)
   }
 }
 
@@ -162,6 +492,32 @@ type CodexNotifyPayload = {
   output_paths: Record<string, string>
   log_excerpt?: CodexNotifyLogExcerpt
   issued_at: string
+  cross_swarm_requirement?: boolean
+  swarm_requirement?: {
+    id?: string
+    signal?: string
+    source?: string
+    target?: string
+    channel?: string
+    description?: string
+    objective?: string
+    payload?: string
+    payloadBytes?: string
+    payloadTruncated?: boolean
+  }
+  swarmRequirementId?: string | null
+  swarmRequirementSignal?: string | null
+  swarmRequirementSource?: string | null
+  swarmRequirementTarget?: string | null
+  swarmRequirementChannel?: string | null
+  swarmRequirementDescription?: string | null
+  swarmRequirementObjective?: string | null
+  swarmRequirementPayload?: string | null
+  swarmRequirementPayloadBytes?: string | null
+  swarmRequirementPayloadTruncated?: boolean | null
+  swarmAgentWorkerId?: string | null
+  swarmAgentIdentity?: string | null
+  swarmAgentRole?: string | null
 }
 
 const MAX_NOTIFY_LOG_CHARS = 12_000
@@ -302,6 +658,7 @@ const buildNotifyPayload = ({
   iteration,
   iterationCycle,
   iterations,
+  requirementMetadata,
 }: {
   repository: string
   issueNumber: string
@@ -334,6 +691,7 @@ const buildNotifyPayload = ({
   iteration?: number | null
   iterationCycle?: number | null
   iterations?: number | null
+  requirementMetadata?: RequirementMetadata
 }): CodexNotifyPayload => {
   return {
     type: 'agent-turn-complete',
@@ -383,6 +741,32 @@ const buildNotifyPayload = ({
     },
     log_excerpt: logExcerpt,
     issued_at: new Date().toISOString(),
+    cross_swarm_requirement: isHulyRequirementChannel(requirementMetadata?.channel),
+    swarm_requirement: {
+      id: requirementMetadata?.id,
+      signal: requirementMetadata?.signal,
+      source: requirementMetadata?.source,
+      target: requirementMetadata?.target,
+      channel: requirementMetadata?.channel,
+      description: requirementMetadata?.description,
+      objective: requirementMetadata?.objective,
+      payload: requirementMetadata?.payload,
+      payloadBytes: requirementMetadata?.payloadBytes,
+      payloadTruncated: requirementMetadata?.payloadTruncated,
+    },
+    swarmRequirementId: requirementMetadata?.id ?? null,
+    swarmRequirementSignal: requirementMetadata?.signal ?? null,
+    swarmRequirementSource: requirementMetadata?.source ?? null,
+    swarmRequirementTarget: requirementMetadata?.target ?? null,
+    swarmRequirementChannel: requirementMetadata?.channel ?? null,
+    swarmRequirementDescription: requirementMetadata?.description ?? null,
+    swarmRequirementObjective: requirementMetadata?.objective ?? null,
+    swarmRequirementPayload: requirementMetadata?.payload ?? null,
+    swarmRequirementPayloadBytes: requirementMetadata?.payloadBytes ?? null,
+    swarmRequirementPayloadTruncated: requirementMetadata?.payloadTruncated ?? null,
+    swarmAgentWorkerId: requirementMetadata?.workerId ?? null,
+    swarmAgentIdentity: requirementMetadata?.workerIdentity ?? null,
+    swarmAgentRole: requirementMetadata?.workerRole ?? null,
   }
 }
 
@@ -766,6 +1150,55 @@ const publishNatsEvent = async (
   } catch (error) {
     logger.warn('Failed to publish NATS event', error)
   }
+}
+
+const enrichRunNatsAttrs = (
+  attrs: Record<string, unknown>,
+  requirementMetadata?: RequirementMetadata,
+): Record<string, unknown> => {
+  if (!requirementMetadata) {
+    return attrs
+  }
+  if (requirementMetadata.workerId) {
+    attrs.swarmAgentWorkerId = requirementMetadata.workerId
+  }
+  if (requirementMetadata.workerIdentity) {
+    attrs.swarmAgentIdentity = requirementMetadata.workerIdentity
+  }
+  if (requirementMetadata.workerRole) {
+    attrs.swarmAgentRole = requirementMetadata.workerRole
+  }
+  if (requirementMetadata.id) {
+    attrs.swarmRequirementId = requirementMetadata.id
+  }
+  if (requirementMetadata.signal) {
+    attrs.swarmRequirementSignal = requirementMetadata.signal
+  }
+  if (requirementMetadata.source) {
+    attrs.swarmRequirementSource = requirementMetadata.source
+  }
+  if (requirementMetadata.target) {
+    attrs.swarmRequirementTarget = requirementMetadata.target
+  }
+  if (requirementMetadata.channel) {
+    attrs.swarmRequirementChannel = requirementMetadata.channel
+  }
+  if (requirementMetadata.description) {
+    attrs.swarmRequirementDescription = requirementMetadata.description
+  }
+  if (requirementMetadata.objective) {
+    attrs.swarmRequirementObjective = requirementMetadata.objective
+  }
+  if (requirementMetadata.payload) {
+    attrs.swarmRequirementPayload = requirementMetadata.payload
+  }
+  if (requirementMetadata.payloadBytes) {
+    attrs.swarmRequirementPayloadBytes = requirementMetadata.payloadBytes
+  }
+  if (typeof requirementMetadata.payloadTruncated === 'boolean') {
+    attrs.swarmRequirementPayloadTruncated = requirementMetadata.payloadTruncated
+  }
+  return attrs
 }
 
 interface CaptureImplementationArtifactsOptions {
@@ -1344,8 +1777,9 @@ export const runCodexImplementation = async (eventPath: string) => {
   }
 
   const event = await readEventPayload(eventPath)
+  const requirementMetadata = extractSwarmRequirementMetadata(event)
 
-  let prompt = event.prompt?.trim() ?? ''
+  let prompt = buildCrossSwarmRequirementScopePrompt(event.prompt?.trim() ?? '', requirementMetadata)
 
   const repository = event.repository?.trim()
   if (!repository) {
@@ -1526,6 +1960,16 @@ export const runCodexImplementation = async (eventPath: string) => {
       run_id: channelRunId || undefined,
     },
   })
+  await postProgressComment({
+    logger,
+    repository,
+    issueNumber,
+    stage,
+    headBranch,
+    baseBranch,
+    phase: 'started',
+    requirementMetadata,
+  })
 
   const systemPromptPath = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_PATH))
   const payloadSystemPrompt = normalizeOptionalString(sanitizeNullableString(event.systemPrompt))
@@ -1613,7 +2057,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   await ensureEmptyFile(runtimeLogPath)
 
   if (process.env.CODEX_SKIP_RUN_STARTED !== '1') {
-    const attrs: Record<string, unknown> = { stage, iteration, iterationCycle }
+    const attrs = enrichRunNatsAttrs({ stage, iteration, iterationCycle }, requirementMetadata)
     if (systemPromptHash) {
       attrs.systemPromptHash = systemPromptHash
     }
@@ -1630,6 +2074,8 @@ export const runCodexImplementation = async (eventPath: string) => {
   let resumeSessionId: string | undefined
   let capturedSessionId: string | undefined
   let runSucceeded = false
+  let lastAssistantMessage: string | null = null
+  let prUrl: string | null = null
 
   try {
     if (supportsResume) {
@@ -1695,7 +2141,6 @@ export const runCodexImplementation = async (eventPath: string) => {
 
     const maxSessionAttempts = parsePositiveIntEnv(process.env.CODEX_MAX_SESSION_ATTEMPTS, 3)
     let sessionResult: RunCodexSessionResult = { agentMessages: [], sessionId: undefined, exitCode: 0 }
-    let lastAssistantMessage: string | null = null
     const runSession = async (sessionPrompt: string) => {
       return await runCodexSession({
         stage: stage as Parameters<typeof runCodexSession>[0]['stage'],
@@ -1802,7 +2247,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     const prNumberRaw = await readOptionalTextFile(prNumberPath, logger)
     const prUrlRaw = await readOptionalTextFile(prUrlPath, logger)
     const prNumber = prNumberRaw ? parseOptionalPrNumber(prNumberRaw) : null
-    const prUrl = prUrlRaw ? prUrlRaw : null
+    prUrl = prUrlRaw ? prUrlRaw : null
     const headSha = commitSha ?? null
     try {
       await ensureFileDirectory(headShaPath)
@@ -1852,6 +2297,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       iteration,
       iterationCycle,
       iterations,
+      requirementMetadata,
     })
     try {
       await ensureFileDirectory(notifyPath)
@@ -1879,43 +2325,64 @@ export const runCodexImplementation = async (eventPath: string) => {
     await publishNatsEvent(logger, {
       kind: 'run-summary',
       content: summary ?? `${stage} run completed`,
-      attrs: {
-        stage,
-        decision,
-        prUrl,
-        ciUrl: null,
-        iteration,
-        iterationCycle,
-      },
+      attrs: enrichRunNatsAttrs(
+        {
+          stage,
+          decision,
+          prUrl,
+          ciUrl: null,
+          iteration,
+          iterationCycle,
+        },
+        requirementMetadata,
+      ),
     })
     await publishNatsEvent(logger, {
       kind: 'run-gaps',
       content: gaps.length > 0 ? gaps.join('; ') : 'None',
-      attrs: {
-        stage,
-        missingItems: gaps,
-        suggestedFixes: gaps.length > 0 ? gaps : [],
-        iteration,
-        iterationCycle,
-      },
+      attrs: enrichRunNatsAttrs(
+        {
+          stage,
+          missingItems: gaps,
+          suggestedFixes: gaps.length > 0 ? gaps : [],
+          iteration,
+          iterationCycle,
+        },
+        requirementMetadata,
+      ),
     })
     await publishNatsEvent(logger, {
       kind: 'run-next-prompt',
       content: nextPrompt ?? 'None',
-      attrs: { stage, decision, iteration, iterationCycle },
+      attrs: enrichRunNatsAttrs({ stage, decision, iteration, iterationCycle }, requirementMetadata),
     })
     await publishNatsEvent(logger, {
       kind: 'run-outcome',
       content: `${stage} completed`,
-      attrs: {
-        stage,
-        decision,
-        prUrl,
-        ciUrl: null,
-        tests,
-        iteration,
-        iterationCycle,
-      },
+      attrs: enrichRunNatsAttrs(
+        {
+          stage,
+          decision,
+          prUrl,
+          ciUrl: null,
+          tests,
+          iteration,
+          iterationCycle,
+        },
+        requirementMetadata,
+      ),
+    })
+    await postProgressComment({
+      logger,
+      repository,
+      issueNumber,
+      stage,
+      headBranch,
+      baseBranch,
+      phase: 'completed',
+      prUrl,
+      lastAssistantMessage,
+      requirementMetadata,
     })
 
     runSucceeded = true
@@ -1932,15 +2399,30 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
   } finally {
     if (!runSucceeded) {
+      await postProgressComment({
+        logger,
+        repository,
+        issueNumber,
+        stage,
+        headBranch,
+        baseBranch,
+        phase: 'failed',
+        prUrl,
+        lastAssistantMessage,
+        requirementMetadata,
+      })
       await publishNatsEvent(logger, {
         kind: 'run-gaps',
         content: 'Run failed before emitting gaps; inspect logs and artifacts.',
-        attrs: { stage, missingItems: ['unknown_failure'], suggestedFixes: [], iteration, iterationCycle },
+        attrs: enrichRunNatsAttrs(
+          { stage, missingItems: ['unknown_failure'], suggestedFixes: [], iteration, iterationCycle },
+          requirementMetadata,
+        ),
       })
       await publishNatsEvent(logger, {
         kind: 'run-outcome',
         content: `${stage} failed`,
-        attrs: { stage, decision: 'fail', iteration, iterationCycle },
+        attrs: enrichRunNatsAttrs({ stage, decision: 'fail', iteration, iterationCycle }, requirementMetadata),
       })
     }
     await ensureNotifyPlaceholder(notifyPath, logger)

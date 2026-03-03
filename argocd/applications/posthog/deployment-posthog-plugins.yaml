@@ -7,6 +7,7 @@ metadata:
     "app.kubernetes.io/name": "posthog"
     "app.kubernetes.io/instance": "posthog"
   annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   selector:
     matchLabels:
@@ -14,6 +15,11 @@ spec:
         release: "posthog"
         role: plugins
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 100%
+      maxSurge: 0
   template:
     metadata:
       annotations:
@@ -23,14 +29,16 @@ spec:
         release: "posthog"
         role: plugins
     spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
       serviceAccountName: posthog
       containers:
       - name: posthog-plugins
-        image: "posthog/posthog:release-1.43.1"
+        image: "posthog/posthog-node:bf60774b71961a8674ca24ed1bd42bed4d670f72"
         imagePullPolicy: IfNotPresent
         command:
-          - ./bin/plugin-server
-          - --no-restart-loop
+          - node
+          - nodejs/dist/index.js
         ports:
         # Expose the port on which the healtchheck endpoint listens
         - containerPort: 6738
@@ -39,6 +47,18 @@ spec:
         
         # Used by PostHog/plugin-server. There is no specific reason for the difference. Expected format: comma-separated list of "host:port"
         - name: KAFKA_HOSTS
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+        - name: KAFKA_PRODUCER_METADATA_BROKER_LIST
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+        - name: KAFKA_CONSUMER_METADATA_BROKER_LIST
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+        - name: KAFKA_CDP_PRODUCER_METADATA_BROKER_LIST
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+        - name: KAFKA_WARPSTREAM_PRODUCER_METADATA_BROKER_LIST
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+        - name: KAFKA_METRICS_PRODUCER_METADATA_BROKER_LIST
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+        - name: KAFKA_WAREHOUSE_PRODUCER_METADATA_BROKER_LIST
           value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
         # Used by PostHog/web. There is no specific reason for the difference. Expected format: comma-separated list of "kafka://host:port"
         - name: KAFKA_URL
@@ -57,21 +77,48 @@ spec:
         
         - name: POSTHOG_REDIS_PORT
           value: "6379"
+        - name: REDIS_URL
+          value: "redis://posthog-redis.posthog.svc.cluster.local:6379/"
+        - name: CDP_REDIS_HOST
+          value: posthog-redis.posthog.svc.cluster.local
+        - name: CDP_REDIS_PORT
+          value: "6379"
+        - name: LOGS_REDIS_HOST
+          value: posthog-redis.posthog.svc.cluster.local
+        - name: LOGS_REDIS_PORT
+          value: "6379"
+        - name: LOGS_REDIS_TLS
+          value: "false"
+        - name: COOKIELESS_REDIS_HOST
+          value: posthog-redis.posthog.svc.cluster.local
+        - name: COOKIELESS_REDIS_PORT
+          value: "6379"
+        - name: SESSION_RECORDING_API_REDIS_HOST
+          value: posthog-redis.posthog.svc.cluster.local
+        - name: SESSION_RECORDING_API_REDIS_PORT
+          value: "6379"
 
         # statsd env variables
         
 
         - name: SITE_URL
-          value: "http://127.0.0.1:8000"
+          value: "https://posthog.proompteng.ai"
         - name: SENTRY_DSN
           value: 
         - name: DEPLOYMENT
-          value: self_managed        
+          value: self_managed
+        - name: PLUGIN_SERVER_MODE
+          value: ingestion-v2
         - name: SECRET_KEY
           valueFrom:
             secretKeyRef:
               name: posthog
               key: posthog-secret
+        - name: ENCRYPTION_SALT_KEYS
+          valueFrom:
+            secretKeyRef:
+              name: posthog
+              key: encryption-salt-keys
         
         - name: POSTHOG_POSTGRES_HOST
           value: posthog-db-pooler
@@ -85,9 +132,11 @@ spec:
           valueFrom:
             secretKeyRef:
               name: "posthog-db-app"
-              key: "postgresql-password"
+              key: "password"
         - name: USING_PGBOUNCER
           value: 'true'
+        - name: SKIP_SERVICE_VERSION_REQUIREMENTS
+          value: '1'
         - name: CLICKHOUSE_HOST
           value: "posthog-clickhouse.posthog.svc.cluster.local"
         - name: CLICKHOUSE_CLUSTER
@@ -131,45 +180,51 @@ spec:
             {}
       initContainers:        
         - name: wait-for-service-dependencies
-          image: ghcr.io/cloudnative-pg/postgresql:17.0
+          image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
           env:
+            - name: POSTHOG_POSTGRES_HOST
+              value: posthog-db-pooler
+            - name: POSTHOG_POSTGRES_PORT
+              value: "5432"
             - name: CLICKHOUSE_HOST
               value: "posthog-clickhouse.posthog.svc.cluster.local"
-            - name: CLICKHOUSE_CLUSTER
-              value: "default"
-            - name: CLICKHOUSE_DATABASE
-              value: "default"
-            - name: CLICKHOUSE_USER
-              value: "posthog"
-            - name: CLICKHOUSE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: "posthog-clickhouse-auth"
-                  key: "password"
-            - name: CLICKHOUSE_SECURE
-              value: "false"
-            - name: CLICKHOUSE_VERIFY
-              value: "false"
+            - name: CLICKHOUSE_PORT
+              value: "8123"
           command:
             - /bin/sh
             - -c
-            - >
-                until pg_isready -q -h "posthog-db-pooler.$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).svc.cluster.local" -p 5432;
+            - |
+                until python -c 'import os, socket, sys; s=socket.socket(); s.settimeout(2); c=s.connect_ex((os.environ["POSTHOG_POSTGRES_HOST"], int(os.environ["POSTHOG_POSTGRES_PORT"]))); s.close(); sys.exit(c)';
                 do
                   echo "waiting for Postgres pooler";
+                  sleep 1;
+                done
+                until python -c 'import os, socket, sys; s=socket.socket(); s.settimeout(2); c=s.connect_ex((os.environ["CLICKHOUSE_HOST"], int(os.environ["CLICKHOUSE_PORT"]))); s.close(); sys.exit(c)';
+                do
+                  echo "waiting for ClickHouse";
                   sleep 1;
                 done
         
                         
         - name: wait-for-migrations
-          image: "posthog/posthog:release-1.43.1"
+          image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
           command:
             - /bin/sh
             - -c
-            - >
+            - |
+                until python -c 'import os, socket, sys; s=socket.socket(); s.settimeout(2); c=s.connect_ex((os.environ["CLICKHOUSE_HOST"], 8123)); s.close(); sys.exit(c)';
+                do
+                    echo "Waiting for clickhouse service readiness"; sleep 1;
+                done
+
                 until (python manage.py migrate --check);
                 do
                     echo "Waiting for database migrations to be completed"; sleep 1;
+                done
+
+                until (python manage.py migrate_clickhouse --check);
+                do
+                    echo "Waiting for clickhouse migrations to be completed"; sleep 1;
                 done
           env:
         
@@ -187,9 +242,11 @@ spec:
             valueFrom:
               secretKeyRef:
                 name: "posthog-db-app"
-                key: "postgresql-password"
+                key: "password"
           - name: USING_PGBOUNCER
             value: 'true'
+          - name: SKIP_SERVICE_VERSION_REQUIREMENTS
+            value: '1'
         
           # Redis env variables  
           

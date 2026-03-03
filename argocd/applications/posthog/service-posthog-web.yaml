@@ -5,7 +5,6 @@ metadata:
   labels:
     "app.kubernetes.io/name": "posthog"
     "app.kubernetes.io/instance": "posthog"
-  annotations:
 spec:
   type: ClusterIP
   ports:

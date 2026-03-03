@@ -305,6 +305,21 @@ spec:
                   type: integer
                 queuedNeeds:
                   type: integer
+                requirements:
+                  type: object
+                  properties:
+                    pending:
+                      type: integer
+                    dispatched:
+                      type: integer
+                    blocked:
+                      type: integer
+                    completed:
+                      type: integer
+                    invalidChannel:
+                      type: integer
+                    error:
+                      type: string
                 discoveries24h:
                   type: integer
                 missions24h:

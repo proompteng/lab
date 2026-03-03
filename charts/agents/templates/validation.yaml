@@ -1,28 +1,481 @@
 {{- $errors := list -}}
 {{- $clusterScoped := .Values.rbac.clusterScoped | default false -}}
-{{- $controllerNamespaces := .Values.controller.namespaces | default (list) -}}
-{{- $orchestrationNamespaces := .Values.orchestrationController.namespaces | default (list) -}}
-{{- $supportingNamespaces := .Values.supportingController.namespaces | default (list) -}}
+{{- $namespaceOverride := .Values.namespaceOverride | default "" -}}
+{{- if hasKey .Values "namespaceOverride" -}}
+{{- if not (kindIs "string" $namespaceOverride) -}}
+{{- $errors = append $errors "namespaceOverride is set but is not a string." -}}
+{{- else if eq (trim $namespaceOverride) "" -}}
+{{- $errors = append $errors "namespaceOverride is set but empty; set it to a valid Kubernetes namespace name or remove the key." -}}
+{{- else -}}
+{{- $cleanedNamespaceOverride := trim $namespaceOverride -}}
+{{- if ne $cleanedNamespaceOverride $namespaceOverride -}}
+{{- $errors = append $errors (printf "namespaceOverride has leading or trailing whitespace; use %q instead." $cleanedNamespaceOverride) -}}
+{{- else if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" $cleanedNamespaceOverride) -}}
+{{- $errors = append $errors (printf "namespaceOverride=%q is not a valid Kubernetes namespace token." $cleanedNamespaceOverride) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $defaultNamespace := .Values.namespaceOverride | default .Release.Namespace -}}
 
-{{- if and (gt (len $controllerNamespaces) 1) (not $clusterScoped) -}}
-{{- $errors = append $errors "rbac.clusterScoped must be true when controller.namespaces has multiple entries." -}}
+{{- $globalEnvVars := .Values.env.vars | default dict -}}
+{{- $controlPlaneExplicitEnvVars := .Values.controlPlane.env.vars | default dict -}}
+{{- $controllersExplicitEnvVars := .Values.controllers.env.vars | default dict -}}
+{{- $controlPlaneEnvVars := merge (deepCopy $globalEnvVars) (deepCopy $controlPlaneExplicitEnvVars) -}}
+{{- $controllersEnvVars := merge (deepCopy $globalEnvVars) (deepCopy $controllersExplicitEnvVars) -}}
+{{- $controllersEnabled := .Values.controllers.enabled | default false -}}
+{{- $envFromSecretRefs := .Values.envFromSecretRefs | default (list) -}}
+{{- $envFromConfigMapRefs := .Values.envFromConfigMapRefs | default (list) -}}
+{{- $reservedEnvKeysEnforced := .Values.validation.reservedEnvKeysEnforced | default false -}}
+{{- $reservedEnvKeys := list
+  "JANGAR_GRPC_ENABLED"
+  "JANGAR_GRPC_HOST"
+  "JANGAR_GRPC_PORT"
+  "JANGAR_MIGRATIONS"
+  "JANGAR_CONTROL_PLANE_CACHE_ENABLED"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS"
+  "JANGAR_AGENTRUN_ARTIFACTS_MAX"
+  "JANGAR_AGENTRUN_ARTIFACTS_STRICT"
+}}
+{{- $controlPlaneReservedEnvKeys := list
+  "JANGAR_GRPC_ENABLED"
+  "JANGAR_GRPC_HOST"
+  "JANGAR_GRPC_PORT"
+  "JANGAR_MIGRATIONS"
+}}
+{{- $controllersReservedEnvKeys := list
+  "JANGAR_GRPC_ENABLED"
+  "JANGAR_GRPC_HOST"
+  "JANGAR_GRPC_PORT"
+  "JANGAR_MIGRATIONS"
+  "JANGAR_CONTROL_PLANE_CACHE_ENABLED"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS"
+  "JANGAR_AGENTRUN_ARTIFACTS_MAX"
+  "JANGAR_AGENTRUN_ARTIFACTS_STRICT"
+}}
+{{- $grpcManagedByChart := true -}}
+{{- if hasKey .Values "grpc" -}}
+{{- if hasKey .Values.grpc "manageEnvVar" -}}
+{{- $grpcManagedByChart = .Values.grpc.manageEnvVar -}}
 {{- end -}}
-{{- if and (has "*" $controllerNamespaces) (not $clusterScoped) -}}
-{{- $errors = append $errors "rbac.clusterScoped must be true when controller.namespaces includes '*' (wildcard)." -}}
+{{- end -}}
+{{- $expectedGrpcEnabled := ternary "true" "false" .Values.grpc.enabled -}}
+{{- $expectedGrpcHost := "0.0.0.0" -}}
+{{- $expectedGrpcPort := toString .Values.grpc.port -}}
+{{- $grpcManagedKeys := list
+  "JANGAR_GRPC_ENABLED"
+  "JANGAR_GRPC_HOST"
+  "JANGAR_GRPC_PORT"
+}}
+{{- $namespaceTokenPattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" -}}
+{{- $controlPlaneGrpcExpectedValues := dict
+  "JANGAR_GRPC_ENABLED" $expectedGrpcEnabled
+  "JANGAR_GRPC_HOST" $expectedGrpcHost
+  "JANGAR_GRPC_PORT" $expectedGrpcPort
+}}
+{{- $controllersGrpcExpectedValues := dict
+  "JANGAR_GRPC_ENABLED" "0"
+  "JANGAR_GRPC_HOST" "0.0.0.0"
+  "JANGAR_GRPC_PORT" $expectedGrpcPort
+}}
+{{- $controllersReservedEnvDefaults := dict
+  "JANGAR_MIGRATIONS" "skip"
+  "JANGAR_GRPC_ENABLED" "0"
+  "JANGAR_GRPC_HOST" "0.0.0.0"
+  "JANGAR_GRPC_PORT" $expectedGrpcPort
+  "JANGAR_CONTROL_PLANE_CACHE_ENABLED" "0"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED" "true"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS" "30"
+  "JANGAR_AGENTRUN_ARTIFACTS_MAX" (toString (.Values.controller.agentRunArtifacts.max | default 50))
+  "JANGAR_AGENTRUN_ARTIFACTS_STRICT" (toString (.Values.controller.agentRunArtifacts.strict | default false))
+}}
+
+{{- $controlPlaneResolvedEnvVars := deepCopy $controlPlaneEnvVars -}}
+{{- if $grpcManagedByChart }}
+{{- range $grpcEnvKey, $grpcEnvValue := $controlPlaneGrpcExpectedValues }}
+{{- $_ := set $controlPlaneResolvedEnvVars $grpcEnvKey $grpcEnvValue -}}
+{{- end }}
 {{- end -}}
 
-{{- if and (gt (len $orchestrationNamespaces) 1) (not $clusterScoped) -}}
-{{- $errors = append $errors "rbac.clusterScoped must be true when orchestrationController.namespaces has multiple entries." -}}
+{{- $controllersSharedReservedEnvKeys := keys $controllersReservedEnvDefaults -}}
+{{- $controllersSharedEnvVars := deepCopy $globalEnvVars -}}
+{{- range $reservedKey := $controllersSharedReservedEnvKeys }}
+{{- $_ := unset $controllersSharedEnvVars $reservedKey -}}
+{{- end }}
+{{- $controllersResolvedEnvVars := merge (deepCopy $controllersSharedEnvVars) (deepCopy $controllersExplicitEnvVars) -}}
+{{- if $controllersEnabled }}
+{{- range $envVarName, $envVarValue := $controllersReservedEnvDefaults }}
+{{- if not (hasKey $controllersResolvedEnvVars $envVarName) }}
+{{- $_ := set $controllersResolvedEnvVars $envVarName $envVarValue -}}
 {{- end -}}
-{{- if and (has "*" $orchestrationNamespaces) (not $clusterScoped) -}}
-{{- $errors = append $errors "rbac.clusterScoped must be true when orchestrationController.namespaces includes '*' (wildcard)." -}}
+{{- end }}
+{{- end }}
+
+{{- $validationInputs := list
+  (dict
+    "label" "controller"
+    "namespaces" (.Values.controller.namespaces | default (list))
+    "explicit" (and (hasKey .Values "controller") (hasKey .Values.controller "namespaces"))
+  )
+  (dict
+    "label" "orchestrationController"
+    "namespaces" (.Values.orchestrationController.namespaces | default (list))
+    "explicit" (and (hasKey .Values "orchestrationController") (hasKey .Values.orchestrationController "namespaces"))
+  )
+  (dict
+    "label" "supportingController"
+    "namespaces" (.Values.supportingController.namespaces | default (list))
+    "explicit" (and (hasKey .Values "supportingController") (hasKey .Values.supportingController "namespaces"))
+  )
+}}
+
+{{- range $scope := $validationInputs }}
+  {{- $label := $scope.label -}}
+  {{- $namespaces := $scope.namespaces -}}
+  {{- $explicit := $scope.explicit -}}
+  {{- $normalized := list -}}
+  {{- $seen := dict -}}
+  {{- $hasWildcard := false -}}
+
+  {{- if and $explicit (not (kindIs "slice" $namespaces)) }}
+    {{- $errors = append $errors (printf "%s.namespaces must be an array (for example, [\"agents\"] or [\"*\"])." $label) }}
+  {{- else if and $explicit (eq (len $namespaces) 0) }}
+    {{- $errors = append $errors (printf "%s.namespaces is set but empty; remove the key to use the release namespace or provide one namespace, a multi-namespace list, or ['*']." $label) }}
+  {{- else if $explicit }}
+    {{- range $namespace := $namespaces }}
+      {{- if not (kindIs "string" $namespace) }}
+        {{- $errors = append $errors (printf "%s.namespaces entry for %q must be a string; found %v." $label $namespace $namespace) }}
+      {{- else if eq (trim $namespace) "" }}
+        {{- $errors = append $errors (printf "%s.namespaces entry %q must not be empty or whitespace." $label $namespace) }}
+      {{- else }}
+        {{- $cleaned := trim $namespace }}
+        {{- if ne $cleaned $namespace }}
+          {{- $errors = append $errors (printf "%s.namespaces entry %q has leading or trailing whitespace; use %q instead." $label $namespace $cleaned) }}
+        {{- end }}
+
+        {{- if and (contains "*" $cleaned) (ne $cleaned "*") }}
+          {{- $errors = append $errors (printf "%s.namespaces entry %q is invalid; entries must be a single '*' or a Kubernetes namespace token." $label $cleaned) }}
+        {{- else if and (ne $cleaned "*") (not (regexMatch $namespaceTokenPattern $cleaned)) -}}
+          {{- $errors = append $errors (printf "%s.namespaces entry %q is not a valid Kubernetes namespace token." $label $cleaned) }}
+        {{- else if hasKey $seen $cleaned -}}
+          {{- $errors = append $errors (printf "%s.namespaces contains duplicate namespace %q; remove duplicates." $label $cleaned) }}
+        {{- else }}
+          {{- $_ := set $seen $cleaned true }}
+          {{- $normalized = append $normalized $cleaned }}
+          {{- if eq $cleaned "*" -}}
+            {{- $hasWildcard = true -}}
+          {{- end -}}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+{{- if gt (len $normalized) 1 }}
+    {{- if $hasWildcard }}
+        {{- $errors = append $errors (printf "%s.namespaces uses wildcard '*' with specific namespaces. Use ['*'] only, then set rbac.clusterScoped=true." $label) }}
+      {{- else if not $clusterScoped }}
+        {{- $errors = append $errors (printf "%s.namespaces has %d entries; set rbac.clusterScoped=true for multi-namespace scope." $label (len $normalized)) }}
+      {{- end }}
+    {{- end }}
+
+    {{- if and $hasWildcard (not $clusterScoped) (eq (len $normalized) 1) }}
+      {{- $errors = append $errors (printf "rbac.clusterScoped must be true when %s.namespaces includes '*'." $label) -}}
+    {{- end }}
+
+    {{- if and (not $hasWildcard) (not $clusterScoped) (eq (len $normalized) 1) }}
+      {{- $scopeNamespace := index $normalized 0 -}}
+      {{- if ne $scopeNamespace $defaultNamespace -}}
+        {{- $errors = append $errors (printf "%s.namespaces is set to %q but rbac.clusterScoped=false can scope to only namespace %q; set rbac.clusterScoped=true for cross-namespace scope or align this list." $label $scopeNamespace $defaultNamespace) -}}
+      {{- end -}}
+    {{- end }}
+  {{- end }}
+{{- end }}
+
+{{- if $grpcManagedByChart }}
+{{- $grpcControlPlaneGrpcConflictValues := list "JANGAR_GRPC_ENABLED" "JANGAR_GRPC_HOST" "JANGAR_GRPC_PORT" -}}
+{{- range $grpcEnvKey := $grpcControlPlaneGrpcConflictValues }}
+{{- if and (hasKey $controlPlaneExplicitEnvVars $grpcEnvKey) (hasKey $globalEnvVars $grpcEnvKey) }}
+{{- if ne (toString (index $controlPlaneExplicitEnvVars $grpcEnvKey)) (toString (index $globalEnvVars $grpcEnvKey)) }}
+{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but env.vars and controlPlane.env.vars define conflicting values for %q: env.vars=%s, controlPlane.env.vars=%s. Remove one value so the key has one source of truth." $grpcEnvKey (index $globalEnvVars $grpcEnvKey) (index $controlPlaneExplicitEnvVars $grpcEnvKey)) -}}
+{{- end }}
+{{- end }}
+{{- if and (hasKey $controllersExplicitEnvVars $grpcEnvKey) (hasKey $globalEnvVars $grpcEnvKey) }}
+{{- if ne (toString (index $controllersExplicitEnvVars $grpcEnvKey)) (toString (index $globalEnvVars $grpcEnvKey)) }}
+{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but env.vars and controllers.env.vars define conflicting values for %q: env.vars=%s, controllers.env.vars=%s. Set controllers.env.vars to match env.vars or remove it from env.vars." $grpcEnvKey (index $globalEnvVars $grpcEnvKey) (index $controllersExplicitEnvVars $grpcEnvKey)) -}}
+{{- end }}
+{{- end }}
+{{- if and (hasKey $controlPlaneEnvVars $grpcEnvKey) (hasKey $controlPlaneGrpcExpectedValues $grpcEnvKey) }}
+{{- if ne (toString (index $controlPlaneEnvVars $grpcEnvKey)) (toString (index $controlPlaneGrpcExpectedValues $grpcEnvKey)) }}
+{{- $errors = append $errors (printf "grpc managed by chart is enabled (grpc.manageEnvVar=true), but control-plane env values (env.vars + controlPlane.env.vars) set %q=%s, expected=%s when derived from grpc settings." $grpcEnvKey (index $controlPlaneEnvVars $grpcEnvKey) (index $controlPlaneGrpcExpectedValues $grpcEnvKey)) -}}
+{{- end }}
+{{- end }}
+{{- end }}
+
 {{- end -}}
 
-{{- if and (gt (len $supportingNamespaces) 1) (not $clusterScoped) -}}
-{{- $errors = append $errors "rbac.clusterScoped must be true when supportingController.namespaces has multiple entries." -}}
+{{- if $reservedEnvKeysEnforced }}
+{{- $structuredEnvFromSources := list -}}
+
+{{- range $envSource := $envFromSecretRefs }}
+{{- if kindIs "map" $envSource }}
+{{- $refName := index $envSource "name" | default "anonymous" -}}
+{{- $refKeys := list -}}
+{{- if kindIs "slice" (index $envSource "keys") }}
+{{- $refKeys = index $envSource "keys" -}}
+{{- else if kindIs "string" (index $envSource "keys") }}
+{{- $refKeys = list (index $envSource "keys") -}}
+{{- end }}
+{{- $structuredEnvFromSources = append $structuredEnvFromSources (dict "type" "secretRef" "name" $refName "keys" $refKeys) -}}
+{{- end }}
+{{- end }}
+
+{{- range $envSource := $envFromConfigMapRefs }}
+{{- if kindIs "map" $envSource }}
+{{- $refName := index $envSource "name" | default "anonymous" -}}
+{{- $refKeys := list -}}
+{{- if kindIs "slice" (index $envSource "keys") }}
+{{- $refKeys = index $envSource "keys" -}}
+{{- else if kindIs "string" (index $envSource "keys") }}
+{{- $refKeys = list (index $envSource "keys") -}}
+{{- end }}
+{{- $structuredEnvFromSources = append $structuredEnvFromSources (dict "type" "configMapRef" "name" $refName "keys" $refKeys) -}}
+{{- end }}
+{{- end }}
+
+{{- $reservedEnvFromOwners := dict -}}
+{{- range $source := $structuredEnvFromSources }}
+{{- $refSourceType := index $source "type" -}}
+{{- $refName := index $source "name" -}}
+{{- range $refKey := index $source "keys" }}
+{{- if and (kindIs "string" $refKey) (has $refKey $reservedEnvKeys) }}
+{{- $owners := get $reservedEnvFromOwners $refKey | default (list) -}}
+{{- $owners = append $owners (printf "%s:%s" $refSourceType $refName) -}}
+{{- $_ := set $reservedEnvFromOwners $refKey $owners -}}
+
+{{- if has $refKey $controlPlaneReservedEnvKeys }}
+{{- if and $grpcManagedByChart (has $refKey $grpcManagedKeys) (hasKey $controlPlaneEnvVars $refKey) }}
+{{- if ne (toString (index $controlPlaneEnvVars $refKey)) (toString (index $controlPlaneGrpcExpectedValues $refKey)) }}
+{{- $errors = append $errors (printf "envFrom %q %q sets managed control-plane key %q, but env.vars + controlPlane.env.vars resolve to %q while chart-managed expected value is %q. Set %q explicitly to %q in controlPlane.env.vars or env.vars, or remove the managed key from this envFrom entry." $refSourceType $refName $refKey (index $controlPlaneEnvVars $refKey) (index $controlPlaneGrpcExpectedValues $refKey) $refKey (index $controlPlaneGrpcExpectedValues $refKey)) -}}
+{{- end }}
+{{- else if not (has $refKey $grpcManagedKeys) }}
+{{- if not (hasKey $controlPlaneResolvedEnvVars $refKey) }}
+{{- $errors = append $errors (printf "envFrom %q %q sets reserved key %q, but controlPlane.env.vars+env.vars does not explicitly set it; add it to controlPlane.env.vars or env.vars, or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName $refKey) -}}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- if and $controllersEnabled (has $refKey $controllersReservedEnvKeys) }}
+{{- if and $grpcManagedByChart (has $refKey $grpcManagedKeys) }}
+{{- if ne (toString (index $controllersResolvedEnvVars $refKey)) (toString (index $controllersGrpcExpectedValues $refKey)) }}
+{{- $errors = append $errors (printf "envFrom %q %q sets managed controllers key %q, but controllers.env.vars resolves to %q. Chart-managed default is %q unless you explicitly set controllers.env.vars.%q. Keep reserved managed keys out of envFrom or set this exact value." $refSourceType $refName $refKey (index $controllersResolvedEnvVars $refKey) (index $controllersGrpcExpectedValues $refKey) $refKey) -}}
+{{- end }}
+{{- else if not (has $refKey $grpcManagedKeys) }}
+{{- if not (hasKey $controllersResolvedEnvVars $refKey) }}
+{{- $errors = append $errors (printf "envFrom %q %q sets reserved key %q, but controllers.env.vars+env.vars does not explicitly set it for controller execution. Add it to controllers.env.vars (reserved controller keys are controller-owned when controllers are enabled), or disable validation.reservedEnvKeysEnforced=false." $refSourceType $refName $refKey) -}}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- if and $controllersEnabled $grpcManagedByChart (has $refKey $grpcManagedKeys) (hasKey $controlPlaneEnvVars $refKey) (hasKey $controllersEnvVars $refKey) (ne (toString (index $controlPlaneEnvVars $refKey)) (toString (index $controllersEnvVars $refKey))) }}
+{{- $errors = append $errors (printf "envFrom %q %q sets managed key %q, but controlPlane env values (env.vars + controlPlane.env.vars) and controllers env values (env.vars + controllers.env.vars) disagree (control-plane=%q, controllers=%q). Remove this key from envFrom or align both component maps to deterministic values." $refSourceType $refName $refKey (index $controlPlaneEnvVars $refKey) (index $controllersEnvVars $refKey)) -}}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- range $envVarName, $refSourceList := $reservedEnvFromOwners }}
+{{- if gt (len $refSourceList) 1 }}
+{{- $errors = append $errors (printf "reserved envFrom key %q is declared in multiple envFrom sources (%s). Keep each reserved key in a single envFrom source for deterministic precedence." $envVarName (join ", " $refSourceList)) -}}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- $rolloutChecksums := .Values.rolloutChecksums | default dict -}}
+{{- if $rolloutChecksums.enabled -}}
+{{- $rolloutEntryErrors := list -}}
+{{- $dbNamespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $checksumNamespacePattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" -}}
+{{- $checksumResourceNamePattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$" -}}
+{{- $ownedDbSecretRef := "" -}}
+{{- $requiredSecrets := dict -}}
+{{- $requiredConfigMaps := dict -}}
+{{- $configuredSecretRefs := dict -}}
+{{- $configuredConfigMapRefs := dict -}}
+{{- $seenSecretRefs := dict -}}
+{{- $seenConfigMapRefs := dict -}}
+
+{{- if and .Values.database.createSecret.enabled .Values.database.url -}}
+{{- $ownedDbSecretName := include "agents.databaseSecretName" . }}
+{{- $ownedDbSecretRef = printf "%s/%s" $dbNamespace $ownedDbSecretName -}}
 {{- end -}}
-{{- if and (has "*" $supportingNamespaces) (not $clusterScoped) -}}
-{{- $errors = append $errors "rbac.clusterScoped must be true when supportingController.namespaces includes '*' (wildcard)." -}}
+
+{{- if and (not .Values.database.createSecret.enabled) (not .Values.database.url) (.Values.database.secretRef.name) -}}
+{{- $dbSecretName := trim (default "" .Values.database.secretRef.name) -}}
+{{- if $dbSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $dbSecretName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- if .Values.database.caSecret.name -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace (.Values.database.caSecret.name | trim)) true -}}
+{{- end -}}
+
+{{- if and .Values.agentComms.enabled .Values.agentComms.nats.userSecret.name -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace (.Values.agentComms.nats.userSecret.name | trim)) true -}}
+{{- end -}}
+
+{{- range .Values.envFromSecretRefs }}
+{{- $requiredSecretName := "" -}}
+{{- if kindIs "string" . }}
+{{- $requiredSecretName = trim . -}}
+{{- else if kindIs "map" . }}
+{{- $requiredSecretName = trim (default "" .name) -}}
+{{- end -}}
+{{- if $requiredSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.env.secrets }}
+{{- $requiredSecretName := trim (default "" .secretName) -}}
+{{- if $requiredSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.envFromConfigMapRefs }}
+{{- $requiredConfigMapName := "" -}}
+{{- if kindIs "string" . }}
+{{- $requiredConfigMapName = trim . -}}
+{{- else if kindIs "map" . }}
+{{- $requiredConfigMapName = trim (default "" .name) -}}
+{{- end -}}
+{{- if $requiredConfigMapName -}}
+{{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.env.config }}
+{{- $requiredConfigMapName := trim (default "" .configMapName) -}}
+{{- if $requiredConfigMapName -}}
+{{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.extraVolumes }}
+{{- with .volume.secret }}
+{{- $requiredSecretName := trim (default "" .secretName) -}}
+{{- if $requiredSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
+{{- end -}}
+{{- end -}}
+{{- with .volume.configMap }}
+{{- $requiredConfigMapName := trim (default "" .name) -}}
+{{- if $requiredConfigMapName -}}
+{{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
+{{- end -}}
+{{- end -}}
+{{- with .volume.projected }}
+{{- range .sources }}
+{{- with .secret }}
+{{- $requiredSecretName := trim (default "" .name) -}}
+{{- if $requiredSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
+{{- end -}}
+{{- end -}}
+{{- with .configMap }}
+{{- $requiredConfigMapName := trim (default "" .name) -}}
+{{- if $requiredConfigMapName -}}
+{{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- if and .Values.database.createSecret.enabled (not .Values.database.url) -}}
+{{- $errors = append $errors "rolloutChecksums.enabled=true requires database.url when database.createSecret.enabled=true." -}}
+{{- end -}}
+
+{{- range $idx, $entry := $rolloutChecksums.secrets -}}
+{{- $secretName := trim (default "" $entry.name) -}}
+{{- $secretChecksum := trim (default "" $entry.checksum) -}}
+{{- $secretNamespace := trim (default $dbNamespace $entry.namespace) -}}
+{{- if not $secretName -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d].name must be a non-empty string." $idx) -}}
+{{- end -}}
+{{- if and $secretName (not (regexMatch $checksumResourceNamePattern $secretName)) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d].name must match RFC-1123 subdomain syntax." $idx) -}}
+{{- end -}}
+{{- if and (not $secretNamespace) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d].namespace must be a non-empty string." $idx) -}}
+{{- end -}}
+{{- if and $secretNamespace (not (regexMatch $checksumNamespacePattern $secretNamespace)) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d].namespace must match RFC-1123 DNS label syntax." $idx) -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Fa-f0-9]{64}$" $secretChecksum) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d].checksum must be a 64-char sha256 hex string." $idx) -}}
+{{- end -}}
+{{- if and $secretName $secretNamespace -}}
+{{- $secretRef := printf "%s/%s" $secretNamespace $secretName -}}
+{{- if and $ownedDbSecretRef (eq $secretRef $ownedDbSecretRef) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d] cannot target %s because database.createSecret.enabled=true already owns the rollout checksum annotation for %s" $idx $secretRef $secretRef) -}}
+{{- else -}}
+{{- $_ := set $configuredSecretRefs $secretRef true -}}
+{{- if hasKey $seenSecretRefs $secretRef -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d] duplicates key %s. namespace+name must be unique." $idx $secretRef) -}}
+{{- else -}}
+{{- $_ := set $seenSecretRefs $secretRef true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- range $idx, $entry := $rolloutChecksums.configMaps -}}
+{{- $configMapName := trim (default "" $entry.name) -}}
+{{- $configMapChecksum := trim (default "" $entry.checksum) -}}
+{{- $configMapNamespace := trim (default $dbNamespace $entry.namespace) -}}
+{{- if not $configMapName -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d].name must be a non-empty string." $idx) -}}
+{{- end -}}
+{{- if and $configMapName (not (regexMatch $checksumResourceNamePattern $configMapName)) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d].name must match RFC-1123 subdomain syntax." $idx) -}}
+{{- end -}}
+{{- if and (not $configMapNamespace) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d].namespace must be a non-empty string." $idx) -}}
+{{- end -}}
+{{- if and $configMapNamespace (not (regexMatch $checksumNamespacePattern $configMapNamespace)) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d].namespace must match RFC-1123 DNS label syntax." $idx) -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Fa-f0-9]{64}$" $configMapChecksum) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d].checksum must be a 64-char sha256 hex string." $idx) -}}
+{{- end -}}
+{{- if and $configMapName $configMapNamespace -}}
+{{- $configMapRef := printf "%s/%s" $configMapNamespace $configMapName -}}
+{{- $_ := set $configuredConfigMapRefs $configMapRef true -}}
+{{- if hasKey $seenConfigMapRefs $configMapRef -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d] duplicates key %s. namespace+name must be unique." $idx $configMapRef) -}}
+{{- else -}}
+{{- $_ := set $seenConfigMapRefs $configMapRef true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- range $requiredRef := keys $requiredSecrets -}}
+{{- if not (hasKey $configuredSecretRefs $requiredRef) -}}
+{{- $errors = append $errors (printf "rolloutChecksums.secrets is missing required contract entry for %s. Add an exact checksum for each secret used by pod env/volume references when rolloutChecksums.enabled=true." $requiredRef) -}}
+{{- end -}}
+{{- end -}}
+
+{{- range $requiredRef := keys $requiredConfigMaps -}}
+{{- if not (hasKey $configuredConfigMapRefs $requiredRef) -}}
+{{- $errors = append $errors (printf "rolloutChecksums.configMaps is missing required contract entry for %s. Add an exact checksum for each configmap used by pod env/volume references when rolloutChecksums.enabled=true." $requiredRef) -}}
+{{- end -}}
+{{- end -}}
+
+{{- if gt (len $rolloutEntryErrors) 0 -}}
+{{- $errors = append $errors (printf "%s" (join "\n" $rolloutEntryErrors)) -}}
+{{- end -}}
 {{- end -}}
 
 {{- if gt (len $errors) 0 -}}

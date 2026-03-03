@@ -1,20 +1,35 @@
 {{- if .Values.controllers.enabled -}}
 {{- $controllersImage := .Values.controllers.image | default dict -}}
 {{- $controllersEnvVars := .Values.controllers.env.vars | default dict -}}
-{{- $envVars := merge (deepCopy (.Values.env.vars | default dict)) (deepCopy $controllersEnvVars) -}}
-{{- if not (hasKey $controllersEnvVars "JANGAR_MIGRATIONS") -}}
+{{- $sharedReservedControllersEnvVars := list
+  "JANGAR_MIGRATIONS"
+  "JANGAR_GRPC_ENABLED"
+  "JANGAR_GRPC_HOST"
+  "JANGAR_GRPC_PORT"
+  "JANGAR_CONTROL_PLANE_CACHE_ENABLED"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED"
+  "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS"
+  "JANGAR_AGENTRUN_ARTIFACTS_MAX"
+  "JANGAR_AGENTRUN_ARTIFACTS_STRICT"
+}}
+{{- $controllersSharedEnvVars := deepCopy (.Values.env.vars | default dict) -}}
+{{- range $reservedKey := $sharedReservedControllersEnvVars }}
+{{- $_ := unset $controllersSharedEnvVars $reservedKey -}}
+{{- end }}
+{{- $envVars := merge $controllersSharedEnvVars (deepCopy $controllersEnvVars) -}}
+{{- if not (hasKey $envVars "JANGAR_MIGRATIONS") -}}
 {{- $_ := set $envVars "JANGAR_MIGRATIONS" "skip" -}}
 {{- end -}}
-{{- if not (hasKey $controllersEnvVars "JANGAR_GRPC_ENABLED") -}}
+{{- if not (hasKey $envVars "JANGAR_GRPC_ENABLED") -}}
 {{- $_ := set $envVars "JANGAR_GRPC_ENABLED" "0" -}}
 {{- end -}}
-{{- if not (hasKey $controllersEnvVars "JANGAR_CONTROL_PLANE_CACHE_ENABLED") -}}
+{{- if not (hasKey $envVars "JANGAR_CONTROL_PLANE_CACHE_ENABLED") -}}
 {{- $_ := set $envVars "JANGAR_CONTROL_PLANE_CACHE_ENABLED" "0" -}}
 {{- end -}}
-{{- if not (hasKey $controllersEnvVars "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED") -}}
+{{- if not (hasKey $envVars "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED") -}}
 {{- $_ := set $envVars "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED" "true" -}}
 {{- end -}}
-{{- if not (hasKey $controllersEnvVars "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS") -}}
+{{- if not (hasKey $envVars "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS") -}}
 {{- $_ := set $envVars "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS" "30" -}}
 {{- end -}}
 {{- if not (hasKey $envVars "JANGAR_AGENTRUN_ARTIFACTS_MAX") -}}
@@ -32,6 +47,16 @@
 {{- $resources := .Values.controllers.resources | default .Values.resources -}}
 {{- $autoscaling := .Values.controllers.autoscaling | default dict -}}
 {{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $controllersDeploymentStrategy := merge (deepCopy (.Values.deploymentStrategy | default dict)) (deepCopy (.Values.controllers.deploymentStrategy | default dict)) -}}
+{{- $controllersLivenessProbe := merge (deepCopy (.Values.livenessProbe | default dict)) (deepCopy (.Values.controllers.livenessProbe | default dict)) -}}
+{{- $controllersReadinessProbe := merge (deepCopy (.Values.readinessProbe | default dict)) (deepCopy (.Values.controllers.readinessProbe | default dict)) -}}
+{{- $controllersStartupProbe := merge (deepCopy (.Values.startupProbe | default dict)) (deepCopy (.Values.controllers.startupProbe | default dict)) -}}
+{{- $controllersLifecycle := merge (deepCopy (.Values.lifecycle | default dict)) (deepCopy (.Values.controllers.lifecycle | default dict)) -}}
+{{- $controllersDeploymentLifecycle := merge (deepCopy (.Values.deploymentLifecycle | default dict)) (deepCopy (.Values.controllers.deploymentLifecycle | default dict)) -}}
+{{- $controllersTerminationGracePeriodSeconds := .Values.terminationGracePeriodSeconds -}}
+{{- if hasKey .Values.controllers "terminationGracePeriodSeconds" -}}
+{{- $controllersTerminationGracePeriodSeconds = .Values.controllers.terminationGracePeriodSeconds -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -43,9 +68,22 @@ spec:
   {{- if not $autoscaling.enabled }}
   replicas: {{ $replicas }}
   {{- end }}
+{{- if $controllersDeploymentStrategy }}
+  strategy:
+{{ toYaml $controllersDeploymentStrategy | nindent 4 }}
+{{- end }}
   selector:
     matchLabels:
       {{- include "agents.controllersSelectorLabels" . | nindent 6 }}
+{{- if hasKey $controllersDeploymentLifecycle "minReadySeconds" }}
+  minReadySeconds: {{ $controllersDeploymentLifecycle.minReadySeconds }}
+{{- end }}
+{{- if hasKey $controllersDeploymentLifecycle "progressDeadlineSeconds" }}
+  progressDeadlineSeconds: {{ $controllersDeploymentLifecycle.progressDeadlineSeconds }}
+{{- end }}
+{{- if hasKey $controllersDeploymentLifecycle "revisionHistoryLimit" }}
+  revisionHistoryLimit: {{ $controllersDeploymentLifecycle.revisionHistoryLimit }}
+{{- end }}
   template:
     metadata:
       labels:
@@ -53,9 +91,13 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.podAnnotations }}
+      {{- $combinedAnnotations := merge (deepCopy (.Values.podAnnotations | default dict)) ((include "agents.rolloutChecksumAnnotations" . | fromYaml) | default dict) -}}
+      {{- if gt (len $combinedAnnotations) 0 }}
       annotations:
-        {{- toYaml . | nindent 8 }}
+      {{- range $annotationKey := sortAlpha (keys $combinedAnnotations) }}
+      {{- $annotationValue := index $combinedAnnotations $annotationKey }}
+      {{- printf "%s: %s\n" $annotationKey ($annotationValue | quote) | nindent 8 }}
+      {{- end }}
       {{- end }}
     spec:
       serviceAccountName: {{ include "agents.serviceAccountName" . }}
@@ -80,6 +122,9 @@ spec:
       {{- with .Values.securityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if ne $controllersTerminationGracePeriodSeconds nil }}
+      terminationGracePeriodSeconds: {{ $controllersTerminationGracePeriodSeconds }}
       {{- end }}
       containers:
         - name: {{ include "agents.controllersName" . }}
@@ -405,37 +450,67 @@ spec:
           {{- if or (gt (len .Values.envFromSecretRefs) 0) (gt (len .Values.envFromConfigMapRefs) 0) }}
           envFrom:
             {{- range .Values.envFromSecretRefs }}
+            {{- if kindIs "map" . }}
+            - secretRef:
+                name: {{ .name | default "anonymous" }}
+                {{- if and (kindIs "map" .) (hasKey . "optional") }}
+                optional: {{ .optional }}
+                {{- end }}
+            {{- else if kindIs "string" . }}
             - secretRef:
                 name: {{ . }}
             {{- end }}
+            {{- end }}
             {{- range .Values.envFromConfigMapRefs }}
+            {{- if kindIs "map" . }}
+            - configMapRef:
+                name: {{ .name | default "anonymous" }}
+                {{- if and (kindIs "map" .) (hasKey . "optional") }}
+                optional: {{ .optional }}
+                {{- end }}
+            {{- else if kindIs "string" . }}
             - configMapRef:
                 name: {{ . }}
+            {{- end }}
             {{- end }}
           {{- end }}
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
-          {{- if .Values.livenessProbe.enabled }}
+          {{- if $controllersLifecycle }}
+          lifecycle:
+{{ toYaml $controllersLifecycle | nindent 12 }}
+          {{- end }}
+          {{- if $controllersStartupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ $controllersStartupProbe.path }}
+              port: http
+            initialDelaySeconds: {{ $controllersStartupProbe.initialDelaySeconds }}
+            periodSeconds: {{ $controllersStartupProbe.periodSeconds }}
+            timeoutSeconds: {{ $controllersStartupProbe.timeoutSeconds }}
+            failureThreshold: {{ $controllersStartupProbe.failureThreshold }}
+          {{- end }}
+          {{- if $controllersLivenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: {{ .Values.livenessProbe.path }}
+              path: {{ $controllersLivenessProbe.path }}
               port: http
-            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+            initialDelaySeconds: {{ $controllersLivenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $controllersLivenessProbe.periodSeconds }}
+            timeoutSeconds: {{ $controllersLivenessProbe.timeoutSeconds }}
+            failureThreshold: {{ $controllersLivenessProbe.failureThreshold }}
           {{- end }}
-          {{- if .Values.readinessProbe.enabled }}
+          {{- if $controllersReadinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: {{ .Values.readinessProbe.path }}
+              path: {{ $controllersReadinessProbe.path }}
               port: http
-            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+            initialDelaySeconds: {{ $controllersReadinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $controllersReadinessProbe.periodSeconds }}
+            timeoutSeconds: {{ $controllersReadinessProbe.timeoutSeconds }}
+            failureThreshold: {{ $controllersReadinessProbe.failureThreshold }}
           {{- end }}
           resources:
             {{- toYaml $resources | nindent 12 }}

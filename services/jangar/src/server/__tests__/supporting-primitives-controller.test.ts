@@ -62,6 +62,16 @@ const createMockKubectlProcess = (code: number, stderr = '') => {
   return child
 }
 
+const requirementIdForSignal = (signalNamespace: string, signalName: string) => {
+  const value = `${signalNamespace}/${signalName}`
+  let hash = 0
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(index)
+    hash |= 0
+  }
+  return Math.abs(hash).toString(36).padStart(8, '0').slice(0, 8)
+}
+
 describe('supporting primitives controller', () => {
   let resolveSwarmAvailability: (resource: string, call: number) => { code: number; stderr?: string } = () => ({
     code: 0,
@@ -129,6 +139,231 @@ describe('supporting primitives controller', () => {
     expect(ready?.status).toBe('False')
     expect(progressing?.status).toBe('False')
     expect(degraded?.status).toBe('True')
+  })
+
+  it('builds schedule runner command with runtime delivery id substitution', () => {
+    const command = __test__.buildScheduleRunnerCommand()
+
+    expect(command).toContain('DELIVERY_ID=$(cat /proc/sys/kernel/random/uuid);')
+    expect(command).toContain('s/__JANGAR_DELIVERY_ID__/${DELIVERY_ID}/g')
+    expect(command).not.toContain('\\${DELIVERY_ID}')
+  })
+
+  it('skips apply for equivalent schedule resources', async () => {
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: { 'swarm.proompteng.ai/name': 'jangar-control-plane' },
+        annotations: { 'swarm.proompteng.ai/worker-id': 'worker-123' },
+        resourceVersion: '123',
+      },
+      spec: {
+        cron: '*/5 * * * *',
+        timezone: 'UTC',
+        targetRef: {
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'AgentRun',
+          name: 'agentrun-sample',
+          namespace: 'agents',
+        },
+      },
+      status: { phase: 'Active' },
+    })
+    const kube = { apply, get } as unknown as KubernetesClient
+
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: { 'swarm.proompteng.ai/name': 'jangar-control-plane' },
+        annotations: { 'swarm.proompteng.ai/worker-id': 'worker-123' },
+      },
+      spec: {
+        cron: '*/5 * * * *',
+        timezone: 'UTC',
+        targetRef: {
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'AgentRun',
+          name: 'agentrun-sample',
+          namespace: 'agents',
+        },
+      },
+    }
+
+    await __test__.applyResourceIfChanged(kube, schedule)
+
+    expect(get).toHaveBeenCalledWith(RESOURCE_MAP.Schedule, 'jangar-control-plane-discover-sched', 'agents')
+    expect(apply).not.toHaveBeenCalled()
+  })
+
+  it('skips apply when live resource has extra defaulted fields outside desired spec', async () => {
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'controller-runtime': 'defaulted',
+        },
+      },
+      spec: {
+        cron: '*/5 * * * *',
+        timezone: 'UTC',
+        targetRef: {
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'AgentRun',
+          name: 'agentrun-sample',
+          namespace: 'agents',
+          uid: 'defaulted-uid',
+        },
+      },
+    })
+    const kube = { apply, get } as unknown as KubernetesClient
+
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: { 'swarm.proompteng.ai/name': 'jangar-control-plane' },
+      },
+      spec: {
+        cron: '*/5 * * * *',
+        timezone: 'UTC',
+        targetRef: {
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'AgentRun',
+          name: 'agentrun-sample',
+          namespace: 'agents',
+        },
+      },
+    }
+
+    await __test__.applyResourceIfChanged(kube, schedule)
+
+    expect(apply).not.toHaveBeenCalled()
+  })
+
+  it('applies schedule when desired spec differs from live resource', async () => {
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: { 'swarm.proompteng.ai/name': 'jangar-control-plane' },
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        timezone: 'UTC',
+      },
+    })
+    const kube = { apply, get } as unknown as KubernetesClient
+
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: { 'swarm.proompteng.ai/name': 'jangar-control-plane' },
+      },
+      spec: {
+        cron: '*/5 * * * *',
+        timezone: 'UTC',
+      },
+    }
+
+    await __test__.applyResourceIfChanged(kube, schedule)
+
+    expect(apply).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves watched resources only for controller-managed kinds', () => {
+    expect(__test__.resolveWatchedResourceForKind('Swarm')).toBe(RESOURCE_MAP.Swarm)
+    expect(__test__.resolveWatchedResourceForKind('Schedule')).toBe(RESOURCE_MAP.Schedule)
+    expect(__test__.resolveWatchedResourceForKind('Artifact')).toBe(RESOURCE_MAP.Artifact)
+    expect(__test__.resolveWatchedResourceForKind('ConfigMap')).toBeNull()
+  })
+
+  it('identifies swarm status-only modified events', () => {
+    const swarm = {
+      kind: 'Swarm',
+      metadata: { generation: 7 },
+      status: { observedGeneration: 7 },
+    }
+
+    expect(__test__.isSwarmStatusOnlyEvent('MODIFIED', swarm)).toBe(true)
+    expect(__test__.isSwarmStatusOnlyEvent('ADDED', swarm)).toBe(false)
+    expect(__test__.isSwarmStatusOnlyEvent('MODIFIED', { ...swarm, status: { observedGeneration: 6 } })).toBe(false)
+  })
+
+  it('throttles swarm status-only reconciles within the guard interval', () => {
+    const key = 'agents/Swarm/jangar-control-plane'
+    const startMs = 1_000
+
+    expect(__test__.shouldThrottleSwarmStatusReconcile(key, startMs)).toBe(false)
+    expect(
+      __test__.shouldThrottleSwarmStatusReconcile(key, startMs + __test__.SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS - 1),
+    ).toBe(true)
+    expect(
+      __test__.shouldThrottleSwarmStatusReconcile(key, startMs + __test__.SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS),
+    ).toBe(false)
+  })
+
+  it('throttles schedule runner status reconciles within the guard interval', () => {
+    const key = 'agents/Schedule/jangar-control-plane-plan-sched'
+    const startMs = 1_000
+
+    expect(__test__.shouldThrottleScheduleRunnerStatusReconcile(key, startMs)).toBe(false)
+    expect(
+      __test__.shouldThrottleScheduleRunnerStatusReconcile(
+        key,
+        startMs + __test__.SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS - 1,
+      ),
+    ).toBe(true)
+    expect(
+      __test__.shouldThrottleScheduleRunnerStatusReconcile(
+        key,
+        startMs + __test__.SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS,
+      ),
+    ).toBe(false)
+  })
+
+  it('reconciles schedule runner status without full schedule apply path', async () => {
+    const get = vi.fn(async (resource: string) => {
+      if (resource === 'cronjob') {
+        return { status: { lastScheduleTime: '2026-01-20T00:10:00Z' } }
+      }
+      return null
+    })
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, applyStatus } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: { name: 'schedule-a', namespace: 'agents', generation: 3 },
+      status: { conditions: [] },
+    }
+
+    await __test__.reconcileScheduleRunnerStatus(kube, schedule, 'agents')
+
+    expect(get).toHaveBeenCalledWith('cronjob', 'schedule-a-cron', 'agents')
+    expect(applyStatus).toHaveBeenCalledTimes(1)
+    const payload = applyStatus.mock.calls[0]?.[0] as { status?: Record<string, unknown> }
+    expect(payload.status?.phase).toBe('Active')
+    expect(payload.status?.lastRunTime).toBe('2026-01-20T00:10:00Z')
   })
 
   it('resolves startup gate from feature flags with env fallback default', async () => {
@@ -201,6 +436,17 @@ describe('supporting primitives controller', () => {
         objectives: ['improve reliability'],
         mode: 'lights-out',
         timezone: 'UTC',
+        integrations: {
+          huly: {
+            baseUrl: 'https://huly.proompteng.ai',
+            workspace: 'virtual-workers',
+            project: 'jangar-control-plane',
+            authSecretRef: {
+              name: 'swarm-huly-access',
+            },
+            skillRef: 'skills/huly-api/SKILL.md',
+          },
+        },
         cadence: {
           discoverEvery: '5m',
           planEvery: '10m',
@@ -233,6 +479,22 @@ describe('supporting primitives controller', () => {
       expect(labels).toMatchObject({
         'swarm.proompteng.ai/uid': 'swarm-uid',
       })
+      const labelsRecord = (labels ?? {}) as Record<string, unknown>
+      expect(typeof labelsRecord['swarm.proompteng.ai/worker-id']).toBe('string')
+
+      const annotations =
+        payload?.metadata && typeof payload.metadata === 'object'
+          ? (payload.metadata as Record<string, unknown>).annotations
+          : undefined
+      expect(annotations).toMatchObject({
+        'swarm.proompteng.ai/huly-base-url': 'https://huly.proompteng.ai',
+        'swarm.proompteng.ai/huly-workspace': 'virtual-workers',
+        'swarm.proompteng.ai/huly-project': 'jangar-control-plane',
+        'swarm.proompteng.ai/huly-secret': 'swarm-huly-access',
+        'swarm.proompteng.ai/huly-skill-ref': 'skills/huly-api/SKILL.md',
+      })
+      expect(typeof (annotations as Record<string, unknown>)['swarm.proompteng.ai/worker-id']).toBe('string')
+      expect(typeof (annotations as Record<string, unknown>)['swarm.proompteng.ai/agent-identity']).toBe('string')
     }
     expect(deleteFn).not.toHaveBeenCalled()
     expect(applyStatus).toHaveBeenCalledTimes(1)
@@ -241,6 +503,796 @@ describe('supporting primitives controller', () => {
     expect(status.phase).toBe('Active')
     expect(status.activeMissions).toBe(0)
     expect(status.stageStates).toBeTruthy()
+  })
+
+  it('derives transactor huly api base url from front owner channel', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun || resource === RESOURCE_MAP.OrchestrationRun) {
+        return { items: [] }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'http://front.huly.svc.cluster.local' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const schedulePayload = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.kind === 'Schedule') as { metadata?: Record<string, unknown> } | undefined
+    expect(schedulePayload).toBeDefined()
+    const annotations = (schedulePayload?.metadata?.annotations ?? {}) as Record<string, string>
+    expect(annotations['swarm.proompteng.ai/huly-base-url']).toBe('http://transactor.huly.svc.cluster.local')
+  })
+
+  it('dispatches Huly requirement signals into implement runs', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+            parameters: {
+              staticKey: 'static-value',
+            },
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-risk-handoff-1',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-123',
+                description: 'Raise risk budget guardrails for market-open volatility',
+                payload: {
+                  priority: 'high',
+                  acceptance: 'deploy and verify policy',
+                  context: {
+                    source: 'torghut-quant',
+                    deadline: '2026-01-25T00:00:00Z',
+                  },
+                },
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(1)
+    const requirementRun = requirementRunPayloads[0] as {
+      metadata: Record<string, unknown>
+      spec: Record<string, unknown>
+    }
+    const runLabels = (requirementRun.metadata.labels ?? {}) as Record<string, string>
+    expect(runLabels['swarm.proompteng.ai/requirement-channel']).toBe('huly')
+    expect(runLabels['swarm.proompteng.ai/from']).toBe('torghut-quant')
+    expect(runLabels['swarm.proompteng.ai/to']).toBe('jangar-control-plane')
+    expect(runLabels['swarm.proompteng.ai/worker-id']).toMatch(/^worker-/)
+    expect(runLabels['swarm.proompteng.ai/requirement-attempt']).toBe('1')
+
+    const parameters = (requirementRun.spec.parameters ?? {}) as Record<string, string>
+    expect(parameters.staticKey).toBe('static-value')
+    expect(parameters.swarmRequirementSignal).toBe('torghut-risk-handoff-1')
+    expect(parameters.swarmRequirementChannel).toBe('huly://swarm-bridge/issues/TOR-123')
+    expect(parameters.swarmRequirementSource).toBe('torghut-quant')
+    expect(parameters.swarmRequirementTarget).toBe('jangar-control-plane')
+    expect(parameters.swarmRequirementDescription).toBe('Raise risk budget guardrails for market-open volatility')
+    const payload = parameters.swarmRequirementPayload ? JSON.parse(parameters.swarmRequirementPayload) : null
+    expect(payload).toEqual({
+      priority: 'high',
+      acceptance: 'deploy and verify policy',
+      context: {
+        source: 'torghut-quant',
+        deadline: '2026-01-25T00:00:00Z',
+      },
+    })
+    expect(parameters.objective).toBe(
+      'Raise risk budget guardrails for market-open volatility\n\n{"priority":"high","acceptance":"deploy and verify policy","context":{"source":"torghut-quant","deadline":"2026-01-25T00:00:00Z"}}',
+    )
+    expect(parameters.swarmAgentWorkerId).toMatch(/^worker-/)
+    expect(parameters.swarmAgentIdentity).toMatch(/^vw-/)
+    expect(parameters.swarmAgentRole).toBe('implement')
+    expect(parameters.hulyApiBaseUrl).toBe('https://huly.proompteng.ai')
+    expect(parameters.hulySkillRef).toBe('skills/huly-api/SKILL.md')
+    const runSecrets = Array.isArray(requirementRun.spec.secrets) ? (requirementRun.spec.secrets as string[]) : []
+    expect(runSecrets).toContain('huly-api')
+
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.pending).toBe(1)
+    expect(requirements.dispatched).toBe(1)
+    expect(requirements.invalidChannel).toBe(0)
+    const conditions = Array.isArray(status.conditions) ? status.conditions : []
+    const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge')
+    expect(bridge?.status).toBe('True')
+  })
+
+  it('uses requirement payload as primary objective when description is missing', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+            parameters: {
+              staticKey: 'static-value',
+            },
+          },
+        }
+      }
+      return null
+    })
+    const payloadForObjective = {
+      priority: 'critical',
+      constraints: ['do not touch auth'],
+      acceptance: ['add guardrail', 'run chaos test'],
+    }
+    const payloadForObjectiveString = JSON.stringify(payloadForObjective)
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-risk-handoff-2',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-222',
+                payload: payloadForObjective,
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(1)
+    const requirementRun = requirementRunPayloads[0] as {
+      metadata: Record<string, unknown>
+      spec: Record<string, unknown>
+    }
+    const parameters = (requirementRun.spec.parameters ?? {}) as Record<string, string>
+    expect(parameters.swarmRequirementSignal).toBe('torghut-risk-handoff-2')
+    expect(parameters.swarmRequirementDescription).toBeUndefined()
+    expect(parameters.swarmRequirementPayload).toBe(payloadForObjectiveString)
+    expect(parameters.objective).toBe(payloadForObjectiveString)
+    expect(parameters.swarmRequirementPayloadBytes).toBe('107')
+  })
+
+  it('extracts objective from payload object when present', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+            parameters: {
+              staticKey: 'static-value',
+            },
+          },
+        }
+      }
+      return null
+    })
+    const payloadForObjective = {
+      objective: 'Align platform handoff policy and rollback checks',
+      acceptance: ['add feature gate', 'run canary check'],
+      scope: 'reliability',
+    }
+    const payloadForObjectiveString = JSON.stringify(payloadForObjective)
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-risk-handoff-3',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-333',
+                payload: payloadForObjective,
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(1)
+    const requirementRun = requirementRunPayloads[0] as {
+      metadata: Record<string, unknown>
+      spec: Record<string, unknown>
+    }
+    const parameters = (requirementRun.spec.parameters ?? {}) as Record<string, string>
+    expect(parameters.swarmRequirementSignal).toBe('torghut-risk-handoff-3')
+    expect(parameters.swarmRequirementDescription).toBeUndefined()
+    expect(parameters.swarmRequirementPayload).toBe(payloadForObjectiveString)
+    expect(parameters.objective).toBe(payloadForObjective.objective)
+    expect(parameters.swarmRequirementPayloadBytes).toBe(
+      String(new TextEncoder().encode(payloadForObjectiveString).length),
+    )
+  })
+
+  it('uses objective payload truncation metadata when payload exceeds transfer cap', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+            parameters: {
+              staticKey: 'static-value',
+            },
+          },
+        }
+      }
+      return null
+    })
+    const largePayload = { riskMode: 'critical', details: 'x'.repeat(18_000) }
+    const largePayloadString = JSON.stringify(largePayload)
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-risk-handoff-4',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-444',
+                description: 'Long payload truncation validation run',
+                payload: largePayload,
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(1)
+    const truncatedRun = requirementRunPayloads.find((requirement) => {
+      const spec = (requirement as { spec: Record<string, unknown> }).spec
+      const payload = (spec.parameters as Record<string, string> | undefined)?.swarmRequirementPayload
+      return typeof payload === 'string' && payload.length === 16_384
+    })
+    expect(truncatedRun).toBeTruthy()
+    const parameters = ((truncatedRun as { spec: Record<string, unknown> }).spec.parameters ?? {}) as Record<
+      string,
+      string
+    >
+    const payload = parameters.swarmRequirementPayload
+    expect(parameters.swarmRequirementPayloadBytes).toBeDefined()
+    expect(Number(parameters.swarmRequirementPayloadBytes)).toBeGreaterThan(16_384)
+    expect(parameters.swarmRequirementPayloadTruncated).toBe('true')
+    expect(payload.length).toBe(16_384)
+    expect(payload).toBe(largePayloadString.slice(0, 16_384))
+  })
+
+  it('rejects non-Huly requirement channels for cross-swarm implementation', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-risk-handoff-2',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'slack://swarm-bridge/TOR-456',
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    expect(apply).toHaveBeenCalledTimes(4)
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.pending).toBe(1)
+    expect(requirements.dispatched).toBe(0)
+    expect(requirements.invalidChannel).toBe(1)
+    const conditions = Array.isArray(status.conditions) ? status.conditions : []
+    const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge')
+    expect(bridge?.status).toBe('False')
+    expect((bridge as { reason?: string } | undefined)?.reason).toBe('InvalidRequirementChannel')
+  })
+
+  it('does not re-dispatch requirement signals that already completed', async () => {
+    const requirementSignalName = 'torghut-risk-handoff-3'
+    const requirementId = requirementIdForSignal('agents', requirementSignalName)
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          items: [
+            {
+              kind: 'AgentRun',
+              metadata: {
+                name: 'completed-requirement-run',
+                namespace: 'agents',
+                creationTimestamp: '2026-01-20T00:00:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'jangar-control-plane',
+                  'swarm.proompteng.ai/stage': 'implement',
+                  'swarm.proompteng.ai/requirement-id': requirementId,
+                },
+              },
+              status: { phase: 'Succeeded' },
+            },
+          ],
+        }
+      }
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: requirementSignalName,
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-789',
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    expect(apply).toHaveBeenCalledTimes(4)
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.completed).toBe(1)
+    expect(requirements.dispatched).toBe(0)
+    expect(requirements.pending).toBe(0)
+  })
+
+  it('re-dispatches requirement signals after failed attempts until max retry count', async () => {
+    const requirementSignalName = 'torghut-risk-handoff-4'
+    const requirementId = requirementIdForSignal('agents', requirementSignalName)
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          items: [
+            {
+              kind: 'AgentRun',
+              metadata: {
+                name: 'failed-requirement-run',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/name': 'jangar-control-plane',
+                  'swarm.proompteng.ai/stage': 'implement',
+                  'swarm.proompteng.ai/requirement-id': requirementId,
+                },
+              },
+              status: { phase: 'Failed' },
+            },
+          ],
+        }
+      }
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: requirementSignalName,
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-654',
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(1)
+    const requirementRun = requirementRunPayloads[0] as {
+      metadata: Record<string, unknown>
+      spec: Record<string, unknown>
+    }
+    const runLabels = (requirementRun.metadata.labels ?? {}) as Record<string, string>
+    expect(runLabels['swarm.proompteng.ai/requirement-attempt']).toBe('2')
+    expect((requirementRun.spec.idempotencyKey as string) ?? '').toContain('-attempt-2')
   })
 
   it('normalizes long swarm names into valid label values for schedules', async () => {

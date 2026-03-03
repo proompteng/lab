@@ -5,7 +5,12 @@
   "properties": {
     "nameOverride": { "type": "string" },
     "fullnameOverride": { "type": "string" },
-    "namespaceOverride": { "type": "string" },
+    "namespaceOverride": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+      "description": "Optional namespace override for namespaced resources; omit to use the release namespace."
+    },
     "replicaCount": { "type": "integer", "minimum": 1 },
     "autoscaling": {
       "type": "object",
@@ -58,7 +63,72 @@
             "vars": { "type": "object", "additionalProperties": { "type": "string" } }
           },
           "additionalProperties": false
-        }
+        },
+        "livenessProbe": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path": { "type": "string" },
+            "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+            "periodSeconds": { "type": "integer", "minimum": 1 },
+            "timeoutSeconds": { "type": "integer", "minimum": 1 },
+            "failureThreshold": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "readinessProbe": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path": { "type": "string" },
+            "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+            "periodSeconds": { "type": "integer", "minimum": 1 },
+            "timeoutSeconds": { "type": "integer", "minimum": 1 },
+            "failureThreshold": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "deploymentLifecycle": {
+          "type": "object",
+          "properties": {
+            "minReadySeconds": { "type": "integer", "minimum": 0 },
+            "progressDeadlineSeconds": { "type": "integer", "minimum": 1 },
+            "revisionHistoryLimit": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "deploymentStrategy": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "rollingUpdate": {
+              "type": "object",
+              "properties": {
+                "maxUnavailable": { "type": ["integer", "string"] },
+                "maxSurge": { "type": ["integer", "string"] }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "startupProbe": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path": { "type": "string" },
+            "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+            "periodSeconds": { "type": "integer", "minimum": 1 },
+            "timeoutSeconds": { "type": "integer", "minimum": 1 },
+            "failureThreshold": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "terminationGracePeriodSeconds": { "type": ["integer", "null"], "minimum": 0 }
       },
       "additionalProperties": false
     },
@@ -75,6 +145,31 @@
             "maxReplicas": { "type": "integer", "minimum": 1 },
             "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 },
             "targetMemoryUtilizationPercentage": { "type": ["integer", "null"], "minimum": 1, "maximum": 100 }
+          },
+          "additionalProperties": false
+        },
+        "podDisruptionBudget": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minAvailable": { "type": ["integer", "string"] },
+            "maxUnavailable": { "type": ["integer", "string"] },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "deploymentStrategy": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "rollingUpdate": {
+              "type": "object",
+              "properties": {
+                "maxUnavailable": { "type": ["integer", "string"] },
+                "maxSurge": { "type": ["integer", "string"] }
+              },
+              "additionalProperties": false
+            }
           },
           "additionalProperties": false
         },
@@ -103,7 +198,57 @@
             "vars": { "type": "object", "additionalProperties": { "type": "string" } }
           },
           "additionalProperties": false
-        }
+        },
+        "deploymentLifecycle": {
+          "type": "object",
+          "properties": {
+            "minReadySeconds": { "type": "integer", "minimum": 0 },
+            "progressDeadlineSeconds": { "type": "integer", "minimum": 1 },
+            "revisionHistoryLimit": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "livenessProbe": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path": { "type": "string" },
+            "initialDelaySeconds": { "type": "integer" },
+            "periodSeconds": { "type": "integer" },
+            "timeoutSeconds": { "type": "integer" },
+            "failureThreshold": { "type": "integer" }
+          },
+          "additionalProperties": false
+        },
+        "readinessProbe": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path": { "type": "string" },
+            "initialDelaySeconds": { "type": "integer" },
+            "periodSeconds": { "type": "integer" },
+            "timeoutSeconds": { "type": "integer" },
+            "failureThreshold": { "type": "integer" }
+          },
+          "additionalProperties": false
+        },
+        "startupProbe": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path": { "type": "string" },
+            "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+            "periodSeconds": { "type": "integer", "minimum": 1 },
+            "timeoutSeconds": { "type": "integer", "minimum": 1 },
+            "failureThreshold": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "terminationGracePeriodSeconds": { "type": ["integer", "null"], "minimum": 0 }
       },
       "additionalProperties": false
     },
@@ -155,7 +300,10 @@
       "type": "object",
       "properties": {
         "create": { "type": "boolean" },
-        "clusterScoped": { "type": "boolean" },
+        "clusterScoped": {
+          "type": "boolean",
+          "description": "When true, install a ClusterRole/ClusterRoleBinding. When false, install namespaced Role/RoleBinding."
+        },
         "extraRules": { "type": "array", "items": { "type": "object" } }
       },
       "additionalProperties": false
@@ -174,9 +322,23 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
+        "manageEnvVar": {
+          "type": "boolean",
+          "description": "When true (default), control-plane env values for JANGAR_GRPC_* are chart-owned and derived from grpc.*. For controllers, reserved keys are source-of-truth-managed unless explicitly set in controllers.env.vars."
+        },
         "port": { "type": "integer" },
         "servicePort": { "type": "integer" },
         "serviceType": { "type": "string", "enum": ["ClusterIP"] }
+      },
+      "additionalProperties": false
+    },
+    "validation": {
+      "type": "object",
+      "properties": {
+        "reservedEnvKeysEnforced": {
+          "type": "boolean",
+          "description": "Fail chart render if structured envFrom entries include reserved keys that are not owned by their component maps or chart-managed defaults. Duplicate structured declarations of reserved keys across envFrom entries are also rejected."
+        }
       },
       "additionalProperties": false
     },
@@ -254,12 +416,87 @@
       "additionalProperties": false
     },
     "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+    "rolloutChecksums": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "secrets": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["name", "checksum"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+              },
+              "checksum": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[A-Fa-f0-9]{64}$" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "configMaps": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["name", "checksum"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+              },
+              "checksum": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[A-Fa-f0-9]{64}$" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },
     "securityContext": { "type": "object" },
     "containerSecurityContext": { "type": "object" },
     "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
     "affinity": { "type": "object" },
     "tolerations": { "type": "array", "items": { "type": "object" } },
+    "deploymentStrategy": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string" },
+        "rollingUpdate": {
+          "type": "object",
+          "properties": {
+            "maxSurge": { "type": ["string", "integer"] },
+            "maxUnavailable": { "type": ["string", "integer"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "deploymentLifecycle": {
+      "type": "object",
+      "properties": {
+        "minReadySeconds": { "type": "integer", "minimum": 0 },
+        "progressDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "revisionHistoryLimit": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
     "livenessProbe": {
       "type": "object",
       "properties": {
@@ -284,6 +521,23 @@
       },
       "additionalProperties": false
     },
+    "startupProbe": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "path": { "type": "string" },
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "terminationGracePeriodSeconds": { "type": ["integer", "null"], "minimum": 0 },
     "podDisruptionBudget": {
       "type": "object",
       "properties": {
@@ -337,7 +591,7 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
+              "name": { "type": "string", "minLength": 1 },
               "value": { "type": "string" }
             },
             "required": ["name", "value"],
@@ -349,8 +603,12 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
-              "secretName": { "type": "string" },
+              "name": { "type": "string", "minLength": 1 },
+              "secretName": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+              },
               "key": { "type": "string" }
             },
             "required": ["name", "secretName"],
@@ -362,8 +620,12 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
-              "configMapName": { "type": "string" },
+              "name": { "type": "string", "minLength": 1 },
+              "configMapName": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+              },
               "key": { "type": "string" }
             },
             "required": ["name", "configMapName"],
@@ -400,8 +662,58 @@
       },
       "additionalProperties": false
     },
-    "envFromSecretRefs": { "type": "array", "items": { "type": "string" } },
-    "envFromConfigMapRefs": { "type": "array", "items": { "type": "string" } },
+    "envFromSecretRefs": {
+      "type": "array",
+      "items": {
+        "description": "Optional envFrom references for shared credentials/settings. Use object form with `keys` to enable reserved-key validation.",
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "Secret name." },
+              "optional": { "type": "boolean", "description": "Whether missing secret is non-fatal." },
+              "keys": {
+                "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
+                "description": "Optional key list used by validation only. Only string entries matching reserved keys are validated."
+              }
+            },
+            "required": ["name"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "envFromConfigMapRefs": {
+      "type": "array",
+      "items": {
+        "description": "Optional envFrom references for shared config. Use object form with `keys` to enable reserved-key validation.",
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "ConfigMap name." },
+              "optional": { "type": "boolean", "description": "Whether missing ConfigMap is non-fatal." },
+              "keys": {
+                "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
+                "description": "Optional key list used by validation only. Only string entries matching reserved keys are validated."
+              }
+            },
+            "required": ["name"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
     "controller": {
       "type": "object",
       "properties": {
@@ -420,10 +732,10 @@
         },
         "namespaces": {
           "type": "array",
-          "uniqueItems": true,
+          "minItems": 1,
           "items": {
             "type": "string",
-            "anyOf": [{ "const": "*" }, { "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" }]
+            "pattern": "^(\\*|[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)$"
           }
         },
         "concurrency": {
@@ -696,7 +1008,14 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
-        "namespaces": { "type": "array", "items": { "type": "string" } }
+        "namespaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^(\\*|[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)$"
+          }
+        }
       },
       "additionalProperties": false
     },
@@ -704,7 +1023,14 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
-        "namespaces": { "type": "array", "items": { "type": "string" } }
+        "namespaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^(\\*|[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)$"
+          }
+        }
       },
       "additionalProperties": false
     },
@@ -722,7 +1048,10 @@
             "userSecret": {
               "type": "object",
               "properties": {
-                "name": { "type": "string" },
+                "name": {
+                  "type": "string",
+                  "pattern": "^$|^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+                },
                 "usernameKey": { "type": "string" },
                 "passwordKey": { "type": "string" }
               },
@@ -741,7 +1070,10 @@
         "secretRef": {
           "type": "object",
           "properties": {
-            "name": { "type": "string" },
+            "name": {
+              "type": "string",
+              "pattern": "^$|^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+            },
             "key": { "type": "string" }
           },
           "additionalProperties": false
@@ -750,7 +1082,10 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
-            "name": { "type": "string" },
+            "name": {
+              "type": "string",
+              "pattern": "^$|^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+            },
             "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
           },
           "additionalProperties": false
@@ -758,7 +1093,10 @@
         "caSecret": {
           "type": "object",
           "properties": {
-            "name": { "type": "string" },
+            "name": {
+              "type": "string",
+              "pattern": "^$|^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+            },
             "key": { "type": "string" }
           },
           "additionalProperties": false
@@ -843,150 +1181,5 @@
       "additionalProperties": false
     }
   },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "controller": {
-            "properties": {
-              "namespaces": { "type": "array", "minItems": 2 }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["controller"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "controller": {
-            "properties": {
-              "namespaces": { "type": "array", "contains": { "const": "*" } }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["controller"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "orchestrationController": {
-            "properties": {
-              "namespaces": { "type": "array", "minItems": 2 }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["orchestrationController"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "orchestrationController": {
-            "properties": {
-              "namespaces": { "type": "array", "contains": { "const": "*" } }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["orchestrationController"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "supportingController": {
-            "properties": {
-              "namespaces": { "type": "array", "minItems": 2 }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["supportingController"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "supportingController": {
-            "properties": {
-              "namespaces": { "type": "array", "contains": { "const": "*" } }
-            },
-            "required": ["namespaces"]
-          }
-        },
-        "required": ["supportingController"]
-      },
-      "then": {
-        "properties": {
-          "rbac": {
-            "properties": {
-              "clusterScoped": { "const": true }
-            },
-            "required": ["clusterScoped"]
-          }
-        },
-        "required": ["rbac"]
-      }
-    }
-  ]
+  "allOf": []
 }

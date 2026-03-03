@@ -1,0 +1,149 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: swarm-intelligence-cycle-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - swarmName
+      - swarmStage
+      - ownerChannel
+      - objective
+  summary: 'Run one read-only swarm intelligence cycle stage.'
+  text: |
+    Objective: Execute one read-only swarm intelligence stage for ${swarmName}.
+
+    Inputs:
+    - swarmName
+    - swarmStage (discover | plan | verify)
+    - ownerChannel
+    - objective
+    - swarmAgentWorkerId (optional)
+    - swarmAgentIdentity (optional)
+    - swarmHumanName (optional, default Worker)
+    - swarmTeamName (optional, default Swarm Team)
+    - hulyApiBaseUrl (optional)
+    - hulyWorkspace (optional)
+    - hulyProject (optional, default DefaultProject)
+    - hulyChannelName (optional, default general)
+    - hulyChannelUrl (optional, default https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message)
+    - swarmRequirementChannel (optional, huly://<workspace>/channels/<name>)
+    - hulyTeamspaceName (optional, default PROOMPTENG)
+    - hulyTrackerUrl (optional, default https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues)
+    - hulyRequireDedicatedAccount (optional, default false)
+    - hulyExpectedActorId (optional, used when dedicated account is enforced)
+    - hulySkillRef (optional, default skills/huly-api/SKILL.md)
+
+    Requirements:
+    - Keep this run read-only: do not open PRs and do not mutate Kubernetes resources.
+    - Use internet research when stage needs fresh external facts.
+    - Use the Huly skill at ${hulySkillRef} for owner updates and cross-swarm communication.
+    - Operate as a human coworker for ${swarmTeamName}; write in natural first-person language as ${swarmHumanName}.
+    - Resolve an active Huly channel in this order: swarmRequirementChannel, hulyChannelName, then hulyChannelUrl.
+    - Read recent teammate context from that active channel before taking action:
+      `python3 skills/huly-api/scripts/huly-api.py --operation list-channel-messages --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --require-worker-token --channel "${activeHulyChannel}" --limit 30`
+    - React to relevant teammate messages by posting at least one explicit reply that references message IDs and your decision.
+    - Write worker-authored channel messages from live context and decisions; do not rely on canned text.
+    - If hulyRequireDedicatedAccount is true, call
+      `python3 skills/huly-api/scripts/huly-api.py --operation account-info --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --require-worker-token`
+      and include `--expected-actor-id` only when hulyExpectedActorId is provided.
+      and fail the run if account identity validation fails.
+    - Verify chat posting access for this worker account via
+      `python3 skills/huly-api/scripts/huly-api.py --operation verify-chat-access --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --require-worker-token --channel "${activeHulyChannel}" --message "${chatAccessMessage}"`
+      and reference ${hulyChannelUrl} in the owner update.
+    - Publish mission artifacts through all Huly collaboration modules (tasks board, channel message, mission document).
+    - Use
+      `python3 skills/huly-api/scripts/huly-api.py --operation upsert-mission --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --project "${hulyProject}" --teamspace "${hulyTeamspaceName}" --channel "${activeHulyChannel}" --message "${ownerUpdateMessage}" ...`
+      to write those artifacts.
+    - Ensure issue artifacts are written to ${hulyProject} and reference ${hulyTrackerUrl} when provided.
+    - Sign communications with ${swarmHumanName} (${swarmTeamName}) and worker identity ${swarmAgentWorkerId}/${swarmAgentIdentity}.
+    - Write a concise Markdown stage report to `/workspace/.agentrun/swarm/${swarmName}-${swarmStage}.md`.
+
+    Stage behavior:
+    - discover: identify high-value needs, cite sources, rank top 3.
+    - plan: turn top need into an executable implementation plan and test plan.
+    - verify: validate current runtime/code health, list regressions and risk deltas.
+
+    Output:
+    - Include: Summary, Evidence, Risks, Next Actions, Owner Update (for ${ownerChannel}), and Huly artifact IDs.
+
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: swarm-autonomous-implementation-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - swarmName
+      - objective
+  summary: 'Implement prioritized swarm work and deliver through GitOps/PR flow.'
+  text: |
+    Objective: Implement one high-value mission for ${swarmName} and deliver safely.
+
+    Inputs:
+    - repository
+    - base
+    - head
+    - swarmName
+    - objective
+    - ownerChannel
+    - swarmAgentWorkerId (optional)
+    - swarmAgentIdentity (optional)
+    - swarmHumanName (optional, default Worker)
+    - swarmTeamName (optional, default Swarm Team)
+    - hulyApiBaseUrl (optional)
+    - hulyWorkspace (optional)
+    - hulyProject (optional, default DefaultProject)
+    - hulyChannelName (optional, default general)
+    - hulyChannelUrl (optional, default https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message)
+    - hulyTeamspaceName (optional, default PROOMPTENG)
+    - hulyTrackerUrl (optional, default https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues)
+    - hulyRequireDedicatedAccount (optional, default false)
+    - hulyExpectedActorId (optional, used when dedicated account is enforced)
+    - hulySkillRef (optional, default skills/huly-api/SKILL.md)
+
+    Optional cross-swarm requirement inputs (present when this run was dispatched from a Signal):
+    - swarmRequirementId
+    - swarmRequirementSignal
+    - swarmRequirementSource
+    - swarmRequirementTarget
+    - swarmRequirementChannel
+    - swarmRequirementDescription
+    - swarmRequirementPayload
+
+    Required execution:
+    1) If swarmRequirementChannel exists and points to Huly, treat this run as a cross-swarm requirement from
+       swarmRequirementSource -> swarmRequirementTarget and use the requirement description/payload as the primary scope.
+    1a) Operate as a human coworker for ${swarmTeamName}; write in natural first-person language as ${swarmHumanName}.
+    1b) Resolve an active Huly channel in this order: swarmRequirementChannel, hulyChannelName, then hulyChannelUrl.
+    1c) Read recent messages on the active channel before implementation to pick up teammate requirements and blockers:
+       `python3 skills/huly-api/scripts/huly-api.py --operation list-channel-messages --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --require-worker-token --channel "${activeHulyChannel}" --limit 30`
+    1d) React to at least one relevant teammate message with a direct reply that references the message id.
+    2) Implement minimal, production-quality code and config changes in ${repository}.
+    3) Run targeted validation for touched areas (lint/type-check/tests as applicable).
+    4) If hulyRequireDedicatedAccount is true, call
+       `python3 skills/huly-api/scripts/huly-api.py --operation account-info --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --require-worker-token`
+       and include `--expected-actor-id` only when hulyExpectedActorId is provided,
+       and fail the mission if validation fails.
+    5) Verify chat posting access for this worker via
+       `python3 skills/huly-api/scripts/huly-api.py --operation verify-chat-access --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --require-worker-token --channel "${activeHulyChannel}" --message "${chatAccessMessage}"`
+       and include ${hulyChannelUrl} in the status update.
+    6) Use the Huly skill at ${hulySkillRef} and call
+       `python3 skills/huly-api/scripts/huly-api.py --operation upsert-mission --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --project "${hulyProject}" --teamspace "${hulyTeamspaceName}" --channel "${activeHulyChannel}" --message "${ownerUpdateMessage}" ...`
+       so this mission always updates all three Huly modules:
+       - tasks board issue
+       - channel status message
+       - mission document
+       Include ${swarmHumanName} (${swarmTeamName}), ${swarmAgentWorkerId}/${swarmAgentIdentity}, and ${hulyTrackerUrl} in the written content.
+    7) Commit to ${head}, open or update a PR against ${base}, and include requirement provenance (signal/channel/id).
+    8) Return a short release note with risks, rollback path, and owner-facing status for ${ownerChannel}.
+
+    Constraints:
+    - Keep scope narrow and evidence-backed.
+    - No direct kubectl production mutations; use GitOps changes only.

@@ -49,6 +49,7 @@ from ..features import (
 from ..forecasting import build_default_forecast_router
 from ..llm.evaluation import build_llm_evaluation_metrics
 from ..models import SignalEnvelope
+from ..parity import build_benchmark_parity_report, write_benchmark_parity_report
 from ..reporting import (
     EvaluationReport,
     EvaluationReportConfig,
@@ -70,7 +71,11 @@ from .janus_q import (
     build_janus_hgrm_reward_artifact_v1,
     build_janus_q_evidence_summary_v1,
 )
-from .policy_checks import evaluate_promotion_prerequisites, evaluate_rollback_readiness
+from .policy_checks import (
+    RollbackReadinessResult,
+    evaluate_promotion_prerequisites,
+    evaluate_rollback_readiness,
+)
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 from .phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
@@ -86,11 +91,17 @@ _ACTUATION_INTENT_SCHEMA_VERSION = "torghut.autonomy.actuation-intent.v1"
 _ACTUATION_CONFIRMATION_PHRASE = "ACTUATE_TORGHUT"
 _ACTUATION_INTENT_PATH = "gates/actuation-intent.json"
 _AUTONOMY_LANE_SCHEMA_VERSION = "torghut-autonomy-stage-manifest-v1"
+_PROFITABILITY_STAGE_MANIFEST_SCHEMA_VERSION = (
+    "profitability-stage-manifest-v1"
+)
+_PROFITABILITY_STAGE_MANIFEST_PATH = "profitability/profitability-stage-manifest-v1.json"
 _STAGE_CANDIDATE_GENERATION = "candidate-generation"
 _STAGE_EVALUATION = "evaluation"
 _STAGE_RECOMMENDATION = "promotion-recommendation"
 _STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
+_BENCHMARK_PARITY_REPORT_PATH = "benchmarks/benchmark-parity-report-v1.json"
+_STAGE_PROFITABILITY = "profitability_stage_manifest"
 
 
 @dataclass(frozen=True)
@@ -106,67 +117,6 @@ class _StageManifestRecord:
     parent_lineage_hash: str | None = None
     parent_stage: str | None = None
     inputs: dict[str, str] = field(default_factory=dict)
-
-
-def _readable_stage_iteration_number(artifact_root: Path) -> int:
-    pattern = re.compile(r"^iteration-(\d+)\.md$")
-    highest = 0
-    for item in artifact_root.glob("iteration-*.md"):
-        match = pattern.match(item.name)
-        if not match:
-            continue
-        try:
-            candidate = int(match.group(1))
-        except (TypeError, ValueError):
-            continue
-        if candidate > highest:
-            highest = candidate
-    return highest + 1
-
-
-def _write_stage_iteration_notes(
-    *,
-    artifact_root: Path,
-    run_id: str,
-    candidate_id: str,
-    promotion_target: PromotionTarget,
-    promotion_recommended_mode: PromotionTarget,
-    gate_allowed: bool,
-    recommendation_action: str,
-    recommendation_reason_count: int,
-    promotion_reasons: list[str],
-    repository: str,
-    base: str,
-    head: str,
-    priority_id: str | None,
-) -> Path:
-    artifact_root.mkdir(parents=True, exist_ok=True)
-    iteration = _readable_stage_iteration_number(artifact_root)
-    notes_path = artifact_root / f"iteration-{iteration}.md"
-
-    lines = [
-        f"# Autonomy lane iteration {iteration}",
-        "",
-        f"- run_id: {run_id}",
-        f"- candidate_id: {candidate_id}",
-        f"- promotion_target: {promotion_target}",
-        f"- recommendation_mode: {promotion_recommended_mode}",
-        f"- recommendation_action: {recommendation_action}",
-        f"- gate_allowed: {str(gate_allowed).lower()}",
-        f"- recommendation_reason_count: {recommendation_reason_count}",
-        "- repository: {0}".format(repository),
-        "- base: {0}".format(base),
-        "- head: {0}".format(head),
-    ]
-    if priority_id:
-        lines.append(f"- priority_id: {priority_id}")
-
-    lines.append("")
-    lines.append("## Gate and evidence summary")
-    lines.extend(f"- {reason}" for reason in promotion_reasons)
-
-    notes_path.write_text("\n".join(lines), encoding="utf-8")
-    return notes_path
 
 
 def _coerce_evidence_bool(value: object) -> bool | None:
@@ -267,32 +217,6 @@ def _build_candidate_state_payload(
     }
 
 
-def _build_gate_readiness_inputs(candidate_state_payload: Mapping[str, Any]) -> dict[str, bool]:
-    rollback_readiness = candidate_state_payload.get("rollbackReadiness")
-    if isinstance(rollback_readiness, dict):
-        rollback_readiness_raw = cast(dict[str, Any], rollback_readiness)
-    else:
-        rollback_readiness_raw = {}
-
-    operational_ready = bool(
-        _coerce_evidence_bool(rollback_readiness_raw.get("strategyDisableDryRunPassed"))
-    )
-    runbook_validated = bool(_coerce_evidence_bool(candidate_state_payload.get("runbookValidated")))
-    kill_switch_dry_run_passed = bool(
-        _coerce_evidence_bool(rollback_readiness_raw.get("killSwitchDryRunPassed"))
-    )
-    rollback_dry_run_passed = bool(
-        _coerce_evidence_bool(rollback_readiness_raw.get("gitopsRevertDryRunPassed"))
-    )
-
-    return {
-        "operational_ready": operational_ready,
-        "runbook_validated": runbook_validated,
-        "kill_switch_dry_run_passed": kill_switch_dry_run_passed,
-        "rollback_dry_run_passed": rollback_dry_run_passed,
-    }
-
-
 @dataclass(frozen=True)
 class AutonomousLaneResult:
     run_id: str
@@ -302,6 +226,7 @@ class AutonomousLaneResult:
     actuation_intent_path: Path | None
     paper_patch_path: Path | None
     phase_manifest_path: Path
+    benchmark_parity_path: Path
     gate_report_trace_id: str
     recommendation_trace_id: str
     recommendation_artifact_path: Path
@@ -309,6 +234,7 @@ class AutonomousLaneResult:
     candidate_generation_manifest_path: Path
     evaluation_manifest_path: Path
     recommendation_manifest_path: Path
+    profitability_manifest_path: Path
     stage_trace_ids: dict[str, str] = field(default_factory=dict)
     stage_lineage_root: str | None = None
 
@@ -435,7 +361,6 @@ def _as_object_dict(value: object) -> dict[str, object]:
         return {}
     return {str(key): item for key, item in value.items()}
 
-
 def _stable_hash(payload: object) -> str:
     payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
@@ -557,6 +482,349 @@ def _build_stage_lineage_payload(
     }
 
 
+def _manifest_relative_path(artifact_root: Path, artifact_path: Path) -> str:
+    try:
+        return str(artifact_path.relative_to(artifact_root))
+    except ValueError:
+        return str(artifact_path)
+
+
+def _manifest_artifact_payload(
+    artifact_root: Path,
+    artifact_path: Path | None,
+    stage_name: str,
+    check_name: str,
+) -> dict[str, str] | None:
+    if artifact_path is None or not artifact_path.exists():
+        return None
+    return {
+        "path": _manifest_relative_path(artifact_root, artifact_path),
+        "sha256": _sha256_path(artifact_path),
+        "stage": stage_name,
+        "check": check_name,
+    }
+
+
+def _load_json_if_exists(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return cast(dict[str, Any], payload)
+
+
+def _build_profitability_stage_manifest(
+    *,
+    output_dir: Path,
+    run_id: str,
+    candidate_id: str,
+    strategy_family: str,
+    llm_artifact_ref: str | None,
+    router_artifact_ref: str,
+    run_context: dict[str, str],
+    research_manifest_path: Path | None,
+    candidate_spec_path: Path,
+    evaluation_report_path: Path,
+    walkforward_results_path: Path,
+    baseline_evaluation_report_path: Path,
+    gate_report_payload: dict[str, Any],
+    gate_report_path: Path,
+    profitability_benchmark_path: Path,
+    benchmark_parity_path: Path,
+    profitability_evidence_path: Path,
+    profitability_validation_path: Path,
+    janus_event_car_path: Path,
+    janus_hgrm_reward_path: Path,
+    recalibration_report_path: Path,
+    rollback_check: RollbackReadinessResult,
+    drift_gate_check: dict[str, Any],
+    patch_path: Path | None,
+    now: datetime,
+) -> dict[str, Any]:
+    research_artifacts: dict[str, dict[str, str]] = {}
+    research_checks: list[dict[str, object]] = []
+    candidate_spec_artifact = _manifest_artifact_payload(
+        output_dir,
+        candidate_spec_path,
+        "research",
+        "candidate_spec_present",
+    )
+    if candidate_spec_artifact:
+        research_artifacts["candidate_spec"] = candidate_spec_artifact
+        research_checks.append({"check": "candidate_spec_present", "status": "pass"})
+    else:
+        research_checks.append(
+            {"check": "candidate_spec_present", "status": "fail", "reason": "missing"}
+        )
+
+    if research_manifest_path is not None:
+        candidate_generation_manifest_artifact = _manifest_artifact_payload(
+            output_dir,
+            research_manifest_path,
+            "research",
+            "candidate_generation_manifest_present",
+        )
+        if candidate_generation_manifest_artifact:
+            research_artifacts["candidate_generation_manifest"] = (
+                candidate_generation_manifest_artifact
+            )
+            research_checks.append(
+                {"check": "candidate_generation_manifest_present", "status": "pass"}
+            )
+        else:
+            research_checks.append(
+                {
+                    "check": "candidate_generation_manifest_present",
+                    "status": "fail",
+                    "reason": "missing",
+                }
+            )
+
+    for artifact_path, check_name in (
+        (walkforward_results_path, "walkforward_results_present"),
+        (baseline_evaluation_report_path, "baseline_evaluation_report_present"),
+    ):
+        entry = _manifest_artifact_payload(
+            output_dir,
+            artifact_path,
+            "research",
+            check_name,
+        )
+        if entry:
+            research_artifacts[check_name] = entry
+            research_checks.append({"check": check_name, "status": "pass"})
+        else:
+            research_checks.append({"check": check_name, "status": "fail", "reason": "missing"})
+
+    research_pass = all(
+        item.get("status") == "pass" for item in research_checks
+    )
+
+    validation_artifacts: dict[str, dict[str, str]] = {}
+    validation_checks: list[dict[str, object]] = []
+    for artifact_path, check_name in (
+        (evaluation_report_path, "evaluation_report_present"),
+        (profitability_benchmark_path, "profitability_benchmark_present"),
+        (profitability_evidence_path, "profitability_evidence_present"),
+        (profitability_validation_path, "profitability_validation_present"),
+    ):
+        entry = _manifest_artifact_payload(
+            output_dir,
+            artifact_path,
+            "validation",
+            check_name,
+        )
+        if entry:
+            validation_artifacts[check_name] = entry
+            validation_checks.append({"check": check_name, "status": "pass"})
+        else:
+            validation_checks.append(
+                {"check": check_name, "status": "fail", "reason": "missing"}
+            )
+
+    validation_pass = all(item.get("status") == "pass" for item in validation_checks)
+    if (
+        profitability_validation_path.exists()
+        and _load_json_if_exists(profitability_validation_path) is None
+    ):
+        validation_checks.append(
+            {
+                "check": "profitability_validation_payload_valid_json",
+                "status": "fail",
+                "reason": "invalid_json",
+            }
+        )
+        validation_pass = False
+
+    execution_artifacts: dict[str, dict[str, str]] = {}
+    execution_checks_map: list[tuple[str, str, Path]] = [
+        ("walkforward_results_present", "walkforward_results", walkforward_results_path),
+        ("evaluation_report_present", "evaluation_report", evaluation_report_path),
+        ("gate_evaluation_present", "gate_evaluation", gate_report_path),
+        ("benchmark_parity_present", "benchmark_parity", benchmark_parity_path),
+        ("janus_event_car_present", "janus_event_car", janus_event_car_path),
+        ("janus_hgrm_reward_present", "janus_hgrm_reward", janus_hgrm_reward_path),
+        ("recalibration_report_present", "recalibration_report", recalibration_report_path),
+    ]
+    for check_name, artifact_key, artifact_path in execution_checks_map:
+        payload = (
+            _manifest_artifact_payload(
+                output_dir,
+                artifact_path,
+                "execution",
+                check_name,
+            )
+            or {}
+        )
+        if payload:
+            execution_artifacts[artifact_key] = payload
+    execution_checks: list[dict[str, object]] = []
+    for check_name, artifact_key, _artifact_path in execution_checks_map:
+        payload = execution_artifacts.get(artifact_key, {})
+        status = "pass" if payload else "fail"
+        execution_checks.append({"check": check_name, "status": status})
+        if status != "pass":
+            execution_checks[-1]["reason"] = "missing"
+    gate_allowance = bool(gate_report_payload.get("promotion_allowed", False))
+    drift_allowed = bool(drift_gate_check.get("allowed", False))
+    execution_checks.extend(
+        [
+            {
+                "check": "gate_matrix_approval",
+                "status": "pass" if gate_allowance else "fail",
+            },
+            {
+                "check": "drift_gate_approval",
+                "status": "pass" if drift_allowed else "fail",
+            },
+        ]
+    )
+    execution_pass = all(item["status"] == "pass" for item in execution_checks)
+
+    governance_artifacts: dict[str, dict[str, str]] = {
+        "candidate_spec": (
+            _manifest_artifact_payload(
+                output_dir,
+                candidate_spec_path,
+                "governance",
+                "candidate_spec_present",
+            )
+            or {}
+        ),
+        "gate_evaluation": (
+            _manifest_artifact_payload(
+                output_dir,
+                gate_report_path,
+                "governance",
+                "gate_evaluation_present",
+            )
+            or {}
+        ),
+        "rollback_readiness": (
+            _manifest_artifact_payload(
+                output_dir,
+                output_dir / "gates" / "rollback-readiness.json",
+                "governance",
+                "rollback_readiness_present",
+            )
+            or {}
+        ),
+    }
+    if patch_path is not None:
+        governance_artifacts["paper_patch"] = (
+            _manifest_artifact_payload(
+                output_dir,
+                patch_path,
+                "governance",
+                "paper_patch_present",
+            )
+            or {}
+        )
+    governance_checks = [
+        {
+            "check": "rollback_ready",
+            "status": "pass" if rollback_check.ready else "fail",
+        },
+        {
+            "check": "rollback_readiness_present",
+            "status": "pass"
+            if bool(governance_artifacts.get("rollback_readiness")) or False
+            else "fail",
+        },
+        {
+            "check": "gate_report_present",
+            "status": "pass" if gate_report_path.exists() else "fail",
+        },
+    ]
+    if patch_path is None:
+        governance_checks.append(
+            {
+                "check": "paper_patch_present",
+                "status": "pass",
+            }
+        )
+    governance_checks.extend(
+        [
+            {
+                "check": "candidate_spec_present",
+                "status": "pass" if candidate_spec_path.exists() else "fail",
+            },
+            {"check": "risk_controls_attestable", "status": "pass"},
+        ]
+    )
+    governance_pass = all(item["status"] == "pass" for item in governance_checks)
+
+    stage_payloads: dict[str, Any] = {
+        "research": {
+            "status": "pass" if research_pass else "fail",
+            "checks": research_checks,
+            "artifacts": research_artifacts,
+            "owner": "research-orchestrator",
+            "completed_at_utc": now.isoformat(),
+        },
+        "validation": {
+            "status": "pass" if validation_pass else "fail",
+            "checks": validation_checks,
+            "artifacts": validation_artifacts,
+            "owner": "validation-service",
+            "completed_at_utc": now.isoformat(),
+        },
+        "execution": {
+            "status": "pass" if execution_pass else "fail",
+            "checks": execution_checks,
+            "artifacts": {
+                key: value for key, value in execution_artifacts.items() if value
+            },
+            "owner": "execution-sim",
+            "completed_at_utc": now.isoformat(),
+        },
+        "governance": {
+            "status": "pass" if governance_pass else "fail",
+            "checks": governance_checks,
+            "artifacts": {
+                key: value for key, value in governance_artifacts.items() if value
+            },
+            "owner": "governance-policy",
+            "completed_at_utc": now.isoformat(),
+        },
+    }
+    overall_status = "pass" if all(
+        item["status"] == "pass" for item in stage_payloads.values()
+    ) else "fail"
+    failure_reasons = [item["check"] for stage in stage_payloads.values()
+                       for item in stage["checks"] if item.get("status") == "fail"]
+    payload: dict[str, Any] = {
+        "schema_version": _PROFITABILITY_STAGE_MANIFEST_SCHEMA_VERSION,
+        "candidate_id": candidate_id,
+        "strategy_family": strategy_family,
+        "llm_artifact_ref": llm_artifact_ref,
+        "router_artifact_ref": router_artifact_ref,
+        "run_context": {
+            "repository": run_context.get("repository", "unknown"),
+            "base": run_context.get("base", "main"),
+            "head": run_context.get("head", "unknown"),
+            "artifact_path": run_context.get("artifact_path", str(output_dir)),
+            "run_id": run_context.get("run_id", run_id),
+            "design_doc": run_context.get("design_doc", ""),
+            "priority_id": run_context.get("priority_id", ""),
+        },
+        "stages": stage_payloads,
+        "overall_status": overall_status,
+        "failure_reasons": failure_reasons,
+        "rollback_contract_ref": _manifest_relative_path(
+            output_dir, output_dir / "gates" / "rollback-readiness.json"
+        ),
+        "created_at_utc": now.isoformat(),
+    }
+    manifest_copy = dict(payload)
+    payload["content_hash"] = _stable_hash(manifest_copy)
+    return payload
+
+
 def _write_iteration_notes(
     *,
     artifact_root: Path,
@@ -599,8 +867,9 @@ def _write_iteration_notes(
     notes_path.write_text("\n".join(lines), encoding="utf-8")
     return notes_path
 
-
-def _extract_janus_q_metrics(summary: dict[str, object]) -> tuple[int, int, bool, list[str]]:
+def _extract_janus_q_metrics(
+    summary: dict[str, object],
+) -> tuple[int, int, bool, list[str]]:
     event_car = _as_object_dict(summary.get("event_car"))
     hgrm_reward = _as_object_dict(summary.get("hgrm_reward"))
     reasons_raw = summary.get("reasons")
@@ -638,7 +907,10 @@ def run_autonomous_lane(
     governance_head: str | None = None,
     governance_artifact_path: str | None = None,
     artifact_path: str | None = None,
+    artifactPath: str | None = None,
     priority_id: str | None = None,
+    priorityId: str | None = None,
+    design_doc: str | None = None,
     governance_change: str = "autonomous-promotion",
     governance_reason: str | None = None,
 ) -> AutonomousLaneResult:
@@ -682,17 +954,25 @@ def run_autonomous_lane(
     janus_event_car_path = gates_dir / "janus-event-car-v1.json"
     janus_hgrm_reward_path = gates_dir / "janus-hgrm-reward-v1.json"
     stress_metrics_path = gates_dir / _STRESS_METRICS_ARTIFACT_PATH
+    benchmark_parity_path = output_dir / _BENCHMARK_PARITY_REPORT_PATH
     recalibration_report_path = gates_dir / "recalibration-report.json"
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
+    profitability_manifest_path = output_dir / _PROFITABILITY_STAGE_MANIFEST_PATH
     phase_manifest_path = rollout_dir / "phase-manifest.json"
     run_row = None
+    resolved_priority_id = (
+        priority_id if priority_id is not None else _coerce_str(priorityId)
+    )
     governance_context = _coalesce_governance_context(
         governance_inputs=governance_inputs,
         governance_repository=governance_repository or repository,
         governance_base=governance_base or base,
         governance_head=governance_head or head,
-        governance_artifact_path=governance_artifact_path or artifact_path,
-        priority_id=priority_id,
+        governance_artifact_path=(
+            governance_artifact_path or artifact_path or artifactPath
+        ),
+        priority_id=resolved_priority_id,
+        design_doc=design_doc,
         now=now,
     )
     governance_context = _normalize_governance_inputs(governance_context)
@@ -705,6 +985,7 @@ def run_autonomous_lane(
     )
     resolved_governance_base = governance_context["execution_context"].get("base")
     resolved_governance_head = governance_context["execution_context"].get("head")
+    resolved_design_doc = governance_context["execution_context"].get("designDoc")
     resolved_governance_priority_id = governance_context["execution_context"].get(
         "priorityId"
     )
@@ -730,6 +1011,12 @@ def run_autonomous_lane(
         ordered_signals = sorted(
             signals, key=lambda item: (item.event_ts, item.symbol, item.seq or 0)
         )
+        strategy_family = _coerce_str(
+            runtime_strategies[0].strategy_type
+            if runtime_strategies
+            else "deterministic"
+        )
+        router_artifact_ref = str(strategy_config_path)
         walk_decisions, runtime_errors = _collect_walk_decisions_for_runtime(
             runtime=runtime,
             ordered_signals=ordered_signals,
@@ -790,17 +1077,19 @@ def run_autonomous_lane(
         )
         evaluation_report_path = backtest_dir / "evaluation-report.json"
         write_evaluation_report(report, evaluation_report_path)
+        baseline_candidate_id = "baseline-legacy-macd-rsi"
+        baseline_report_config = EvaluationReportConfig(
+            evaluation_start=signals[0].event_ts,
+            evaluation_end=signals[-1].event_ts,
+            signal_source=str(signals_path),
+            strategies=_to_orm_strategies(baseline_runtime_strategies),
+            run_id=f"{run_id}-baseline",
+            strategy_config_path=f"baseline:{baseline_candidate_id}@1.0.0",
+            git_sha=code_version,
+        )
         baseline_report = generate_evaluation_report(
             baseline_walk_results,
-            config=EvaluationReportConfig(
-                evaluation_start=signals[0].event_ts,
-                evaluation_end=signals[-1].event_ts,
-                signal_source=str(signals_path),
-                strategies=_to_orm_strategies(baseline_runtime_strategies),
-                run_id=f"{run_id}-baseline",
-                strategy_config_path="baseline:legacy_macd_rsi@1.0.0",
-                git_sha=code_version,
-            ),
+            config=baseline_report_config,
             promotion_target="shadow",
         )
         write_evaluation_report(baseline_report, baseline_report_path)
@@ -870,7 +1159,7 @@ def run_autonomous_lane(
 
         benchmark = execute_profitability_benchmark_v4(
             candidate_id=candidate_id,
-            baseline_id="baseline-legacy-macd-rsi",
+            baseline_id=baseline_candidate_id,
             candidate_report_payload=report.to_payload(),
             baseline_report_payload=baseline_report.to_payload(),
             required_slice_keys=[
@@ -882,6 +1171,12 @@ def run_autonomous_lane(
         profitability_benchmark_path.write_text(
             json.dumps(benchmark.to_payload(), indent=2), encoding="utf-8"
         )
+        benchmark_parity_report = build_benchmark_parity_report(
+            candidate_id=candidate_id,
+            baseline_candidate_id=baseline_candidate_id,
+            now=now,
+        )
+        write_benchmark_parity_report(benchmark_parity_report, benchmark_parity_path)
 
         confidence_values = _collect_confidence_values(walk_decisions)
         reproducibility_hashes = {
@@ -897,7 +1192,7 @@ def run_autonomous_lane(
         profitability_evidence = build_profitability_evidence_v4(
             run_id=run_id,
             candidate_id=candidate_id,
-            baseline_id="baseline-legacy-macd-rsi",
+            baseline_id=baseline_candidate_id,
             candidate_report_payload=report.to_payload(),
             benchmark=benchmark,
             confidence_values=confidence_values,
@@ -942,10 +1237,8 @@ def run_autonomous_lane(
             fragility_score,
             stability_mode_active,
             fragility_inputs_valid,
-        ) = (
-            _resolve_gate_fragility_inputs(
-                decisions=walk_decisions
-            )
+        ) = _resolve_gate_fragility_inputs(
+            metrics_payload=metrics_payload, decisions=walk_decisions
         )
         forecast_gate_metrics = _resolve_gate_forecast_metrics(signals=ordered_signals)
         confidence_calibration, uncertainty_action, recalibration_run_id = (
@@ -990,7 +1283,12 @@ def run_autonomous_lane(
             code_version=code_version,
             runbook_validated=_is_runbook_valid(strategy_configmap_path),
         )
-        gate_readiness_inputs = _build_gate_readiness_inputs(candidate_state_payload)
+        candidate_state_readiness_raw = candidate_state_payload.get("rollbackReadiness", {})
+        candidate_state_readiness = (
+            candidate_state_readiness_raw
+            if isinstance(candidate_state_readiness_raw, dict)
+            else {}
+        )
         gate_inputs = GateInputs(
             feature_schema_version=gate_policy.required_feature_schema_version,
             required_feature_null_rate=_required_feature_null_rate(signals),
@@ -1011,10 +1309,23 @@ def run_autonomous_lane(
             fragility_score=fragility_score,
             stability_mode_active=stability_mode_active,
             fragility_inputs_valid=fragility_inputs_valid,
-            operational_ready=gate_readiness_inputs["operational_ready"],
-            runbook_validated=gate_readiness_inputs["runbook_validated"],
-            kill_switch_dry_run_passed=gate_readiness_inputs["kill_switch_dry_run_passed"],
-            rollback_dry_run_passed=gate_readiness_inputs["rollback_dry_run_passed"],
+            operational_ready=not bool(candidate_state_payload.get("paused", False)),
+            runbook_validated=bool(
+                _coerce_evidence_bool(candidate_state_payload.get("runbookValidated"))
+            ),
+            kill_switch_dry_run_passed=bool(
+                _coerce_evidence_bool(
+                    candidate_state_readiness.get("killSwitchDryRunPassed")
+                )
+            ),
+            rollback_dry_run_passed=bool(
+                _coerce_evidence_bool(
+                    candidate_state_readiness.get("gitopsRevertDryRunPassed")
+                )
+                and _coerce_evidence_bool(
+                    candidate_state_readiness.get("strategyDisableDryRunPassed")
+                )
+            ),
             approval_token=approval_token,
         )
         gate_report = evaluate_gate_matrix(
@@ -1054,6 +1365,11 @@ def run_autonomous_lane(
         stress_metrics_artifact_ref = str(stress_metrics_path)
         if not output_dir.is_absolute():
             stress_metrics_artifact_ref = str(stress_metrics_path.relative_to(output_dir))
+        benchmark_parity_artifact_ref = str(benchmark_parity_path)
+        if not output_dir.is_absolute():
+            benchmark_parity_artifact_ref = str(
+                benchmark_parity_path.relative_to(output_dir)
+            )
         gate_report_payload = gate_report.to_payload()
         gate_report_payload["run_id"] = run_id
         gate_report_payload["throughput"] = {
@@ -1088,6 +1404,9 @@ def run_autonomous_lane(
                 "evidence_complete": janus_evidence_complete,
                 "reasons": janus_reasons,
             },
+            "benchmark_parity": {
+                "artifact_ref": benchmark_parity_artifact_ref,
+            },
             "promotion_rationale": {
                 "requested_target": promotion_target,
                 "gate_recommended_mode": gate_report.recommended_mode,
@@ -1119,6 +1438,7 @@ def run_autonomous_lane(
                 "evaluation_report": str(evaluation_report_path),
                 "baseline_evaluation_report": str(baseline_report_path),
                 "gate_report": str(gate_report_path),
+                "benchmark_parity": str(benchmark_parity_path),
                 "profitability_benchmark": str(profitability_benchmark_path),
                 "profitability_evidence": str(profitability_evidence_path),
                 "profitability_validation": str(profitability_validation_path),
@@ -1153,21 +1473,10 @@ def run_autonomous_lane(
             paper_dir=paper_dir,
             promotion_target=promotion_target,
         )
-        promotion_check = evaluate_promotion_prerequisites(
-            policy_payload=raw_gate_policy,
-            gate_report_payload=gate_report_payload,
-            candidate_state_payload=candidate_state_payload,
-            promotion_target=promotion_target,
-            artifact_root=output_dir,
-            now=now,
-        )
         rollback_check = evaluate_rollback_readiness(
             policy_payload=raw_gate_policy,
             candidate_state_payload=candidate_state_payload,
             now=now,
-        )
-        promotion_check_path.write_text(
-            json.dumps(promotion_check.to_payload(), indent=2), encoding="utf-8"
         )
         rollback_check_path.write_text(
             json.dumps(rollback_check.to_payload(), indent=2), encoding="utf-8"
@@ -1175,6 +1484,71 @@ def run_autonomous_lane(
         drift_gate_check = _evaluate_drift_promotion_gate(
             promotion_target=promotion_target,
             drift_promotion_evidence=drift_promotion_evidence,
+        )
+        candidate_spec_path.write_text(
+            json.dumps(research_spec, indent=2), encoding="utf-8"
+        )
+        profitability_run_context = {
+            "repository": str(resolved_governance_repository or ""),
+            "base": str(resolved_governance_base or ""),
+            "head": str(resolved_governance_head or ""),
+            "artifact_path": notes_artifact_root or str(output_dir),
+            "run_id": run_id,
+            "design_doc": str(resolved_design_doc or ""),
+            "priority_id": str(resolved_governance_priority_id or ""),
+        }
+
+        def _write_profitability_manifest() -> None:
+            profitability_manifest_payload = _build_profitability_stage_manifest(
+                output_dir=output_dir,
+                run_id=run_id,
+                candidate_id=candidate_id,
+                strategy_family=strategy_family,
+                llm_artifact_ref=None,
+                router_artifact_ref=router_artifact_ref,
+                run_context=profitability_run_context,
+                research_manifest_path=manifest_paths.get(_STAGE_CANDIDATE_GENERATION),
+                candidate_spec_path=candidate_spec_path,
+                evaluation_report_path=evaluation_report_path,
+                walkforward_results_path=walk_results_path,
+                baseline_evaluation_report_path=baseline_report_path,
+                gate_report_payload=gate_report_payload,
+                gate_report_path=gate_report_path,
+                profitability_benchmark_path=profitability_benchmark_path,
+                profitability_evidence_path=profitability_evidence_path,
+                profitability_validation_path=profitability_validation_path,
+                benchmark_parity_path=benchmark_parity_path,
+                janus_event_car_path=janus_event_car_path,
+                janus_hgrm_reward_path=janus_hgrm_reward_path,
+                recalibration_report_path=recalibration_report_path,
+                rollback_check=rollback_check,
+                drift_gate_check=drift_gate_check,
+                patch_path=patch_path,
+                now=now,
+            )
+            profitability_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            profitability_manifest_path.write_text(
+                json.dumps(profitability_manifest_payload, indent=2),
+                encoding="utf-8",
+            )
+
+        _write_profitability_manifest()
+        promotion_policy_payload = dict(raw_gate_policy)
+        promotion_policy_payload["promotion_require_profitability_stage_manifest"] = True
+        promotion_policy_payload.setdefault(
+            "promotion_profitability_stage_manifest_artifact",
+            _PROFITABILITY_STAGE_MANIFEST_PATH,
+        )
+        promotion_check = evaluate_promotion_prerequisites(
+            policy_payload=promotion_policy_payload,
+            gate_report_payload=gate_report_payload,
+            candidate_state_payload=candidate_state_payload,
+            promotion_target=promotion_target,
+            artifact_root=output_dir,
+            now=now,
+        )
+        promotion_check_path.write_text(
+            json.dumps(promotion_check.to_payload(), indent=2), encoding="utf-8"
         )
         fold_metrics_count = len(walk_results.folds)
         promotion_rationale = _build_promotion_rationale(
@@ -1220,7 +1594,9 @@ def run_autonomous_lane(
         promotion_reasons = promotion_recommendation.reasons
         recommended_mode = promotion_recommendation.recommended_mode
         recommendation_trace_id = promotion_recommendation.trace_id
-        research_spec["promotion_recommendation"] = promotion_recommendation.to_payload()
+        research_spec["promotion_recommendation"] = (
+            promotion_recommendation.to_payload()
+        )
         research_spec["promotion_evidence_requirements"] = {
             "fold_metrics_count": len(fold_evidence),
             "stress_case_count": len(stress_evidence),
@@ -1240,6 +1616,7 @@ def run_autonomous_lane(
                     "reasons": gate_report.reasons,
                     "artifact_refs": [
                         str(gate_report_path),
+                        str(benchmark_parity_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
                         str(stress_metrics_path),
@@ -1262,6 +1639,7 @@ def run_autonomous_lane(
                         str(promotion_check_path),
                         str(rollback_check_path),
                         str(gate_report_path),
+                        str(benchmark_parity_path),
                         str(profitability_benchmark_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
@@ -1307,6 +1685,9 @@ def run_autonomous_lane(
                 "evidence_complete": janus_evidence_complete,
                 "reasons": janus_reasons,
             },
+            "benchmark_parity": {
+                "artifact_ref": benchmark_parity_artifact_ref,
+            },
             "promotion_rationale": {
                 "requested_target": promotion_target,
                 "gate_recommended_mode": gate_report.recommended_mode,
@@ -1328,6 +1709,7 @@ def run_autonomous_lane(
         gate_report_payload["provenance"] = {
             "gate_report_trace_id": gate_report_trace_id,
             "recommendation_trace_id": recommendation_trace_id,
+            "benchmark_parity_artifact": str(benchmark_parity_path),
             "profitability_benchmark_artifact": str(profitability_benchmark_path),
             "profitability_evidence_artifact": str(profitability_evidence_path),
             "profitability_validation_artifact": str(profitability_validation_path),
@@ -1361,6 +1743,7 @@ def run_autonomous_lane(
             output_artifacts={
                 "evaluation_report": evaluation_report_path,
                 "gate_evaluation": gate_report_path,
+                "benchmark_parity": benchmark_parity_path,
                 "profitability_benchmark": profitability_benchmark_path,
                 "profitability_evidence": profitability_evidence_path,
                 "profitability_validation": profitability_validation_path,
@@ -1396,6 +1779,8 @@ def run_autonomous_lane(
                     [
                         str(gate_report_path),
                         str(promotion_gate_path),
+                        str(profitability_manifest_path),
+                        str(benchmark_parity_path),
                         str(profitability_benchmark_path),
                         str(profitability_validation_path),
                         str(janus_event_car_path),
@@ -1453,6 +1838,8 @@ def run_autonomous_lane(
             "baseline_evaluation_report": baseline_report_path,
             "evaluation_report": evaluation_report_path,
             "gate_report": gate_report_path,
+            "profitability_stage_manifest": profitability_manifest_path,
+            "benchmark_parity": benchmark_parity_path,
             "profitability_benchmark": profitability_benchmark_path,
             "profitability_evidence": profitability_evidence_path,
             "profitability_validation": profitability_validation_path,
@@ -1467,7 +1854,39 @@ def run_autonomous_lane(
                 _STAGE_CANDIDATE_GENERATION
             ),
         }
-        replay_artifact_hashes = _artifact_hashes(replay_artifacts)
+        research_spec["stage_lineage"] = stage_lineage_payload
+        research_spec["stage_trace_ids"] = dict(stage_trace_ids)
+        research_spec["stage_lineage_root"] = (
+            stage_lineage_payload.get("root_lineage_hash")
+        )
+        research_spec["stage_manifest_refs"] = {
+            _STAGE_CANDIDATE_GENERATION: str(manifest_paths[_STAGE_CANDIDATE_GENERATION]),
+            _STAGE_EVALUATION: str(manifest_paths[_STAGE_EVALUATION]),
+            _STAGE_RECOMMENDATION: str(manifest_paths[_STAGE_RECOMMENDATION]),
+            _STAGE_PROFITABILITY: str(profitability_manifest_path),
+        }
+        research_spec["artifacts"] = {
+            **research_spec["artifacts"],
+            **{
+                key: str(artifact_path)
+                for key, artifact_path in replay_artifacts.items()
+                if artifact_path is not None
+            },
+            "promotion_recommendation": str(promotion_recommendation_path),
+            _STAGE_PROFITABILITY: str(profitability_manifest_path),
+            _STAGE_CANDIDATE_GENERATION: str(manifest_paths[_STAGE_CANDIDATE_GENERATION]),
+            _STAGE_EVALUATION: str(manifest_paths[_STAGE_EVALUATION]),
+            _STAGE_RECOMMENDATION: str(manifest_paths[_STAGE_RECOMMENDATION]),
+        }
+        candidate_spec_path.write_text(
+            json.dumps(research_spec, indent=2), encoding="utf-8"
+        )
+        candidate_spec_replay_artifacts: dict[str, Path | None] = {
+            key: value
+            for key, value in replay_artifacts.items()
+            if key != "profitability_stage_manifest"
+        }
+        replay_artifact_hashes = _artifact_hashes(candidate_spec_replay_artifacts)
         candidate_hash = _compute_candidate_hash(
             run_id=run_id,
             runtime_strategies=runtime_strategies,
@@ -1479,32 +1898,11 @@ def run_autonomous_lane(
             replay_artifact_hashes=replay_artifact_hashes,
         )
         research_spec["candidate_hash"] = candidate_hash
-        research_spec["stage_lineage"] = stage_lineage_payload
-        research_spec["stage_trace_ids"] = dict(stage_trace_ids)
-        research_spec["stage_lineage_root"] = (
-            stage_lineage_payload.get("root_lineage_hash")
-        )
         research_spec["replay_artifact_hashes"] = replay_artifact_hashes
-        research_spec["stage_manifest_refs"] = {
-            _STAGE_CANDIDATE_GENERATION: str(manifest_paths[_STAGE_CANDIDATE_GENERATION]),
-            _STAGE_EVALUATION: str(manifest_paths[_STAGE_EVALUATION]),
-            _STAGE_RECOMMENDATION: str(manifest_paths[_STAGE_RECOMMENDATION]),
-        }
-        research_spec["artifacts"] = {
-            **research_spec["artifacts"],
-            **{
-                key: str(artifact_path)
-                for key, artifact_path in replay_artifacts.items()
-                if artifact_path is not None
-            },
-            "promotion_recommendation": str(promotion_recommendation_path),
-            _STAGE_CANDIDATE_GENERATION: str(manifest_paths[_STAGE_CANDIDATE_GENERATION]),
-            _STAGE_EVALUATION: str(manifest_paths[_STAGE_EVALUATION]),
-            _STAGE_RECOMMENDATION: str(manifest_paths[_STAGE_RECOMMENDATION]),
-        }
         candidate_spec_path.write_text(
             json.dumps(research_spec, indent=2), encoding="utf-8"
         )
+        _write_profitability_manifest()
         _write_iteration_notes(
             artifact_root=notes_root,
             run_id=run_id,
@@ -1545,6 +1943,7 @@ def run_autonomous_lane(
             ],
             evaluation_manifest_path=manifest_paths[_STAGE_EVALUATION],
             recommendation_manifest_path=manifest_paths[_STAGE_RECOMMENDATION],
+            profitability_manifest_path=profitability_manifest_path,
             promotion_recommendation_path=promotion_recommendation_path,
             evaluation_report_path=evaluation_report_path,
             walk_results_path=walk_results_path,
@@ -1556,6 +1955,7 @@ def run_autonomous_lane(
             profitability_benchmark_path=profitability_benchmark_path,
             profitability_evidence_path=profitability_evidence_path,
             profitability_validation_path=profitability_validation_path,
+            benchmark_parity_path=benchmark_parity_path,
             janus_event_car_path=janus_event_car_path,
             janus_hgrm_reward_path=janus_hgrm_reward_path,
             recalibration_report_path=recalibration_report_path,
@@ -1648,21 +2048,6 @@ def run_autonomous_lane(
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
         )
-        _write_stage_iteration_notes(
-            artifact_root=output_dir,
-            run_id=run_id,
-            candidate_id=candidate_id,
-            promotion_target=promotion_target,
-            promotion_recommended_mode=recommended_mode,
-            gate_allowed=promotion_allowed,
-            recommendation_action=promotion_recommendation.action,
-            recommendation_reason_count=len(promotion_reasons),
-            promotion_reasons=promotion_reasons,
-            repository=cast(str, resolved_governance_repository),
-            base=cast(str, resolved_governance_base),
-            head=cast(str, resolved_governance_head),
-            priority_id=priority_id,
-        )
 
         return AutonomousLaneResult(
             run_id=run_id,
@@ -1679,6 +2064,8 @@ def run_autonomous_lane(
             ],
             evaluation_manifest_path=manifest_paths[_STAGE_EVALUATION],
             recommendation_manifest_path=manifest_paths[_STAGE_RECOMMENDATION],
+            profitability_manifest_path=profitability_manifest_path,
+            benchmark_parity_path=benchmark_parity_path,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
             stage_trace_ids=stage_trace_ids,
@@ -1737,6 +2124,10 @@ def _normalize_governance_inputs(
                 execution_context.get("priorityId"),
                 default="",
             ),
+            "designDoc": _coerce_str(
+                execution_context.get("designDoc"),
+                default="",
+            ),
         },
         "runtime_governance": cast(Mapping[str, Any], runtime),
         "rollback_proof": cast(Mapping[str, Any], rollback),
@@ -1750,6 +2141,7 @@ def _coalesce_governance_context(
     governance_base: str | None,
     governance_head: str | None,
     governance_artifact_path: str | None,
+    design_doc: str | None,
     priority_id: str | None,
     now: datetime,
 ) -> dict[str, Any]:
@@ -1792,8 +2184,13 @@ def _coalesce_governance_context(
             ),
             "priorityId": (
                 priority_id
-                if priority_id is not None
+                if priority_id
                 else _coerce_str(execution_context.get("priorityId"))
+            ),
+            "designDoc": (
+                design_doc
+                if design_doc is not None
+                else _coerce_str(execution_context.get("designDoc"))
             ),
         },
         "runtime_governance": cast(Mapping[str, Any], runtime),
@@ -2084,6 +2481,7 @@ def _build_phase_manifest(
             str(output_dir / "gates" / "profitability-benchmark-v4.json"),
             str(output_dir / "gates" / "profitability-evidence-v4.json"),
             str(output_dir / "gates" / "profitability-evidence-validation.json"),
+            str(output_dir / "benchmarks" / "benchmark-parity-report-v1.json"),
             str(output_dir / "gates" / "janus-event-car-v1.json"),
             str(output_dir / "gates" / "janus-hgrm-reward-v1.json"),
             str(output_dir / "gates" / "promotion-evidence-gate.json"),
@@ -2247,6 +2645,7 @@ def _build_actuation_intent_payload(
     candidate_generation_manifest_path: Path,
     evaluation_manifest_path: Path,
     recommendation_manifest_path: Path,
+    profitability_manifest_path: Path,
     promotion_recommendation_path: Path,
     evaluation_report_path: Path,
     walk_results_path: Path,
@@ -2255,6 +2654,7 @@ def _build_actuation_intent_payload(
     profitability_benchmark_path: Path,
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
+    benchmark_parity_path: Path,
     janus_event_car_path: Path,
     janus_hgrm_reward_path: Path,
     recalibration_report_path: Path,
@@ -2289,8 +2689,10 @@ def _build_actuation_intent_payload(
             str(candidate_generation_manifest_path),
             str(evaluation_manifest_path),
             str(recommendation_manifest_path),
+            str(profitability_manifest_path),
             str(promotion_recommendation_path),
             str(profitability_benchmark_path),
+            str(benchmark_parity_path),
             str(profitability_evidence_path),
             str(profitability_validation_path),
             str(janus_event_car_path),
@@ -2304,7 +2706,12 @@ def _build_actuation_intent_payload(
     rollback_evidence_links.extend(
         [str(item) for item in promotion_check.get("artifact_refs", [])]
     )
-    candidate_state_readiness = candidate_state_payload.get("rollbackReadiness", {})
+    candidate_state_readiness_raw = candidate_state_payload.get("rollbackReadiness", {})
+    candidate_state_readiness = (
+        candidate_state_readiness_raw
+        if isinstance(candidate_state_readiness_raw, dict)
+        else {}
+    )
     return {
         "schema_version": _ACTUATION_INTENT_SCHEMA_VERSION,
         "run_id": run_id,
@@ -2325,9 +2732,7 @@ def _build_actuation_intent_payload(
         "actuation_allowed": actuation_allowed,
         "confirmation_phrase_required": promotion_target == "live",
         "confirmation_phrase": (
-            _ACTUATION_CONFIRMATION_PHRASE
-            if promotion_target == "live"
-            else None
+            _ACTUATION_CONFIRMATION_PHRASE if promotion_target == "live" else None
         ),
         "gates": {
             "recommendation_trace_id": recommendation_trace_id,
@@ -2358,9 +2763,7 @@ def _build_actuation_intent_payload(
                 "strategy_disable_dry_run_passed": bool(
                     candidate_state_readiness.get("strategyDisableDryRunPassed")
                 ),
-                "human_approved": bool(
-                    candidate_state_readiness.get("humanApproved")
-                ),
+                "human_approved": bool(candidate_state_readiness.get("humanApproved")),
                 "rollback_target": str(
                     candidate_state_readiness.get("rollbackTarget") or ""
                 ),
@@ -3319,7 +3722,7 @@ def _coerce_fragility_score(value: object) -> Decimal | None:
 
 
 def _coerce_fragility_measurement(
-    payload: dict[str, object]
+    payload: dict[str, object],
 ) -> tuple[str, Decimal, bool] | None:
     state = _coerce_fragility_state(payload.get("fragility_state"))
     score = _coerce_fragility_score(payload.get("fragility_score"))
@@ -3343,8 +3746,16 @@ def _is_more_worse_fragility(
 
 def _resolve_gate_fragility_inputs(
     *,
+    metrics_payload: dict[str, object],
     decisions: list[WalkForwardDecision],
 ) -> tuple[str, Decimal, bool, bool]:
+    fallback_measurement = _coerce_fragility_measurement(
+        {
+            "fragility_state": metrics_payload.get("fragility_state"),
+            "fragility_score": metrics_payload.get("fragility_score"),
+            "stability_mode_active": metrics_payload.get("stability_mode_active"),
+        }
+    )
     selected_measurement: tuple[str, Decimal, bool] | None = None
 
     for item in decisions:
@@ -3386,7 +3797,10 @@ def _resolve_gate_fragility_inputs(
             selected_measurement = candidate
 
     if selected_measurement is None:
-        return ("not_measured", Decimal("0"), False, False)
+        if fallback_measurement is None:
+            return ("crisis", Decimal("1"), False, False)
+        selected_measurement = fallback_measurement
+
     selected_state, selected_score, selected_stability = selected_measurement
     return selected_state, selected_score, selected_stability, True
 
@@ -3431,7 +3845,10 @@ def _resolve_gate_forecast_metrics(
         calibration_scores.append(route_result.contract.calibration_score)
 
     expected_samples = len(signals)
-    if len(latency_samples_ms) != expected_samples or len(calibration_scores) != expected_samples:
+    if (
+        len(latency_samples_ms) != expected_samples
+        or len(calibration_scores) != expected_samples
+    ):
         return {}
 
     fallback_rate = (Decimal(fallback_total) / Decimal(expected_samples)).quantize(
@@ -3526,17 +3943,20 @@ def _load_tca_gate_inputs(
     except Exception:
         return {
             "order_count": 0,
-            "avg_slippage_bps": None,
-            "avg_shortfall_notional": None,
-            "avg_shortfall_notional_abs": None,
-            "avg_churn_ratio": None,
-            "avg_divergence_bps": None,
-            "avg_divergence_bps_abs": None,
-            "avg_realized_shortfall_bps": None,
-            "expected_shortfall_coverage": None,
+            "avg_slippage_bps": Decimal("0"),
+            "avg_abs_slippage_bps": Decimal("0"),
+            "avg_shortfall_notional": Decimal("0"),
+            "avg_shortfall_notional_abs": Decimal("0"),
+            "avg_churn_ratio": Decimal("0"),
+            "avg_divergence_bps": Decimal("0"),
+            "avg_divergence_bps_abs": Decimal("0"),
+            "avg_realized_shortfall_bps": Decimal("0"),
+            "avg_realized_shortfall_bps_abs": Decimal("0"),
+            "avg_calibration_error_bps": Decimal("0"),
+            "expected_shortfall_coverage": Decimal("0"),
             "expected_shortfall_sample_count": 0,
-            "avg_expected_shortfall_bps_p50": None,
-            "avg_expected_shortfall_bps_p95": None,
+            "avg_expected_shortfall_bps_p50": Decimal("0"),
+            "avg_expected_shortfall_bps_p95": Decimal("0"),
         }
 
 

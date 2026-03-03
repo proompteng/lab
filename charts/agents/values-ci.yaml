@@ -6,6 +6,8 @@ image:
   digest: sha256:44669d6e24474c9661977b3ad231caa532bc9548acd46ef5bca2905435394992
   pullPolicy: IfNotPresent
 
+namespaceOverride: agents-ci
+
 grpc:
   enabled: false
 

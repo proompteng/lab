@@ -77,10 +77,28 @@ def main() -> int:
         help="Optional artifact root for execution-context notes and governance artifact path.",
     )
     parser.add_argument(
+        "--artifactPath",
+        type=Path,
+        default=None,
+        help="CamelCase alias for --artifact-path",
+    )
+    parser.add_argument(
         "--priority-id",
         type=str,
         default=None,
         help="Priority identifier for lane execution and governance output.",
+    )
+    parser.add_argument(
+        "--priorityId",
+        type=str,
+        default=None,
+        help="CamelCase alias for --priority-id",
+    )
+    parser.add_argument(
+        "--design-doc",
+        type=str,
+        default=None,
+        help="Optional design document reference (for governance contract and evidence provenance).",
     )
     parser.add_argument(
         "--promotion-target", choices=("shadow", "paper", "live"), default="paper"
@@ -109,7 +127,12 @@ def main() -> int:
         artifact_path=str(args.artifact_path)
         if args.artifact_path is not None
         else None,
+        artifactPath=str(args.artifactPath)
+        if args.artifactPath is not None
+        else None,
         priority_id=args.priority_id,
+        priorityId=args.priorityId,
+        design_doc=args.design_doc,
         promotion_target=args.promotion_target,
         strategy_configmap_path=args.strategy_configmap,
         code_version=_resolve_git_sha(),
@@ -133,7 +156,9 @@ def main() -> int:
         ),
         "evaluation_manifest_path": str(result.evaluation_manifest_path),
         "recommendation_manifest_path": str(result.recommendation_manifest_path),
+        "profitability_manifest_path": str(result.profitability_manifest_path),
         "recommendation_artifact_path": str(result.recommendation_artifact_path),
+        "benchmark_parity_path": str(result.benchmark_parity_path),
         "stage_trace_ids": result.stage_trace_ids,
         "stage_lineage_root": result.stage_lineage_root,
         "profitability_benchmark_path": str(

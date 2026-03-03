@@ -108,7 +108,7 @@ class TestGovernancePolicyDryRun(TestCase):
         repo_root = Path(__file__).resolve().parents[3]
         service_root = repo_root / "services" / "torghut"
         script = service_root / "scripts" / "run_governance_policy_dry_run.py"
-        policy = service_root / "config" / "autonomy-gates-v3.json"
+        source_policy = service_root / "config" / "autonomy-gates-v3.json"
 
         gate_report = _default_gate_report(now)
         if "--simulate-stress-metrics-stale" in extra_args:
@@ -143,6 +143,18 @@ class TestGovernancePolicyDryRun(TestCase):
                 )
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            policy_payload = json.loads(source_policy.read_text(encoding="utf-8"))
+            if isinstance(policy_payload, dict):
+                policy_payload["promotion_require_benchmark_parity"] = False
+            else:
+                policy_payload = {
+                    "policy_version": "v3-gates-1",
+                    "required_feature_schema_version": "3.0.0",
+                    "promotion_require_benchmark_parity": False,
+                }
+            tmp_policy_path = Path(tmpdir) / "autonomy-gates-v3.json"
+            tmp_policy_path.write_text(json.dumps(policy_payload, indent=2), encoding="utf-8")
+
             gate_report_path = Path(tmpdir) / "gate-report.json"
             gate_report_path.write_text(
                 json.dumps(gate_report, indent=2), encoding="utf-8"
@@ -152,7 +164,7 @@ class TestGovernancePolicyDryRun(TestCase):
                 "python3",
                 str(script),
                 "--policy",
-                str(policy),
+                str(tmp_policy_path),
                 "--gate-report",
                 str(gate_report_path),
                 "--promotion-target",

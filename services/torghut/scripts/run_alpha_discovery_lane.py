@@ -29,10 +29,22 @@ def parse_args() -> argparse.Namespace:
         help="Priority identifier for candidate generation cycle.",
     )
     parser.add_argument(
+        "--priorityId",
+        type=str,
+        default=None,
+        help="CamelCase alias for --priority-id.",
+    )
+    parser.add_argument(
         "--artifact-path",
         type=Path,
         default=None,
         help="Optional artifact root for execution-context notes.",
+    )
+    parser.add_argument(
+        "--artifactPath",
+        type=Path,
+        default=None,
+        help="CamelCase alias for --artifact-path.",
     )
     parser.add_argument(
         "--gate-policy",
@@ -110,6 +122,10 @@ def main() -> int:
         base=args.base,
         head=args.head,
         priority_id=args.priority_id,
+        priorityId=args.priorityId,
+        artifactPath=str(args.artifactPath)
+        if args.artifactPath is not None
+        else None,
         notes_artifact_path=str(args.artifact_path)
         if args.artifact_path
         else None,

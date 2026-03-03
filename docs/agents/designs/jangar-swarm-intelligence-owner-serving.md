@@ -3,6 +3,7 @@
 Status: Proposed (2026-03-01)
 
 Docs index: [README](../README.md)
+Execution runbook: [swarm-end-to-end-runbook](../swarm-end-to-end-runbook.md)
 
 ## Objective
 
@@ -344,6 +345,176 @@ Regime state remains in runtime storage (not CRD fields), versioned per delivery
    - Tight rollback thresholds
    - Daily review of mission traces
 
+## Production Rollout Plan (End-to-End, Huly-First)
+
+### Internet-backed Huly baseline (as of 2026-03-02)
+
+Huly should be treated as the mandatory collaboration layer for virtual workers in this system:
+
+- Huly is presented as an all-in-one open-source platform for project management, team planning, chat, and documents.
+- Huly product modules include Team Planner, Chat, Documents, and Inbox.
+- Huly platform docs list integrations with GitHub, Telegram, email, and calendars.
+- Huly roles/permissions support workspace/team/project/issue-level controls.
+- Huly publishes API tooling via `@hcengineering/core` and `@hcengineering/api-client`, with example automation in
+  `huly-examples/platform-api`.
+- Huly provides self-hosting options (Docker Compose and Kubernetes examples).
+
+### Non-negotiable communication policy
+
+1. All swarm-to-owner communication is written to Huly.
+2. All swarm-to-swarm communication between `jangar-control-plane` and `torghut-quant` is written to Huly.
+3. Every autonomous mission must have a canonical Huly issue/thread before implementation begins.
+4. Any mission without a Huly artifact is invalid for promotion to production.
+
+### Huly workspace topology for virtual workers
+
+Current deployment target uses one shared workspace and shared defaults:
+
+- Workspace: `proompteng`
+- Tracker board/project: `DefaultProject`
+- Tracker URL: `https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues`
+- Documents teamspace: `PROOMPTENG`
+- Chat channel: `general`
+- Chat URL: `https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message`
+
+Required Huly objects per mission:
+
+- One issue in `DefaultProject` (system of record for status and ownership).
+- One chat thread linked from the issue (real-time coordination).
+- One document page in `PROOMPTENG` linked from the issue (design, evidence, rollout notes).
+- One inbox entry for owner visibility (approval, override, or notification path).
+
+### Virtual worker access bundle (all agents)
+
+Every agent identity uses a unique human coworker name and belongs to one of two swarm teams:
+
+- Jangar Engineering
+- Torghut Traders
+
+Each worker account must have full module access to the Huly suite used here:
+
+- Issues/project tracking
+- Chat
+- Documents
+- Team Planner
+- Inbox
+
+Production controls for these identities:
+
+- Short-lived API credentials issued by a central secret manager.
+- Rotation every 24h or on compromise signal.
+- Separate credential manifests per swarm team:
+  - `argocd/applications/agents/huly-api-jangar-sealedsecret.yaml`
+  - `argocd/applications/agents/huly-api-torghut-sealedsecret.yaml`
+- One token per agent identity stored as `HULY_API_TOKEN_<SWARM_AGENT_IDENTITY>` (or worker id equivalent).
+- One expected actor mapping per identity stored as `HULY_EXPECTED_ACTOR_ID_<SWARM_AGENT_IDENTITY>` and validated before mission writes.
+- Space/project permission templates applied automatically at creation time.
+- Every write includes `swarm`, `stage`, `missionId`, and `deliveryId` metadata for audit.
+
+### Jangar-Torghut communication contract (via Huly only)
+
+Inter-swarm handoff protocol:
+
+1. Source swarm creates a requirement issue in `DefaultProject` labeled with:
+   - `from-swarm`, `to-swarm`, `handoff-type`, `priority`, `deadline`, `risk-tier`.
+2. Source swarm posts structured payload in issue body:
+   - problem statement, required outcome, constraints, evidence links, acceptance tests.
+3. Destination swarm posts ACK comment with planned execution window.
+4. Destination swarm links its implementation issue and mirrors status back to the requirement issue.
+5. Source swarm closes bridge issue only after destination evidence + verification links are attached.
+
+Kubernetes bridge contract used by the swarm controller:
+
+- Torghut publishes a `Signal` with labels:
+  - `swarm.proompteng.ai/type=requirement`
+  - `swarm.proompteng.ai/from=<source-swarm>`
+  - `swarm.proompteng.ai/to=<destination-swarm>`
+- `Signal.spec.channel` must reference Huly (`huly://...` or Huly URL).
+- Destination swarm consumes those signals and launches `implement` execution runs with requirement context parameters:
+  - `swarmRequirementSignal`
+  - `swarmRequirementSource`
+  - `swarmRequirementTarget`
+  - `swarmRequirementChannel`
+  - `swarmRequirementPayload`
+
+Handoff types:
+
+- `risk-alert`: Torghut risk/regime state requires platform or policy action in Jangar.
+- `infra-change`: Jangar platform change required for Torghut runtime.
+- `strategy-change`: Torghut model/policy update requiring control-plane support.
+- `incident`: coordinated rollback/freeze/recovery.
+
+### Rollout phases and exit criteria
+
+Phase 0: Controller reliability and schedule integrity
+
+- Goal: continuous schedule creation and run dispatch with stable swarm status.
+- Exit:
+  - 24h of schedule ticks without schedule controller errors.
+  - `discover/plan/implement/verify` each dispatching runs successfully.
+  - Freeze/unfreeze behavior deterministic and alert-backed.
+
+Phase 1: Huly foundation and identity bootstrap
+
+- Goal: all virtual workers can read/write required Huly modules.
+- Deliverables:
+  - workspace/spaces/projects created,
+  - service identities and token issuance flow,
+  - mission metadata schema and templates.
+- Exit:
+  - 100% of autonomous runs create/update Huly artifacts.
+  - `huly_write_success_rate >= 99.9%` over 24h.
+
+Phase 2: Jangar swarm assisted-to-autonomous progression
+
+- Goal: Jangar control-plane swarm runs full discovery-to-production path with Huly traceability.
+- Steps:
+  - 7-day assisted run,
+  - low-risk lights-out canary in one repo/app,
+  - progressive expansion to allowlisted control-plane targets.
+- Exit:
+  - `mission_success_rate >= 85%` over trailing 7 days,
+  - `rollback_recovery_time_p95 < 15m`,
+  - zero production changes without linked Huly issue/chat/doc.
+
+Phase 3: Torghut swarm activation with bridge dependency on Jangar
+
+- Goal: Torghut swarm operates autonomously while coordinating infrastructure/risk dependencies through Huly bridge.
+- Steps:
+  - enable `risk-alert` and `infra-change` handoff types first,
+  - enforce regime/risk gate evidence links in Huly documents.
+- Exit:
+  - `bridge_ack_latency_p95 < 2m`,
+  - `cross_swarm_handoff_success_rate >= 95%`,
+  - all regime-change incidents have complete Huly timeline and decisions.
+
+Phase 4: Full dual-swarm 24/7 operation
+
+- Goal: both swarms run continuously with production-grade SLOs and auditable communication.
+- Exit:
+  - 30-day sustained operation,
+  - no untracked autonomous write paths,
+  - monthly disaster-recovery and freeze-drill pass.
+
+### End-to-end acceptance tests
+
+1. Discovery-to-production test (Jangar):
+   - internet signal -> Huly issue/thread/doc -> AgentRun/PR -> CI -> GitOps rollout -> canary -> Huly closure.
+2. Regime-change handoff test (Torghut -> Jangar):
+   - Torghut detects regime/risk event -> bridge issue -> Jangar ACK -> platform fix rollout -> Torghut verification.
+3. Incident rollback test (both swarms):
+   - force failed rollout -> freeze -> rollback -> bridge coordination -> controlled resume.
+4. Huly outage behavior test:
+   - simulated Huly write failure triggers implementation gate block and `Degraded` condition.
+
+### Operational SLOs
+
+- `swarm_schedule_tick_success_rate >= 99.5%` (per stage).
+- `huly_artifact_coverage = 100%` for autonomous missions.
+- `cross_swarm_ack_latency_p95 < 2m`.
+- `autonomous_change_traceability = 100%` (run -> PR -> deploy -> Huly record).
+- `freeze_false_positive_rate < 2%` monthly.
+
 ## Example Swarm Object (Generic Template)
 
 ```yaml
@@ -479,6 +650,14 @@ spec:
 
 ## References
 
+- Huly product overview: [https://huly.io/](https://huly.io/)
+- Huly getting started: [https://docs.huly.io/getting-started/](https://docs.huly.io/getting-started/)
+- Huly integrations: [https://docs.huly.io/platform/integrations/](https://docs.huly.io/platform/integrations/)
+- Huly roles and permissions: [https://docs.huly.io/platform/roles-and-permissions/](https://docs.huly.io/platform/roles-and-permissions/)
+- Huly API and tools: [https://docs.huly.io/platform/api-tools/](https://docs.huly.io/platform/api-tools/)
+- Huly self-hosting docs: [https://docs.huly.io/self-hosting/](https://docs.huly.io/self-hosting/)
+- Huly self-host repository: [https://github.com/hcengineering/huly-selfhost](https://github.com/hcengineering/huly-selfhost)
+- Huly platform API examples: [https://github.com/hcengineering/huly-examples/tree/main/platform-api](https://github.com/hcengineering/huly-examples/tree/main/platform-api)
 - Argo CD Automated Sync: [https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/)
 - Argo Rollouts Canary: [https://argoproj.github.io/argo-rollouts/features/canary/](https://argoproj.github.io/argo-rollouts/features/canary/)
 - Argo Rollouts Analysis: [https://argoproj.github.io/argo-rollouts/features/analysis/](https://argoproj.github.io/argo-rollouts/features/analysis/)
@@ -514,14 +693,21 @@ spec:
 
 ```mermaid
 flowchart LR
-  A[Swarm CRD] --> B[Swarm Controller]
-  B --> C[Discovery Loop 24x7]
-  B --> D[Planning and Ranking]
-  B --> E[AgentRun and OrchestrationRun Dispatch]
-  E --> F[CI and Merge Gates]
-  F --> G[GitOps Sync]
-  G --> H[Canary Analysis]
-  H --> I[Promote or Rollback]
-  I --> J[Memory and Metrics Feedback]
-  J --> D
+  A["Swarm CRD (Jangar)"] --> B["Swarm Controller (Jangar)"]
+  A2["Swarm CRD (Torghut)"] --> B2["Swarm Controller (Torghut)"]
+  B --> C["Discovery/Plan/Implement/Verify"]
+  B2 --> C2["Discovery/Plan/Implement/Verify"]
+  C --> E["AgentRun + OrchestrationRun"]
+  C2 --> E2["AgentRun + OrchestrationRun"]
+  E --> F["CI + Merge Gates"]
+  E2 --> F2["CI + Risk Gates"]
+  F --> G["GitOps Sync + Rollout Analysis"]
+  F2 --> G2["Trading Policy + Runtime Verification"]
+  B --> H["Huly: Issues + Chat + Docs + Inbox"]
+  B2 --> H
+  H --> I["Swarm Bridge Handoffs"]
+  I --> B
+  I --> B2
+  G --> J["Metrics + Memory Feedback"]
+  G2 --> J
 ```

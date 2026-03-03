@@ -174,6 +174,8 @@ class DSPyReviewRuntime:
     ) -> tuple[LLMReviewResponse, DSPyRuntimeMetadata]:
         if self.mode == "disabled":
             raise DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled")
+        if self.mode == "active":
+            self._require_live_runtime_gate()
         if self.artifact_hash is None:
             raise DSPyRuntimeUnsupportedStateError("dspy_artifact_hash_missing")
         if (
@@ -385,7 +387,7 @@ class DSPyReviewRuntime:
         if manifest.executor == "dspy_live":
             program = LiveDSPyCommitteeProgram(
                 model_name=_resolve_dspy_model_name(),
-                api_base=_resolve_dspy_api_base(),
+                api_completion_url=_resolve_dspy_api_base(),
                 api_key=settings.jangar_api_key.strip()
                 if settings.jangar_api_key
                 else None,
@@ -402,6 +404,15 @@ class DSPyReviewRuntime:
             raise DSPyRuntimeUnsupportedStateError("dspy_program_name_mismatch")
         if manifest.signature_version != self.signature_version:
             raise DSPyRuntimeUnsupportedStateError("dspy_signature_version_mismatch")
+
+    def _require_live_runtime_gate(self) -> None:
+        allowed, reasons = settings.llm_dspy_live_runtime_gate()
+        if allowed:
+            return
+        reason_summary = "|".join(reasons) or "dspy_live_runtime_gate_blocked"
+        raise DSPyRuntimeUnsupportedStateError(
+            f"dspy_live_runtime_gate_blocked:{reason_summary}"
+        )
 
 
 def _normalize_hash(value: str | None) -> str | None:
@@ -471,16 +482,12 @@ def _resolve_dspy_api_base() -> str:
         )
 
     base_path = (parsed.path or "/").rstrip("/")
-    for suffix in (_DSPY_OPENAI_CHAT_COMPLETIONS_PATH,):
-        if base_path.endswith(suffix):
-            base_path = base_path[: -len(suffix)]
-            break
-
-    if base_path == "":
-        base_path = ""
-
-    if not base_path.endswith(_DSPY_OPENAI_BASE_PATH):
-        base_path = f"{base_path}{_DSPY_OPENAI_BASE_PATH}"
+    if base_path in ("", "/"):
+        base_path = _DSPY_OPENAI_BASE_PATH
+    elif base_path == f"{_DSPY_OPENAI_BASE_PATH}{_DSPY_OPENAI_CHAT_COMPLETIONS_PATH}":
+        base_path = _DSPY_OPENAI_BASE_PATH
+    elif base_path != _DSPY_OPENAI_BASE_PATH:
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_invalid_path")
 
     normalized_base = f"{parsed.scheme}://{parsed.netloc}{base_path}"
     return normalized_base
