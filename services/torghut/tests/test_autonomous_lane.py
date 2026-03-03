@@ -249,6 +249,10 @@ class TestAutonomousLane(TestCase):
                 evidence["hmm_state_posterior"]["artifact_ref"],
                 str(output_dir / "gates" / "hmm-state-posterior-v1.json"),
             )
+            self.assertEqual(
+                evidence["expert_router_registry"]["artifact_ref"],
+                str(output_dir / "gates" / "expert-router-registry-v1.json"),
+            )
             self.assertTrue(
                 (output_dir / "gates" / "stress-metrics-v1.json").exists()
             )
@@ -262,6 +266,9 @@ class TestAutonomousLane(TestCase):
             )
             self.assertTrue(
                 (output_dir / "gates" / "hmm-state-posterior-v1.json").exists()
+            )
+            self.assertTrue(
+                (output_dir / "gates" / "expert-router-registry-v1.json").exists()
             )
             hmm_state_posterior_payload = json.loads(
                 (output_dir / "gates" / "hmm-state-posterior-v1.json").read_text(
@@ -416,6 +423,10 @@ class TestAutonomousLane(TestCase):
                     evidence["hmm_state_posterior"]["artifact_ref"],
                     str(Path("gates") / "hmm-state-posterior-v1.json"),
                 )
+                self.assertEqual(
+                    evidence["expert_router_registry"]["artifact_ref"],
+                    str(Path("gates") / "expert-router-registry-v1.json"),
+                )
                 self.assertTrue(
                     (output_dir / "gates" / "stress-metrics-v1.json").exists()
                 )
@@ -429,6 +440,9 @@ class TestAutonomousLane(TestCase):
                 )
                 self.assertTrue(
                     (output_dir / "gates" / "hmm-state-posterior-v1.json").exists()
+                )
+                self.assertTrue(
+                    (output_dir / "gates" / "expert-router-registry-v1.json").exists()
                 )
             finally:
                 os.chdir(original_cwd)

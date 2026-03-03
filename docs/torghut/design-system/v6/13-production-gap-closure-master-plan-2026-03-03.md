@@ -149,7 +149,7 @@ Close architecture gaps for regime-adaptive routing with persisted HMM state lin
 ### Deliverables
 
 1. Implement HMM posterior state artifact (`hmm_state_posterior`) persistence and lineage references. (Completed `2026-03-03`)
-2. Add expert-router artifact registry with concentration/fallback SLO feedback loop.
+2. Add expert-router artifact registry with concentration/fallback SLO feedback loop. (Completed `2026-03-03`)
 3. Wire regime-state quality into promotion and drift governance decisions.
 
 ### Primary files

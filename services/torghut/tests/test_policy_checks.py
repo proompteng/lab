@@ -268,6 +268,189 @@ class TestPolicyChecks(TestCase):
         self.assertNotIn("hmm_state_posterior_artifact_ref_missing", promotion.reasons)
         self.assertIn(str(root / "gates" / "hmm-state-posterior-v1.json"), promotion.artifact_refs)
 
+    def test_promotion_prerequisites_fail_when_expert_router_registry_required_and_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            gate_report = _gate_report()
+            promotion_evidence = gate_report.get("promotion_evidence", {})
+            assert isinstance(promotion_evidence, dict)
+            promotion_evidence.pop("expert_router_registry", None)
+            (root / "gates" / "gate-evaluation.json").write_text(
+                json.dumps(gate_report),
+                encoding="utf-8",
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_expert_router_registry": True,
+                    "promotion_expert_router_required_targets": ["paper", "live"],
+                    "promotion_expert_router_required_artifacts": [
+                        "gates/expert-router-registry-v1.json"
+                    ],
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_profitability_stage_manifest": False,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_hmm_state_posterior": False,
+                    "promotion_require_janus_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "gate6_require_profitability_evidence": False,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("required_artifacts_missing", promotion.reasons)
+        self.assertIn(
+            "gates/expert-router-registry-v1.json",
+            promotion.missing_artifacts,
+        )
+        self.assertIn(
+            "expert_router_registry_artifact_ref_missing",
+            promotion.reasons,
+        )
+
+    def test_promotion_prerequisites_accept_valid_expert_router_registry_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "gates" / "gate-evaluation.json").write_text(
+                json.dumps(_gate_report()),
+                encoding="utf-8",
+            )
+            expert_router_artifact = root / "gates" / "expert-router-registry-v1.json"
+            expert_router_payload = {
+                "schema_version": "expert-router-registry-v1",
+                "run_id": "run-test",
+                "candidate_id": "cand-test",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "router_version": "router-v1",
+                "route_count": 5,
+                "fallback_count": 0,
+                "fallback_rate": "0",
+                "max_expert_weight": "0.62",
+                "avg_expert_weights": {
+                    "trend": "0.62",
+                    "reversal": "0.14",
+                    "breakout": "0.20",
+                    "defensive": "0.04",
+                },
+                "top_expert_counts": {
+                    "trend": 5,
+                    "reversal": 0,
+                    "breakout": 0,
+                    "defensive": 0,
+                },
+                "concentration": {
+                    "dominant_expert": "trend",
+                    "dominant_expert_count": 5,
+                    "max_expert_weight": "0.62",
+                },
+                "slo_feedback": {
+                    "max_fallback_rate": "0.05",
+                    "max_expert_concentration": "0.85",
+                    "fallback_rate": "0",
+                    "max_observed_expert_weight": "0.62",
+                    "fallback_slo_pass": True,
+                    "concentration_slo_pass": True,
+                    "overall_status": "pass",
+                    "reasons": [],
+                },
+                "source_lineage": {
+                    "walkforward_results_artifact_ref": "backtest/walkforward-results.json",
+                    "hmm_state_posterior_artifact_ref": "gates/hmm-state-posterior-v1.json",
+                    "gate_policy_artifact_ref": "gates/gate-evaluation.json",
+                    "strategy_config_artifact_ref": "research/candidate-spec.json",
+                },
+            }
+            expert_router_payload["artifact_hash"] = _sha256_json(
+                {
+                    key: value
+                    for key, value in expert_router_payload.items()
+                    if key != "artifact_hash"
+                }
+            )
+            expert_router_artifact.write_text(
+                json.dumps(expert_router_payload),
+                encoding="utf-8",
+            )
+
+            gate_report = _gate_report()
+            promotion_evidence = gate_report.get("promotion_evidence", {})
+            assert isinstance(promotion_evidence, dict)
+            promotion_evidence["expert_router_registry"] = {
+                "artifact_ref": "gates/expert-router-registry-v1.json",
+                "schema_version": "expert-router-registry-v1",
+                "route_count": 5,
+                "fallback_rate": "0",
+                "max_expert_weight": "0.62",
+            }
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_expert_router_registry": True,
+                    "promotion_expert_router_required_targets": ["paper", "live"],
+                    "promotion_expert_router_required_artifacts": [
+                        "gates/expert-router-registry-v1.json"
+                    ],
+                    "promotion_expert_router_min_route_count": 1,
+                    "promotion_expert_router_max_fallback_rate": "0.05",
+                    "promotion_expert_router_max_expert_concentration": "0.85",
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_profitability_stage_manifest": False,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_hmm_state_posterior": False,
+                    "promotion_require_janus_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "gate6_require_profitability_evidence": False,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertTrue(promotion.allowed)
+        self.assertNotIn(
+            "expert_router_registry_artifact_ref_missing",
+            promotion.reasons,
+        )
+        self.assertIn(
+            str(root / "gates" / "expert-router-registry-v1.json"),
+            promotion.artifact_refs,
+        )
+
     def test_promotion_prerequisites_fail_when_profitability_stage_manifest_replay_contract_missing(
         self,
     ) -> None:
@@ -3825,6 +4008,7 @@ def _build_profitability_stage_manifest_payload(
     janus_hgrm_reward_path: Path,
     recalibration_report_path: Path,
     hmm_state_posterior_path: Path | None = None,
+    expert_router_registry_path: Path | None = None,
     rollback_readiness_path: Path | None = None,
     stage_statuses: dict[str, str] | None = None,
     check_status_overrides: dict[tuple[str, str], str] | None = None,
@@ -3878,6 +4062,65 @@ def _build_profitability_stage_manifest_payload(
             json.dumps(hmm_payload),
             encoding="utf-8",
         )
+    if expert_router_registry_path is None:
+        expert_router_registry_path = root / "gates" / "expert-router-registry-v1.json"
+    if not expert_router_registry_path.exists():
+        expert_router_registry_path.parent.mkdir(parents=True, exist_ok=True)
+        expert_router_payload: dict[str, object] = {
+            "schema_version": "expert-router-registry-v1",
+            "run_id": "run-test",
+            "candidate_id": "cand-test",
+            "generated_at": "2026-03-01T00:00:00+00:00",
+            "router_version": "router-v1",
+            "route_count": 1,
+            "fallback_count": 0,
+            "fallback_rate": "0",
+            "max_expert_weight": "0.62",
+            "avg_expert_weights": {
+                "trend": "0.62",
+                "reversal": "0.14",
+                "breakout": "0.20",
+                "defensive": "0.04",
+            },
+            "top_expert_counts": {
+                "trend": 1,
+                "reversal": 0,
+                "breakout": 0,
+                "defensive": 0,
+            },
+            "concentration": {
+                "dominant_expert": "trend",
+                "dominant_expert_count": 1,
+                "max_expert_weight": "0.62",
+            },
+            "slo_feedback": {
+                "max_fallback_rate": "0.05",
+                "max_expert_concentration": "0.85",
+                "fallback_rate": "0",
+                "max_observed_expert_weight": "0.62",
+                "fallback_slo_pass": True,
+                "concentration_slo_pass": True,
+                "overall_status": "pass",
+                "reasons": [],
+            },
+            "source_lineage": {
+                "walkforward_results_artifact_ref": "backtest/walkforward-results.json",
+                "hmm_state_posterior_artifact_ref": "gates/hmm-state-posterior-v1.json",
+                "gate_policy_artifact_ref": "gates/gate-evaluation.json",
+                "strategy_config_artifact_ref": "research/candidate-spec.json",
+            },
+        }
+        expert_router_payload["artifact_hash"] = _sha256_json(
+            {
+                key: value
+                for key, value in expert_router_payload.items()
+                if key != "artifact_hash"
+            }
+        )
+        expert_router_registry_path.write_text(
+            json.dumps(expert_router_payload),
+            encoding="utf-8",
+        )
 
     stage_owner = {
         "research": "research-orchestrator",
@@ -3903,6 +4146,11 @@ def _build_profitability_stage_manifest_payload(
             ("evaluation_report_present", "evaluation_report", evaluation_report_path),
             ("gate_evaluation_present", "gate_evaluation", gate_report_path),
             ("hmm_state_posterior_present", "hmm_state_posterior", hmm_state_posterior_path),
+            (
+                "expert_router_registry_present",
+                "expert_router_registry",
+                expert_router_registry_path,
+            ),
             ("janus_event_car_present", "janus_event_car", janus_event_car_path),
             ("janus_hgrm_reward_present", "janus_hgrm_reward", janus_hgrm_reward_path),
             ("recalibration_report_present", "recalibration_report", recalibration_report_path),
@@ -4165,6 +4413,15 @@ def _gate_report() -> dict[str, object]:
                 "samples_total": 12,
                 "authoritative_samples": 8,
                 "authoritative_sample_ratio": "0.6667",
+            },
+            "expert_router_registry": {
+                "artifact_ref": "gates/expert-router-registry-v1.json",
+                "schema_version": "expert-router-registry-v1",
+                "router_version": "router-v1",
+                "route_count": 12,
+                "fallback_count": 0,
+                "fallback_rate": "0",
+                "max_expert_weight": "0.62",
             },
             "promotion_rationale": {
                 "requested_target": "paper",
