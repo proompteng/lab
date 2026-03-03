@@ -36,6 +36,7 @@ class ForwarderConfigTest {
     assertFalse(cfg.enableTradeUpdates)
     assertEquals(AlpacaMarketType.EQUITY, cfg.alpacaMarketType)
     assertEquals("us", cfg.alpacaCryptoLocation)
+    assertEquals(listOf("trades", "quotes", "bars", "updatedBars"), cfg.alpacaMarketDataChannels)
     assertEquals("torghut.trades.v1", cfg.topics.trades)
   }
 
@@ -78,6 +79,7 @@ class ForwarderConfigTest {
 
     assertEquals(AlpacaMarketType.CRYPTO, cfg.alpacaMarketType)
     assertEquals("us", cfg.alpacaCryptoLocation)
+    assertEquals(listOf("trades", "quotes", "bars"), cfg.alpacaMarketDataChannels)
   }
 
   @Test
@@ -145,6 +147,35 @@ class ForwarderConfigTest {
           "ALPACA_SECRET_KEY" to "secret",
           "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
           "HEALTH_NOT_READY_KILL_AFTER_MS" to "0",
+        ),
+      )
+    }
+  }
+
+  @Test
+  fun `supports explicit market data channels override`() {
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+          "ALPACA_MARKET_DATA_CHANNELS" to "trades,bars,updatedBars",
+        ),
+      )
+
+    assertEquals(listOf("trades", "bars", "updatedBars"), cfg.alpacaMarketDataChannels)
+  }
+
+  @Test
+  fun `rejects unsupported market data channels`() {
+    assertFailsWith<IllegalStateException> {
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+          "ALPACA_MARKET_DATA_CHANNELS" to "trades,dailyBars",
         ),
       )
     }
