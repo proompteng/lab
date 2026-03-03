@@ -16,7 +16,7 @@
   - `services/torghut/app/trading/execution_policy.py`
   - `services/torghut/app/trading/tca.py`
   - `services/torghut/app/trading/regime.py`
-- Rollout gap: HMM posterior inference service and state artifact lineage persistence (`hmm_state_posterior`, entropy, transition shock) are still unimplemented in production runtime.
+- Rollout gap: HMM posterior inference service remains partial, but deterministic `hmm-state-posterior-v1` lineage artifact emission is implemented in the autonomous lane (`2026-03-03`).
 
 ## Objective
 

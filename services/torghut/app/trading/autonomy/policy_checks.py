@@ -43,6 +43,7 @@ _PROFITABILITY_STAGE_REQUIRED_CHECKS: dict[str, tuple[str, ...]] = {
         "walkforward_results_present",
         "evaluation_report_present",
         "gate_evaluation_present",
+        "hmm_state_posterior_present",
         "janus_event_car_present",
         "janus_hgrm_reward_present",
         "recalibration_report_present",
@@ -135,6 +136,10 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
+    hmm_state_posterior_required = _requires_hmm_state_posterior(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     required_artifacts = _required_artifacts_for_target(
         policy_payload,
         promotion_target,
@@ -143,6 +148,7 @@ def evaluate_promotion_prerequisites(
         include_benchmark_parity_artifacts=benchmark_parity_required,
         include_contamination_artifacts=contamination_registry_required,
         include_stress_artifacts=stress_required,
+        include_hmm_state_posterior_artifacts=hmm_state_posterior_required,
         require_profitability_manifest=require_profitability_manifest,
     )
     missing_artifacts = [
@@ -1207,6 +1213,7 @@ def _required_artifacts_for_target(
     include_benchmark_parity_artifacts: bool,
     include_contamination_artifacts: bool,
     include_stress_artifacts: bool,
+    include_hmm_state_posterior_artifacts: bool,
     require_profitability_manifest: bool,
 ) -> list[str]:
     base_raw = policy_payload.get(
@@ -1279,6 +1286,10 @@ def _required_artifacts_for_target(
         for artifact in stress_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
+    if include_hmm_state_posterior_artifacts:
+        hmm_artifacts = _hmm_state_posterior_required_artifact_refs(policy_payload)
+        for artifact in hmm_artifacts:
+            required.append(artifact)
     return sorted(set(required))
 
 
@@ -1341,6 +1352,44 @@ def _contamination_registry_required_artifact_refs(
     if legacy_artifact:
         return [legacy_artifact]
     return ["gates/contamination-leakage-report-v1.json"]
+
+
+def _hmm_state_posterior_required_artifact_refs(
+    policy_payload: dict[str, Any],
+) -> list[str]:
+    artifacts_raw = policy_payload.get(
+        "promotion_hmm_required_artifacts",
+        ["gates/hmm-state-posterior-v1.json"],
+    )
+    artifacts = [
+        str(artifact).strip()
+        for artifact in _list_from_any(artifacts_raw)
+        if isinstance(artifact, str) and artifact.strip()
+    ]
+    if artifacts:
+        return artifacts
+    return ["gates/hmm-state-posterior-v1.json"]
+
+
+def _requires_hmm_state_posterior(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("promotion_require_hmm_state_posterior", False)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_hmm_required_targets",
+        ["paper", "live"],
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
 
 
 def _requires_profitability_evidence(
@@ -1543,6 +1592,16 @@ def _evaluate_promotion_evidence(
     reasons.extend(contamination_reasons)
     details.extend(contamination_details)
     refs.extend(contamination_refs)
+
+    hmm_reasons, hmm_details, hmm_refs = _evaluate_hmm_state_posterior_evidence(
+        policy_payload=policy_payload,
+        gate_report_payload=gate_report_payload,
+        artifact_root=artifact_root,
+        promotion_target=promotion_target,
+    )
+    reasons.extend(hmm_reasons)
+    details.extend(hmm_details)
+    refs.extend(hmm_refs)
 
     rationale_reasons, rationale_details = _evaluate_rationale_evidence(
         policy_payload=policy_payload,
@@ -2466,6 +2525,196 @@ def _evaluate_contamination_registry_evidence(
             details.append(
                 {
                     "reason": "contamination_registry_artifact_hash_mismatch",
+                    "artifact_ref": str(artifact_path),
+                    "artifact_hash": artifact_hash,
+                    "expected_artifact_hash": expected_hash,
+                }
+            )
+
+    return reasons, details, refs
+
+
+def _evaluate_hmm_state_posterior_evidence(
+    *,
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+    artifact_root: Path,
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    if not _requires_hmm_state_posterior(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return [], [], []
+
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    refs: list[str] = []
+
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    hmm_posterior = _as_dict(evidence.get("hmm_state_posterior"))
+    evidence_ref = str(hmm_posterior.get("artifact_ref") or "").strip()
+    if not evidence_ref:
+        reasons.append("hmm_state_posterior_artifact_ref_missing")
+        details.append({"reason": "hmm_state_posterior_artifact_ref_missing"})
+
+    required_artifacts = _hmm_state_posterior_required_artifact_refs(policy_payload)
+    artifact_ref = (evidence_ref or required_artifacts[0]).strip()
+    artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
+    if artifact_path is None:
+        reasons.append("hmm_state_posterior_artifact_ref_invalid")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_artifact_ref_invalid",
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return reasons, details, refs
+
+    refs.append(evidence_ref or str(artifact_path))
+    payload = _load_json_if_exists(artifact_path)
+    if payload is None:
+        reasons.append("hmm_state_posterior_artifact_invalid_json")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_artifact_invalid_json",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+        return reasons, details, refs
+
+    schema_version = str(payload.get("schema_version", "")).strip()
+    if schema_version != "hmm-state-posterior-v1":
+        reasons.append("hmm_state_posterior_schema_version_invalid")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_schema_version_invalid",
+                "artifact_ref": str(artifact_path),
+                "schema_version": schema_version,
+            }
+        )
+
+    run_id = str(payload.get("run_id", "")).strip()
+    if not run_id:
+        reasons.append("hmm_state_posterior_run_id_missing")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_run_id_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    candidate_id = str(payload.get("candidate_id", "")).strip()
+    if not candidate_id:
+        reasons.append("hmm_state_posterior_candidate_id_missing")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_candidate_id_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    samples_total = _int_or_default(payload.get("samples_total"), -1)
+    if samples_total < 0:
+        reasons.append("hmm_state_posterior_samples_total_missing")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_samples_total_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    authoritative_samples = _int_or_default(payload.get("authoritative_samples"), -1)
+    if authoritative_samples < 0:
+        reasons.append("hmm_state_posterior_authoritative_samples_missing")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_authoritative_samples_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif samples_total >= 0 and authoritative_samples > samples_total:
+        reasons.append("hmm_state_posterior_authoritative_samples_invalid")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_authoritative_samples_invalid",
+                "artifact_ref": str(artifact_path),
+                "samples_total": samples_total,
+                "authoritative_samples": authoritative_samples,
+            }
+        )
+
+    authoritative_ratio = _float_or_none(payload.get("authoritative_sample_ratio"))
+    if authoritative_ratio is None:
+        reasons.append("hmm_state_posterior_authoritative_ratio_missing")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_authoritative_ratio_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    else:
+        min_authoritative_ratio = _float_or_none(
+            policy_payload.get("promotion_hmm_min_authoritative_sample_ratio")
+        )
+        if (
+            min_authoritative_ratio is not None
+            and authoritative_ratio < min_authoritative_ratio
+        ):
+            reasons.append("hmm_state_posterior_authoritative_ratio_below_threshold")
+            details.append(
+                {
+                    "reason": "hmm_state_posterior_authoritative_ratio_below_threshold",
+                    "artifact_ref": str(artifact_path),
+                    "actual_ratio": authoritative_ratio,
+                    "minimum_ratio": min_authoritative_ratio,
+                }
+            )
+
+    source_lineage = _as_dict(payload.get("source_lineage"))
+    walkforward_ref = str(
+        source_lineage.get("walkforward_results_artifact_ref") or ""
+    ).strip()
+    gate_policy_ref = str(source_lineage.get("gate_policy_artifact_ref") or "").strip()
+    if not walkforward_ref or not gate_policy_ref:
+        reasons.append("hmm_state_posterior_source_lineage_incomplete")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_source_lineage_incomplete",
+                "artifact_ref": str(artifact_path),
+                "walkforward_results_artifact_ref": walkforward_ref,
+                "gate_policy_artifact_ref": gate_policy_ref,
+            }
+        )
+
+    posterior_mass = _as_dict(payload.get("posterior_mass_by_regime"))
+    if not posterior_mass:
+        reasons.append("hmm_state_posterior_distribution_missing")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_distribution_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+
+    artifact_hash = str(payload.get("artifact_hash", "")).strip()
+    if not artifact_hash:
+        reasons.append("hmm_state_posterior_artifact_hash_missing")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_artifact_hash_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    else:
+        expected_hash = _sha256_json(
+            {key: value for key, value in payload.items() if key != "artifact_hash"}
+        )
+        if artifact_hash != expected_hash:
+            reasons.append("hmm_state_posterior_artifact_hash_mismatch")
+            details.append(
+                {
+                    "reason": "hmm_state_posterior_artifact_hash_mismatch",
                     "artifact_ref": str(artifact_path),
                     "artifact_hash": artifact_hash,
                     "expected_artifact_hash": expected_hash,

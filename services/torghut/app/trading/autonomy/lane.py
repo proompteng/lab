@@ -50,6 +50,7 @@ from ..forecasting import build_default_forecast_router
 from ..llm.evaluation import build_llm_evaluation_metrics
 from ..models import SignalEnvelope
 from ..parity import build_benchmark_parity_report, write_benchmark_parity_report
+from ..regime_hmm import HMM_UNKNOWN_REGIME_ID, resolve_hmm_context
 from ..reporting import (
     EvaluationReport,
     EvaluationReportConfig,
@@ -100,6 +101,7 @@ _STAGE_EVALUATION = "evaluation"
 _STAGE_RECOMMENDATION = "promotion-recommendation"
 _STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
 _CONTAMINATION_REGISTRY_ARTIFACT_PATH = "contamination-leakage-report-v1.json"
+_HMM_STATE_POSTERIOR_ARTIFACT_PATH = "gates/hmm-state-posterior-v1.json"
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
 _BENCHMARK_PARITY_REPORT_PATH = "benchmarks/benchmark-parity-report-v1.json"
 _STAGE_PROFITABILITY = "profitability_stage_manifest"
@@ -560,6 +562,122 @@ def _build_contamination_registry_payload(
     return payload
 
 
+def _normalize_hmm_regime_id(value: object) -> str:
+    normalized = str(value).strip().lower()
+    return normalized or HMM_UNKNOWN_REGIME_ID
+
+
+def _build_hmm_state_posterior_payload(
+    *,
+    output_dir: Path,
+    run_id: str,
+    candidate_id: str,
+    now: datetime,
+    walk_decisions: Sequence[WalkForwardDecision],
+    walkforward_results_path: Path,
+    gate_policy_path: Path,
+) -> dict[str, Any]:
+    regime_counts: dict[str, int] = {}
+    entropy_band_counts: dict[str, int] = {}
+    guardrail_reason_counts: dict[str, int] = {}
+    posterior_mass: dict[str, Decimal] = {}
+    authoritative_samples = 0
+    transition_shock_samples = 0
+    stale_or_defensive_samples = 0
+
+    decision_timestamps = sorted(
+        {
+            item.decision.event_ts.isoformat()
+            for item in walk_decisions
+            if item.decision.event_ts.tzinfo is not None
+        }
+    )
+
+    for decision in walk_decisions:
+        context = resolve_hmm_context(decision.decision.params)
+        regime_id = _normalize_hmm_regime_id(context.regime_id)
+        entropy_band = str(context.entropy_band).strip().lower() or "unknown"
+        guardrail_reason = str(context.guardrail_reason or "").strip() or "none"
+
+        regime_counts[regime_id] = regime_counts.get(regime_id, 0) + 1
+        entropy_band_counts[entropy_band] = entropy_band_counts.get(entropy_band, 0) + 1
+        guardrail_reason_counts[guardrail_reason] = (
+            guardrail_reason_counts.get(guardrail_reason, 0) + 1
+        )
+
+        if context.is_authoritative:
+            authoritative_samples += 1
+        if context.transition_shock:
+            transition_shock_samples += 1
+        if context.guardrail.stale or context.guardrail.fallback_to_defensive:
+            stale_or_defensive_samples += 1
+
+        for posterior_regime, posterior_value in context.posterior.items():
+            try:
+                posterior_decimal = Decimal(str(posterior_value))
+            except Exception:
+                continue
+            if posterior_decimal.is_nan() or posterior_decimal.is_infinite():
+                continue
+            normalized_regime = _normalize_hmm_regime_id(posterior_regime)
+            posterior_mass[normalized_regime] = (
+                posterior_mass.get(normalized_regime, Decimal("0")) + posterior_decimal
+            )
+
+    sample_count = len(walk_decisions)
+    authoritative_ratio = (
+        Decimal(authoritative_samples) / Decimal(sample_count)
+        if sample_count > 0
+        else Decimal("0")
+    )
+    ordered_posterior_mass = {
+        regime: str(value)
+        for regime, value in sorted(
+            posterior_mass.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    }
+    top_regime = (
+        max(posterior_mass.items(), key=lambda item: item[1])[0]
+        if posterior_mass
+        else HMM_UNKNOWN_REGIME_ID
+    )
+
+    payload: dict[str, Any] = {
+        "schema_version": "hmm-state-posterior-v1",
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "generated_at": now.isoformat(),
+        "samples_total": sample_count,
+        "authoritative_samples": authoritative_samples,
+        "authoritative_sample_ratio": str(authoritative_ratio),
+        "transition_shock_samples": transition_shock_samples,
+        "stale_or_defensive_samples": stale_or_defensive_samples,
+        "regime_counts": dict(sorted(regime_counts.items())),
+        "entropy_band_counts": dict(sorted(entropy_band_counts.items())),
+        "guardrail_reason_counts": dict(sorted(guardrail_reason_counts.items())),
+        "posterior_mass_by_regime": ordered_posterior_mass,
+        "top_regime_by_posterior_mass": top_regime,
+        "decision_window": {
+            "first_event_ts": decision_timestamps[0] if decision_timestamps else None,
+            "last_event_ts": decision_timestamps[-1] if decision_timestamps else None,
+        },
+        "source_lineage": {
+            "walkforward_results_artifact_ref": _manifest_relative_path(
+                output_dir, walkforward_results_path
+            ),
+            "gate_policy_artifact_ref": _manifest_relative_path(
+                output_dir, gate_policy_path
+            ),
+            "decision_source": "walkforward_results",
+        },
+    }
+    payload["artifact_hash"] = _stable_hash(
+        {key: value for key, value in payload.items() if key != "artifact_hash"}
+    )
+    return payload
+
+
 def _build_profitability_stage_manifest(
     *,
     output_dir: Path,
@@ -581,6 +699,7 @@ def _build_profitability_stage_manifest(
     benchmark_parity_path: Path,
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
+    hmm_state_posterior_path: Path,
     janus_event_car_path: Path,
     janus_hgrm_reward_path: Path,
     recalibration_report_path: Path,
@@ -691,6 +810,11 @@ def _build_profitability_stage_manifest(
         ("evaluation_report_present", "evaluation_report", evaluation_report_path),
         ("gate_evaluation_present", "gate_evaluation", gate_report_path),
         ("benchmark_parity_present", "benchmark_parity", benchmark_parity_path),
+        (
+            "hmm_state_posterior_present",
+            "hmm_state_posterior",
+            hmm_state_posterior_path,
+        ),
         ("janus_event_car_present", "janus_event_car", janus_event_car_path),
         ("janus_hgrm_reward_present", "janus_hgrm_reward", janus_hgrm_reward_path),
         ("recalibration_report_present", "recalibration_report", recalibration_report_path),
@@ -863,6 +987,9 @@ def _build_profitability_stage_manifest(
         "strategy_family": strategy_family,
         "llm_artifact_ref": llm_artifact_ref,
         "router_artifact_ref": router_artifact_ref,
+        "hmm_state_posterior_artifact_ref": _manifest_relative_path(
+            output_dir, hmm_state_posterior_path
+        ),
         "run_context": {
             "repository": run_context.get("repository", "unknown"),
             "base": run_context.get("base", "main"),
@@ -1022,6 +1149,7 @@ def run_autonomous_lane(
     janus_event_car_path = gates_dir / "janus-event-car-v1.json"
     janus_hgrm_reward_path = gates_dir / "janus-hgrm-reward-v1.json"
     stress_metrics_path = gates_dir / _STRESS_METRICS_ARTIFACT_PATH
+    hmm_state_posterior_path = output_dir / _HMM_STATE_POSTERIOR_ARTIFACT_PATH
     benchmark_parity_path = output_dir / _BENCHMARK_PARITY_REPORT_PATH
     recalibration_report_path = gates_dir / "recalibration-report.json"
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
@@ -1061,6 +1189,7 @@ def run_autonomous_lane(
     stage_records: list[_StageManifestRecord] = []
     manifest_paths: dict[str, Path] = {}
     stage_trace_ids: dict[str, str] = {}
+    hmm_state_posterior_payload: dict[str, Any] = {}
 
     factory = session_factory or SessionLocal
     if persist_results:
@@ -1130,6 +1259,20 @@ def run_autonomous_lane(
 
         walk_results_path = backtest_dir / "walkforward-results.json"
         write_walk_forward_results(walk_results, walk_results_path)
+        hmm_state_posterior_payload = _build_hmm_state_posterior_payload(
+            output_dir=output_dir,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            now=now,
+            walk_decisions=walk_decisions,
+            walkforward_results_path=walk_results_path,
+            gate_policy_path=gate_policy_path,
+        )
+        hmm_state_posterior_path.parent.mkdir(parents=True, exist_ok=True)
+        hmm_state_posterior_path.write_text(
+            json.dumps(hmm_state_posterior_payload, indent=2),
+            encoding="utf-8",
+        )
 
         report_config = EvaluationReportConfig(
             evaluation_start=signals[0].event_ts,
@@ -1252,6 +1395,7 @@ def run_autonomous_lane(
             "strategy_config": _sha256_path(strategy_config_path),
             "gate_policy": _sha256_path(gate_policy_path),
             "walkforward_results": _sha256_path(walk_results_path),
+            "hmm_state_posterior": _sha256_path(hmm_state_posterior_path),
             "candidate_report": _sha256_path(evaluation_report_path),
             "baseline_report": _sha256_path(baseline_report_path),
             "janus_event_car": _sha256_path(janus_event_car_path),
@@ -1269,6 +1413,7 @@ def run_autonomous_lane(
                 str(evaluation_report_path),
                 str(baseline_report_path),
                 str(walk_results_path),
+                str(hmm_state_posterior_path),
                 str(signals_path),
                 str(strategy_config_path),
                 str(gate_policy_path),
@@ -1310,6 +1455,7 @@ def run_autonomous_lane(
                 profitability_validation_path,
                 profitability_benchmark_path,
                 benchmark_parity_path,
+                hmm_state_posterior_path,
             ],
         )
         contamination_registry_path.write_text(
@@ -1465,6 +1611,11 @@ def run_autonomous_lane(
             contamination_registry_artifact_ref = str(
                 contamination_registry_path.relative_to(output_dir)
             )
+        hmm_state_posterior_artifact_ref = str(hmm_state_posterior_path)
+        if not output_dir.is_absolute():
+            hmm_state_posterior_artifact_ref = str(
+                hmm_state_posterior_path.relative_to(output_dir)
+            )
         gate_report_payload = gate_report.to_payload()
         gate_report_payload["run_id"] = run_id
         gate_report_payload["throughput"] = {
@@ -1501,6 +1652,21 @@ def run_autonomous_lane(
             },
             "benchmark_parity": {
                 "artifact_ref": benchmark_parity_artifact_ref,
+            },
+            "hmm_state_posterior": {
+                "artifact_ref": hmm_state_posterior_artifact_ref,
+                "schema_version": hmm_state_posterior_payload.get("schema_version"),
+                "samples_total": hmm_state_posterior_payload.get("samples_total"),
+                "authoritative_samples": hmm_state_posterior_payload.get(
+                    "authoritative_samples"
+                ),
+                "authoritative_sample_ratio": hmm_state_posterior_payload.get(
+                    "authoritative_sample_ratio"
+                ),
+                "top_regime_by_posterior_mass": hmm_state_posterior_payload.get(
+                    "top_regime_by_posterior_mass"
+                ),
+                "artifact_hash": hmm_state_posterior_payload.get("artifact_hash"),
             },
             "contamination_registry": {
                 "artifact_ref": contamination_registry_artifact_ref,
@@ -1549,6 +1715,7 @@ def run_autonomous_lane(
                 "profitability_evidence": str(profitability_evidence_path),
                 "profitability_validation": str(profitability_validation_path),
                 "stress_metrics": str(stress_metrics_path),
+                "hmm_state_posterior": str(hmm_state_posterior_path),
                 "janus_event_car": str(janus_event_car_path),
                 "janus_hgrm_reward": str(janus_hgrm_reward_path),
                 "recalibration_report": str(recalibration_report_path),
@@ -1624,6 +1791,7 @@ def run_autonomous_lane(
                 contamination_registry_path=contamination_registry_path,
                 profitability_evidence_path=profitability_evidence_path,
                 profitability_validation_path=profitability_validation_path,
+                hmm_state_posterior_path=hmm_state_posterior_path,
                 benchmark_parity_path=benchmark_parity_path,
                 janus_event_car_path=janus_event_car_path,
                 janus_hgrm_reward_path=janus_hgrm_reward_path,
@@ -1727,6 +1895,7 @@ def run_autonomous_lane(
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
                         str(stress_metrics_path),
+                        str(hmm_state_posterior_path),
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         str(recalibration_report_path),
@@ -1752,6 +1921,7 @@ def run_autonomous_lane(
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
                         str(stress_metrics_path),
+                        str(hmm_state_posterior_path),
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         *[
@@ -1796,6 +1966,21 @@ def run_autonomous_lane(
             "benchmark_parity": {
                 "artifact_ref": benchmark_parity_artifact_ref,
             },
+            "hmm_state_posterior": {
+                "artifact_ref": hmm_state_posterior_artifact_ref,
+                "schema_version": hmm_state_posterior_payload.get("schema_version"),
+                "samples_total": hmm_state_posterior_payload.get("samples_total"),
+                "authoritative_samples": hmm_state_posterior_payload.get(
+                    "authoritative_samples"
+                ),
+                "authoritative_sample_ratio": hmm_state_posterior_payload.get(
+                    "authoritative_sample_ratio"
+                ),
+                "top_regime_by_posterior_mass": hmm_state_posterior_payload.get(
+                    "top_regime_by_posterior_mass"
+                ),
+                "artifact_hash": hmm_state_posterior_payload.get("artifact_hash"),
+            },
             "contamination_registry": {
                 "artifact_ref": contamination_registry_artifact_ref,
                 "status": contamination_registry_payload.get("status", "fail"),
@@ -1832,6 +2017,7 @@ def run_autonomous_lane(
             "profitability_benchmark_artifact": str(profitability_benchmark_path),
             "profitability_evidence_artifact": str(profitability_evidence_path),
             "profitability_validation_artifact": str(profitability_validation_path),
+            "hmm_state_posterior_artifact": str(hmm_state_posterior_path),
             "janus_event_car_artifact": str(janus_event_car_path),
             "janus_hgrm_reward_artifact": str(janus_hgrm_reward_path),
             "recalibration_artifact": str(recalibration_report_path),
@@ -1867,6 +2053,7 @@ def run_autonomous_lane(
                 "profitability_benchmark": profitability_benchmark_path,
                 "profitability_evidence": profitability_evidence_path,
                 "profitability_validation": profitability_validation_path,
+                "hmm_state_posterior": hmm_state_posterior_path,
                 "janus_event_car": janus_event_car_path,
                 "janus_hgrm_reward": janus_hgrm_reward_path,
                 "recalibration_report": recalibration_report_path,
@@ -1903,7 +2090,9 @@ def run_autonomous_lane(
                         str(benchmark_parity_path),
                         str(contamination_registry_path),
                         str(profitability_benchmark_path),
+                        str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(hmm_state_posterior_path),
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         str(recalibration_report_path),
