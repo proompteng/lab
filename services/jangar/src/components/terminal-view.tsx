@@ -10,8 +10,11 @@ import { randomUuid } from '@/lib/uuid'
 
 const OUTPUT_FRAME_TYPE = 1
 const RECONNECT_STORAGE_KEY = 'jangar-terminal-reconnect'
+const EXPERIMENTAL_RENDERERS_ENABLED = false
 const TERMINAL_FONT_FAMILY =
   '"JetBrains Mono Nerd Font", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+
+type TerminalRenderer = 'dom' | 'canvas' | 'webgl'
 
 const buildWsUrl = (
   baseUrl: string,
@@ -39,6 +42,36 @@ const buildWsUrl = (
 const resolveBaseUrl = (terminalUrl?: string | null) => {
   if (terminalUrl) return terminalUrl
   return window.location.origin
+}
+
+const resolveRequestedRenderer = (search: string): TerminalRenderer => {
+  const params = new URLSearchParams(search)
+  const value = params.get('renderer')?.toLowerCase()
+  if (value === 'canvas' || value === 'webgl') return value
+  return 'dom'
+}
+
+const resolveEffectiveRenderer = (
+  search: string,
+  experimentalEnabled = EXPERIMENTAL_RENDERERS_ENABLED,
+): TerminalRenderer => {
+  const requested = resolveRequestedRenderer(search)
+  if (requested === 'dom') return 'dom'
+  return experimentalEnabled ? requested : 'dom'
+}
+
+const safeTerminalDispose = (terminal: Terminal, logger: Pick<typeof console, 'warn'> = console) => {
+  try {
+    terminal.dispose()
+  } catch (error) {
+    logger.warn('[terminal] terminal dispose failed', error)
+  }
+}
+
+export const __private = {
+  resolveRequestedRenderer,
+  resolveEffectiveRenderer,
+  safeTerminalDispose,
 }
 
 type TerminalViewProps = {
@@ -134,7 +167,6 @@ export function TerminalView({
       try {
         const [
           { Terminal },
-          { CanvasAddon },
           { ClipboardAddon },
           { FitAddon },
           { ImageAddon },
@@ -142,11 +174,9 @@ export function TerminalView({
           { SerializeAddon },
           { Unicode11Addon },
           { WebLinksAddon },
-          { WebglAddon },
           { LigaturesAddon },
         ] = await Promise.all([
           import('@xterm/xterm'),
-          import('@xterm/addon-canvas'),
           import('@xterm/addon-clipboard'),
           import('@xterm/addon-fit'),
           import('@xterm/addon-image'),
@@ -154,7 +184,6 @@ export function TerminalView({
           import('@xterm/addon-serialize'),
           import('@xterm/addon-unicode11'),
           import('@xterm/addon-web-links'),
-          import('@xterm/addon-webgl'),
           import('@xterm/addon-ligatures/lib/addon-ligatures.mjs'),
         ])
 
@@ -187,30 +216,35 @@ export function TerminalView({
 
         terminal.loadAddon(new SerializeAddon())
 
-        const rendererPreference = (() => {
-          const params = new URLSearchParams(window.location.search)
-          const query = params.get('renderer')?.toLowerCase()
-          const stored = window.localStorage.getItem('jangar-terminal-renderer')
-          if (query) return { value: query, fromQuery: true }
-          if (stored) return { value: stored, fromQuery: false }
-          return { value: 'canvas', fromQuery: false }
-        })()
+        const requestedRenderer = resolveRequestedRenderer(window.location.search)
+        const renderer = resolveEffectiveRenderer(window.location.search)
 
-        const needsCanvasRenderer = rendererPreference.value === 'dom'
-        if (needsCanvasRenderer && !rendererPreference.fromQuery) {
-          window.localStorage.setItem('jangar-terminal-renderer', 'canvas')
+        if (requestedRenderer !== renderer) {
+          console.warn(
+            `[terminal] experimental renderer "${requestedRenderer}" requested but disabled; falling back to "${renderer}"`,
+          )
         }
-
-        const renderer = needsCanvasRenderer ? 'canvas' : rendererPreference.value
 
         if (renderer === 'webgl') {
           try {
+            const { WebglAddon } = await import('@xterm/addon-webgl')
             terminal.loadAddon(new WebglAddon())
-          } catch {
-            terminal.loadAddon(new CanvasAddon())
+          } catch (error) {
+            console.warn('[terminal] failed to load webgl renderer addon', error)
+            try {
+              const { CanvasAddon } = await import('@xterm/addon-canvas')
+              terminal.loadAddon(new CanvasAddon())
+            } catch (canvasError) {
+              console.warn('[terminal] failed to load canvas renderer addon', canvasError)
+            }
           }
         } else if (renderer === 'canvas') {
-          terminal.loadAddon(new CanvasAddon())
+          try {
+            const { CanvasAddon } = await import('@xterm/addon-canvas')
+            terminal.loadAddon(new CanvasAddon())
+          } catch (error) {
+            console.warn('[terminal] failed to load canvas renderer addon', error)
+          }
         }
 
         terminal.attachCustomKeyEventHandler((event) => {
@@ -345,7 +379,7 @@ export function TerminalView({
             container.removeEventListener('focus', focusTerminal)
           }
           resizeObserver.disconnect()
-          terminal.dispose()
+          safeTerminalDispose(terminal)
           terminalRef.current = null
           fitRef.current = null
           searchRef.current = null

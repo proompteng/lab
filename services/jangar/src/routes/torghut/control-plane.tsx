@@ -68,6 +68,49 @@ const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: '
 const ratio = new Intl.NumberFormat('en-US', { maximumFractionDigits: 4 })
 const integer = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
 
+const humanizeToken = (value: string) => value.split('_').filter(Boolean).join(' ')
+
+const formatAsOf = (value: string) => {
+  const [datePart, timePartRaw = ''] = value.split('T')
+  if (!datePart || !timePartRaw) return value
+  const timePart = timePartRaw.replace('Z', '')
+  const [hhmmss] = timePart.split('.')
+  return `${datePart} ${hhmmss} UTC`
+}
+
+const qualityTone = (quality: string) => {
+  if (quality === 'error') {
+    return {
+      badge: 'border-red-500/40 bg-red-500/15 text-red-200',
+      row: 'border-red-500/35 bg-red-500/10',
+      primaryText: 'text-red-100',
+      secondaryText: 'text-red-200/85',
+    }
+  }
+  if (quality === 'stale') {
+    return {
+      badge: 'border-amber-500/40 bg-amber-500/15 text-amber-200',
+      row: 'border-amber-500/35 bg-amber-500/10',
+      primaryText: 'text-amber-100',
+      secondaryText: 'text-amber-200/85',
+    }
+  }
+  if (quality === 'insufficient_data') {
+    return {
+      badge: 'border-zinc-500/40 bg-zinc-500/15 text-zinc-300',
+      row: 'border-zinc-600 bg-zinc-900/70',
+      primaryText: 'text-zinc-100',
+      secondaryText: 'text-zinc-300',
+    }
+  }
+  return {
+    badge: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200',
+    row: 'border-zinc-700 bg-zinc-900/85',
+    primaryText: 'text-zinc-100',
+    secondaryText: 'text-zinc-300',
+  }
+}
+
 const formatMetric = (metric: QuantMetric) => {
   if (metric.status !== 'ok') return null
   if (metric.valueNumeric === null) return null
@@ -85,8 +128,7 @@ const severityColor = (severity: QuantAlert['severity']) => (severity === 'criti
 
 const freshnessBadge = (freshnessSeconds: number, quality: string) => {
   const label = `${freshnessSeconds}s`
-  const tone =
-    quality === 'stale' ? 'bg-amber-100 text-amber-950 border-amber-200' : 'bg-zinc-100 text-zinc-950 border-zinc-200'
+  const tone = qualityTone(quality).badge
   return (
     <Badge variant="outline" className={cn('font-mono text-[0.65rem] px-2 py-0.5', tone)}>
       {label}
@@ -249,20 +291,20 @@ function TorghutQuantControlPlane() {
   )
 
   return (
-    <div className="h-full w-full overflow-auto">
+    <div className="h-full w-full overflow-auto text-zinc-100">
       <div className="mx-auto w-full max-w-6xl p-6">
         <div className="flex flex-col gap-1">
           <h1 className="text-lg font-semibold tracking-tight">Torghut Quant Control Plane</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-zinc-400">
             Near-real-time performance, risk, and execution surfaces. Read-only; Torghut remains execution authority.
           </p>
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <Card>
+          <Card className="border-zinc-800/80 bg-zinc-950/70">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">Strategy</CardTitle>
-              <CardDescription>Select an enabled strategy.</CardDescription>
+              <CardDescription className="text-zinc-400">Select an enabled strategy.</CardDescription>
             </CardHeader>
             <CardContent>
               <Select value={strategyId} onValueChange={(value) => setStrategyId(value ?? '')}>
@@ -278,20 +320,20 @@ function TorghutQuantControlPlane() {
                   ))}
                 </SelectContent>
               </Select>
-              <div className="mt-2 text-xs text-muted-foreground">
+              <div className="mt-2 text-xs text-zinc-400">
                 Missing strategies? Check Torghut trading status and Jangar Torghut DB connectivity.
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="border-zinc-800/80 bg-zinc-950/70">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">Account</CardTitle>
-              <CardDescription>Optional. Empty means aggregate.</CardDescription>
+              <CardDescription className="text-zinc-400">Optional. Empty means aggregate.</CardDescription>
             </CardHeader>
             <CardContent>
               <input
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-zinc-200"
+                className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:ring-2 focus:ring-zinc-500/50"
                 value={account}
                 onChange={(e) => setAccount(e.target.value)}
                 placeholder="alpaca account label"
@@ -309,10 +351,10 @@ function TorghutQuantControlPlane() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="border-zinc-800/80 bg-zinc-950/70">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">Window</CardTitle>
-              <CardDescription>Controls aggregation window semantics.</CardDescription>
+              <CardDescription className="text-zinc-400">Controls aggregation window semantics.</CardDescription>
             </CardHeader>
             <CardContent>
               <Select value={window} onValueChange={(v) => setWindow(v as (typeof WINDOWS)[number])}>
@@ -329,7 +371,7 @@ function TorghutQuantControlPlane() {
               </Select>
               <button
                 type="button"
-                className="mt-3 inline-flex h-9 items-center rounded-md border bg-zinc-950 px-3 text-xs font-medium text-zinc-50 hover:bg-zinc-900"
+                className="mt-3 inline-flex h-9 items-center rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs font-medium text-zinc-100 hover:bg-zinc-800"
                 onClick={() => void loadSnapshot()}
               >
                 Refresh snapshot
@@ -339,12 +381,12 @@ function TorghutQuantControlPlane() {
         </div>
 
         {error ? (
-          <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-950">
+          <div className="mt-4 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-100">
             <div className="font-medium">Snapshot error</div>
             <div className="mt-1">{error}</div>
             <div className="mt-2 text-xs">
               See{' '}
-              <Link to="/torghut/trading" className="underline">
+              <Link to="/torghut/trading" className="underline decoration-red-300/80 underline-offset-2">
                 Torghut Trading
               </Link>{' '}
               for raw execution history.
@@ -386,15 +428,20 @@ function TorghutQuantControlPlane() {
         </div>
 
         {frame?.alerts?.length ? (
-          <Card className="mt-6">
+          <Card className="mt-6 border-zinc-800/80 bg-zinc-950/70">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">Active Alerts</CardTitle>
-              <CardDescription>Threshold breaches emitted by the control plane.</CardDescription>
+              <CardDescription className="text-zinc-400">
+                Threshold breaches emitted by the control plane.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 gap-2">
                 {frame.alerts.map((alert) => (
-                  <div key={alert.alertId} className="flex items-center justify-between rounded-md border p-3">
+                  <div
+                    key={alert.alertId}
+                    className="flex items-center justify-between rounded-md border border-zinc-700 bg-zinc-900/60 p-3"
+                  >
                     <div className="flex items-center gap-3">
                       <span className={cn('h-2 w-2 rounded-full', severityColor(alert.severity))} />
                       <div className="flex flex-col">
@@ -432,12 +479,12 @@ function MetricGroup({
   const freshness = groupFreshness(metrics)
   const skeletonKeys = React.useMemo(() => ['a', 'b', 'c', 'd', 'e', 'f'], [])
   return (
-    <Card>
+    <Card className="border-zinc-800/80 bg-zinc-950/70">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-4">
           <div>
             <CardTitle className="text-sm">{title}</CardTitle>
-            <CardDescription>{subtitle}</CardDescription>
+            <CardDescription className="text-zinc-400">{subtitle}</CardDescription>
           </div>
           {metrics.length > 0 ? freshnessBadge(freshness.freshnessSeconds, freshness.quality) : null}
         </div>
@@ -455,7 +502,7 @@ function MetricGroup({
               <MetricRow key={metric.metricName} metric={metric} />
             ))}
             {metrics.length === 0 ? (
-              <div className="text-sm text-muted-foreground">No metrics available for this group yet.</div>
+              <div className="text-sm text-zinc-400">No metrics available for this group yet.</div>
             ) : null}
           </div>
         )}
@@ -467,23 +514,20 @@ function MetricGroup({
 function MetricRow({ metric }: { metric: QuantMetric }) {
   const value = formatMetric(metric)
   const isOk = metric.status === 'ok' && value !== null
-  const tone =
-    metric.quality === 'stale'
-      ? 'border-amber-200 bg-amber-50'
-      : metric.quality === 'error'
-        ? 'border-red-200 bg-red-50'
-        : 'border-zinc-200 bg-white'
+  const tone = qualityTone(metric.quality)
+  const metricName = humanizeToken(metric.metricName)
+  const statusLabel = humanizeToken(metric.status)
 
   return (
-    <div className={cn('flex items-center justify-between rounded-md border p-3', tone)}>
+    <div className={cn('flex items-center justify-between rounded-md border p-3', tone.row)}>
       <div className="flex flex-col gap-0.5">
-        <div className="text-sm font-medium">{metric.metricName}</div>
-        <div className="text-xs text-muted-foreground font-mono">{metric.asOf}</div>
+        <div className={cn('text-sm font-medium', tone.primaryText)}>{metricName}</div>
+        <div className={cn('text-xs font-mono', tone.secondaryText)}>{formatAsOf(metric.asOf)}</div>
       </div>
       <div className="flex items-center gap-2">
         {freshnessBadge(metric.freshnessSeconds, metric.quality)}
-        <div className={cn('text-sm font-mono', isOk ? 'text-zinc-950' : 'text-muted-foreground')}>
-          {isOk ? value : metric.status}
+        <div className={cn('text-sm font-mono', isOk ? tone.primaryText : tone.secondaryText)}>
+          {isOk ? value : statusLabel}
         </div>
       </div>
     </div>

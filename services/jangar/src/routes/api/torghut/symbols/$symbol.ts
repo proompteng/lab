@@ -1,11 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { getDb } from '~/server/db'
-import { setTorghutSymbolEnabled } from '~/server/torghut-symbols'
+import { deleteTorghutSymbol, setTorghutSymbolEnabled } from '~/server/torghut-symbols'
 
 export const Route = createFileRoute('/api/torghut/symbols/$symbol')({
   server: {
     handlers: {
       PATCH: async ({ params, request }) => patchSymbolHandler(params.symbol, request),
+      DELETE: async ({ params, request }) => deleteSymbolHandler(params.symbol, request),
     },
   },
 })
@@ -36,4 +37,17 @@ export const patchSymbolHandler = async (symbol: string, request: Request) => {
 
   await setTorghutSymbolEnabled({ db, symbol, enabled, assetClass })
   return jsonResponse({ ok: true })
+}
+
+export const deleteSymbolHandler = async (symbol: string, request: Request) => {
+  const db = getDb()
+  if (!db) return jsonResponse({ error: 'DATABASE_URL is not configured' }, 503)
+
+  const url = new URL(request.url)
+  const assetClassRaw = url.searchParams.get('assetClass')
+  const assetClass = assetClassRaw === 'crypto' ? 'crypto' : assetClassRaw === 'equity' ? 'equity' : undefined
+
+  const deleted = await deleteTorghutSymbol({ db, symbol, assetClass })
+  if (deleted < 1) return jsonResponse({ error: `${symbol} was not found` }, 404)
+  return jsonResponse({ ok: true, deleted })
 }

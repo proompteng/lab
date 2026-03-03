@@ -68,5 +68,17 @@ export const upsertSymbolsHandler = async (request: Request) => {
   const assetClass = (payload as Record<string, unknown>).assetClass === 'crypto' ? 'crypto' : 'equity'
 
   const result = await upsertTorghutSymbols({ db, symbols, enabled, assetClass })
+  if (symbols.length > 0 && result.insertedOrUpdated === 0) {
+    return jsonResponse(
+      {
+        error:
+          assetClass === 'crypto'
+            ? 'No valid crypto symbols provided (expected forms like BTC/USD or BTC-USD).'
+            : 'No valid equity symbols provided (expected forms like AAPL or BRK.B).',
+        rejected: result.rejected,
+      },
+      400,
+    )
+  }
   return jsonResponse(result)
 }

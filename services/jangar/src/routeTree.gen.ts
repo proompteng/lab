@@ -130,6 +130,7 @@ import { Route as ApiTorghutTradingDecisionsRouteImport } from './routes/api/tor
 import { Route as ApiTorghutTaSignalsRouteImport } from './routes/api/torghut/ta/signals'
 import { Route as ApiTorghutTaLatestRouteImport } from './routes/api/torghut/ta/latest'
 import { Route as ApiTorghutTaBarsRouteImport } from './routes/api/torghut/ta/bars'
+import { Route as ApiTorghutSymbolsSearchRouteImport } from './routes/api/torghut/symbols/search'
 import { Route as ApiTorghutSymbolsSymbolRouteImport } from './routes/api/torghut/symbols/$symbol'
 import { Route as ApiTorghutMarketContextIngestRouteImport } from './routes/api/torghut/market-context/ingest'
 import { Route as ApiTorghutMarketContextHealthRouteImport } from './routes/api/torghut/market-context/health'
@@ -821,6 +822,11 @@ const ApiTorghutTaBarsRoute = ApiTorghutTaBarsRouteImport.update({
   path: '/api/torghut/ta/bars',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTorghutSymbolsSearchRoute = ApiTorghutSymbolsSearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => ApiTorghutSymbolsRoute,
+} as any)
 const ApiTorghutSymbolsSymbolRoute = ApiTorghutSymbolsSymbolRouteImport.update({
   id: '/$symbol',
   path: '/$symbol',
@@ -1218,6 +1224,7 @@ export interface FileRoutesByFullPath {
   '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/market-context/ingest': typeof ApiTorghutMarketContextIngestRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
+  '/api/torghut/symbols/search': typeof ApiTorghutSymbolsSearchRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
   '/api/torghut/ta/signals': typeof ApiTorghutTaSignalsRoute
@@ -1384,6 +1391,7 @@ export interface FileRoutesByTo {
   '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/market-context/ingest': typeof ApiTorghutMarketContextIngestRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
+  '/api/torghut/symbols/search': typeof ApiTorghutSymbolsSearchRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
   '/api/torghut/ta/signals': typeof ApiTorghutTaSignalsRoute
@@ -1553,6 +1561,7 @@ export interface FileRoutesById {
   '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/market-context/ingest': typeof ApiTorghutMarketContextIngestRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
+  '/api/torghut/symbols/search': typeof ApiTorghutSymbolsSearchRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
   '/api/torghut/ta/signals': typeof ApiTorghutTaSignalsRoute
@@ -1723,6 +1732,7 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context/health'
     | '/api/torghut/market-context/ingest'
     | '/api/torghut/symbols/$symbol'
+    | '/api/torghut/symbols/search'
     | '/api/torghut/ta/bars'
     | '/api/torghut/ta/latest'
     | '/api/torghut/ta/signals'
@@ -1889,6 +1899,7 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context/health'
     | '/api/torghut/market-context/ingest'
     | '/api/torghut/symbols/$symbol'
+    | '/api/torghut/symbols/search'
     | '/api/torghut/ta/bars'
     | '/api/torghut/ta/latest'
     | '/api/torghut/ta/signals'
@@ -2057,6 +2068,7 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context/health'
     | '/api/torghut/market-context/ingest'
     | '/api/torghut/symbols/$symbol'
+    | '/api/torghut/symbols/search'
     | '/api/torghut/ta/bars'
     | '/api/torghut/ta/latest'
     | '/api/torghut/ta/signals'
@@ -3083,6 +3095,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTorghutTaBarsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/torghut/symbols/search': {
+      id: '/api/torghut/symbols/search'
+      path: '/search'
+      fullPath: '/api/torghut/symbols/search'
+      preLoaderRoute: typeof ApiTorghutSymbolsSearchRouteImport
+      parentRoute: typeof ApiTorghutSymbolsRoute
+    }
     '/api/torghut/symbols/$symbol': {
       id: '/api/torghut/symbols/$symbol'
       path: '/$symbol'
@@ -3612,10 +3631,12 @@ const ApiGithubPullsRouteWithChildren = ApiGithubPullsRoute._addFileChildren(
 
 interface ApiTorghutSymbolsRouteChildren {
   ApiTorghutSymbolsSymbolRoute: typeof ApiTorghutSymbolsSymbolRoute
+  ApiTorghutSymbolsSearchRoute: typeof ApiTorghutSymbolsSearchRoute
 }
 
 const ApiTorghutSymbolsRouteChildren: ApiTorghutSymbolsRouteChildren = {
   ApiTorghutSymbolsSymbolRoute: ApiTorghutSymbolsSymbolRoute,
+  ApiTorghutSymbolsSearchRoute: ApiTorghutSymbolsSearchRoute,
 }
 
 const ApiTorghutSymbolsRouteWithChildren =
