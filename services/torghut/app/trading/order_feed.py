@@ -57,8 +57,15 @@ class OrderFeedIngestor:
         self,
         *,
         consumer_factory: Callable[[], Any] | None = None,
+        default_account_label: str | None = None,
     ) -> None:
         self._consumer_factory = consumer_factory or self._build_consumer
+        provided_label = (
+            default_account_label.strip() if default_account_label is not None else ""
+        )
+        self._default_account_label = (
+            provided_label or settings.trading_account_label
+        )
         self._consumer: Any | None = None
         self._disabled_logged = False
 
@@ -134,7 +141,7 @@ class OrderFeedIngestor:
         normalized = normalize_order_feed_record(
             record,
             default_topic=settings.trading_order_feed_topic,
-            default_account_label=settings.trading_account_label,
+            default_account_label=self._default_account_label,
         )
         if normalized.event is None:
             counters['missing_fields_total'] += 1

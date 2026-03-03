@@ -65,7 +65,14 @@ class TestOrderFeed(TestCase):
         settings.trading_order_feed_bootstrap_servers = self._orig_bootstrap
         settings.trading_order_feed_topic = self._orig_topic
 
-    def _seed_execution(self, session: Session) -> Execution:
+    def _seed_execution(
+        self,
+        session: Session,
+        *,
+        account_label: str = "paper",
+        order_id: str = "order-1",
+        client_order_id: str = "client-1",
+    ) -> Execution:
         strategy = Strategy(
             name='demo',
             description='demo',
@@ -79,11 +86,11 @@ class TestOrderFeed(TestCase):
 
         decision = TradeDecision(
             strategy_id=strategy.id,
-            alpaca_account_label='paper',
+            alpaca_account_label=account_label,
             symbol='AAPL',
             timeframe='1Min',
             decision_json={'side': 'buy'},
-            decision_hash='client-1',
+            decision_hash=client_order_id,
             status='submitted',
         )
         session.add(decision)
@@ -91,9 +98,9 @@ class TestOrderFeed(TestCase):
 
         execution = Execution(
             trade_decision_id=decision.id,
-            alpaca_account_label='paper',
-            alpaca_order_id='order-1',
-            client_order_id='client-1',
+            alpaca_account_label=account_label,
+            alpaca_order_id=order_id,
+            client_order_id=client_order_id,
             symbol='AAPL',
             side='buy',
             order_type='limit',
@@ -108,6 +115,97 @@ class TestOrderFeed(TestCase):
         session.commit()
         session.refresh(execution)
         return execution
+
+    def test_cross_account_order_feed_normalization_defaults_do_not_crosstalk(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-shared","client_order_id":"client-shared","symbol":"AAPL","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+        )
+        record = FakeRecord(value=payload, offset=22)
+
+        with Session(self.engine) as session:
+            paper_a = self._seed_execution(
+                session,
+                account_label='paper-a',
+                order_id='order-shared',
+                client_order_id='client-shared',
+            )
+            paper_b = self._seed_execution(
+                session,
+                account_label='paper-b',
+                order_id='order-2',
+                client_order_id='client-b',
+            )
+
+            normalized = normalize_order_feed_record(
+                record,
+                default_topic='torghut.trade-updates.v1',
+                default_account_label='paper-b',
+            )
+            assert normalized.event is not None
+
+            persisted, is_duplicate = persist_order_event(session, normalized.event)
+            session.commit()
+
+            self.assertFalse(is_duplicate)
+            self.assertEqual(persisted.alpaca_account_label, 'paper-b')
+            self.assertIsNone(persisted.execution_id)
+            self.assertEqual(paper_a.status, 'new')
+            self.assertEqual(paper_b.status, 'new')
+
+    def test_cross_account_ingest_default_account_does_not_update_wrong_execution(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-shared","client_order_id":"client-shared","symbol":"AAPL","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+        )
+        fake_payload_record = FakeRecord(value=payload, offset=22)
+
+        with Session(self.engine) as session:
+            self._seed_execution(
+                session,
+                account_label='paper-a',
+                order_id='order-shared',
+                client_order_id='client-shared',
+            )
+            self._seed_execution(
+                session,
+                account_label='paper-b',
+                order_id='order-shared-b',
+                client_order_id='client-shared-b',
+            )
+
+            ingestor = OrderFeedIngestor(
+                consumer_factory=lambda: FakeConsumer([fake_payload_record]),
+                default_account_label='paper-b',
+            )
+            counters = ingestor.ingest_once(session)
+            self.assertEqual(counters['messages_total'], 1)
+            self.assertEqual(counters['events_persisted_total'], 1)
+            self.assertEqual(counters['apply_updates_total'], 0)
+            self.assertEqual(counters['duplicates_total'], 0)
+
+            session.commit()
+
+            paper_a = session.execute(
+                select(Execution).where(
+                    Execution.alpaca_account_label == 'paper-a',
+                    Execution.alpaca_order_id == 'order-shared',
+                )
+            ).scalar_one()
+            paper_b = session.execute(
+                select(Execution).where(
+                    Execution.alpaca_account_label == 'paper-b',
+                    Execution.alpaca_order_id == 'order-shared-b',
+                )
+            ).scalar_one()
+            self.assertEqual(paper_a.status, 'new')
+            self.assertEqual(paper_b.status, 'new')
+
+            events = session.execute(select(ExecutionOrderEvent)).scalars().all()
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].alpaca_account_label, 'paper-b')
 
     def test_duplicate_event_is_idempotent(self) -> None:
         payload = (
