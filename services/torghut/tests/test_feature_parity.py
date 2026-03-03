@@ -7,7 +7,17 @@ from pathlib import Path
 from unittest import TestCase
 
 from app.trading.models import SignalEnvelope
-from app.trading.parity import run_feature_parity, write_feature_parity_report
+from app.trading.parity import (
+    BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
+    BENCHMARK_PARITY_REQUIRED_FAMILIES,
+    BENCHMARK_PARITY_REQUIRED_RUN_FIELDS,
+    BENCHMARK_PARITY_REQUIRED_SCORECARDS,
+    BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
+    _benchmark_report_hash,
+    build_benchmark_parity_report,
+    run_feature_parity,
+    write_feature_parity_report,
+)
 
 
 class TestFeatureParity(TestCase):
@@ -44,3 +54,46 @@ class TestFeatureParity(TestCase):
             self.assertEqual(payload['accepted'], report.accepted)
             self.assertEqual(payload['checked_rows'], 1)
             self.assertEqual(payload['top_drift_fields'][0]['field'], 'price')
+
+    def test_benchmark_parity_report_includes_standardized_contract(self) -> None:
+        now = datetime(2026, 3, 3, tzinfo=timezone.utc)
+        report = build_benchmark_parity_report(
+            candidate_id='cand-test',
+            baseline_candidate_id='base-test',
+            now=now,
+        )
+
+        contract = report.get('contract')
+        self.assertIsInstance(contract, dict)
+        assert isinstance(contract, dict)
+        self.assertEqual(
+            contract.get('schema_version'),
+            BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
+        )
+        self.assertEqual(
+            contract.get('required_families'),
+            list(BENCHMARK_PARITY_REQUIRED_FAMILIES),
+        )
+        self.assertEqual(
+            contract.get('required_scorecards'),
+            list(BENCHMARK_PARITY_REQUIRED_SCORECARDS),
+        )
+        self.assertEqual(
+            contract.get('required_run_fields'),
+            list(BENCHMARK_PARITY_REQUIRED_RUN_FIELDS),
+        )
+        self.assertEqual(contract.get('hash_algorithm'), 'sha256')
+
+        benchmark_runs = report.get('benchmark_runs')
+        self.assertIsInstance(benchmark_runs, list)
+        assert isinstance(benchmark_runs, list)
+        self.assertGreater(len(benchmark_runs), 0)
+        for run in benchmark_runs:
+            self.assertIsInstance(run, dict)
+            assert isinstance(run, dict)
+            self.assertEqual(
+                run.get('schema_version'),
+                BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
+            )
+
+        self.assertEqual(report.get('artifact_hash'), _benchmark_report_hash(report))

@@ -6,10 +6,13 @@
 - Date: `2026-03-01`
 - Maturity: `production design`
 - Scope: external benchmark parity contract for Torghut validation and promotion gates
-- Implementation status: `Planned`
+- Implementation status: `Partial`
 - Evidence:
-  - `docs/torghut/design-system/v6/09-external-benchmark-parity-suite-ai-trader-fev-gift.md` (design-level contract)
-- Rollout gap: current evaluation artifacts do not yet include explicit parity reports against modern public financial-agent benchmark families.
+  - `services/torghut/app/trading/parity.py`
+  - `services/torghut/app/trading/autonomy/policy_checks.py`
+  - `services/torghut/tests/test_feature_parity.py`
+  - `services/torghut/tests/test_policy_checks.py`
+- Rollout gap: benchmark parity artifact contract standardization is implemented (`2026-03-03`); remaining closure is Wave 4 deliverables 2-3 (coverage/calibration drift bounds hardening and promotion block completeness).
 
 ## Objective
 

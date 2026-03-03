@@ -11,7 +11,11 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app.trading.parity import (
+    BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
     BENCHMARK_PARITY_REQUIRED_FAMILIES,
+    BENCHMARK_PARITY_REQUIRED_RUN_FIELDS,
+    BENCHMARK_PARITY_REQUIRED_SCORECARDS,
+    BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
     BENCHMARK_PARITY_SCHEMA_VERSION,
 )
 from app.trading.autonomy.policy_checks import (
@@ -3602,6 +3606,75 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(promotion.allowed)
         self.assertIn("benchmark_parity_schema_version_invalid", promotion.reasons)
 
+    def test_promotion_prerequisites_fail_when_benchmark_parity_contract_is_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            payload = _build_benchmark_parity_payload()
+            payload.pop("contract", None)
+            _write_benchmark_parity_payload_payload(root, payload=payload)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("benchmark_parity_contract_missing", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_benchmark_parity_run_schema_is_invalid(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            payload = _build_benchmark_parity_payload()
+            benchmark_runs = payload.get("benchmark_runs")
+            if isinstance(benchmark_runs, list) and benchmark_runs:
+                if isinstance(benchmark_runs[0], dict):
+                    benchmark_runs[0]["schema_version"] = "benchmark-run-v0"
+            _recompute_benchmark_artifact_hash(payload)
+            _write_benchmark_parity_payload_payload(root, payload=payload)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn(
+            "benchmark_parity_run_schema_version_invalid",
+            promotion.reasons,
+        )
+
     def test_promotion_prerequisites_fail_when_benchmark_parity_artifact_hash_is_missing(
         self,
     ) -> None:
@@ -3994,6 +4067,14 @@ def _build_benchmark_parity_payload(
         "schema_version": schema_version,
         "candidate_id": "cand-test",
         "baseline_candidate_id": "base-test",
+        "contract": {
+            "schema_version": BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
+            "required_families": list(BENCHMARK_PARITY_REQUIRED_FAMILIES),
+            "required_scorecards": list(BENCHMARK_PARITY_REQUIRED_SCORECARDS),
+            "required_run_fields": list(BENCHMARK_PARITY_REQUIRED_RUN_FIELDS),
+            "hash_algorithm": "sha256",
+            "generation_mode": "deterministic_benchmark_parity_v1",
+        },
         "benchmark_runs": [
             _build_test_benchmark_parity_run(family)
             for family in families
@@ -4027,6 +4108,7 @@ def _build_test_benchmark_parity_run(
     run_hash: str = "test-run-hash",
 ) -> dict[str, object]:
     return {
+        "schema_version": BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
         "family": family,
         "dataset_ref": "benchmarks/external-labeled-stream-v1",
         "window_ref": "20260201T000000Z",

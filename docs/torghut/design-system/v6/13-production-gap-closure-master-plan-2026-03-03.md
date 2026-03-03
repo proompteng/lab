@@ -174,7 +174,7 @@ Require explicit parity reports against external benchmark families before promo
 
 ### Deliverables
 
-1. Standardize benchmark-parity artifact generation contracts.
+1. Standardize benchmark-parity artifact generation contracts. (Completed `2026-03-03`)
 2. Add benchmark family coverage checks and confidence calibration drift bounds.
 3. Block promotion on missing/incomplete parity scorecards.
 
