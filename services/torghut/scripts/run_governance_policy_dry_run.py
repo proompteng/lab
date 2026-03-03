@@ -287,8 +287,12 @@ def main() -> int:
             "authoritative_sample_ratio": str(
                 hmm_posterior_payload.get("authoritative_sample_ratio") or "0.6"
             ),
-            "transition_shock_samples": 0,
-            "stale_or_defensive_samples": 0,
+            "transition_shock_samples": int(
+                hmm_posterior_payload.get("transition_shock_samples") or 0
+            ),
+            "stale_or_defensive_samples": int(
+                hmm_posterior_payload.get("stale_or_defensive_samples") or 0
+            ),
             "regime_counts": {"r2": 10},
             "entropy_band_counts": {"medium": 10},
             "guardrail_reason_counts": {"none": 10},

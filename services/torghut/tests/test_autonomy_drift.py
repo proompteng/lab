@@ -17,6 +17,8 @@ from app.trading.autonomy.drift import (
     REASON_PERF_DRAWDOWN,
     REASON_PERF_FALLBACK_RATIO,
     REASON_PERF_NET_PNL,
+    REASON_REGIME_STALE_OR_DEFENSIVE_RATIO,
+    REASON_REGIME_TRANSITION_SHOCK_RATIO,
     decide_drift_action,
     detect_drift,
     evaluate_live_promotion_evidence,
@@ -141,3 +143,42 @@ class TestAutonomyDrift(TestCase):
         self.assertFalse(evidence.eligible_for_live_promotion)
         self.assertIn("drift_detected", evidence.reasons)
         self.assertGreaterEqual(len(evidence.evidence_artifact_refs), 2)
+
+    def test_detect_drift_emits_regime_quality_reason_codes(self) -> None:
+        report = FeatureQualityReport(
+            accepted=True,
+            rows_total=10,
+            null_rate_by_field={"macd": 0.0},
+            staleness_ms_p95=100,
+            duplicate_ratio=0.0,
+            schema_mismatch_total=0,
+            reasons=[],
+        )
+        detection = detect_drift(
+            run_id="run-4",
+            feature_quality_report=report,
+            gate_report_payload={
+                "promotion_evidence": {
+                    "hmm_state_posterior": {
+                        "samples_total": 10,
+                        "transition_shock_samples": 4,
+                        "stale_or_defensive_samples": 3,
+                    }
+                }
+            },
+            fallback_ratio=Decimal("0"),
+            thresholds=DriftThresholds(
+                max_regime_transition_shock_ratio=Decimal("0.2"),
+                max_regime_stale_or_defensive_ratio=Decimal("0.2"),
+            ),
+        )
+
+        self.assertTrue(detection.drift_detected)
+        self.assertIn(
+            REASON_REGIME_TRANSITION_SHOCK_RATIO,
+            detection.reason_codes,
+        )
+        self.assertIn(
+            REASON_REGIME_STALE_OR_DEFENSIVE_RATIO,
+            detection.reason_codes,
+        )

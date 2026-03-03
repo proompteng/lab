@@ -20,6 +20,8 @@ REASON_DATA_DUPLICATE_RATIO = "data_duplicate_ratio_exceeded"
 REASON_DATA_SCHEMA_MISMATCH = "data_schema_mismatch_detected"
 REASON_MODEL_CALIBRATION_ERROR = "model_calibration_error_exceeded"
 REASON_MODEL_LLM_ERROR_RATIO = "model_llm_error_ratio_exceeded"
+REASON_REGIME_TRANSITION_SHOCK_RATIO = "regime_transition_shock_ratio_exceeded"
+REASON_REGIME_STALE_OR_DEFENSIVE_RATIO = "regime_stale_or_defensive_ratio_exceeded"
 REASON_PERF_NET_PNL = "performance_net_pnl_below_floor"
 REASON_PERF_DRAWDOWN = "performance_drawdown_exceeded"
 REASON_PERF_COST_BPS = "performance_cost_bps_exceeded"
@@ -35,6 +37,8 @@ class DriftThresholds:
     max_schema_mismatch_total: int = 0
     max_model_calibration_error: Decimal = Decimal("0.45")
     max_model_llm_error_ratio: Decimal = Decimal("0.10")
+    max_regime_transition_shock_ratio: Decimal = Decimal("0.20")
+    max_regime_stale_or_defensive_ratio: Decimal = Decimal("0.20")
     min_performance_net_pnl: Decimal = Decimal("0")
     max_performance_drawdown: Decimal = Decimal("0.08")
     max_performance_cost_bps: Decimal = Decimal("35")
@@ -48,6 +52,12 @@ class DriftThresholds:
             "max_schema_mismatch_total": self.max_schema_mismatch_total,
             "max_model_calibration_error": str(self.max_model_calibration_error),
             "max_model_llm_error_ratio": str(self.max_model_llm_error_ratio),
+            "max_regime_transition_shock_ratio": str(
+                self.max_regime_transition_shock_ratio
+            ),
+            "max_regime_stale_or_defensive_ratio": str(
+                self.max_regime_stale_or_defensive_ratio
+            ),
             "min_performance_net_pnl": str(self.min_performance_net_pnl),
             "max_performance_drawdown": str(self.max_performance_drawdown),
             "max_performance_cost_bps": str(self.max_performance_cost_bps),
@@ -180,6 +190,7 @@ def detect_drift(
     signals: list[DriftSignal] = []
     signals.extend(_data_drift_signals(feature_quality_report, thresholds))
     signals.extend(_model_drift_signals(gate_report_payload, thresholds))
+    signals.extend(_regime_drift_signals(gate_report_payload, thresholds))
     signals.extend(
         _performance_drift_signals(
             gate_report_payload=gate_report_payload,
@@ -370,6 +381,50 @@ def _performance_drift_signals(
     return signals
 
 
+def _regime_drift_signals(
+    gate_report_payload: Mapping[str, Any],
+    thresholds: DriftThresholds,
+) -> list[DriftSignal]:
+    evidence_payload = _as_mapping(gate_report_payload.get("promotion_evidence"))
+    hmm_payload = _as_mapping(evidence_payload.get("hmm_state_posterior"))
+    samples_total = _to_int(hmm_payload.get("samples_total"))
+    if samples_total is None or samples_total <= 0:
+        return []
+
+    signals: list[DriftSignal] = []
+
+    transition_shock_samples = _to_int(hmm_payload.get("transition_shock_samples"))
+    if transition_shock_samples is not None and transition_shock_samples >= 0:
+        transition_shock_ratio = Decimal(transition_shock_samples) / Decimal(samples_total)
+        if transition_shock_ratio > thresholds.max_regime_transition_shock_ratio:
+            signals.append(
+                _drift_signal(
+                    category="regime",
+                    reason_code=REASON_REGIME_TRANSITION_SHOCK_RATIO,
+                    observed=transition_shock_ratio,
+                    threshold=thresholds.max_regime_transition_shock_ratio,
+                    comparator=">",
+                )
+            )
+
+    stale_or_defensive_samples = _to_int(hmm_payload.get("stale_or_defensive_samples"))
+    if stale_or_defensive_samples is not None and stale_or_defensive_samples >= 0:
+        stale_or_defensive_ratio = Decimal(stale_or_defensive_samples) / Decimal(
+            samples_total
+        )
+        if stale_or_defensive_ratio > thresholds.max_regime_stale_or_defensive_ratio:
+            signals.append(
+                _drift_signal(
+                    category="regime",
+                    reason_code=REASON_REGIME_STALE_OR_DEFENSIVE_RATIO,
+                    observed=stale_or_defensive_ratio,
+                    threshold=thresholds.max_regime_stale_or_defensive_ratio,
+                    comparator=">",
+                )
+            )
+    return signals
+
+
 def _drift_signal(
     *,
     category: DriftCategory,
@@ -485,6 +540,15 @@ def _to_decimal(raw: Any) -> Decimal | None:
         return None
 
 
+def _to_int(raw: Any) -> int | None:
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
 def _extract_profitability_decimal(
     payload: Mapping[str, Any], path: list[str]
 ) -> Decimal | None:
@@ -515,6 +579,8 @@ __all__ = [
     "REASON_DATA_SCHEMA_MISMATCH",
     "REASON_MODEL_CALIBRATION_ERROR",
     "REASON_MODEL_LLM_ERROR_RATIO",
+    "REASON_REGIME_TRANSITION_SHOCK_RATIO",
+    "REASON_REGIME_STALE_OR_DEFENSIVE_RATIO",
     "REASON_PERF_NET_PNL",
     "REASON_PERF_DRAWDOWN",
     "REASON_PERF_COST_BPS",

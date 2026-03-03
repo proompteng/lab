@@ -2744,6 +2744,93 @@ def _evaluate_hmm_state_posterior_evidence(
                 }
             )
 
+    transition_shock_samples = _int_or_default(payload.get("transition_shock_samples"), -1)
+    if transition_shock_samples < 0:
+        reasons.append("hmm_state_posterior_transition_shock_samples_missing")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_transition_shock_samples_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif samples_total >= 0 and transition_shock_samples > samples_total:
+        reasons.append("hmm_state_posterior_transition_shock_samples_invalid")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_transition_shock_samples_invalid",
+                "artifact_ref": str(artifact_path),
+                "samples_total": samples_total,
+                "transition_shock_samples": transition_shock_samples,
+            }
+        )
+
+    stale_or_defensive_samples = _int_or_default(
+        payload.get("stale_or_defensive_samples"),
+        -1,
+    )
+    if stale_or_defensive_samples < 0:
+        reasons.append("hmm_state_posterior_stale_or_defensive_samples_missing")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_stale_or_defensive_samples_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif samples_total >= 0 and stale_or_defensive_samples > samples_total:
+        reasons.append("hmm_state_posterior_stale_or_defensive_samples_invalid")
+        details.append(
+            {
+                "reason": "hmm_state_posterior_stale_or_defensive_samples_invalid",
+                "artifact_ref": str(artifact_path),
+                "samples_total": samples_total,
+                "stale_or_defensive_samples": stale_or_defensive_samples,
+            }
+        )
+
+    if samples_total > 0:
+        max_transition_shock_ratio = _float_or_none(
+            policy_payload.get("promotion_hmm_max_transition_shock_ratio")
+        )
+        if (
+            max_transition_shock_ratio is not None
+            and transition_shock_samples >= 0
+            and (transition_shock_samples / samples_total) > max_transition_shock_ratio
+        ):
+            reasons.append("hmm_state_posterior_transition_shock_ratio_exceeds_threshold")
+            details.append(
+                {
+                    "reason": "hmm_state_posterior_transition_shock_ratio_exceeds_threshold",
+                    "artifact_ref": str(artifact_path),
+                    "samples_total": samples_total,
+                    "transition_shock_samples": transition_shock_samples,
+                    "actual_ratio": transition_shock_samples / samples_total,
+                    "maximum_ratio": max_transition_shock_ratio,
+                }
+            )
+
+        max_stale_or_defensive_ratio = _float_or_none(
+            policy_payload.get("promotion_hmm_max_stale_or_defensive_ratio")
+        )
+        if (
+            max_stale_or_defensive_ratio is not None
+            and stale_or_defensive_samples >= 0
+            and (stale_or_defensive_samples / samples_total)
+            > max_stale_or_defensive_ratio
+        ):
+            reasons.append(
+                "hmm_state_posterior_stale_or_defensive_ratio_exceeds_threshold"
+            )
+            details.append(
+                {
+                    "reason": "hmm_state_posterior_stale_or_defensive_ratio_exceeds_threshold",
+                    "artifact_ref": str(artifact_path),
+                    "samples_total": samples_total,
+                    "stale_or_defensive_samples": stale_or_defensive_samples,
+                    "actual_ratio": stale_or_defensive_samples / samples_total,
+                    "maximum_ratio": max_stale_or_defensive_ratio,
+                }
+            )
+
     source_lineage = _as_dict(payload.get("source_lineage"))
     walkforward_ref = str(
         source_lineage.get("walkforward_results_artifact_ref") or ""

@@ -99,6 +99,8 @@ data:
         "gates/hmm-state-posterior-v1.json"
       ],
       "promotion_hmm_min_authoritative_sample_ratio": "0.0",
+      "promotion_hmm_max_transition_shock_ratio": "0.20",
+      "promotion_hmm_max_stale_or_defensive_ratio": "0.20",
       "promotion_require_expert_router_registry": true,
       "promotion_expert_router_required_targets": ["paper", "live"],
       "promotion_expert_router_required_artifacts": [

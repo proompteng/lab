@@ -67,6 +67,8 @@ def _default_gate_report(now: datetime) -> dict[str, object]:
                 "samples_total": 10,
                 "authoritative_samples": 6,
                 "authoritative_sample_ratio": "0.6",
+                "transition_shock_samples": 0,
+                "stale_or_defensive_samples": 0,
             },
             "expert_router_registry": {
                 "artifact_ref": "gates/expert-router-registry-v1.json",
