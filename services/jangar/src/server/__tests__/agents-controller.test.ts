@@ -3339,6 +3339,43 @@ describe('agents controller queue and rate limits', () => {
     }
   })
 
+  it('clears Blocked condition when a run is admitted', async () => {
+    const kube = buildKube()
+    const blockedAt = new Date(Date.now() - 60_000).toISOString()
+    const agentRun = buildAgentRun({
+      status: {
+        phase: 'Pending',
+        conditions: [
+          {
+            type: 'Blocked',
+            status: 'True',
+            reason: 'QueueLimit',
+            message: 'Repository proompteng/lab reached queue limit',
+            lastTransitionTime: blockedAt,
+          },
+        ],
+      },
+    })
+
+    await __test.setStatus(kube as never, agentRun, {
+      phase: 'Running',
+      conditions: [
+        {
+          type: 'Blocked',
+          status: 'True',
+          reason: 'QueueLimit',
+          message: 'Repository proompteng/lab reached queue limit',
+          lastTransitionTime: blockedAt,
+        },
+      ],
+    })
+
+    const status = getLastStatus(kube)
+    const blocked = findCondition(status, 'Blocked')
+    expect(blocked?.status).toBe('False')
+    expect(blocked?.reason).toBe('NotBlocked')
+  })
+
   it('blocks AgentRun when rate limit is exceeded', async () => {
     const previousWindow = process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
     const previousNamespace = process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE
