@@ -56,10 +56,14 @@ CREATE TABLE IF NOT EXISTS torghut.ta_signals ON CLUSTER default
   imbalance_ask_px Nullable(Float64),
   imbalance_bid_sz Nullable(UInt64),
   imbalance_ask_sz Nullable(UInt64),
-  vol_realized_w60s Nullable(Float64)
+  vol_realized_w60s Nullable(Float64),
+  microstructure_signal_v1 Nullable(String)
 )
 ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/ta_signals', '{replica}', ingest_ts)
 PARTITION BY toDate(event_ts)
 ORDER BY (symbol, event_ts, seq)
 TTL toDateTime(event_ts) + INTERVAL 14 DAY
 SETTINGS index_granularity = 8192;
+
+ALTER TABLE torghut.ta_signals ON CLUSTER default
+  ADD COLUMN IF NOT EXISTS microstructure_signal_v1 Nullable(String);
