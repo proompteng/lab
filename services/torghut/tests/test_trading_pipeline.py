@@ -40,6 +40,8 @@ from app.trading.scheduler import (
     TradingPipeline,
     TradingState,
     _apply_projected_position_decision,
+    _build_dspy_lineage,
+    _committee_trace_has_veto,
 )
 from app.trading.tca import AdaptiveExecutionPolicyDecision
 from app.trading.universe import UniverseResolver
@@ -4038,6 +4040,30 @@ class TestTradingPipeline(TestCase):
                 assert isinstance(policy_resolution, dict)
                 self.assertIn("effective_fail_mode", policy_resolution)
                 self.assertIn("reasoning", policy_resolution)
+                lineage = reviews[0].response_json.get("dspy_lineage")
+                self.assertIsInstance(lineage, dict)
+                assert isinstance(lineage, dict)
+                self.assertEqual(
+                    lineage.get("program_name"),
+                    config.settings.llm_dspy_program_name,
+                )
+                self.assertEqual(
+                    lineage.get("signature_version"),
+                    config.settings.llm_dspy_signature_version,
+                )
+                configured_artifact_hash = config.settings.llm_dspy_artifact_hash
+                if isinstance(configured_artifact_hash, str):
+                    expected_artifact_hash = configured_artifact_hash.strip() or None
+                else:
+                    expected_artifact_hash = None
+                self.assertEqual(lineage.get("artifact_hash"), expected_artifact_hash)
+                committee_veto_alignment = reviews[0].response_json.get(
+                    "committee_veto_alignment"
+                )
+                self.assertIsInstance(committee_veto_alignment, dict)
+                assert isinstance(committee_veto_alignment, dict)
+                self.assertFalse(committee_veto_alignment.get("committee_veto", True))
+                self.assertFalse(committee_veto_alignment.get("deterministic_veto", True))
 
             config.settings.trading_mode = "live"
             config.settings.trading_live_enabled = True
@@ -4102,6 +4128,47 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_adjustment_approved = original[
                 "llm_adjustment_approved"
             ]
+
+    def test_committee_veto_detection_helper(self) -> None:
+        with_veto = {
+            "committee": {
+                "roles": {
+                    "risk_critic": {"verdict": "veto"},
+                    "execution_critic": {"verdict": "approve"},
+                }
+            }
+        }
+        without_veto = {
+            "committee": {
+                "roles": {
+                    "risk_critic": {"verdict": "approve"},
+                    "execution_critic": {"verdict": "adjust"},
+                }
+            }
+        }
+
+        self.assertTrue(_committee_trace_has_veto(with_veto))
+        self.assertFalse(_committee_trace_has_veto(without_veto))
+        self.assertFalse(_committee_trace_has_veto({}))
+
+    def test_dspy_lineage_helper_uses_response_payload(self) -> None:
+        response_json = {
+            "dspy": {
+                "mode": "active",
+                "program_name": "trade-review-committee-v9",
+                "signature_version": "2026-03-03.v9",
+                "artifact_hash": "f" * 64,
+                "artifact_source": "runtime_fallback",
+            }
+        }
+
+        lineage = _build_dspy_lineage(response_json)
+
+        self.assertEqual(lineage["mode"], "active")
+        self.assertEqual(lineage["program_name"], "trade-review-committee-v9")
+        self.assertEqual(lineage["signature_version"], "2026-03-03.v9")
+        self.assertEqual(lineage["artifact_hash"], "f" * 64)
+        self.assertEqual(lineage["artifact_source"], "runtime_fallback")
 
     def test_pipeline_llm_unsupported_runtime_state_vetoes_decision(self) -> None:
         from app import config

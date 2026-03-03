@@ -10,12 +10,14 @@
 - Evidence:
   - `services/torghut/app/trading/llm/dspy_programs/runtime.py`
   - `services/torghut/app/trading/llm/dspy_compile/workflow.py`
-  - `services/torghut/app/trading/llm/review_engine.py`
-  - `services/torghut/app/trading/llm/schema.py`
-  - `services/torghut/tests/test_llm_dspy_workflow.py`
-  - `services/torghut/tests/test_llm_review_engine.py`
-  - `argocd/applications/torghut/knative-service.yaml`
-- Rollout gap: full production-path cutover still needs legacy LLM route decommission and end-to-end artifact-driven promotion telemetry.
+- `services/torghut/app/trading/llm/review_engine.py`
+- `services/torghut/app/trading/llm/schema.py`
+- `services/torghut/app/trading/scheduler.py`
+- `services/torghut/tests/test_llm_dspy_workflow.py`
+- `services/torghut/tests/test_llm_review_engine.py`
+- `services/torghut/tests/test_trading_pipeline.py`
+- `argocd/applications/torghut/knative-service.yaml`
+- Rollout gap: full production-path cutover still needs explicit legacy fail-open posture sunset; decision-row DSPy lineage and committee/veto telemetry coverage are now persisted end-to-end.
 
 ## Objective
 
