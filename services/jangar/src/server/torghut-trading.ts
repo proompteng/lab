@@ -64,6 +64,12 @@ const coerceStringArray = (value: unknown): string[] => {
   return []
 }
 
+const splitRiskReason = (value: string): string[] =>
+  value
+    .split(';')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+
 export const listTorghutTradingStrategies = async (params: { pool: Pool; limit?: number }) => {
   const limit = Math.max(1, Math.min(params.limit ?? 200, 1000))
   const result = await params.pool.query(
@@ -314,9 +320,9 @@ export const buildTorghutTradingSummary = async (params: {
   const reasonsCount = new Map<string, number>()
   for (const decision of rejections) {
     for (const reason of decision.riskReasons) {
-      const key = reason.trim()
-      if (!key) continue
-      reasonsCount.set(key, (reasonsCount.get(key) ?? 0) + 1)
+      for (const key of splitRiskReason(reason)) {
+        reasonsCount.set(key, (reasonsCount.get(key) ?? 0) + 1)
+      }
     }
   }
   const topReasons = [...reasonsCount.entries()]
@@ -375,4 +381,8 @@ export const parseTorghutTradingStrategyId = (url: URL) => {
   const parsed = parseUuid(strategyId)
   if (!parsed) return { ok: false as const, message: 'strategyId must be a UUID' }
   return { ok: true as const, value: parsed }
+}
+
+export const __private = {
+  splitRiskReason,
 }
