@@ -13,6 +13,7 @@ from app.trading.portfolio import (
     ALLOCATOR_CLIP_STRATEGY_BUDGET,
     ALLOCATOR_REJECT_CORRELATION_CAPACITY,
     ALLOCATOR_REJECT_SYMBOL_CAPACITY,
+    ALLOCATOR_REGIME_LOW_CONFIDENCE,
     AllocationConfig,
     IntentAggregator,
     PortfolioAllocator,
@@ -201,6 +202,146 @@ class TestPortfolioSizing(TestCase):
         self.assertFalse(result.approved)
         self.assertIn(ALLOCATOR_REJECT_SYMBOL_CAPACITY, result.reason_codes)
         self.assertEqual(result.decision.qty, Decimal("0"))
+
+    def test_allocator_applies_regime_low_confidence_penalty(self) -> None:
+        allocator = PortfolioAllocator(
+            AllocationConfig(
+                enabled=True,
+                default_regime="vol=high|trend=flat|liq=liquid",
+                default_budget_multiplier=Decimal("1.0"),
+                default_capacity_multiplier=Decimal("1.0"),
+                min_multiplier=Decimal("0"),
+                max_multiplier=Decimal("2"),
+                max_symbol_pct_equity=None,
+                max_symbol_notional=None,
+                max_gross_exposure=None,
+                strategy_notional_caps={},
+                symbol_notional_caps={"AAPL": Decimal("1000")},
+                correlation_group_caps={},
+                symbol_correlation_groups={},
+                regime_budget_multipliers={},
+                regime_capacity_multipliers={},
+                regime_low_confidence_threshold=Decimal("0.60"),
+                regime_low_confidence_multiplier=Decimal("0.70"),
+            )
+        )
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("20"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.55", "R1": "0.45"},
+                },
+            },
+        )
+
+        results = allocator.allocate(
+            [decision],
+            account={"equity": "10000", "buying_power": "10000", "cash": "10000"},
+            positions=[],
+            regime_label="vol=high|trend=flat|liq=liquid",
+        )
+
+        self.assertEqual(len(results), 1)
+        result = results[0]
+        self.assertTrue(result.approved)
+        self.assertIn(ALLOCATOR_REGIME_LOW_CONFIDENCE, result.reason_codes)
+        self.assertTrue(
+            result.decision.params["allocator"]["regime_low_confidence_applied"]
+        )
+        self.assertEqual(
+            Decimal(result.decision.params["allocator"]["regime_confidence"]),
+            Decimal("0.55"),
+        )
+        self.assertEqual(
+            Decimal(result.decision.params["allocator"]["budget_multiplier"]),
+            Decimal("0.7"),
+        )
+        self.assertEqual(
+            Decimal(result.decision.params["allocator"]["capacity_multiplier"]),
+            Decimal("0.7"),
+        )
+        self.assertEqual(
+            Decimal(result.decision.params["allocator"]["approved_qty"]),
+            Decimal("7"),
+        )
+
+    def test_allocator_skips_regime_penalty_for_high_confidence(self) -> None:
+        allocator = PortfolioAllocator(
+            AllocationConfig(
+                enabled=True,
+                default_regime="vol=high|trend=flat|liq=liquid",
+                default_budget_multiplier=Decimal("1.0"),
+                default_capacity_multiplier=Decimal("1.0"),
+                min_multiplier=Decimal("0"),
+                max_multiplier=Decimal("2"),
+                max_symbol_pct_equity=None,
+                max_symbol_notional=None,
+                max_gross_exposure=None,
+                strategy_notional_caps={},
+                symbol_notional_caps={"AAPL": Decimal("1000")},
+                correlation_group_caps={},
+                symbol_correlation_groups={},
+                regime_budget_multipliers={},
+                regime_capacity_multipliers={},
+                regime_low_confidence_threshold=Decimal("0.60"),
+                regime_low_confidence_multiplier=Decimal("0.70"),
+            )
+        )
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("20"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.85", "R1": "0.15"},
+                },
+            },
+        )
+
+        results = allocator.allocate(
+            [decision],
+            account={"equity": "10000", "buying_power": "10000", "cash": "10000"},
+            positions=[],
+            regime_label="vol=high|trend=flat|liq=liquid",
+        )
+
+        self.assertEqual(len(results), 1)
+        result = results[0]
+        self.assertTrue(result.approved)
+        self.assertNotIn(ALLOCATOR_REGIME_LOW_CONFIDENCE, result.reason_codes)
+        self.assertFalse(
+            result.decision.params["allocator"]["regime_low_confidence_applied"]
+        )
+        self.assertEqual(
+            Decimal(result.decision.params["allocator"]["budget_multiplier"]),
+            Decimal("1"),
+        )
+        self.assertEqual(
+            Decimal(result.decision.params["allocator"]["capacity_multiplier"]),
+            Decimal("1"),
+        )
+        self.assertEqual(
+            Decimal(result.decision.params["allocator"]["approved_qty"]),
+            Decimal("10"),
+        )
 
     def test_allocator_clips_by_strategy_budget(self) -> None:
         allocator = PortfolioAllocator(

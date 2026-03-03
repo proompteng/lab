@@ -62,6 +62,7 @@ from .reconcile import Reconciler
 from .risk import RiskEngine
 from .tca import AdaptiveExecutionPolicyDecision, derive_adaptive_execution_policy
 from .regime_hmm import (
+    HMMRegimeContext,
     resolve_regime_context_authority_reason,
     resolve_hmm_context,
     resolve_legacy_regime_label,
@@ -99,6 +100,12 @@ _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
 _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
 _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
 _RUNTIME_UNCERTAINTY_GATE_MAX_STALENESS_SECONDS = 15 * 60
+_RUNTIME_REGIME_CONFIDENCE_DEGRADE_BY_ENTROPY_BAND: dict[str, tuple[Decimal, Decimal]] = {
+    "low": (Decimal("0.65"), Decimal("0.45")),
+    "medium": (Decimal("0.75"), Decimal("0.55")),
+    "high": (Decimal("0.85"), Decimal("0.70")),
+}
+_RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS = (Decimal("0.75"), Decimal("0.55"))
 RuntimeUncertaintyGateAction = Literal["pass", "degrade", "abstain", "fail"]
 
 
@@ -2300,6 +2307,49 @@ class TradingPipeline:
         _, _, gate = self._resolve_runtime_uncertainty_gate_components(decision)
         return gate
 
+    def _resolve_runtime_uncertainty_degrade_profile(
+        self,
+        decision: StrategyDecision,
+        regime_gate: RuntimeUncertaintyGate,
+    ) -> tuple[Decimal, Decimal, int]:
+        regime_label = regime_gate.regime_label
+        if regime_label is None:
+            regime_label, _, _ = _resolve_decision_regime_label_with_source(decision)
+        regime_key = str(regime_label).strip().lower() if regime_label else ""
+
+        qty_multiplier = _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER
+        max_participation_rate = _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE
+        min_execution_seconds = _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
+
+        if regime_key:
+            configured_qty_multiplier = settings.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime.get(
+                regime_key
+            )
+            if configured_qty_multiplier is not None:
+                qty_multiplier = Decimal(str(configured_qty_multiplier))
+
+            configured_max_participation_rate = (
+                settings.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime.get(
+                    regime_key
+                )
+            )
+            if configured_max_participation_rate is not None:
+                max_participation_rate = Decimal(
+                    str(configured_max_participation_rate)
+                )
+
+            configured_min_execution_seconds = settings.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime.get(
+                regime_key
+            )
+            if configured_min_execution_seconds is not None:
+                min_execution_seconds = configured_min_execution_seconds
+
+        return (
+            qty_multiplier,
+            max_participation_rate,
+            int(min_execution_seconds),
+        )
+
     def _resolve_runtime_uncertainty_gate_from_inputs(
         self, decision: StrategyDecision
     ) -> RuntimeUncertaintyGate:
@@ -2571,6 +2621,12 @@ class TradingPipeline:
                     or "regime_hmm_non_authoritative"
                 ),
             )
+        confidence_gate = self._resolve_runtime_regime_confidence_gate(
+            regime_context=regime_context,
+            regime_label=regime_label,
+        )
+        if confidence_gate is not None:
+            return confidence_gate
         return RuntimeUncertaintyGate(
             action="pass",
             source="regime_hmm",
@@ -2578,6 +2634,69 @@ class TradingPipeline:
             regime_label=regime_label or regime_context.regime_id,
             regime_stale=regime_stale,
         )
+
+    def _resolve_runtime_regime_confidence_gate(
+        self,
+        *,
+        regime_context: HMMRegimeContext,
+        regime_label: str | None,
+    ) -> RuntimeUncertaintyGate | None:
+        top_posterior_probability = self._extract_top_regime_posterior_probability(
+            regime_context.posterior
+        )
+        if top_posterior_probability is None:
+            return None
+
+        degrade_threshold, abstain_threshold = self._resolve_regime_confidence_thresholds(
+            regime_context.entropy_band
+        )
+        if top_posterior_probability < abstain_threshold:
+            return RuntimeUncertaintyGate(
+                action="abstain",
+                source="regime_hmm_confidence",
+                regime_action_source="regime_hmm",
+                regime_label=regime_label,
+                regime_stale=False,
+                reason="regime_hmm_confidence_too_low",
+            )
+        if top_posterior_probability < degrade_threshold:
+            return RuntimeUncertaintyGate(
+                action="degrade",
+                source="regime_hmm_confidence",
+                regime_action_source="regime_hmm",
+                regime_label=regime_label,
+                regime_stale=False,
+                reason="regime_hmm_confidence_is_uncertain",
+            )
+        return None
+
+    def _extract_top_regime_posterior_probability(
+        self,
+        posterior: Mapping[str, str],
+    ) -> Decimal | None:
+        top_probability = None
+        for raw_probability in posterior.values():
+            try:
+                parsed_probability = Decimal(raw_probability)
+            except (ArithmeticError, ValueError):
+                continue
+            if parsed_probability < 0 or parsed_probability > 1:
+                continue
+            if top_probability is None or parsed_probability > top_probability:
+                top_probability = parsed_probability
+        return top_probability
+
+    def _resolve_regime_confidence_thresholds(
+        self,
+        entropy_band: str,
+    ) -> tuple[Decimal, Decimal]:
+        degrade_threshold, abstain_threshold = (
+            _RUNTIME_REGIME_CONFIDENCE_DEGRADE_BY_ENTROPY_BAND.get(
+                entropy_band,
+                _RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS,
+            )
+        )
+        return max(degrade_threshold, abstain_threshold), abstain_threshold
 
     def _apply_runtime_uncertainty_gate(
         self,
@@ -2641,43 +2760,43 @@ class TradingPipeline:
             return decision, payload, None
 
         params = dict(decision.params)
+        (
+            degrade_qty_multiplier,
+            max_participation_rate,
+            min_execution_seconds,
+        ) = self._resolve_runtime_uncertainty_degrade_profile(
+            decision=decision,
+            regime_gate=regime_gate,
+        )
         allocator = _coerce_json(params.get("allocator"))
         current_override = _optional_decimal(
             allocator.get("max_participation_rate_override")
         )
         if (
             current_override is None
-            or current_override > _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE
+            or current_override > max_participation_rate
         ):
             allocator["max_participation_rate_override"] = str(
-                _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE
+                max_participation_rate
             )
         params["allocator"] = allocator
         execution_seconds = _optional_int(params.get("execution_seconds"))
         if (
             execution_seconds is None
-            or execution_seconds < _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
+            or execution_seconds < min_execution_seconds
         ):
-            params["execution_seconds"] = (
-                _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
-            )
+            params["execution_seconds"] = min_execution_seconds
 
         qty = _optional_decimal(decision.qty)
         adjusted_qty = decision.qty
         if qty is not None and qty > 0:
-            scaled = (qty * _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER).quantize(
-                Decimal("1")
-            )
+            scaled = (qty * degrade_qty_multiplier).quantize(Decimal("1"))
             adjusted_qty = max(Decimal("1"), scaled)
-        payload["degrade_qty_multiplier"] = str(
-            _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER
-        )
+        payload["degrade_qty_multiplier"] = str(degrade_qty_multiplier)
         payload["max_participation_rate_override"] = str(
-            _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE
+            max_participation_rate
         )
-        payload["min_execution_seconds"] = (
-            _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS
-        )
+        payload["min_execution_seconds"] = min_execution_seconds
         payload["adjusted_qty"] = str(adjusted_qty)
         return (
             decision.model_copy(update={"qty": adjusted_qty, "params": params}),
