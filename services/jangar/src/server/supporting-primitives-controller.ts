@@ -1137,24 +1137,65 @@ const clampUtf8 = (value: string, maxBytes: number) => {
   }
 }
 
-const makeRequirementObjective = (description: string, payload: string) => {
-  const payloadObjective = (() => {
-    if (!payload) {
+const extractPayloadObjective = (payload: string) => {
+  try {
+    const parsed = JSON.parse(payload)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return ''
     }
-    try {
-      const parsed = JSON.parse(payload)
-      if (parsed && typeof parsed === 'object' && typeof parsed.objective === 'string') {
-        const normalizedObjective = parsed.objective.trim()
-        if (normalizedObjective.length > 0) {
-          return normalizedObjective
-        }
-      }
-    } catch {
-      // ignore malformed payloads and fall back to full payload text
+
+    const objectiveValue = parsed.objective
+    if (typeof objectiveValue === 'string') {
+      const normalized = objectiveValue.trim()
+      if (normalized.length > 0) return normalized
     }
-    return ''
-  })()
+
+    const acceptanceValue = parsed.acceptance
+    if (typeof acceptanceValue === 'string') {
+      const normalized = acceptanceValue.trim()
+      if (normalized.length > 0) return `acceptance: ${normalized}`
+    }
+    if (Array.isArray(acceptanceValue)) {
+      const acceptanceList = acceptanceValue
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter((value) => value.length > 0)
+      if (acceptanceList.length > 0) {
+        return `acceptance: ${acceptanceList.join(', ')}`
+      }
+    }
+
+    const missionValue = parsed.mission
+    if (typeof missionValue === 'string') {
+      const normalized = missionValue.trim()
+      if (normalized.length > 0) return `mission: ${normalized}`
+    }
+
+    const objectiveSource = extractPayloadObjectiveObject(parsed as Record<string, unknown>)
+    if (objectiveSource) {
+      return objectiveSource
+    }
+  } catch {
+    // ignore malformed payloads
+  }
+  return ''
+}
+
+const extractPayloadObjectiveObject = (payload: Record<string, unknown>) => {
+  const fields: Array<unknown> = [payload.objective, payload.scope, payload.goal, payload.summary]
+  for (const value of fields) {
+    if (typeof value === 'string') {
+      const normalized = value.trim()
+      if (normalized.length > 0) return normalized
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value)
+    }
+  }
+  return ''
+}
+
+const makeRequirementObjective = (description: string, payload: string) => {
+  const payloadObjective = payload ? extractPayloadObjective(payload) : ''
   const objectiveSource = payloadObjective || payload
   const parts = [description, objectiveSource].filter((value) => value.length > 0)
   if (parts.length === 0) return ''
