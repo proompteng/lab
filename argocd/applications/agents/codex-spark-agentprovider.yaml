@@ -48,7 +48,7 @@ spec:
           "binary": "/bin/bash",
           "argsTemplate": [
             "-lc",
-            "python3 /root/.codex/ensure-market-context-issue-number.py \"$1\" && exec /usr/local/bin/codex-implement \"$1\"",
+            "EVENT_FILE=$(mktemp /tmp/codex-event.XXXXXX.json) && cp \"$1\" \"$EVENT_FILE\" && python3 /root/.codex/ensure-market-context-issue-number.py \"$EVENT_FILE\" && exec /usr/local/bin/codex-implement \"$EVENT_FILE\"",
             "--",
             "{{payloads.eventFilePath}}"
           ],
