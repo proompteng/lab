@@ -41,7 +41,7 @@ No promotion path may bypass these controls.
 3. `v6/03` DSPy production cutover is implemented with live fail-closed runtime posture. (Completed `2026-03-03`)
 4. `v6/02` expert-router artifact registry and tuning SLO loop are partial.
 5. `v6/07` HMM posterior state service + lineage are partial.
-6. `v6/09` external benchmark parity suite is planned.
+6. `v6/09` external benchmark parity suite is implemented with fail-closed contract + coverage/calibration gating. (Completed `2026-03-03`)
 7. `v6/10` TimesFM parity contract is planned.
 8. `v6/11` DeepLOB/BDLOB production contract is planned.
 9. `v6/12` PostHog domain telemetry pipeline is planned.
@@ -175,8 +175,8 @@ Require explicit parity reports against external benchmark families before promo
 ### Deliverables
 
 1. Standardize benchmark-parity artifact generation contracts. (Completed `2026-03-03`)
-2. Add benchmark family coverage checks and confidence calibration drift bounds.
-3. Block promotion on missing/incomplete parity scorecards.
+2. Add benchmark family coverage checks and confidence calibration drift bounds. (Completed `2026-03-03`)
+3. Block promotion on missing/incomplete parity scorecards. (Completed `2026-03-03`)
 
 ### Primary files
 

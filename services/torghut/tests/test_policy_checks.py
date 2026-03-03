@@ -14,6 +14,7 @@ from app.trading.parity import (
     BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
     BENCHMARK_PARITY_REQUIRED_FAMILIES,
     BENCHMARK_PARITY_REQUIRED_RUN_FIELDS,
+    BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS,
     BENCHMARK_PARITY_REQUIRED_SCORECARDS,
     BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
     BENCHMARK_PARITY_SCHEMA_VERSION,
@@ -3637,6 +3638,45 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(promotion.allowed)
         self.assertIn("benchmark_parity_contract_missing", promotion.reasons)
 
+    def test_promotion_prerequisites_fail_when_benchmark_parity_contract_scorecard_fields_are_invalid(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            payload = _build_benchmark_parity_payload()
+            contract = payload.get("contract")
+            if isinstance(contract, dict):
+                contract["required_scorecard_fields"] = {
+                    "forecast_quality": ["status"]
+                }
+            _recompute_benchmark_artifact_hash(payload)
+            _write_benchmark_parity_payload_payload(root, payload=payload)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn(
+            "benchmark_parity_contract_required_scorecard_fields_invalid",
+            promotion.reasons,
+        )
+
     def test_promotion_prerequisites_fail_when_benchmark_parity_run_schema_is_invalid(
         self,
     ) -> None:
@@ -4000,6 +4040,82 @@ class TestPolicyChecks(TestCase):
             )
         )
 
+    def test_promotion_prerequisites_fail_when_benchmark_parity_scorecard_is_incomplete(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            payload = _build_benchmark_parity_payload()
+            scorecards = payload.get("scorecards")
+            if isinstance(scorecards, dict):
+                forecast = scorecards.get("forecast_quality")
+                if isinstance(forecast, dict):
+                    forecast.pop("confidence_calibration_error_baseline", None)
+            _recompute_benchmark_artifact_hash(payload)
+            _write_benchmark_parity_payload_payload(root, payload=payload)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn(
+            "benchmark_parity_scorecard_missing_required_fields",
+            promotion.reasons,
+        )
+
+    def test_promotion_prerequisites_fail_when_benchmark_parity_scorecard_confidence_drift_is_exceeded(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            _write_benchmark_parity_payload(
+                root,
+                forecast_confidence_calibration_error=0.03,
+                forecast_confidence_calibration_error_baseline=0.01,
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "promotion_benchmark_parity_max_scorecard_confidence_calibration_error_drift": 0.01,
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn(
+            "benchmark_parity_scorecard_confidence_calibration_error_drift_exceeds_threshold",
+            promotion.reasons,
+        )
+
 
 def _candidate_state() -> dict[str, object]:
     return {
@@ -4026,6 +4142,8 @@ def _write_benchmark_parity_payload(
     adverse_regime_degradation: float = 0.0,
     risk_veto_degradation: float = 0.0,
     confidence_calibration_error_degradation: float = 0.0,
+    forecast_confidence_calibration_error: float = 0.015,
+    forecast_confidence_calibration_error_baseline: float = 0.015,
     families: tuple[str, ...] = BENCHMARK_PARITY_REQUIRED_FAMILIES,
     schema_version: str = BENCHMARK_PARITY_SCHEMA_VERSION,
 ) -> Path:
@@ -4034,6 +4152,8 @@ def _write_benchmark_parity_payload(
         adverse_regime_degradation=adverse_regime_degradation,
         risk_veto_degradation=risk_veto_degradation,
         confidence_calibration_error_degradation=confidence_calibration_error_degradation,
+        forecast_confidence_calibration_error=forecast_confidence_calibration_error,
+        forecast_confidence_calibration_error_baseline=forecast_confidence_calibration_error_baseline,
         schema_version=schema_version,
     )
     return _write_benchmark_parity_payload_payload(root, payload=payload)
@@ -4061,6 +4181,8 @@ def _build_benchmark_parity_payload(
     adverse_regime_degradation: float = 0.0,
     risk_veto_degradation: float = 0.0,
     confidence_calibration_error_degradation: float = 0.0,
+    forecast_confidence_calibration_error: float = 0.015,
+    forecast_confidence_calibration_error_baseline: float = 0.015,
     schema_version: str = BENCHMARK_PARITY_SCHEMA_VERSION,
 ) -> dict[str, object]:
     payload = {
@@ -4071,6 +4193,10 @@ def _build_benchmark_parity_payload(
             "schema_version": BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
             "required_families": list(BENCHMARK_PARITY_REQUIRED_FAMILIES),
             "required_scorecards": list(BENCHMARK_PARITY_REQUIRED_SCORECARDS),
+            "required_scorecard_fields": {
+                name: list(fields)
+                for name, fields in BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS.items()
+            },
             "required_run_fields": list(BENCHMARK_PARITY_REQUIRED_RUN_FIELDS),
             "hash_algorithm": "sha256",
             "generation_mode": "deterministic_benchmark_parity_v1",
@@ -4080,9 +4206,35 @@ def _build_benchmark_parity_payload(
             for family in families
         ],
         "scorecards": {
-            "decision_quality": {"status": "pass"},
-            "reasoning_quality": {"status": "pass"},
-            "forecast_quality": {"status": "pass"},
+            "decision_quality": {
+                "status": "pass",
+                "advisory_output_rate": 0.998,
+                "advisory_output_rate_baseline": 0.998,
+                "policy_violation_rate": 0.01,
+                "policy_violation_rate_baseline": 0.01,
+                "deterministic_gate_compatible": True,
+                "decision_count": 144,
+            },
+            "reasoning_quality": {
+                "status": "pass",
+                "policy_violation_rate": 0.01,
+                "policy_violation_rate_baseline": 0.01,
+                "advisory_output_rate": 0.997,
+                "advisory_output_rate_baseline": 0.997,
+                "deterministic_gate_compatible": True,
+            },
+            "forecast_quality": {
+                "status": "pass",
+                "confidence_calibration_error": forecast_confidence_calibration_error,
+                "confidence_calibration_error_baseline": forecast_confidence_calibration_error_baseline,
+                "risk_veto_alignment": 0.95,
+                "risk_veto_alignment_baseline": 0.95,
+                "policy_violation_rate": 0.01,
+                "policy_violation_rate_baseline": 0.01,
+                "advisory_output_rate": 0.997,
+                "advisory_output_rate_baseline": 0.997,
+                "deterministic_gate_compatible": True,
+            },
         },
         "overall_parity_status": "pass",
         "degradation_summary": {

@@ -12,7 +12,7 @@
   - `services/torghut/app/trading/autonomy/policy_checks.py`
   - `services/torghut/tests/test_feature_parity.py`
   - `services/torghut/tests/test_policy_checks.py`
-- Rollout gap: benchmark parity artifact contract standardization is implemented (`2026-03-03`); remaining closure is Wave 4 deliverables 2-3 (coverage/calibration drift bounds hardening and promotion block completeness).
+- Rollout gap: Wave 4 benchmark parity closure is implemented (`2026-03-03`) across contract standardization, family coverage/calibration drift bounds, and fail-closed scorecard completeness checks; remaining program closure is Wave 5-6.
 
 ## Objective
 

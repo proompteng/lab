@@ -22,6 +22,34 @@ BENCHMARK_PARITY_REQUIRED_SCORECARDS: tuple[str, ...] = (
     "reasoning_quality",
     "forecast_quality",
 )
+BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS: dict[str, tuple[str, ...]] = {
+    "decision_quality": (
+        "advisory_output_rate",
+        "advisory_output_rate_baseline",
+        "policy_violation_rate",
+        "policy_violation_rate_baseline",
+        "deterministic_gate_compatible",
+        "decision_count",
+    ),
+    "reasoning_quality": (
+        "policy_violation_rate",
+        "policy_violation_rate_baseline",
+        "advisory_output_rate",
+        "advisory_output_rate_baseline",
+        "deterministic_gate_compatible",
+    ),
+    "forecast_quality": (
+        "confidence_calibration_error",
+        "confidence_calibration_error_baseline",
+        "risk_veto_alignment",
+        "risk_veto_alignment_baseline",
+        "policy_violation_rate",
+        "policy_violation_rate_baseline",
+        "advisory_output_rate",
+        "advisory_output_rate_baseline",
+        "deterministic_gate_compatible",
+    ),
+}
 BENCHMARK_PARITY_REQUIRED_FAMILIES: tuple[str, ...] = (
     "ai-trader",
     "fev-bench",
@@ -236,6 +264,10 @@ def build_benchmark_parity_report(
             "schema_version": BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
             "required_families": list(BENCHMARK_PARITY_REQUIRED_FAMILIES),
             "required_scorecards": list(BENCHMARK_PARITY_REQUIRED_SCORECARDS),
+            "required_scorecard_fields": {
+                name: list(fields)
+                for name, fields in BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS.items()
+            },
             "required_run_fields": list(BENCHMARK_PARITY_REQUIRED_RUN_FIELDS),
             "hash_algorithm": "sha256",
             "generation_mode": "deterministic_benchmark_parity_v1",
@@ -418,6 +450,7 @@ __all__ = [
     'BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION',
     'BENCHMARK_PARITY_RUN_SCHEMA_VERSION',
     'BENCHMARK_PARITY_REQUIRED_SCORECARDS',
+    'BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS',
     'BENCHMARK_PARITY_REQUIRED_FAMILIES',
     'BENCHMARK_PARITY_REQUIRED_RUN_FIELDS',
     'build_benchmark_parity_report',

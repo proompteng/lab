@@ -11,6 +11,7 @@ from app.trading.parity import (
     BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
     BENCHMARK_PARITY_REQUIRED_FAMILIES,
     BENCHMARK_PARITY_REQUIRED_RUN_FIELDS,
+    BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS,
     BENCHMARK_PARITY_REQUIRED_SCORECARDS,
     BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
     _benchmark_report_hash,
@@ -77,6 +78,13 @@ class TestFeatureParity(TestCase):
         self.assertEqual(
             contract.get('required_scorecards'),
             list(BENCHMARK_PARITY_REQUIRED_SCORECARDS),
+        )
+        self.assertEqual(
+            contract.get('required_scorecard_fields'),
+            {
+                name: list(fields)
+                for name, fields in BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS.items()
+            },
         )
         self.assertEqual(
             contract.get('required_run_fields'),
