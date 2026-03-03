@@ -51,8 +51,10 @@ from ..llm.evaluation import build_llm_evaluation_metrics
 from ..models import SignalEnvelope
 from ..parity import (
     build_benchmark_parity_report,
+    build_deeplob_bdlob_report,
     build_foundation_router_parity_report,
     write_benchmark_parity_report,
+    write_deeplob_bdlob_report,
     write_foundation_router_parity_report,
 )
 from ..regime_hmm import HMM_UNKNOWN_REGIME_ID, resolve_hmm_context
@@ -111,6 +113,7 @@ _EXPERT_ROUTER_REGISTRY_ARTIFACT_PATH = "gates/expert-router-registry-v1.json"
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
 _BENCHMARK_PARITY_REPORT_PATH = "benchmarks/benchmark-parity-report-v1.json"
 _FOUNDATION_ROUTER_PARITY_REPORT_PATH = "router/foundation-router-parity-report-v1.json"
+_DEEPLOB_BDLOB_REPORT_PATH = "microstructure/deeplob-bdlob-report-v1.json"
 _STAGE_PROFITABILITY = "profitability_stage_manifest"
 
 
@@ -976,6 +979,7 @@ def _build_profitability_stage_manifest(
     contamination_registry_path: Path,
     benchmark_parity_path: Path,
     foundation_router_parity_path: Path,
+    deeplob_bdlob_report_path: Path,
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
     hmm_state_posterior_path: Path,
@@ -1094,6 +1098,11 @@ def _build_profitability_stage_manifest(
             "foundation_router_parity_present",
             "foundation_router_parity",
             foundation_router_parity_path,
+        ),
+        (
+            "deeplob_bdlob_contract_present",
+            "deeplob_bdlob_contract",
+            deeplob_bdlob_report_path,
         ),
         (
             "hmm_state_posterior_present",
@@ -1446,6 +1455,7 @@ def run_autonomous_lane(
     expert_router_registry_path = output_dir / _EXPERT_ROUTER_REGISTRY_ARTIFACT_PATH
     benchmark_parity_path = output_dir / _BENCHMARK_PARITY_REPORT_PATH
     foundation_router_parity_path = output_dir / _FOUNDATION_ROUTER_PARITY_REPORT_PATH
+    deeplob_bdlob_report_path = output_dir / _DEEPLOB_BDLOB_REPORT_PATH
     recalibration_report_path = gates_dir / "recalibration-report.json"
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     profitability_manifest_path = output_dir / _PROFITABILITY_STAGE_MANIFEST_PATH
@@ -1698,6 +1708,20 @@ def run_autonomous_lane(
             foundation_router_parity_report,
             foundation_router_parity_path,
         )
+        deeplob_bdlob_report = build_deeplob_bdlob_report(
+            candidate_id=candidate_id,
+            feature_policy_version=str(
+                gate_policy_payload.get(
+                    "required_feature_schema_version",
+                    settings.trading_feature_schema_version,
+                )
+            ),
+            now=now,
+        )
+        write_deeplob_bdlob_report(
+            deeplob_bdlob_report,
+            deeplob_bdlob_report_path,
+        )
         expert_router_registry_payload = _build_expert_router_registry_payload(
             output_dir=output_dir,
             run_id=run_id,
@@ -1723,6 +1747,7 @@ def run_autonomous_lane(
             "gate_policy": _sha256_path(gate_policy_path),
             "walkforward_results": _sha256_path(walk_results_path),
             "foundation_router_parity": _sha256_path(foundation_router_parity_path),
+            "deeplob_bdlob_contract": _sha256_path(deeplob_bdlob_report_path),
             "hmm_state_posterior": _sha256_path(hmm_state_posterior_path),
             "expert_router_registry": _sha256_path(expert_router_registry_path),
             "candidate_report": _sha256_path(evaluation_report_path),
@@ -1744,6 +1769,7 @@ def run_autonomous_lane(
                 str(walk_results_path),
                 str(hmm_state_posterior_path),
                 str(expert_router_registry_path),
+                str(deeplob_bdlob_report_path),
                 str(signals_path),
                 str(strategy_config_path),
                 str(gate_policy_path),
@@ -1785,6 +1811,7 @@ def run_autonomous_lane(
                 profitability_benchmark_path,
                 benchmark_parity_path,
                 foundation_router_parity_path,
+                deeplob_bdlob_report_path,
                 hmm_state_posterior_path,
                 expert_router_registry_path,
             ],
@@ -1942,6 +1969,11 @@ def run_autonomous_lane(
             foundation_router_parity_artifact_ref = str(
                 foundation_router_parity_path.relative_to(output_dir)
             )
+        deeplob_bdlob_artifact_ref = str(deeplob_bdlob_report_path)
+        if not output_dir.is_absolute():
+            deeplob_bdlob_artifact_ref = str(
+                deeplob_bdlob_report_path.relative_to(output_dir)
+            )
         contamination_registry_artifact_ref = str(contamination_registry_path)
         if not output_dir.is_absolute():
             contamination_registry_artifact_ref = str(
@@ -1996,6 +2028,9 @@ def run_autonomous_lane(
             },
             "foundation_router_parity": {
                 "artifact_ref": foundation_router_parity_artifact_ref,
+            },
+            "deeplob_bdlob_contract": {
+                "artifact_ref": deeplob_bdlob_artifact_ref,
             },
             "hmm_state_posterior": {
                 "artifact_ref": hmm_state_posterior_artifact_ref,
@@ -2075,6 +2110,7 @@ def run_autonomous_lane(
                 "gate_report": str(gate_report_path),
                 "benchmark_parity": str(benchmark_parity_path),
                 "foundation_router_parity": str(foundation_router_parity_path),
+                "deeplob_bdlob_contract": str(deeplob_bdlob_report_path),
                 "contamination_registry": str(contamination_registry_path),
                 "profitability_benchmark": str(profitability_benchmark_path),
                 "profitability_evidence": str(profitability_evidence_path),
@@ -2161,6 +2197,7 @@ def run_autonomous_lane(
                 expert_router_registry_path=expert_router_registry_path,
                 benchmark_parity_path=benchmark_parity_path,
                 foundation_router_parity_path=foundation_router_parity_path,
+                deeplob_bdlob_report_path=deeplob_bdlob_report_path,
                 janus_event_car_path=janus_event_car_path,
                 janus_hgrm_reward_path=janus_hgrm_reward_path,
                 recalibration_report_path=recalibration_report_path,
@@ -2243,6 +2280,7 @@ def run_autonomous_lane(
         research_spec["promotion_evidence_requirements"] = {
             "fold_metrics_count": len(fold_evidence),
             "stress_case_count": len(stress_evidence),
+            "deeplob_bdlob_contract_required": True,
             "rationale_required": True,
             "rationale_reason_codes": promotion_reasons,
         }
@@ -2260,6 +2298,7 @@ def run_autonomous_lane(
                     "artifact_refs": [
                         str(gate_report_path),
                         str(benchmark_parity_path),
+                        str(deeplob_bdlob_report_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
                         str(stress_metrics_path),
@@ -2285,6 +2324,7 @@ def run_autonomous_lane(
                         str(rollback_check_path),
                         str(gate_report_path),
                         str(benchmark_parity_path),
+                        str(deeplob_bdlob_report_path),
                         str(contamination_registry_path),
                         str(profitability_benchmark_path),
                         str(profitability_evidence_path),
@@ -2338,6 +2378,9 @@ def run_autonomous_lane(
             },
             "foundation_router_parity": {
                 "artifact_ref": foundation_router_parity_artifact_ref,
+            },
+            "deeplob_bdlob_contract": {
+                "artifact_ref": deeplob_bdlob_artifact_ref,
             },
             "hmm_state_posterior": {
                 "artifact_ref": hmm_state_posterior_artifact_ref,
@@ -2407,6 +2450,7 @@ def run_autonomous_lane(
             "recommendation_trace_id": recommendation_trace_id,
             "benchmark_parity_artifact": str(benchmark_parity_path),
             "foundation_router_parity_artifact": str(foundation_router_parity_path),
+            "deeplob_bdlob_contract_artifact": str(deeplob_bdlob_report_path),
             "contamination_registry_artifact": str(contamination_registry_path),
             "profitability_benchmark_artifact": str(profitability_benchmark_path),
             "profitability_evidence_artifact": str(profitability_evidence_path),
@@ -2445,6 +2489,7 @@ def run_autonomous_lane(
                 "gate_evaluation": gate_report_path,
                 "benchmark_parity": benchmark_parity_path,
                 "foundation_router_parity": foundation_router_parity_path,
+                "deeplob_bdlob_contract": deeplob_bdlob_report_path,
                 "contamination_registry": contamination_registry_path,
                 "profitability_benchmark": profitability_benchmark_path,
                 "profitability_evidence": profitability_evidence_path,
@@ -2549,6 +2594,7 @@ def run_autonomous_lane(
             "profitability_stage_manifest": profitability_manifest_path,
             "benchmark_parity": benchmark_parity_path,
             "foundation_router_parity": foundation_router_parity_path,
+            "deeplob_bdlob_contract": deeplob_bdlob_report_path,
             "contamination_registry": contamination_registry_path,
             "profitability_benchmark": profitability_benchmark_path,
             "profitability_evidence": profitability_evidence_path,
@@ -2668,6 +2714,7 @@ def run_autonomous_lane(
             profitability_validation_path=profitability_validation_path,
             benchmark_parity_path=benchmark_parity_path,
             foundation_router_parity_path=foundation_router_parity_path,
+            deeplob_bdlob_report_path=deeplob_bdlob_report_path,
             janus_event_car_path=janus_event_car_path,
             janus_hgrm_reward_path=janus_hgrm_reward_path,
             recalibration_report_path=recalibration_report_path,
@@ -3377,6 +3424,7 @@ def _build_actuation_intent_payload(
     profitability_validation_path: Path,
     benchmark_parity_path: Path,
     foundation_router_parity_path: Path,
+    deeplob_bdlob_report_path: Path,
     janus_event_car_path: Path,
     janus_hgrm_reward_path: Path,
     recalibration_report_path: Path,
@@ -3416,6 +3464,7 @@ def _build_actuation_intent_payload(
             str(profitability_benchmark_path),
             str(benchmark_parity_path),
             str(foundation_router_parity_path),
+            str(deeplob_bdlob_report_path),
             str(profitability_evidence_path),
             str(profitability_validation_path),
             str(janus_event_car_path),

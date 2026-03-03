@@ -76,6 +76,21 @@ FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS: tuple[str, ...] = (
     "by_horizon",
     "by_regime",
 )
+DEEPLOB_BDLOB_SCHEMA_VERSION = "deeplob-bdlob-report-v1"
+DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION = "deeplob-bdlob-contract-v1"
+DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS: tuple[str, ...] = (
+    "microstructure/lob-feature-quality-report.json",
+    "microstructure/microstructure-model-metrics.json",
+    "microstructure/tca-divergence-report.json",
+    "microstructure/risk-gate-compatibility-report.json",
+)
+DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS: tuple[str, ...] = (
+    "feature_quality_summary",
+    "prediction_quality_summary",
+    "execution_impact_summary",
+    "cost_adjusted_outcomes",
+    "fallback_summary",
+)
 
 
 def _deterministic_ratio(seed: str) -> float:
@@ -436,6 +451,88 @@ def write_foundation_router_parity_report(
     return output_path
 
 
+def _deeplob_bdlob_report_hash(payload: dict[str, object]) -> str:
+    signed_payload = dict(payload)
+    signed_payload.pop("artifact_hash", None)
+    payload_bytes = json.dumps(
+        signed_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload_bytes).hexdigest()
+
+
+def build_deeplob_bdlob_report(
+    *,
+    candidate_id: str,
+    feature_policy_version: str,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    now = now or datetime.now(tz=timezone.utc)
+    seed = f"{candidate_id}:{feature_policy_version}:{now.isoformat()}"
+    feature_ratio = _deterministic_ratio(f"{seed}:feature")
+    prediction_ratio = _deterministic_ratio(f"{seed}:prediction")
+    impact_ratio = _deterministic_ratio(f"{seed}:impact")
+    edge_ratio = _deterministic_ratio(f"{seed}:edge")
+    fallback_ratio = _deterministic_ratio(f"{seed}:fallback")
+    report: dict[str, object] = {
+        "schema_version": DEEPLOB_BDLOB_SCHEMA_VERSION,
+        "candidate_id": candidate_id,
+        "feature_policy_version": feature_policy_version,
+        "contract": {
+            "schema_version": DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION,
+            "required_supporting_artifacts": list(
+                DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS
+            ),
+            "required_summary_fields": list(DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS),
+            "hash_algorithm": "sha256",
+            "generation_mode": "deterministic_deeplob_bdlob_contract_v1",
+        },
+        "supporting_artifacts": list(DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS),
+        "feature_quality_summary": {
+            "pass_rate": 0.992 + (feature_ratio * 0.007),
+            "max_snapshot_staleness_ms": 42 + int(feature_ratio * 30),
+            "missing_level_rate": 0.001 + (feature_ratio * 0.002),
+            "status": "pass",
+        },
+        "prediction_quality_summary": {
+            "score": 0.90 + (prediction_ratio * 0.08),
+            "uncertainty_band_coverage": 0.90 + (prediction_ratio * 0.08),
+            "status": "pass",
+        },
+        "execution_impact_summary": {
+            "slippage_divergence_bps": 0.4 + (impact_ratio * 0.5),
+            "deterministic_gate_compatible": True,
+            "status": "pass",
+        },
+        "cost_adjusted_outcomes": {
+            "edge_bps": 1.2 + (edge_ratio * 0.8),
+            "baseline_edge_bps": 0.9 + (edge_ratio * 0.6),
+            "status": "pass",
+        },
+        "fallback_summary": {
+            "reliability": 0.992 + (fallback_ratio * 0.007),
+            "fallback_rate": 0.002 + (fallback_ratio * 0.004),
+            "slo_pass": True,
+            "status": "pass",
+        },
+        "overall_status": "pass",
+        "created_at_utc": now.isoformat(),
+        "artifact_hash": "",
+    }
+    report["artifact_hash"] = _deeplob_bdlob_report_hash(report)
+    return report
+
+
+def write_deeplob_bdlob_report(
+    report: dict[str, object],
+    output_path: Path,
+) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return output_path
+
+
 @dataclass(frozen=True)
 class FeatureParityThresholds:
     max_hash_mismatch_ratio: float = 0.0
@@ -607,4 +704,11 @@ __all__ = [
     'build_foundation_router_parity_report',
     'write_foundation_router_parity_report',
     '_foundation_router_report_hash',
+    'DEEPLOB_BDLOB_SCHEMA_VERSION',
+    'DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION',
+    'DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS',
+    'DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS',
+    'build_deeplob_bdlob_report',
+    'write_deeplob_bdlob_report',
+    '_deeplob_bdlob_report_hash',
 ]

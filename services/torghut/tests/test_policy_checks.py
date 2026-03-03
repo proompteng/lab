@@ -18,6 +18,10 @@ from app.trading.parity import (
     BENCHMARK_PARITY_REQUIRED_SCORECARDS,
     BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
     BENCHMARK_PARITY_SCHEMA_VERSION,
+    DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION,
+    DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS,
+    DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS,
+    DEEPLOB_BDLOB_SCHEMA_VERSION,
     FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION,
     FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS,
     FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS,
@@ -4289,6 +4293,103 @@ class TestPolicyChecks(TestCase):
             any(reason.startswith("foundation_router_parity_") for reason in promotion.reasons)
         )
 
+    def test_promotion_prerequisites_fail_when_deeplob_bdlob_contract_artifact_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text("{}", encoding="utf-8")
+            gate_report = _gate_report()
+            (root / "gates" / "gate-evaluation.json").write_text(
+                json.dumps(gate_report),
+                encoding="utf-8",
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_deeplob_bdlob_contract": True,
+                    "promotion_deeplob_bdlob_required_targets": ["paper"],
+                    "promotion_deeplob_bdlob_required_artifacts": [
+                        "microstructure/deeplob-bdlob-report-v1.json"
+                    ],
+                    "promotion_require_foundation_router_parity": False,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_hmm_state_posterior": False,
+                    "promotion_require_expert_router_registry": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("required_artifacts_missing", promotion.reasons)
+        self.assertIn(
+            "deeplob_bdlob_contract_artifact_missing",
+            promotion.reasons,
+        )
+
+    def test_promotion_prerequisites_pass_with_valid_deeplob_bdlob_contract(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text("{}", encoding="utf-8")
+            (root / "backtest" / "evaluation-report.json").write_text("{}", encoding="utf-8")
+            gate_report = _gate_report()
+            (root / "gates" / "gate-evaluation.json").write_text(
+                json.dumps(gate_report),
+                encoding="utf-8",
+            )
+            _write_deeplob_bdlob_payload(root)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_patch_targets": [],
+                    "promotion_require_deeplob_bdlob_contract": True,
+                    "promotion_deeplob_bdlob_required_targets": ["paper"],
+                    "promotion_deeplob_bdlob_min_feature_quality_pass_rate": 0.99,
+                    "promotion_deeplob_bdlob_min_prediction_quality_score": 0.85,
+                    "promotion_deeplob_bdlob_min_cost_adjusted_edge_bps": 0.0,
+                    "promotion_deeplob_bdlob_max_slippage_divergence_bps": 1.0,
+                    "promotion_deeplob_bdlob_min_fallback_reliability": 0.99,
+                    "promotion_require_foundation_router_parity": False,
+                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_contamination_registry": False,
+                    "promotion_require_stress_evidence": False,
+                    "promotion_require_hmm_state_posterior": False,
+                    "promotion_require_expert_router_registry": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                },
+                gate_report_payload=gate_report,
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertTrue(promotion.allowed)
+        self.assertFalse(
+            any(reason.startswith("deeplob_bdlob_contract_") for reason in promotion.reasons)
+        )
+
 
 def _candidate_state() -> dict[str, object]:
     return {
@@ -4514,6 +4615,66 @@ def _write_foundation_router_parity_payload(
         {key: value for key, value in payload.items() if key != "artifact_hash"}
     )
     artifact_path = root / "router" / "foundation-router-parity-report-v1.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+    return artifact_path
+
+
+def _write_deeplob_bdlob_payload(
+    root: Path,
+    *,
+    schema_version: str = DEEPLOB_BDLOB_SCHEMA_VERSION,
+    contract_schema_version: str = DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION,
+    supporting_artifacts: tuple[str, ...] = DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS,
+    required_summary_fields: tuple[str, ...] = DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS,
+    feature_quality_pass_rate: float = 0.995,
+    prediction_quality_score: float = 0.9,
+    cost_adjusted_edge_bps: float = 0.6,
+    slippage_divergence_bps: float = 0.6,
+    fallback_reliability: float = 0.995,
+    overall_status: str = "pass",
+) -> Path:
+    payload: dict[str, object] = {
+        "schema_version": schema_version,
+        "candidate_id": "cand-test",
+        "feature_policy_version": "3.0.0",
+        "contract": {
+            "schema_version": contract_schema_version,
+            "required_supporting_artifacts": list(supporting_artifacts),
+            "required_summary_fields": list(required_summary_fields),
+            "hash_algorithm": "sha256",
+            "generation_mode": "deterministic_deeplob_bdlob_contract_v1",
+        },
+        "supporting_artifacts": list(supporting_artifacts),
+        "feature_quality_summary": {
+            "pass_rate": feature_quality_pass_rate,
+            "status": "pass",
+        },
+        "prediction_quality_summary": {
+            "score": prediction_quality_score,
+            "status": "pass",
+        },
+        "execution_impact_summary": {
+            "slippage_divergence_bps": slippage_divergence_bps,
+            "deterministic_gate_compatible": True,
+            "status": "pass",
+        },
+        "cost_adjusted_outcomes": {
+            "edge_bps": cost_adjusted_edge_bps,
+            "status": "pass",
+        },
+        "fallback_summary": {
+            "reliability": fallback_reliability,
+            "slo_pass": True,
+            "status": "pass",
+        },
+        "overall_status": overall_status,
+        "created_at_utc": datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
+    }
+    payload["artifact_hash"] = _sha256_json(
+        {key: value for key, value in payload.items() if key != "artifact_hash"}
+    )
+    artifact_path = root / "microstructure" / "deeplob-bdlob-report-v1.json"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text(json.dumps(payload), encoding="utf-8")
     return artifact_path
@@ -4964,6 +5125,9 @@ def _gate_report() -> dict[str, object]:
             },
             "foundation_router_parity": {
                 "artifact_ref": "router/foundation-router-parity-report-v1.json",
+            },
+            "deeplob_bdlob_contract": {
+                "artifact_ref": "microstructure/deeplob-bdlob-report-v1.json",
             },
             "promotion_rationale": {
                 "requested_target": "paper",
