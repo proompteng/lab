@@ -984,19 +984,14 @@ const collectStaleStageSignals = (
     const cadenceMs = parseDurationToMs(stageConfig.every)
     if (cadenceMs === null || cadenceMs <= 0) continue
     const stageRuns = runs.filter(
-      (run) =>
-        asString(readNested(run, ['metadata', 'labels', 'swarm.proompteng.ai/stage'])) ===
-        stageConfig.stage,
+      (run) => asString(readNested(run, ['metadata', 'labels', 'swarm.proompteng.ai/stage'])) === stageConfig.stage,
     )
     const latestRunTime = sortByMostRecentRun(stageRuns).at(0)
     const fromRuns = parseTimeOrNull(getRunTimestamp(latestRunTime ?? {}))
-    const fromStatus = parseTimeOrNull(
-      asString(readNested(status, [STAGE_LAST_RUN_KEY[stageConfig.stage]]) ?? null),
-    )
-    const lastRunMs = [fromRuns, fromStatus].filter((value): value is number => value !== null).reduce(
-      (left, right) => Math.max(left, right),
-      Number.NEGATIVE_INFINITY,
-    )
+    const fromStatus = parseTimeOrNull(asString(readNested(status, [STAGE_LAST_RUN_KEY[stageConfig.stage]]) ?? null))
+    const lastRunMs = [fromRuns, fromStatus]
+      .filter((value): value is number => value !== null)
+      .reduce((left, right) => Math.max(left, right), Number.NEGATIVE_INFINITY)
     if (!Number.isFinite(lastRunMs) || lastRunMs <= 0) {
       continue
     }
@@ -1130,7 +1125,8 @@ const collectRecentFailureRuns = (resources: Record<string, unknown>[], limit = 
     const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
     const timestamp = getRunTimestamp(resource)
     const conclusion = asString(readNested(resource, ['status', 'conclusion']))
-    const reason = asString(readNested(resource, ['status', 'message'])) ?? asString(readNested(resource, ['status', 'reason']))
+    const reason =
+      asString(readNested(resource, ['status', 'message'])) ?? asString(readNested(resource, ['status', 'reason']))
     return {
       name,
       namespace,
