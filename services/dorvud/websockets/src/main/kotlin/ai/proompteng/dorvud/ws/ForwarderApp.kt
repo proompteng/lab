@@ -78,8 +78,7 @@ internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
 
 internal fun alpacaBarsBackfillNeedsFeed(config: ForwarderConfig): Boolean = config.alpacaMarketType == AlpacaMarketType.EQUITY
 
-internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> =
-  config.alpacaMarketDataChannels
+internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> = config.alpacaMarketDataChannels
 
 @Serializable
 internal data class AlpacaBarsResponse(
