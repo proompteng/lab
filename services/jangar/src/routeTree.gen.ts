@@ -168,12 +168,14 @@ import { Route as ApiTorghutTradingControlPlaneQuantHealthRouteImport } from './
 import { Route as ApiTorghutTradingControlPlaneQuantAlertsRouteImport } from './routes/api/torghut/trading/control-plane/quant/alerts'
 import { Route as ApiTorghutTradingControlPlaneLlmRolloutRouteImport } from './routes/api/torghut/trading/control-plane/llm/rollout'
 import { Route as ApiGithubPullsOwnerRepoNumberRouteImport } from './routes/api/github/pulls/$owner/$repo/$number'
+import { Route as ApiGithubPullsOwnerRepoNumberWriteActionsRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/write-actions'
 import { Route as ApiGithubPullsOwnerRepoNumberThreadsRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/threads'
 import { Route as ApiGithubPullsOwnerRepoNumberReviewRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/review'
 import { Route as ApiGithubPullsOwnerRepoNumberRefreshFilesRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/refresh-files'
 import { Route as ApiGithubPullsOwnerRepoNumberMergeRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/merge'
 import { Route as ApiGithubPullsOwnerRepoNumberJudgeRunsRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/judge-runs'
 import { Route as ApiGithubPullsOwnerRepoNumberFilesRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/files'
+import { Route as ApiGithubPullsOwnerRepoNumberDeploymentRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/deployment'
 import { Route as ApiGithubPullsOwnerRepoNumberChecksRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/checks'
 import { Route as ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve'
 
@@ -1045,6 +1047,12 @@ const ApiGithubPullsOwnerRepoNumberRoute =
     path: '/$owner/$repo/$number',
     getParentRoute: () => ApiGithubPullsRoute,
   } as any)
+const ApiGithubPullsOwnerRepoNumberWriteActionsRoute =
+  ApiGithubPullsOwnerRepoNumberWriteActionsRouteImport.update({
+    id: '/write-actions',
+    path: '/write-actions',
+    getParentRoute: () => ApiGithubPullsOwnerRepoNumberRoute,
+  } as any)
 const ApiGithubPullsOwnerRepoNumberThreadsRoute =
   ApiGithubPullsOwnerRepoNumberThreadsRouteImport.update({
     id: '/threads',
@@ -1079,6 +1087,12 @@ const ApiGithubPullsOwnerRepoNumberFilesRoute =
   ApiGithubPullsOwnerRepoNumberFilesRouteImport.update({
     id: '/files',
     path: '/files',
+    getParentRoute: () => ApiGithubPullsOwnerRepoNumberRoute,
+  } as any)
+const ApiGithubPullsOwnerRepoNumberDeploymentRoute =
+  ApiGithubPullsOwnerRepoNumberDeploymentRouteImport.update({
+    id: '/deployment',
+    path: '/deployment',
     getParentRoute: () => ApiGithubPullsOwnerRepoNumberRoute,
   } as any)
 const ApiGithubPullsOwnerRepoNumberChecksRoute =
@@ -1255,12 +1269,14 @@ export interface FileRoutesByFullPath {
   '/api/torghut/trading/control-plane/quant/snapshot': typeof ApiTorghutTradingControlPlaneQuantSnapshotRoute
   '/api/torghut/trading/control-plane/quant/stream': typeof ApiTorghutTradingControlPlaneQuantStreamRoute
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
+  '/api/github/pulls/$owner/$repo/$number/deployment': typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
   '/api/github/pulls/$owner/$repo/$number/judge-runs': typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   '/api/github/pulls/$owner/$repo/$number/refresh-files': typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
   '/api/github/pulls/$owner/$repo/$number/threads': typeof ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren
+  '/api/github/pulls/$owner/$repo/$number/write-actions': typeof ApiGithubPullsOwnerRepoNumberWriteActionsRoute
   '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve': typeof ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute
 }
 export interface FileRoutesByTo {
@@ -1422,12 +1438,14 @@ export interface FileRoutesByTo {
   '/api/torghut/trading/control-plane/quant/snapshot': typeof ApiTorghutTradingControlPlaneQuantSnapshotRoute
   '/api/torghut/trading/control-plane/quant/stream': typeof ApiTorghutTradingControlPlaneQuantStreamRoute
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
+  '/api/github/pulls/$owner/$repo/$number/deployment': typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
   '/api/github/pulls/$owner/$repo/$number/judge-runs': typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   '/api/github/pulls/$owner/$repo/$number/refresh-files': typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
   '/api/github/pulls/$owner/$repo/$number/threads': typeof ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren
+  '/api/github/pulls/$owner/$repo/$number/write-actions': typeof ApiGithubPullsOwnerRepoNumberWriteActionsRoute
   '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve': typeof ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute
 }
 export interface FileRoutesById {
@@ -1592,12 +1610,14 @@ export interface FileRoutesById {
   '/api/torghut/trading/control-plane/quant/snapshot': typeof ApiTorghutTradingControlPlaneQuantSnapshotRoute
   '/api/torghut/trading/control-plane/quant/stream': typeof ApiTorghutTradingControlPlaneQuantStreamRoute
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
+  '/api/github/pulls/$owner/$repo/$number/deployment': typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
   '/api/github/pulls/$owner/$repo/$number/judge-runs': typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   '/api/github/pulls/$owner/$repo/$number/refresh-files': typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
   '/api/github/pulls/$owner/$repo/$number/threads': typeof ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren
+  '/api/github/pulls/$owner/$repo/$number/write-actions': typeof ApiGithubPullsOwnerRepoNumberWriteActionsRoute
   '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve': typeof ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute
 }
 export interface FileRouteTypes {
@@ -1763,12 +1783,14 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/control-plane/quant/snapshot'
     | '/api/torghut/trading/control-plane/quant/stream'
     | '/api/github/pulls/$owner/$repo/$number/checks'
+    | '/api/github/pulls/$owner/$repo/$number/deployment'
     | '/api/github/pulls/$owner/$repo/$number/files'
     | '/api/github/pulls/$owner/$repo/$number/judge-runs'
     | '/api/github/pulls/$owner/$repo/$number/merge'
     | '/api/github/pulls/$owner/$repo/$number/refresh-files'
     | '/api/github/pulls/$owner/$repo/$number/review'
     | '/api/github/pulls/$owner/$repo/$number/threads'
+    | '/api/github/pulls/$owner/$repo/$number/write-actions'
     | '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -1930,12 +1952,14 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/control-plane/quant/snapshot'
     | '/api/torghut/trading/control-plane/quant/stream'
     | '/api/github/pulls/$owner/$repo/$number/checks'
+    | '/api/github/pulls/$owner/$repo/$number/deployment'
     | '/api/github/pulls/$owner/$repo/$number/files'
     | '/api/github/pulls/$owner/$repo/$number/judge-runs'
     | '/api/github/pulls/$owner/$repo/$number/merge'
     | '/api/github/pulls/$owner/$repo/$number/refresh-files'
     | '/api/github/pulls/$owner/$repo/$number/review'
     | '/api/github/pulls/$owner/$repo/$number/threads'
+    | '/api/github/pulls/$owner/$repo/$number/write-actions'
     | '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve'
   id:
     | '__root__'
@@ -2099,12 +2123,14 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/control-plane/quant/snapshot'
     | '/api/torghut/trading/control-plane/quant/stream'
     | '/api/github/pulls/$owner/$repo/$number/checks'
+    | '/api/github/pulls/$owner/$repo/$number/deployment'
     | '/api/github/pulls/$owner/$repo/$number/files'
     | '/api/github/pulls/$owner/$repo/$number/judge-runs'
     | '/api/github/pulls/$owner/$repo/$number/merge'
     | '/api/github/pulls/$owner/$repo/$number/refresh-files'
     | '/api/github/pulls/$owner/$repo/$number/review'
     | '/api/github/pulls/$owner/$repo/$number/threads'
+    | '/api/github/pulls/$owner/$repo/$number/write-actions'
     | '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve'
   fileRoutesById: FileRoutesById
 }
@@ -3361,6 +3387,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberRouteImport
       parentRoute: typeof ApiGithubPullsRoute
     }
+    '/api/github/pulls/$owner/$repo/$number/write-actions': {
+      id: '/api/github/pulls/$owner/$repo/$number/write-actions'
+      path: '/write-actions'
+      fullPath: '/api/github/pulls/$owner/$repo/$number/write-actions'
+      preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberWriteActionsRouteImport
+      parentRoute: typeof ApiGithubPullsOwnerRepoNumberRoute
+    }
     '/api/github/pulls/$owner/$repo/$number/threads': {
       id: '/api/github/pulls/$owner/$repo/$number/threads'
       path: '/threads'
@@ -3401,6 +3434,13 @@ declare module '@tanstack/react-router' {
       path: '/files'
       fullPath: '/api/github/pulls/$owner/$repo/$number/files'
       preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberFilesRouteImport
+      parentRoute: typeof ApiGithubPullsOwnerRepoNumberRoute
+    }
+    '/api/github/pulls/$owner/$repo/$number/deployment': {
+      id: '/api/github/pulls/$owner/$repo/$number/deployment'
+      path: '/deployment'
+      fullPath: '/api/github/pulls/$owner/$repo/$number/deployment'
+      preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberDeploymentRouteImport
       parentRoute: typeof ApiGithubPullsOwnerRepoNumberRoute
     }
     '/api/github/pulls/$owner/$repo/$number/checks': {
@@ -3585,18 +3625,22 @@ const ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren =
 
 interface ApiGithubPullsOwnerRepoNumberRouteChildren {
   ApiGithubPullsOwnerRepoNumberChecksRoute: typeof ApiGithubPullsOwnerRepoNumberChecksRoute
+  ApiGithubPullsOwnerRepoNumberDeploymentRoute: typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   ApiGithubPullsOwnerRepoNumberFilesRoute: typeof ApiGithubPullsOwnerRepoNumberFilesRoute
   ApiGithubPullsOwnerRepoNumberJudgeRunsRoute: typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   ApiGithubPullsOwnerRepoNumberMergeRoute: typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   ApiGithubPullsOwnerRepoNumberRefreshFilesRoute: typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   ApiGithubPullsOwnerRepoNumberReviewRoute: typeof ApiGithubPullsOwnerRepoNumberReviewRoute
   ApiGithubPullsOwnerRepoNumberThreadsRoute: typeof ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren
+  ApiGithubPullsOwnerRepoNumberWriteActionsRoute: typeof ApiGithubPullsOwnerRepoNumberWriteActionsRoute
 }
 
 const ApiGithubPullsOwnerRepoNumberRouteChildren: ApiGithubPullsOwnerRepoNumberRouteChildren =
   {
     ApiGithubPullsOwnerRepoNumberChecksRoute:
       ApiGithubPullsOwnerRepoNumberChecksRoute,
+    ApiGithubPullsOwnerRepoNumberDeploymentRoute:
+      ApiGithubPullsOwnerRepoNumberDeploymentRoute,
     ApiGithubPullsOwnerRepoNumberFilesRoute:
       ApiGithubPullsOwnerRepoNumberFilesRoute,
     ApiGithubPullsOwnerRepoNumberJudgeRunsRoute:
@@ -3609,6 +3653,8 @@ const ApiGithubPullsOwnerRepoNumberRouteChildren: ApiGithubPullsOwnerRepoNumberR
       ApiGithubPullsOwnerRepoNumberReviewRoute,
     ApiGithubPullsOwnerRepoNumberThreadsRoute:
       ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren,
+    ApiGithubPullsOwnerRepoNumberWriteActionsRoute:
+      ApiGithubPullsOwnerRepoNumberWriteActionsRoute,
   }
 
 const ApiGithubPullsOwnerRepoNumberRouteWithChildren =
@@ -3818,12 +3864,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

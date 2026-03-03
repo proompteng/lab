@@ -1344,7 +1344,7 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
             .map((item) => item.trim())
             .filter((item) => item.length > 0)
         : []
-    const rows = await db
+    let query = db
       .selectFrom('jangar_github.write_actions')
       .select([
         'repository',
@@ -1369,7 +1369,10 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
       ])
       .where('repository', '=', input.repository)
       .where('pr_number', '=', input.prNumber)
-      .if(actionList.length > 0, (query) => query.where('action', 'in', actionList))
+    if (actionList.length > 0) {
+      query = query.where('action', 'in', actionList)
+    }
+    const rows = await query
       .orderBy('received_at', 'desc')
       .limit(Math.min(Math.max(input.limit ?? 20, 1), 200))
       .execute()

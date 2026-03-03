@@ -620,7 +620,7 @@ type MergeBody = {
 }
 
 type DeploymentEvidenceBody = {
-  action: string
+  action?: string
   missionId?: string
   stage?: string
   reference?: string
@@ -707,7 +707,7 @@ export const postPullDeploymentEvidenceHandler = async (
       reason: body.reason,
     })
 
-    return jsonResponse({ ok: true, ...payload })
+    return jsonResponse(payload)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to record deployment evidence'
     return jsonResponse({ ok: false, error: message }, 500)

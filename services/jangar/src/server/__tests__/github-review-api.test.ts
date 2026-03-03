@@ -295,6 +295,8 @@ describe('github review api routes', () => {
         missionId: 'mission-1',
         stage: 'rollout',
         reference: 'deploy/ref',
+        status: null,
+        reason: null,
       })),
     }
 
@@ -334,6 +336,8 @@ describe('github review api routes', () => {
           action: 'rollout',
           missionId: null,
           stage: 'rollout',
+          status: null,
+          reason: null,
         })),
       },
     )

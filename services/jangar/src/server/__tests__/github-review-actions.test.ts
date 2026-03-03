@@ -110,7 +110,7 @@ const githubMock = {
   submitReview: vi.fn(async () => ({ id: 1 })),
   resolveReviewThread: vi.fn(async () => ({ id: 'thread-1', isResolved: true })),
   getReviewThreadForComment: vi.fn(async () => ({ threadId: 'thread-1', isResolved: false })),
-  mergePullRequest: vi.fn(async () => ({ merged: true })),
+  mergePullRequest: vi.fn(async () => ({ merged: true }) as { merged: boolean; sha?: string }),
   deleteBranch: vi.fn(async () => ({ ok: true })),
 }
 
@@ -388,7 +388,7 @@ describe('github review write actions', () => {
       },
     ])
     globalState.__githubReviewStoreMock = store
-    globalState.__githubReviewConfigMock.automergeRequiredCheckNames = ['ci/required']
+    globalState.__githubReviewConfigMock!.automergeRequiredCheckNames = ['ci/required']
 
     const { mergePullRequest } = await import('../github-review-actions')
     const request = new Request('http://localhost/api/github/pulls/proompteng/lab/1/merge', { method: 'POST' })
@@ -459,13 +459,35 @@ describe('github review write actions', () => {
         failureCount: 0,
         pendingCount: 0,
         updatedAt: null,
-        runs: [{ name: 'ci/required', status: 'completed', conclusion: 'success', id: '1' }],
+        runs: [
+          {
+            id: '1',
+            name: 'ci/required',
+            status: 'completed',
+            conclusion: 'success',
+            url: null,
+            completedAt: null,
+          },
+        ],
       },
     ])
-    store.listFiles = vi.fn(async () => [{ path: 'infra/unsafe.tf' }])
+    store.listFiles = vi.fn(async () => [
+      {
+        path: 'infra/unsafe.tf',
+        status: null,
+        additions: null,
+        deletions: null,
+        changes: null,
+        patch: null,
+        blobUrl: null,
+        rawUrl: null,
+        sha: null,
+        previousFilename: null,
+      },
+    ])
     globalState.__githubReviewStoreMock = store
-    globalState.__githubReviewConfigMock.automergeRequiredCheckNames = ['ci/required']
-    globalState.__githubReviewConfigMock.automergeAllowedFilePrefixes = ['services']
+    globalState.__githubReviewConfigMock!.automergeRequiredCheckNames = ['ci/required']
+    globalState.__githubReviewConfigMock!.automergeAllowedFilePrefixes = ['services']
 
     const { mergePullRequest } = await import('../github-review-actions')
     const request = new Request('http://localhost/api/github/pulls/proompteng/lab/1/merge', { method: 'POST' })
