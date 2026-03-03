@@ -63,6 +63,16 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 5. Check Jangar SSE health for control-plane dashboards.
    - Review Jangar logs for `torghut-quant` stream errors.
    - Verify the quant control-plane UI connection in Jangar (`/torghut/control-plane`).
+6. Verify domain telemetry correlation continuity (PostHog contract, non-critical path).
+   - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq '.control_plane_contract | {last_autonomy_recommendation_trace_id, domain_telemetry_event_total, domain_telemetry_dropped_total}'`
+   - `curl -fsS "http://127.0.0.1:8081/trading/executions?limit=20" | jq '[.[] | {id, trade_decision_id, execution_correlation_id, execution_idempotency_key}]'`
+   - Pass criteria:
+     - `control_plane_contract.last_autonomy_recommendation_trace_id` is present after an autonomy cycle.
+     - recent execution rows include `execution_correlation_id` and `execution_idempotency_key` fields.
+     - `domain_telemetry_dropped_total` does not show sustained growth from transport/runtime errors.
+   - Fail criteria:
+     - correlation IDs are absent on newly-created execution rows.
+     - telemetry drops grow with reasons other than expected operational modes (for example `disabled` during planned disablement).
 
 ## Mitigations
 
@@ -87,6 +97,18 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 - If SSE errors persist, restart Jangar and verify `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` connectivity.
 - As a rollback, disable quant control-plane compute:
   - Set `JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED=false` in GitOps and sync the Jangar app.
+
+## Routine drills
+
+1. Emergency-stop rehearsal (weekly):
+   - Trigger the documented rehearsal path in paper mode and capture the resulting rollback incident artifact.
+   - Verify `rollback.incident_evidence_complete=true` and that the artifact path is retained in status payloads.
+2. Control-plane/evidence continuity contract rehearsal (weekly):
+   - Save contract snapshots from `/trading/status` and `/trading/autonomy/evidence-continuity?refresh=true`.
+   - Run `services/torghut/scripts/verify_quant_readiness.py` with:
+     - `--control-plane-contract <status-control-plane-contract.json>`
+     - `--model-risk-evidence-package <model-risk-evidence-package.json>`
+   - Require `ok=true` before closing the drill.
 
 ## Notes
 

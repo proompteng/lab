@@ -45,6 +45,7 @@ This pack is positioned as the next architecture layer above:
 11. `11-deeplob-bdlob-microstructure-intelligence.md`
 12. `12-posthog-agent-observability-and-error-tracking-production-design.md`
 13. `13-production-gap-closure-master-plan-2026-03-03.md`
+14. `14-legacy-gap-disposition-map-2026-03-03.md`
 
 ## Recommended Build Order
 
@@ -61,6 +62,7 @@ This pack is positioned as the next architecture layer above:
 11. `12-posthog-agent-observability-and-error-tracking-production-design.md`
 12. `07-hmm-regime-state-and-autonomous-llm-control-plane-2026-02-28.md`
 13. `13-production-gap-closure-master-plan-2026-03-03.md`
+14. `14-legacy-gap-disposition-map-2026-03-03.md`
 
 ## Why This Sequence
 
