@@ -11,7 +11,7 @@
   },
   "type": "module",
   "scripts": {
-    "build": "echo \"TODO(jng-010): build cx-tools binaries\"",
+    "build": "bun build src/cli/cx-codex-run.ts src/cli/cx-workflow-start.ts src/cli/cx-workflow-cancel.ts src/cli/cx-workflow-query.ts src/cli/cx-workflow-signal.ts --outdir dist --target node --sourcemap=none --minify",
     "lint": "bun run lint:oxlint || true",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
