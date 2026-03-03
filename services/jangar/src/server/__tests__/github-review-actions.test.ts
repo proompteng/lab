@@ -294,7 +294,15 @@ describe('github review write actions', () => {
       status: 'passed',
     })
     await expect(result).rejects.toThrow('Rollout evidence requires a reference')
-    expect(store.insertWriteAudit).not.toHaveBeenCalled()
+    expect(store.insertWriteAudit).toHaveBeenCalledTimes(1)
+    expect(store.insertWriteAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'rollout',
+        stage: 'rollout',
+        success: false,
+        error: 'Rollout evidence requires a reference',
+      }),
+    )
   })
 
   it('requires rollback evidence reason', async () => {
@@ -312,7 +320,15 @@ describe('github review write actions', () => {
       reference: 'deploy/ref',
     })
     await expect(result).rejects.toThrow('Rollback evidence requires a reason')
-    expect(store.insertWriteAudit).not.toHaveBeenCalled()
+    expect(store.insertWriteAudit).toHaveBeenCalledTimes(1)
+    expect(store.insertWriteAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'rollback',
+        stage: 'rollback',
+        success: false,
+        error: 'Rollback evidence requires a reason',
+      }),
+    )
   })
 
   it('requires required check names for codex/swarm merge lanes', async () => {

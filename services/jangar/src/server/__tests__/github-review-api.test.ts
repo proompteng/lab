@@ -214,7 +214,7 @@ describe('github review api routes', () => {
         issueComments: [],
       })),
       listWriteAudits: vi.fn(async ({ action }) => {
-        const actionFilter = Array.isArray(action) ? action[0] : undefined
+        const actionFilter = Array.isArray(action) ? action[0] : action
         if (actionFilter === 'rollout') return [rolloutAudit]
         if (actionFilter === 'rollback') return [rollbackAudit]
         return []
