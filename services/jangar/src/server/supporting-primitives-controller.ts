@@ -718,6 +718,11 @@ const SWARM_SCHEDULE_ANNOTATION_HULY_WORKSPACE = 'swarm.proompteng.ai/huly-works
 const SWARM_SCHEDULE_ANNOTATION_HULY_PROJECT = 'swarm.proompteng.ai/huly-project'
 const SWARM_SCHEDULE_ANNOTATION_HULY_SECRET = 'swarm.proompteng.ai/huly-secret'
 const SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF = 'swarm.proompteng.ai/huly-skill-ref'
+const SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT = (() => {
+  const raw = Number(process.env.JANGAR_SWARM_REQUIREMENT_MAX_PAYLOAD_BYTES ?? '16384')
+  if (!Number.isFinite(raw) || raw < 1) return 16_384
+  return Math.floor(raw)
+})()
 const SWARM_DEFAULT_HULY_BASE_URL = (() => {
   const value = asString(process.env.JANGAR_SWARM_HULY_BASE_URL)?.trim()
   return value && value.length > 0 ? value : 'https://huly.proompteng.ai'
@@ -1088,10 +1093,73 @@ const isHulyChannel = (channel: string | null | undefined) => {
 const stringifyUnknown = (value: unknown) => {
   if (typeof value === 'string') return value
   try {
-    return JSON.stringify(value)
+    const result = JSON.stringify(value)
+    return result === undefined ? '' : result
   } catch {
     return ''
   }
+}
+
+const truncateUtf8 = (value: string, maxBytes: number) => {
+  const safeMaxBytes = Math.max(0, maxBytes)
+  if (!value) return ''
+  if (safeMaxBytes === 0) return ''
+
+  let usedBytes = 0
+  const encoder = new TextEncoder()
+  let result = ''
+
+  for (const char of value) {
+    const charBytes = encoder.encode(char).byteLength
+    if (usedBytes + charBytes > safeMaxBytes) break
+    usedBytes += charBytes
+    result += char
+  }
+
+  return result
+}
+
+const clampUtf8 = (value: string, maxBytes: number) => {
+  const encoder = new TextEncoder()
+  const encoded = encoder.encode(value)
+  if (encoded.byteLength <= maxBytes) {
+    return {
+      value,
+      bytes: encoded.byteLength,
+      truncated: false,
+    }
+  }
+
+  return {
+    value: truncateUtf8(value, maxBytes),
+    bytes: encoded.byteLength,
+    truncated: true,
+  }
+}
+
+const makeRequirementObjective = (description: string, payload: string) => {
+  const payloadObjective = (() => {
+    if (!payload) {
+      return ''
+    }
+    try {
+      const parsed = JSON.parse(payload)
+      if (parsed && typeof parsed === 'object' && typeof parsed.objective === 'string') {
+        const normalizedObjective = parsed.objective.trim()
+        if (normalizedObjective.length > 0) {
+          return normalizedObjective
+        }
+      }
+    } catch {
+      // ignore malformed payloads and fall back to full payload text
+    }
+    return ''
+  })()
+  const objectiveSource = payloadObjective || payload
+  const parts = [description, objectiveSource].filter((value) => value.length > 0)
+  if (parts.length === 0) return ''
+  const combined = parts.join('\n\n')
+  return clampUtf8(combined, SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT).value
 }
 
 const normalizeParameterMap = (raw: unknown) => {
@@ -1780,8 +1848,10 @@ const reconcileSwarm = async (
       [SWARM_REQUIREMENT_ANNOTATION_SIGNAL]: signalName,
       [SWARM_SCHEDULE_ANNOTATION_IDENTITY]: requirementIdentity.identity,
     }
-    const payloadValue = stringifyUnknown(signalSpec.payload)
+    const rawPayloadValue = stringifyUnknown(signalSpec.payload)
+    const payloadValue = clampUtf8(rawPayloadValue, SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT)
     const description = asString(signalSpec.description)
+    const objectiveValue = makeRequirementObjective(description ?? '', payloadValue.value)
     const requirementParameters: Record<string, string> = {
       ...runtimeParameters,
       swarmRequirementId: requirementId,
@@ -1793,8 +1863,15 @@ const reconcileSwarm = async (
     if (description) {
       requirementParameters.swarmRequirementDescription = description
     }
-    if (payloadValue) {
-      requirementParameters.swarmRequirementPayload = payloadValue.slice(0, 16_384)
+    if (payloadValue.value) {
+      requirementParameters.swarmRequirementPayload = payloadValue.value
+      requirementParameters.swarmRequirementPayloadBytes = String(payloadValue.bytes)
+      if (payloadValue.truncated) {
+        requirementParameters.swarmRequirementPayloadTruncated = 'true'
+      }
+    }
+    if (objectiveValue) {
+      requirementParameters.objective = objectiveValue
     }
 
     const targetKind = asString(requirementTemplate.kind)

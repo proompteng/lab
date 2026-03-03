@@ -84,12 +84,6 @@ spec:
           if isinstance(issue_number, str) and issue_number.strip():
             return 0
 
-          domain = str(payload.get('domain', '')).strip().lower()
-          callback_url = str(payload.get('callbackUrl', '')).strip().lower()
-          is_market_context = domain in {'fundamentals', 'news'} and '/market-context/' in callback_url
-          if not is_market_context:
-            return 0
-
           seed = '|'.join(
             [
               str(payload.get('repository', '')).strip(),
@@ -97,8 +91,12 @@ spec:
               str(payload.get('symbol', '')).strip(),
               str(payload.get('requestId', '')).strip(),
               str(payload.get('head', '')).strip(),
+              str(payload.get('base', '')).strip(),
+              str(payload.get('stage', '')).strip(),
             ]
           )
+          if not seed.strip('|'):
+            seed = 'codex-issue-fallback'
           digest = hashlib.sha256(seed.encode('utf-8')).hexdigest()[:10]
           normalized = (int(digest, 16) % 900_000_000) + 100_000_000
           payload['issueNumber'] = str(normalized)
