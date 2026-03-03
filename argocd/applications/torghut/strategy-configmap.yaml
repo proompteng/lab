@@ -26,7 +26,7 @@ data:
         max_position_pct_equity: 0.08
   forecast-router-policy.json: |
     {
-      "policy_version": "forecast_router_policy_v1",
+      "policy_version": "forecast_router_policy_v2",
       "routes": [
         {
           "symbol_glob": "*/USD",
@@ -36,6 +36,26 @@ data:
           "candidate_fallbacks": ["chronos", "moment"],
           "min_calibration_score": "0.88",
           "max_inference_latency_ms": 120,
+          "disable_refinement": false
+        },
+        {
+          "symbol_glob": "*/USD",
+          "horizon": "*",
+          "regime": "mean_revert",
+          "preferred_model_family": "financial_tsfm",
+          "candidate_fallbacks": ["moment", "chronos"],
+          "min_calibration_score": "0.89",
+          "max_inference_latency_ms": 180,
+          "disable_refinement": false
+        },
+        {
+          "symbol_glob": "*/USD",
+          "horizon": "*",
+          "regime": "range",
+          "preferred_model_family": "moment",
+          "candidate_fallbacks": ["chronos", "financial_tsfm"],
+          "min_calibration_score": "0.91",
+          "max_inference_latency_ms": 180,
           "disable_refinement": false
         },
         {
