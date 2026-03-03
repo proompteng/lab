@@ -87,9 +87,22 @@ export type MarketContextOptions = {
 
 const FALLBACK_TECHNICAL_FRESHNESS_SECONDS = 60
 const FALLBACK_NEWS_FRESHNESS_SECONDS = 300
+const FALLBACK_NEWS_TRADING_HOURS_FRESHNESS_SECONDS = 600
 const FALLBACK_FUNDAMENTALS_FRESHNESS_SECONDS = 24 * 60 * 60
 const FALLBACK_REGIME_FRESHNESS_SECONDS = 120
 const DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY = 'jangar.market_context.enabled'
+const MARKET_CONTEXT_EXCHANGE_TIMEZONE = 'America/New_York'
+const MARKET_CONTEXT_TRADING_WEEKDAYS = new Set(['Mon', 'Tue', 'Wed', 'Thu', 'Fri'])
+const MARKET_CONTEXT_SESSION_OPEN_MINUTE = 9 * 60 + 30
+const MARKET_CONTEXT_SESSION_CLOSE_MINUTE = 16 * 60
+
+const exchangeClockFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: MARKET_CONTEXT_EXCHANGE_TIMEZONE,
+  weekday: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
 
 const toBoolean = (value: string | undefined, fallback: boolean) => {
   if (!value) return fallback
@@ -122,6 +135,9 @@ const resolveSettings = () => {
     FALLBACK_FUNDAMENTALS_FRESHNESS_SECONDS
   const newsMaxFreshnessSeconds =
     parseOptionalInt(process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS) ?? FALLBACK_NEWS_FRESHNESS_SECONDS
+  const newsTradingHoursMaxFreshnessSeconds =
+    parseOptionalInt(process.env.JANGAR_MARKET_CONTEXT_NEWS_TRADING_HOURS_MAX_FRESHNESS_SECONDS) ??
+    FALLBACK_NEWS_TRADING_HOURS_FRESHNESS_SECONDS
   const regimeMaxFreshnessSeconds =
     parseOptionalInt(process.env.JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS) ??
     FALLBACK_REGIME_FRESHNESS_SECONDS
@@ -139,8 +155,25 @@ const resolveSettings = () => {
     technicalsMaxFreshnessSeconds,
     fundamentalsMaxFreshnessSeconds,
     newsMaxFreshnessSeconds,
+    newsTradingHoursMaxFreshnessSeconds,
     regimeMaxFreshnessSeconds,
   }
+}
+
+const isUsRegularTradingSession = (now: Date) => {
+  const parts = exchangeClockFormatter.formatToParts(now)
+  const weekday = parts.find((part) => part.type === 'weekday')?.value ?? ''
+  if (!MARKET_CONTEXT_TRADING_WEEKDAYS.has(weekday)) return false
+  const hour = Number.parseInt(parts.find((part) => part.type === 'hour')?.value ?? '-1', 10)
+  const minute = Number.parseInt(parts.find((part) => part.type === 'minute')?.value ?? '-1', 10)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false
+  const minuteOfDay = hour * 60 + minute
+  return minuteOfDay >= MARKET_CONTEXT_SESSION_OPEN_MINUTE && minuteOfDay <= MARKET_CONTEXT_SESSION_CLOSE_MINUTE
+}
+
+const resolveNewsMaxFreshnessSeconds = (params: { now: Date; settings: ReturnType<typeof resolveSettings> }) => {
+  if (!isUsRegularTradingSession(params.now)) return params.settings.newsMaxFreshnessSeconds
+  return Math.max(params.settings.newsMaxFreshnessSeconds, params.settings.newsTradingHoursMaxFreshnessSeconds)
 }
 
 const resolveMarketContextEnabled = (params: { settings: ReturnType<typeof resolveSettings> }) =>
@@ -594,9 +627,14 @@ const buildBundleFromDomains = (params: {
   }
 }
 
-const bundleCacheKey = (params: { symbol: string; asOf: Date | undefined; maxStalenessSeconds: number }) => {
+const bundleCacheKey = (params: {
+  symbol: string
+  asOf: Date | undefined
+  maxStalenessSeconds: number
+  newsMaxFreshnessSeconds: number
+}) => {
   const asOfKey = params.asOf ? params.asOf.toISOString() : 'latest'
-  return `${params.symbol.toUpperCase()}|${asOfKey}|${params.maxStalenessSeconds}`
+  return `${params.symbol.toUpperCase()}|${asOfKey}|${params.maxStalenessSeconds}|news:${params.newsMaxFreshnessSeconds}`
 }
 
 export const clearMarketContextCache = () => {
@@ -610,6 +648,7 @@ export const getTorghutMarketContext = async (
   const settings = resolveSettings()
   const symbol = normalizeTorghutSymbol(symbolInput)
   const now = options.asOf ?? new Date()
+  const newsMaxFreshnessSeconds = resolveNewsMaxFreshnessSeconds({ now, settings })
   const maxStalenessSeconds = options.maxStalenessSeconds ?? settings.maxStalenessSeconds
   const enabled = await resolveMarketContextEnabled({ settings })
   if (!enabled) {
@@ -624,7 +663,7 @@ export const getTorghutMarketContext = async (
       news: emptyDomain({
         now,
         domain: 'news',
-        maxFreshnessSeconds: settings.newsMaxFreshnessSeconds,
+        maxFreshnessSeconds: newsMaxFreshnessSeconds,
         provider: 'feature_disabled',
       }),
       regime: regimeDomain({ now, row: null, maxFreshnessSeconds: settings.regimeMaxFreshnessSeconds }),
@@ -637,6 +676,7 @@ export const getTorghutMarketContext = async (
     symbol,
     asOf: options.asOf,
     maxStalenessSeconds,
+    newsMaxFreshnessSeconds,
   })
   const cached = cache.get(cacheKey)
   if (cached) {
@@ -714,7 +754,7 @@ export const getTorghutMarketContext = async (
     news: externalDomain({
       now,
       domain: 'news',
-      maxFreshnessSeconds: settings.newsMaxFreshnessSeconds,
+      maxFreshnessSeconds: newsMaxFreshnessSeconds,
       response: newsResponse,
     }),
     regime: regimeDomain({
