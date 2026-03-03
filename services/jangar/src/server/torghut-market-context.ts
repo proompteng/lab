@@ -301,20 +301,13 @@ const getLatestSignalRow = async (client: ClickHouseClient, symbol: string) => {
     `
       SELECT
         event_ts,
-        c,
-        vwap,
-        spread,
+        coalesce(vwap_session, vwap_w5m) AS vwap,
         rsi14,
-        rsi,
         macd,
         macd_signal,
-        v,
-        volatility,
-        atr,
-        imbalance,
-        trend_strength,
-        adx,
-        liquidity_score
+        vol_realized_w60s AS volatility,
+        imbalance_spread AS imbalance,
+        macd_hist AS trend_strength
       FROM ta_signals
       WHERE symbol = {symbol:String}
       ORDER BY event_ts DESC

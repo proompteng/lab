@@ -370,4 +370,25 @@ describe('market context dispatch runtime', () => {
 
     expect(head).toMatch(/^codex\/torghut-market-context\/fundamentals-aapl-20260228060000-[0-9a-f]{8}$/)
   })
+
+  it('builds deterministic numeric issue numbers for market-context runs', async () => {
+    const { buildMarketContextIssueNumber } = await import('../torghut-market-context-agents')
+
+    const newsNvda = buildMarketContextIssueNumber({
+      domain: 'news',
+      symbol: 'NVDA',
+    })
+    const newsNvdaAgain = buildMarketContextIssueNumber({
+      domain: 'news',
+      symbol: 'NVDA',
+    })
+    const fundamentalsNvda = buildMarketContextIssueNumber({
+      domain: 'fundamentals',
+      symbol: 'NVDA',
+    })
+
+    expect(newsNvda).toMatch(/^\d+$/)
+    expect(newsNvda).toBe(newsNvdaAgain)
+    expect(newsNvda).not.toBe(fundamentalsNvda)
+  })
 })

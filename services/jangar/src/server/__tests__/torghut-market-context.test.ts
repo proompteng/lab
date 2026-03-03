@@ -62,6 +62,41 @@ describe('torghut market context', () => {
     expect(context.riskFlags).toContain('fundamentals_missing')
   })
 
+  it('uses canonical ta_signals columns and avoids legacy identifiers', async () => {
+    const now = new Date('2026-02-19T12:00:00.000Z')
+    const context = await getTorghutMarketContext('nvda', {
+      asOf: now,
+      client: {
+        queryJson: async <T>(query: string) => {
+          const forbiddenTokens = [' c,', ' spread,', ' rsi,', ' v,', ' atr,', ' adx,', ' liquidity_score']
+          for (const token of forbiddenTokens) {
+            if (query.includes(token)) throw new Error(`legacy_column_in_query:${token.trim()}`)
+          }
+          expect(query).toContain('coalesce(vwap_session, vwap_w5m) AS vwap')
+          expect(query).toContain('vol_realized_w60s AS volatility')
+          expect(query).toContain('imbalance_spread AS imbalance')
+          expect(query).toContain('macd_hist AS trend_strength')
+          return [
+            {
+              event_ts: '2026-02-19 11:59:30.000',
+              vwap: '142.51',
+              rsi14: '57.2',
+              macd: '1.2',
+              macd_signal: '0.8',
+              volatility: '0.14',
+              imbalance: '0.02',
+              trend_strength: '0.9',
+            },
+          ] as T[]
+        },
+      },
+    })
+
+    expect(context.domains.technicals.state).toBe('ok')
+    expect(context.domains.regime.state).toBe('ok')
+    expect(context.domains.technicals.payload.price).toBe(142.51)
+  })
+
   it('marks stale bundle when max staleness exceeded', async () => {
     const now = new Date('2026-02-19T12:00:00.000Z')
     const context = await getTorghutMarketContext('AAPL', {
