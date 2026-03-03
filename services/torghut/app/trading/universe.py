@@ -114,7 +114,7 @@ class UniverseResolver:
             and (
                 settings.trading_enabled
                 or settings.trading_autonomy_enabled
-                or settings.trading_live_enabled
+                or settings.trading_mode == "live"
             )
         ):
             logger.error(
@@ -308,7 +308,7 @@ def _filter_symbols(symbols: set[str]) -> set[str]:
     for symbol in symbols:
         normalized = normalize_symbol(symbol)
         if normalized:
-            if "/" in normalized and not settings.trading_universe_crypto_enabled:
+            if "/" in normalized and not settings.trading_crypto_enabled:
                 continue
             cleaned.add(normalized)
     return cleaned
