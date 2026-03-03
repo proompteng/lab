@@ -45,13 +45,6 @@ _SIZING_CAP_ZERO_REASON_BY_METHOD: dict[str, str] = {
     "cap_sell_inventory_zero": "sell_inventory_unavailable",
 }
 
-_SIZING_CAP_ZERO_REASON_BY_METHOD: dict[str, str] = {
-    "cap_per_symbol_zero": "symbol_capacity_exhausted",
-    "cap_gross_exposure_zero": "gross_exposure_capacity_exhausted",
-    "cap_net_exposure_zero": "net_exposure_capacity_exhausted",
-    "cap_sell_inventory_zero": "sell_inventory_unavailable",
-}
-
 
 @dataclass(frozen=True)
 class AggregatedIntent:
