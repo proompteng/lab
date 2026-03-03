@@ -36,6 +36,13 @@ ALLOCATOR_CLIP_STRATEGY_BUDGET = "allocator_clip_strategy_budget"
 ALLOCATOR_CLIP_SYMBOL_BUDGET = "allocator_clip_symbol_budget"
 ALLOCATOR_CLIP_CORRELATION_CAPACITY = "allocator_clip_correlation_capacity"
 
+_SIZING_CAP_ZERO_REASON_BY_METHOD: dict[str, str] = {
+    "cap_per_symbol_zero": "symbol_capacity_exhausted",
+    "cap_gross_exposure_zero": "gross_exposure_capacity_exhausted",
+    "cap_net_exposure_zero": "net_exposure_capacity_exhausted",
+    "cap_sell_inventory_zero": "sell_inventory_unavailable",
+}
+
 
 @dataclass(frozen=True)
 class AggregatedIntent:
@@ -180,6 +187,7 @@ class PortfolioSizer:
             price=price,
             notional=notional,
             current_qty=current_qty,
+            applied_methods=applied_methods,
             reasons=reasons,
         )
 
@@ -309,8 +317,23 @@ class PortfolioSizer:
         price: Decimal,
         notional: Decimal,
         current_qty: Decimal,
+        applied_methods: list[str],
         reasons: list[str],
     ) -> tuple[Decimal, Decimal, bool, list[str]]:
+        for method in applied_methods:
+            mapped_reason = _SIZING_CAP_ZERO_REASON_BY_METHOD.get(method)
+            if mapped_reason is None:
+                continue
+            if (
+                mapped_reason == "sell_inventory_unavailable"
+                and "shorts_not_allowed" in reasons
+            ):
+                continue
+            if mapped_reason not in reasons:
+                reasons.append(mapped_reason)
+        if reasons:
+            return Decimal("0"), Decimal("0"), False, reasons
+
         target_qty = notional / price
         fractional_equities_enabled = fractional_equities_enabled_for_trade(
             action=decision.action,

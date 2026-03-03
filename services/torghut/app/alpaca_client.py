@@ -93,6 +93,21 @@ class TorghutAlpacaClient:
         account = self._trading.get_account()
         return self._model_to_dict(account)
 
+    def get_asset(self, symbol_or_asset_id: str) -> Dict[str, Any] | None:
+        getter = cast(Callable[[str], Any] | None, getattr(self._trading, "get_asset", None))
+        if getter is None:
+            return None
+        try:
+            asset = getter(symbol_or_asset_id)
+        except APIError as exc:
+            status_code = getattr(exc, "status_code", None)
+            if isinstance(status_code, int) and status_code == 404:
+                return None
+            raise
+        if asset is None:
+            return None
+        return self._model_to_dict(asset)
+
     def list_positions(self) -> List[Dict[str, Any]]:
         positions = self._trading.get_all_positions()
         return [self._model_to_dict(pos) for pos in positions]

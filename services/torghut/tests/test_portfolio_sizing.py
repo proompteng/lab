@@ -602,6 +602,41 @@ class TestPortfolioSizing(TestCase):
         self.assertTrue(result.approved)
         self.assertEqual(result.decision.qty, Decimal("5"))
 
+    def test_symbol_capacity_exhaustion_reports_capacity_reason_not_qty_min(self) -> None:
+        sizer = PortfolioSizer(
+            PortfolioSizingConfig(
+                notional_per_position=None,
+                volatility_target=None,
+                volatility_floor=Decimal("0"),
+                max_positions=None,
+                max_notional_per_symbol=Decimal("1000"),
+                max_position_pct_equity=Decimal("0.10"),
+                max_gross_exposure=None,
+                max_net_exposure=None,
+            )
+        )
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="NVDA",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        positions = [{"symbol": "NVDA", "qty": "15", "market_value": "1500"}]
+
+        result = sizer.size(decision, account={"equity": "10000"}, positions=positions)
+
+        self.assertFalse(result.approved)
+        self.assertIn("symbol_capacity_exhausted", result.reasons)
+        self.assertNotIn("qty_below_min", result.reasons)
+        portfolio_output = result.audit.get("output", {})
+        self.assertEqual(portfolio_output.get("status"), "rejected")
+        self.assertIn("cap_per_symbol_zero", portfolio_output.get("methods", []))
+
     def test_allocator_clips_fractional_crypto_qty(self) -> None:
         allocator = PortfolioAllocator(
             AllocationConfig(
