@@ -605,54 +605,52 @@ export const mergePullRequest = async (
         actor,
         requestId,
       }
-      void (async () => {
-        try {
-          await store.insertWriteAudit({
+      try {
+        await store.insertWriteAudit({
+          repository,
+          prNumber: input.number,
+          commitSha: rolloutReference,
+          missionId: null,
+          stage: 'rollout',
+          actionClass: 'autonomous',
+          riskClass,
+          rolloutRef: rolloutReference,
+          rolloutStatus: 'passed',
+          rollbackRef: null,
+          rollbackReason: null,
+          action: 'rollout',
+          actor,
+          requestId,
+          payload: rolloutPayload,
+          response: { merge: response as Record<string, unknown>, deleteBranch: deleteBranchResponse },
+          success: true,
+          receivedAt,
+        })
+        void emitAuditEventBestEffort({
+          entityType: 'GithubWriteAction',
+          entityId: randomUUID(),
+          eventType: 'github.rollout_reported',
+          context: auditContext,
+          details: {
             repository,
             prNumber: input.number,
-            commitSha: rolloutReference,
+            action: 'rollout',
             missionId: null,
             stage: 'rollout',
-            actionClass: 'autonomous',
-            riskClass,
-            rolloutRef: rolloutReference,
-            rolloutStatus: 'passed',
-            rollbackRef: null,
-            rollbackReason: null,
-            action: 'rollout',
-            actor,
-            requestId,
-            payload: rolloutPayload,
-            response: { merge: response as Record<string, unknown>, deleteBranch: deleteBranchResponse },
+            reference: rolloutReference,
+            status: 'passed',
             success: true,
-            receivedAt,
-          })
-          void emitAuditEventBestEffort({
-            entityType: 'GithubWriteAction',
-            entityId: randomUUID(),
-            eventType: 'github.rollout_reported',
-            context: auditContext,
-            details: {
-              repository,
-              prNumber: input.number,
-              action: 'rollout',
-              missionId: null,
-              stage: 'rollout',
-              reference: rolloutReference,
-              status: 'passed',
-              success: true,
-            },
-          })
-        } catch (error) {
-          console.error('[jangar][github] merge rollout evidence write failed', {
-            repository,
-            prNumber: input.number,
-            actor,
-            requestId,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        }
-      })()
+          },
+        })
+      } catch (error) {
+        console.error('[jangar][github] merge rollout evidence write failed', {
+          repository,
+          prNumber: input.number,
+          actor,
+          requestId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
     }
 
     await store.insertWriteAudit({
@@ -814,7 +812,8 @@ export const recordPullDeploymentAction = async (
   const actor = auditContext.actor ?? null
   const requestId = auditContext.requestId ?? auditContext.correlationId ?? null
   const receivedAt = new Date().toISOString()
-  let action: DeploymentAction = 'rollout'
+  const rawAction = normalizeText(input.action)
+  let action: DeploymentAction | null = null
   let missionId = normalizeText(input.missionId)
   let stage = normalizeText(input.stage)
   const reference = normalizeText(input.reference)
@@ -828,10 +827,10 @@ export const recordPullDeploymentAction = async (
       throw new Error('Pull request not found in stored state')
     }
 
-    if (!isDeploymentAction(input.action)) {
+    if (!rawAction || !isDeploymentAction(rawAction)) {
       throw new Error(`Invalid deployment action: ${input.action}`)
     }
-    action = input.action
+    action = rawAction
     if (!stage) {
       stage = action === 'rollback' ? 'rollback' : 'rollout'
     }
@@ -899,6 +898,7 @@ export const recordPullDeploymentAction = async (
     const pullState = await store.getPull({ repository, prNumber: input.number }).catch(() => ({ pull: null }))
     const pull = pullState.pull
     const riskClass = parseRiskClass(pull?.labels)
+    const auditAction = action ?? 'invalid'
     await store.insertWriteAudit({
       repository,
       prNumber: input.number,
@@ -907,14 +907,14 @@ export const recordPullDeploymentAction = async (
       stage,
       actionClass: 'autonomous',
       riskClass,
-      rolloutRef: action === 'rollout' ? reference : null,
-      rolloutStatus: action === 'rollout' ? status : null,
-      rollbackRef: action === 'rollback' ? reference : null,
-      rollbackReason: action === 'rollback' ? reason : null,
-      action,
+      rolloutRef: isDeploymentAction(auditAction) ? reference : null,
+      rolloutStatus: auditAction === 'rollout' ? status : null,
+      rollbackRef: auditAction === 'rollback' ? reference : null,
+      rollbackReason: auditAction === 'rollback' ? reason : null,
+      action: auditAction,
       actor,
       requestId,
-      payload: { action, missionId, stage, reference, status, reason },
+      payload: { action: auditAction, missionId, stage, reference, status, reason },
       response: null,
       success: false,
       error: message,
