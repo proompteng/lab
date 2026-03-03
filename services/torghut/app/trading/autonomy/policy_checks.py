@@ -1556,31 +1556,11 @@ def _requires_fold_evidence(
 ) -> bool:
     if promotion_target == "shadow":
         return False
-    if not bool(policy_payload.get("promotion_require_contamination_registry", False)):
-        return False
-    required_targets_raw = policy_payload.get(
-        "promotion_contamination_required_targets",
-        ["paper", "live"],
-    )
-    required_targets = [
-        str(target)
-        for target in _list_from_any(required_targets_raw)
-        if isinstance(target, str)
-    ]
-    if not required_targets:
-        return False
-    return promotion_target in required_targets
-
-
-def _requires_fold_evidence(
-    *, policy_payload: dict[str, Any], promotion_target: str
-) -> bool:
-    if promotion_target == "shadow":
-        return False
     if not bool(policy_payload.get("promotion_require_fold_evidence", False)):
         return False
     required_targets_raw = policy_payload.get(
-        "promotion_fold_required_targets", ["paper", "live"]
+        "promotion_fold_required_targets",
+        ["paper", "live"],
     )
     required_targets = [
         str(target)
