@@ -37,6 +37,7 @@ from .models import (
     WhitepaperEngineeringTrigger,
     WhitepaperRolloutTransition,
 )
+from .observability import capture_posthog_event, shutdown_posthog_telemetry
 from .trading import TradingScheduler
 from .trading.autonomy import (
     assert_runtime_gate_policy_contract,
@@ -227,6 +228,7 @@ async def lifespan(app: FastAPI):
 
     await whitepaper_worker.stop()
     await scheduler.stop()
+    shutdown_posthog_telemetry()
 
 
 app = FastAPI(title="torghut", lifespan=lifespan)
@@ -249,6 +251,15 @@ def sqlalchemy_exception_handler(
         detail = "database schema mismatch; migrations pending"
     else:
         detail = "database unavailable"
+    capture_posthog_event(
+        "torghut.runtime.db_exception",
+        severity="error",
+        properties={
+            "loop": "http",
+            "error_class": type(exc).__name__,
+            "detail": detail,
+        },
+    )
     logger.error("Unhandled database exception: %s", exc)
     return JSONResponse(status_code=503, content={"detail": detail})
 
@@ -718,6 +729,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "last_actuation_intent": state.last_autonomy_actuation_intent,
             "last_patch": state.last_autonomy_patch,
             "last_recommendation": state.last_autonomy_recommendation,
+            "last_recommendation_trace_id": state.last_autonomy_recommendation_trace_id,
             "last_error": state.last_autonomy_error,
             "last_reason": state.last_autonomy_reason,
             "last_ingest_signal_count": state.last_ingest_signals_total,
@@ -760,6 +772,13 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "emergency_stop_recovery_streak": state.emergency_stop_recovery_streak,
             "incidents_total": state.rollback_incidents_total,
             "incident_evidence_path": state.rollback_incident_evidence_path,
+        },
+        "posthog": {
+            "enabled": settings.posthog_enabled,
+            "host": settings.posthog_host,
+            "project_id": settings.posthog_project_id,
+            "event_total": dict(state.metrics.domain_telemetry_event_total),
+            "dropped_total": dict(state.metrics.domain_telemetry_dropped_total),
         },
         "metrics": state.metrics.__dict__,
         "llm": scheduler.llm_status(),
@@ -891,6 +910,7 @@ def trading_autonomy() -> dict[str, object]:
         "last_actuation_intent": state.last_autonomy_actuation_intent,
         "last_patch": state.last_autonomy_patch,
         "last_recommendation": state.last_autonomy_recommendation,
+        "last_recommendation_trace_id": state.last_autonomy_recommendation_trace_id,
         "last_error": state.last_autonomy_error,
         "last_reason": state.last_autonomy_reason,
         "last_ingest_signal_count": state.last_ingest_signals_total,
@@ -1077,6 +1097,8 @@ def trading_executions(
             "execution_actual_adapter": execution.execution_actual_adapter,
             "execution_fallback_reason": execution.execution_fallback_reason,
             "execution_fallback_count": execution.execution_fallback_count,
+            "execution_correlation_id": execution.execution_correlation_id,
+            "execution_idempotency_key": execution.execution_idempotency_key,
             "status": execution.status,
             "created_at": execution.created_at,
             "last_update_at": execution.last_update_at,
@@ -1329,6 +1351,15 @@ def _build_control_plane_contract(state: object) -> dict[str, object]:
         "running": bool(getattr(state, "running", False)),
         "last_run_at": last_run_at,
         "last_reconcile_at": last_reconcile_at,
+        "last_autonomy_recommendation_trace_id": getattr(
+            state, "last_autonomy_recommendation_trace_id", None
+        ),
+        "domain_telemetry_event_total": getattr(
+            metrics, "domain_telemetry_event_total", None
+        ),
+        "domain_telemetry_dropped_total": getattr(
+            metrics, "domain_telemetry_dropped_total", None
+        ),
         "market_context_required": settings.trading_market_context_required,
         "market_context_max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
     }

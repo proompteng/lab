@@ -23,6 +23,21 @@ from app.models import (
 )
 
 
+def _parse_iso8601_timestamp(raw: str, *, field_name: str) -> datetime:
+    normalized = raw.strip()
+    if not normalized:
+        raise ValueError(f'{field_name}_missing')
+    if normalized.endswith('Z'):
+        normalized = f'{normalized[:-1]}+00:00'
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f'{field_name}_invalid') from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f'{field_name}_missing_timezone')
+    return parsed.astimezone(timezone.utc)
+
+
 def _load_gate_trace(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding='utf-8'))
     if not isinstance(payload, dict):
@@ -136,6 +151,140 @@ def _load_incident_evidence(path: Path) -> dict[str, Any]:
     return payload_map
 
 
+def _load_control_plane_contract(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(payload, dict):
+        raise ValueError('control_plane_contract_invalid')
+    payload_map = cast(dict[str, Any], payload)
+    required_keys = (
+        'contract_version',
+        'signal_continuity_state',
+        'signal_continuity_alert_active',
+        'signal_continuity_promotion_block_total',
+        'last_autonomy_recommendation_trace_id',
+        'domain_telemetry_event_total',
+        'domain_telemetry_dropped_total',
+    )
+    missing = [key for key in required_keys if key not in payload_map]
+    if missing:
+        raise ValueError(f'control_plane_contract_missing_keys:{",".join(missing)}')
+    if payload_map.get('contract_version') != 'torghut.quant-producer.v1':
+        raise ValueError('control_plane_contract_version_invalid')
+    telemetry_events = payload_map.get('domain_telemetry_event_total')
+    if not isinstance(telemetry_events, dict):
+        raise ValueError('control_plane_contract_domain_telemetry_events_invalid')
+    telemetry_drops = payload_map.get('domain_telemetry_dropped_total')
+    if not isinstance(telemetry_drops, dict):
+        raise ValueError('control_plane_contract_domain_telemetry_dropped_invalid')
+    return payload_map
+
+
+def _load_model_risk_evidence_package(
+    path: Path,
+    *,
+    now: datetime,
+    max_age_hours: int,
+) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(payload, dict):
+        raise ValueError('model_risk_evidence_package_invalid')
+    payload_map = cast(dict[str, Any], payload)
+    required_keys = (
+        'schema_version',
+        'generated_at',
+        'promotion',
+        'rollback',
+        'drift',
+        'runbook_drill',
+        'legacy_gap_disposition',
+    )
+    missing = [key for key in required_keys if key not in payload_map]
+    if missing:
+        raise ValueError(
+            f'model_risk_evidence_package_missing_keys:{",".join(missing)}'
+        )
+    generated_at_raw = payload_map.get('generated_at')
+    if not isinstance(generated_at_raw, str):
+        raise ValueError('model_risk_evidence_package_generated_at_invalid')
+    generated_at = _parse_iso8601_timestamp(
+        generated_at_raw,
+        field_name='model_risk_evidence_package_generated_at',
+    )
+    age_hours = max(
+        0.0,
+        (now - generated_at).total_seconds() / 3600.0,
+    )
+    if age_hours > max(1, int(max_age_hours)):
+        raise ValueError('model_risk_evidence_package_stale')
+
+    promotion_raw = payload_map.get('promotion')
+    if not isinstance(promotion_raw, dict):
+        raise ValueError('model_risk_evidence_package_promotion_invalid')
+    promotion = cast(dict[str, Any], promotion_raw)
+    gate_trace = str(promotion.get('gate_report_trace_id', '')).strip()
+    recommendation_trace = str(promotion.get('recommendation_trace_id', '')).strip()
+    if not gate_trace:
+        raise ValueError('model_risk_evidence_package_gate_trace_missing')
+    if not recommendation_trace:
+        raise ValueError('model_risk_evidence_package_recommendation_trace_missing')
+
+    rollback_raw = payload_map.get('rollback')
+    if not isinstance(rollback_raw, dict):
+        raise ValueError('model_risk_evidence_package_rollback_invalid')
+    rollback = cast(dict[str, Any], rollback_raw)
+    incident_evidence_path = str(rollback.get('incident_evidence_path', '')).strip()
+    if not incident_evidence_path:
+        raise ValueError('model_risk_evidence_package_rollback_incident_path_missing')
+    if not bool(rollback.get('incident_evidence_complete', False)):
+        raise ValueError('model_risk_evidence_package_rollback_incomplete')
+
+    drift_raw = payload_map.get('drift')
+    if not isinstance(drift_raw, dict):
+        raise ValueError('model_risk_evidence_package_drift_invalid')
+    drift = cast(dict[str, Any], drift_raw)
+    continuity_path = str(drift.get('evidence_continuity_report_path', '')).strip()
+    if not continuity_path:
+        raise ValueError('model_risk_evidence_package_drift_report_missing')
+    if not bool(drift.get('evidence_continuity_passed', False)):
+        raise ValueError('model_risk_evidence_package_drift_not_passed')
+
+    runbook_raw = payload_map.get('runbook_drill')
+    if not isinstance(runbook_raw, dict):
+        raise ValueError('model_risk_evidence_package_runbook_invalid')
+    runbook = cast(dict[str, Any], runbook_raw)
+    rehearsal_at_raw = str(runbook.get('rehearsal_at', '')).strip()
+    if not rehearsal_at_raw:
+        raise ValueError('model_risk_evidence_package_runbook_rehearsal_missing')
+    _parse_iso8601_timestamp(
+        rehearsal_at_raw,
+        field_name='model_risk_evidence_package_rehearsal_at',
+    )
+    if not bool(runbook.get('emergency_stop_rehearsed', False)):
+        raise ValueError('model_risk_evidence_package_runbook_rehearsal_not_passed')
+
+    legacy_raw = payload_map.get('legacy_gap_disposition')
+    if not isinstance(legacy_raw, dict):
+        raise ValueError('model_risk_evidence_package_legacy_disposition_invalid')
+    legacy_disposition = cast(dict[str, Any], legacy_raw)
+    mapping_path = str(legacy_disposition.get('mapping_path', '')).strip()
+    if not mapping_path:
+        raise ValueError('model_risk_evidence_package_legacy_mapping_missing')
+    if not bool(legacy_disposition.get('signed_disposition_complete', False)):
+        raise ValueError('model_risk_evidence_package_legacy_disposition_incomplete')
+
+    return {
+        'schema_version': str(payload_map.get('schema_version', '')).strip(),
+        'generated_at': generated_at.isoformat(),
+        'age_hours': round(age_hours, 4),
+        'promotion_gate_report_trace_id': gate_trace,
+        'promotion_recommendation_trace_id': recommendation_trace,
+        'rollback_incident_evidence_path': incident_evidence_path,
+        'drift_evidence_continuity_report_path': continuity_path,
+        'runbook_rehearsal_at': rehearsal_at_raw,
+        'legacy_mapping_path': mapping_path,
+    }
+
+
 def _evaluate_acceptance_window(
     *,
     non_skipped_runs: int,
@@ -241,6 +390,22 @@ def main() -> None:
         '--profitability-proof',
         type=Path,
         help='Optional profitability proof manifest path with scientific evidence details.',
+    )
+    parser.add_argument(
+        '--control-plane-contract',
+        type=Path,
+        help='Optional control-plane contract artifact to verify drift/promotion/telemetry continuity fields.',
+    )
+    parser.add_argument(
+        '--model-risk-evidence-package',
+        type=Path,
+        help='Optional model-risk evidence package artifact enforcing Wave-6 audit completeness.',
+    )
+    parser.add_argument(
+        '--max-model-risk-evidence-age-hours',
+        type=int,
+        default=48,
+        help='Maximum allowed age (hours) for model-risk evidence package generated_at timestamp.',
     )
     parser.add_argument(
         '--lookback-hours',
@@ -540,6 +705,43 @@ def main() -> None:
             'effect_size': proof_payload.get('effect_size'),
             'p_value': proof_payload.get('p_value'),
             'drawdown_delta': proof_payload.get('drawdown_delta'),
+            'passed': True,
+        }
+
+    if args.control_plane_contract:
+        checks['control_plane_contract'] = {
+            'artifact': str(args.control_plane_contract),
+            'passed': False,
+        }
+        contract_payload = _load_control_plane_contract(args.control_plane_contract)
+        checks['control_plane_contract'] = {
+            'artifact': str(args.control_plane_contract),
+            'contract_version': contract_payload.get('contract_version'),
+            'last_autonomy_recommendation_trace_id': contract_payload.get(
+                'last_autonomy_recommendation_trace_id'
+            ),
+            'domain_telemetry_event_total': contract_payload.get(
+                'domain_telemetry_event_total'
+            ),
+            'domain_telemetry_dropped_total': contract_payload.get(
+                'domain_telemetry_dropped_total'
+            ),
+            'passed': True,
+        }
+
+    if args.model_risk_evidence_package:
+        checks['model_risk_evidence_package'] = {
+            'artifact': str(args.model_risk_evidence_package),
+            'passed': False,
+        }
+        package_payload = _load_model_risk_evidence_package(
+            args.model_risk_evidence_package,
+            now=now,
+            max_age_hours=max(1, int(args.max_model_risk_evidence_age_hours)),
+        )
+        checks['model_risk_evidence_package'] = {
+            'artifact': str(args.model_risk_evidence_package),
+            **package_payload,
             'passed': True,
         }
 

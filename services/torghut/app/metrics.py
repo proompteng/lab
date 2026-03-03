@@ -66,6 +66,20 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "reason",
         "int",
     ),
+    "domain_telemetry_event_total": (
+        "torghut_trading_domain_telemetry_event_total",
+        "Count of attempted domain telemetry events by event name.",
+        "counter",
+        "event",
+        "int",
+    ),
+    "domain_telemetry_dropped_total": (
+        "torghut_trading_domain_telemetry_dropped_total",
+        "Count of dropped domain telemetry events by drop reason.",
+        "counter",
+        "reason",
+        "int",
+    ),
     "lean_request_total": (
         "torghut_trading_lean_request_total",
         "Count of LEAN runner requests by operation.",

@@ -23,6 +23,7 @@ from ..alpaca_client import TorghutAlpacaClient
 from ..config import TradingAccountLane, settings
 from ..db import SessionLocal
 from ..models import LLMDecisionReview, Strategy, TradeDecision, coerce_json_payload
+from ..observability import capture_posthog_event
 from ..snapshots import snapshot_account_and_positions
 from ..strategies import StrategyCatalog
 from .decisions import DecisionEngine, DecisionRuntimeTelemetry
@@ -537,6 +538,12 @@ class TradingMetrics:
     autonomy_outcome_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
+    domain_telemetry_event_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    domain_telemetry_dropped_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     calibration_coverage_error: float = 0
     conformal_interval_width: float = 0
     regime_shift_score: float = 0
@@ -914,6 +921,22 @@ class TradingMetrics:
             normalized_outcome = "unknown"
         self.autonomy_outcome_total[normalized_outcome] = (
             self.autonomy_outcome_total.get(normalized_outcome, 0) + 1
+        )
+
+    def record_domain_telemetry(
+        self, *, event_name: str, emitted: bool, drop_reason: str | None
+    ) -> None:
+        normalized_event = event_name.strip() if event_name else ""
+        if not normalized_event:
+            normalized_event = "unknown"
+        self.domain_telemetry_event_total[normalized_event] = (
+            self.domain_telemetry_event_total.get(normalized_event, 0) + 1
+        )
+        if emitted:
+            return
+        normalized_reason = _normalize_reason_metric(drop_reason)
+        self.domain_telemetry_dropped_total[normalized_reason] = (
+            self.domain_telemetry_dropped_total.get(normalized_reason, 0) + 1
         )
 
     def record_uncertainty_gate(self, gate_report_payload: Mapping[str, Any]) -> None:
@@ -1932,6 +1955,77 @@ class TradingPipeline:
         for reason in reasons:
             logger.info(log_template, decision.strategy_id, decision.symbol, reason)
         self.executor.mark_rejected(session, decision_row, ";".join(reasons))
+        self._emit_domain_telemetry(
+            event_name="torghut.decision.blocked",
+            severity="warning",
+            decision=decision,
+            decision_row=decision_row,
+            reason_codes=reasons,
+            extra_properties={"decision_status": "rejected"},
+        )
+
+    def _emit_domain_telemetry(
+        self,
+        *,
+        event_name: str,
+        severity: str,
+        decision: StrategyDecision | None = None,
+        decision_row: TradeDecision | None = None,
+        execution: Any | None = None,
+        reason_codes: Sequence[str] | None = None,
+        extra_properties: Mapping[str, Any] | None = None,
+    ) -> None:
+        properties: dict[str, Any] = {
+            "account_label": self.account_label,
+            "trading_mode": settings.trading_mode,
+        }
+        if decision is not None:
+            properties.update(
+                {
+                    "strategy_id": decision.strategy_id,
+                    "symbol": decision.symbol,
+                    "timeframe": decision.timeframe,
+                    "decision_action": decision.action,
+                }
+            )
+        if decision_row is not None:
+            properties["trade_decision_id"] = str(decision_row.id)
+            properties["decision_hash"] = decision_row.decision_hash
+            properties["decision_status"] = decision_row.status
+        if execution is not None:
+            properties["execution_id"] = str(getattr(execution, "id", ""))
+            properties["execution_status"] = str(getattr(execution, "status", ""))
+            properties["execution_correlation_id"] = str(
+                getattr(execution, "execution_correlation_id", "") or ""
+            )
+            properties["execution_idempotency_key"] = str(
+                getattr(execution, "execution_idempotency_key", "") or ""
+            )
+            properties["execution_fallback_reason"] = str(
+                getattr(execution, "execution_fallback_reason", "") or ""
+            )
+        if reason_codes:
+            properties["reason_codes"] = sorted(
+                {str(reason).strip() for reason in reason_codes if str(reason).strip()}
+            )
+        if extra_properties:
+            properties.update(
+                {
+                    str(key): value
+                    for key, value in extra_properties.items()
+                }
+            )
+        emitted, drop_reason = capture_posthog_event(
+            event_name,
+            severity=severity,
+            distinct_id=f"torghut-{self.account_label}",
+            properties=properties,
+        )
+        self.state.metrics.record_domain_telemetry(
+            event_name=event_name,
+            emitted=emitted,
+            drop_reason=drop_reason,
+        )
 
     def _evaluate_execution_policy_outcome(
         self,
@@ -2089,9 +2183,28 @@ class TradingPipeline:
         )
         if rejected:
             return False
+        self._emit_domain_telemetry(
+            event_name="torghut.decision.generated",
+            severity="info",
+            decision=decision,
+            decision_row=decision_row,
+            extra_properties={
+                "selected_execution_adapter": selected_adapter_name,
+            },
+        )
         if execution is None:
             self._sync_lean_observability(execution_client)
             self.state.metrics.orders_submitted_total += 1
+            self._emit_domain_telemetry(
+                event_name="torghut.execution.submitted",
+                severity="info",
+                decision=decision,
+                decision_row=decision_row,
+                extra_properties={
+                    "execution_expected_adapter": selected_adapter_name,
+                    "execution_actual_adapter": selected_adapter_name,
+                },
+            )
             return True
 
         actual_adapter_name = str(
@@ -2110,6 +2223,17 @@ class TradingPipeline:
         self._record_lean_shadow_from_execution(execution)
         self._sync_lean_observability(execution_client)
         self.state.metrics.orders_submitted_total += 1
+        self._emit_domain_telemetry(
+            event_name="torghut.execution.submitted",
+            severity="info",
+            decision=decision,
+            decision_row=decision_row,
+            execution=execution,
+            extra_properties={
+                "execution_expected_adapter": selected_adapter_name,
+                "execution_actual_adapter": actual_adapter_name,
+            },
+        )
         logger.info(
             "Order submitted strategy_id=%s decision_id=%s symbol=%s adapter=%s alpaca_order_id=%s",
             decision.strategy_id,
@@ -2199,6 +2323,14 @@ class TradingPipeline:
         except OrderFirewallBlocked as exc:
             self.state.metrics.orders_rejected_total += 1
             self.executor.mark_rejected(session, decision_row, str(exc))
+            self._emit_domain_telemetry(
+                event_name="torghut.execution.rejected",
+                severity="warning",
+                decision=decision,
+                decision_row=decision_row,
+                reason_codes=[str(exc)],
+                extra_properties={"rejection_type": "firewall_blocked"},
+            )
             logger.warning(
                 "Order blocked by firewall strategy_id=%s decision_id=%s symbol=%s reason=%s",
                 decision.strategy_id,
@@ -2227,6 +2359,14 @@ class TradingPipeline:
                     )
             reason = _format_order_submit_rejection(exc)
             self.executor.mark_rejected(session, decision_row, reason)
+            self._emit_domain_telemetry(
+                event_name="torghut.execution.rejected",
+                severity="error",
+                decision=decision,
+                decision_row=decision_row,
+                reason_codes=[reason],
+                extra_properties={"rejection_type": "submit_failed"},
+            )
             logger.warning(
                 "Order submission failed strategy_id=%s decision_id=%s symbol=%s error=%s",
                 decision.strategy_id,
@@ -2253,6 +2393,18 @@ class TradingPipeline:
             expected_adapter=selected_adapter_name,
             actual_adapter=actual_adapter_name,
             fallback_reason=fallback_reason or "adaptive_fallback",
+        )
+        self._emit_domain_telemetry(
+            event_name="torghut.execution.fallback",
+            severity="warning",
+            decision=decision,
+            decision_row=decision_row,
+            execution=execution,
+            reason_codes=[fallback_reason or "adaptive_fallback"],
+            extra_properties={
+                "execution_expected_adapter": selected_adapter_name,
+                "execution_actual_adapter": actual_adapter_name,
+            },
         )
         self._evaluate_lean_canary_guard(session, symbol=decision.symbol)
         self.executor.update_decision_params(
@@ -4391,6 +4543,50 @@ class TradingScheduler:
         self._pipeline: Optional[TradingPipeline] = None
         self._pipelines: list[TradingPipeline] = []
 
+    def _emit_autonomy_domain_telemetry(
+        self,
+        *,
+        event_name: str,
+        severity: str,
+        properties: Mapping[str, Any],
+    ) -> None:
+        payload = {str(key): value for key, value in properties.items()}
+        emitted, drop_reason = capture_posthog_event(
+            event_name,
+            severity=severity,
+            distinct_id=f"torghut-autonomy-{settings.trading_account_label}",
+            properties=payload,
+        )
+        self.state.metrics.record_domain_telemetry(
+            event_name=event_name,
+            emitted=emitted,
+            drop_reason=drop_reason,
+        )
+
+    def _emit_runtime_loop_failure(
+        self,
+        *,
+        loop_name: str,
+        error: Exception,
+        account_label: str | None = None,
+    ) -> None:
+        emitted, drop_reason = capture_posthog_event(
+            "torghut.runtime.loop_failed",
+            severity="error",
+            distinct_id=f"torghut-runtime-{settings.trading_account_label}",
+            properties={
+                "loop": loop_name,
+                "account_label": account_label or settings.trading_account_label,
+                "error_class": type(error).__name__,
+                "error": str(error),
+            },
+        )
+        self.state.metrics.record_domain_telemetry(
+            event_name="torghut.runtime.loop_failed",
+            emitted=emitted,
+            drop_reason=drop_reason,
+        )
+
     def llm_status(self) -> dict[str, object]:
         circuit_snapshot = None
         if self._pipeline and self._pipeline.llm_review_engine:
@@ -4987,6 +5183,24 @@ class TradingScheduler:
             json.dumps(incident_payload, indent=2), encoding="utf-8"
         )
         self.state.rollback_incident_evidence_path = str(incident_path)
+        self._emit_autonomy_domain_telemetry(
+            event_name="torghut.autonomy.rollback_triggered",
+            severity="critical",
+            properties={
+                "torghut_run_id": gate_provenance.get("run_id"),
+                "candidate_id": self.state.last_autonomy_candidate_id,
+                "gate_report_trace_id": gate_provenance.get("gate_report_trace_id"),
+                "recommendation_trace_id": gate_provenance.get(
+                    "recommendation_trace_id"
+                ),
+                "rollback_incident_evidence_path": str(incident_path),
+                "reason_codes": list(reasons),
+                "fallback_ratio": round(fallback_ratio, 6),
+                "max_drawdown": drawdown,
+                "market_session_open": self.state.market_session_open,
+                "emergency_stop_active": True,
+            },
+        )
         logger.error(
             "Emergency stop triggered reasons=%s canceled_open_orders=%s evidence=%s",
             reasons,
@@ -5128,6 +5342,11 @@ class TradingScheduler:
                 try:
                     await asyncio.to_thread(pipeline.run_once)
                 except Exception as lane_exc:
+                    self._emit_runtime_loop_failure(
+                        loop_name="trading_lane",
+                        error=lane_exc,
+                        account_label=pipeline.account_label,
+                    )
                     logger.exception(
                         "Trading lane failed account=%s: %s",
                         pipeline.account_label,
@@ -5136,6 +5355,7 @@ class TradingScheduler:
             self.state.last_run_at = datetime.now(timezone.utc)
             self.state.last_error = None
         except Exception as exc:  # pragma: no cover - loop guard
+            self._emit_runtime_loop_failure(loop_name="trading", error=exc)
             logger.exception("Trading loop failed: %s", exc)
             self.state.last_error = str(exc)
         finally:
@@ -5151,6 +5371,11 @@ class TradingScheduler:
                 try:
                     updates += await asyncio.to_thread(pipeline.reconcile)
                 except Exception as lane_exc:
+                    self._emit_runtime_loop_failure(
+                        loop_name="reconcile_lane",
+                        error=lane_exc,
+                        account_label=pipeline.account_label,
+                    )
                     logger.exception(
                         "Reconcile lane failed account=%s: %s",
                         pipeline.account_label,
@@ -5161,6 +5386,7 @@ class TradingScheduler:
             self.state.last_reconcile_at = datetime.now(timezone.utc)
             self.state.last_error = None
         except Exception as exc:  # pragma: no cover - loop guard
+            self._emit_runtime_loop_failure(loop_name="reconcile", error=exc)
             logger.exception("Reconcile loop failed: %s", exc)
             self.state.last_error = str(exc)
         finally:
@@ -5173,6 +5399,7 @@ class TradingScheduler:
             await asyncio.to_thread(self._run_autonomous_cycle)
             self.state.last_autonomy_error = None
         except Exception as exc:  # pragma: no cover - loop guard
+            self._emit_runtime_loop_failure(loop_name="autonomy", error=exc)
             logger.exception("Autonomous loop failed: %s", exc)
             self.state.last_error = str(exc)
             self.state.last_autonomy_error = str(exc)
@@ -5187,6 +5414,7 @@ class TradingScheduler:
                 raise RuntimeError("trading_pipeline_not_initialized")
             await asyncio.to_thread(self._run_evidence_continuity_check)
         except Exception as exc:  # pragma: no cover - loop guard
+            self._emit_runtime_loop_failure(loop_name="evidence", error=exc)
             logger.exception("Evidence continuity check failed: %s", exc)
             self.state.last_error = str(exc)
 
@@ -5601,6 +5829,19 @@ class TradingScheduler:
             batch.query_start,
             batch.query_end,
         )
+        self._emit_autonomy_domain_telemetry(
+            event_name="torghut.autonomy.cycle_failed",
+            severity="warning",
+            properties={
+                "torghut_run_id": self.state.last_autonomy_run_id,
+                "candidate_id": self.state.last_autonomy_candidate_id,
+                "recommendation_trace_id": self.state.last_autonomy_recommendation_trace_id,
+                "no_signal_reason": reason,
+                "outcome": "skipped_no_signal",
+                "signal_lag_seconds": batch.signal_lag_seconds,
+                "market_session_open": self.state.market_session_open,
+            },
+        )
         self._evaluate_safety_controls()
 
     @staticmethod
@@ -5814,6 +6055,18 @@ class TradingScheduler:
             self.state.last_autonomy_error = str(exc)
             self.state.last_autonomy_reason = "lane_execution_failed"
             self._clear_autonomy_result_state()
+            self._emit_autonomy_domain_telemetry(
+                event_name="torghut.autonomy.cycle_failed",
+                severity="error",
+                properties={
+                    "torghut_run_id": None,
+                    "candidate_id": None,
+                    "recommendation_trace_id": None,
+                    "outcome": "lane_execution_failed",
+                    "error": str(exc),
+                    "promotion_target": promotion_target,
+                },
+            )
             logger.exception("Autonomous lane execution failed: %s", exc)
             self._evaluate_safety_controls()
             return None
@@ -5950,6 +6203,35 @@ class TradingScheduler:
                 if actuation_recommendation_trace_id
                 else None
             ),
+        )
+        gate_provenance_raw = gate_report.get("provenance")
+        gate_provenance = (
+            cast(Mapping[str, Any], gate_provenance_raw)
+            if isinstance(gate_provenance_raw, Mapping)
+            else cast(Mapping[str, Any], {})
+        )
+        gate_report_trace_id = str(
+            actuation_gates_payload.get("gate_report_trace_id")
+            or gate_provenance.get("gate_report_trace_id")
+            or ""
+        ).strip()
+        self._emit_autonomy_domain_telemetry(
+            event_name="torghut.autonomy.cycle_completed",
+            severity="info",
+            properties={
+                "torghut_run_id": result.run_id,
+                "candidate_id": self.state.last_autonomy_candidate_id,
+                "recommendation_trace_id": self.state.last_autonomy_recommendation_trace_id,
+                "gate_report_trace_id": gate_report_trace_id or None,
+                "promotion_target": requested_promotion_target,
+                "recommended_mode": recommended_mode,
+                "promotion_allowed": promotion_allowed,
+                "actuation_allowed": actuation_allowed,
+                "effective_promotion_allowed": effective_promotion_allowed,
+                "signal_count": _int_from_mapping(throughput, "signal_count"),
+                "decision_count": _int_from_mapping(throughput, "decision_count"),
+                "trade_count": _int_from_mapping(throughput, "trade_count"),
+            },
         )
         self._update_autonomy_throughput_state(
             throughput_payload=gate_report.get("throughput")

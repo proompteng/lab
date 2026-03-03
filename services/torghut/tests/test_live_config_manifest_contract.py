@@ -112,6 +112,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(settings.llm_fail_mode, "veto")
         self.assertEqual(settings.llm_fail_mode_enforcement, "strict_veto")
         self.assertFalse(settings.llm_fail_open_live_approved)
+        self.assertFalse(settings.posthog_enabled)
         self.assertFalse(settings.llm_live_fail_open_requested_for_stage("stage3"))
         self.assertEqual(settings.llm_effective_fail_mode_for_current_rollout(), "veto")
         cutover_allowed, cutover_reasons = settings.llm_dspy_cutover_migration_guard()

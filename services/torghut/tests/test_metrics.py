@@ -223,6 +223,27 @@ class TestTradingMetrics(TestCase):
             payload,
         )
 
+    def test_domain_telemetry_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.domain_telemetry_event_total["torghut.decision.generated"] = 3
+        metrics.domain_telemetry_event_total["torghut.execution.submitted"] = 2
+        metrics.domain_telemetry_dropped_total["disabled"] = 5
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_domain_telemetry_event_total{event="torghut.decision.generated"} 3',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_domain_telemetry_event_total{event="torghut.execution.submitted"} 2',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_domain_telemetry_dropped_total{reason="disabled"} 5',
+            payload,
+        )
+
     def test_tca_summary_metrics_are_exported(self) -> None:
         metrics = TradingMetrics()
         payload = render_trading_metrics(

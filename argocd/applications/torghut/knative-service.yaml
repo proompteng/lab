@@ -188,6 +188,26 @@ spec:
                   name: jangar-api
                   key: apiKey
                   optional: true
+            - name: POSTHOG_ENABLED
+              value: "false"
+            - name: POSTHOG_HOST
+              value: http://posthog-events.posthog.svc.cluster.local:8000
+            - name: POSTHOG_TIMEOUT_SECONDS
+              value: "1.0"
+            - name: POSTHOG_DISTINCT_ID
+              value: torghut-service
+            - name: POSTHOG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-posthog
+                  key: POSTHOG_API_KEY
+                  optional: true
+            - name: POSTHOG_PROJECT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-posthog
+                  key: POSTHOG_PROJECT_ID
+                  optional: true
             - name: WHITEPAPER_WORKFLOW_ENABLED
               value: "true"
             - name: WHITEPAPER_KAFKA_ENABLED
