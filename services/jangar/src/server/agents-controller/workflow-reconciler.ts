@@ -710,51 +710,70 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         const iterationIndex = loopStatus
           ? Math.max(1, loopStatus.currentIteration || loopStatus.completedIterations + 1)
           : 0
+        const jobName = asString(stepStatus.jobRef?.name) ?? ''
+        const jobNamespace = asString(stepStatus.jobRef?.namespace) ?? namespace
+        let prefetchedJobForTimeout: Record<string, unknown> | null = null
+        const applyTimeoutOutcome = () => {
+          if (stepStatus.attempt < maxAttempts) {
+            setWorkflowStepPhase(stepStatus, 'Retrying', 'Step timed out; retrying')
+            stepStatus.finishedAt = deps.nowIso()
+            stepStatus.nextRetryAt =
+              stepSpec.retryBackoffSeconds > 0
+                ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
+                : deps.nowIso()
+            if (loopStatus) {
+              upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+                phase: 'Running',
+                attempts: stepStatus.attempt,
+                startedAt: stepStatus.startedAt,
+                finishedAt: stepStatus.finishedAt,
+                message: 'Step timed out; retrying',
+                jobRef: stepStatus.jobRef,
+              })
+            }
+            workflowRunning = true
+            return
+          }
+          setWorkflowStepPhase(stepStatus, 'Failed', 'Step timed out')
+          stepStatus.finishedAt = deps.nowIso()
+          if (loopStatus) {
+            upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+              phase: 'Failed',
+              attempts: stepStatus.attempt,
+              startedAt: stepStatus.startedAt,
+              finishedAt: stepStatus.finishedAt,
+              message: 'Step timed out',
+              jobRef: stepStatus.jobRef,
+            })
+            loopStatus.stopReason = 'LoopIterationFailed'
+          }
+          workflowFailure = {
+            reason: 'WorkflowStepTimedOut',
+            message: `workflow step ${stepSpec.name} timed out`,
+          }
+        }
         if (stepSpec.timeoutSeconds > 0) {
           const startedAt = stepStatus.startedAt
           const startTime = startedAt ? Date.parse(startedAt) : Number.NaN
           if (Number.isFinite(startTime) && now >= startTime + stepSpec.timeoutSeconds * 1000) {
-            if (stepStatus.attempt < maxAttempts) {
-              setWorkflowStepPhase(stepStatus, 'Retrying', 'Step timed out; retrying')
-              stepStatus.finishedAt = deps.nowIso()
-              stepStatus.nextRetryAt =
-                stepSpec.retryBackoffSeconds > 0
-                  ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
-                  : deps.nowIso()
-              if (loopStatus) {
-                upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
-                  phase: 'Running',
-                  attempts: stepStatus.attempt,
-                  startedAt: stepStatus.startedAt,
-                  finishedAt: stepStatus.finishedAt,
-                  message: 'Step timed out; retrying',
-                  jobRef: stepStatus.jobRef,
-                })
+            let terminalJobStateObserved = false
+            if (jobName) {
+              prefetchedJobForTimeout = await kube.get('job', jobName, jobNamespace)
+              if (prefetchedJobForTimeout) {
+                const prefetchedStatus = asRecord(prefetchedJobForTimeout.status) ?? {}
+                const prefetchedSucceeded = Number(prefetchedStatus.succeeded ?? 0)
+                const prefetchedFailed = Number(prefetchedStatus.failed ?? 0)
+                const terminalSuccess = prefetchedSucceeded > 0 || deps.isJobComplete(prefetchedJobForTimeout)
+                const terminalFailure = prefetchedFailed > 0 && deps.isJobFailed(prefetchedJobForTimeout)
+                terminalJobStateObserved = terminalSuccess || terminalFailure
               }
-              workflowRunning = true
+            }
+            if (!terminalJobStateObserved) {
+              applyTimeoutOutcome()
               break
             }
-            setWorkflowStepPhase(stepStatus, 'Failed', 'Step timed out')
-            stepStatus.finishedAt = deps.nowIso()
-            if (loopStatus) {
-              upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
-                phase: 'Failed',
-                attempts: stepStatus.attempt,
-                startedAt: stepStatus.startedAt,
-                finishedAt: stepStatus.finishedAt,
-                message: 'Step timed out',
-                jobRef: stepStatus.jobRef,
-              })
-              loopStatus.stopReason = 'LoopIterationFailed'
-            }
-            workflowFailure = {
-              reason: 'WorkflowStepTimedOut',
-              message: `workflow step ${stepSpec.name} timed out`,
-            }
-            break
           }
         }
-        const jobName = asString(stepStatus.jobRef?.name) ?? ''
         if (!jobName) {
           setWorkflowStepPhase(stepStatus, 'Failed', 'Job reference missing')
           stepStatus.finishedAt = deps.nowIso()
@@ -775,8 +794,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
           }
           break
         }
-        const jobNamespace = asString(stepStatus.jobRef?.namespace) ?? namespace
-        const job = await kube.get('job', jobName, jobNamespace)
+        const job = prefetchedJobForTimeout ?? (await kube.get('job', jobName, jobNamespace))
         if (!job) {
           if (!stepStatus.jobObservedAt) {
             setWorkflowStepPhase(stepStatus, 'Running', 'Waiting for job to be created')
