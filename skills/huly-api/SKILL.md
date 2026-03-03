@@ -92,6 +92,8 @@ python3 skills/huly-api/scripts/huly-api.py \
   --details "Includes evidence, risk deltas, and PR links" \
   --stage discover \
   --status running \
+  --swarm-agent-worker-id "${SWARM_AGENT_WORKER_ID}" \
+  --swarm-agent-identity "${SWARM_AGENT_IDENTITY}" \
   --message "${OWNER_UPDATE_MESSAGE}" \
   --project "DefaultProject" \
   --teamspace "PROOMPTENG" \
@@ -131,6 +133,9 @@ python3 skills/huly-api/scripts/huly-api.py --operation http --method GET --path
 - Use `--require-worker-token` for dedicated-account checks so shared fallback tokens are rejected.
 - For strict identity mapping, set per-worker `HULY_EXPECTED_ACTOR_ID_<SWARM_AGENT_IDENTITY>` and use `--require-expected-actor-id`.
 - Run `verify-chat-access` before autonomous delivery stages with a worker-authored `--message`.
-- Include `swarmAgentWorkerId` and `swarmAgentIdentity` in the issue/document/message body.
+- Include `swarmAgentWorkerId` and `swarmAgentIdentity` in the issue/document/channel message body.
+  - `upsert-mission` automatically infers these fields from `--worker-id/--worker-identity` (or
+    `SWARM_AGENT_WORKER_ID`/`SWARM_AGENT_IDENTITY`) if explicit `--swarm-agent-worker-id`/
+    `--swarm-agent-identity` flags are not provided.
 - Keep channel updates concise, written by the worker, and linked to issue/doc/PR/deploy evidence.
 - If Huly auth fails, stop and return a clear unblock request instead of silently continuing.

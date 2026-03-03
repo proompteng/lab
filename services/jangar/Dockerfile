@@ -558,6 +558,12 @@ COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/serv
 WORKDIR /app
 COPY --from=jangar-build /app/services/bumba ./services/bumba
 WORKDIR /app/services/jangar
+RUN ln -sf /app/packages/cx-tools/dist/cli/cx-codex-run.js /usr/local/bin/cx-codex-run \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
+  && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
 
 ENV JANGAR_AGENTS_CONTROLLER_ENABLED=0 \
   JANGAR_ORCHESTRATION_CONTROLLER_ENABLED=0 \
@@ -599,6 +605,12 @@ COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/serv
 WORKDIR /app
 COPY --from=jangar-build /app/services/bumba ./services/bumba
 WORKDIR /app/services/jangar
+RUN ln -sf /app/packages/cx-tools/dist/cli/cx-codex-run.js /usr/local/bin/cx-codex-run \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
+  && ln -sf /app/packages/cx-tools/dist/cli/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
+  && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
 
 RUN mkdir -p /root/.codex
 COPY --from=jangar-build /app/services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
