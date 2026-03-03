@@ -12,11 +12,19 @@ export type TorghutSymbol = {
   updatedAt: string
 }
 
+const EQUITY_SYMBOL_PATTERN = /^[A-Z][A-Z0-9.-]{0,11}$/
+const CRYPTO_SYMBOL_PATTERN = /^[A-Z0-9]{2,15}(?:[-/][A-Z0-9]{2,15})$/
+
 const ensureSchema = async (db: Db) => {
   await ensureMigrations(db)
 }
 
 export const normalizeTorghutSymbol = (raw: string) => raw.trim().toUpperCase()
+
+export const isValidTorghutSymbol = (symbol: string, assetClass: TorghutAssetClass) => {
+  if (assetClass === 'crypto') return CRYPTO_SYMBOL_PATTERN.test(symbol)
+  return EQUITY_SYMBOL_PATTERN.test(symbol)
+}
 
 const normalizeAssetClass = (raw: unknown): TorghutAssetClass => {
   if (raw === 'crypto') return 'crypto'
@@ -63,13 +71,15 @@ export const upsertTorghutSymbols = async ({
   db: Db
   enabled: boolean
   symbols: string[]
-}): Promise<{ insertedOrUpdated: number; symbols: string[] }> => {
+}): Promise<{ insertedOrUpdated: number; rejected: string[]; symbols: string[] }> => {
   await ensureSchema(db)
 
   const normalizedSymbols = symbols.map(normalizeTorghutSymbol).filter((symbol) => symbol.length > 0)
 
-  const deduped = [...new Set(normalizedSymbols)]
-  if (deduped.length === 0) return { insertedOrUpdated: 0, symbols: [] }
+  const uniqueSymbols = [...new Set(normalizedSymbols)]
+  const deduped = uniqueSymbols.filter((symbol) => isValidTorghutSymbol(symbol, assetClass))
+  const rejected = uniqueSymbols.filter((symbol) => !isValidTorghutSymbol(symbol, assetClass))
+  if (deduped.length === 0) return { insertedOrUpdated: 0, rejected, symbols: [] }
 
   await db
     .insertInto('torghut_symbols')
@@ -90,7 +100,7 @@ export const upsertTorghutSymbols = async ({
     )
     .execute()
 
-  return { insertedOrUpdated: deduped.length, symbols: deduped }
+  return { insertedOrUpdated: deduped.length, rejected, symbols: deduped }
 }
 
 export const setTorghutSymbolEnabled = async ({

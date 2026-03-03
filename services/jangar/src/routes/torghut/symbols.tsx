@@ -1,16 +1,15 @@
 import {
   Button,
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
 } from '@proompteng/design/ui'
 import { createFileRoute } from '@tanstack/react-router'
-import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useId, useMemo, useState } from 'react'
+
 import { randomUuid } from '@/lib/uuid'
 
 type SymbolItem = {
@@ -20,6 +19,16 @@ type SymbolItem = {
   updatedAt: string
 }
 
+const EQUITY_SYMBOL_PATTERN = /^[A-Z][A-Z0-9.-]{0,11}$/
+const CRYPTO_SYMBOL_PATTERN = /^[A-Z0-9]{2,15}(?:[-/][A-Z0-9]{2,15})$/
+
+const normalizeSymbol = (value: string) => value.trim().toUpperCase()
+
+const isValidSymbolForAssetClass = (symbol: string, assetClass: 'equity' | 'crypto') => {
+  if (assetClass === 'crypto') return CRYPTO_SYMBOL_PATTERN.test(symbol)
+  return EQUITY_SYMBOL_PATTERN.test(symbol)
+}
+
 export const Route = createFileRoute('/torghut/symbols')({
   component: TorghutSymbols,
 })
@@ -27,13 +36,13 @@ export const Route = createFileRoute('/torghut/symbols')({
 function TorghutSymbols() {
   const [items, setItems] = useState<SymbolItem[]>([])
   const [assetClass, setAssetClass] = useState<'equity' | 'crypto'>('equity')
-  const [symbolsText, setSymbolsText] = useState('')
+  const [symbolQuery, setSymbolQuery] = useState('')
+  const [candidateSymbols, setCandidateSymbols] = useState<string[]>([])
+  const [isCandidateLoading, setIsCandidateLoading] = useState(false)
   const [listStatus, setListStatus] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
-  const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const symbolsTextId = useId()
-  const symbolsTextRef = useRef<HTMLTextAreaElement | null>(null)
+  const symbolInputId = useId()
 
   const enabledCount = useMemo(() => items.filter((item) => item.enabled).length, [items])
 
@@ -52,12 +61,97 @@ function TorghutSymbols() {
     })
   }, [refresh])
 
+  const normalizedSymbolQuery = useMemo(() => normalizeSymbol(symbolQuery), [symbolQuery])
+
+  useEffect(() => {
+    let isCancelled = false
+    if (normalizedSymbolQuery.length === 0) {
+      setCandidateSymbols([])
+      setIsCandidateLoading(false)
+      return () => {
+        isCancelled = true
+      }
+    }
+
+    const timeout = setTimeout(() => {
+      setIsCandidateLoading(true)
+      const query = new URLSearchParams()
+      query.set('assetClass', assetClass)
+      query.set('limit', '40')
+      query.set('q', normalizedSymbolQuery)
+
+      fetch(`/api/torghut/symbols/search?${query.toString()}`)
+        .then(async (res) => {
+          const payload = (await res.json().catch(() => null)) as { symbols?: string[] } | null
+          if (isCancelled) return
+          if (!res.ok || !Array.isArray(payload?.symbols)) {
+            setCandidateSymbols([])
+            return
+          }
+          setCandidateSymbols(payload.symbols.map((symbol) => normalizeSymbol(symbol)))
+        })
+        .catch(() => {
+          if (!isCancelled) setCandidateSymbols([])
+        })
+        .finally(() => {
+          if (!isCancelled) setIsCandidateLoading(false)
+        })
+    }, 180)
+
+    return () => {
+      isCancelled = true
+      clearTimeout(timeout)
+    }
+  }, [assetClass, normalizedSymbolQuery])
+
+  const knownSymbols = useMemo(() => {
+    const values = new Set<string>()
+
+    for (const item of items) {
+      if (item.assetClass !== assetClass) continue
+      values.add(normalizeSymbol(item.symbol))
+    }
+
+    for (const candidate of candidateSymbols) {
+      if (!isValidSymbolForAssetClass(candidate, assetClass)) continue
+      values.add(candidate)
+    }
+
+    return [...values].sort((a, b) => a.localeCompare(b))
+  }, [assetClass, candidateSymbols, items])
+
+  const knownSymbolSet = useMemo(() => new Set(knownSymbols), [knownSymbols])
+
+  const existingSymbolSet = useMemo(
+    () => new Set(items.filter((item) => item.assetClass === assetClass).map((item) => normalizeSymbol(item.symbol))),
+    [assetClass, items],
+  )
+
+  const filteredKnownSymbols = useMemo(() => {
+    if (!normalizedSymbolQuery) return knownSymbols.slice(0, 120)
+    return knownSymbols.filter((symbol) => symbol.includes(normalizedSymbolQuery)).slice(0, 120)
+  }, [knownSymbols, normalizedSymbolQuery])
+
+  const canSubmit =
+    normalizedSymbolQuery.length > 0 &&
+    knownSymbolSet.has(normalizedSymbolQuery) &&
+    !existingSymbolSet.has(normalizedSymbolQuery) &&
+    !isSaving
+
   const submit = useCallback(async () => {
     setFormError(null)
-    const trimmed = symbolsText.trim()
-    if (!trimmed) {
-      setFormError('Enter at least one symbol to save.')
-      symbolsTextRef.current?.focus()
+
+    const normalized = normalizeSymbol(symbolQuery)
+    if (!normalized) {
+      setFormError('Choose a symbol to add.')
+      return
+    }
+    if (!knownSymbolSet.has(normalized)) {
+      setFormError('Select a valid symbol from the combobox list.')
+      return
+    }
+    if (existingSymbolSet.has(normalized)) {
+      setFormError(`${normalized} is already in this asset class.`)
       return
     }
 
@@ -66,20 +160,22 @@ function TorghutSymbols() {
       const res = await fetch('/api/torghut/symbols', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'idempotency-key': randomUuid() },
-        body: JSON.stringify({ symbolsText: trimmed, enabled: true, assetClass }),
+        body: JSON.stringify({ symbols: [normalized], enabled: true, assetClass }),
       })
-      if (!res.ok) throw new Error(`Failed to save (${res.status})`)
-      setSymbolsText('')
+      const payload = (await res.json().catch(() => null)) as { error?: string; insertedOrUpdated?: number } | null
+      if (!res.ok) throw new Error(payload?.error ?? `Failed to save (${res.status})`)
+      if ((payload?.insertedOrUpdated ?? 0) < 1) throw new Error('No symbol was added')
+
+      setSymbolQuery('')
       await refresh()
-      setListStatus('Saved.')
-      setIsDialogOpen(false)
+      setListStatus(`Added ${normalized}.`)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
       setFormError(message)
     } finally {
       setIsSaving(false)
     }
-  }, [assetClass, refresh, symbolsText])
+  }, [assetClass, existingSymbolSet, knownSymbolSet, refresh, symbolQuery])
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault()
@@ -129,60 +225,67 @@ function TorghutSymbols() {
             </select>
           </div>
         </div>
-        <Dialog
-          open={isDialogOpen}
-          onOpenChange={(open) => {
-            setIsDialogOpen(open)
-            if (open) {
-              setFormError(null)
-              setSymbolsText('')
-              setTimeout(() => symbolsTextRef.current?.focus(), 0)
-            }
-          }}
-        >
-          <DialogTrigger render={<Button />}>Add symbols</DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add symbols</DialogTitle>
-              <DialogDescription>Add one or more symbols separated by commas, spaces, or new lines.</DialogDescription>
-            </DialogHeader>
-            <form className="space-y-3" onSubmit={onSubmit}>
-              <label className="block text-xs text-muted-foreground" htmlFor={symbolsTextId}>
-                Symbols
-              </label>
-              <textarea
-                ref={symbolsTextRef}
-                id={symbolsTextId}
-                name="symbolsText"
-                className="min-h-28 w-full rounded-none border border-input bg-transparent px-2.5 py-2 text-xs leading-6 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
-                placeholder="NVDA, AAPL, MSFT…"
-                value={symbolsText}
-                onChange={(event) => setSymbolsText(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                    event.preventDefault()
-                    void submit()
-                  }
-                }}
+
+        <form className="flex w-full flex-wrap items-end gap-2 sm:w-auto" onSubmit={onSubmit}>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground" htmlFor={symbolInputId}>
+              Add symbol
+            </label>
+            <Combobox
+              inputValue={symbolQuery}
+              onInputValueChange={(value) => {
+                setFormError(null)
+                setSymbolQuery(value.toUpperCase())
+              }}
+              value={normalizedSymbolQuery.length > 0 ? normalizedSymbolQuery : null}
+              onValueChange={(value) => {
+                setFormError(null)
+                setSymbolQuery(value ?? '')
+              }}
+              autoHighlight
+              openOnInputClick
+            >
+              <ComboboxInput
+                id={symbolInputId}
+                name="symbol"
+                placeholder={isCandidateLoading ? 'Loading symbols…' : 'Search symbol'}
+                autoComplete="off"
+                showTrigger
+                aria-invalid={Boolean(formError)}
               />
-              {formError ? (
-                <p className="text-xs text-destructive" role="alert">
-                  {formError}
-                </p>
-              ) : null}
-              <DialogFooter>
-                <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-                <Button type="submit" disabled={isSaving} aria-busy={isSaving}>
-                  {isSaving ? (
-                    <span className="mr-2 size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none" />
-                  ) : null}
-                  <span>Save</span>
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+              <ComboboxContent>
+                <ComboboxList>
+                  {filteredKnownSymbols.map((symbol) => (
+                    <ComboboxItem key={symbol} value={symbol}>
+                      <span className="font-mono text-foreground">{symbol}</span>
+                    </ComboboxItem>
+                  ))}
+                  <ComboboxEmpty>
+                    {isCandidateLoading ? 'Searching symbols…' : 'No matching symbols found.'}
+                  </ComboboxEmpty>
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
+          </div>
+          <Button type="submit" disabled={!canSubmit} aria-busy={isSaving}>
+            {isSaving ? (
+              <span className="mr-2 size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none" />
+            ) : null}
+            <span>Add symbol</span>
+          </Button>
+        </form>
       </header>
+
+      {formError ? (
+        <p className="text-xs text-destructive" role="alert">
+          {formError}
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Type to search internet symbol data, then pick from the combobox list. Free-form comma-separated entry is
+          removed.
+        </p>
+      )}
 
       <section className="space-y-2">
         {listStatus ? (
@@ -203,7 +306,7 @@ function TorghutSymbols() {
               {items.length === 0 ? (
                 <tr>
                   <td colSpan={3} className="px-3 py-6 text-center text-muted-foreground">
-                    No symbols yet. Add your first set to start tracking.
+                    No symbols yet. Add your first symbol to start tracking.
                   </td>
                 </tr>
               ) : (
