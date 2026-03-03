@@ -20,29 +20,40 @@ export const runCommand = async (
   args: string[],
   { input, env }: RunCommandOptions = {},
 ): Promise<number> => {
+  type EventedChildProcess = {
+    on: (
+      event: 'error' | 'close',
+      listener: (...args: (number | string | NodeJS.Signals | Error | null)[]) => void,
+    ) => void
+    stdout?: NodeJS.ReadableStream | null
+    stderr?: NodeJS.ReadableStream | null
+    stdin?: NodeJS.WritableStream | null
+  }
+
   return new Promise<number>((resolve) => {
-    const child = spawn(command, args, {
+    const eventedChild = spawn(command, args, {
       env: { ...process.env, ...env },
       stdio: ['pipe', 'pipe', 'pipe'],
-    })
+    }) as unknown as EventedChildProcess
 
     if (input === undefined) {
-      child.stdin?.end()
+      eventedChild.stdin?.end()
     } else {
-      child.stdin?.write(input)
-      child.stdin?.end()
+      eventedChild.stdin?.write(input)
+      eventedChild.stdin?.end()
     }
 
-    child.stdout?.on('data', (chunk) => process.stdout.write(chunk))
-    child.stderr?.on('data', (chunk) => process.stderr.write(chunk))
+    eventedChild.stdout?.on('data', (chunk) => process.stdout.write(chunk))
+    eventedChild.stderr?.on('data', (chunk) => process.stderr.write(chunk))
 
-    child.once('error', (error) => {
+    eventedChild.on('error', (error) => {
       console.error(`Failed to execute ${command}: ${error instanceof Error ? error.message : String(error)}`)
       resolve(1)
     })
 
-    child.once('close', (code, signal) => {
-      resolve(toExitCode(code, signal))
+    eventedChild.on('close', (code, signal) => {
+      const normalizedSignal = typeof signal === 'string' ? (signal as NodeJS.Signals) : null
+      resolve(toExitCode(typeof code === 'number' ? code : null, normalizedSignal))
     })
   })
 }

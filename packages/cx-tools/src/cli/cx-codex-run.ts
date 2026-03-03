@@ -310,42 +310,36 @@ export const parsePrompt = async (options: ParsedArgs): Promise<string> => {
   return normalized
 }
 
-import { exitWithError, hasOption, resolveBinary, runCommand, usage } from './_shared'
-
-const usageText = `Usage: cx-codex-run [codex exec options]
-
-This command is a thin wrapper around:
-  codex exec --json <args>
-
-It enforces JSON event streaming by default unless --json is passed explicitly.
-`
-
-const buildArgs = (args: string[]) => {
-  const baseArgs = ['exec', ...args]
-  if (!hasOption(args, '--json')) {
-    return [...baseArgs, '--json']
-  }
-  return baseArgs
-}
-
 export const main = async () => {
-  const args = process.argv.slice(2)
-  if (args.includes('--help') || args.includes('-h')) {
-    usage(usageText)
+  let parsed: ParsedArgs
+  try {
+    parsed = parseCodexRunArgs(process.argv.slice(2))
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error))
+    console.error(HELP_TEXT)
+    return 1
+  }
+
+  if (parsed.help) {
+    console.log(HELP_TEXT)
     return 0
   }
 
   try {
-    const binary = resolveBinary('codex')
-    const exitCode = await runCommand(binary, buildArgs(args), {
-      env: process.env,
+    const prompt = await parsePrompt(parsed)
+    parsed.jsonMode = parseJsonMode(parsed.jsonMode)
+
+    const args = buildCommandArgs(parsed)
+
+    return await runCommand(parsed.binary, args, {
+      input: prompt,
+      env: {
+        ...(parsed.model ? { CODEX_MODEL: parsed.model } : undefined),
+      },
     })
-    return exitCode
   } catch (error) {
-    if (error instanceof Error) {
-      return exitWithError(error.message, usageText)
-    }
-    return exitWithError('Unexpected error while executing cx-codex-run')
+    console.error(error instanceof Error ? error.message : String(error))
+    return 1
   }
 }
 
