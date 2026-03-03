@@ -82,7 +82,9 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      - name: Update latest tag
+      - name: Update latest tag (best effort)
+        id: latest_tag
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -91,3 +93,18 @@ jobs:
           docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}:${TAG}"
           docker buildx imagetools inspect "${IMAGE}:${TAG}"
           docker buildx imagetools inspect "${IMAGE}:latest"
+
+      - name: Warn on latest tag update failure
+        if: steps.latest_tag.outcome == 'failure'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE='registry.ide-newton.ts.net/lab/torghut'
+          echo "::warning::Non-blocking failure updating ${IMAGE}:latest; digest-tagged image and release artifact are still valid."
+          {
+            echo "### Latest tag update failed (non-blocking)"
+            echo ""
+            echo "- Registry alias update failed for \`registry.ide-newton.ts.net/lab/torghut:latest\`."
+            echo "- Immutable release contract artifact was already produced and uploaded."
+            echo "- \`torghut-release\` can proceed using the digest from the contract."
+          } >> "$GITHUB_STEP_SUMMARY"
