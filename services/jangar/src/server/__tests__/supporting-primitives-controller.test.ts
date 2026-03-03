@@ -149,6 +149,223 @@ describe('supporting primitives controller', () => {
     expect(command).not.toContain('\\${DELIVERY_ID}')
   })
 
+  it('skips apply for equivalent schedule resources', async () => {
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: { 'swarm.proompteng.ai/name': 'jangar-control-plane' },
+        annotations: { 'swarm.proompteng.ai/worker-id': 'worker-123' },
+        resourceVersion: '123',
+      },
+      spec: {
+        cron: '*/5 * * * *',
+        timezone: 'UTC',
+        targetRef: {
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'AgentRun',
+          name: 'agentrun-sample',
+          namespace: 'agents',
+        },
+      },
+      status: { phase: 'Active' },
+    })
+    const kube = { apply, get } as unknown as KubernetesClient
+
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: { 'swarm.proompteng.ai/name': 'jangar-control-plane' },
+        annotations: { 'swarm.proompteng.ai/worker-id': 'worker-123' },
+      },
+      spec: {
+        cron: '*/5 * * * *',
+        timezone: 'UTC',
+        targetRef: {
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'AgentRun',
+          name: 'agentrun-sample',
+          namespace: 'agents',
+        },
+      },
+    }
+
+    await __test__.applyResourceIfChanged(kube, schedule)
+
+    expect(get).toHaveBeenCalledWith(RESOURCE_MAP.Schedule, 'jangar-control-plane-discover-sched', 'agents')
+    expect(apply).not.toHaveBeenCalled()
+  })
+
+  it('skips apply when live resource has extra defaulted fields outside desired spec', async () => {
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'controller-runtime': 'defaulted',
+        },
+      },
+      spec: {
+        cron: '*/5 * * * *',
+        timezone: 'UTC',
+        targetRef: {
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'AgentRun',
+          name: 'agentrun-sample',
+          namespace: 'agents',
+          uid: 'defaulted-uid',
+        },
+      },
+    })
+    const kube = { apply, get } as unknown as KubernetesClient
+
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: { 'swarm.proompteng.ai/name': 'jangar-control-plane' },
+      },
+      spec: {
+        cron: '*/5 * * * *',
+        timezone: 'UTC',
+        targetRef: {
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'AgentRun',
+          name: 'agentrun-sample',
+          namespace: 'agents',
+        },
+      },
+    }
+
+    await __test__.applyResourceIfChanged(kube, schedule)
+
+    expect(apply).not.toHaveBeenCalled()
+  })
+
+  it('applies schedule when desired spec differs from live resource', async () => {
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: { 'swarm.proompteng.ai/name': 'jangar-control-plane' },
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        timezone: 'UTC',
+      },
+    })
+    const kube = { apply, get } as unknown as KubernetesClient
+
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        labels: { 'swarm.proompteng.ai/name': 'jangar-control-plane' },
+      },
+      spec: {
+        cron: '*/5 * * * *',
+        timezone: 'UTC',
+      },
+    }
+
+    await __test__.applyResourceIfChanged(kube, schedule)
+
+    expect(apply).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves watched resources only for controller-managed kinds', () => {
+    expect(__test__.resolveWatchedResourceForKind('Swarm')).toBe(RESOURCE_MAP.Swarm)
+    expect(__test__.resolveWatchedResourceForKind('Schedule')).toBe(RESOURCE_MAP.Schedule)
+    expect(__test__.resolveWatchedResourceForKind('Artifact')).toBe(RESOURCE_MAP.Artifact)
+    expect(__test__.resolveWatchedResourceForKind('ConfigMap')).toBeNull()
+  })
+
+  it('identifies swarm status-only modified events', () => {
+    const swarm = {
+      kind: 'Swarm',
+      metadata: { generation: 7 },
+      status: { observedGeneration: 7 },
+    }
+
+    expect(__test__.isSwarmStatusOnlyEvent('MODIFIED', swarm)).toBe(true)
+    expect(__test__.isSwarmStatusOnlyEvent('ADDED', swarm)).toBe(false)
+    expect(__test__.isSwarmStatusOnlyEvent('MODIFIED', { ...swarm, status: { observedGeneration: 6 } })).toBe(false)
+  })
+
+  it('throttles swarm status-only reconciles within the guard interval', () => {
+    const key = 'agents/Swarm/jangar-control-plane'
+    const startMs = 1_000
+
+    expect(__test__.shouldThrottleSwarmStatusReconcile(key, startMs)).toBe(false)
+    expect(
+      __test__.shouldThrottleSwarmStatusReconcile(key, startMs + __test__.SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS - 1),
+    ).toBe(true)
+    expect(
+      __test__.shouldThrottleSwarmStatusReconcile(key, startMs + __test__.SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS),
+    ).toBe(false)
+  })
+
+  it('throttles schedule runner status reconciles within the guard interval', () => {
+    const key = 'agents/Schedule/jangar-control-plane-plan-sched'
+    const startMs = 1_000
+
+    expect(__test__.shouldThrottleScheduleRunnerStatusReconcile(key, startMs)).toBe(false)
+    expect(
+      __test__.shouldThrottleScheduleRunnerStatusReconcile(
+        key,
+        startMs + __test__.SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS - 1,
+      ),
+    ).toBe(true)
+    expect(
+      __test__.shouldThrottleScheduleRunnerStatusReconcile(
+        key,
+        startMs + __test__.SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS,
+      ),
+    ).toBe(false)
+  })
+
+  it('reconciles schedule runner status without full schedule apply path', async () => {
+    const get = vi.fn(async (resource: string) => {
+      if (resource === 'cronjob') {
+        return { status: { lastScheduleTime: '2026-01-20T00:10:00Z' } }
+      }
+      return null
+    })
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, applyStatus } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: { name: 'schedule-a', namespace: 'agents', generation: 3 },
+      status: { conditions: [] },
+    }
+
+    await __test__.reconcileScheduleRunnerStatus(kube, schedule, 'agents')
+
+    expect(get).toHaveBeenCalledWith('cronjob', 'schedule-a-cron', 'agents')
+    expect(applyStatus).toHaveBeenCalledTimes(1)
+    const payload = applyStatus.mock.calls[0]?.[0] as { status?: Record<string, unknown> }
+    expect(payload.status?.phase).toBe('Active')
+    expect(payload.status?.lastRunTime).toBe('2026-01-20T00:10:00Z')
+  })
+
   it('resolves startup gate from feature flags with env fallback default', async () => {
     const previousNodeEnv = process.env.NODE_ENV
     try {

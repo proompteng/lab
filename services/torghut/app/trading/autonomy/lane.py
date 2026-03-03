@@ -49,6 +49,7 @@ from ..features import (
 from ..forecasting import build_default_forecast_router
 from ..llm.evaluation import build_llm_evaluation_metrics
 from ..models import SignalEnvelope
+from ..parity import build_benchmark_parity_report, write_benchmark_parity_report
 from ..reporting import (
     EvaluationReport,
     EvaluationReportConfig,
@@ -78,10 +79,8 @@ from .policy_checks import (
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 from .phase_manifest_contract import (
     AUTONOMY_PHASE_ORDER,
-    AUTONOMY_PHASE_MANIFEST_SLO_VERSION,
-    AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
-    build_phase_manifest_payload_with_runtime_and_rollback,
-    coerce_path_strings,
+    coerce_phase_status,
+    normalize_phase_transitions,
 )
 
 
@@ -101,6 +100,7 @@ _STAGE_EVALUATION = "evaluation"
 _STAGE_RECOMMENDATION = "promotion-recommendation"
 _STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
+_BENCHMARK_PARITY_REPORT_PATH = "benchmarks/benchmark-parity-report-v1.json"
 _STAGE_PROFITABILITY = "profitability_stage_manifest"
 
 
@@ -117,62 +117,6 @@ class _StageManifestRecord:
     parent_lineage_hash: str | None = None
     parent_stage: str | None = None
     inputs: dict[str, str] = field(default_factory=dict)
-
-
-def _write_stage_iteration_notes(
-    *,
-    artifact_root: Path,
-    run_id: str,
-    candidate_id: str,
-    promotion_target: PromotionTarget,
-    promotion_recommended_mode: PromotionTarget,
-    gate_allowed: bool,
-    recommendation_action: str,
-    recommendation_reason_count: int,
-    promotion_reasons: list[str],
-    repository: str,
-    base: str,
-    head: str,
-    priority_id: str | None,
-) -> Path:
-    notes_dir = artifact_root / "notes"
-    notes_dir.mkdir(parents=True, exist_ok=True)
-    iteration = _readable_notes_iteration_number(notes_dir)
-    if iteration > 1:
-        iteration -= 1
-    notes_path = notes_dir / f"iteration-{iteration}.md"
-
-    if notes_path.exists():
-        lines = notes_path.read_text(encoding="utf-8").splitlines()
-        if lines and lines[-1]:
-            lines.append("")
-    else:
-        lines = [
-            f"# Autonomy lane iteration {iteration}",
-            "",
-            f"- run_id: {run_id}",
-            f"- candidate_id: {candidate_id}",
-            f"- promotion_target: {promotion_target}",
-            f"- recommendation_mode: {promotion_recommended_mode}",
-            f"- recommendation_action: {recommendation_action}",
-            f"- gate_allowed: {str(gate_allowed).lower()}",
-            f"- recommendation_reason_count: {recommendation_reason_count}",
-            "- repository: {0}".format(repository),
-            "- base: {0}".format(base),
-            "- head: {0}".format(head),
-        ]
-        if priority_id:
-            lines.append(f"- priority_id: {priority_id}")
-
-    lines.extend([
-        "",
-        "## Gate and evidence summary",
-        "",
-    ])
-    lines.extend(f"- {reason}" for reason in promotion_reasons)
-
-    notes_path.write_text("\n".join(lines), encoding="utf-8")
-    return notes_path
 
 
 def _coerce_evidence_bool(value: object) -> bool | None:
@@ -282,6 +226,7 @@ class AutonomousLaneResult:
     actuation_intent_path: Path | None
     paper_patch_path: Path | None
     phase_manifest_path: Path
+    benchmark_parity_path: Path
     gate_report_trace_id: str
     recommendation_trace_id: str
     recommendation_artifact_path: Path
@@ -589,6 +534,7 @@ def _build_profitability_stage_manifest(
     gate_report_payload: dict[str, Any],
     gate_report_path: Path,
     profitability_benchmark_path: Path,
+    benchmark_parity_path: Path,
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
     janus_event_car_path: Path,
@@ -699,6 +645,7 @@ def _build_profitability_stage_manifest(
         ("walkforward_results_present", "walkforward_results", walkforward_results_path),
         ("evaluation_report_present", "evaluation_report", evaluation_report_path),
         ("gate_evaluation_present", "gate_evaluation", gate_report_path),
+        ("benchmark_parity_present", "benchmark_parity", benchmark_parity_path),
         ("janus_event_car_present", "janus_event_car", janus_event_car_path),
         ("janus_hgrm_reward_present", "janus_hgrm_reward", janus_hgrm_reward_path),
         ("recalibration_report_present", "recalibration_report", recalibration_report_path),
@@ -1007,6 +954,7 @@ def run_autonomous_lane(
     janus_event_car_path = gates_dir / "janus-event-car-v1.json"
     janus_hgrm_reward_path = gates_dir / "janus-hgrm-reward-v1.json"
     stress_metrics_path = gates_dir / _STRESS_METRICS_ARTIFACT_PATH
+    benchmark_parity_path = output_dir / _BENCHMARK_PARITY_REPORT_PATH
     recalibration_report_path = gates_dir / "recalibration-report.json"
     promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     profitability_manifest_path = output_dir / _PROFITABILITY_STAGE_MANIFEST_PATH
@@ -1129,17 +1077,19 @@ def run_autonomous_lane(
         )
         evaluation_report_path = backtest_dir / "evaluation-report.json"
         write_evaluation_report(report, evaluation_report_path)
+        baseline_candidate_id = "baseline-legacy-macd-rsi"
+        baseline_report_config = EvaluationReportConfig(
+            evaluation_start=signals[0].event_ts,
+            evaluation_end=signals[-1].event_ts,
+            signal_source=str(signals_path),
+            strategies=_to_orm_strategies(baseline_runtime_strategies),
+            run_id=f"{run_id}-baseline",
+            strategy_config_path=f"baseline:{baseline_candidate_id}@1.0.0",
+            git_sha=code_version,
+        )
         baseline_report = generate_evaluation_report(
             baseline_walk_results,
-            config=EvaluationReportConfig(
-                evaluation_start=signals[0].event_ts,
-                evaluation_end=signals[-1].event_ts,
-                signal_source=str(signals_path),
-                strategies=_to_orm_strategies(baseline_runtime_strategies),
-                run_id=f"{run_id}-baseline",
-                strategy_config_path="baseline:legacy_macd_rsi@1.0.0",
-                git_sha=code_version,
-            ),
+            config=baseline_report_config,
             promotion_target="shadow",
         )
         write_evaluation_report(baseline_report, baseline_report_path)
@@ -1209,7 +1159,7 @@ def run_autonomous_lane(
 
         benchmark = execute_profitability_benchmark_v4(
             candidate_id=candidate_id,
-            baseline_id="baseline-legacy-macd-rsi",
+            baseline_id=baseline_candidate_id,
             candidate_report_payload=report.to_payload(),
             baseline_report_payload=baseline_report.to_payload(),
             required_slice_keys=[
@@ -1221,6 +1171,12 @@ def run_autonomous_lane(
         profitability_benchmark_path.write_text(
             json.dumps(benchmark.to_payload(), indent=2), encoding="utf-8"
         )
+        benchmark_parity_report = build_benchmark_parity_report(
+            candidate_id=candidate_id,
+            baseline_candidate_id=baseline_candidate_id,
+            now=now,
+        )
+        write_benchmark_parity_report(benchmark_parity_report, benchmark_parity_path)
 
         confidence_values = _collect_confidence_values(walk_decisions)
         reproducibility_hashes = {
@@ -1236,7 +1192,7 @@ def run_autonomous_lane(
         profitability_evidence = build_profitability_evidence_v4(
             run_id=run_id,
             candidate_id=candidate_id,
-            baseline_id="baseline-legacy-macd-rsi",
+            baseline_id=baseline_candidate_id,
             candidate_report_payload=report.to_payload(),
             benchmark=benchmark,
             confidence_values=confidence_values,
@@ -1409,6 +1365,11 @@ def run_autonomous_lane(
         stress_metrics_artifact_ref = str(stress_metrics_path)
         if not output_dir.is_absolute():
             stress_metrics_artifact_ref = str(stress_metrics_path.relative_to(output_dir))
+        benchmark_parity_artifact_ref = str(benchmark_parity_path)
+        if not output_dir.is_absolute():
+            benchmark_parity_artifact_ref = str(
+                benchmark_parity_path.relative_to(output_dir)
+            )
         gate_report_payload = gate_report.to_payload()
         gate_report_payload["run_id"] = run_id
         gate_report_payload["throughput"] = {
@@ -1443,6 +1404,9 @@ def run_autonomous_lane(
                 "evidence_complete": janus_evidence_complete,
                 "reasons": janus_reasons,
             },
+            "benchmark_parity": {
+                "artifact_ref": benchmark_parity_artifact_ref,
+            },
             "promotion_rationale": {
                 "requested_target": promotion_target,
                 "gate_recommended_mode": gate_report.recommended_mode,
@@ -1474,6 +1438,7 @@ def run_autonomous_lane(
                 "evaluation_report": str(evaluation_report_path),
                 "baseline_evaluation_report": str(baseline_report_path),
                 "gate_report": str(gate_report_path),
+                "benchmark_parity": str(benchmark_parity_path),
                 "profitability_benchmark": str(profitability_benchmark_path),
                 "profitability_evidence": str(profitability_evidence_path),
                 "profitability_validation": str(profitability_validation_path),
@@ -1552,6 +1517,7 @@ def run_autonomous_lane(
                 profitability_benchmark_path=profitability_benchmark_path,
                 profitability_evidence_path=profitability_evidence_path,
                 profitability_validation_path=profitability_validation_path,
+                benchmark_parity_path=benchmark_parity_path,
                 janus_event_car_path=janus_event_car_path,
                 janus_hgrm_reward_path=janus_hgrm_reward_path,
                 recalibration_report_path=recalibration_report_path,
@@ -1650,6 +1616,7 @@ def run_autonomous_lane(
                     "reasons": gate_report.reasons,
                     "artifact_refs": [
                         str(gate_report_path),
+                        str(benchmark_parity_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
                         str(stress_metrics_path),
@@ -1672,6 +1639,7 @@ def run_autonomous_lane(
                         str(promotion_check_path),
                         str(rollback_check_path),
                         str(gate_report_path),
+                        str(benchmark_parity_path),
                         str(profitability_benchmark_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
@@ -1717,6 +1685,9 @@ def run_autonomous_lane(
                 "evidence_complete": janus_evidence_complete,
                 "reasons": janus_reasons,
             },
+            "benchmark_parity": {
+                "artifact_ref": benchmark_parity_artifact_ref,
+            },
             "promotion_rationale": {
                 "requested_target": promotion_target,
                 "gate_recommended_mode": gate_report.recommended_mode,
@@ -1738,6 +1709,7 @@ def run_autonomous_lane(
         gate_report_payload["provenance"] = {
             "gate_report_trace_id": gate_report_trace_id,
             "recommendation_trace_id": recommendation_trace_id,
+            "benchmark_parity_artifact": str(benchmark_parity_path),
             "profitability_benchmark_artifact": str(profitability_benchmark_path),
             "profitability_evidence_artifact": str(profitability_evidence_path),
             "profitability_validation_artifact": str(profitability_validation_path),
@@ -1771,6 +1743,7 @@ def run_autonomous_lane(
             output_artifacts={
                 "evaluation_report": evaluation_report_path,
                 "gate_evaluation": gate_report_path,
+                "benchmark_parity": benchmark_parity_path,
                 "profitability_benchmark": profitability_benchmark_path,
                 "profitability_evidence": profitability_evidence_path,
                 "profitability_validation": profitability_validation_path,
@@ -1807,6 +1780,7 @@ def run_autonomous_lane(
                         str(gate_report_path),
                         str(promotion_gate_path),
                         str(profitability_manifest_path),
+                        str(benchmark_parity_path),
                         str(profitability_benchmark_path),
                         str(profitability_validation_path),
                         str(janus_event_car_path),
@@ -1865,6 +1839,7 @@ def run_autonomous_lane(
             "evaluation_report": evaluation_report_path,
             "gate_report": gate_report_path,
             "profitability_stage_manifest": profitability_manifest_path,
+            "benchmark_parity": benchmark_parity_path,
             "profitability_benchmark": profitability_benchmark_path,
             "profitability_evidence": profitability_evidence_path,
             "profitability_validation": profitability_validation_path,
@@ -1980,6 +1955,7 @@ def run_autonomous_lane(
             profitability_benchmark_path=profitability_benchmark_path,
             profitability_evidence_path=profitability_evidence_path,
             profitability_validation_path=profitability_validation_path,
+            benchmark_parity_path=benchmark_parity_path,
             janus_event_car_path=janus_event_car_path,
             janus_hgrm_reward_path=janus_hgrm_reward_path,
             recalibration_report_path=recalibration_report_path,
@@ -2072,21 +2048,6 @@ def run_autonomous_lane(
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
         )
-        _write_stage_iteration_notes(
-            artifact_root=notes_root,
-            run_id=run_id,
-            candidate_id=candidate_id,
-            promotion_target=promotion_target,
-            promotion_recommended_mode=recommended_mode,
-            gate_allowed=promotion_allowed,
-            recommendation_action=promotion_recommendation.action,
-            recommendation_reason_count=len(promotion_reasons),
-            promotion_reasons=promotion_reasons,
-            repository=cast(str, resolved_governance_repository),
-            base=cast(str, resolved_governance_base),
-            head=cast(str, resolved_governance_head),
-            priority_id=priority_id,
-        )
 
         return AutonomousLaneResult(
             run_id=run_id,
@@ -2104,6 +2065,7 @@ def run_autonomous_lane(
             evaluation_manifest_path=manifest_paths[_STAGE_EVALUATION],
             recommendation_manifest_path=manifest_paths[_STAGE_RECOMMENDATION],
             profitability_manifest_path=profitability_manifest_path,
+            benchmark_parity_path=benchmark_parity_path,
             gate_report_trace_id=gate_report_trace_id,
             recommendation_trace_id=recommendation_trace_id,
             stage_trace_ids=stage_trace_ids,
@@ -2259,7 +2221,7 @@ def _build_phase_manifest(
     phase_timestamp = evaluated_at.isoformat()
     governance = _normalize_governance_inputs(governance_inputs)
     execution_context = governance["execution_context"]
-    execution_context["artifactPath"] = _coerce_str(
+    artifact_path = _coerce_str(
         execution_context.get("artifactPath"),
         default=str(output_dir),
     )
@@ -2290,20 +2252,13 @@ def _build_phase_manifest(
         if isinstance(drift_gate_check.get("artifact_refs", []), list)
         else []
     )
-    evidence_artifact_refs = []
-    evidence_artifact_refs.extend(
-        _coerce_path_strings(
-            runtime_governance.get("artifact_refs", [])
-            if isinstance(runtime_governance.get("artifact_refs", []), list)
-            else []
-        )
+    runtime_gate_status = coerce_phase_status(
+        runtime_governance.get("governance_status", "skipped")
     )
-    evidence_artifact_refs.extend(
-        _coerce_path_strings(
-            rollback_proof.get("artifact_refs", [])
-            if isinstance(rollback_proof.get("artifact_refs", []), list)
-            else []
-        )
+    runtime_artifact_refs = _coerce_path_strings(
+        runtime_governance.get("artifact_refs", [])
+        if isinstance(runtime_governance.get("artifact_refs", []), list)
+        else []
     )
     rollback_triggered = bool(
         runtime_governance.get("rollback_triggered", False)
@@ -2316,10 +2271,11 @@ def _build_phase_manifest(
         rollback_proof_path = _coerce_str(
             rollback_proof.get("rollback_incident_evidence"), default=""
         )
-    governance_reasons = [
-        *_coerce_path_strings(runtime_governance.get("reasons", [])),
-        *_coerce_path_strings(rollback_proof.get("reasons", [])),
-    ]
+    rollback_proof_status = (
+        "pass"
+        if (not rollback_triggered)
+        else ("pass" if rollback_proof_path else "fail")
+    )
     drift_gate_artifacts = sorted(
         {
             str(item)
@@ -2457,7 +2413,60 @@ def _build_phase_manifest(
             },
             "artifact_refs": ([str(patch_path)] if patch_path else []),
         },
+        {
+            "name": "runtime-governance",
+            "status": runtime_gate_status,
+            "timestamp": phase_timestamp,
+            "slo_gates": [
+                {
+                    "id": "slo_runtime_rollback_not_triggered",
+                    "status": "pass" if not rollback_triggered else "fail",
+                    "threshold": False,
+                    "value": rollback_triggered,
+                }
+            ],
+            "observations": {
+                "requested_promotion_target": requested_promotion_target,
+                "drift_status": str(runtime_governance.get("drift_status", "unknown")),
+                "action_type": str(runtime_governance.get("action_type", "")) or None,
+                "action_triggered": bool(runtime_governance.get("action_triggered", False)),
+                "rollback_triggered": rollback_triggered,
+            },
+            "required": {"required_items": ["drift_status", "rollback_triggered"]},
+            "artifact_refs": runtime_artifact_refs,
+            "reasons": list(runtime_governance.get("reasons", [])),
+        },
+        {
+            "name": "rollback-proof",
+            "status": rollback_proof_status,
+            "timestamp": phase_timestamp,
+            "slo_gates": [
+                {
+                    "id": "slo_rollback_evidence_required_when_triggered",
+                    "status": (
+                        "pass" if rollback_proof_path and rollback_triggered else "pass"
+                        if not rollback_triggered
+                        else "fail"
+                    ),
+                    "threshold": True,
+                    "value": bool(rollback_proof_path),
+                }
+            ],
+            "observations": {
+                "rollback_triggered": rollback_triggered,
+                "rollback_incident_evidence_path": rollback_proof_path or "",
+                "rollback_incident_evidence": rollback_proof_path or "",
+            },
+            "artifact_refs": [rollback_proof_path] if rollback_proof_path else [],
+            "reasons": list(rollback_proof.get("reasons", [])),
+        },
     ]
+
+    overall_pass = all(
+        coerce_phase_status(phase.get("status"), default="fail")
+        in {"pass", "skipped", "skip"}
+        for phase in phase_summaries
+    )
 
     phase_artifact_refs = sorted(
         {
@@ -2472,6 +2481,7 @@ def _build_phase_manifest(
             str(output_dir / "gates" / "profitability-benchmark-v4.json"),
             str(output_dir / "gates" / "profitability-evidence-v4.json"),
             str(output_dir / "gates" / "profitability-evidence-validation.json"),
+            str(output_dir / "benchmarks" / "benchmark-parity-report-v1.json"),
             str(output_dir / "gates" / "janus-event-car-v1.json"),
             str(output_dir / "gates" / "janus-hgrm-reward-v1.json"),
             str(output_dir / "gates" / "promotion-evidence-gate.json"),
@@ -2483,34 +2493,88 @@ def _build_phase_manifest(
             str(output_dir / "rollout" / "phase-manifest.json"),
         }
     )
+    phase_transitions = normalize_phase_transitions(
+        phase_summaries,
+    )
 
-    return build_phase_manifest_payload_with_runtime_and_rollback(
-        run_id=run_id,
-        candidate_id=candidate_id,
-        execution_context=execution_context,
-        requested_promotion_target=requested_promotion_target,
-        phase_timestamp=evaluated_at,
-        phase_payloads=phase_summaries,
-        governance_status=cast(str | None, runtime_governance.get("governance_status")),
-        drift_status=str(runtime_governance.get("drift_status", "unknown")),
-        action_type=str(runtime_governance.get("action_type", "")),
-        action_triggered=bool(runtime_governance.get("action_triggered", False)),
-        rollback_triggered=rollback_triggered,
-        rollback_incident_evidence_path=rollback_proof_path,
-        reasons=governance_reasons,
-        evidence_artifact_refs=evidence_artifact_refs,
-        observation_summary={
+    canonical_phase_payloads = {
+        str(phase.get("name", "")).strip(): dict(phase)
+        for phase in phase_summaries
+        if str(phase.get("name", "")).strip() in _AUTONOMY_PHASE_ORDER
+    }
+    ordered_phase_summaries: list[dict[str, Any]] = []
+    for expected_name in _AUTONOMY_PHASE_ORDER:
+        phase_payload = canonical_phase_payloads.get(expected_name)
+        if phase_payload is None:
+            ordered_phase_summaries.append(
+                {
+                    "name": expected_name,
+                    "status": "skip",
+                    "timestamp": phase_timestamp,
+                    "observations": {"note": "stage not evaluated"},
+                    "slo_gates": [],
+                    "artifact_refs": [],
+                }
+            )
+            continue
+
+        normalized_phase = dict(phase_payload)
+        normalized_phase["name"] = expected_name
+        normalized_phase["status"] = coerce_phase_status(
+            normalized_phase.get("status"), default="skip"
+        )
+        normalized_phase["artifact_refs"] = _coerce_path_strings(
+            normalized_phase.get("artifact_refs", [])
+        )
+        normalized_phase.setdefault("slo_gates", [])
+        ordered_phase_summaries.append(normalized_phase)
+
+    phase_summaries = ordered_phase_summaries
+    phase_transitions = normalize_phase_transitions(phase_summaries)
+    normalized_runtime_governance = dict(runtime_governance)
+    normalized_runtime_governance["rollback_triggered"] = rollback_triggered
+    normalized_runtime_governance["rollback_incident_evidence_path"] = rollback_proof_path
+    normalized_runtime_governance["rollback_incident_evidence"] = rollback_proof_path
+    normalized_rollback_proof = dict(rollback_proof)
+    normalized_rollback_proof["rollback_triggered"] = rollback_triggered
+    normalized_rollback_proof["rollback_incident_evidence_path"] = rollback_proof_path
+    normalized_rollback_proof["rollback_incident_evidence"] = rollback_proof_path
+
+    return {
+        "schema_version": "autonomy-phase-manifest-v1",
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "execution_context": {
+            "repository": execution_context.get("repository", "unknown"),
+            "base": execution_context.get("base", "unknown"),
+            "head": execution_context.get("head", "unknown"),
+            "artifactPath": artifact_path,
+            "priorityId": execution_context.get("priorityId", ""),
+        },
+        "requested_promotion_target": requested_promotion_target,
+        "created_at": phase_timestamp,
+        "updated_at": phase_timestamp,
+        "phase_count": len(phase_summaries),
+        "phase_transitions": phase_transitions,
+        "status": "pass" if overall_pass else "fail",
+        "observation_summary": {
             "signal_count": len(signals),
             "has_signals": bool(signals),
             "paper_canary_targeted": requested_promotion_target == "paper",
             "live_targeted": requested_promotion_target == "live",
         },
-        artifact_refs=[*phase_artifact_refs, *evidence_paths],
-        schema_version=AUTONOMY_PHASE_MANIFEST_SCHEMA_VERSION,
-        slo_contract_version=AUTONOMY_PHASE_MANIFEST_SLO_VERSION,
-        created_at=evaluated_at,
-        updated_at=evaluated_at,
-    )
+        "phases": phase_summaries,
+        "runtime_governance": normalized_runtime_governance,
+        "rollback_proof": normalized_rollback_proof,
+        "artifact_refs": sorted(
+            {
+                artifact_ref
+                for artifact_ref in [*phase_artifact_refs, *evidence_paths]
+                if str(artifact_ref).strip()
+            }
+        ),
+        "slo_contract_version": "governance-slo-v1",
+    }
 
 
 def _coerce_str(raw: Any, default: str = "") -> str:
@@ -2535,7 +2599,15 @@ def _coerce_int(raw: Any, default: int = 0) -> int:
 
 
 def _coerce_path_strings(values: Any) -> list[str]:
-    return coerce_path_strings(values)
+    if not isinstance(values, (list, tuple, set)):
+        return []
+    return sorted(
+        {
+            _coerce_str(value)
+            for value in values
+            if _coerce_str(value)
+        }
+    )
 
 
 def _coerce_gate_phase_gates(raw_gates: Any) -> list[dict[str, Any]]:
@@ -2590,6 +2662,7 @@ def _build_actuation_intent_payload(
     profitability_benchmark_path: Path,
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
+    benchmark_parity_path: Path,
     janus_event_car_path: Path,
     janus_hgrm_reward_path: Path,
     recalibration_report_path: Path,
@@ -2627,6 +2700,7 @@ def _build_actuation_intent_payload(
             str(profitability_manifest_path),
             str(promotion_recommendation_path),
             str(profitability_benchmark_path),
+            str(benchmark_parity_path),
             str(profitability_evidence_path),
             str(profitability_validation_path),
             str(janus_event_car_path),

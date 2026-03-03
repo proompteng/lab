@@ -218,6 +218,194 @@
 {{- end }}
 {{- end -}}
 
-{{- if gt (len $errors) 0 }}
+{{- $rolloutChecksums := .Values.rolloutChecksums | default dict -}}
+{{- if $rolloutChecksums.enabled -}}
+{{- $rolloutEntryErrors := list -}}
+{{- $dbNamespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $checksumNamespacePattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" -}}
+{{- $checksumResourceNamePattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$" -}}
+{{- $ownedDbSecretRef := "" -}}
+{{- $requiredSecrets := dict -}}
+{{- $requiredConfigMaps := dict -}}
+{{- $configuredSecretRefs := dict -}}
+{{- $configuredConfigMapRefs := dict -}}
+{{- $seenSecretRefs := dict -}}
+{{- $seenConfigMapRefs := dict -}}
+
+{{- if and .Values.database.createSecret.enabled .Values.database.url -}}
+{{- $ownedDbSecretName := include "agents.databaseSecretName" . }}
+{{- $ownedDbSecretRef = printf "%s/%s" $dbNamespace $ownedDbSecretName -}}
+{{- end -}}
+
+{{- if and (not .Values.database.createSecret.enabled) (not .Values.database.url) (.Values.database.secretRef.name) -}}
+{{- $dbSecretName := trim (default "" .Values.database.secretRef.name) -}}
+{{- if $dbSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $dbSecretName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- if .Values.database.caSecret.name -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace (.Values.database.caSecret.name | trim)) true -}}
+{{- end -}}
+
+{{- if and .Values.agentComms.enabled .Values.agentComms.nats.userSecret.name -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace (.Values.agentComms.nats.userSecret.name | trim)) true -}}
+{{- end -}}
+
+{{- range .Values.envFromSecretRefs }}
+{{- $requiredSecretName := "" -}}
+{{- if kindIs "string" . }}
+{{- $requiredSecretName = trim . -}}
+{{- else if kindIs "map" . }}
+{{- $requiredSecretName = trim (default "" .name) -}}
+{{- end -}}
+{{- if $requiredSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.env.secrets }}
+{{- $requiredSecretName := trim (default "" .secretName) -}}
+{{- if $requiredSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.envFromConfigMapRefs }}
+{{- $requiredConfigMapName := "" -}}
+{{- if kindIs "string" . }}
+{{- $requiredConfigMapName = trim . -}}
+{{- else if kindIs "map" . }}
+{{- $requiredConfigMapName = trim (default "" .name) -}}
+{{- end -}}
+{{- if $requiredConfigMapName -}}
+{{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.env.config }}
+{{- $requiredConfigMapName := trim (default "" .configMapName) -}}
+{{- if $requiredConfigMapName -}}
+{{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
+{{- end -}}
+{{- end -}}
+
+{{- range .Values.extraVolumes }}
+{{- with .volume.secret }}
+{{- $requiredSecretName := trim (default "" .secretName) -}}
+{{- if $requiredSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
+{{- end -}}
+{{- end -}}
+{{- with .volume.configMap }}
+{{- $requiredConfigMapName := trim (default "" .name) -}}
+{{- if $requiredConfigMapName -}}
+{{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
+{{- end -}}
+{{- end -}}
+{{- with .volume.projected }}
+{{- range .sources }}
+{{- with .secret }}
+{{- $requiredSecretName := trim (default "" .name) -}}
+{{- if $requiredSecretName -}}
+{{- $_ := set $requiredSecrets (printf "%s/%s" $dbNamespace $requiredSecretName) true -}}
+{{- end -}}
+{{- end -}}
+{{- with .configMap }}
+{{- $requiredConfigMapName := trim (default "" .name) -}}
+{{- if $requiredConfigMapName -}}
+{{- $_ := set $requiredConfigMaps (printf "%s/%s" $dbNamespace $requiredConfigMapName) true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- if and .Values.database.createSecret.enabled (not .Values.database.url) -}}
+{{- $errors = append $errors "rolloutChecksums.enabled=true requires database.url when database.createSecret.enabled=true." -}}
+{{- end -}}
+
+{{- range $idx, $entry := $rolloutChecksums.secrets -}}
+{{- $secretName := trim (default "" $entry.name) -}}
+{{- $secretChecksum := trim (default "" $entry.checksum) -}}
+{{- $secretNamespace := trim (default $dbNamespace $entry.namespace) -}}
+{{- if not $secretName -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d].name must be a non-empty string." $idx) -}}
+{{- end -}}
+{{- if and $secretName (not (regexMatch $checksumResourceNamePattern $secretName)) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d].name must match RFC-1123 subdomain syntax." $idx) -}}
+{{- end -}}
+{{- if and (not $secretNamespace) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d].namespace must be a non-empty string." $idx) -}}
+{{- end -}}
+{{- if and $secretNamespace (not (regexMatch $checksumNamespacePattern $secretNamespace)) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d].namespace must match RFC-1123 DNS label syntax." $idx) -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Fa-f0-9]{64}$" $secretChecksum) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d].checksum must be a 64-char sha256 hex string." $idx) -}}
+{{- end -}}
+{{- if and $secretName $secretNamespace -}}
+{{- $secretRef := printf "%s/%s" $secretNamespace $secretName -}}
+{{- if and $ownedDbSecretRef (eq $secretRef $ownedDbSecretRef) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d] cannot target %s because database.createSecret.enabled=true already owns the rollout checksum annotation for %s" $idx $secretRef $secretRef) -}}
+{{- else -}}
+{{- $_ := set $configuredSecretRefs $secretRef true -}}
+{{- if hasKey $seenSecretRefs $secretRef -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.secrets[%d] duplicates key %s. namespace+name must be unique." $idx $secretRef) -}}
+{{- else -}}
+{{- $_ := set $seenSecretRefs $secretRef true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- range $idx, $entry := $rolloutChecksums.configMaps -}}
+{{- $configMapName := trim (default "" $entry.name) -}}
+{{- $configMapChecksum := trim (default "" $entry.checksum) -}}
+{{- $configMapNamespace := trim (default $dbNamespace $entry.namespace) -}}
+{{- if not $configMapName -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d].name must be a non-empty string." $idx) -}}
+{{- end -}}
+{{- if and $configMapName (not (regexMatch $checksumResourceNamePattern $configMapName)) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d].name must match RFC-1123 subdomain syntax." $idx) -}}
+{{- end -}}
+{{- if and (not $configMapNamespace) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d].namespace must be a non-empty string." $idx) -}}
+{{- end -}}
+{{- if and $configMapNamespace (not (regexMatch $checksumNamespacePattern $configMapNamespace)) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d].namespace must match RFC-1123 DNS label syntax." $idx) -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Fa-f0-9]{64}$" $configMapChecksum) -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d].checksum must be a 64-char sha256 hex string." $idx) -}}
+{{- end -}}
+{{- if and $configMapName $configMapNamespace -}}
+{{- $configMapRef := printf "%s/%s" $configMapNamespace $configMapName -}}
+{{- $_ := set $configuredConfigMapRefs $configMapRef true -}}
+{{- if hasKey $seenConfigMapRefs $configMapRef -}}
+{{- $rolloutEntryErrors = append $rolloutEntryErrors (printf "rolloutChecksums.configMaps[%d] duplicates key %s. namespace+name must be unique." $idx $configMapRef) -}}
+{{- else -}}
+{{- $_ := set $seenConfigMapRefs $configMapRef true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- range $requiredRef := keys $requiredSecrets -}}
+{{- if not (hasKey $configuredSecretRefs $requiredRef) -}}
+{{- $errors = append $errors (printf "rolloutChecksums.secrets is missing required contract entry for %s. Add an exact checksum for each secret used by pod env/volume references when rolloutChecksums.enabled=true." $requiredRef) -}}
+{{- end -}}
+{{- end -}}
+
+{{- range $requiredRef := keys $requiredConfigMaps -}}
+{{- if not (hasKey $configuredConfigMapRefs $requiredRef) -}}
+{{- $errors = append $errors (printf "rolloutChecksums.configMaps is missing required contract entry for %s. Add an exact checksum for each configmap used by pod env/volume references when rolloutChecksums.enabled=true." $requiredRef) -}}
+{{- end -}}
+{{- end -}}
+
+{{- if gt (len $rolloutEntryErrors) 0 -}}
+{{- $errors = append $errors (printf "%s" (join "\n" $rolloutEntryErrors)) -}}
+{{- end -}}
+{{- end -}}
+
+{{- if gt (len $errors) 0 -}}
 {{- fail (printf "Agents chart values validation failed:\n- %s" (join "\n- " $errors)) -}}
 {{- end -}}

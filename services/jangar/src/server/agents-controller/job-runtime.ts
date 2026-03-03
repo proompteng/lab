@@ -81,7 +81,7 @@ export const normalizeLabelValue = (value: string) => {
   return trimmed.length <= 63 ? trimmed : trimmed.slice(0, 63)
 }
 
-const buildRunSpecContext = (
+export const buildRunSpecContext = (
   agentRun: Record<string, unknown>,
   agent: Record<string, unknown> | null,
   implementation: Record<string, unknown>,
@@ -104,6 +104,7 @@ const buildRunSpecContext = (
     },
     implementation,
     parameters,
+    inputs: parameters,
     memory: memory ?? {},
     vcs: vcs ?? {},
   }

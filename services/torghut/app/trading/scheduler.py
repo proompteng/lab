@@ -5790,7 +5790,9 @@ class TradingScheduler:
         ).strip().lower()
         has_payload_values = (
             drift_governance_payload.get("rollback_triggered")
+            or isinstance(action_payload, Mapping)
             or _as_values(action_payload)
+            or isinstance(detection_payload, Mapping)
             or _as_values(detection_payload)
             or drift_status in {"drift_detected", "unhealthy"}
             or (

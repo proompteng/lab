@@ -64,8 +64,14 @@ let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 let watchHandles: Array<{ stop: () => void }> = []
 let swarmCrdsRefreshHandle: NodeJS.Timeout | null = null
 const namespaceQueues = new Map<string, Promise<void>>()
+const queuedResourceKeysByNamespace = new Map<string, Map<string, { rerun: boolean }>>()
 const optionalCrdsReady = new Set<string>()
 const swarmUnfreezeTimers = new Map<string, NodeJS.Timeout>()
+const swarmStatusReconcileThrottleByKey = new Map<string, number>()
+const scheduleRunnerStatusReconcileThrottleByKey = new Map<string, number>()
+
+const SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS = 30_000
+const SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS = 30_000
 
 const nowIso = () => new Date().toISOString()
 
@@ -228,6 +234,42 @@ const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
       console.warn('[jangar] supporting controller task failed', error)
     })
   namespaceQueues.set(namespace, next)
+}
+
+const queueResourceTask = (namespace: string, key: string, task: () => Promise<void>) => {
+  const keys = queuedResourceKeysByNamespace.get(namespace) ?? new Map<string, { rerun: boolean }>()
+  const existing = keys.get(key)
+  if (existing) {
+    existing.rerun = true
+    return
+  }
+
+  const state = { rerun: false }
+  keys.set(key, state)
+  queuedResourceKeysByNamespace.set(namespace, keys)
+
+  const runTask = () => {
+    enqueueNamespaceTask(namespace, async () => {
+      try {
+        await task()
+      } finally {
+        const currentKeys = queuedResourceKeysByNamespace.get(namespace)
+        const currentState = currentKeys?.get(key)
+        if (!currentKeys || !currentState) return
+        if (currentState.rerun) {
+          currentState.rerun = false
+          runTask()
+          return
+        }
+        currentKeys.delete(key)
+        if (currentKeys.size === 0) {
+          queuedResourceKeysByNamespace.delete(namespace)
+        }
+      }
+    })
+  }
+
+  runTask()
 }
 
 const clearAllSwarmUnfreezeTimers = () => {
@@ -442,6 +484,137 @@ const setStatus = async (
 const listItems = (payload: Record<string, unknown>) => {
   const items = Array.isArray(payload.items) ? payload.items : []
   return items.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+}
+
+const stableStringify = (value: unknown): string => {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value) ?? 'null'
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(',')}]`
+  }
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort()
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`
+}
+
+const extractComparableValue = (actual: unknown, desired: unknown): unknown => {
+  if (desired === null || typeof desired !== 'object') {
+    return actual
+  }
+  if (Array.isArray(desired)) {
+    if (!Array.isArray(actual)) return actual
+    return desired.map((entry, index) => extractComparableValue(actual[index], entry))
+  }
+  if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
+    return actual
+  }
+  const actualRecord = actual as Record<string, unknown>
+  const desiredRecord = desired as Record<string, unknown>
+  const output: Record<string, unknown> = {}
+  for (const key of Object.keys(desiredRecord)) {
+    output[key] = extractComparableValue(actualRecord[key], desiredRecord[key])
+  }
+  return output
+}
+
+const normalizeResourceForApplyCompare = (input: Record<string, unknown>, desired: Record<string, unknown>) => {
+  const next: Record<string, unknown> = {
+    apiVersion: asString(input.apiVersion) ?? asString(desired.apiVersion),
+    kind: asString(input.kind) ?? asString(desired.kind),
+    metadata: extractComparableValue(asRecord(input.metadata) ?? {}, asRecord(desired.metadata) ?? {}),
+  }
+
+  for (const key of Object.keys(desired)) {
+    if (key === 'apiVersion' || key === 'kind' || key === 'metadata' || key === 'status') continue
+    next[key] = extractComparableValue(input[key], desired[key])
+  }
+
+  return next
+}
+
+const resolveComparableResource = (kind: string) => {
+  if (kind === 'Schedule') return RESOURCE_MAP.Schedule
+  if (kind === 'ConfigMap') return 'configmap'
+  if (kind === 'CronJob') return 'cronjob'
+  if (kind === 'PersistentVolumeClaim') return 'persistentvolumeclaim'
+  return null
+}
+
+const resolveWatchedResourceForKind = (kind: string) => {
+  if (kind === 'Tool') return RESOURCE_MAP.Tool
+  if (kind === 'ApprovalPolicy') return RESOURCE_MAP.ApprovalPolicy
+  if (kind === 'Budget') return RESOURCE_MAP.Budget
+  if (kind === 'SecretBinding') return RESOURCE_MAP.SecretBinding
+  if (kind === 'Signal') return RESOURCE_MAP.Signal
+  if (kind === 'SignalDelivery') return RESOURCE_MAP.SignalDelivery
+  if (kind === 'Schedule') return RESOURCE_MAP.Schedule
+  if (kind === 'Swarm') return RESOURCE_MAP.Swarm
+  if (kind === 'Workspace') return RESOURCE_MAP.Workspace
+  if (kind === 'Artifact') return RESOURCE_MAP.Artifact
+  return null
+}
+
+const asNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  return null
+}
+
+const isSwarmStatusOnlyEvent = (eventType: string | undefined, resource: Record<string, unknown>) => {
+  if (eventType !== 'MODIFIED') return false
+  if (asString(resource.kind) !== 'Swarm') return false
+  const generation = asNumber(readNested(resource, ['metadata', 'generation']))
+  const observedGeneration = asNumber(readNested(resource, ['status', 'observedGeneration']))
+  return generation !== null && observedGeneration !== null && generation === observedGeneration
+}
+
+const shouldThrottleSwarmStatusReconcile = (resourceKey: string, nowMs = Date.now()) => {
+  const last = swarmStatusReconcileThrottleByKey.get(resourceKey)
+  if (last !== undefined && nowMs - last < SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS) {
+    return true
+  }
+  swarmStatusReconcileThrottleByKey.set(resourceKey, nowMs)
+  return false
+}
+
+const shouldThrottleScheduleRunnerStatusReconcile = (resourceKey: string, nowMs = Date.now()) => {
+  const last = scheduleRunnerStatusReconcileThrottleByKey.get(resourceKey)
+  if (last !== undefined && nowMs - last < SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS) {
+    return true
+  }
+  scheduleRunnerStatusReconcileThrottleByKey.set(resourceKey, nowMs)
+  return false
+}
+
+const applyResourceIfChanged = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  resource: Record<string, unknown>,
+) => {
+  const kind = asString(resource.kind)
+  const metadata = asRecord(resource.metadata) ?? {}
+  const name = asString(metadata.name)
+  const namespace = asString(metadata.namespace)
+  if (!kind || !name || !namespace) {
+    return kube.apply(resource)
+  }
+
+  const comparableResource = resolveComparableResource(kind)
+  if (!comparableResource) {
+    return kube.apply(resource)
+  }
+
+  const existing = await kube.get(comparableResource, name, namespace)
+  if (existing) {
+    const normalizedExisting = normalizeResourceForApplyCompare(existing, resource)
+    const normalizedDesired = normalizeResourceForApplyCompare(resource, resource)
+    if (stableStringify(normalizedExisting) === stableStringify(normalizedDesired)) {
+      return existing
+    }
+  }
+
+  return kube.apply(resource)
 }
 
 const hashNameSuffix = (value: string) => {
@@ -846,7 +1019,7 @@ const scheduleSwarmUnfreezeReconcile = (
     const timer = setTimeout(async () => {
       if (delayMs <= 2_147_483_647) {
         swarmUnfreezeTimers.delete(key)
-        await enqueueNamespaceTask(namespace, async () => {
+        queueResourceTask(namespace, `Swarm/${namespace}/${swarmName}`, async () => {
           const latest = await kube.get(RESOURCE_MAP.Swarm, swarmName, namespace)
           if (!latest) return
           await reconcileSwarm(kube, latest, namespace)
@@ -1192,6 +1365,28 @@ const buildScheduleRunnerCommand = (): string =>
     'sed "s/__JANGAR_DELIVERY_ID__/${DELIVERY_ID}/g" /config/run.json | kubectl create -f -',
   ].join(' ')
 
+const reconcileScheduleRunnerStatus = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  schedule: Record<string, unknown>,
+  namespace: string,
+) => {
+  const status = asRecord(schedule.status) ?? {}
+  const scheduleName = asString(readNested(schedule, ['metadata', 'name'])) ?? 'schedule'
+  const cronJobName = makeName(scheduleName, 'cron')
+  const cronResource = await kube.get('cronjob', cronJobName, namespace)
+  const lastRunTime = asString(readNested(cronResource ?? {}, ['status', 'lastScheduleTime'])) ?? undefined
+  const conditions = upsertCondition(
+    normalizeConditions(status.conditions),
+    buildReadyCondition(true, 'Active', 'schedule active'),
+  )
+  await setStatus(kube, schedule, {
+    observedGeneration: asRecord(schedule.metadata)?.generation ?? 0,
+    phase: 'Active',
+    lastRunTime,
+    conditions,
+  })
+}
+
 const reconcileSchedule = async (
   kube: ReturnType<typeof createKubernetesClient>,
   schedule: Record<string, unknown>,
@@ -1235,7 +1430,7 @@ const reconcileSchedule = async (
         'run.json': JSON.stringify(template, null, 2),
       },
     }
-    await kube.apply(configMap)
+    await applyResourceIfChanged(kube, configMap)
 
     const image =
       process.env.JANGAR_SCHEDULE_RUNNER_IMAGE || process.env.JANGAR_IMAGE || 'ghcr.io/proompteng/jangar:latest'
@@ -1291,19 +1486,8 @@ const reconcileSchedule = async (
         },
       },
     }
-    await kube.apply(cronJob)
-    const cronResource = await kube.get('cronjob', cronJobName, namespace)
-    const lastRunTime = asString(readNested(cronResource ?? {}, ['status', 'lastScheduleTime'])) ?? undefined
-    const conditions = upsertCondition(
-      normalizeConditions(status.conditions),
-      buildReadyCondition(true, 'Active', 'schedule active'),
-    )
-    await setStatus(kube, schedule, {
-      observedGeneration: asRecord(schedule.metadata)?.generation ?? 0,
-      phase: 'Active',
-      lastRunTime,
-      conditions,
-    })
+    await applyResourceIfChanged(kube, cronJob)
+    await reconcileScheduleRunnerStatus(kube, schedule, namespace)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const conditions = upsertCondition(
@@ -1739,7 +1923,7 @@ const reconcileSwarm = async (
       },
     }
 
-    await kube.apply(schedule)
+    await applyResourceIfChanged(kube, schedule)
     const scheduleResource = await kube.get(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace)
     const schedulePhase = asString(readNested(scheduleResource ?? {}, ['status', 'phase'])) ?? 'Active'
     const lastRunTime = asString(readNested(scheduleResource ?? {}, ['status', 'lastRunTime'])) ?? undefined
@@ -1922,7 +2106,7 @@ const reconcileWorkspace = async (
       ...(storageClassName ? { storageClassName } : {}),
     },
   }
-  await kube.apply(pvc)
+  await applyResourceIfChanged(kube, pvc)
 
   const pvcResource = await kube.get('persistentvolumeclaim', workspaceName, namespace)
   const pvcPhase = asString(readNested(pvcResource ?? {}, ['status', 'phase'])) ?? 'Pending'
@@ -2086,7 +2270,23 @@ const handleResourceEvent = (
     return
   }
   if (!resource) return
-  enqueueNamespaceTask(namespace, () => reconcileResource(kube, resource, namespace))
+  const resourceNamespace = asString(readNested(resource, ['metadata', 'namespace'])) ?? namespace
+  const resourceKind = asString(resource.kind) ?? 'Unknown'
+  const resourceName = asString(readNested(resource, ['metadata', 'name'])) ?? 'unknown'
+  const queueKey = `${resourceNamespace}/${resourceKind}/${resourceName}`
+  if (isSwarmStatusOnlyEvent(event.type, resource) && shouldThrottleSwarmStatusReconcile(queueKey)) {
+    return
+  }
+  queueResourceTask(resourceNamespace, queueKey, async () => {
+    const watchedResource = resolveWatchedResourceForKind(resourceKind)
+    if (!watchedResource || !resourceName || resourceName === 'unknown') {
+      await reconcileResource(kube, resource, resourceNamespace)
+      return
+    }
+    const latestResource = await kube.get(watchedResource, resourceName, resourceNamespace)
+    if (!latestResource) return
+    await reconcileResource(kube, latestResource, resourceNamespace)
+  })
 }
 
 const handleScheduleRunnerEvent = async (
@@ -2098,9 +2298,17 @@ const handleScheduleRunnerEvent = async (
   if (!resource) return
   const scheduleName = asString(readNested(resource, ['metadata', 'labels', 'schedules.proompteng.ai/schedule']))
   if (!scheduleName) return
-  const schedule = await kube.get(RESOURCE_MAP.Schedule, scheduleName, namespace)
-  if (!schedule) return
-  await reconcileSchedule(kube, schedule, namespace)
+  const queueKey = `${namespace}/Schedule/${scheduleName}`
+  if (event.type === 'MODIFIED' && shouldThrottleScheduleRunnerStatusReconcile(queueKey)) return
+  queueResourceTask(namespace, queueKey, async () => {
+    const schedule = await kube.get(RESOURCE_MAP.Schedule, scheduleName, namespace)
+    if (!schedule) return
+    if (event.type === 'DELETED') {
+      await reconcileSchedule(kube, schedule, namespace)
+      return
+    }
+    await reconcileScheduleRunnerStatus(kube, schedule, namespace)
+  })
 }
 
 const handleWorkspaceVolumeEvent = async (
@@ -2112,9 +2320,11 @@ const handleWorkspaceVolumeEvent = async (
   if (!resource) return
   const workspaceName = asString(readNested(resource, ['metadata', 'labels', 'workspaces.proompteng.ai/workspace']))
   if (!workspaceName) return
-  const workspace = await kube.get(RESOURCE_MAP.Workspace, workspaceName, namespace)
-  if (!workspace) return
-  await reconcileWorkspace(kube, workspace, namespace)
+  queueResourceTask(namespace, `${namespace}/Workspace/${workspaceName}`, async () => {
+    const workspace = await kube.get(RESOURCE_MAP.Workspace, workspaceName, namespace)
+    if (!workspace) return
+    await reconcileWorkspace(kube, workspace, namespace)
+  })
 }
 
 export const startSupportingPrimitivesController = async () => {
@@ -2298,14 +2508,25 @@ export const stopSupportingPrimitivesController = () => {
   clearAllSwarmUnfreezeTimers()
   watchHandles = []
   namespaceQueues.clear()
+  queuedResourceKeysByNamespace.clear()
+  swarmStatusReconcileThrottleByKey.clear()
+  scheduleRunnerStatusReconcileThrottleByKey.clear()
   started = false
   controllerState.started = false
 }
 
 export const __test__ = {
+  applyResourceIfChanged,
   buildScheduleRunnerCommand,
+  isSwarmStatusOnlyEvent,
+  reconcileScheduleRunnerStatus,
   reconcileTool,
   reconcileSwarm,
+  resolveWatchedResourceForKind,
+  shouldThrottleScheduleRunnerStatusReconcile,
+  shouldThrottleSwarmStatusReconcile,
+  SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS,
   shouldStartWithFeatureFlag,
+  SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS,
   SWARM_CRD_REFRESH_INTERVAL_MS,
 }

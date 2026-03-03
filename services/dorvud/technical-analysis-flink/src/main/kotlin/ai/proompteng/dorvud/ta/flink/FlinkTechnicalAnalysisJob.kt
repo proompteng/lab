@@ -42,6 +42,7 @@ import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction
 import org.apache.flink.util.Collector
 import org.apache.kafka.clients.consumer.OffsetResetStrategy
 import org.apache.kafka.clients.producer.ProducerRecord
+import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.ta4j.core.BaseBar
 import org.ta4j.core.BaseBarSeries
@@ -198,34 +199,67 @@ private fun ensureClickhouseSchema(config: FlinkTaConfig) {
     return
   }
 
-  val maxAttempts = (config.clickhouseInsertMaxRetries.coerceAtLeast(0)) + 1
+  val maxAttempts = (config.clickhouseSchemaInitMaxRetries.coerceAtLeast(0)) + 1
+  val retryDelayMs = config.clickhouseSchemaInitRetryDelayMs.coerceAtLeast(0)
+
+  executeWithRetry(
+    maxAttempts = maxAttempts,
+    retryDelayMs = retryDelayMs,
+    strict = config.clickhouseSchemaInitStrict,
+    logger = logger,
+    operationName = "ClickHouse schema",
+  ) {
+    val properties = Properties()
+    config.clickhouseUsername?.let { properties["user"] = it }
+    config.clickhousePassword?.let { properties["password"] = it }
+    val connection =
+      if (properties.isEmpty) {
+        DriverManager.getConnection(adminUrl)
+      } else {
+        DriverManager.getConnection(adminUrl, properties)
+      }
+
+    connection.use { conn ->
+      conn.createStatement().use { statement ->
+        statements.forEach { statement.execute(it) }
+      }
+    }
+  }
+
+  logger.info("ClickHouse schema ensured.")
+}
+
+internal fun executeWithRetry(
+  maxAttempts: Int,
+  retryDelayMs: Long,
+  strict: Boolean,
+  logger: Logger,
+  operationName: String,
+  sleep: (Long) -> Unit = Thread::sleep,
+  operation: () -> Unit,
+) {
+  val attempts = maxAttempts.coerceAtLeast(1)
+  val delayMs = retryDelayMs.coerceAtLeast(0)
   var attempt = 1
   while (true) {
     try {
-      val properties = Properties()
-      config.clickhouseUsername?.let { properties["user"] = it }
-      config.clickhousePassword?.let { properties["password"] = it }
-      val connection =
-        if (properties.isEmpty) {
-          DriverManager.getConnection(adminUrl)
-        } else {
-          DriverManager.getConnection(adminUrl, properties)
-        }
-
-      connection.use { conn ->
-        conn.createStatement().use { statement ->
-          statements.forEach { statement.execute(it) }
-        }
-      }
-      logger.info("ClickHouse schema ensured.")
+      operation()
       return
     } catch (ex: Exception) {
-      if (attempt >= maxAttempts) {
-        logger.error("Failed to ensure ClickHouse schema after $attempt attempts.", ex)
+      if (attempt >= attempts) {
+        val message = "Failed to ensure $operationName after $attempt attempts."
+        if (strict) {
+          logger.error("$message Aborting startup because strict mode is enabled.", ex)
+          throw IllegalStateException(message, ex)
+        }
+        logger.error("$message Continuing startup because strict mode is disabled.", ex)
         return
       }
-      logger.warn("ClickHouse schema init failed (attempt $attempt/$maxAttempts); retrying in 2000ms.", ex)
-      Thread.sleep(2_000L)
+
+      logger.warn("$operationName init failed (attempt $attempt/$attempts); retrying in ${delayMs}ms.", ex)
+      if (delayMs > 0) {
+        sleep(delayMs)
+      }
       attempt += 1
     }
   }

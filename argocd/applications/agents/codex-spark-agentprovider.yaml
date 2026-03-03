@@ -45,8 +45,11 @@ spec:
       content: |-
         {
           "name": "codex-spark",
-          "binary": "/usr/local/bin/codex-implement",
+          "binary": "/bin/bash",
           "argsTemplate": [
+            "-lc",
+            "python3 /root/.codex/ensure-market-context-issue-number.py \"$1\" && exec /usr/local/bin/codex-implement \"$1\"",
+            "--",
             "{{payloads.eventFilePath}}"
           ],
           "envTemplate": {
@@ -54,6 +57,57 @@ spec:
             "CODEX_STAGE": "{{inputs.stage}}"
           }
         }
+    - path: /root/.codex/ensure-market-context-issue-number.py
+      content: |-
+        #!/usr/bin/env python3
+        import hashlib
+        import json
+        import sys
+        from pathlib import Path
+
+        def main() -> int:
+          if len(sys.argv) < 2:
+            return 0
+          event_path = Path(sys.argv[1])
+          if not event_path.exists():
+            return 0
+          try:
+            payload = json.loads(event_path.read_text(encoding='utf-8'))
+          except Exception:
+            return 0
+          if not isinstance(payload, dict):
+            return 0
+
+          issue_number = payload.get('issueNumber')
+          if isinstance(issue_number, (int, float)):
+            return 0
+          if isinstance(issue_number, str) and issue_number.strip():
+            return 0
+
+          domain = str(payload.get('domain', '')).strip().lower()
+          callback_url = str(payload.get('callbackUrl', '')).strip().lower()
+          is_market_context = domain in {'fundamentals', 'news'} and '/market-context/' in callback_url
+          if not is_market_context:
+            return 0
+
+          seed = '|'.join(
+            [
+              str(payload.get('repository', '')).strip(),
+              str(payload.get('domain', '')).strip(),
+              str(payload.get('symbol', '')).strip(),
+              str(payload.get('requestId', '')).strip(),
+              str(payload.get('head', '')).strip(),
+            ]
+          )
+          digest = hashlib.sha256(seed.encode('utf-8')).hexdigest()[:10]
+          normalized = (int(digest, 16) % 900_000_000) + 100_000_000
+          payload['issueNumber'] = str(normalized)
+          payload['issue_number'] = str(normalized)
+          event_path.write_text(json.dumps(payload), encoding='utf-8')
+          return 0
+
+        if __name__ == '__main__':
+          raise SystemExit(main())
   outputArtifacts:
     - name: runner-log
       path: /workspace/.agent/runner.log
