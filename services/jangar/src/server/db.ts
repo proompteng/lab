@@ -363,7 +363,15 @@ type JangarGithubWriteActions = {
   pr_number: number
   commit_sha: string | null
   received_at: Timestamp
+  mission_id: string | null
+  stage: string | null
+  action_class: string | null
   action: string
+  risk_class: string | null
+  rollout_ref: string | null
+  rollout_status: string | null
+  rollback_ref: string | null
+  rollback_reason: string | null
   actor: string | null
   request_id: string | null
   payload: JsonValue

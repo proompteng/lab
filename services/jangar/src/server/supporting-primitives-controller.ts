@@ -967,6 +967,51 @@ const cadenceToCron = (raw: string) => {
   return null
 }
 
+const collectStaleStageSignals = (
+  stageConfigs: Array<{
+    stage: StageName
+    enabled: boolean
+    every?: string
+  }>,
+  status: Record<string, unknown>,
+  runs: Record<string, unknown>[],
+  nowMs: number,
+) => {
+  const staleSignals = []
+  for (const stageConfig of stageConfigs) {
+    if (!stageConfig.enabled) continue
+    if (!stageConfig.every) continue
+    const cadenceMs = parseDurationToMs(stageConfig.every)
+    if (cadenceMs === null || cadenceMs <= 0) continue
+    const stageRuns = runs.filter(
+      (run) => asString(readNested(run, ['metadata', 'labels', 'swarm.proompteng.ai/stage'])) === stageConfig.stage,
+    )
+    const latestRunTime = sortByMostRecentRun(stageRuns).at(0)
+    const fromRuns = parseTimeOrNull(getRunTimestamp(latestRunTime ?? {}))
+    const fromStatus = parseTimeOrNull(asString(readNested(status, [STAGE_LAST_RUN_KEY[stageConfig.stage]]) ?? null))
+    const lastRunMs = [fromRuns, fromStatus]
+      .filter((value): value is number => value !== null)
+      .reduce((left, right) => Math.max(left, right), Number.NEGATIVE_INFINITY)
+    if (!Number.isFinite(lastRunMs) || lastRunMs <= 0) {
+      continue
+    }
+    const ageMs = nowMs - lastRunMs
+    const maxAgeMs = 2 * cadenceMs
+    if (ageMs <= maxAgeMs) {
+      continue
+    }
+    staleSignals.push({
+      stage: stageConfig.stage,
+      lastRunAt: new Date(lastRunMs).toISOString(),
+      ageMs,
+      configuredEveryMs: cadenceMs,
+      configuredEvery: stageConfig.every,
+      staleAfterMs: maxAgeMs,
+    })
+  }
+  return staleSignals
+}
+
 const resolveStageEvery = (spec: Record<string, unknown>, stageSpec: Record<string, unknown>, stage: StageName) => {
   const stageEvery = asString(stageSpec.every)
   if (stageEvery) return stageEvery
@@ -1050,68 +1095,13 @@ const sortByMostRecentRun = (resources: Record<string, unknown>[]) => {
   })
 }
 
-const getFailedConditionReason = (resource: Record<string, unknown>) => {
-  const conditions = normalizeConditions(readNested(resource, ['status', 'conditions']))
-  const failedCondition = conditions.find((condition) => condition.type === 'Failed' && condition.status === 'True')
-  return failedCondition?.reason ?? null
-}
-
-const didTimedOutWorkflowRunSucceed = async (
-  kube: ReturnType<typeof createKubernetesClient>,
-  resource: Record<string, unknown>,
-  defaultNamespace: string,
-) => {
-  const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
-  if (!TERMINAL_FAILURE_PHASES.has(phase)) return false
-  if (getFailedConditionReason(resource) !== 'WorkflowStepTimedOut') return false
-
-  const runtimeRef = asRecord(readNested(resource, ['status', 'runtimeRef'])) ?? {}
-  const runtimeType = (asString(runtimeRef.type) ?? '').toLowerCase()
-  if (runtimeType && runtimeType !== 'workflow') return false
-
-  const runtimeName = asString(runtimeRef.name)
-  if (!runtimeName) return false
-  const runtimeNamespace = asString(runtimeRef.namespace) ?? defaultNamespace
-
-  let job: Record<string, unknown> | null
-  try {
-    job = await kube.get('job', runtimeName, runtimeNamespace)
-  } catch (error) {
-    console.warn('[jangar] failed to inspect timed-out workflow runtime job', {
-      run: asString(readNested(resource, ['metadata', 'name'])) ?? 'unknown',
-      namespace: runtimeNamespace,
-      job: runtimeName,
-      error: error instanceof Error ? error.message : String(error),
-    })
-    return false
-  }
-  if (!job) return false
-
-  const jobStatus = asRecord(readNested(job, ['status'])) ?? {}
-  const succeeded = Number(jobStatus.succeeded ?? 0)
-  const failed = Number(jobStatus.failed ?? 0)
-  if (succeeded > 0 && failed <= 0) return true
-
-  const jobConditions = normalizeConditions(jobStatus.conditions)
-  const completeCondition = jobConditions.find((condition) => condition.type === 'Complete')
-  const failedCondition = jobConditions.find((condition) => condition.type === 'Failed')
-  return completeCondition?.status === 'True' && failedCondition?.status !== 'True'
-}
-
-const countConsecutiveFailures = async (
-  kube: ReturnType<typeof createKubernetesClient>,
-  resources: Record<string, unknown>[],
-  defaultNamespace: string,
-) => {
+const countConsecutiveFailures = (resources: Record<string, unknown>[]) => {
   const sorted = sortByMostRecentRun(resources)
   let failures = 0
   for (const resource of sorted) {
     const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
     if (!phase) continue
     if (TERMINAL_FAILURE_PHASES.has(phase)) {
-      if (await didTimedOutWorkflowRunSucceed(kube, resource, defaultNamespace)) {
-        break
-      }
       failures += 1
       continue
     }
@@ -1119,6 +1109,33 @@ const countConsecutiveFailures = async (
     if (ACTIVE_PHASES.has(phase)) break
   }
   return failures
+}
+
+const collectRecentFailureRuns = (resources: Record<string, unknown>[], limit = 5) => {
+  const sorted = sortByMostRecentRun(resources)
+  const failures = sorted
+    .filter((resource) => {
+      const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
+      return TERMINAL_FAILURE_PHASES.has(phase)
+    })
+    .slice(0, limit)
+  return failures.map((resource) => {
+    const name = asString(readNested(resource, ['metadata', 'name'])) ?? 'unknown'
+    const namespace = asString(readNested(resource, ['metadata', 'namespace'])) ?? ''
+    const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
+    const timestamp = getRunTimestamp(resource)
+    const conclusion = asString(readNested(resource, ['status', 'conclusion']))
+    const reason =
+      asString(readNested(resource, ['status', 'message'])) ?? asString(readNested(resource, ['status', 'reason']))
+    return {
+      name,
+      namespace,
+      phase,
+      timestamp,
+      conclusion: conclusion || null,
+      reason: reason || null,
+    }
+  })
 }
 
 const filterRunsAfterTime = (resources: Record<string, unknown>[], timestampMs: number | null) => {
@@ -1805,23 +1822,107 @@ const reconcileSwarm = async (
   const nowMs = Date.now()
   const existingFreezeUntil = asString(readNested(status, ['freeze', 'until']))
   const existingFreezeReason = asString(readNested(status, ['freeze', 'reason']))
+  const frozenAtReleaseReason = existingFreezeReason ?? 'Healthy'
+  const existingFreezeEnteredAt = asString(readNested(status, ['freeze', 'enteredAt']))
   const existingFreezeAt = parseTimeOrNull(existingFreezeUntil)
   let freezeActive = existingFreezeAt !== null && existingFreezeAt > nowMs
+  const freezeWasActive = freezeActive
+  const staleStageSignals = collectStaleStageSignals(stageConfigs, status, allRuns, nowMs)
   let freezeReason = existingFreezeReason ?? 'FreezeActive'
   let freezeUntil = existingFreezeUntil ?? undefined
   const failureWindowStartMs = existingFreezeAt !== null && existingFreezeAt <= nowMs ? existingFreezeAt : null
+  const recentImplementRuns = filterRunsAfterTime(implementRuns, failureWindowStartMs)
+  let consecutiveFailures = 0
 
+  const freezeTriggerReasons: string[] = []
   if (!freezeActive) {
-    const recentImplementRuns = filterRunsAfterTime(implementRuns, failureWindowStartMs)
-    const consecutiveFailures = await countConsecutiveFailures(kube, recentImplementRuns, swarmNamespace)
+    consecutiveFailures = countConsecutiveFailures(recentImplementRuns)
+    const failureRunSummary = collectRecentFailureRuns(recentImplementRuns)
     if (consecutiveFailures >= freezeAfterFailures) {
-      freezeActive = true
-      freezeReason = 'ConsecutiveFailures'
-      freezeUntil = new Date(nowMs + freezeDurationMs).toISOString()
+      freezeTriggerReasons.push('ConsecutiveFailures')
     } else {
+      if (failureRunSummary.length > 0) {
+        console.info('[jangar] swarm freeze check', {
+          swarm: swarmName,
+          namespace: swarmNamespace,
+          consecutiveFailures,
+          threshold: freezeAfterFailures,
+          failureRunCount: failureRunSummary.length,
+          evidenceRuns: failureRunSummary,
+        })
+      }
       freezeReason = 'Healthy'
       freezeUntil = undefined
     }
+    if (staleStageSignals.length > 0) {
+      freezeTriggerReasons.push('StageStaleness')
+    }
+    if (freezeTriggerReasons.length > 0) {
+      freezeActive = true
+      freezeReason = freezeTriggerReasons.join('|')
+      freezeUntil = new Date(nowMs + freezeDurationMs).toISOString()
+      console.warn('[jangar] swarm freeze activated', {
+        swarm: swarmName,
+        namespace: swarmNamespace,
+        reason: freezeReason,
+        reasons: freezeTriggerReasons,
+        consecutiveFailures,
+        threshold: freezeAfterFailures,
+        freezeDurationMs,
+        staleStageSignals: staleStageSignals.map((entry) => ({
+          stage: entry.stage,
+          ageMs: entry.ageMs,
+          configuredEveryMs: entry.configuredEveryMs,
+          staleAfterMs: entry.staleAfterMs,
+        })),
+      })
+    } else {
+      const failureRunSummary = collectRecentFailureRuns(recentImplementRuns)
+      if (failureRunSummary.length > 0) {
+        console.info('[jangar] swarm freeze check', {
+          swarm: swarmName,
+          namespace: swarmNamespace,
+          consecutiveFailures,
+          threshold: freezeAfterFailures,
+          failureRunCount: failureRunSummary.length,
+          evidenceRuns: failureRunSummary,
+        })
+      }
+      freezeReason = 'Healthy'
+      freezeUntil = undefined
+    }
+  }
+  const freezeFailureEvidence = collectRecentFailureRuns(
+    recentImplementRuns.filter((resource) => {
+      const runTime = parseTimeOrNull(getRunTimestamp(resource))
+      if (failureWindowStartMs === null) return true
+      return runTime !== null && runTime > failureWindowStartMs
+    }),
+    10,
+  )
+
+  const freezeEnteredAt = freezeActive
+    ? freezeWasActive
+      ? existingFreezeEnteredAt || new Date(nowMs).toISOString()
+      : new Date(nowMs).toISOString()
+    : undefined
+
+  if (!freezeWasActive && freezeActive) {
+    console.warn('[jangar] swarm freeze activated', {
+      swarm: swarmName,
+      namespace: swarmNamespace,
+      reason: freezeReason,
+      until: freezeUntil,
+      consecutiveFailures,
+      threshold: freezeAfterFailures,
+    })
+  }
+  if (freezeWasActive && !freezeActive) {
+    console.info('[jangar] swarm freeze released', {
+      swarm: swarmName,
+      namespace: swarmNamespace,
+      previousReason: frozenAtReleaseReason,
+    })
   }
 
   const ownerReferences = buildOwnerRefs(swarm)
@@ -2188,6 +2289,17 @@ const reconcileSwarm = async (
     nextStatus.freeze = {
       reason: freezeReason,
       until: freezeUntil,
+      consecutiveFailures,
+      threshold: freezeAfterFailures,
+      enteredAt: freezeEnteredAt,
+      durationMs: freezeDurationMs,
+      evidence: {
+        triggeringRuns: freezeFailureEvidence,
+        recentRunWindowMs: freezeAfterFailures * freezeDurationMs,
+        freezeWindowStartedAt: failureWindowStartMs === null ? null : new Date(failureWindowStartMs).toISOString(),
+        stageStaleness: staleStageSignals,
+        triggers: freezeTriggerReasons,
+      },
     }
   } else {
     clearSwarmUnfreezeTimer(swarmNamespace, swarmName)

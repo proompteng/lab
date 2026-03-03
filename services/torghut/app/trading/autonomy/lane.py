@@ -110,6 +110,7 @@ _STRESS_METRICS_ARTIFACT_PATH = "stress-metrics-v1.json"
 _CONTAMINATION_REGISTRY_ARTIFACT_PATH = "contamination-leakage-report-v1.json"
 _HMM_STATE_POSTERIOR_ARTIFACT_PATH = "gates/hmm-state-posterior-v1.json"
 _EXPERT_ROUTER_REGISTRY_ARTIFACT_PATH = "gates/expert-router-registry-v1.json"
+_FOLD_METRICS_ARTIFACT_PATH = "fold-metrics-v1.json"
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
 _BENCHMARK_PARITY_REPORT_PATH = "benchmarks/benchmark-parity-report-v1.json"
 _FOUNDATION_ROUTER_PARITY_REPORT_PATH = "router/foundation-router-parity-report-v1.json"
@@ -1453,6 +1454,7 @@ def run_autonomous_lane(
     stress_metrics_path = gates_dir / _STRESS_METRICS_ARTIFACT_PATH
     hmm_state_posterior_path = output_dir / _HMM_STATE_POSTERIOR_ARTIFACT_PATH
     expert_router_registry_path = output_dir / _EXPERT_ROUTER_REGISTRY_ARTIFACT_PATH
+    fold_metrics_path = gates_dir / _FOLD_METRICS_ARTIFACT_PATH
     benchmark_parity_path = output_dir / _BENCHMARK_PARITY_REPORT_PATH
     foundation_router_parity_path = output_dir / _FOUNDATION_ROUTER_PARITY_REPORT_PATH
     deeplob_bdlob_report_path = output_dir / _DEEPLOB_BDLOB_REPORT_PATH
@@ -1956,9 +1958,21 @@ def run_autonomous_lane(
         stress_metrics_path.write_text(
             json.dumps(stress_metrics_payload, indent=2), encoding="utf-8"
         )
+        fold_metrics_payload = {
+            "schema_version": "fold-metrics-v1",
+            "run_id": run_id,
+            "generated_at": now.isoformat(),
+            "count": len(fold_evidence),
+            "items": fold_evidence,
+        }
+        fold_metrics_path.write_text(
+            json.dumps(fold_metrics_payload, indent=2), encoding="utf-8"
+        )
         stress_metrics_artifact_ref = str(stress_metrics_path)
+        fold_metrics_artifact_ref = str(fold_metrics_path)
         if not output_dir.is_absolute():
             stress_metrics_artifact_ref = str(stress_metrics_path.relative_to(output_dir))
+            fold_metrics_artifact_ref = str(fold_metrics_path.relative_to(output_dir))
         benchmark_parity_artifact_ref = str(benchmark_parity_path)
         if not output_dir.is_absolute():
             benchmark_parity_artifact_ref = str(
@@ -2004,7 +2018,7 @@ def run_autonomous_lane(
             "fold_metrics": {
                 "count": len(fold_evidence),
                 "items": fold_evidence,
-                "artifact_ref": str(evaluation_report_path),
+                "artifact_ref": fold_metrics_artifact_ref,
             },
             "stress_metrics": {
                 "count": len(stress_evidence),
@@ -2118,6 +2132,7 @@ def run_autonomous_lane(
                 "stress_metrics": str(stress_metrics_path),
                 "hmm_state_posterior": str(hmm_state_posterior_path),
                 "expert_router_registry": str(expert_router_registry_path),
+                "fold_metrics": str(fold_metrics_path),
                 "janus_event_car": str(janus_event_car_path),
                 "janus_hgrm_reward": str(janus_hgrm_reward_path),
                 "recalibration_report": str(recalibration_report_path),
@@ -2304,6 +2319,7 @@ def run_autonomous_lane(
                         str(stress_metrics_path),
                         str(hmm_state_posterior_path),
                         str(expert_router_registry_path),
+                        str(fold_metrics_path),
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         str(recalibration_report_path),
@@ -2329,6 +2345,7 @@ def run_autonomous_lane(
                         str(profitability_benchmark_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(fold_metrics_path),
                         str(stress_metrics_path),
                         str(hmm_state_posterior_path),
                         str(expert_router_registry_path),
@@ -2354,7 +2371,7 @@ def run_autonomous_lane(
             "fold_metrics": {
                 "count": len(fold_evidence),
                 "items": fold_evidence,
-                "artifact_ref": str(evaluation_report_path),
+                "artifact_ref": fold_metrics_artifact_ref,
             },
             "stress_metrics": {
                 "count": len(stress_evidence),

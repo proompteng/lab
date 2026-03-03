@@ -107,6 +107,28 @@ export type GithubIssueComment = {
   url: string | null
 }
 
+export type GithubWriteAudit = {
+  repository: string
+  prNumber: number
+  commitSha: string | null
+  missionId: string | null
+  stage: string | null
+  actionClass: string | null
+  riskClass: string | null
+  rolloutRef: string | null
+  rolloutStatus: string | null
+  rollbackRef: string | null
+  rollbackReason: string | null
+  action: string
+  actor: string | null
+  requestId: string | null
+  payload: Record<string, unknown>
+  response?: Record<string, unknown> | null
+  success: boolean
+  error?: string | null
+  receivedAt: string
+}
+
 export type GithubPrFile = {
   path: string
   status: string | null
@@ -144,6 +166,13 @@ export type GithubPullDetailResponse =
       checks: GithubCheckSummary | null
       issueComments: GithubIssueComment[]
       capabilities: GithubCapabilities
+    }
+  | { ok: false; error: string }
+
+export type GithubWriteAuditResponse =
+  | {
+      ok: true
+      audits: GithubWriteAudit[]
     }
   | { ok: false; error: string }
 
@@ -222,6 +251,42 @@ export const fetchGithubPullChecks = async (owner: string, repo: string, number:
     return { ok: false, error: payload?.error ?? 'Failed to load pull request checks' } as const
   }
   return { ok: true, commits: payload.commits ?? [] } as const
+}
+
+export const fetchGithubPullWriteActions = async (owner: string, repo: string, number: number) => {
+  const response = await fetch(`/api/github/pulls/${owner}/${repo}/${number}/write-actions`)
+  const payload = (await response.json().catch(() => null)) as GithubWriteAuditResponse | null
+  if (!response.ok) {
+    return { ok: false, error: 'Failed to load write action audit trail' } as const
+  }
+  if (payload === null) {
+    return { ok: false, error: 'Failed to load write action audit trail' } as const
+  }
+  if (!payload?.ok) {
+    return { ok: false, error: payload?.error ?? 'Failed to load write action audit trail' } as const
+  }
+  return { ok: true, audits: payload.audits } as const
+}
+
+export type GithubDeploymentEvidenceSummary = {
+  rollout: GithubWriteAudit | null
+  rollback: GithubWriteAudit | null
+}
+
+export const fetchGithubPullDeploymentEvidenceSummary = async (owner: string, repo: string, number: number) => {
+  const response = await fetch(`/api/github/pulls/${owner}/${repo}/${number}/deployment`)
+  const payload = (await response.json().catch(() => null)) as {
+    ok: boolean
+    deployment?: GithubDeploymentEvidenceSummary
+    error?: string
+  } | null
+  if (!response.ok || !payload) {
+    return { ok: false, error: payload?.error ?? 'Failed to load pull request deployment evidence' } as const
+  }
+  if (!payload.ok) {
+    return { ok: false, error: payload.error ?? 'Unable to load pull request deployment evidence' } as const
+  }
+  return { ok: true, deployment: payload.deployment ?? { rollout: null, rollback: null } } as const
 }
 
 export const refreshGithubPullFiles = async (owner: string, repo: string, number: number) => {
@@ -320,6 +385,33 @@ export const mergeGithubPull = async (
   const payload = (await response.json().catch(() => null)) as { ok: boolean; error?: string } | null
   if (!response.ok || !payload || !payload.ok) {
     return { ok: false, error: payload?.error ?? 'Failed to merge pull request' } as const
+  }
+  return { ok: true } as const
+}
+
+export type GithubDeploymentEvidence = {
+  action: 'rollout' | 'rollback'
+  missionId?: string
+  stage?: string
+  reference?: string
+  status?: string
+  reason?: string
+}
+
+export const postGithubPullDeploymentEvidence = async (
+  owner: string,
+  repo: string,
+  number: number,
+  body: GithubDeploymentEvidence,
+) => {
+  const response = await fetch(`/api/github/pulls/${owner}/${repo}/${number}/deployment`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const payload = (await response.json().catch(() => null)) as { ok: boolean; error?: string } | null
+  if (!response.ok || !payload || !payload.ok) {
+    return { ok: false, error: payload?.error ?? 'Failed to record deployment evidence' } as const
   }
   return { ok: true } as const
 }

@@ -44,6 +44,66 @@ def _load_gate_trace(path: Path) -> dict[str, Any]:
     }
 
 
+def _load_profitability_proof(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(payload, dict):
+        raise ValueError('profitability_proof_invalid')
+    payload_map = cast(dict[str, Any], payload)
+    required_root_keys = (
+        'hypothesis',
+        'window_days',
+        'statistics',
+        'risk_controls',
+    )
+    missing = [key for key in required_root_keys if key not in payload_map]
+    if missing:
+        raise ValueError(f'profitability_proof_missing_keys:{",".join(missing)}')
+
+    raw_statistics = payload_map.get('statistics')
+    if not isinstance(raw_statistics, dict):
+        raise ValueError('profitability_proof_statistics_invalid')
+    statistics = cast(dict[str, Any], raw_statistics)
+
+    effect_size = statistics.get('effect_size')
+    if not isinstance(effect_size, (int, float)):
+        raise ValueError('profitability_proof_effect_size_invalid')
+
+    sample_size = payload_map.get('sample_size')
+    if not isinstance(sample_size, int) or sample_size < 1:
+        raise ValueError('profitability_proof_sample_size_invalid')
+
+    p_value = statistics.get('p_value')
+    if not isinstance(p_value, (int, float)) or not 0 <= float(p_value) <= 1:
+        raise ValueError('profitability_proof_p_value_invalid')
+
+    raw_risk_controls = payload_map.get('risk_controls')
+    if not isinstance(raw_risk_controls, dict):
+        raise ValueError('profitability_proof_risk_controls_invalid')
+    risk_controls = cast(dict[str, Any], raw_risk_controls)
+
+    drawdown_delta = risk_controls.get('max_drawdown_delta')
+    if not isinstance(drawdown_delta, (int, float)):
+        raise ValueError('profitability_proof_risk_controls_drawdown_invalid')
+
+    window_days = payload_map.get('window_days')
+    if not isinstance(window_days, (int, float)) or window_days <= 0:
+        raise ValueError('profitability_proof_window_days_invalid')
+
+    hypothesis = str(payload_map.get('hypothesis', '')).strip()
+    if not hypothesis:
+        raise ValueError('profitability_proof_hypothesis_missing')
+
+    return {
+        'hypothesis': hypothesis,
+        'sample_size': sample_size,
+        'window_days': float(window_days),
+        'effect_size': float(effect_size),
+        'p_value': float(p_value),
+        'drawdown_delta': float(drawdown_delta),
+        'risk_controls': risk_controls,
+    }
+
+
 def _load_incident_evidence(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding='utf-8'))
     if not isinstance(payload, dict):
@@ -176,6 +236,11 @@ def main() -> None:
         '--incident-evidence',
         type=Path,
         help='Optional rollback incident evidence path to validate emergency-stop evidence package.',
+    )
+    parser.add_argument(
+        '--profitability-proof',
+        type=Path,
+        help='Optional profitability proof manifest path with scientific evidence details.',
     )
     parser.add_argument(
         '--lookback-hours',
@@ -458,6 +523,23 @@ def main() -> None:
             'artifact': str(args.incident_evidence),
             'triggered_at': incident_payload.get('triggered_at'),
             'reason_count': len(cast(list[Any], incident_payload.get('reasons', []))),
+            'passed': True,
+        }
+
+    if args.profitability_proof:
+        checks['profitability_evidence'] = {
+            'artifact': str(args.profitability_proof),
+            'passed': False,
+        }
+        proof_payload = _load_profitability_proof(args.profitability_proof)
+        checks['profitability_evidence'] = {
+            'artifact': str(args.profitability_proof),
+            'hypothesis': proof_payload.get('hypothesis'),
+            'sample_size': proof_payload.get('sample_size'),
+            'window_days': proof_payload.get('window_days'),
+            'effect_size': proof_payload.get('effect_size'),
+            'p_value': proof_payload.get('p_value'),
+            'drawdown_delta': proof_payload.get('drawdown_delta'),
             'passed': True,
         }
 

@@ -48,15 +48,10 @@
     "gates/recalibration-report.json"
   ],
   "promotion_janus_required_targets": ["paper", "live"],
-  "promotion_janus_required_artifacts": [
-    "gates/janus-event-car-v1.json",
-    "gates/janus-hgrm-reward-v1.json"
-  ],
+  "promotion_janus_required_artifacts": ["gates/janus-event-car-v1.json", "gates/janus-hgrm-reward-v1.json"],
   "promotion_require_benchmark_parity": true,
   "promotion_benchmark_parity_required_targets": ["paper", "live"],
-  "promotion_benchmark_required_artifacts": [
-    "benchmarks/benchmark-parity-report-v1.json"
-  ],
+  "promotion_benchmark_required_artifacts": ["benchmarks/benchmark-parity-report-v1.json"],
   "promotion_benchmark_parity_min_advisory_output_rate": "0.995",
   "promotion_benchmark_parity_max_policy_violation_rate_degradation": "0.05",
   "promotion_benchmark_parity_max_fallback_rate": "0.01",
@@ -90,9 +85,7 @@
   "promotion_deeplob_bdlob_min_fallback_reliability": "0.99",
   "promotion_require_contamination_registry": true,
   "promotion_contamination_required_targets": ["paper", "live"],
-  "promotion_contamination_required_artifacts": [
-    "gates/contamination-leakage-report-v1.json"
-  ],
+  "promotion_contamination_required_artifacts": ["gates/contamination-leakage-report-v1.json"],
   "promotion_contamination_required_checks": [
     "temporal_ordering",
     "lineage_complete",
@@ -102,23 +95,19 @@
   "promotion_contamination_max_leakage_rate": "0.0",
   "promotion_require_stress_evidence": true,
   "promotion_stress_required_targets": ["paper", "live"],
-  "promotion_stress_required_artifacts": [
-    "gates/stress-metrics-v1.json"
-  ],
+  "promotion_stress_required_artifacts": ["gates/stress-metrics-v1.json"],
+  "promotion_require_fold_evidence": true,
+  "promotion_fold_required_artifacts": ["gates/fold-metrics-v1.json"],
   "promotion_stress_max_age_hours": 24,
   "promotion_require_hmm_state_posterior": true,
   "promotion_hmm_required_targets": ["paper", "live"],
-  "promotion_hmm_required_artifacts": [
-    "gates/hmm-state-posterior-v1.json"
-  ],
+  "promotion_hmm_required_artifacts": ["gates/hmm-state-posterior-v1.json"],
   "promotion_hmm_min_authoritative_sample_ratio": "0.0",
   "promotion_hmm_max_transition_shock_ratio": "0.20",
   "promotion_hmm_max_stale_or_defensive_ratio": "0.20",
   "promotion_require_expert_router_registry": true,
   "promotion_expert_router_required_targets": ["paper", "live"],
-  "promotion_expert_router_required_artifacts": [
-    "gates/expert-router-registry-v1.json"
-  ],
+  "promotion_expert_router_required_artifacts": ["gates/expert-router-registry-v1.json"],
   "promotion_expert_router_min_route_count": 1,
   "promotion_expert_router_max_fallback_rate": "0.05",
   "promotion_expert_router_max_expert_concentration": "0.85",

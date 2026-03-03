@@ -1,4 +1,10 @@
-import { mergePullRequest, resolvePullRequestThread, submitPullRequestReview } from '~/server/github-review-actions'
+import {
+  mergePullRequest,
+  recordPullDeploymentAction,
+  resolvePullRequestThread,
+  submitPullRequestReview,
+} from '~/server/github-review-actions'
+import { type GithubWriteAudit } from '~/data/github'
 import { isGithubRepoAllowed, loadGithubReviewConfig } from '~/server/github-review-config'
 import { createGithubReviewStore } from '~/server/github-review-store'
 import { refreshWorktreeSnapshot, type WorktreeSnapshotResult } from '~/server/github-worktree-snapshot'
@@ -72,6 +78,14 @@ const parseLimit = (value: string | null, fallback: number) => {
   const parsed = Number.parseInt(value, 10)
   if (!Number.isFinite(parsed)) return fallback
   return Math.max(1, Math.min(parsed, 100))
+}
+
+const parseActionFilter = (value: string | null): string[] => {
+  if (!value) return []
+  return value
+    .split(',')
+    .map((raw) => raw.trim())
+    .filter((item) => item.length > 0)
 }
 
 const GITHUB_LOGIN_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i
@@ -385,6 +399,92 @@ export const getPullChecksHandler = async (
   }
 }
 
+export const getPullWriteActionsHandler = async (
+  _request: Request,
+  params: { owner: string; repo: string; number: string },
+  createStore = createGithubReviewStore,
+) => {
+  const prNumber = parseNumberParam(params.number)
+  if (!prNumber) {
+    return jsonResponse({ ok: false, error: 'Invalid pull request number' }, 400)
+  }
+
+  const repository = `${params.owner}/${params.repo}`
+  const config = loadGithubReviewConfig()
+  if (!isGithubRepoAllowed(config, repository)) {
+    return jsonResponse({ ok: false, error: 'Repository not allowed' }, 403)
+  }
+
+  const store = createStore()
+  try {
+    const result = await store.getPull({ repository, prNumber })
+    if (!result.pull) {
+      return jsonResponse({ ok: false, error: 'Pull request not found' }, 404)
+    }
+
+    const url = new URL(_request.url)
+    const limit = parseLimit(url.searchParams.get('limit'), 20)
+    const action = parseActionFilter(url.searchParams.get('action'))
+    const audits = await store.listWriteAudits({ repository, prNumber, action, limit })
+    return jsonResponse({
+      ok: true,
+      audits,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to load pull request write actions'
+    return jsonResponse({ ok: false, error: message }, 500)
+  } finally {
+    await store.close()
+  }
+}
+
+type DeploymentEvidenceSummary = {
+  rollout: GithubWriteAudit | null
+  rollback: GithubWriteAudit | null
+}
+
+export const getPullDeploymentEvidenceSummaryHandler = async (
+  _request: Request,
+  params: { owner: string; repo: string; number: string },
+  createStore = createGithubReviewStore,
+) => {
+  const prNumber = parseNumberParam(params.number)
+  if (!prNumber) {
+    return jsonResponse({ ok: false, error: 'Invalid pull request number' }, 400)
+  }
+
+  const repository = `${params.owner}/${params.repo}`
+  const config = loadGithubReviewConfig()
+  if (!isGithubRepoAllowed(config, repository)) {
+    return jsonResponse({ ok: false, error: 'Repository not allowed' }, 403)
+  }
+
+  const store = createStore()
+  try {
+    const result = await store.getPull({ repository, prNumber })
+    if (!result.pull) {
+      return jsonResponse({ ok: false, error: 'Pull request not found' }, 404)
+    }
+
+    const [rolloutAudits, rollbackAudits] = await Promise.all([
+      store.listWriteAudits({ repository, prNumber, action: 'rollout', limit: 1 }),
+      store.listWriteAudits({ repository, prNumber, action: 'rollback', limit: 1 }),
+    ])
+
+    const summary: DeploymentEvidenceSummary = {
+      rollout: rolloutAudits[0] ?? null,
+      rollback: rollbackAudits[0] ?? null,
+    }
+
+    return jsonResponse({ ok: true, deployment: summary })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to load pull request deployment evidence'
+    return jsonResponse({ ok: false, error: message }, 500)
+  } finally {
+    await store.close()
+  }
+}
+
 export const getPullThreadsHandler = async (
   _request: Request,
   params: { owner: string; repo: string; number: string },
@@ -520,6 +620,15 @@ type MergeBody = {
   force?: boolean
 }
 
+type DeploymentEvidenceBody = {
+  action?: string
+  missionId?: string
+  stage?: string
+  reference?: string
+  status?: string
+  reason?: string
+}
+
 export const mergePullHandler = async (
   request: Request,
   params: { owner: string; repo: string; number: string },
@@ -559,6 +668,49 @@ export const mergePullHandler = async (
     return jsonResponse({ ok: true, ...result })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to merge pull request'
+    return jsonResponse({ ok: false, error: message }, 500)
+  }
+}
+
+export const postPullDeploymentEvidenceHandler = async (
+  request: Request,
+  params: { owner: string; repo: string; number: string },
+  actions: { recordPullDeploymentAction: typeof recordPullDeploymentAction } = {
+    recordPullDeploymentAction,
+  },
+) => {
+  const prNumber = parseNumberParam(params.number)
+  if (!prNumber) {
+    return jsonResponse({ ok: false, error: 'Invalid pull request number' }, 400)
+  }
+
+  let body: DeploymentEvidenceBody = {}
+  try {
+    body = (await request.json()) as DeploymentEvidenceBody
+  } catch {
+    return jsonResponse({ ok: false, error: 'Invalid deployment evidence body' }, 400)
+  }
+
+  if (!body.action) {
+    return jsonResponse({ ok: false, error: 'Missing deployment action' }, 400)
+  }
+
+  try {
+    const payload = await actions.recordPullDeploymentAction(request, {
+      owner: params.owner,
+      repo: params.repo,
+      number: prNumber,
+      action: body.action,
+      missionId: body.missionId,
+      stage: body.stage,
+      reference: body.reference,
+      status: body.status,
+      reason: body.reason,
+    })
+
+    return jsonResponse(payload)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to record deployment evidence'
     return jsonResponse({ ok: false, error: message }, 500)
   }
 }

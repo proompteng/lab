@@ -16,6 +16,7 @@ _REQUIRED_BOOL_KEYS: tuple[str, ...] = (
     "promotion_require_expert_router_registry",
     "promotion_require_janus_evidence",
     "promotion_require_stress_evidence",
+    "promotion_require_fold_evidence",
 )
 
 _REQUIRED_STRING_KEYS: tuple[str, ...] = (
@@ -42,6 +43,7 @@ _REQUIRED_LIST_KEYS: tuple[str, ...] = (
     "promotion_expert_router_required_artifacts",
     "promotion_janus_required_artifacts",
     "promotion_stress_required_artifacts",
+    "promotion_fold_required_artifacts",
 )
 
 REQUIRED_RUNTIME_GATE_POLICY_KEYS: tuple[str, ...] = (

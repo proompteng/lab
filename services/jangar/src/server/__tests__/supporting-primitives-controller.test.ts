@@ -1600,7 +1600,7 @@ describe('supporting primitives controller', () => {
     expect(status.freeze).toBeTruthy()
   })
 
-  it('does not freeze when timed-out implement runs have successful runtime jobs', async () => {
+  it('freezes when consecutive timed-out implement failures remain active', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
     const get = vi.fn(async (resource: string, name: string) => {
@@ -1690,12 +1690,14 @@ describe('supporting primitives controller', () => {
 
     await __test__.reconcileSwarm(kube, swarm, 'agents')
 
-    expect(apply).toHaveBeenCalledTimes(4)
-    expect(deleteFn).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
+    expect(deleteFn).toHaveBeenCalledTimes(4)
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
-    expect(status.phase).toBe('Active')
-    expect(status.freeze).toBeUndefined()
+    expect(status.phase).toBe('Frozen')
+    expect(status.freeze).toMatchObject({
+      reason: 'ConsecutiveFailures',
+    })
   })
 
   it('counts implement failures from configured target namespaces when deciding freeze', async () => {
@@ -1870,7 +1872,7 @@ describe('supporting primitives controller', () => {
     expect(status.freeze).toBeTruthy()
   })
 
-  it('does not immediately re-freeze from failures that occurred before freeze expiry', async () => {
+  it('re-freezes when stale stage cadence indicates liveness loss after freeze expiry', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
     const get = vi.fn().mockResolvedValue({
@@ -1948,12 +1950,14 @@ describe('supporting primitives controller', () => {
 
     await __test__.reconcileSwarm(kube, swarm, 'agents')
 
-    expect(apply).toHaveBeenCalledTimes(4)
-    expect(deleteFn).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
+    expect(deleteFn).toHaveBeenCalledTimes(4)
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
-    expect(status.phase).toBe('Active')
-    expect(status.freeze).toBeUndefined()
+    expect(status.phase).toBe('Frozen')
+    expect(status.freeze).toMatchObject({
+      reason: 'StageStaleness',
+    })
   })
 
   it('reconciles again after freeze expiry to resume schedules automatically', async () => {

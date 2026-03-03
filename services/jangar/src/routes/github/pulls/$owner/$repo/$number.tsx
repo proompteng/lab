@@ -8,12 +8,18 @@ import {
   fetchGithubPullChecks,
   fetchGithubPullFiles,
   fetchGithubPullJudgeRuns,
+  fetchGithubPullDeploymentEvidenceSummary,
+  fetchGithubPullWriteActions,
   fetchGithubPullThreads,
+  postGithubPullDeploymentEvidence,
   type GithubCheckState,
   type GithubCheckSummary,
   type GithubIssueComment,
+  type GithubDeploymentEvidenceSummary,
   type GithubPrFile,
+  type GithubDeploymentEvidence,
   type GithubPullState,
+  type GithubWriteAudit,
   type GithubReviewSummary,
   type GithubReviewThread,
   mergeGithubPull,
@@ -48,7 +54,7 @@ const formatDateTime = (value: string | null) => {
   }).format(new Date(parsed))
 }
 
-type TabKey = 'overview' | 'files' | 'conversation' | 'checks' | 'judge'
+type TabKey = 'overview' | 'files' | 'conversation' | 'checks' | 'audits' | 'judge'
 
 type InlineComment = {
   id: string
@@ -109,12 +115,23 @@ function GithubPullDetailPage() {
   const [threads, setThreads] = React.useState<GithubReviewThread[]>([])
   const [files, setFiles] = React.useState<GithubPrFile[]>([])
   const [judgeRuns, setJudgeRuns] = React.useState<CodexRunRecord[]>([])
+  const [writeActions, setWriteActions] = React.useState<GithubWriteAudit[]>([])
+  const [deploymentEvidence, setDeploymentEvidence] = React.useState<GithubDeploymentEvidenceSummary>({
+    rollout: null,
+    rollback: null,
+  })
   const [capabilities, setCapabilities] = React.useState({ reviewsWriteEnabled: false, mergeWriteEnabled: false })
 
   const [status, setStatus] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [refreshingFiles, setRefreshingFiles] = React.useState(false)
+  const [deploymentAction, setDeploymentAction] = React.useState<'rollout' | 'rollback'>('rollout')
+  const [deploymentMissionId, setDeploymentMissionId] = React.useState('')
+  const [deploymentStage, setDeploymentStage] = React.useState('')
+  const [deploymentReference, setDeploymentReference] = React.useState('')
+  const [deploymentStatus, setDeploymentStatus] = React.useState('')
+  const [deploymentReason, setDeploymentReason] = React.useState('')
 
   const [activeTab, setActiveTab] = React.useState<TabKey>('overview')
   const [reviewBody, setReviewBody] = React.useState('')
@@ -151,6 +168,14 @@ function GithubPullDetailPage() {
     [owner, repo, prNumber],
   )
 
+  const loadWriteActions = React.useCallback(async () => {
+    if (!Number.isFinite(prNumber)) return
+    const auditsRes = await fetchGithubPullWriteActions(owner, repo, prNumber)
+    if (auditsRes.ok) {
+      setWriteActions(auditsRes.audits)
+    }
+  }, [owner, repo, prNumber])
+
   const loadAll = React.useCallback(async () => {
     if (!Number.isFinite(prNumber)) {
       setError('Invalid pull request number')
@@ -171,11 +196,12 @@ function GithubPullDetailPage() {
       setIssueComments(pullRes.issueComments)
       setCapabilities(pullRes.capabilities)
 
-      const [filesRes, threadsRes, checksRes, judgeRes] = await Promise.all([
+      const [filesRes, threadsRes, checksRes, judgeRes, deploymentEvidenceRes] = await Promise.all([
         fetchGithubPullFiles(owner, repo, prNumber),
         fetchGithubPullThreads(owner, repo, prNumber),
         fetchGithubPullChecks(owner, repo, prNumber),
         fetchGithubPullJudgeRuns(owner, repo, prNumber),
+        fetchGithubPullDeploymentEvidenceSummary(owner, repo, prNumber),
       ])
       if (filesRes.ok) {
         setFiles(filesRes.files)
@@ -186,6 +212,12 @@ function GithubPullDetailPage() {
       if (threadsRes.ok) setThreads(threadsRes.threads)
       if (checksRes.ok) setChecksByCommit(checksRes.commits)
       if (judgeRes.ok) setJudgeRuns(judgeRes.runs)
+      if (deploymentEvidenceRes.ok) {
+        setDeploymentEvidence(deploymentEvidenceRes.deployment)
+      } else {
+        setDeploymentEvidence({ rollout: null, rollback: null })
+      }
+      await loadWriteActions()
 
       setStatus('Loaded pull request details.')
     } catch (err) {
@@ -194,7 +226,45 @@ function GithubPullDetailPage() {
     } finally {
       setLoading(false)
     }
-  }, [owner, pollForFiles, prNumber, repo])
+  }, [owner, pollForFiles, prNumber, repo, loadWriteActions])
+
+  const submitDeploymentEvidence = async () => {
+    if (!pull) return
+    if (deploymentAction === 'rollout' && !deploymentReference.trim()) {
+      setError('Rollout requires a deployment reference')
+      return
+    }
+    if (deploymentAction === 'rollback' && !deploymentReason.trim()) {
+      setError('Rollback requires a reason')
+      return
+    }
+    setStatus(null)
+    setError(null)
+
+    const response = await postGithubPullDeploymentEvidence(owner, repo, prNumber, {
+      action: deploymentAction,
+      missionId: deploymentMissionId.trim() || undefined,
+      stage: deploymentStage.trim() || undefined,
+      reference: deploymentReference.trim() || undefined,
+      status: deploymentStatus.trim() || undefined,
+      reason: deploymentReason.trim() || undefined,
+    })
+
+    if (!response.ok) {
+      setError(response.error)
+      return
+    }
+
+    setDeploymentReference('')
+    setDeploymentStatus('')
+    setDeploymentReason('')
+    setStatus('Deployment evidence submitted.')
+    await loadWriteActions()
+    const deploymentEvidenceRes = await fetchGithubPullDeploymentEvidenceSummary(owner, repo, prNumber)
+    if (deploymentEvidenceRes.ok) {
+      setDeploymentEvidence(deploymentEvidenceRes.deployment)
+    }
+  }
 
   React.useEffect(() => {
     void loadAll()
@@ -400,6 +470,7 @@ function GithubPullDetailPage() {
                 { key: 'files', label: 'Files' },
                 { key: 'conversation', label: 'Conversation' },
                 { key: 'checks', label: 'Checks' },
+                { key: 'audits', label: 'Write actions' },
                 { key: 'judge', label: 'Judge' },
               ] as Array<{ key: TabKey; label: string }>
             ).map((tab) => (
@@ -602,6 +673,96 @@ function GithubPullDetailPage() {
             </div>
           </TabsContent>
 
+          <TabsContent value="audits">
+            <div className="space-y-3 rounded-none border bg-card p-4 text-xs">
+              <div className="space-y-2 rounded-none border p-3">
+                <div className="text-sm font-medium">Latest deployment evidence</div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="space-y-1 border-r pr-2">
+                    <div className="text-muted-foreground">Rollout</div>
+                    {deploymentEvidence.rollout ? (
+                      <>
+                        <div>{formatDateTime(deploymentEvidence.rollout.receivedAt)}</div>
+                        <div>
+                          Ref: {deploymentEvidence.rollout.rolloutRef ?? '—'} · Stage:{' '}
+                          {deploymentEvidence.rollout.stage ?? '—'}
+                        </div>
+                        <div>Mission: {deploymentEvidence.rollout.missionId ?? '—'}</div>
+                        <div>Status: {deploymentEvidence.rollout.rolloutStatus ?? '—'}</div>
+                        <div>Result: {deploymentEvidence.rollout.success ? 'passed' : 'failed'}</div>
+                      </>
+                    ) : (
+                      <div className="text-muted-foreground">No rollout evidence recorded.</div>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-muted-foreground">Rollback</div>
+                    {deploymentEvidence.rollback ? (
+                      <>
+                        <div>{formatDateTime(deploymentEvidence.rollback.receivedAt)}</div>
+                        <div>
+                          Ref: {deploymentEvidence.rollback.rollbackRef ?? '—'} · Stage:{' '}
+                          {deploymentEvidence.rollback.stage ?? '—'}
+                        </div>
+                        <div>Mission: {deploymentEvidence.rollback.missionId ?? '—'}</div>
+                        <div>Reason: {deploymentEvidence.rollback.rollbackReason ?? '—'}</div>
+                        <div>Result: {deploymentEvidence.rollback.success ? 'passed' : 'failed'}</div>
+                      </>
+                    ) : (
+                      <div className="text-muted-foreground">No rollback evidence recorded.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="text-sm font-medium">Write action audit trail</div>
+              {writeActions.length === 0 ? (
+                <div className="text-muted-foreground">No write actions recorded yet.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full table-fixed border-separate border-spacing-0 text-left">
+                    <thead className="text-muted-foreground">
+                      <tr>
+                        <th className="px-2 py-1.5">Time</th>
+                        <th className="px-2 py-1.5">Action</th>
+                        <th className="px-2 py-1.5">Actor</th>
+                        <th className="px-2 py-1.5">Mission</th>
+                        <th className="px-2 py-1.5">Stage</th>
+                        <th className="px-2 py-1.5">Class</th>
+                        <th className="px-2 py-1.5">Risk</th>
+                        <th className="px-2 py-1.5">Rollout</th>
+                        <th className="px-2 py-1.5">Rollback</th>
+                        <th className="px-2 py-1.5">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {writeActions.map((audit) => (
+                        <tr key={`${audit.receivedAt}-${audit.action}-${audit.actor ?? ''}`}>
+                          <td className="border-t px-2 py-1.5 text-xs">{formatDateTime(audit.receivedAt)}</td>
+                          <td className="border-t px-2 py-1.5 text-xs">{audit.action}</td>
+                          <td className="border-t px-2 py-1.5 text-xs">{audit.actor ?? '—'}</td>
+                          <td className="border-t px-2 py-1.5 text-xs">{audit.missionId ?? '—'}</td>
+                          <td className="border-t px-2 py-1.5 text-xs">{audit.stage ?? '—'}</td>
+                          <td className="border-t px-2 py-1.5 text-xs">{audit.actionClass ?? '—'}</td>
+                          <td className="border-t px-2 py-1.5 text-xs">{audit.riskClass ?? '—'}</td>
+                          <td className="border-t px-2 py-1.5 text-xs">
+                            {audit.rolloutRef ?? audit.rolloutStatus ?? '—'}
+                          </td>
+                          <td className="border-t px-2 py-1.5 text-xs">
+                            {audit.rollbackRef ?? audit.rollbackReason ?? '—'}
+                          </td>
+                          <td className="border-t px-2 py-1.5 text-xs">
+                            {audit.success ? 'success' : 'failed'}
+                            {audit.error ? <div className="text-red-500">{audit.error}</div> : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
           <TabsContent value="judge">
             <div className="space-y-3 rounded-none border bg-card p-4 text-xs">
               <div className="text-sm font-medium">Judge runs</div>
@@ -765,6 +926,54 @@ function GithubPullDetailPage() {
             </Button>
             {!capabilities.mergeWriteEnabled ? (
               <div className="text-[11px] text-muted-foreground">Merge writes are disabled.</div>
+            ) : null}
+          </section>
+
+          <section className="rounded-none border bg-card p-4 text-xs space-y-3">
+            <div className="text-sm font-medium">Rollout / rollback evidence</div>
+            <select
+              className="h-9 w-full border bg-background px-2 text-xs"
+              value={deploymentAction}
+              onChange={(event) => setDeploymentAction(event.target.value as 'rollout' | 'rollback')}
+            >
+              <option value="rollout">Rollout</option>
+              <option value="rollback">Rollback</option>
+            </select>
+            <Input
+              placeholder="Mission ID (optional)"
+              value={deploymentMissionId}
+              onChange={(event) => setDeploymentMissionId(event.target.value)}
+            />
+            <Input
+              placeholder="Stage (optional)"
+              value={deploymentStage}
+              onChange={(event) => setDeploymentStage(event.target.value)}
+            />
+            <Input
+              placeholder={deploymentAction === 'rollout' ? 'Deployment reference' : 'Rollback reference'}
+              value={deploymentReference}
+              onChange={(event) => setDeploymentReference(event.target.value)}
+            />
+            <Input
+              placeholder={deploymentAction === 'rollout' ? 'Rollout status (optional)' : 'Rollback status (optional)'}
+              value={deploymentStatus}
+              onChange={(event) => setDeploymentStatus(event.target.value)}
+            />
+            <Input
+              placeholder={deploymentAction === 'rollback' ? 'Rollback reason' : 'Note (optional)'}
+              value={deploymentReason}
+              onChange={(event) => setDeploymentReason(event.target.value)}
+            />
+            <Button
+              type="button"
+              size="sm"
+              disabled={loading || !capabilities.mergeWriteEnabled}
+              onClick={() => void submitDeploymentEvidence()}
+            >
+              Record deployment evidence
+            </Button>
+            {!capabilities.mergeWriteEnabled ? (
+              <div className="text-[11px] text-muted-foreground">Deployment evidence writes are disabled.</div>
             ) : null}
           </section>
         </aside>

@@ -4,10 +4,13 @@ import {
   getPullFilesHandler,
   getPullHandler,
   getPullsHandler,
+  getPullDeploymentEvidenceSummaryHandler,
   mergePullHandler,
   refreshPullFilesHandler,
   resolveThreadHandler,
   submitReviewHandler,
+  getPullWriteActionsHandler,
+  postPullDeploymentEvidenceHandler,
 } from '~/server/github-review-handlers'
 
 const refreshWorktreeSnapshotMock = vi.hoisted(() => vi.fn())
@@ -107,6 +110,135 @@ describe('github review api routes', () => {
     })
   })
 
+  it('lists pull request write audits', async () => {
+    const store = {
+      getPull: vi.fn(async () => ({
+        pull: { repository: 'proompteng/lab', number: 42, labels: [], receivedAt: '2025-01-01T00:00:00Z' },
+        review: null,
+        checks: null,
+        issueComments: [],
+      })),
+      listWriteAudits: vi.fn(async () => [
+        {
+          repository: 'proompteng/lab',
+          prNumber: 42,
+          commitSha: null,
+          missionId: 'mission-42',
+          stage: 'merge',
+          actionClass: 'autonomous',
+          riskClass: 'low',
+          rolloutRef: null,
+          rolloutStatus: null,
+          rollbackRef: null,
+          rollbackReason: null,
+          action: 'merge',
+          actor: 'bot',
+          requestId: 'req-42',
+          payload: {},
+          response: null,
+          success: true,
+          error: null,
+          receivedAt: '2025-01-01T00:00:00Z',
+        },
+      ]),
+      close: vi.fn(async () => {}),
+    }
+
+    const response = await getPullWriteActionsHandler(
+      new Request('http://localhost/api/github/pulls/proompteng/lab/42/write-actions'),
+      { owner: 'proompteng', repo: 'lab', number: '42' },
+      () => store as never,
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      audits: [{ action: 'merge' }],
+    })
+    expect(store.listWriteAudits).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: 'proompteng/lab',
+        prNumber: 42,
+      }),
+    )
+  })
+
+  it('fetches pull request deployment evidence summary', async () => {
+    const rolloutAudit = {
+      repository: 'proompteng/lab',
+      prNumber: 43,
+      commitSha: 'sha-rollout',
+      missionId: 'mission-43',
+      stage: 'rollout',
+      actionClass: 'autonomous',
+      riskClass: 'low',
+      rolloutRef: 'deploy/main-123',
+      rolloutStatus: 'passed',
+      rollbackRef: null,
+      rollbackReason: null,
+      action: 'rollout',
+      actor: 'bot',
+      requestId: 'req-43',
+      payload: {},
+      response: null,
+      success: true,
+      error: null,
+      receivedAt: '2025-01-01T00:00:00Z',
+    }
+    const rollbackAudit = {
+      repository: 'proompteng/lab',
+      prNumber: 43,
+      commitSha: 'sha-rollback',
+      missionId: 'mission-43',
+      stage: 'rollback',
+      actionClass: 'autonomous',
+      riskClass: 'low',
+      rolloutRef: null,
+      rolloutStatus: null,
+      rollbackRef: 'deploy/main-456',
+      rollbackReason: 'safety-stop',
+      action: 'rollback',
+      actor: 'bot',
+      requestId: 'req-43',
+      payload: {},
+      response: null,
+      success: false,
+      error: null,
+      receivedAt: '2025-01-01T00:30:00Z',
+    }
+    const store = {
+      getPull: vi.fn(async () => ({
+        pull: { repository: 'proompteng/lab', number: 43, labels: [], receivedAt: '2025-01-01T00:00:00Z' },
+        review: null,
+        checks: null,
+        issueComments: [],
+      })),
+      listWriteAudits: vi.fn(async ({ action }) => {
+        const actionFilter = Array.isArray(action) ? action[0] : action
+        if (actionFilter === 'rollout') return [rolloutAudit]
+        if (actionFilter === 'rollback') return [rollbackAudit]
+        return []
+      }),
+      close: vi.fn(async () => {}),
+    }
+
+    const response = await getPullDeploymentEvidenceSummaryHandler(
+      new Request('http://localhost/api/github/pulls/proompteng/lab/43/deployment'),
+      { owner: 'proompteng', repo: 'lab', number: '43' },
+      () => store as never,
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      deployment: {
+        rollout: { action: 'rollout', rolloutRef: 'deploy/main-123' },
+        rollback: { action: 'rollback', rollbackReason: 'safety-stop' },
+      },
+    })
+    expect(store.listWriteAudits).toHaveBeenCalledTimes(2)
+  })
+
   it('submits a review', async () => {
     const actions = { submitPullRequestReview: vi.fn(async () => ({ id: 123 })) }
     const response = await submitReviewHandler(
@@ -153,6 +285,88 @@ describe('github review api routes', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({ ok: true })
     expect(actions.mergePullRequest).toHaveBeenCalled()
+  })
+
+  it('records PR deployment evidence', async () => {
+    const actions = {
+      recordPullDeploymentAction: vi.fn(async () => ({
+        ok: true,
+        action: 'rollout' as const,
+        missionId: 'mission-1',
+        stage: 'rollout',
+        reference: 'deploy/ref',
+        status: null,
+        reason: null,
+      })),
+    }
+
+    const response = await postPullDeploymentEvidenceHandler(
+      new Request('http://localhost/api/github/pulls/proompteng/lab/1/deployment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'rollout', missionId: 'mission-1', reference: 'deploy/ref' }),
+      }),
+      { owner: 'proompteng', repo: 'lab', number: '1' },
+      actions,
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ ok: true })
+    expect(actions.recordPullDeploymentAction).toHaveBeenCalledWith(
+      expect.any(Request),
+      expect.objectContaining({
+        action: 'rollout',
+        missionId: 'mission-1',
+        reference: 'deploy/ref',
+      }),
+    )
+  })
+
+  it('rejects invalid deployment evidence bodies', async () => {
+    const response = await postPullDeploymentEvidenceHandler(
+      new Request('http://localhost/api/github/pulls/proompteng/lab/1/deployment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: '' }),
+      }),
+      { owner: 'proompteng', repo: 'lab', number: '1' },
+      {
+        recordPullDeploymentAction: vi.fn(async () => ({
+          ok: true,
+          action: 'rollout' as const,
+          missionId: null,
+          stage: 'rollout',
+          reference: null,
+          status: null,
+          reason: null,
+        })),
+      },
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({ ok: false })
+  })
+
+  it('returns an error when rollout evidence is missing reference', async () => {
+    const response = await postPullDeploymentEvidenceHandler(
+      new Request('http://localhost/api/github/pulls/proompteng/lab/1/deployment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'rollout', missionId: 'mission-1' }),
+      }),
+      { owner: 'proompteng', repo: 'lab', number: '1' },
+      {
+        recordPullDeploymentAction: vi.fn(async () => {
+          throw new Error('Rollout evidence requires a reference')
+        }),
+      },
+    )
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: 'Rollout evidence requires a reference',
+    })
   })
 
   it('deduplicates pull file refreshes while one snapshot refresh is in flight', async () => {

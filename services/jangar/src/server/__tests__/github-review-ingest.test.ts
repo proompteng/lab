@@ -51,6 +51,7 @@ const buildStore = (): GithubReviewStore => ({
   updateThreadResolution: vi.fn(async () => {}),
   updateMergeState: vi.fn(async () => {}),
   updateReviewDecision: vi.fn(async () => {}),
+  listWriteAudits: vi.fn(async () => []),
   insertWriteAudit: vi.fn(async () => {}),
   resolveThreadKey: vi.fn(async () => ({ threadId: null })),
   getUnresolvedThreadCount: vi.fn(async () => 0),
