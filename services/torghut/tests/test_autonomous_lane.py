@@ -246,6 +246,10 @@ class TestAutonomousLane(TestCase):
                 str(output_dir / "microstructure" / "deeplob-bdlob-report-v1.json"),
             )
             self.assertEqual(
+                evidence["advisor_fallback_slo"]["artifact_ref"],
+                str(output_dir / "execution" / "advisor-fallback-slo-report-v1.json"),
+            )
+            self.assertEqual(
                 evidence["contamination_registry"]["artifact_ref"],
                 str(output_dir / "gates" / "contamination-leakage-report-v1.json"),
             )
@@ -265,6 +269,9 @@ class TestAutonomousLane(TestCase):
             )
             self.assertTrue(
                 (output_dir / "microstructure" / "deeplob-bdlob-report-v1.json").exists()
+            )
+            self.assertTrue(
+                (output_dir / "execution" / "advisor-fallback-slo-report-v1.json").exists()
             )
             self.assertTrue(
                 (
@@ -427,6 +434,10 @@ class TestAutonomousLane(TestCase):
                     str(Path("microstructure") / "deeplob-bdlob-report-v1.json"),
                 )
                 self.assertEqual(
+                    evidence["advisor_fallback_slo"]["artifact_ref"],
+                    str(Path("execution") / "advisor-fallback-slo-report-v1.json"),
+                )
+                self.assertEqual(
                     evidence["contamination_registry"]["artifact_ref"],
                     str(Path("gates") / "contamination-leakage-report-v1.json"),
                 )
@@ -446,6 +457,9 @@ class TestAutonomousLane(TestCase):
                 )
                 self.assertTrue(
                     (output_dir / "microstructure" / "deeplob-bdlob-report-v1.json").exists()
+                )
+                self.assertTrue(
+                    (output_dir / "execution" / "advisor-fallback-slo-report-v1.json").exists()
                 )
                 self.assertTrue(
                     (

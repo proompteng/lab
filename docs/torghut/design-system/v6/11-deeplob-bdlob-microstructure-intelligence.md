@@ -14,7 +14,7 @@
   - `services/torghut/config/autonomy-gates-v3.json`
   - `argocd/applications/torghut/autonomy-gate-policy-configmap.yaml`
   - `services/torghut/tests/test_policy_checks.py`
-- Rollout gap: Closed for the strict schema/version contract. Remaining Wave 5 work is advisor timeout/staleness fallback SLO closure.
+- Rollout gap: Closed for full Wave 5 scope, including advisor timeout/staleness fallback SLO closure (`2026-03-03`).
 
 ## Objective
 
