@@ -687,7 +687,8 @@ describe('supporting primitives controller', () => {
     expect(parameters.hulyApiBaseUrl).toBe('https://huly.proompteng.ai')
     expect(parameters.hulySkillRef).toBe('skills/huly-api/SKILL.md')
     const runSecrets = Array.isArray(requirementRun.spec.secrets) ? (requirementRun.spec.secrets as string[]) : []
-    expect(runSecrets).toContain('huly-api')
+    expect(runSecrets).not.toContain('huly-api')
+    expect(runSecrets).toHaveLength(0)
 
     const statusCall = applyStatus.mock.calls.at(-1)
     const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
