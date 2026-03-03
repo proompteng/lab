@@ -10,9 +10,9 @@ data:
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_TRADE_STREAM_URL: "wss://paper-api.alpaca.markets/stream"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
-  # Dynamic desired-symbol feed is temporarily disabled to stay within Alpaca symbol limits.
-  JANGAR_SYMBOLS_URL: ""
-  # Static fallback universe used while dynamic feed is disabled.
+  # Dynamic desired-symbol feed from Jangar (enabled symbols only).
+  JANGAR_SYMBOLS_URL: "http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact"
+  # Bootstrap fallback universe used only if Jangar fetch fails at startup.
   SYMBOLS: "ARM,CRWD,GOOG,LRCX,MSFT,MU,NVDA,SNDK,TSM"
   SYMBOLS_POLL_INTERVAL_MS: "30000"
   SUBSCRIBE_BATCH_SIZE: "200"
