@@ -38,7 +38,7 @@ No promotion path may bypass these controls.
 
 1. `v6/05` contamination-safe promotion artifact registry is partial.
 2. `v6/08` canonical profitability operating contract is planned.
-3. `v6/03` DSPy production cutover is partial (legacy path decommission pending).
+3. `v6/03` DSPy production cutover is implemented with live fail-closed runtime posture. (Completed `2026-03-03`)
 4. `v6/02` expert-router artifact registry and tuning SLO loop are partial.
 5. `v6/07` HMM posterior state service + lineage are partial.
 6. `v6/09` external benchmark parity suite is planned.
@@ -121,8 +121,8 @@ Complete DSPy-only production decisioning path with explicit decommissioning of 
 
 ### Deliverables
 
-1. Remove legacy runtime LLM call path from decision codepath.
-2. Enforce DSPy artifact/version locks for all live advisory decisions.
+1. Remove legacy runtime LLM call path from decision codepath. (Completed `2026-03-03`)
+2. Enforce DSPy artifact/version locks for all live advisory decisions. (Completed `2026-03-03`)
 3. Ensure committee/veto telemetry and promotion lineage coverage are complete. (Completed `2026-03-03`)
 4. Add migration guard that blocks rollout if legacy toggles are still enabled. (Completed `2026-03-03`)
 

@@ -107,17 +107,16 @@ class TestLiveConfigManifestContract(TestCase):
         settings = Settings(**env)
 
         self.assertEqual(settings.trading_mode, "live")
-        self.assertEqual(settings.llm_rollout_stage, "stage1")
-        self.assertEqual(settings.llm_fail_mode, "pass_through")
-        self.assertEqual(settings.llm_fail_mode_enforcement, "configured")
-        self.assertTrue(settings.llm_live_fail_open_requested_for_stage("stage1"))
-        self.assertTrue(settings.llm_fail_open_live_approved)
-        self.assertEqual(
-            settings.llm_effective_fail_mode_for_current_rollout(), "pass_through"
-        )
-        self.assertEqual(
-            settings.llm_effective_fail_mode(rollout_stage="stage1"), "pass_through"
-        )
+        self.assertEqual(settings.llm_rollout_stage, "stage3_controlled_live")
+        self.assertEqual(settings.llm_dspy_runtime_mode, "active")
+        self.assertEqual(settings.llm_fail_mode, "veto")
+        self.assertEqual(settings.llm_fail_mode_enforcement, "strict_veto")
+        self.assertFalse(settings.llm_fail_open_live_approved)
+        self.assertFalse(settings.llm_live_fail_open_requested_for_stage("stage3"))
+        self.assertEqual(settings.llm_effective_fail_mode_for_current_rollout(), "veto")
+        cutover_allowed, cutover_reasons = settings.llm_dspy_cutover_migration_guard()
+        self.assertTrue(cutover_allowed)
+        self.assertEqual(cutover_reasons, ())
 
     def test_manifest_rollout_toggles_disable_execution_advisor(self) -> None:
         knative_env = _load_torghut_knative_env()
@@ -148,13 +147,15 @@ class TestLiveConfigManifestContract(TestCase):
 
         _require_flag_enabled_false("torghut_trading_execution_advisor_enabled")
         _require_flag_enabled_false("torghut_trading_execution_advisor_live_apply_enabled")
+        _require_flag_enabled_false("torghut_llm_fail_open_live_approved")
+        _require_flag_enabled_false("torghut_llm_shadow_mode")
 
     def test_live_pass_through_with_strict_veto_profile_is_rejected(self) -> None:
         env = _load_torghut_knative_env()
         env["TRADING_FEATURE_FLAGS_ENABLED"] = "false"
         env["TRADING_MODE"] = "live"
         fail_open_env = dict(env)
-        fail_open_env["LLM_ROLLOUT_STAGE"] = "stage1"
+        fail_open_env["LLM_ROLLOUT_STAGE"] = "stage3"
         fail_open_env["LLM_FAIL_MODE"] = "pass_through"
         fail_open_env["LLM_FAIL_MODE_ENFORCEMENT"] = "strict_veto"
         fail_open_env["LLM_FAIL_OPEN_LIVE_APPROVED"] = "false"
@@ -169,3 +170,8 @@ class TestLiveConfigManifestContract(TestCase):
             approved_settings.llm_effective_fail_mode_for_current_rollout(),
             "pass_through",
         )
+        cutover_allowed, cutover_reasons = (
+            approved_settings.llm_dspy_cutover_migration_guard()
+        )
+        self.assertFalse(cutover_allowed)
+        self.assertIn("dspy_cutover_requires_strict_veto_enforcement", cutover_reasons)

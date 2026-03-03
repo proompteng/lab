@@ -6,7 +6,7 @@
 - Date: `2026-02-27`
 - Maturity: `production design`
 - Scope: production LLM decision architecture using DSPy programs, Jangar OpenAI-compatible inference, and deterministic safety integration
-- Implementation status: `Partial`
+- Implementation status: `Implemented`
 - Evidence:
   - `services/torghut/app/trading/llm/dspy_programs/runtime.py`
   - `services/torghut/app/trading/llm/dspy_compile/workflow.py`
@@ -17,7 +17,8 @@
 - `services/torghut/tests/test_llm_review_engine.py`
 - `services/torghut/tests/test_trading_pipeline.py`
 - `argocd/applications/torghut/knative-service.yaml`
-- Rollout gap: full production-path cutover still needs explicit legacy fail-open posture sunset; decision-row DSPy lineage and committee/veto telemetry coverage are now persisted end-to-end.
+- `argocd/applications/feature-flags/gitops/default/features.yaml`
+- Cutover status: live runtime now enforces stage3 DSPy active posture with strict-veto fail-closed controls and feature-flag parity.
 
 ## Objective
 
