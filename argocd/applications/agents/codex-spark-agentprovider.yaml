@@ -62,8 +62,72 @@ spec:
         #!/usr/bin/env python3
         import hashlib
         import json
+        import re
         import sys
         from pathlib import Path
+
+        PLACEHOLDER_PATTERN = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
+
+        def _is_nonempty_scalar(value) -> bool:
+          if isinstance(value, str):
+            return bool(value.strip())
+          return isinstance(value, (int, float))
+
+        def _scalar_to_text(value):
+          if isinstance(value, str):
+            return value
+          if isinstance(value, bool):
+            return 'true' if value else 'false'
+          if isinstance(value, (int, float)):
+            return str(value)
+          return ''
+
+        def _hydrate_top_level(payload: dict) -> None:
+          # Market-context runs pass required values in `parameters`; expose them at top-level
+          # so command snippets can interpolate without manual user input.
+          for container_key in ('parameters',):
+            container = payload.get(container_key)
+            if not isinstance(container, dict):
+              continue
+            for key, raw_value in container.items():
+              if not isinstance(key, str) or not key:
+                continue
+              if not _is_nonempty_scalar(raw_value):
+                continue
+              existing = payload.get(key)
+              if _is_nonempty_scalar(existing):
+                continue
+              payload[key] = _scalar_to_text(raw_value)
+
+        def _interpolate(value: str, values: dict[str, str]) -> str:
+          def repl(match):
+            key = match.group(1)
+            replacement = values.get(key)
+            if replacement is None or replacement == '':
+              return match.group(0)
+            return replacement
+          return PLACEHOLDER_PATTERN.sub(repl, value)
+
+        def _interpolate_prompt_fields(payload: dict) -> None:
+          values: dict[str, str] = {}
+          for key, raw_value in payload.items():
+            if isinstance(raw_value, (str, int, float, bool)):
+              text = _scalar_to_text(raw_value).strip()
+              if text:
+                values[key] = text
+          if not values:
+            return
+
+          for field in ('prompt', 'issueBody'):
+            raw_field = payload.get(field)
+            if isinstance(raw_field, str):
+              payload[field] = _interpolate(raw_field, values)
+
+          implementation = payload.get('implementation')
+          if isinstance(implementation, dict):
+            raw_text = implementation.get('text')
+            if isinstance(raw_text, str):
+              implementation['text'] = _interpolate(raw_text, values)
 
         def main() -> int:
           if len(sys.argv) < 2:
@@ -78,29 +142,33 @@ spec:
           if not isinstance(payload, dict):
             return 0
 
+          _hydrate_top_level(payload)
+
           issue_number = payload.get('issueNumber')
           if isinstance(issue_number, (int, float)):
-            return 0
-          if isinstance(issue_number, str) and issue_number.strip():
-            return 0
+            payload['issueNumber'] = str(int(issue_number))
+          elif isinstance(issue_number, str) and issue_number.strip():
+            payload['issueNumber'] = issue_number.strip()
+          else:
+            seed = '|'.join(
+              [
+                str(payload.get('repository', '')).strip(),
+                str(payload.get('domain', '')).strip(),
+                str(payload.get('symbol', '')).strip(),
+                str(payload.get('requestId', '')).strip(),
+                str(payload.get('head', '')).strip(),
+                str(payload.get('base', '')).strip(),
+                str(payload.get('stage', '')).strip(),
+              ]
+            )
+            if not seed.strip('|'):
+              seed = 'codex-issue-fallback'
+            digest = hashlib.sha256(seed.encode('utf-8')).hexdigest()[:10]
+            normalized = (int(digest, 16) % 900_000_000) + 100_000_000
+            payload['issueNumber'] = str(normalized)
 
-          seed = '|'.join(
-            [
-              str(payload.get('repository', '')).strip(),
-              str(payload.get('domain', '')).strip(),
-              str(payload.get('symbol', '')).strip(),
-              str(payload.get('requestId', '')).strip(),
-              str(payload.get('head', '')).strip(),
-              str(payload.get('base', '')).strip(),
-              str(payload.get('stage', '')).strip(),
-            ]
-          )
-          if not seed.strip('|'):
-            seed = 'codex-issue-fallback'
-          digest = hashlib.sha256(seed.encode('utf-8')).hexdigest()[:10]
-          normalized = (int(digest, 16) % 900_000_000) + 100_000_000
-          payload['issueNumber'] = str(normalized)
-          payload['issue_number'] = str(normalized)
+          payload['issue_number'] = str(payload.get('issueNumber', '')).strip()
+          _interpolate_prompt_fields(payload)
           event_path.write_text(json.dumps(payload), encoding='utf-8')
           return 0
 
