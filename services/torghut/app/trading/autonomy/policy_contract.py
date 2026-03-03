@@ -8,6 +8,7 @@ from typing import Any, cast
 
 _REQUIRED_BOOL_KEYS: tuple[str, ...] = (
     "promotion_require_profitability_stage_manifest",
+    "promotion_require_profitability_stage_replay_contract",
     "promotion_require_benchmark_parity",
     "promotion_require_janus_evidence",
     "promotion_require_stress_evidence",
