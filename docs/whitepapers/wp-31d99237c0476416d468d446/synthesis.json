@@ -1,0 +1,177 @@
+{
+  "run_id": "wp-31d99237c0476416d468d446",
+  "paper": {
+    "title": "DiffLOB: Diffusion Models for Counterfactual Generation in Limit Order Books",
+    "arxiv_id": "2602.03776",
+    "pdf_url": "https://arxiv.org/pdf/2602.03776.pdf"
+  },
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "sources": [
+      "ijcai26.tex",
+      "appendix.tex"
+    ],
+    "notes": "Reviewed from official arXiv source bundle to guarantee full-text coverage."
+  },
+  "executive_summary": "DiffLOB introduces a regime-conditioned diffusion model for counterfactual LOB trajectory generation. The paper demonstrates strong controllable realism and generally good counterfactual validity, with mixed robustness on trend interventions and limited external-validity evidence due short horizon and narrow universe. For Torghut, the method is research-relevant but not directly production-deployable because current runtime contracts do not include full-depth LOB trajectory tensors or diffusion training infrastructure.",
+  "problem_statement": "Existing LOB predictors forecast selected variables, and existing LOB generators mostly model observed trajectories without explicit future regime intervention. The paper targets controllable and counterfactual generation so users can ask how LOB dynamics change under hypothetical future regimes (trend, volatility, liquidity, imbalance).",
+  "methodology_summary": "The model learns p(x_{t+1:t+tau} | x_{1:t}, c_{t+1:t+tau}) using DDPM-style denoising with classifier-free guidance. Architecture uses a WaveNet-style backbone with FiLM modulation and separate local/global regime encoders. Training is dual-stage: train base dynamics first, then freeze backbone and train a control module (ControlNet-inspired zero-initialized additive path) for regime interventions.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "Under observed future regimes, DiffLOB is best or near-best across distributional realism metrics on AMZN/AAPL/GOOG.",
+      "evidence": [
+        "Section 5.1",
+        "Table 1",
+        "Figures 2-4"
+      ],
+      "notes": "Removing the control module degrades most realism metrics."
+    },
+    {
+      "id": "KF-2",
+      "finding": "Counterfactual validity is generally strong for volatility/liquidity/imbalance, but trend interventions are not uniformly best.",
+      "evidence": [
+        "Section 5.2",
+        "Table 2",
+        "Appendix Table 4"
+      ],
+      "notes": "cGAN beats DiffLOB on AMZN high/low trend in reported table."
+    },
+    {
+      "id": "KF-3",
+      "finding": "Counterfactual data augmentation improves many extreme-regime downstream subsets versus real-only baselines.",
+      "evidence": [
+        "Section 5.3",
+        "Table 3"
+      ],
+      "notes": "Absolute quality remains uneven; several regression slices still have weak or negative R^2."
+    },
+    {
+      "id": "KF-4",
+      "finding": "Paper setup is narrow: three stocks and a short February 2023 window.",
+      "evidence": [
+        "Section 4.1"
+      ],
+      "notes": "Limits external validity for immediate production adoption."
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "Regime-conditioned counterfactual LOB generation with direct intervention controls.",
+      "assessment": "moderately_novel",
+      "support": [
+        "Section 1",
+        "Section 3.1",
+        "Section 3.2"
+      ]
+    },
+    {
+      "claim": "Dual-stage control module improves controllability while preserving base realism.",
+      "assessment": "supported_in_scope",
+      "support": [
+        "Section 3.2",
+        "Section 5.1",
+        "Section 5.2"
+      ]
+    },
+    {
+      "claim": "Synthetic counterfactual trajectories provide practical downstream gains.",
+      "assessment": "partially_supported",
+      "support": [
+        "Section 5.3",
+        "Table 3"
+      ]
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "data_contract_gap",
+      "severity": "high",
+      "detail": "Torghut ingest/runtime contracts currently center on compact indicator and microstructure fields, not full per-second LOB tensors required by DiffLOB training/inference."
+    },
+    {
+      "risk": "infrastructure_gap",
+      "severity": "high",
+      "detail": "Current service dependency/runtime profile does not include diffusion-model training stack or GPU job orchestration in-process."
+    },
+    {
+      "risk": "external_validity",
+      "severity": "high",
+      "detail": "Paper evaluates only three U.S. large-cap stocks over a short 2023 period."
+    },
+    {
+      "risk": "counterfactual_consistency",
+      "severity": "medium",
+      "detail": "Trend intervention performance is not dominant versus all baselines in reported tables."
+    },
+    {
+      "risk": "downstream_stability",
+      "severity": "medium",
+      "detail": "Usefulness metrics show relative gains but weak absolute values in several slices."
+    }
+  ],
+  "citations": [
+    {
+      "source_type": "paper",
+      "pointer": "Section 1",
+      "claim": "Motivation and contribution framing for counterfactual LOB generation."
+    },
+    {
+      "source_type": "paper",
+      "pointer": "Section 3.1 (problem formulation equation)",
+      "claim": "Conditional objective with intervenable future regimes."
+    },
+    {
+      "source_type": "paper",
+      "pointer": "Section 3.2, Figure 1",
+      "claim": "WaveNet backbone, regime encoders, and dual-stage control module."
+    },
+    {
+      "source_type": "paper",
+      "pointer": "Section 4.1-4.2",
+      "claim": "Data split, preprocessing, and DDPM training/sampling setup."
+    },
+    {
+      "source_type": "paper",
+      "pointer": "Section 5.1, Table 1",
+      "claim": "Controllable realism outcomes on AMZN/AAPL/GOOG."
+    },
+    {
+      "source_type": "paper",
+      "pointer": "Section 5.2, Table 2",
+      "claim": "Counterfactual validity under extreme regime interventions."
+    },
+    {
+      "source_type": "paper",
+      "pointer": "Section 5.3, Table 3",
+      "claim": "Counterfactual usefulness for trend/liquidity prediction."
+    },
+    {
+      "source_type": "paper",
+      "pointer": "Appendix Section A.1-A.2",
+      "claim": "Diffusion theory and explicit training/sampling algorithms."
+    },
+    {
+      "source_type": "paper",
+      "pointer": "Appendix Section A.4, Table 4",
+      "claim": "Complete counterfactual validity results across three stocks."
+    },
+    {
+      "source_type": "repository",
+      "pointer": "services/torghut/app/trading/ingest.py (FLAT_SIGNAL_COLUMNS)",
+      "claim": "Current ingest schema lacks full LOB trajectory tensor contract."
+    },
+    {
+      "source_type": "repository",
+      "pointer": "services/torghut/app/trading/microstructure.py (MicrostructureStateV5)",
+      "claim": "Runtime microstructure contract is compact and execution-focused."
+    },
+    {
+      "source_type": "repository",
+      "pointer": "services/torghut/pyproject.toml",
+      "claim": "Current runtime dependencies do not include a diffusion training stack."
+    }
+  ],
+  "implementation_plan_md": "### Phase A - Deterministic Research Contract (in-repo)\n1. Define DiffLOB experiment artifact schema (manifest hash, data snapshot hash, config hash, seed, model artifact hash).\n2. Add contract validators and unit tests; keep runtime path inference-free.\n3. Record reproducibility metadata as first-class evidence artifacts.\n\n### Phase B - Offline Model Lane (out-of-process)\n1. Stand up offline training/evaluation job for regime-conditioned diffusion on full LOB snapshots.\n2. Export signed artifacts for Torghut consumption (read-only analysis evidence).\n3. Add CI checks that fail when artifact schema or reproducibility metadata is incomplete.\n\n### Phase C - Promotion Gate Experiments\n1. Evaluate on walk-forward and stress slices aligned to Torghut deployment horizons.\n2. Require regime-wise stability thresholds before linking outputs to policy logic.\n3. Restrict usage to simulation/paper trading until gates pass consistently.",
+  "confidence": 0.83
+}
