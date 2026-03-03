@@ -1694,7 +1694,7 @@ describe('supporting primitives controller', () => {
     expect(deleteFn).toHaveBeenCalledTimes(4)
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
-    expect(status.phase).toBe('Active')
+    expect(status.phase).toBe('Frozen')
     expect(status.freeze).toMatchObject({
       reason: 'ConsecutiveFailures',
     })
