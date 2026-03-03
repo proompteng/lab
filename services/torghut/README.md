@@ -77,6 +77,7 @@ Endpoints:
   - `LLM_DSPY_PROGRAM_NAME`, `LLM_DSPY_SIGNATURE_VERSION`, `LLM_DSPY_TIMEOUT_SECONDS`
 
 AgentRun payload builder (`build_dspy_agentrun_payload`) enforces:
+
 - explicit `idempotencyKey`
 - `implementationSpecRef` from DSPy lane catalog
 - `vcsPolicy.required=true` with `mode=read-write`
@@ -139,6 +140,19 @@ uv run python scripts/evaluate_dspy_compile.py \
   - `TRADING_FEATURE_FLAGS_TIMEOUT_MS` (default `500`)
 - Canonical flag inventory is in `argocd/applications/feature-flags/gitops/default/features.yaml` (`torghut_*` keys).
 - Migration and rollout runbook: `docs/torghut/feature-flags-rollout.md`.
+
+## Autonomy phase manifest contract (governance, canary, rollback)
+
+- Primary authority for rollout governance shape is in `app/trading/autonomy/phase_manifest_contract.py`.
+- `build_runtime_and_rollback_governance_payloads(...)` produces all artifacts for the unified runtime governance + rollback proof stage:
+  - `runtime_phase` (`runtime-governance`) and `rollback_proof_phase` (`rollback-proof`) phase payloads
+  - `runtime_governance` and `rollback_proof` top-level manifest metadata
+- `build_phase_manifest_payload_with_runtime_and_rollback(...)` is the single manifest builder used by both lane and scheduler paths:
+  - merges canonical runtime and rollback proof phases into the existing manifest phase list
+  - rollback evidence is only attached when rollback is actually triggered
+  - non-triggered rollback evidence references are dropped from rollback-proof
+  - missing evidence while rollback is triggered fails `rollback-proof` via `slo_rollback_evidence_required_when_triggered`
+- Phase manifests should be treated as single-source governance evidence for promotion and rollback decisions; avoid manual duplicate assembly outside this helper.
 
 ## Deploy automation (main -> Argo CD)
 

@@ -2454,8 +2454,8 @@ def _build_phase_manifest(
             ],
             "observations": {
                 "rollback_triggered": rollback_triggered,
-                "rollback_incident_evidence_path": rollback_proof_path or None,
-                "rollback_incident_evidence": rollback_proof_path or None,
+                "rollback_incident_evidence_path": rollback_proof_path or "",
+                "rollback_incident_evidence": rollback_proof_path or "",
             },
             "artifact_refs": [rollback_proof_path] if rollback_proof_path else [],
             "reasons": list(rollback_proof.get("reasons", [])),
@@ -2531,6 +2531,14 @@ def _build_phase_manifest(
 
     phase_summaries = ordered_phase_summaries
     phase_transitions = normalize_phase_transitions(phase_summaries)
+    normalized_runtime_governance = dict(runtime_governance)
+    normalized_runtime_governance["rollback_triggered"] = rollback_triggered
+    normalized_runtime_governance["rollback_incident_evidence_path"] = rollback_proof_path
+    normalized_runtime_governance["rollback_incident_evidence"] = rollback_proof_path
+    normalized_rollback_proof = dict(rollback_proof)
+    normalized_rollback_proof["rollback_triggered"] = rollback_triggered
+    normalized_rollback_proof["rollback_incident_evidence_path"] = rollback_proof_path
+    normalized_rollback_proof["rollback_incident_evidence"] = rollback_proof_path
 
     return {
         "schema_version": "autonomy-phase-manifest-v1",
@@ -2556,8 +2564,8 @@ def _build_phase_manifest(
             "live_targeted": requested_promotion_target == "live",
         },
         "phases": phase_summaries,
-        "runtime_governance": runtime_governance,
-        "rollback_proof": rollback_proof,
+        "runtime_governance": normalized_runtime_governance,
+        "rollback_proof": normalized_rollback_proof,
         "artifact_refs": sorted(
             {
                 artifact_ref
