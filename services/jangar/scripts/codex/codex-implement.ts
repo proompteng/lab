@@ -409,6 +409,48 @@ const normalizeOptionalString = (value: string | null | undefined) => {
   return value
 }
 
+const EVENT_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+const eventKeyToEnvAlias = (key: string) =>
+  key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^A-Za-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase()
+
+const eventValueToEnvString = (value: unknown): string | null => {
+  if (value === null || value === undefined) {
+    return null
+  }
+  if (typeof value === 'string') {
+    return value
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value)
+  }
+  return null
+}
+
+const exportScalarEventParametersToEnv = (event: ImplementationEventPayload) => {
+  for (const [key, value] of Object.entries(event)) {
+    const envValue = eventValueToEnvString(value)
+    if (envValue === null) {
+      continue
+    }
+
+    if (EVENT_ENV_NAME_PATTERN.test(key)) {
+      process.env[key] = envValue
+    }
+
+    const envAlias = eventKeyToEnvAlias(key)
+    if (EVENT_ENV_NAME_PATTERN.test(envAlias)) {
+      process.env[envAlias] = envValue
+      process.env[`CODEX_PARAM_${envAlias}`] = envValue
+    }
+  }
+}
+
 const sha256Hex = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
 
 const parseOptionalPrNumber = (value: string): number | null => {
@@ -1914,6 +1956,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   process.env.COMMIT_SHA_PATH = commitShaPath
   process.env.PR_NUMBER_PATH = prNumberPath
   process.env.PR_URL_PATH = prUrlPath
+  exportScalarEventParametersToEnv(event)
 
   process.env.CODEX_STAGE = stage
   process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=info'
