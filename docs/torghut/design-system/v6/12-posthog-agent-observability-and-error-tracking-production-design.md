@@ -6,12 +6,16 @@
 - Date: `2026-03-03`
 - Maturity: `production design`
 - Scope: production-grade PostHog adoption for Torghut agent observation, error tracking, LLM telemetry, and feature-flag strategy
-- Implementation status: `Planned`
+- Implementation status: `Implemented` (Completed `2026-03-03`)
 - Evidence:
+  - `services/torghut/app/observability/posthog.py` (best-effort capture client + redaction contract)
+  - `services/torghut/app/trading/scheduler.py` (decision/execution/autonomy domain event emission with correlation IDs)
+  - `services/torghut/app/main.py` (`/trading/status`, `/trading/executions`, and control-plane contract correlation surfaces)
+  - `services/torghut/scripts/verify_quant_readiness.py` (control-plane + model-risk evidence package verification)
+  - `services/torghut/tests/test_posthog_observability.py` (capture + redaction regression coverage)
   - `argocd/applications/posthog/**` (self-hosted platform manifests)
   - `argocd/applications/torghut/knative-service.yaml` (runtime env and feature-flag wiring)
-  - `services/torghut/app/trading/scheduler.py` (loop-level failure boundaries and runtime control points)
-- Rollout gap: Torghut has metrics/logs coverage via Alloy+Mimir+Loki, but no first-class PostHog domain telemetry or error-tracking pipeline.
+- Rollout gap: PostHog telemetry path is now implemented as best-effort, non-critical-path capture; rollout monitoring should continue to track dropped-event reasons.
 
 ## Objective
 
@@ -226,12 +230,8 @@ Add envs to Torghut Knative Service:
 - `POSTHOG_HOST` (in-cluster URL or external endpoint)
 - `POSTHOG_API_KEY` (secret)
 - `POSTHOG_PROJECT_ID`
-- `POSTHOG_CAPTURE_ERRORS`
-- `POSTHOG_CAPTURE_LLM`
-- `POSTHOG_FLUSH_INTERVAL_SECONDS`
-- `POSTHOG_QUEUE_MAX_EVENTS`
-- `POSTHOG_SAMPLE_RATE_ERRORS`
-- `POSTHOG_SAMPLE_RATE_EVENTS`
+- `POSTHOG_TIMEOUT_SECONDS`
+- `POSTHOG_DISTINCT_ID`
 
 Store sensitive values in `argocd/applications/torghut/sealed-secrets.yaml`.
 

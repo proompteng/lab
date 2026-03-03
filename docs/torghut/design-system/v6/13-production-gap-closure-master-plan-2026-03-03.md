@@ -6,7 +6,7 @@
 - Date: `2026-03-03`
 - Maturity: `production execution plan`
 - Scope: close all currently documented `Partial`/`Planned` gaps across the active Torghut autonomous quant stack and supporting v4/v5 dependencies.
-- Implementation status: `In progress`
+- Implementation status: `Completed` (Wave 0-6 + legacy disposition closure completed `2026-03-03`)
 
 ## Objective
 
@@ -44,8 +44,8 @@ No promotion path may bypass these controls.
 6. `v6/09` external benchmark parity suite is implemented with fail-closed contract + coverage/calibration gating. (Completed `2026-03-03`)
 7. `v6/10` TimesFM parity contract is implemented with fail-closed promotion gating. (Completed `2026-03-03`)
 8. `v6/11` DeepLOB/BDLOB production contract is implemented with fail-closed schema/version governance. (Completed `2026-03-03`)
-9. `v6/12` PostHog domain telemetry pipeline is planned.
-10. Remaining `v4`/`v5` advanced-doc deltas are largely not implemented and must be explicitly absorbed, superseded, or closed.
+9. `v6/12` PostHog domain telemetry pipeline is implemented with non-critical-path capture and correlation IDs surfaced in control-plane contracts. (Completed `2026-03-03`)
+10. Remaining `v4`/`v5` advanced-doc deltas have explicit signed disposition mapping. (Completed `2026-03-03`)
 
 ## Program Principles
 
@@ -224,10 +224,10 @@ Reach operational completeness for autonomous governance and incident response.
 
 ### Deliverables
 
-1. Domain-level PostHog telemetry with decision/execution correlation IDs.
-2. Quant control-plane coverage for promotion, rollback, and drift evidence continuity.
-3. Runbook closure for all new failure classes and emergency-stop rehearse checks.
-4. Model-risk/audit evidence package completeness checks in CI.
+1. Domain-level PostHog telemetry with decision/execution correlation IDs. (Completed `2026-03-03`)
+2. Quant control-plane coverage for promotion, rollback, and drift evidence continuity. (Completed `2026-03-03`)
+3. Runbook closure for all new failure classes and emergency-stop rehearse checks. (Completed `2026-03-03`)
+4. Model-risk/audit evidence package completeness checks in CI. (Completed `2026-03-03`)
 
 ### Primary files
 
@@ -293,6 +293,10 @@ Each `Not Implemented` v4/v5 item must be assigned exactly one disposition:
 3. `Dropped` with supersession rationale and risk signoff.
 
 No unresolved row may remain without disposition.
+
+Signed mapping artifact:
+
+- `docs/torghut/design-system/v6/14-legacy-gap-disposition-map-2026-03-03.md`
 
 ## Legacy Gap Mapping (Required Closure)
 

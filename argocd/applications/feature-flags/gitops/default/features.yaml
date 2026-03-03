@@ -195,3 +195,8 @@ flags:
     description: Approval gate for LLM execution adjustments.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
+  - key: torghut_posthog_enabled
+    name: Torghut PostHog Enabled
+    description: Enables Torghut PostHog domain telemetry emission.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false

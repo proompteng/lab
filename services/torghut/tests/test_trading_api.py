@@ -86,6 +86,8 @@ class TestTradingApi(TestCase):
                 submitted_qty=Decimal("1"),
                 filled_qty=Decimal("0"),
                 avg_fill_price=None,
+                execution_correlation_id="corr-1",
+                execution_idempotency_key="idem-1",
                 status="accepted",
                 raw_order={},
                 last_update_at=datetime.now(timezone.utc),
@@ -299,6 +301,8 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["symbol"], "AAPL")
+        self.assertEqual(payload[0]["execution_correlation_id"], "corr-1")
+        self.assertEqual(payload[0]["execution_idempotency_key"], "idem-1")
         self.assertIsNotNone(payload[0]["tca"])
         self.assertEqual(payload[0]["tca"]["slippage_bps"], 100.0)
 
@@ -389,6 +393,8 @@ class TestTradingApi(TestCase):
         self.assertIn("signal_expected_staleness_total", control_plane_contract)
         self.assertIn("market_session_open", control_plane_contract)
         self.assertIn("universe_fail_safe_blocked", control_plane_contract)
+        self.assertIn("domain_telemetry_event_total", control_plane_contract)
+        self.assertIn("domain_telemetry_dropped_total", control_plane_contract)
 
     def test_trading_metrics_includes_control_plane_contract(self) -> None:
         response = self.client.get("/trading/metrics")
@@ -457,6 +463,7 @@ class TestTradingApi(TestCase):
             scheduler.state.last_ingest_reason = "cursor_ahead_of_stream"
             scheduler.state.last_ingest_signals_total = 0
             scheduler.state.autonomy_no_signal_streak = 4
+            scheduler.state.last_autonomy_recommendation_trace_id = "trace-123"
             scheduler.state.last_signal_continuity_state = (
                 "expected_market_closed_staleness"
             )
@@ -475,6 +482,7 @@ class TestTradingApi(TestCase):
             self.assertEqual(autonomy["last_ingest_signal_count"], 0)
             self.assertEqual(autonomy["last_ingest_reason"], "cursor_ahead_of_stream")
             self.assertEqual(autonomy["no_signal_streak"], 4)
+            self.assertEqual(autonomy["last_recommendation_trace_id"], "trace-123")
             continuity = payload["signal_continuity"]
             self.assertEqual(
                 continuity["last_state"], "expected_market_closed_staleness"
@@ -571,6 +579,7 @@ class TestTradingApi(TestCase):
             scheduler = TradingScheduler()
             scheduler.state.autonomy_no_signal_streak = 7
             scheduler.state.last_autonomy_reason = "cursor_ahead_of_stream"
+            scheduler.state.last_autonomy_recommendation_trace_id = "autonomy-trace-1"
             app.state.trading_scheduler = scheduler
 
             response = self.client.get("/trading/autonomy")
@@ -578,6 +587,9 @@ class TestTradingApi(TestCase):
             payload = response.json()
             self.assertEqual(payload["no_signal_streak"], 7)
             self.assertEqual(payload["last_reason"], "cursor_ahead_of_stream")
+            self.assertEqual(
+                payload["last_recommendation_trace_id"], "autonomy-trace-1"
+            )
             self.assertIsNone(payload["last_actuation_intent"])
         finally:
             if original_scheduler is None:

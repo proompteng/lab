@@ -77,6 +77,23 @@ class TestConfig(TestCase):
                 DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
             )
 
+    def test_rejects_posthog_enabled_without_host_and_key(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                POSTHOG_ENABLED=True,
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
+    def test_allows_posthog_enabled_with_valid_host_and_key(self) -> None:
+        settings = Settings(
+            POSTHOG_ENABLED=True,
+            POSTHOG_HOST="https://posthog.example",
+            POSTHOG_API_KEY="phc_demo_key",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertTrue(settings.posthog_enabled)
+        self.assertEqual(settings.posthog_host, "https://posthog.example")
+
     def test_allows_configured_live_pass_through_with_explicit_approval(self) -> None:
         settings = Settings(
             TRADING_MODE="live",

@@ -175,6 +175,26 @@ class TestSnapshots(TestCase):
             self.assertEqual(execution.execution_expected_adapter, 'lean')
             self.assertEqual(execution.execution_actual_adapter, 'lean')
 
+    def test_sync_order_to_db_persists_execution_correlation_fields(self) -> None:
+        with Session(self.engine) as session:
+            execution = sync_order_to_db(
+                session,
+                {
+                    'id': 'order-correlation',
+                    'symbol': 'AAPL',
+                    'side': 'buy',
+                    'type': 'market',
+                    'time_in_force': 'day',
+                    'qty': '1',
+                    'filled_qty': '0',
+                    'status': 'accepted',
+                    '_execution_correlation_id': 'corr-123',
+                    '_execution_idempotency_key': 'idem-123',
+                },
+            )
+            self.assertEqual(execution.execution_correlation_id, 'corr-123')
+            self.assertEqual(execution.execution_idempotency_key, 'idem-123')
+
     def test_sync_order_to_db_persists_simulation_context_in_audit_and_raw_order(self) -> None:
         with Session(self.engine) as session:
             execution = sync_order_to_db(

@@ -3,7 +3,7 @@
 ## Status
 
 - Version: `v1`
-- Last updated: **2026-02-08**
+- Last updated: **2026-03-03**
 - Source of truth (config): `argocd/applications/torghut/**`
 
 ## Purpose
@@ -44,6 +44,11 @@ flowchart TD
   - structured input summary,
   - structured output verdict,
   - timestamps.
+- Quant control-plane contracts include:
+  - `last_autonomy_recommendation_trace_id`,
+  - `domain_telemetry_event_total`,
+  - `domain_telemetry_dropped_total`,
+  - execution correlation/idempotency identifiers for execution rows.
 
 ## Repo pointers
 
@@ -62,6 +67,22 @@ flowchart TD
 
 - Restrict access to audit tables.
 - Ensure audit records do not contain secrets or sensitive identifiers beyond what is required.
+
+## Compliance evidence package (Wave 6 closure)
+
+CI-ready model-risk package checks are enforced through `services/torghut/scripts/verify_quant_readiness.py` using:
+
+- `--control-plane-contract` for promotion/rollback/drift telemetry continuity fields.
+- `--model-risk-evidence-package` for completeness and freshness checks.
+- `--max-model-risk-evidence-age-hours` to bound stale signoff artifacts.
+
+The model-risk evidence package must include:
+
+- promotion trace IDs (`gate_report_trace_id`, `recommendation_trace_id`),
+- rollback incident evidence completeness and path,
+- drift evidence continuity pass signal + report path,
+- runbook emergency-stop rehearsal proof,
+- signed legacy-gap disposition mapping path.
 
 ## Decisions (ADRs)
 

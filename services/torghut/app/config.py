@@ -48,6 +48,7 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "llm_shadow_mode": "torghut_llm_shadow_mode",
     "llm_committee_enabled": "torghut_llm_committee_enabled",
     "llm_adjustment_approved": "torghut_llm_adjustment_approved",
+    "posthog_enabled": "torghut_posthog_enabled",
 }
 
 _LLM_COMMITTEE_ROLES = {
@@ -1222,6 +1223,21 @@ class Settings(BaseSettings):
     # Jangar gateway (recommended for LLM calls in-cluster).
     jangar_base_url: Optional[str] = Field(default=None, alias="JANGAR_BASE_URL")
     jangar_api_key: Optional[str] = Field(default=None, alias="JANGAR_API_KEY")
+    posthog_enabled: bool = Field(
+        default=False,
+        alias="POSTHOG_ENABLED",
+        description=(
+            "Enable best-effort PostHog domain telemetry capture. This must never block trading execution."
+        ),
+    )
+    posthog_host: Optional[str] = Field(default=None, alias="POSTHOG_HOST")
+    posthog_api_key: Optional[str] = Field(default=None, alias="POSTHOG_API_KEY")
+    posthog_project_id: Optional[str] = Field(default=None, alias="POSTHOG_PROJECT_ID")
+    posthog_timeout_seconds: float = Field(default=1.0, alias="POSTHOG_TIMEOUT_SECONDS")
+    posthog_distinct_id: str = Field(
+        default="torghut-service",
+        alias="POSTHOG_DISTINCT_ID",
+    )
 
     llm_enabled: bool = Field(default=True, alias="LLM_ENABLED")
     llm_model: str = Field(default="gpt-5.3-codex-spark", alias="LLM_MODEL")
@@ -1472,6 +1488,7 @@ class Settings(BaseSettings):
             "jangar_base_url",
             "trading_market_context_url",
             "trading_lean_runner_url",
+            "posthog_host",
         ):
             raw_value = cast(str | None, getattr(self, field_name))
             if not raw_value:
@@ -1494,12 +1511,16 @@ class Settings(BaseSettings):
             "trading_simulation_order_updates_sasl_mechanism",
             "trading_simulation_order_updates_sasl_username",
             "trading_simulation_order_updates_sasl_password",
+            "posthog_api_key",
+            "posthog_project_id",
         ):
             raw_value = cast(str | None, getattr(self, field_name))
             if not raw_value:
                 continue
             normalized_value = raw_value.strip()
             setattr(self, field_name, normalized_value or None)
+
+        self.posthog_distinct_id = self.posthog_distinct_id.strip() or "torghut-service"
 
     def _normalize_trading_csv_settings(self) -> None:
         for field_name in (
@@ -1888,6 +1909,19 @@ class Settings(BaseSettings):
         if not self.llm_dspy_signature_version:
             raise ValueError("LLM_DSPY_SIGNATURE_VERSION must be set")
 
+    def _validate_posthog_settings(self) -> None:
+        if self.posthog_timeout_seconds <= 0:
+            raise ValueError("POSTHOG_TIMEOUT_SECONDS must be > 0")
+        if not self.posthog_enabled:
+            return
+        if not self.posthog_host:
+            raise ValueError("POSTHOG_HOST is required when POSTHOG_ENABLED=true")
+        parsed = urlsplit(self.posthog_host)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("POSTHOG_HOST must be a valid http(s) URL")
+        if not self.posthog_api_key:
+            raise ValueError("POSTHOG_API_KEY is required when POSTHOG_ENABLED=true")
+
     def model_post_init(self, __context: Any) -> None:
         self._apply_feature_flag_overrides()
         self._apply_trading_defaults()
@@ -1907,6 +1941,7 @@ class Settings(BaseSettings):
         self._validate_runtime_uncertainty_degrade_map_settings()
         self._validate_fragility_settings()
         self._validate_llm_settings()
+        self._validate_posthog_settings()
 
     @property
     def sqlalchemy_dsn(self) -> str:
