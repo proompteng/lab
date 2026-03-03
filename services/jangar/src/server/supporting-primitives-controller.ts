@@ -1050,13 +1050,68 @@ const sortByMostRecentRun = (resources: Record<string, unknown>[]) => {
   })
 }
 
-const countConsecutiveFailures = (resources: Record<string, unknown>[]) => {
+const getFailedConditionReason = (resource: Record<string, unknown>) => {
+  const conditions = normalizeConditions(readNested(resource, ['status', 'conditions']))
+  const failedCondition = conditions.find((condition) => condition.type === 'Failed' && condition.status === 'True')
+  return failedCondition?.reason ?? null
+}
+
+const didTimedOutWorkflowRunSucceed = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  resource: Record<string, unknown>,
+  defaultNamespace: string,
+) => {
+  const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
+  if (!TERMINAL_FAILURE_PHASES.has(phase)) return false
+  if (getFailedConditionReason(resource) !== 'WorkflowStepTimedOut') return false
+
+  const runtimeRef = asRecord(readNested(resource, ['status', 'runtimeRef'])) ?? {}
+  const runtimeType = (asString(runtimeRef.type) ?? '').toLowerCase()
+  if (runtimeType && runtimeType !== 'workflow') return false
+
+  const runtimeName = asString(runtimeRef.name)
+  if (!runtimeName) return false
+  const runtimeNamespace = asString(runtimeRef.namespace) ?? defaultNamespace
+
+  let job: Record<string, unknown> | null
+  try {
+    job = await kube.get('job', runtimeName, runtimeNamespace)
+  } catch (error) {
+    console.warn('[jangar] failed to inspect timed-out workflow runtime job', {
+      run: asString(readNested(resource, ['metadata', 'name'])) ?? 'unknown',
+      namespace: runtimeNamespace,
+      job: runtimeName,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return false
+  }
+  if (!job) return false
+
+  const jobStatus = asRecord(readNested(job, ['status'])) ?? {}
+  const succeeded = Number(jobStatus.succeeded ?? 0)
+  const failed = Number(jobStatus.failed ?? 0)
+  if (succeeded > 0 && failed <= 0) return true
+
+  const jobConditions = normalizeConditions(jobStatus.conditions)
+  const completeCondition = jobConditions.find((condition) => condition.type === 'Complete')
+  const failedCondition = jobConditions.find((condition) => condition.type === 'Failed')
+  return completeCondition?.status === 'True' && failedCondition?.status !== 'True'
+}
+
+const countConsecutiveFailures = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  resources: Record<string, unknown>[],
+  defaultNamespace: string,
+) => {
   const sorted = sortByMostRecentRun(resources)
   let failures = 0
   for (const resource of sorted) {
     const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
     if (!phase) continue
     if (TERMINAL_FAILURE_PHASES.has(phase)) {
+      if (await didTimedOutWorkflowRunSucceed(kube, resource, defaultNamespace)) {
+        break
+      }
       failures += 1
       continue
     }
@@ -1758,7 +1813,7 @@ const reconcileSwarm = async (
 
   if (!freezeActive) {
     const recentImplementRuns = filterRunsAfterTime(implementRuns, failureWindowStartMs)
-    const consecutiveFailures = countConsecutiveFailures(recentImplementRuns)
+    const consecutiveFailures = await countConsecutiveFailures(kube, recentImplementRuns, swarmNamespace)
     if (consecutiveFailures >= freezeAfterFailures) {
       freezeActive = true
       freezeReason = 'ConsecutiveFailures'

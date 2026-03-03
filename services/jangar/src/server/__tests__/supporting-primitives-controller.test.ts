@@ -1600,6 +1600,104 @@ describe('supporting primitives controller', () => {
     expect(status.freeze).toBeTruthy()
   })
 
+  it('does not freeze when timed-out implement runs have successful runtime jobs', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string, name: string) => {
+      if (resource === 'job' && (name === 'timeout-job-1' || name === 'timeout-job-2')) {
+        return {
+          metadata: { name, namespace: 'agents' },
+          status: {
+            succeeded: 1,
+            startTime: '2026-01-20T00:00:00Z',
+            completionTime: '2026-01-20T00:10:00Z',
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'run-2',
+                creationTimestamp: '2026-01-20T00:01:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: {
+                phase: 'Failed',
+                runtimeRef: { type: 'workflow', name: 'timeout-job-2', namespace: 'agents' },
+                conditions: [{ type: 'Failed', status: 'True', reason: 'WorkflowStepTimedOut' }],
+              },
+            },
+            {
+              metadata: {
+                name: 'run-1',
+                creationTimestamp: '2026-01-20T00:00:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: {
+                phase: 'Failed',
+                runtimeRef: { type: 'workflow', name: 'timeout-job-1', namespace: 'agents' },
+                conditions: [{ type: 'Failed', status: 'True', reason: 'WorkflowStepTimedOut' }],
+              },
+            },
+          ],
+        }
+      }
+      if (resource === RESOURCE_MAP.OrchestrationRun) {
+        return { items: [] }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'torghut-quant', namespace: 'agents', generation: 1, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'trading-owner', channel: 'swarm://owner/trading' },
+        domains: ['autonomous-trading'],
+        objectives: ['improve risk-adjusted return'],
+        mode: 'lights-out',
+        cadence: {
+          discoverEvery: '1m',
+          planEvery: '5m',
+          implementEvery: '15m',
+          verifyEvery: '1m',
+        },
+        discovery: { sources: [{ name: 'market-feed' }] },
+        delivery: { deploymentTargets: ['torghut'] },
+        risk: { freezeAfterFailures: 2, freezeDuration: '60m' },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'OrchestrationRun', name: 'orchestrationrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    expect(apply).toHaveBeenCalledTimes(4)
+    expect(deleteFn).not.toHaveBeenCalled()
+    const firstStatusCall = applyStatus.mock.calls[0]
+    const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('Active')
+    expect(status.freeze).toBeUndefined()
+  })
+
   it('counts implement failures from configured target namespaces when deciding freeze', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
