@@ -216,7 +216,7 @@ export const parseCodexRunArgs = (argv: string[]): ParsedArgs => {
     if (arg.startsWith('--')) {
       if (arg.includes('=')) {
         parsed.passthrough.push(arg)
-      } else if (argv[i + 1] && !argv[i + 1].startsWith('-')) {
+      } else if (positional.length > 0 && argv[i + 1] && !argv[i + 1].startsWith('-')) {
         parsed.passthrough.push(arg, argv[i + 1])
         i += 1
       } else {

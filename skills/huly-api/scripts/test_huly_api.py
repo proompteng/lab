@@ -76,6 +76,10 @@ class HulyApiFormattingTests(unittest.TestCase):
                 'WORKER_JANGAR_IMPLEMENT',
                 '--worker-identity',
                 'WORKER_JANGAR_IMPLEMENT',
+                '--swarm-agent-worker-id',
+                'worker-override',
+                '--swarm-agent-identity',
+                'agent-override',
                 '--tracker-url',
                 'https://example-tracker.local',
             ]
@@ -87,8 +91,8 @@ class HulyApiFormattingTests(unittest.TestCase):
                 'swarm': 'jangar-control-plane',
                 'human': 'Ava Runner',
                 'team': 'Swarm Team',
-                'workerId': 'WORKER_JANGAR_IMPLEMENT',
-                'workerIdentity': 'WORKER_JANGAR_IMPLEMENT',
+                'workerId': 'worker-override',
+                'workerIdentity': 'agent-override',
                 'trackerUrl': 'https://example-tracker.local',
             },
         )
@@ -96,13 +100,13 @@ class HulyApiFormattingTests(unittest.TestCase):
             self.module.build_upsert_mission_context_section(metadata=metadata).strip(),
             '## Mission context\n'
             '- Owner: Ava Runner (Swarm Team)\n'
-            '- Worker: WORKER_JANGAR_IMPLEMENT/WORKER_JANGAR_IMPLEMENT\n'
+            '- Worker: worker-override/agent-override\n'
             '- Tracker: https://example-tracker.local\n'
             '- Swarm: jangar-control-plane',
         )
         self.assertEqual(
             self.module.build_upsert_mission_context_message(metadata=metadata),
-            'Ava Runner (Swarm Team) | WORKER_JANGAR_IMPLEMENT/WORKER_JANGAR_IMPLEMENT | https://example-tracker.local',
+            'Ava Runner (Swarm Team) | worker-override/agent-override | https://example-tracker.local',
         )
 
     def test_verify_chat_access_requires_message(self):

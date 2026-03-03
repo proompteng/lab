@@ -12,6 +12,13 @@ describe('cx-codex-run parser', () => {
 
     expect(args).toEqual(['exec', '--json'])
   })
+
+  it('does not swallow positional prompt as unknown flag value', () => {
+    const args = parseCodexRunArgs(['--dangerous-flag', 'please run this'])
+
+    expect(args.passthrough).toEqual(['--dangerous-flag'])
+    expect(args.prompt).toBe('please run this')
+  })
 })
 
 describe('cx-codex-run prompt parsing', () => {

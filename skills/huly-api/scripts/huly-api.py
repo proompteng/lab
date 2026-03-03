@@ -82,6 +82,15 @@ def resolve_worker_identity(args: argparse.Namespace) -> str:
     return env_if_set('SWARM_AGENT_IDENTITY')
 
 
+def resolve_mission_agent_identity(args: argparse.Namespace) -> str:
+    explicit_agent_identity = (
+        args.swarm_agent_identity.strip() if args.swarm_agent_identity else ''
+    )
+    if explicit_agent_identity:
+        return explicit_agent_identity
+    return resolve_worker_identity(args)
+
+
 def resolve_worker_id(args: argparse.Namespace) -> str:
     worker_id = args.worker_id.strip() if args.worker_id else ''
     if worker_id:
@@ -89,9 +98,16 @@ def resolve_worker_id(args: argparse.Namespace) -> str:
     return env_if_set('SWARM_AGENT_WORKER_ID')
 
 
+def resolve_mission_agent_worker_id(args: argparse.Namespace) -> str:
+    explicit_agent_id = args.swarm_agent_worker_id.strip() if args.swarm_agent_worker_id else ''
+    if explicit_agent_id:
+        return explicit_agent_id
+    return resolve_worker_id(args)
+
+
 def build_upsert_mission_metadata(*, args: argparse.Namespace) -> dict[str, str]:
-    worker_id = resolve_worker_id(args)
-    worker_identity = resolve_worker_identity(args)
+    worker_id = resolve_mission_agent_worker_id(args)
+    worker_identity = resolve_mission_agent_identity(args)
     human_name = args.swarm_human_name.strip() if args.swarm_human_name else ''
     team_name = args.swarm_team_name.strip() if args.swarm_team_name else ''
     swarm_name = args.swarm_name.strip() if args.swarm_name else ''
@@ -1135,16 +1151,10 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
     status = args.status.strip() or 'in-progress'
     details = args.details.strip()
     swarm_agent_worker_id = (
-        args.swarm_agent_worker_id.strip()
-        or args.worker_id.strip()
-        or env_first('SWARM_AGENT_WORKER_ID')
-        or ''
+        resolve_mission_agent_worker_id(args)
     )
     swarm_agent_identity = (
-        args.swarm_agent_identity.strip()
-        or args.worker_identity.strip()
-        or env_first('SWARM_AGENT_IDENTITY')
-        or ''
+        resolve_mission_agent_identity(args)
     )
 
     metadata = build_mission_provenance(
