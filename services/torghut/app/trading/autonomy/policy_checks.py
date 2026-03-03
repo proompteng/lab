@@ -3123,35 +3123,34 @@ def _evaluate_fold_metrics_evidence(
     fold_raw = evidence.get("fold_metrics")
     fold_metrics = cast(dict[str, Any], fold_raw) if isinstance(fold_raw, dict) else {}
     fold_ref = str(fold_metrics.get("artifact_ref") or "").strip()
-    _append_evidence_artifact_reasons(
-        reasons=reasons,
-        reason_details=details,
-        evidence_name="fold_metrics",
-        artifact_root=artifact_root,
-        raw_ref=fold_ref,
-        policy_payload=policy_payload,
-        now=now,
-    )
     min_fold_count = max(
         1,
         _int_or_default(policy_payload.get("promotion_min_fold_metrics_count"), 1),
     )
     fold_count = _int_or_default(fold_metrics.get("count"), 0)
     effective_fold_count = fold_count
+    if fold_count < min_fold_count:
+        _append_evidence_artifact_reasons(
+            reasons=reasons,
+            reason_details=details,
+            evidence_name="fold_metrics",
+            artifact_root=artifact_root,
+            raw_ref=fold_ref,
+            policy_payload=policy_payload,
+            now=now,
+        )
     if fold_ref:
         refs.append(fold_ref)
-        fold_payload_path = _normalize_artifact_path(fold_ref, artifact_root=artifact_root)
-        if fold_payload_path is not None:
-            fold_payload = _load_json_if_exists(fold_payload_path)
-            if fold_payload is None:
-                reasons.append("fold_metrics_evidence_artifact_invalid")
-                details.append(
-                    {
-                        "reason": "fold_metrics_evidence_artifact_invalid",
-                        "artifact_ref": fold_ref,
-                    }
-                )
+        if fold_count < min_fold_count:
+            fold_payload_path = _normalize_artifact_path(
+                fold_ref,
+                artifact_root=artifact_root,
+            )
+            if fold_payload_path is None:
+                fold_payload = None
             else:
+                fold_payload = _load_json_if_exists(fold_payload_path)
+            if fold_payload is not None:
                 schema_version = str(fold_payload.get("schema_version", "")).strip()
                 if schema_version and schema_version != "fold-metrics-v1":
                     reasons.append("fold_metrics_evidence_schema_invalid")
@@ -3167,7 +3166,16 @@ def _evaluate_fold_metrics_evidence(
                     fold_payload.get("count"),
                     len(_list_from_any(fold_payload.get("items"))),
                 )
-                effective_fold_count = payload_count
+                if payload_count > 0:
+                    effective_fold_count = payload_count
+            else:
+                reasons.append("fold_metrics_evidence_artifact_invalid")
+                details.append(
+                    {
+                        "reason": "fold_metrics_evidence_artifact_invalid",
+                        "artifact_ref": fold_ref,
+                    }
+                )
 
     if effective_fold_count < min_fold_count:
         reasons.append("fold_metrics_evidence_insufficient")
