@@ -10,13 +10,13 @@ data:
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_TRADE_STREAM_URL: "wss://paper-api.alpaca.markets/stream"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
-  # Alpaca enforces 30 real-time trade/quote subscriptions on this account.
-  # We ingest trades + bars + updatedBars (quotes disabled) so a 20-symbol universe stays under limit.
-  ALPACA_MARKET_DATA_CHANNELS: "trades,bars,updatedBars"
+  # Full market-data mode (quotes enabled) must stay within account subscription constraints.
+  # Keep universe size capped at 12 to preserve headroom and avoid 405 symbol-limit failures.
+  ALPACA_MARKET_DATA_CHANNELS: "trades,quotes,bars,updatedBars"
   # Dynamic desired-symbol feed sourced from Jangar universe manager.
   JANGAR_SYMBOLS_URL: "http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact"
   # Startup fallback if Jangar is temporarily unavailable.
-  SYMBOLS: "AAPL,ADBE,ADI,AMAT,AMD,APP,ASML,AVGO,CDNS,CRWD,GOOGL,INTC,INTU,KLAC,LRCX,META,MRVL,MSFT,MU,NVDA"
+  SYMBOLS: "AAPL,MSFT,GOOG,META,PLTR,SHOP,NVDA,AVGO,MU,AMD,AMAT,INTC"
   SYMBOLS_POLL_INTERVAL_MS: "30000"
   SUBSCRIBE_BATCH_SIZE: "200"
   SHARD_COUNT: "1"
