@@ -345,7 +345,7 @@ jobs:
 
           # Use docker.io for Bun base image in CI builds to avoid mirror image metadata drift.
           # Local image rebuilds are best-effort in CI; fall back to the public image on timeout.
-          BUILD_TIMEOUT_MINUTES=25
+          BUILD_TIMEOUT_MINUTES=12
           KIND_LOAD_TIMEOUT_MINUTES=20
 
           if run_with_progress "Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
