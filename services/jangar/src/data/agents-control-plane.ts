@@ -121,6 +121,67 @@ export type WorkflowFailureReason = {
   count: number
 }
 
+export type RolloutFailureReason = {
+  reason: string
+  count: number
+}
+
+export type WorkflowReliabilityStatus = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  window_minutes: number
+  active_job_runs: number
+  recent_failed_jobs: number
+  backoff_limit_exceeded_jobs: number
+  top_failure_reasons: WorkflowFailureReason[]
+  message: string
+}
+
+export type ControlPlaneRolloutStageReliability = {
+  name: string
+  namespace: string
+  swarm: string
+  stage: string
+  phase: string
+  last_run_at: string
+  last_successful_run_at: string
+  last_transition_at: string
+  is_active: boolean
+  is_stale: boolean
+  failed_runs_last_window: number
+  backoff_failures_last_window: number
+  top_failure_reasons: RolloutFailureReason[]
+  reasons: string[]
+}
+
+export type ControlPlaneRolloutReliability = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  window_minutes: number
+  observed_schedules: number
+  inactive_schedules: number
+  stale_schedules: number
+  stages: ControlPlaneRolloutStageReliability[]
+}
+
+export type DeploymentRolloutStatus = {
+  name: string
+  namespace: string
+  status: 'healthy' | 'degraded' | 'unknown' | 'disabled'
+  desired_replicas: number
+  ready_replicas: number
+  available_replicas: number
+  updated_replicas: number
+  unavailable_replicas: number
+  message: string
+}
+
+export type ControlPlaneRolloutHealth = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  observed_deployments: number
+  degraded_deployments: number
+  deployments: DeploymentRolloutStatus[]
+  message: string
+}
+
 export type DatabaseMigrationConsistency = {
   status: 'healthy' | 'degraded' | 'unknown'
   migration_table: string | null
@@ -144,38 +205,11 @@ export type DatabaseStatus = {
   migration_consistency: DatabaseMigrationConsistency
 }
 
-export type WorkflowsReliabilityStatus = {
-  status: 'healthy' | 'degraded' | 'unknown'
+export type GrpcStatus = {
+  enabled: boolean
+  address: string
+  status: 'healthy' | 'degraded' | 'disabled'
   message: string
-  active_job_runs: number
-  recent_failed_jobs: number
-  backoff_limit_exceeded_jobs: number
-  window_minutes: number
-  top_failure_reasons: string[]
-}
-
-export type ControlPlaneRolloutStageReliability = {
-  name: string
-  namespace: string
-  swarm: string
-  stage: string
-  phase: string
-  last_run_at: string | null
-  last_successful_run_at: string | null
-  last_transition_at: string | null
-  is_active: boolean
-  is_stale: boolean
-  reasons: string[]
-}
-
-export type ControlPlaneRolloutReliability = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  message: string
-  window_minutes: number
-  observed_schedules: number
-  inactive_schedules: number
-  stale_schedules: number
-  stages: ControlPlaneRolloutStageReliability[]
 }
 
 export type ControlPlaneWatchReliabilityStream = {
@@ -195,13 +229,6 @@ export type ControlPlaneWatchReliability = {
   total_errors: number
   total_restarts: number
   streams: ControlPlaneWatchReliabilityStream[]
-}
-
-export type GrpcStatus = {
-  enabled: boolean
-  address: string
-  status: 'healthy' | 'degraded' | 'disabled'
-  message: string
 }
 
 export type NamespaceStatus = {
@@ -227,11 +254,12 @@ export type ControlPlaneStatus = {
   }
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
-  workflows: WorkflowsReliabilityStatus
+  workflows: WorkflowReliabilityStatus
   rollout: ControlPlaneRolloutReliability
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
+  rollout_health: ControlPlaneRolloutHealth
   namespaces: NamespaceStatus[]
 }
 

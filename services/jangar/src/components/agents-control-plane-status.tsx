@@ -247,6 +247,35 @@ export const ControlPlaneStatusPanel = ({
         </div>
 
         <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Rollout health</div>
+          <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-foreground">Control-plane rollout</span>
+              <StatusBadge label={status.rollout_health.status} />
+            </div>
+            <div className="text-muted-foreground">
+              Deployments configured: {status.rollout_health.observed_deployments} · Degraded:{' '}
+              {status.rollout_health.degraded_deployments}
+            </div>
+            <div className="text-muted-foreground">Message: {status.rollout_health.message}</div>
+            {status.rollout_health.deployments.length > 0 ? (
+              <ul className="space-y-1 pt-1 text-muted-foreground">
+                {status.rollout_health.deployments.map((deployment) => (
+                  <li key={deployment.name} className="text-[11px]">
+                    <span className="font-medium text-foreground">{deployment.name}</span> ({deployment.namespace}):{' '}
+                    {deployment.status} · ready {deployment.ready_replicas}/{deployment.desired_replicas} · available{' '}
+                    {deployment.available_replicas}/{deployment.desired_replicas}
+                    {deployment.message ? ` · ${deployment.message}` : ''}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-[11px] text-muted-foreground">No rollout entries configured.</div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-2">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Namespaces</div>
           <ul className="space-y-2">
             {status.namespaces.map((entry) => (
