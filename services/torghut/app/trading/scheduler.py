@@ -106,13 +106,6 @@ _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
 _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
 _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
 _RUNTIME_UNCERTAINTY_GATE_MAX_STALENESS_SECONDS = 15 * 60
-_RUNTIME_REGIME_CONFIDENCE_DEGRADE_BY_ENTROPY_BAND: dict[
-    str, tuple[Decimal, Decimal]
-] = {
-    "low": (Decimal("0.65"), Decimal("0.45")),
-    "medium": (Decimal("0.75"), Decimal("0.55")),
-    "high": (Decimal("0.85"), Decimal("0.70")),
-}
 _RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS = (Decimal("0.75"), Decimal("0.55"))
 RuntimeUncertaintyGateAction = Literal["pass", "degrade", "abstain", "fail"]
 
@@ -2848,13 +2841,17 @@ class TradingPipeline:
         self,
         entropy_band: str,
     ) -> tuple[Decimal, Decimal]:
-        degrade_threshold, abstain_threshold = (
-            _RUNTIME_REGIME_CONFIDENCE_DEGRADE_BY_ENTROPY_BAND.get(
-                entropy_band,
-                _RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS,
-            )
+        normalized_entropy_band = (entropy_band or "").strip().lower()
+        (
+            degrade_threshold,
+            abstain_threshold,
+        ) = settings.trading_runtime_regime_confidence_thresholds_by_entropy_band.get(
+            normalized_entropy_band,
+            _RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS,
         )
-        return max(degrade_threshold, abstain_threshold), abstain_threshold
+        decimal_degrade_threshold = Decimal(str(degrade_threshold))
+        decimal_abstain_threshold = Decimal(str(abstain_threshold))
+        return max(decimal_degrade_threshold, decimal_abstain_threshold), decimal_abstain_threshold
 
     def _apply_runtime_uncertainty_gate(
         self,

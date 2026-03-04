@@ -1231,6 +1231,62 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "regime_hmm_confidence")
         self.assertEqual(gate.reason, "regime_hmm_confidence_too_low")
 
+    def test_pipeline_runtime_regime_gate_respects_configured_entropy_band_thresholds(
+        self,
+    ) -> None:
+        from app import config
+
+        original_thresholds = dict(
+            config.settings.trading_runtime_regime_confidence_thresholds_by_entropy_band
+        )
+        config.settings.trading_runtime_regime_confidence_thresholds_by_entropy_band = {
+            **original_thresholds,
+            "high": (0.55, 0.45),
+        }
+        try:
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            decision = StrategyDecision(
+                strategy_id="strategy",
+                symbol="AAPL",
+                event_ts=datetime.now(timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("10"),
+                params={
+                    "regime_hmm": {
+                        "schema_version": "hmm_regime_context_v1",
+                        "regime_id": "R2",
+                        "posterior": {"R2": "0.60", "R3": "0.40"},
+                        "entropy": "2.2",
+                        "entropy_band": "high",
+                        "predicted_next": "R3",
+                        "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                        "guardrail": {"reason": "stable"},
+                    },
+                },
+            )
+
+            gate = pipeline._resolve_runtime_regime_gate(decision)
+            self.assertEqual(gate.action, "pass")
+            self.assertEqual(gate.source, "regime_hmm")
+        finally:
+            config.settings.trading_runtime_regime_confidence_thresholds_by_entropy_band = (
+                original_thresholds
+            )
+
     def test_pipeline_runtime_regime_gate_invalid_regime_gate_action_fails_closed(
         self,
     ) -> None:
