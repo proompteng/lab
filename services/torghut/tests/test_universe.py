@@ -120,6 +120,60 @@ class TestUniverseResolver(TestCase):
             self.assertEqual(resolution.reason, "jangar_fetch_failed_cache_stale")
             self.assertEqual(resolution.symbols, set())
 
+    def test_jangar_empty_payload_with_no_cache_fails_closed(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+        resolver = UniverseResolver()
+
+        with patch("app.trading.universe.urlopen") as mock_urlopen:
+            response = mock_urlopen.return_value.__enter__.return_value
+            response.read.return_value = json.dumps([]).encode()
+            resolution = resolver.get_resolution()
+            self.assertEqual(resolution.status, "error")
+            self.assertEqual(resolution.reason, "jangar_payload_empty")
+            self.assertEqual(resolution.symbols, set())
+
+    def test_jangar_empty_payload_uses_cached_symbols_within_stale_window(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_cache_seconds = 1
+        config.settings.trading_universe_max_stale_seconds = 1200
+        resolver = UniverseResolver()
+        resolver._cache = UniverseCache(
+            symbols={"MSFT"},
+            fetched_at=datetime.now(timezone.utc) - timedelta(seconds=2),
+        )
+
+        with patch("app.trading.universe.urlopen") as mock_urlopen:
+            response = mock_urlopen.return_value.__enter__.return_value
+            response.read.return_value = json.dumps([]).encode()
+            resolution = resolver.get_resolution()
+            self.assertEqual(resolution.status, "degraded")
+            self.assertEqual(
+                resolution.reason,
+                "jangar_payload_empty_using_stale_cache",
+            )
+            self.assertEqual(resolution.symbols, {"MSFT"})
+
+    def test_jangar_empty_payload_rejects_expired_cache(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_max_stale_seconds = 5
+        config.settings.trading_universe_cache_seconds = 1
+        resolver = UniverseResolver()
+        resolver._cache = UniverseCache(
+            symbols={"MSFT"},
+            fetched_at=datetime.now(timezone.utc) - timedelta(seconds=60),
+        )
+
+        with patch("app.trading.universe.urlopen") as mock_urlopen:
+            response = mock_urlopen.return_value.__enter__.return_value
+            response.read.return_value = json.dumps([]).encode()
+            resolution = resolver.get_resolution()
+            self.assertEqual(resolution.status, "error")
+            self.assertEqual(resolution.reason, "jangar_payload_empty_cache_stale")
+            self.assertEqual(resolution.symbols, set())
+
     def test_jangar_resolution_reason_transitions_from_ok_to_degraded_and_stale(self) -> None:
         config.settings.trading_universe_source = "jangar"
         config.settings.trading_jangar_symbols_url = "http://example"

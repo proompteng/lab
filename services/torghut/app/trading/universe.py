@@ -177,6 +177,16 @@ class UniverseResolver:
         return resolution
 
     def _resolve_from_jangar(self) -> UniverseResolution:
+        """Resolve symbols from Jangar with explicit freshness governance.
+
+        Policy matrix:
+        - Success with valid payload -> `jangar_fetch_ok`.
+        - Cache hit before TTL -> `jangar_cache_hit`.
+        - Fetch failure + cache within `TRADING_UNIVERSE_MAX_STALE_SECONDS`
+          -> `jangar_<reason>_using_stale_cache` (degraded).
+        - Fetch failure + cache too old -> `jangar_<reason>_cache_stale` (error).
+        - Empty payload behaves like fetch failure and follows the same policy.
+        """
         now = datetime.now(timezone.utc)
         url = settings.trading_jangar_symbols_url
         if not url:
@@ -262,6 +272,7 @@ class UniverseResolver:
         reason: str,
         cause: Exception | None = None,
     ) -> UniverseResolution:
+        """Return a structured fallback result when authoritative Jangar fetch is unavailable."""
         if self._cache is None:
             if self._should_emit_stale_cache_warning(reason, now):
                 logger.warning(
