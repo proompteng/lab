@@ -160,18 +160,6 @@ export type ControlPlaneStatusDeps = {
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
 const normalizeText = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
-const asNumber = (value: unknown, fallback: number): number => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value, 10)
-    return Number.isFinite(parsed) ? parsed : fallback
-  }
-  return fallback
-}
-const clampPositiveNumber = (value: number, fallback: number) => {
-  const parsed = Math.floor(value)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
 const dedupeSorted = (items: string[]) => [...new Set(items)].sort()
 
 const MIGRATION_TABLE_CANDIDATES = ['kysely_migration', 'kysely_migrations'] as const

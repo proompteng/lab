@@ -141,7 +141,6 @@ describe('control-plane status', () => {
           message: '',
           latency_ms: 4,
           migration_consistency: buildDatabaseMigrationConsistency(),
-
         }),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
         getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
@@ -204,7 +203,6 @@ describe('control-plane status', () => {
           message: 'DATABASE_URL not set',
           latency_ms: 0,
           migration_consistency: buildDatabaseMigrationConsistency(),
-
         }),
         getWatchReliabilitySummary: () => watchReliabilityDegraded,
         getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
@@ -255,7 +253,6 @@ describe('control-plane status', () => {
           message: '',
           latency_ms: 1,
           migration_consistency: buildDatabaseMigrationConsistency(),
-
         }),
         getWorkflowsReliabilityStatus: async () =>
           buildWorkflowsReliabilityStatus({
@@ -312,7 +309,6 @@ describe('control-plane status', () => {
           message: '',
           latency_ms: 1,
           migration_consistency: buildDatabaseMigrationConsistency(),
-
         }),
       },
     )
@@ -376,5 +372,4 @@ describe('control-plane status', () => {
     expect(status.namespaces[0]?.status).toBe('healthy')
     expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)
   })
-
 })
