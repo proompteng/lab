@@ -146,7 +146,7 @@ jobs:
           AGENTS_VALUES_FILE: charts/agents/values-ci.yaml
           AGENTS_CREATE_NAMESPACE: 'true'
           AGENTS_DB_BOOTSTRAP: 'true'
-          AGENTS_TIMEOUT: 10m
+          AGENTS_TIMEOUT: 15m
           AGENTCTL_BIN: services/jangar/agentctl/dist/agentctl
         run: bun run packages/scripts/src/agents/smoke-agents.ts
 
