@@ -56,6 +56,7 @@ This pack is positioned as the next architecture layer above:
 21. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
 22. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
 23. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
+24. `23-trading-startup-readiness-warmup-2026-03-04.md`
 
 ## Recommended Build Order
 
@@ -83,6 +84,7 @@ This pack is positioned as the next architecture layer above:
 21. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
 22. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
 23. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
+24. `23-trading-startup-readiness-warmup-2026-03-04.md`
 
 ## Why This Sequence
 
