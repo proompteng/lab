@@ -38,6 +38,7 @@ interface ImplementationEventPayload {
   repository?: string
   issueNumber?: number | string
   objective?: string
+  swarmRequirementObjective?: string
   issueTitle?: string | null
   issueBody?: string | null
   issueUrl?: string | null
@@ -85,6 +86,7 @@ type RequirementMetadata = {
   channel?: string
   description?: string
   objective?: string
+  swarmRequirementObjective?: string
   payload?: string
   payloadBytes?: string
   payloadTruncated?: boolean
@@ -194,7 +196,7 @@ const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): Req
     workerId: resolve('swarmAgentWorkerId', 'swarmAgentWorkerId'),
     workerIdentity: resolve('swarmAgentIdentity', 'swarmAgentIdentity'),
     workerRole: resolve('swarmAgentRole', 'swarmAgentRole'),
-    objective: payloadObjective ?? resolve('objective', 'swarmRequirementObjective'),
+    objective: payloadObjective ?? resolve('objective') ?? resolve('swarmRequirementObjective'),
     payload,
     payloadBytes: resolve('swarmRequirementPayloadBytes', 'swarmRequirementPayloadBytes'),
     payloadTruncated: parseBool(parameters.swarmRequirementPayloadTruncated),
@@ -543,6 +545,7 @@ type CodexNotifyPayload = {
     channel?: string
     description?: string
     objective?: string
+    swarmRequirementObjective?: string
     payload?: string
     payloadBytes?: string
     payloadTruncated?: boolean

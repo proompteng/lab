@@ -389,6 +389,37 @@ describe('runCodexImplementation', () => {
     expect(invocation?.prompt).toContain('Original request context:')
   }, 40_000)
 
+  it('uses swarmRequirementObjective fallback when objective is omitted', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772430502',
+      swarmRequirementId: '00gcj8mx',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772430502',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'Acceptance-only scope for swarm requirement alias fallback.',
+      swarmRequirementObjective: 'Objective from swarmRequirementObjective alias',
+    }
+    await writeFile(eventPath, JSON.stringify(payload), 'utf8')
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls.at(-1)?.[0]
+    expect(invocation?.prompt).toContain('Cross-swarm implementation requirement (primary scope):')
+    expect(invocation?.prompt).toContain('Objective: Objective from swarmRequirementObjective alias')
+    expect(invocation?.prompt).toContain('Description:\nAcceptance-only scope for swarm requirement alias fallback.')
+
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as {
+      swarmRequirementObjective?: string | null
+    }
+    expect(notify.swarmRequirementObjective).toBe('Objective from swarmRequirementObjective alias')
+  }, 40_000)
   it('uses payload objective as cross-swarm primary objective', async () => {
     const payload = {
       prompt: 'Implementation prompt',
