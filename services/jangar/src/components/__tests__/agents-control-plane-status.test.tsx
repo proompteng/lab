@@ -51,7 +51,6 @@ const baseStatus: ControlPlaneStatus = {
     observed_schedules: 0,
     inactive_schedules: 0,
     stale_schedules: 0,
-    message: '',
     stages: [],
   },
   database: {

@@ -196,7 +196,11 @@ export const ControlPlaneStatusPanel = ({
               <span>Stale: {renderSummaryValue(status.rollout.stale_schedules)}</span>
               <span>Window: {renderSummaryValue(status.rollout.window_minutes)}m</span>
             </div>
-            <div className="text-muted-foreground">{status.rollout.message || 'No rollout issues detected'}</div>
+            <div className="text-muted-foreground">
+              {status.rollout.status === 'healthy'
+                ? 'Rollout reliability healthy for active schedules'
+                : 'Rollout reliability degraded; review schedule states below'}
+            </div>
             {status.rollout.stages.length > 0 ? (
               <div className="space-y-2">
                 <div className="text-[11px] text-muted-foreground">Stages</div>

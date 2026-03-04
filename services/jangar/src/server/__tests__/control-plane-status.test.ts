@@ -710,9 +710,9 @@ describe('control-plane status', () => {
 
     expect(status.rollout.status).toBe('degraded')
     expect(status.rollout.stale_schedules).toBe(1)
-    expect(status.rollout.message).toContain('rollout reliability degraded')
-    expect(status.rollout.message).toContain('0 inactive')
-    expect(status.rollout.message).toContain('1 stale')
+    expect(status.rollout.inactive_schedules).toBe(0)
+    expect(status.rollout.stages.length).toBe(1)
+    expect(status.rollout.stages[0]?.reasons).toEqual(expect.arrayContaining(['no successful run in last 15m']))
     expect(status.namespaces[0]?.degraded_components).toContain('rollout')
   })
 
@@ -759,8 +759,9 @@ describe('control-plane status', () => {
     )
 
     expect(status.rollout.status).toBe('healthy')
-    expect(status.rollout.message).toContain('rollout reliability healthy')
-    expect(status.rollout.message).toContain('1 stages observed')
+    expect(status.rollout.observed_schedules).toBe(1)
+    expect(status.rollout.stages[0]?.is_active).toBe(true)
+    expect(status.rollout.stages[0]?.is_stale).toBe(false)
     expect(status.rollout.stale_schedules).toBe(0)
     expect(status.rollout.observed_schedules).toBe(1)
     const rolloutStage = status.rollout.stages.find((item) => item.name === 'jangar-control-plane-implement-sched')
