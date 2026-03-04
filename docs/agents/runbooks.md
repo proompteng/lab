@@ -134,8 +134,13 @@ kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
 Expected outcomes:
 
 - `runtime_adapters` contains `workflow` with `status: healthy` and a native runtime message.
-- `workflows` includes a bounded rollup with `active_job_runs`, `recent_failed_jobs`,
-  `backoff_limit_exceeded_jobs`, and `top_failure_reasons`.
+- `workflows` includes a bounded rollup with:
+  - `status` (`healthy` / `degraded` / `unknown`)
+  - `message`
+  - `active_job_runs`, `recent_failed_jobs`, and `backoff_limit_exceeded_jobs`
+  - `top_failure_reasons`
+- `status: unknown` is expected if workflow/Kubernetes list calls fail; the status endpoint must
+  remain available and still return the rest of the control-plane health snapshot.
 - The Argo Workflows resource check returns empty output (no CRD or no workflows).
 
 ## Native workflow e2e proof

@@ -27,6 +27,7 @@ const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
 const MAX_TOP_FAILURE_REASONS = 5
 const MIN_WINDOW_MINUTES = 1
 const MAX_WINDOW_MINUTES = 24 * 60
+const KUBERNETES_QUERY_FAILURE_MESSAGE_PREFIX = 'kubernetes query failed'
 
 const WORKFLOW_JOB_RESOURCE = 'jobs.batch'
 const WORKFLOW_SCHEDULE_LABEL_SELECTOR = 'schedules.proompteng.ai/schedule'
@@ -66,6 +67,8 @@ export type RuntimeAdapterStatus = {
 }
 
 export type WorkflowsReliabilityStatus = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  message: string
   active_job_runs: number
   recent_failed_jobs: number
   backoff_limit_exceeded_jobs: number
@@ -461,7 +464,13 @@ const resolveWorkflowNamespaces = (optionsNamespace: string) => {
 const safeNumber = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
 
-const buildEmptyWorkflowsReliabilityStatus = (windowMinutes: number): WorkflowsReliabilityStatus => ({
+const buildEmptyWorkflowsReliabilityStatus = (
+  windowMinutes: number,
+  status: WorkflowsReliabilityStatus['status'],
+  message: string,
+): WorkflowsReliabilityStatus => ({
+  status,
+  message,
   active_job_runs: 0,
   recent_failed_jobs: 0,
   backoff_limit_exceeded_jobs: 0,
@@ -507,6 +516,7 @@ const resolveWorkflowsReliabilityStatus = async ({
 }: WorkflowsReliabilityStatusInput) => {
   const nowMs = now.getTime()
   const windowStartMs = nowMs - windowMinutes * STATUS_MS_PER_MINUTE
+  let queryFailed = false
 
   let activeJobRuns = 0
   let recentFailedJobs = 0
@@ -604,6 +614,7 @@ const resolveWorkflowsReliabilityStatus = async ({
         }
       }
     } catch (error) {
+      queryFailed = true
       console.warn(
         `[jangar] failed to collect workflow reliability metrics for namespace ${currentNamespace}: ${normalizeMessage(error)}`,
       )
@@ -618,8 +629,13 @@ const resolveWorkflowsReliabilityStatus = async ({
     .slice(0, MAX_TOP_FAILURE_REASONS)
     .map(([reason]) => reason)
 
+  const status: WorkflowsReliabilityStatus['status'] = queryFailed ? 'unknown' : 'healthy'
+  const message = queryFailed ? `${KUBERNETES_QUERY_FAILURE_MESSAGE_PREFIX} for one or more workflow namespaces` : ''
+
   // Keep payload bounded and deterministic.
   return {
+    status,
+    message,
     active_job_runs: activeJobRuns,
     recent_failed_jobs: recentFailedJobs,
     backoff_limit_exceeded_jobs: backoffLimitExceededJobs,
@@ -692,7 +708,7 @@ export const buildControlPlaneStatus = async (
     warningBackoffThreshold,
   )
   const windowMinutes = resolveWorkflowWindowMinutes()
-  let workflows = buildEmptyWorkflowsReliabilityStatus(windowMinutes)
+  let workflows = buildEmptyWorkflowsReliabilityStatus(windowMinutes, 'healthy', '')
   try {
     workflows = await (deps.getWorkflowsReliabilityStatus ?? resolveWorkflowsReliabilityStatus)({
       now,
@@ -703,11 +719,27 @@ export const buildControlPlaneStatus = async (
       kube: createKubernetesClient(),
     })
   } catch (error) {
+    workflows = buildEmptyWorkflowsReliabilityStatus(
+      windowMinutes,
+      'unknown',
+      `${KUBERNETES_QUERY_FAILURE_MESSAGE_PREFIX}: ${normalizeMessage(error)}`,
+    )
     console.warn(`[jangar] failed to collect workflow reliability status: ${normalizeMessage(error)}`)
   }
 
-  const isWorkflowsWarning = workflows.backoff_limit_exceeded_jobs >= warningBackoffThreshold
-  const isWorkflowsDegraded = workflows.backoff_limit_exceeded_jobs >= degradedBackoffThreshold
+  const isWorkflowsWarning =
+    workflows.status !== 'unknown' && workflows.backoff_limit_exceeded_jobs >= warningBackoffThreshold
+  const isWorkflowsDegraded =
+    workflows.status !== 'unknown' && workflows.backoff_limit_exceeded_jobs >= degradedBackoffThreshold
+  if (workflows.status === 'healthy' && (isWorkflowsWarning || isWorkflowsDegraded)) {
+    workflows = {
+      ...workflows,
+      status: 'degraded',
+      message:
+        `${workflows.message ? `${workflows.message}; ` : ''}` +
+        `workflow reliability degraded: ${workflows.backoff_limit_exceeded_jobs} backoff-limited jobs in last ${windowMinutes}m`,
+    }
+  }
 
   const leaderElection = getLeaderElectionStatus()
 

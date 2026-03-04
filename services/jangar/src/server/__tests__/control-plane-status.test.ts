@@ -27,6 +27,8 @@ const healthyController = {
 const buildWorkflowsReliabilityStatus = (
   overrides: Partial<WorkflowsReliabilityStatus> = {},
 ): WorkflowsReliabilityStatus => ({
+  status: 'healthy',
+  message: '',
   active_job_runs: 0,
   recent_failed_jobs: 0,
   backoff_limit_exceeded_jobs: 0,
@@ -151,6 +153,8 @@ describe('control-plane status', () => {
     expect(status.controllers).toHaveLength(3)
     expect(status.runtime_adapters).toHaveLength(4)
     expect(status.workflows).toEqual({
+      status: 'healthy',
+      message: '',
       active_job_runs: 0,
       recent_failed_jobs: 0,
       backoff_limit_exceeded_jobs: 0,
@@ -267,6 +271,8 @@ describe('control-plane status', () => {
     expect(status.workflows.active_job_runs).toBe(2)
     expect(status.workflows.recent_failed_jobs).toBe(4)
     expect(status.workflows.backoff_limit_exceeded_jobs).toBe(2)
+    expect(status.workflows.status).toBe('degraded')
+    expect(status.workflows.message).toContain('backoff-limited jobs')
     expect(status.workflows.top_failure_reasons).toEqual(['BackoffLimitExceeded', 'DeadlineExceeded'])
     expect(status.namespaces[0]?.status).toBe('degraded')
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('workflows')
@@ -313,7 +319,9 @@ describe('control-plane status', () => {
       },
     )
 
-    expect(status.workflows).toMatchObject({
+    expect(status.workflows).toEqual({
+      status: 'unknown',
+      message: 'kubernetes query failed for one or more workflow namespaces',
       active_job_runs: 0,
       recent_failed_jobs: 0,
       backoff_limit_exceeded_jobs: 0,
@@ -363,12 +371,15 @@ describe('control-plane status', () => {
     )
 
     expect(status.workflows).toEqual({
+      status: 'unknown',
+      message: 'kubernetes query failed: simulated kube client creation failure',
       active_job_runs: 0,
       recent_failed_jobs: 0,
       backoff_limit_exceeded_jobs: 0,
       window_minutes: 15,
       top_failure_reasons: [],
     })
-    expect(status.namespaces[0]?.degraded_components ?? []).not.toContain('workflows')
+    expect(status.namespaces[0]?.status).toBe('healthy')
+    expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)
   })
 })

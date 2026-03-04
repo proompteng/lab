@@ -116,6 +116,11 @@ export type RuntimeAdapterStatus = {
   endpoint: string
 }
 
+export type WorkflowFailureReason = {
+  reason: string
+  count: number
+}
+
 export type DatabaseMigrationConsistency = {
   status: 'healthy' | 'degraded' | 'unknown'
   migration_table: string | null
@@ -140,6 +145,8 @@ export type DatabaseStatus = {
 }
 
 export type WorkflowsReliabilityStatus = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  message: string
   active_job_runs: number
   recent_failed_jobs: number
   backoff_limit_exceeded_jobs: number
@@ -196,10 +203,10 @@ export type ControlPlaneStatus = {
   }
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
+  workflows: WorkflowsReliabilityStatus
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
-  workflows: WorkflowsReliabilityStatus
   namespaces: NamespaceStatus[]
 }
 
