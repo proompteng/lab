@@ -225,12 +225,6 @@ jobs:
           }
 
           run_kind_load_with_fallback() {
-            if run_with_progress "kind load docker-image" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
-              echo "Loaded local image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}."
-              return 0
-            fi
-
-            echo "kind load docker-image failed; retrying with image-archive path."
             if ! run_with_progress "docker save image archive" "${KIND_LOAD_TIMEOUT_MINUTES}" docker save --output "${KIND_IMAGE_TAR}" "${IMAGE}"; then
               echo "Failed to save local image archive ${KIND_IMAGE_TAR}."
               return 1
@@ -240,6 +234,12 @@ jobs:
 
             if run_with_progress "kind load image-archive" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load image-archive "${KIND_IMAGE_TAR}" --name "${KIND_CLUSTER_NAME}"; then
               echo "Loaded local image archive ${KIND_IMAGE_TAR} into kind cluster ${KIND_CLUSTER_NAME}."
+              return 0
+            fi
+
+            echo "kind load image-archive failed; retrying with docker-image path."
+            if run_with_progress "kind load docker-image" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
+              echo "Loaded local image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}."
               return 0
             fi
             return 1
