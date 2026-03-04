@@ -235,7 +235,17 @@ jobs:
           IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
           # Use docker.io for Bun base image in CI builds to avoid mirror image metadata drift.
-          if timeout 45m env DOCKER_BUILDKIT=1 docker build \
+          BUILD_TIMEOUT_MINUTES=90
+          KIND_LOAD_TIMEOUT_MINUTES=20
+
+          (
+            while :; do
+              echo "[progress] waiting on Docker build for ${IMAGE} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+              sleep 120
+            done
+          ) &
+          BUILD_HEARTBEAT_PID=$!
+          if timeout "${BUILD_TIMEOUT_MINUTES}m" env DOCKER_BUILDKIT=1 docker build \
             -f "${WORKSPACE}/services/jangar/Dockerfile" \
             --target control-plane \
             -t "${IMAGE}" \
@@ -246,16 +256,35 @@ jobs:
             "${PRUNE_DIR}"; then
             echo "Built local image ${IMAGE}."
           else
+            BUILD_STATUS=$?
+            kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+            wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+            echo "Failed to build local image; exit code=${BUILD_STATUS}." >&2
             echo "Failed to build local image." >&2
             exit 1
           fi
+          kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+          wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
 
-          if timeout 10m kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
+          (
+            while :; do
+              echo "[progress] waiting on kind image load for ${IMAGE} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+              sleep 120
+            done
+          ) &
+          KIND_HEARTBEAT_PID=$!
+          if timeout "${KIND_LOAD_TIMEOUT_MINUTES}m" kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
             echo "Loaded local image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}."
           else
+            KIND_LOAD_STATUS=$?
+            kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
+            wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
+            echo "Failed to load local image into kind; exit code=${KIND_LOAD_STATUS}." >&2
             echo "Failed to load local image into kind." >&2
             exit 1
           fi
+          kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
+          wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
 
       - name: Run agents integration smoke test
         env:
