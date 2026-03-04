@@ -972,15 +972,14 @@ class Settings(BaseSettings):
         alias="TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS",
         description="Symbol->notional concentration caps applied by allocator before risk checks (JSON object).",
     )
-    trading_allocator_correlation_symbol_groups: dict[str, str] = Field(
+    trading_allocator_symbol_correlation_groups: dict[str, str] = Field(
         default_factory=dict,
-        alias="TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS",
+        alias="TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS",
+        validation_alias=AliasChoices(
+            "TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS",
+            "TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS",
+        ),
         description="Symbol->correlation group map used for correlation-aware throttles (JSON object).",
-    )
-    trading_allocator_correlation_group_notional_caps: dict[str, float] = Field(
-        default_factory=dict,
-        alias="TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS",
-        description="Correlation-group->notional caps applied by allocator before risk checks (JSON object).",
     )
     trading_allocator_regime_budget_multipliers: dict[str, float] = Field(
         default_factory=dict,
@@ -1048,12 +1047,11 @@ class Settings(BaseSettings):
     trading_allocator_correlation_group_caps: dict[str, float] = Field(
         default_factory=dict,
         alias="TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS",
+        validation_alias=AliasChoices(
+            "TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS",
+            "TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS",
+        ),
         description="Correlation-group->per-cycle notional cap map used by allocator (JSON object).",
-    )
-    trading_allocator_symbol_correlation_groups: dict[str, str] = Field(
-        default_factory=dict,
-        alias="TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS",
-        description="Symbol->correlation group mapping used when decisions do not provide a group.",
     )
     trading_fragility_mode: Literal["off", "observe", "enforce"] = Field(
         default="enforce",
@@ -1641,29 +1639,29 @@ class Settings(BaseSettings):
 
     def _normalize_correlation_symbol_groups(self) -> None:
         normalized_correlation_groups: dict[str, str] = {}
-        for key, value in self.trading_allocator_correlation_symbol_groups.items():
+        for key, value in self.trading_allocator_symbol_correlation_groups.items():
             normalized_key = key.strip().upper()
             normalized_value = str(value).strip().lower()
             if not normalized_key or not normalized_value:
                 continue
             normalized_correlation_groups[normalized_key] = normalized_value
-        self.trading_allocator_correlation_symbol_groups = normalized_correlation_groups
+        self.trading_allocator_symbol_correlation_groups = normalized_correlation_groups
 
     def _normalize_correlation_group_notional_caps(self) -> None:
         normalized_correlation_caps: dict[str, float] = {}
         for (
             key,
             value,
-        ) in self.trading_allocator_correlation_group_notional_caps.items():
+        ) in self.trading_allocator_correlation_group_caps.items():
             normalized_key = key.strip().lower()
             if not normalized_key:
                 continue
             if value < 0:
                 raise ValueError(
-                    f"TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS[{key}] must be >= 0"
+                    f"TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS[{key}] must be >= 0"
                 )
             normalized_correlation_caps[normalized_key] = value
-        self.trading_allocator_correlation_group_notional_caps = (
+        self.trading_allocator_correlation_group_caps = (
             normalized_correlation_caps
         )
 
