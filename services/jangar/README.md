@@ -237,14 +237,12 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
 - `JANGAR_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
 - `DATABASE_URL` (required to use MCP memories tools)
 - `PGSSLMODE` (optional; defaults to `require`; Jangar does not support `sslrootcert` URL params for Bun’s Postgres client)
-- `JANGAR_WORKFLOWS_WINDOW_MINUTES` (optional; default: `15`)
+- `JANGAR_CONTROL_PLANE_WORKFLOW_WINDOW_MINUTES` (optional; default: `15`)
   - Time window used for workflow rollup counts in `status.workflows`.
-- `JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD` (optional; default: `2`)
-  - Mark workflow status as degraded when backoff failures cross this warning threshold.
-- `JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD` (optional; default: `3`)
-  - Promote degraded workflow status to hard degradation at this threshold.
-- `JANGAR_WORKFLOWS_SWARMS` (optional)
-  - Comma-separated list of swarm names included in workflow status rollups (defaults to `jangar-control-plane`).
+- `JANGAR_CONTROL_PLANE_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD` (optional; default: `2`)
+  - Degrade workflow reliability when backoff failures in the window meet or exceed this threshold.
+- `JANGAR_CONTROL_PLANE_WORKFLOW_SWARMS` (optional)
+  - Comma-separated list of swarm names included in workflow status rollups (default: `jangar-control-plane,torghut-quant`).
 - `JANGAR_CONTROL_PLANE_ROLLOUT_MONITORS` (optional)
   - Comma-separated list of swarms included in rollout reliability monitoring.
 - `JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_SWARMS` (optional)

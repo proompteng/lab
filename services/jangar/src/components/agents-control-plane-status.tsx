@@ -61,6 +61,14 @@ const renderSummaryValue = (value: string | number | boolean | null) => {
   return String(value)
 }
 
+const formatFailureReasons = (reasons: Array<{ reason: string; count: number }>) => {
+  if (reasons.length === 0) {
+    return '—'
+  }
+
+  return reasons.map((entry) => `${entry.reason} (${entry.count})`).join(', ')
+}
+
 export const ControlPlaneStatusPanel = ({
   status,
   error,
@@ -168,8 +176,7 @@ export const ControlPlaneStatusPanel = ({
               <span>Window: {renderSummaryValue(status.workflows.window_minutes)}m</span>
             </div>
             <div className="text-muted-foreground">
-              Top failure reasons:{' '}
-              {status.workflows.top_failure_reasons.length > 0 ? status.workflows.top_failure_reasons.join(', ') : '—'}
+              Top failure reasons: {formatFailureReasons(status.workflows.top_failure_reasons)}
             </div>
           </div>
         </div>
@@ -215,6 +222,9 @@ export const ControlPlaneStatusPanel = ({
                       </div>
                       <div className="text-muted-foreground text-[11px]">
                         Reasons: {stage.reasons.length > 0 ? stage.reasons.join(', ') : '—'}
+                      </div>
+                      <div className="text-muted-foreground text-[11px]">
+                        Failure trend: {formatFailureReasons(stage.top_failure_reasons)}
                       </div>
                     </li>
                   ))}
