@@ -131,6 +131,25 @@ export type GrpcStatus = {
   message: string
 }
 
+export type ControlPlaneWatchReliabilityStream = {
+  resource: string
+  namespace: string
+  events: number
+  errors: number
+  restarts: number
+  last_seen_at: string
+}
+
+export type ControlPlaneWatchReliability = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  window_minutes: number
+  observed_streams: number
+  total_events: number
+  total_errors: number
+  total_restarts: number
+  streams: ControlPlaneWatchReliabilityStream[]
+}
+
 export type NamespaceStatus = {
   namespace: string
   status: 'healthy' | 'degraded'
@@ -156,6 +175,7 @@ export type ControlPlaneStatus = {
   runtime_adapters: RuntimeAdapterStatus[]
   database: DatabaseStatus
   grpc: GrpcStatus
+  watch_reliability: ControlPlaneWatchReliability
   namespaces: NamespaceStatus[]
 }
 
