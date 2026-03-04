@@ -10,6 +10,7 @@ import os
 import math
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlparse
 
 from ..parity import (
     ADVISOR_FALLBACK_SLO_CONTRACT_SCHEMA_VERSION,
@@ -593,6 +594,17 @@ def _append_profitability_stage_manifest_reasons(
                 "artifact_ref": str(manifest_path),
             }
         )
+    else:
+        design_doc = str(run_context.get("design_doc", "")).strip()
+        if not _is_valid_design_doc_reference(design_doc):
+            reasons.append("profitability_stage_manifest_design_doc_invalid")
+            reason_details.append(
+                {
+                    "reason": "profitability_stage_manifest_design_doc_invalid",
+                    "artifact_ref": str(manifest_path),
+                    "design_doc": design_doc,
+                }
+            )
 
     stages_raw = manifest_payload.get("stages")
     stages = _as_dict(stages_raw)
@@ -886,6 +898,25 @@ def _append_profitability_stage_manifest_reasons(
                 "failure_reasons": failure_reasons,
             }
         )
+
+
+def _is_valid_design_doc_reference(value: str) -> bool:
+    value = value.strip()
+    if not value:
+        return False
+    if value.startswith(("docs/", "./docs/")) and value.lower().endswith(".md"):
+        return True
+
+    parsed = urlparse(value)
+    if (
+        parsed.scheme.lower() in {"http", "https"}
+        and parsed.netloc
+        and parsed.path
+        and parsed.path.lower().endswith(".md")
+    ):
+        return True
+
+    return False
 
 
 def _append_profitability_stage_manifest_replay_contract_reasons(
