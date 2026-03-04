@@ -3,11 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "bin": {
-    "cx-codex-run": "./dist/cli/cx-codex-run.js",
-    "cx-workflow-cancel": "./dist/cli/cx-workflow-cancel.js",
-    "cx-workflow-query": "./dist/cli/cx-workflow-query.js",
-    "cx-workflow-signal": "./dist/cli/cx-workflow-signal.js",
-    "cx-workflow-start": "./dist/cli/cx-workflow-start.js"
+    "cx-codex-run": "./dist/cx-codex-run.js",
+    "cx-workflow-cancel": "./dist/cx-workflow-cancel.js",
+    "cx-workflow-query": "./dist/cx-workflow-query.js",
+    "cx-workflow-signal": "./dist/cx-workflow-signal.js",
+    "cx-workflow-start": "./dist/cx-workflow-start.js"
   },
   "type": "module",
   "scripts": {
