@@ -121,16 +121,6 @@ export type WorkflowFailureReason = {
   count: number
 }
 
-export type WorkflowReliabilityStatus = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  window_minutes: number
-  active_job_runs: number
-  recent_failed_jobs: number
-  backoff_limit_exceeded_jobs: number
-  top_failure_reasons: WorkflowFailureReason[]
-  message: string
-}
-
 export type DatabaseMigrationConsistency = {
   status: 'healthy' | 'degraded' | 'unknown'
   migration_table: string | null
@@ -211,11 +201,10 @@ export type ControlPlaneStatus = {
   }
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
-  workflows: WorkflowReliabilityStatus
+  workflows: WorkflowsReliabilityStatus
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
-  workflows: WorkflowsReliabilityStatus
   namespaces: NamespaceStatus[]
 }
 
