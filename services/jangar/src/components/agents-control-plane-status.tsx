@@ -61,8 +61,8 @@ const renderSummaryValue = (value: string | number | boolean | null) => {
   return String(value)
 }
 
-const formatFailureReasons = (reasons: Array<{ reason: string; count: number }>) => {
-  if (reasons.length === 0) {
+const formatFailureReasons = (reasons?: Array<{ reason: string; count: number }> | null) => {
+  if (!reasons || reasons.length === 0) {
     return '—'
   }
 

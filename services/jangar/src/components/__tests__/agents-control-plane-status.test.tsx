@@ -112,4 +112,40 @@ describe('ControlPlaneStatusPanel', () => {
     expect(normalizedHtml).toContain('Top failure reasons: BackoffLimitExceeded (2), ImagePullBackOff (1)')
     expect(normalizedHtml).not.toContain('Top failure reasons: [object Object], [object Object]')
   })
+
+  it('handles missing rollout stage failure reasons without crashing', () => {
+    const statusWithMissingRolloutReasons = {
+      ...baseStatus,
+      rollout: {
+        ...baseStatus.rollout,
+        stages: [
+          {
+            name: 'jangar-control-plane-implement-sched',
+            namespace: 'agents',
+            swarm: 'jangar-control-plane',
+            stage: 'implement',
+            phase: 'Active',
+            last_run_at: '2026-01-20T00:00:00Z',
+            last_successful_run_at: '2026-01-20T00:00:00Z',
+            last_transition_at: '2026-01-20T00:00:00Z',
+            is_active: true,
+            is_stale: false,
+            reasons: ['manual test'],
+            recent_failed_jobs: 0,
+            backoff_limit_exceeded_jobs: 0,
+            failed_runs_last_window: 0,
+            backoff_failures_last_window: 0,
+            top_failure_reasons: undefined as unknown as Array<{ reason: string; count: number }>,
+          },
+        ],
+      },
+    }
+
+    const html = renderToString(
+      <ControlPlaneStatusPanel status={statusWithMissingRolloutReasons} error={null} isLoading={false} />,
+    )
+    const normalizedHtml = html.replace(/<!-- -->/g, '')
+
+    expect(normalizedHtml).toContain('Failure trend: —')
+  })
 })

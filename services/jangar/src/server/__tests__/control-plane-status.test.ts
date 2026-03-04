@@ -45,9 +45,9 @@ type DeploymentFixtureOverrides = {
   status?: Record<string, unknown>
 }
 
-const createDeployment = (overrides: DeploymentFixtureOverrides = {}) => ({
+const createDeployment = (name: string, overrides: DeploymentFixtureOverrides = {}) => ({
   metadata: {
-    name: 'agents',
+    name,
     namespace: 'agents',
     generation: 1,
     ...overrides.metadata,
@@ -62,19 +62,20 @@ const createDeployment = (overrides: DeploymentFixtureOverrides = {}) => ({
     updatedReplicas: 1,
     unavailableReplicas: 0,
     observedGeneration: 1,
-    conditions: [
-      { type: 'Available', status: 'True' },
-      { type: 'Progressing', status: 'True' },
-    ],
     ...overrides.status,
   },
 })
+
+const createDeploymentWith = (name: string, overrides: DeploymentFixtureOverrides = {}) =>
+  createDeployment(name, {
+    ...overrides,
+  })
 
 const createKubeList = (
   jobs: unknown[],
   schedules: unknown[] = [],
   cronjobs: unknown[] = [],
-  deployments: unknown[] = [],
+  deployments: unknown[] = [createDeployment('agents')],
 ) => ({
   list: async (resource: string) => {
     if (resource === 'jobs') return { items: jobs } as Record<string, unknown>
@@ -100,15 +101,6 @@ const createActiveJob = () => ({
     active: 1,
   },
 })
-
-const createDeploymentWith = (name: string, overrides: DeploymentFixtureOverrides = {}) =>
-  createDeployment({
-    ...overrides,
-    metadata: {
-      ...overrides.metadata,
-      name,
-    },
-  })
 
 const createBackoffJob = (name: string, reason: string, at: string) => ({
   metadata: { name, creationTimestamp: at },
@@ -745,6 +737,7 @@ describe('control-plane status', () => {
           [],
           [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', '2026-01-19T20:00:00Z')],
           [createRolloutCron('jangar-control-plane-implement-sched', '2026-01-19T20:00:00Z', '2026-01-19T20:00:00Z')],
+          [createDeploymentWith('agents')],
         ),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
@@ -754,7 +747,9 @@ describe('control-plane status', () => {
     expect(status.rollout.stale_schedules).toBe(1)
     expect(status.rollout.inactive_schedules).toBe(0)
     expect(status.rollout.stages.length).toBe(1)
-    expect(status.rollout.stages[0]?.reasons).toEqual(expect.arrayContaining(['no successful run in last 15m']))
+    expect(status.rollout.stages[0]?.reasons).toEqual(
+      expect.arrayContaining(['no successful run in last 120m', 'no rollout activity in last 120m']),
+    )
     expect(status.namespaces[0]?.degraded_components).toContain('rollout')
   })
 
@@ -868,8 +863,8 @@ describe('control-plane status', () => {
     expect(status.rollout.status).toBe('healthy')
     const rolloutStage = status.rollout.stages.find((item) => item.name === 'jangar-control-plane-implement-sched')
     expect(rolloutStage).toBeDefined()
-    expect(rolloutStage?.recent_failed_jobs).toBe(2)
-    expect(rolloutStage?.backoff_limit_exceeded_jobs).toBe(1)
+    expect(rolloutStage?.failed_runs_last_window).toBe(2)
+    expect(rolloutStage?.backoff_failures_last_window).toBe(1)
     expect(rolloutStage?.top_failure_reasons).toEqual([
       { reason: 'BackoffLimitExceeded', count: 1 },
       { reason: 'ImagePullBackOff', count: 1 },
