@@ -73,9 +73,14 @@ const respondToThreadStart = async (child: FakeChildProcess, threadId: string) =
   })
 }
 
-const respondToTurnStart = async (child: FakeChildProcess, turnId: string) => {
+const respondToTurnStart = async (
+  child: FakeChildProcess,
+  turnId: string,
+  inspect?: (request: JsonRpcRequest) => void,
+) => {
   const request = await nextRequest(child)
   expect(request.method).toBe('turn/start')
+  inspect?.(request)
   writeLine(child, {
     id: request.id,
     result: { turn: { id: turnId, status: 'inProgress', items: [], error: null } },
@@ -136,6 +141,26 @@ describe('CodexAppServerClient v2 notifications', () => {
 
     const delta = await stream.next()
     expect(delta.value).toEqual({ type: 'usage', usage: tokenUsage })
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } },
+    })
+    await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
+  })
+
+  it('omits summary override from turn/start payload by default', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1', (request) => {
+      const params = request.params as Record<string, unknown>
+      expect(params).not.toHaveProperty('summary')
+    })
+    const { stream } = await runPromise
 
     writeLine(child, {
       method: 'turn/completed',
