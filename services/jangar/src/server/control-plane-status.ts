@@ -12,7 +12,11 @@ import {
   type ControlPlaneWatchReliabilitySummary,
 } from '~/server/control-plane-watch-reliability'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
-import type { ControlPlaneRolloutHealth, DeploymentRolloutStatus } from '~/data/agents-control-plane'
+import type {
+  ControlPlaneRolloutHealth,
+  DeploymentRolloutStatus,
+  RolloutFailureReason,
+} from '~/data/agents-control-plane'
 
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
@@ -23,6 +27,7 @@ const DEFAULT_WORKFLOW_MONITOR_SWARMS = 'jangar-control-plane,torghut-quant'
 const DEFAULT_ROLLOUT_MONITOR_SWARMS = 'jangar-control-plane,torghut-quant'
 const DEFAULT_ROLLOUT_WINDOW_MINUTES = 120
 const WORKFLOW_WINDOW_REASON_LIMIT = 5
+const ROLLOUT_WINDOW_REASON_LIMIT = 5
 const DEFAULT_ROLLOUT_DEPLOYMENTS = 'agents'
 
 type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>
@@ -103,6 +108,9 @@ export type ControlPlaneRolloutStageReliability = {
   last_transition_at: string
   is_active: boolean
   is_stale: boolean
+  failed_runs_last_window: number
+  backoff_failures_last_window: number
+  top_failure_reasons: RolloutFailureReason[]
   reasons: string[]
 }
 
@@ -442,6 +450,40 @@ const toTopFailureReasons = (entries: Map<string, number>) =>
     .slice(0, WORKFLOW_WINDOW_REASON_LIMIT)
     .map(([reason, count]) => ({ reason, count }))
 
+const toTopRolloutFailureReasons = (entries: Map<string, number>) =>
+  [...entries.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, ROLLOUT_WINDOW_REASON_LIMIT)
+    .map(([reason, count]) => ({ reason, count }))
+
+type RolloutScheduleJobStats = {
+  failedRuns: number
+  backoffFailures: number
+  failureReasons: Map<string, number>
+}
+
+const createRolloutScheduleJobStats = (): RolloutScheduleJobStats => ({
+  failedRuns: 0,
+  backoffFailures: 0,
+  failureReasons: new Map(),
+})
+
+const resolveScheduleFromJobName = (jobName: string, scheduleNames: string[]) => {
+  const isStepJob = /-step-\d+-attempt-/.test(jobName)
+  if (!isStepJob) {
+    return null
+  }
+
+  const strippedAttempt = jobName.replace(/-attempt-[^/]+$/, '')
+  const scheduleCandidate = strippedAttempt.replace(/-step-\d+$/, '')
+  for (const scheduleName of scheduleNames) {
+    if (scheduleCandidate === scheduleName || scheduleCandidate.startsWith(`${scheduleName}-`)) {
+      return scheduleName
+    }
+  }
+  return null
+}
+
 const MIGRATION_TABLE_CANDIDATES = ['kysely_migration', 'kysely_migrations'] as const
 
 const buildDatabaseMigrationConsistencyUnknown = (message: string): DatabaseMigrationConsistency => ({
@@ -642,9 +684,11 @@ const buildRolloutReliability = async (deps: {
 
   const schedulesResponse = await deps.kube.list('schedules.schedules.proompteng.ai', deps.options.namespace)
   const cronResponse = await deps.kube.list('cronjob', deps.options.namespace)
+  const jobsResponse = await deps.kube.list('jobs', deps.options.namespace)
 
   const scheduleItems = asArray(asRecord(schedulesResponse).items).map(asRecord)
   const cronItems = asArray(asRecord(cronResponse).items).map(asRecord)
+  const jobItems = asArray(asRecord(jobsResponse).items).map(asRecord)
 
   const cronHealthBySchedule = new Map<
     string,
@@ -698,6 +742,44 @@ const buildRolloutReliability = async (deps: {
     })
   }
 
+  const scheduleNames = scheduleItems
+    .map((schedule) => asString(asRecord(schedule.metadata).name))
+    .filter(Boolean) as string[]
+  const scheduleStatsByName = new Map<string, RolloutScheduleJobStats>()
+
+  for (const job of jobItems) {
+    const metadata = asRecord(job.metadata)
+    const jobName = asString(metadata.name) ?? ''
+    if (!jobName) continue
+
+    const createdAtMs = parseTimestampMs(metadata.creationTimestamp)
+    if (createdAtMs === null || createdAtMs < windowStartMs) {
+      continue
+    }
+
+    const scheduleName = resolveScheduleFromJobName(jobName, scheduleNames)
+    if (!scheduleName) {
+      continue
+    }
+
+    const status = asRecord(job.status)
+    if (asNumber(status.failed, 0) <= 0) {
+      continue
+    }
+
+    const conditions = asArray(status.conditions).map(asRecord)
+    const failedCondition = conditions.find((condition) => asString(condition.type) === 'Failed')
+    const reason = asString(failedCondition?.reason) ?? 'Failed'
+
+    const stats = scheduleStatsByName.get(scheduleName) ?? createRolloutScheduleJobStats()
+    stats.failedRuns += 1
+    if (reason === 'BackoffLimitExceeded') {
+      stats.backoffFailures += 1
+    }
+    stats.failureReasons.set(reason, (stats.failureReasons.get(reason) ?? 0) + 1)
+    scheduleStatsByName.set(scheduleName, stats)
+  }
+
   const stages = scheduleItems
     .map((schedule) => {
       const metadata = asRecord(schedule.metadata)
@@ -731,6 +813,15 @@ const buildRolloutReliability = async (deps: {
       if (isStale) {
         reasons.push(`no successful run in last ${windowMinutes}m`)
       }
+      const jobStats = scheduleStatsByName.get(name)
+      const failedRuns = jobStats?.failedRuns ?? 0
+      const backoffFailures = jobStats?.backoffFailures ?? 0
+      if (failedRuns > 0) {
+        reasons.push(`${failedRuns} failed runs in last ${windowMinutes}m`)
+      }
+      if (backoffFailures > 0) {
+        reasons.push(`${backoffFailures} backoff failures in last ${windowMinutes}m`)
+      }
 
       const transitionTime = conditions.find((condition) => asString(condition.type) === 'Ready')?.lastTransitionTime
       const lastTransitionAt = asString(transitionTime)
@@ -745,6 +836,9 @@ const buildRolloutReliability = async (deps: {
         last_transition_at: asString(lastTransitionAt) || asString(cronHealth?.transitionTime) || '',
         is_active: isActive,
         is_stale: isStale,
+        failed_runs_last_window: failedRuns,
+        backoff_failures_last_window: backoffFailures,
+        top_failure_reasons: jobStats ? toTopRolloutFailureReasons(jobStats.failureReasons) : [],
         reasons,
       }
       return stageObj

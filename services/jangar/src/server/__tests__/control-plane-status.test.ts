@@ -660,4 +660,67 @@ describe('control-plane status', () => {
     expect(status.rollout.stale_schedules).toBe(1)
     expect(status.namespaces[0]?.degraded_components).toContain('rollout')
   })
+
+  it('surfaces failed-run and backoff metrics for rollout schedules', async () => {
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now,
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => ({
+          name: 'temporal',
+          available: true,
+          status: 'configured',
+          message: '',
+          endpoint: 'temporal:7233',
+        }),
+        checkDatabase: async () => ({
+          configured: true,
+          connected: true,
+          status: 'healthy',
+          message: '',
+          latency_ms: 4,
+          migration_consistency: makeMigrationConsistency(),
+        }),
+        kube: createKubeList(
+          [
+            createBackoffJob(
+              'jangar-control-plane-implement-sched-step-1-attempt-1',
+              'BackoffLimitExceeded',
+              now().toISOString(),
+            ),
+            createBackoffJob(
+              'jangar-control-plane-implement-sched-step-1-attempt-2',
+              'ImagePullBackOff',
+              now().toISOString(),
+            ),
+          ],
+          [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', now().toISOString())],
+          [createRolloutCron('jangar-control-plane-implement-sched', now().toISOString(), now().toISOString())],
+          [createDeploymentWith('agents')],
+        ),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+      },
+    )
+
+    expect(status.rollout.status).toBe('healthy')
+    const rolloutStage = status.rollout.stages.find((item) => item.name === 'jangar-control-plane-implement-sched')
+    expect(rolloutStage).toBeDefined()
+    expect(rolloutStage?.failed_runs_last_window).toBe(2)
+    expect(rolloutStage?.backoff_failures_last_window).toBe(1)
+    expect(rolloutStage?.top_failure_reasons).toEqual([
+      { reason: 'BackoffLimitExceeded', count: 1 },
+      { reason: 'ImagePullBackOff', count: 1 },
+    ])
+  })
 })
