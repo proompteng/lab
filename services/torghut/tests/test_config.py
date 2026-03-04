@@ -455,6 +455,33 @@ class TestConfig(TestCase):
             {"megacap": 3000.0},
         )
 
+    def test_allocator_surface_uses_canonical_field_names(self) -> None:
+        model_fields = set(Settings.model_fields.keys())
+        self.assertIn(
+            "trading_allocator_symbol_correlation_groups",
+            model_fields,
+        )
+        self.assertIn(
+            "trading_allocator_correlation_group_caps",
+            model_fields,
+        )
+        self.assertIn(
+            "trading_allocator_strategy_notional_caps",
+            model_fields,
+        )
+        self.assertIn(
+            "trading_allocator_symbol_notional_caps",
+            model_fields,
+        )
+        self.assertNotIn(
+            "trading_allocator_correlation_symbol_groups",
+            model_fields,
+        )
+        self.assertNotIn(
+            "trading_allocator_correlation_group_notional_caps",
+            model_fields,
+        )
+
     def test_legacy_allocator_aliases_are_supported(self) -> None:
         settings = Settings(
             TRADING_UNIVERSE_SOURCE="static",
