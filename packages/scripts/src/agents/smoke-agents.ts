@@ -236,6 +236,10 @@ const main = async () => {
   const kubeconfigPath =
     process.env.AGENTCTL_KUBECONFIG ?? process.env.KUBECONFIG ?? resolve(homedir(), '.kube', 'config')
   const caFile = process.env.KUBE_CA_FILE ?? '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+  const imageRepository = process.env.AGENTS_IMAGE_REPOSITORY
+  const imageTag = process.env.AGENTS_IMAGE_TAG
+  const imageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_IMAGE_DIGEST')
+  const imageDigest = process.env.AGENTS_IMAGE_DIGEST ?? ''
 
   const agentctlCommand = agentctlBin.endsWith('.js') ? ['node', agentctlBin] : [agentctlBin]
   const agentctlExecutable = agentctlCommand[0]
@@ -393,6 +397,15 @@ spec:
 
   if (process.env.AGENTS_DB_URL) {
     helmArgs.push('--set-string', `database.url=${process.env.AGENTS_DB_URL}`)
+  }
+  if (imageRepository) {
+    helmArgs.push('--set', `image.repository=${imageRepository}`)
+  }
+  if (imageTag) {
+    helmArgs.push('--set', `image.tag=${imageTag}`)
+  }
+  if (imageDigestSet) {
+    helmArgs.push('--set', `image.digest=${imageDigest}`)
   }
 
   await run('helm', helmArgs)

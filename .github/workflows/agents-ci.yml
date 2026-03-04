@@ -139,17 +139,77 @@ jobs:
           kubectl_version: v1.29.4
           wait: 180s
 
-      - name: Preload Jangar image into kind
+      - name: Build and preload local Jangar control-plane image into kind
         run: |
           set -euo pipefail
-          IMAGE_REPO=$(awk '/^[[:space:]]*repository:/{print $2; exit}' charts/agents/values-ci.yaml)
-          IMAGE_TAG=$(awk '/^[[:space:]]*tag:/{print $2; exit}' charts/agents/values-ci.yaml | tr -d "'\"")
-          IMAGE_DIGEST=$(awk '/^[[:space:]]*digest:/{print $2; exit}' charts/agents/values-ci.yaml | tr -d "'\"")
-          IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
-          if [ "${IMAGE_DIGEST}" != "''" ] && [ -n "${IMAGE_DIGEST}" ]; then
-            IMAGE="${IMAGE}@${IMAGE_DIGEST}"
+
+          WORKSPACE="${GITHUB_WORKSPACE}"
+          IMAGE_REPOSITORY="${AGENTS_IMAGE_REPOSITORY:-jangar-local}"
+          IMAGE_TAG="${AGENTS_IMAGE_TAG:-ci-${GITHUB_SHA:-unknown}}"
+          PRUNE_DIR="$(mktemp -d /tmp/jangar-prune-XXXXXX)"
+          trap 'rm -rf "${PRUNE_DIR}"' EXIT
+
+          OUTPUT_ENTRY="${WORKSPACE}/services/jangar/.output/server/index.mjs"
+          OUTPUT_PROTO="${WORKSPACE}/services/jangar/.output/server/proto/proompteng/jangar/v1/agentctl.proto"
+          BUILD_OUTPUT=0
+          if [ ! -f "${OUTPUT_ENTRY}" ] || [ ! -f "${OUTPUT_PROTO}" ]; then
+            BUILD_OUTPUT=1
           fi
-          docker pull "${IMAGE}"
+
+          echo "Pruning jangar build context to ${PRUNE_DIR}"
+          bunx turbo prune --scope=@proompteng/jangar --docker --out-dir="${PRUNE_DIR}"
+          cp "${WORKSPACE}/tsconfig.base.json" "${PRUNE_DIR}/tsconfig.base.json"
+          if [ -d "${WORKSPACE}/skills" ]; then
+            cp -R "${WORKSPACE}/skills" "${PRUNE_DIR}/skills"
+          fi
+          if [ -d "${WORKSPACE}/services/jangar/agentctl" ]; then
+            mkdir -p "${PRUNE_DIR}/full/services/jangar" "${PRUNE_DIR}/json/services/jangar"
+            cp -R "${WORKSPACE}/services/jangar/agentctl" "${PRUNE_DIR}/full/services/jangar/agentctl"
+            cp -R "${WORKSPACE}/services/jangar/agentctl" "${PRUNE_DIR}/json/services/jangar/agentctl"
+          fi
+          if [ -d "${WORKSPACE}/packages/cx-tools" ]; then
+            mkdir -p "${PRUNE_DIR}/full/packages/cx-tools" "${PRUNE_DIR}/json/packages/cx-tools"
+            cp -R "${WORKSPACE}/packages/cx-tools" "${PRUNE_DIR}/full/packages/cx-tools"
+            cp -R "${WORKSPACE}/packages/cx-tools" "${PRUNE_DIR}/json/packages/cx-tools"
+          fi
+
+          if [ "${BUILD_OUTPUT}" = "1" ]; then
+            echo "Building services/jangar .output in pruned context"
+            BUILD_DIR="${PRUNE_DIR}/build"
+            mkdir -p "${BUILD_DIR}"
+            cp -R "${PRUNE_DIR}/json/." "${BUILD_DIR}/"
+            cp "${PRUNE_DIR}/tsconfig.base.json" "${BUILD_DIR}/tsconfig.base.json"
+            (cd "${BUILD_DIR}" && bun install --no-save --ignore-scripts)
+            cp -R "${PRUNE_DIR}/full/." "${BUILD_DIR}/"
+            (cd "${BUILD_DIR}/services/jangar" && bun run build)
+            mkdir -p "${PRUNE_DIR}/full/services/jangar"
+            cp -R "${BUILD_DIR}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
+          elif [ -f "${OUTPUT_ENTRY}" ] && [ -f "${OUTPUT_PROTO}" ]; then
+            echo "Using local services/jangar .output from workspace"
+            mkdir -p "${PRUNE_DIR}/full/services/jangar"
+            cp -R "${WORKSPACE}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
+          elif [ -d "${WORKSPACE}/services/jangar/.output" ]; then
+            echo "Skipping prebuilt .output reuse: missing generated index/proto artifacts"
+          fi
+
+          CODEX_AUTH_PATH="${HOME}/.codex/auth.json"
+          if [ ! -f "${CODEX_AUTH_PATH}" ]; then
+            CODEX_AUTH_PATH="${PRUNE_DIR}/codex-auth.json"
+            printf '{}' > "${CODEX_AUTH_PATH}"
+          fi
+
+          JANGAR_VERSION="$(git -C "${WORKSPACE}" rev-parse --short HEAD)"
+          JANGAR_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
+          IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+
+          DOCKER_BUILDKIT=1 docker build \
+            -f "${WORKSPACE}/services/jangar/Dockerfile" \
+            --target control-plane \
+            -t "${IMAGE}" \
+            --build-arg "JANGAR_VERSION=${JANGAR_VERSION}" \
+            --build-arg "JANGAR_COMMIT=${JANGAR_COMMIT}" \
+            --secret "id=codexauth,src=${CODEX_AUTH_PATH}" \
+            "${PRUNE_DIR}"
           kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"
 
       - name: Run agents integration smoke test
@@ -160,6 +220,9 @@ jobs:
           AGENTS_CREATE_NAMESPACE: 'true'
           AGENTS_DB_BOOTSTRAP: 'true'
           AGENTS_TIMEOUT: 15m
+          AGENTS_IMAGE_REPOSITORY: jangar-local
+          AGENTS_IMAGE_TAG: ci-${{ github.sha }}
+          AGENTS_IMAGE_DIGEST: ''
           AGENTCTL_BIN: services/jangar/agentctl/dist/agentctl
         run: bun run packages/scripts/src/agents/smoke-agents.ts
 
