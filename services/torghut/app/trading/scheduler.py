@@ -102,6 +102,50 @@ _RECOVERABLE_EMERGENCY_STOP_PREFIXES: tuple[str, ...] = (
     "signal_lag_exceeded:",
     "signal_staleness_streak_exceeded:",
 )
+
+
+def _coerce_non_empty_reason(reason: str | None) -> str:
+    normalized = reason.strip() if reason is not None else ""
+    return normalized or "unknown"
+
+
+def _normalize_emergency_stop_reason_entry(raw: str) -> str:
+    normalized = raw.strip()
+    return normalized or "unknown"
+
+
+def _split_emergency_stop_reasons(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return _merge_emergency_stop_reasons(raw.split(";"))
+
+
+def _merge_emergency_stop_reasons(raw_reasons: Sequence[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw_reason in raw_reasons:
+        reason = _normalize_emergency_stop_reason_entry(raw_reason)
+        if reason == "unknown":
+            continue
+        if reason in seen:
+            continue
+        seen.add(reason)
+        deduped.append(reason)
+    return deduped
+
+
+def _is_recoverable_emergency_stop_reason(reason: str) -> bool:
+    return any(
+        reason.startswith(prefix)
+        for prefix in _RECOVERABLE_EMERGENCY_STOP_PREFIXES
+    )
+
+
+def _coerce_recovery_reason_sequence(raw_reasons: Sequence[str] | None) -> list[str]:
+    if not raw_reasons:
+        return []
+    return _merge_emergency_stop_reasons(raw_reasons)
+
 _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
 _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
 _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
@@ -168,31 +212,6 @@ def _select_strictest_runtime_uncertainty_gate(
 
 def _clone_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [dict(position) for position in positions]
-
-
-def _split_emergency_stop_reasons(raw: str | None) -> list[str]:
-    if not raw:
-        return []
-    return _merge_emergency_stop_reasons(raw.split(";"))
-
-
-def _merge_emergency_stop_reasons(reason_groups: Sequence[str]) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-    for reason in reason_groups:
-        normalized = reason.strip()
-        if not normalized:
-            continue
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        merged.append(normalized)
-    return merged
-
-
-def _is_recoverable_emergency_stop_reason(reason: str) -> bool:
-    return reason.startswith(_RECOVERABLE_EMERGENCY_STOP_PREFIXES)
-
 
 def _normalize_reason_metric(reason: str | None) -> str:
     normalized = reason.strip() if isinstance(reason, str) else ""
@@ -5098,6 +5117,7 @@ class TradingScheduler:
         latched_reasons = _split_emergency_stop_reasons(
             self.state.emergency_stop_reason
         )
+        normalized_current_reasons = _coerce_recovery_reason_sequence(current_reasons)
         if not latched_reasons:
             self.state.emergency_stop_recovery_streak = 0
             return
@@ -5112,7 +5132,7 @@ class TradingScheduler:
 
         nonrecoverable_current_reasons = [
             reason
-            for reason in current_reasons
+            for reason in normalized_current_reasons
             if not _is_recoverable_emergency_stop_reason(reason)
         ]
         if nonrecoverable_current_reasons:
@@ -5129,7 +5149,7 @@ class TradingScheduler:
 
         recoverable_current_reasons = [
             reason
-            for reason in current_reasons
+            for reason in normalized_current_reasons
             if _is_recoverable_emergency_stop_reason(reason)
         ]
         if recoverable_current_reasons:

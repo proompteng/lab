@@ -7,7 +7,12 @@ from pathlib import Path
 from unittest import TestCase
 
 from app import config
-from app.trading.scheduler import TradingScheduler, _split_emergency_stop_reasons
+from app.trading.scheduler import (
+    TradingScheduler,
+    _coerce_recovery_reason_sequence,
+    _is_recoverable_emergency_stop_reason,
+    _split_emergency_stop_reasons,
+)
 
 
 class _OrderFirewallStub:
@@ -218,6 +223,40 @@ class TestTradingSchedulerSafety(TestCase):
             self.assertIsNone(scheduler.state.emergency_stop_reason)
             self.assertIsNone(scheduler.state.emergency_stop_triggered_at)
             self.assertEqual(scheduler._pipeline.order_firewall.cancel_all_calls, 0)  # type: ignore[union-attr]
+
+    def test_split_emergency_stop_reasons_normalizes_and_dedupes(self) -> None:
+        reason = (
+            "signal_lag_exceeded:10 ; signal_lag_exceeded:10; ; "
+            "max_drawdown_exceeded:0.05 ; unknown;  "
+        )
+        self.assertEqual(
+            _split_emergency_stop_reasons(reason),
+            ["signal_lag_exceeded:10", "max_drawdown_exceeded:0.05"],
+        )
+
+    def test_recovery_reason_sequence_normalizes_and_dedupes(self) -> None:
+        self.assertEqual(
+            _coerce_recovery_reason_sequence(
+                [
+                    " signal_lag_exceeded:10 ",
+                    "",
+                    "signal_lag_exceeded:10",
+                    "max_drawdown_exceeded:0.05",
+                ]
+            ),
+            ["signal_lag_exceeded:10", "max_drawdown_exceeded:0.05"],
+        )
+
+    def test_recoverable_reason_prefix_matches_are_strict(self) -> None:
+        self.assertTrue(_is_recoverable_emergency_stop_reason("signal_lag_exceeded:17"))
+        self.assertTrue(
+            _is_recoverable_emergency_stop_reason(
+                "signal_staleness_streak_exceeded:window"
+            )
+        )
+        self.assertFalse(
+            _is_recoverable_emergency_stop_reason("max_drawdown_exceeded:0.10")
+        )
 
     def test_split_emergency_stop_reasons_ignores_duplicates_and_whitespace(self) -> None:
         self.assertEqual(
