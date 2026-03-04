@@ -461,6 +461,7 @@ describe('github review api routes', () => {
         checks: null,
         issueComments: [],
       })),
+      getPrWorktree: vi.fn(async () => null),
       close: vi.fn(async () => {}),
     }
 
@@ -479,6 +480,45 @@ describe('github review api routes', () => {
     const second = await refreshPullFilesHandler(request, params, () => store as never)
     expect(second.status).toBe(202)
     await expect(second.json()).resolves.toMatchObject({ ok: true, status: 'refreshing' })
+    expect(refreshWorktreeSnapshotMock).not.toHaveBeenCalled()
+  })
+
+  it('skips API-triggered refresh when db suppression is active', async () => {
+    const blockedUntil = new Date(Date.now() + 60_000).toISOString()
+    const store = {
+      getPull: vi.fn(async () => ({
+        pull: {
+          repository: 'proompteng/lab',
+          number: 7003,
+          labels: [],
+          receivedAt: '2025-01-01T00:00:00Z',
+          headRef: 'feature-refresh-7003',
+          headSha: 'abc7003',
+          baseRef: 'main',
+          baseSha: 'def7003',
+        },
+        review: null,
+        checks: null,
+        issueComments: [],
+      })),
+      getPrWorktree: vi.fn(async () => ({
+        repository: 'proompteng/lab',
+        prNumber: 7003,
+        worktreeName: 'proompteng-lab-7003',
+        worktreePath: '/tmp/proompteng-lab-7003',
+        baseSha: 'def7003',
+        headSha: 'abc7003',
+        lastRefreshedAt: '2025-01-01T00:00:00Z',
+        refreshBlockedUntil: blockedUntil,
+      })),
+      close: vi.fn(async () => {}),
+    }
+
+    const request = new Request('http://localhost/api/github/pulls/proompteng/lab/7003/files/refresh')
+    const params = { owner: 'proompteng', repo: 'lab', number: '7003' }
+    const response = await refreshPullFilesHandler(request, params, () => store as never)
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ ok: true, status: 'refreshing' })
     expect(refreshWorktreeSnapshotMock).not.toHaveBeenCalled()
   })
 })

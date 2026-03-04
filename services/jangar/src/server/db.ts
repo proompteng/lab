@@ -355,6 +355,9 @@ type JangarGithubPrWorktrees = {
   base_sha: string | null
   head_sha: string | null
   last_refreshed_at: Timestamp
+  refresh_failure_reason: string | null
+  refresh_failed_at: Timestamp | null
+  refresh_blocked_until: Timestamp | null
 }
 
 type JangarGithubWriteActions = {
