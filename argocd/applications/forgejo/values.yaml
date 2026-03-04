@@ -1,0 +1,56 @@
+# Single-pod Forgejo with CNPG Postgres + PVC.
+# For medium/large instances, add external Redis/Valkey for session/cache/queue.
+replicaCount: 1
+
+persistence:
+  enabled: true
+  size: 50Gi
+  storageClass: rook-ceph-block
+
+ingress:
+  enabled: true
+  className: traefik
+  hosts:
+    - host: git.proompteng.ai
+      paths:
+        - path: /
+          pathType: Prefix
+          port: http
+  tls:
+    - hosts:
+        - git.proompteng.ai
+
+service:
+  ssh:
+    type: LoadBalancer
+    annotations:
+      metallb.io/address-pool: metallb-ip-pool
+      metallb.io/allow-shared-ip: ingress-edge
+
+gitea:
+  admin:
+    username: kalmyk
+    passwordMode: initialOnlyNoReset
+  config:
+    server:
+      ROOT_URL: https://git.proompteng.ai
+      DOMAIN: git.proompteng.ai
+      SSH_DOMAIN: git.proompteng.ai
+      SSH_PORT: 22
+    database:
+      DB_TYPE: postgres
+      HOST: forgejo-db-rw:5432
+      NAME: forgejo
+      USER: forgejo
+      SSL_MODE: disable
+    service:
+      DISABLE_REGISTRATION: true
+  additionalConfigFromEnvs:
+    - name: FORGEJO__DATABASE__PASSWD
+      valueFrom:
+        secretKeyRef:
+          name: forgejo-db-app
+          key: password
+
+test:
+  enabled: false

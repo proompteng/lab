@@ -1,0 +1,20 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: forgejo-db
+  namespace: forgejo
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    storageClass: rook-ceph-block
+    size: 10Gi
+  bootstrap:
+    initdb:
+      database: forgejo
+      owner: forgejo
+      encoding: 'UTF8'
+      dataChecksums: true
+  monitoring:
+    enablePodMonitor: true
+# CNPG emits application credentials in `forgejo-db-app` (uri, user, password, host, port, dbname)
