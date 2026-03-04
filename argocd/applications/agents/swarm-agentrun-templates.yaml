@@ -206,7 +206,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: merge Jangar PRs only when all required checks pass with no failures; if checks fail, fix them first, then roll out merged changes in-cluster via GitOps with health verification
+    objective: merge Jangar PRs only when all checks pass with no failures; if checks fail, fix them first, then roll out merged changes in-cluster via GitOps with health verification
   vcsRef:
     name: github
   vcsPolicy:
@@ -425,7 +425,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: merge Torghut PRs only when all required checks pass with no failures; if checks fail, fix them first, then roll out merged changes in-cluster via GitOps with health verification
+    objective: merge Torghut PRs only when all checks pass with no failures; if checks fail, fix them first, then roll out merged changes in-cluster via GitOps with health verification
   vcsRef:
     name: github
   vcsPolicy:

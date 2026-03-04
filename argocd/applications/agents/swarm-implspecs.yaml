@@ -161,9 +161,9 @@ spec:
     Requirements:
     - Work only on `${head}` based on `${base}` in `${repository}`.
     - Enumerate open PRs, prioritize unblock-first/high-impact, and move each selected PR to mergeable state.
-    - Resolve blocking comments/conflicts and fix failing required checks until every required check is passing.
-    - Never merge while any required check is failing, cancelled, or pending.
-    - Merge via squash only after all required checks are passing with no failures.
+    - Resolve blocking comments/conflicts and fix failing checks until all checks are passing.
+    - Never merge while any check is failing, cancelled, or pending.
+    - Merge via squash only after all checks are passing with no failures.
     - After merge, verify rollout through GitOps/cluster signals until healthy or explicitly blocked:
       - sync/rollout status
       - workload readiness
