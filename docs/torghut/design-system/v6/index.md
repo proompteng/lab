@@ -52,6 +52,7 @@ This pack is positioned as the next architecture layer above:
 18. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
 19. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
 20. `19-jangar-symbol-dependency-freshness-and-readiness-guard.md`
+21. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
 
 ## Recommended Build Order
 
@@ -75,6 +76,7 @@ This pack is positioned as the next architecture layer above:
 18. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
 19. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
 20. `19-jangar-symbol-dependency-freshness-and-readiness-guard.md`
+21. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
 
 ## Why This Sequence
 

@@ -447,11 +447,28 @@ class TestConfig(TestCase):
             settings.trading_allocator_symbol_notional_caps, {"AAPL": 2000.0}
         )
         self.assertEqual(
-            settings.trading_allocator_correlation_symbol_groups,
+            settings.trading_allocator_symbol_correlation_groups,
             {"MSFT": "megacap"},
         )
         self.assertEqual(
-            settings.trading_allocator_correlation_group_notional_caps,
+            settings.trading_allocator_correlation_group_caps,
+            {"megacap": 3000.0},
+        )
+
+    def test_legacy_allocator_aliases_are_supported(self) -> None:
+        settings = Settings(
+            TRADING_UNIVERSE_SOURCE="static",
+            TRADING_ENABLED=False,
+            TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS={" msft ": " MegaCap "},
+            TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS={" MegaCap ": 3000.0},
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(
+            settings.trading_allocator_symbol_correlation_groups,
+            {"MSFT": "megacap"},
+        )
+        self.assertEqual(
+            settings.trading_allocator_correlation_group_caps,
             {"megacap": 3000.0},
         )
 

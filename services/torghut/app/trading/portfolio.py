@@ -1216,15 +1216,7 @@ def allocator_from_settings(equity: Optional[Decimal]) -> PortfolioAllocator:
         ),
     )
     correlation_group_caps = dict(settings.trading_allocator_correlation_group_caps)
-    correlation_group_caps.update(
-        settings.trading_allocator_correlation_group_notional_caps
-    )
-    symbol_correlation_groups = dict(
-        settings.trading_allocator_symbol_correlation_groups
-    )
-    symbol_correlation_groups.update(
-        settings.trading_allocator_correlation_symbol_groups
-    )
+    symbol_correlation_groups = dict(settings.trading_allocator_symbol_correlation_groups)
     return PortfolioAllocator(
         AllocationConfig(
             enabled=settings.trading_allocator_enabled,
