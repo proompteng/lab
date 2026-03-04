@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import TestCase
 
 from app import config
-from app.trading.scheduler import TradingScheduler
+from app.trading.scheduler import TradingScheduler, _split_emergency_stop_reasons
 
 
 class _OrderFirewallStub:
@@ -218,3 +218,47 @@ class TestTradingSchedulerSafety(TestCase):
             self.assertIsNone(scheduler.state.emergency_stop_reason)
             self.assertIsNone(scheduler.state.emergency_stop_triggered_at)
             self.assertEqual(scheduler._pipeline.order_firewall.cancel_all_calls, 0)  # type: ignore[union-attr]
+
+    def test_split_emergency_stop_reasons_ignores_duplicates_and_whitespace(self) -> None:
+        self.assertEqual(
+            _split_emergency_stop_reasons(
+                " signal_lag_exceeded:10 ;signal_lag_exceeded:10;; max_drawdown_exceeded:0.1000 ;  "
+            ),
+            ["signal_lag_exceeded:10", "max_drawdown_exceeded:0.1000"],
+        )
+
+    def test_emergency_stop_recovery_canonicalizes_and_merges_nonrecoverable_reasons(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config.settings.trading_autonomy_artifact_dir = tmpdir
+            config.settings.trading_emergency_stop_enabled = True
+            config.settings.trading_emergency_stop_recovery_cycles = 1
+            scheduler = TradingScheduler()
+            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler.state.emergency_stop_active = True
+            scheduler.state.emergency_stop_reason = (
+                " signal_staleness_streak_exceeded:no_signals_in_window ;"
+                "signal_lag_exceeded:7; signal_lag_exceeded:7; "
+            )
+            scheduler.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
+            scheduler.state.metrics.signal_lag_seconds = 0
+            scheduler._collect_emergency_stop_reasons = (
+                lambda: (
+                    [
+                        " signal_lag_exceeded:7 ",
+                        "max_drawdown_exceeded:0.1100",
+                        "signal_lag_exceeded:7",
+                    ],
+                    0.0,
+                    None,
+                )
+            )
+
+            scheduler._evaluate_safety_controls()
+
+            self.assertTrue(scheduler.state.emergency_stop_active)
+            self.assertEqual(
+                scheduler.state.emergency_stop_reason,
+                "signal_staleness_streak_exceeded:no_signals_in_window;"
+                "signal_lag_exceeded:7;"
+                "max_drawdown_exceeded:0.1100",
+            )

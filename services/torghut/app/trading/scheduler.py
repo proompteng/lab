@@ -173,8 +173,21 @@ def _clone_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _split_emergency_stop_reasons(raw: str | None) -> list[str]:
     if not raw:
         return []
-    parts = [part.strip() for part in raw.split(";")]
-    return [part for part in parts if part]
+    return _merge_emergency_stop_reasons(raw.split(";"))
+
+
+def _merge_emergency_stop_reasons(reason_groups: Sequence[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for reason in reason_groups:
+        normalized = reason.strip()
+        if not normalized:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        merged.append(normalized)
+    return merged
 
 
 def _is_recoverable_emergency_stop_reason(reason: str) -> bool:
@@ -5103,8 +5116,8 @@ class TradingScheduler:
             if not _is_recoverable_emergency_stop_reason(reason)
         ]
         if nonrecoverable_current_reasons:
-            merged_reasons = sorted(
-                set(latched_reasons + nonrecoverable_current_reasons)
+            merged_reasons = _merge_emergency_stop_reasons(
+                latched_reasons + nonrecoverable_current_reasons
             )
             self.state.emergency_stop_reason = ";".join(merged_reasons)
             self.state.emergency_stop_recovery_streak = 0
@@ -5121,7 +5134,7 @@ class TradingScheduler:
         ]
         if recoverable_current_reasons:
             self.state.emergency_stop_recovery_streak = 0
-            refreshed = ";".join(sorted(set(recoverable_current_reasons)))
+            refreshed = ";".join(_merge_emergency_stop_reasons(recoverable_current_reasons))
             if refreshed and refreshed != self.state.emergency_stop_reason:
                 self.state.emergency_stop_reason = refreshed
             return
@@ -5204,7 +5217,7 @@ class TradingScheduler:
         self.state.emergency_stop_triggered_at = now
         self.state.emergency_stop_resolved_at = None
         self.state.emergency_stop_recovery_streak = 0
-        self.state.emergency_stop_reason = ";".join(reasons)
+        self.state.emergency_stop_reason = ";".join(_merge_emergency_stop_reasons(reasons))
         self.state.metrics.signal_continuity_breach_total += 1
         self.state.last_error = (
             f"emergency_stop_triggered reasons={self.state.emergency_stop_reason}"
