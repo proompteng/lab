@@ -1,21 +1,23 @@
 # Control Plane Cache Freshness Contract
 
-Status: Draft (2026-03-04)
+Status: Implemented (2026-03-04)
 
 Docs index: [README](../README.md)
 
 ## Current State
 
-- `/api/agents/control-plane/resource` and `/api/agents/control-plane/resources` can read from `agents_control_plane.resources_current` when `JANGAR_CONTROL_PLANE_CACHE_ENABLED` is on.
-- Cache responses currently return only the snapshot JSON document with no freshness metadata.
-- If the database cache lags, operators cannot distinguish a stale hit from a current hit.
-- Cache stale behavior is implicit; there is no explicit policy for when stale records should be rejected.
+- `/api/agents/control-plane/resource` and `/api/agents/control-plane/resources` read from `agents_control_plane.resources_current` when `JANGAR_CONTROL_PLANE_CACHE_ENABLED` is on.
+- Cache responses now return metadata via `cacheStateToResponse()` when cache is used.
+- If the database cache lags, clients now receive freshness flags (`fresh`/`stale`) and age data.
+- Stale behavior is explicit and policy-driven:
+  - strict mode (`JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE=false`) triggers live read fallback on stale rows.
+  - permissive mode falls back to cached payload with stale markers.
 
 ## Problem
 
-- High-confidence control-plane operations (resource fetch/list) can return silently stale state.
-- Incident triage is harder because API consumers see unexpected drift without signal.
-- `agents_control_plane.resources_current` has no explicit freshness contract surfaced to HTTP clients, so clients cannot decide whether to accept cache data or force live reads.
+- High-confidence control-plane operations (resource fetch/list) now have an explicit cache freshness decision path.
+- Incident triage is improved through cache metadata and fallback logs.
+- `agents_control_plane.resources_current` now drives explicit API-side freshness behavior, not only storage.
 
 ## Goals
 
@@ -25,11 +27,12 @@ Docs index: [README](../README.md)
 
 ## Design
 
-- Add `services/jangar/src/server/control-plane-cache-freshness.ts` with:
+- Implemented behavior uses:
+  - `services/jangar/src/server/control-plane-cache-freshness.ts` with:
   - cache window configuration via `JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS` (seconds),
   - stale-policy configuration via `JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE` (default `true`),
   - shared freshness evaluation helper and response serialization helper.
-- Extend cache store reads to return timestamp metadata (`last_seen_at`, `updated_at`, `resource_updated_at`) with every resource row:
+- Cache store reads already return timestamp metadata (`last_seen_at`, `updated_at`, `resource_updated_at`) with every resource row:
   - `services/jangar/src/server/control-plane-cache-store.ts`
 - Update API handlers:
   - `/api/agents/control-plane/resource`:
@@ -39,7 +42,8 @@ Docs index: [README](../README.md)
     - evaluate stale state per cached row;
     - return aggregate cache metadata (`stale_count`, `oldest_age_seconds`) when cached data is used;
     - if strict mode is disabled and any row is stale, fall back to live list.
-- Add regression tests for cache freshness and strict fallback:
+  - Add warning logs before strict-mode stale fallback when cache is bypassed.
+- Existing regression coverage:
   - `services/jangar/src/server/__tests__/agents-control-plane-resource.test.ts`
   - `services/jangar/src/server/__tests__/agents-control-plane-resources.test.ts`
 

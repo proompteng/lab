@@ -169,8 +169,19 @@ export const listPrimitiveResources = async (
           buildCacheFreshnessState(item.lastSeenAt, cacheCheckedAt, cacheConfig),
         )
         const staleCount = freshnessStates.filter((state) => state.isStale).length
-        if (staleCount > 0 && !cacheConfig.allowStale) {
-          // Explicitly require live reads when cached list has stale rows and stale reads are disabled.
+        const hasStaleRows = staleCount > 0
+        if (hasStaleRows && !cacheConfig.allowStale) {
+          const oldestAgeSeconds = freshnessStates.reduce((max, state) => {
+            if (state.ageSeconds == null) return max
+            return Math.max(max, state.ageSeconds)
+          }, 0)
+          console.warn('[jangar][control-plane-cache] stale cache list detected, falling back to live list', {
+            kind: resolved.kind,
+            namespace,
+            total: result.total,
+            stale_count: staleCount,
+            oldest_age_seconds: oldestAgeSeconds,
+          })
         } else {
           const oldestAgeSeconds = freshnessStates.reduce((max, state) => {
             if (state.ageSeconds == null) return max

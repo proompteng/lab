@@ -101,9 +101,7 @@ export const getPrimitiveResource = async (
         const cached = await store.getResource({ cluster, kind: resolved.kind, namespace, name })
         if (cached) {
           const freshness = buildCacheFreshnessState(cached.lastSeenAt, cacheCheckedAt, cacheConfig)
-          if (!freshness.isFresh && !cacheConfig.allowStale) {
-            // Explicitly require live reads when cache data is stale and stale reads are disabled.
-          } else {
+          if (freshness.isFresh || cacheConfig.allowStale) {
             return okResponse({
               ok: true,
               kind: resolved.kind,
@@ -112,6 +110,14 @@ export const getPrimitiveResource = async (
               cache: cacheStateToResponse(freshness),
             })
           }
+
+          console.warn('[jangar][control-plane-cache] stale resource cache hit, falling back to live read', {
+            kind: resolved.kind,
+            namespace,
+            name,
+            age_seconds: freshness.ageSeconds,
+            max_age_seconds: freshness.maxAgeSeconds,
+          })
         }
       } catch {
         // Fall back to kubectl get for transient DB issues.
