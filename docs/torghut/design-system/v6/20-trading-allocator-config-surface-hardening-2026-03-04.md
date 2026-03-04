@@ -35,6 +35,10 @@ Adopt one canonical allocator config surface while keeping backward-compatible e
   - Pros: reduces future config drift, preserves existing deployments, and makes a single allocator path enforceable.
   - Cons: requires one-time code+test update and explicit upgrade note in release docs.
 
+4. Add field-level schema linting to detect duplicate env aliases at startup (rejected)
+   - Pros: gives runtime early warning when duplicate env definitions reappear or alias mappings drift.
+   - Cons: adds complexity in settings bootstrap and does not prevent duplicate fields without additional migration burden.
+
 ## Implementation
 
 1. `services/torghut/app/config.py`
@@ -59,6 +63,14 @@ Adopt one canonical allocator config surface while keeping backward-compatible e
 
 - Risk: if a deployment depends on both alias families in different services, only merge-time precedence applies via environment resolution order; behavior remains explicit and backward-compatible.
 - Rollback: revert this PR and redeploy the previous image if unexpected alias behavior is observed.
+
+## Discovery-Run Verification Updates (2026-03-04)
+
+- Added regression test `TestSettings::test_allocator_surface_uses_canonical_field_names` to catch reintroduction of removed duplicate model fields and enforce canonical aliases.
+- Updated source-of-truth assessment confirms:
+  - Canonical settings field `trading_allocator_symbol_correlation_groups` with legacy alias support.
+  - Canonical settings field `trading_allocator_correlation_group_caps` with legacy alias support.
+  - Canonical allocator budget maps (`trading_allocator_strategy_notional_caps`, `trading_allocator_symbol_notional_caps`) remain unchanged and are normalized through a single path.
 
 ## Relation to Objective
 

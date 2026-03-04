@@ -962,16 +962,6 @@ class Settings(BaseSettings):
         alias="TRADING_ALLOCATOR_MAX_SYMBOL_NOTIONAL",
         description="Allocator pre-risk concentration cap as absolute notional per symbol (optional).",
     )
-    trading_allocator_strategy_notional_caps: dict[str, float] = Field(
-        default_factory=dict,
-        alias="TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS",
-        description="Strategy->notional budget caps applied by allocator before risk checks (JSON object).",
-    )
-    trading_allocator_symbol_notional_caps: dict[str, float] = Field(
-        default_factory=dict,
-        alias="TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS",
-        description="Symbol->notional concentration caps applied by allocator before risk checks (JSON object).",
-    )
     trading_allocator_symbol_correlation_groups: dict[str, str] = Field(
         default_factory=dict,
         alias="TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS",
