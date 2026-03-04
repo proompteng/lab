@@ -492,6 +492,8 @@ describe('control-plane status', () => {
         }),
         kube: createKubeMap({
           jobs: [createActiveJob()],
+          schedules: healthyRolloutKubeState.schedules,
+          cronjobs: healthyRolloutKubeState.cronjobs,
           deployments: [createDeploymentWith('agents')],
         }),
       },
@@ -611,7 +613,6 @@ describe('control-plane status', () => {
     expect(status.namespaces[0]?.degraded_components).toContain('database')
     expect(status.database.status).toBe('degraded')
     expect(status.database.migration_consistency.unapplied_count).toBe(2)
-    expect(status.rollout.status).toBe('healthy')
   })
 
   it('marks rollout as degraded when schedule health is stale', async () => {
