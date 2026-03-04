@@ -380,7 +380,10 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
         "schema_current": schema_current,
         "schema_current_heads": schema_status.get("current_heads", []),
         "expected_heads": schema_status.get("expected_heads", []),
-        "schema_head_signature": schema_status.get("expected_heads_signature"),
+        "schema_head_signature": schema_status.get(
+            "expected_heads_signature",
+            schema_status.get("schema_head_signature"),
+        ),
         "checked_at": checked_at,
         "account_scope_ready": account_scope_ready,
         "account_scope_errors": account_scope_checks.get("account_scope_errors", []),

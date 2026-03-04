@@ -83,7 +83,7 @@ class TestDbSchemaCurrent(TestCase):
         with (
             patch(
                 "app.db._get_expected_schema_heads",
-                return_value=("0012_demo_beta", "0011_demo_alpha"),
+                return_value=("0011_demo_alpha", "0012_demo_beta"),
             ),
             patch("app.db.MigrationContext") as mock_migration_context,
         ):

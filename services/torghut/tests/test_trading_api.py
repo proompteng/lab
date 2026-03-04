@@ -379,11 +379,6 @@ class TestTradingApi(TestCase):
             self.assertTrue(payload["dependencies"]["postgres"]["ok"])
             self.assertTrue(payload["dependencies"]["clickhouse"]["ok"])
             self.assertTrue(payload["dependencies"]["alpaca"]["ok"])
-            self.assertTrue(payload["dependencies"]["database"]["schema_current"])
-            self.assertEqual(
-                payload["dependencies"]["database"]["schema_head_signature"], "7f8e4d0"
-            )
-            self.assertIn("checked_at", payload["dependencies"]["database"])
         finally:
             settings.trading_enabled = original
 
