@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
@@ -498,6 +499,45 @@ class TestConfig(TestCase):
             settings.trading_allocator_correlation_group_caps,
             {"megacap": 3000.0},
         )
+
+    def test_legacy_allocator_aliases_with_equivalent_values_pass(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS": '{" MSFT ": " MegaCap "}',
+                "TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS": '{"msft":"megacap"}',
+                "TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS": '{" MegaCap ": 3000}',
+                "TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS": '{"MEGACAP":3000}',
+                "TRADING_ENABLED": "false",
+                "TRADING_UNIVERSE_SOURCE": "static",
+                "DB_DSN": "postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            },
+            clear=False,
+        ):
+            settings = Settings()
+            self.assertEqual(
+                settings.trading_allocator_symbol_correlation_groups,
+                {"MSFT": "megacap"},
+            )
+            self.assertEqual(
+                settings.trading_allocator_correlation_group_caps,
+                {"megacap": 3000.0},
+            )
+
+    def test_allocator_alias_environment_conflict_raises(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS": '{"MSFT": "megacap"}',
+                "TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS": '{"AAPL": "growth"}',
+                "TRADING_ENABLED": "false",
+                "TRADING_UNIVERSE_SOURCE": "static",
+                "DB_DSN": "postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            },
+            clear=False,
+        ):
+            with self.assertRaises(ValueError):
+                Settings()
 
     def test_runtime_uncertainty_degrade_regime_maps_are_normalized(self) -> None:
         settings = Settings(

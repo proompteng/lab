@@ -153,6 +153,7 @@ uv run python scripts/evaluate_dspy_compile.py \
   - non-triggered rollback evidence references are dropped from rollback-proof
   - missing evidence while rollback is triggered fails `rollback-proof` via `slo_rollback_evidence_required_when_triggered`
 - Phase manifests should be treated as single-source governance evidence for promotion and rollback decisions; avoid manual duplicate assembly outside this helper.
+- Profitability manifest `run_context.design_doc` should reference the design document that governed behavior for this run (for example `docs/torghut/design-system/v6/08-profitability-research-validation-execution-governance-system.md`).
 
 ## Deploy automation (main -> Argo CD)
 

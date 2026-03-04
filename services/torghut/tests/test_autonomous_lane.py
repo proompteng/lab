@@ -711,6 +711,34 @@ class TestAutonomousLane(TestCase):
                 "P-2002",
             )
 
+    def test_lane_defaults_design_doc_to_governing_doc_when_omitted(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-default-design-doc"
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+            profitability_manifest = json.loads(
+                result.profitability_manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                profitability_manifest["run_context"]["design_doc"],
+                "docs/torghut/design-system/v6/08-profitability-research-validation-execution-governance-system.md",
+            )
+
     def test_lane_top_level_execution_context_args_are_honored(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
         strategy_config_path = (

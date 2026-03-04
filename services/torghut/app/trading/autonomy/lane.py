@@ -119,6 +119,9 @@ _FOUNDATION_ROUTER_PARITY_REPORT_PATH = "router/foundation-router-parity-report-
 _DEEPLOB_BDLOB_REPORT_PATH = "microstructure/deeplob-bdlob-report-v1.json"
 _ADVISOR_FALLBACK_SLO_REPORT_PATH = "execution/advisor-fallback-slo-report-v1.json"
 _STAGE_PROFITABILITY = "profitability_stage_manifest"
+_V6_08_GOVERNING_DESIGN_DOC = (
+    "docs/torghut/design-system/v6/08-profitability-research-validation-execution-governance-system.md"
+)
 
 
 @dataclass(frozen=True)
@@ -3059,9 +3062,12 @@ def _coalesce_governance_context(
                 else _coerce_str(execution_context.get("priorityId"))
             ),
             "designDoc": (
-                design_doc
-                if design_doc is not None
-                else _coerce_str(execution_context.get("designDoc"))
+                (
+                    design_doc
+                    if design_doc is not None
+                    else _coerce_str(execution_context.get("designDoc"))
+                )
+                or _V6_08_GOVERNING_DESIGN_DOC
             ),
         },
         "runtime_governance": cast(Mapping[str, Any], runtime),
