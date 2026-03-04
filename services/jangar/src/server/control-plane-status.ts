@@ -368,13 +368,15 @@ const readRolloutDeploymentNames = () => {
 const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
 
 const readDeploymentCondition = (deployment: Record<string, unknown>, conditionType: string) => {
-  const status = asRecord(deployment.status) ?? {}
-  const conditions = asArray(status.conditions)
-  return conditions.find((condition) => {
-    const parsedCondition = asRecord(condition)
-    if (!parsedCondition) return false
-    return asString(parsedCondition.type) === conditionType
-  })
+  const status = asRecord(deployment.status)
+  const conditions = status ? asArray(status.conditions) : []
+  for (const item of conditions) {
+    const parsedCondition = asRecord(item)
+    if (parsedCondition && asString(parsedCondition.type) === conditionType) {
+      return parsedCondition
+    }
+  }
+  return null
 }
 
 const safeDeploymentNumber = (value: unknown) => {
