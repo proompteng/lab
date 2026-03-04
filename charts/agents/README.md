@@ -342,6 +342,7 @@ Enable gRPC for agentctl or in-cluster clients:
 - `grpc.enabled=true`
 - `grpc.manageEnvVar=true` (default) keeps control-plane `JANGAR_GRPC_*` values chart-owned and deterministic.
 - `controllers.service.enabled=true` to expose controller `agentctl` gRPC when `controllers.env.vars.JANGAR_GRPC_ENABLED=true`.
+- Controller `JANGAR_GRPC_HOST` and `JANGAR_GRPC_PORT` are still rendered from chart defaults (`0.0.0.0`, `grpc.port`) when unset so an explicit controller opt-in remains externally reachable once `controllers.service.enabled` is true.
 - `grpc.manageEnvVar=false` if you want manual ownership in values.
 - Source-of-truth for gRPC in managed mode:
   - `JANGAR_GRPC_ENABLED` = `grpc.enabled`
