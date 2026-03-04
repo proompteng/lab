@@ -314,6 +314,8 @@ def _evaluate_trading_health_payload(
             "schema_current": bool(database_contract.get("schema_current")),
             "schema_current_heads": database_contract.get("schema_current_heads"),
             "expected_heads": database_contract.get("expected_heads"),
+            "schema_head_signature": database_contract.get("schema_head_signature"),
+            "checked_at": database_contract.get("checked_at"),
             "account_scope_ready": bool(
                 database_contract.get("account_scope_ready")
             ),
@@ -336,6 +338,7 @@ def _evaluate_trading_health_payload(
 
 def _evaluate_database_contract(session: Session) -> dict[str, object]:
     """Collect schema and account-scope readiness checks used by /readyz and /db-check."""
+    checked_at = datetime.now(timezone.utc).isoformat()
 
     try:
         schema_status = check_schema_current(session)
@@ -347,6 +350,8 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
             "schema_current": False,
             "schema_current_heads": [],
             "expected_heads": [],
+            "schema_head_signature": None,
+            "checked_at": checked_at,
             "account_scope_ready": False,
             "account_scope_errors": [str(exc)],
         }
@@ -357,6 +362,8 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
             "schema_current": False,
             "schema_current_heads": [],
             "expected_heads": [],
+            "schema_head_signature": None,
+            "checked_at": checked_at,
             "account_scope_ready": False,
             "account_scope_errors": [str(exc)],
         }
@@ -373,6 +380,8 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
         "schema_current": schema_current,
         "schema_current_heads": schema_status.get("current_heads", []),
         "expected_heads": schema_status.get("expected_heads", []),
+        "schema_head_signature": schema_status.get("expected_heads_signature"),
+        "checked_at": checked_at,
         "account_scope_ready": account_scope_ready,
         "account_scope_errors": account_scope_checks.get("account_scope_errors", []),
     }
@@ -414,6 +423,9 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             "schema_current": bool(database_contract.get("schema_current")),
             "current_heads": database_contract.get("schema_current_heads"),
             "expected_heads": database_contract.get("expected_heads"),
+            "schema_head_signature": database_contract.get(
+                "schema_head_signature"
+            ),
         }
         account_scope_status = {
             "account_scope_ready": bool(database_contract.get("account_scope_ready")),
@@ -430,6 +442,7 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             detail={
                 "error": database_contract.get("error"),
                 "schema_current": False,
+                "checked_at": database_contract.get("checked_at"),
                 "account_scope_ready": account_scope_status.get("account_scope_ready"),
             },
         )
@@ -439,6 +452,7 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             status_code=503,
             detail={
                 "error": "database schema mismatch",
+                "checked_at": database_contract.get("checked_at"),
                 **schema_status,
             },
         )
@@ -449,6 +463,7 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             status_code=503,
             detail={
                 "error": "database account scope schema mismatch",
+                "checked_at": database_contract.get("checked_at"),
                 **account_scope_status,
             },
         )
@@ -459,6 +474,7 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
 
     return {
         "ok": True,
+        "checked_at": database_contract.get("checked_at"),
         **schema_status,
         "account_scope_ready": bool(account_scope_status.get("account_scope_ready")),
         "account_scope_checks": account_scope_status,

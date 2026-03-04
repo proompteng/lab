@@ -1,6 +1,8 @@
 """Database utilities for torghut."""
 
+from functools import lru_cache
 from collections.abc import Generator
+import hashlib
 from pathlib import Path
 from typing import Any, Optional
 
@@ -276,15 +278,30 @@ def _alembic_config() -> AlembicConfig:
     return config
 
 
+@lru_cache(maxsize=1)
+def _get_expected_schema_heads() -> tuple[str, ...]:
+    """Return deterministic Alembic heads for schema-contract comparisons."""
+    heads = set(ScriptDirectory.from_config(_alembic_config()).get_heads())
+    return tuple(sorted(heads))
+
+
+def _schema_heads_signature(heads: tuple[str, ...]) -> str:
+    """Return a stable fingerprint for schema head sets."""
+    return hashlib.sha256(",".join(heads).encode("utf-8")).hexdigest()
+
+
 def check_schema_current(session: Session) -> dict[str, object]:
     """Report Alembic head alignment for readiness and diagnostics."""
 
     ping(session)
-    expected_heads = set(ScriptDirectory.from_config(_alembic_config()).get_heads())
+    expected_heads = _get_expected_schema_heads()
     context = MigrationContext.configure(connection=session.connection())
-    current_heads = set(context.get_current_heads())
+    current_heads = sorted(context.get_current_heads())
+    expected_heads_set = set(expected_heads)
+    current_heads_set = set(current_heads)
     return {
-        "schema_current": current_heads == expected_heads,
-        "current_heads": sorted(current_heads),
-        "expected_heads": sorted(expected_heads),
+        "schema_current": current_heads_set == expected_heads_set,
+        "current_heads": current_heads,
+        "expected_heads": list(expected_heads),
+        "expected_heads_signature": _schema_heads_signature(expected_heads),
     }

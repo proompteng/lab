@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+import hashlib
+from unittest.mock import MagicMock, patch
 from unittest import TestCase
 
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+
 from app.config import settings
+from app import db as app_db
 from app.db import check_account_scope_invariants
 from app.models import Base
 
@@ -68,3 +72,58 @@ class TestDbAccountScopeInvariants(TestCase):
         )
         self.assertTrue(status["legacy_executions_single_account_indexes_present"])
         self.assertTrue(status["legacy_trade_cursor_source_only_index_present"])
+
+
+class TestDbSchemaCurrent(TestCase):
+    def test_check_schema_current_normalizes_and_signs_expected_heads(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        Base.metadata.create_all(bind=engine)
+
+        with (
+            patch(
+                "app.db._get_expected_schema_heads",
+                return_value=("0012_demo_beta", "0011_demo_alpha"),
+            ),
+            patch("app.db.MigrationContext") as mock_migration_context,
+        ):
+            context_instance = MagicMock()
+            context_instance.get_current_heads.return_value = [
+                "0011_demo_alpha",
+                "0012_demo_gamma",
+                "0011_demo_alpha",
+            ]
+            mock_migration_context.configure.return_value = context_instance
+
+            with session_local() as session:
+                status = app_db.check_schema_current(session)
+
+        self.assertEqual(
+            status["current_heads"],
+            ["0011_demo_alpha", "0011_demo_alpha", "0012_demo_gamma"],
+        )
+        self.assertEqual(
+            status["expected_heads"], ["0011_demo_alpha", "0012_demo_beta"]
+        )
+        self.assertFalse(status["schema_current"])
+        self.assertEqual(
+            status["expected_heads_signature"],
+            hashlib.sha256("0011_demo_alpha,0012_demo_beta".encode("utf-8")).hexdigest(),
+        )
+
+    def test_expected_schema_heads_cached(self) -> None:
+        app_db._get_expected_schema_heads.cache_clear()
+        with patch("app.db.ScriptDirectory.from_config") as mock_from_config:
+            script_directory = MagicMock()
+            script_directory.get_heads.return_value = [
+                "0012_demo_beta",
+                "0011_demo_alpha",
+            ]
+            mock_from_config.return_value = script_directory
+
+            first = app_db._get_expected_schema_heads()
+            second = app_db._get_expected_schema_heads()
+
+        self.assertEqual(first, ("0011_demo_alpha", "0012_demo_beta"))
+        self.assertEqual(second, first)
+        self.assertEqual(mock_from_config.call_count, 1)
