@@ -1228,7 +1228,15 @@ export const buildControlPlaneStatus = async (
   ]
 
   const now = (deps.now ?? (() => new Date()))()
-  const kube = deps.kube ?? createKubernetesClient()
+  const kube =
+    deps.kube ??
+    (() => {
+      try {
+        return createKubernetesClient()
+      } catch {
+        return createKubernetesFailureFallback(options.namespace, now)
+      }
+    })()
   const rolloutWindowMinutes = readRolloutWindowMinutes()
   let workflows: WorkflowReliabilityStatus
   try {

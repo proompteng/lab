@@ -39,11 +39,48 @@ const makeMigrationConsistency = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
-const createKubeList = (jobs: unknown[], schedules: unknown[] = [], cronjobs: unknown[] = []) => ({
+type DeploymentFixtureOverrides = {
+  metadata?: Record<string, unknown>
+  spec?: Record<string, unknown>
+  status?: Record<string, unknown>
+}
+
+const createDeployment = (overrides: DeploymentFixtureOverrides = {}) => ({
+  metadata: {
+    name: 'agents',
+    namespace: 'agents',
+    generation: 1,
+    ...overrides.metadata,
+  },
+  spec: {
+    replicas: 1,
+    ...overrides.spec,
+  },
+  status: {
+    readyReplicas: 1,
+    availableReplicas: 1,
+    updatedReplicas: 1,
+    unavailableReplicas: 0,
+    observedGeneration: 1,
+    conditions: [
+      { type: 'Available', status: 'True' },
+      { type: 'Progressing', status: 'True' },
+    ],
+    ...overrides.status,
+  },
+})
+
+const createKubeList = (
+  jobs: unknown[],
+  schedules: unknown[] = [],
+  cronjobs: unknown[] = [],
+  deployments: unknown[] = [],
+) => ({
   list: async (resource: string) => {
     if (resource === 'jobs') return { items: jobs } as Record<string, unknown>
     if (resource === 'schedules.schedules.proompteng.ai') return { items: schedules } as Record<string, unknown>
     if (resource === 'cronjob') return { items: cronjobs } as Record<string, unknown>
+    if (resource === 'deployments') return { items: deployments } as Record<string, unknown>
     return { items: [] } as Record<string, unknown>
   },
 })
