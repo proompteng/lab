@@ -290,7 +290,12 @@ describe('control-plane status', () => {
         getAgentsControllerHealth: () => healthyController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs),
+        kube: createKubeList(
+          [createActiveJob()],
+          healthyRolloutKubeState.schedules,
+          healthyRolloutKubeState.cronjobs,
+          [createDeploymentWith('agents')],
+        ),
         resolveTemporalAdapter: async () => ({
           name: 'temporal',
           available: true,
@@ -350,7 +355,12 @@ describe('control-plane status', () => {
         getAgentsControllerHealth: () => degradedController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs),
+        kube: createKubeList(
+          [createActiveJob()],
+          healthyRolloutKubeState.schedules,
+          healthyRolloutKubeState.cronjobs,
+          [createDeploymentWith('agents')],
+        ),
         resolveTemporalAdapter: async () => ({
           name: 'temporal',
           available: false,
@@ -528,7 +538,12 @@ describe('control-plane status', () => {
             unexpected_migrations: [],
           }),
         }),
-        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs),
+        kube: createKubeList(
+          [createActiveJob()],
+          healthyRolloutKubeState.schedules,
+          healthyRolloutKubeState.cronjobs,
+          [createDeploymentWith('agents')],
+        ),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
     )
@@ -736,10 +751,9 @@ describe('control-plane status', () => {
           migration_consistency: makeMigrationConsistency(),
         }),
         kube: createKubeList(
-          [createActiveJob()],
+          [],
           [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', '2026-01-19T20:00:00Z')],
           [createRolloutCron('jangar-control-plane-implement-sched', '2026-01-19T20:00:00Z', '2026-01-19T20:00:00Z')],
-          [createDeploymentWith('agents')],
         ),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
@@ -863,8 +877,8 @@ describe('control-plane status', () => {
     expect(status.rollout.status).toBe('healthy')
     const rolloutStage = status.rollout.stages.find((item) => item.name === 'jangar-control-plane-implement-sched')
     expect(rolloutStage).toBeDefined()
-    expect(rolloutStage?.failed_runs_last_window).toBe(2)
-    expect(rolloutStage?.backoff_failures_last_window).toBe(1)
+    expect(rolloutStage?.recent_failed_jobs).toBe(2)
+    expect(rolloutStage?.backoff_limit_exceeded_jobs).toBe(1)
     expect(rolloutStage?.top_failure_reasons).toEqual([
       { reason: 'BackoffLimitExceeded', count: 1 },
       { reason: 'ImagePullBackOff', count: 1 },
