@@ -111,6 +111,8 @@ spec:
               value: gpt-5.3-codex,gpt-5.3-codex-spark
             - name: JANGAR_DEFAULT_MODEL
               value: gpt-5.3-codex
+            - name: JANGAR_CODEX_MODEL_REASONING_SUMMARY
+              value: none
             - name: JANGAR_GIT_LOCK_RETRY_ATTEMPTS
               value: "6"
             - name: JANGAR_GIT_LOCK_RETRY_DELAY_MS

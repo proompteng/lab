@@ -2,6 +2,9 @@ import { CodexAppServerClient } from '@proompteng/codex'
 import { Effect } from 'effect'
 
 type Factory = (options?: { defaultModel?: string }) => CodexAppServerClient
+type ReasoningSummary = 'auto' | 'concise' | 'detailed' | 'none'
+
+const VALID_REASONING_SUMMARIES: ReadonlySet<ReasoningSummary> = new Set(['auto', 'concise', 'detailed', 'none'])
 
 const resolveMcpUrl = () => {
   const envUrl = process.env.JANGAR_MCP_URL?.trim()
@@ -11,11 +14,18 @@ const resolveMcpUrl = () => {
   return `http://127.0.0.1:${port}/mcp`
 }
 
+const resolveReasoningSummary = (): ReasoningSummary => {
+  const raw = process.env.JANGAR_CODEX_MODEL_REASONING_SUMMARY?.trim().toLowerCase()
+  if (!raw) return 'none'
+  return VALID_REASONING_SUMMARIES.has(raw as ReasoningSummary) ? (raw as ReasoningSummary) : 'none'
+}
+
 const defaultFactory: Factory = (options) =>
   new CodexAppServerClient({
     defaultModel: options?.defaultModel,
     threadConfig: {
       'features.rmcp_client': true,
+      model_reasoning_summary: resolveReasoningSummary(),
       web_search: 'live',
       mcp_servers: {
         memories: {
