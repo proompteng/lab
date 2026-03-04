@@ -18,7 +18,7 @@ export const getControlPlaneStatus = async (request: Request) => {
   try {
     const status = await buildControlPlaneStatus({
       namespace,
-      grpc: resolveGrpcStatus(),
+      grpc: await resolveGrpcStatus(),
     })
     return okResponse(status)
   } catch (error) {
