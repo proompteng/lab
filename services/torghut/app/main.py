@@ -335,16 +335,6 @@ def _evaluate_trading_health_payload(
 def _evaluate_database_contract(session: Session) -> dict[str, object]:
     """Collect schema and account-scope readiness checks used by /readyz and /db-check."""
 
-    if not settings.trading_enabled:
-        return {
-            "ok": True,
-            "schema_current": True,
-            "schema_current_heads": [],
-            "expected_heads": [],
-            "account_scope_ready": True,
-            "account_scope_errors": [],
-        }
-
     try:
         schema_status = check_schema_current(session)
         account_scope_status = check_account_scope_invariants(session)
