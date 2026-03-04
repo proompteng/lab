@@ -3,6 +3,7 @@ import type {
   GithubIssueComment,
   GithubPullState,
   GithubReviewComment,
+  GithubPrWorktree,
   GithubReviewStore,
   GithubReviewThread,
 } from '~/server/github-review-store'
@@ -45,7 +46,13 @@ const getStore = () => {
 
 const getWorktreeSnapshot = () => globalOverrides.__githubWorktreeSnapshotMock ?? refreshWorktreeSnapshot
 
-const WORKTREE_REFRESH_FAILURE_TTL_MS = 60_000
+const resolveWorktreeRefreshFailureTtlMs = () => {
+  const rawTtl = process.env.JANGAR_GITHUB_WORKTREE_REFRESH_FAILURE_TTL_SECONDS?.trim()
+  const parsed = rawTtl ? Number.parseInt(rawTtl, 10) : NaN
+  return Number.isFinite(parsed) && parsed > 0 ? parsed * 1_000 : 60_000
+}
+
+const WORKTREE_REFRESH_FAILURE_TTL_MS = resolveWorktreeRefreshFailureTtlMs()
 const REFRESH_WORKTREE_NOT_FOUND_ERROR = /Unable to resolve git ref:/
 const worktreeRefreshFailures = new Map<string, number>()
 const worktreeRefreshInFlight = new Map<string, Promise<void>>()
@@ -73,6 +80,48 @@ const markWorktreeRefreshFailure = (key: string) => {
 
 const buildWorktreeRefreshKey = (input: { repository: string; prNumber: number; headRef: string; baseRef: string }) =>
   `${input.repository}#${input.prNumber}#${input.headRef}#${input.baseRef}`
+
+const resolveRefreshBlockedUntil = () => {
+  return new Date(Date.now() + WORKTREE_REFRESH_FAILURE_TTL_MS).toISOString()
+}
+
+const isRefreshBlockedByStore = (worktree: GithubPrWorktree | null) => {
+  const blockedAt = worktree?.refreshBlockedUntil
+  if (!blockedAt) return false
+  const blockedUntil = Date.parse(blockedAt)
+  return Number.isFinite(blockedUntil) && blockedUntil > Date.now()
+}
+
+const markPrWorktreeRefreshFailure = async (store: GithubReviewStore, worktree: GithubPrWorktree, reason: string) => {
+  await store.upsertPrWorktree({
+    repository: worktree.repository,
+    prNumber: worktree.prNumber,
+    worktreeName: worktree.worktreeName,
+    worktreePath: worktree.worktreePath,
+    baseSha: worktree.baseSha,
+    headSha: worktree.headSha,
+    lastRefreshedAt: worktree.lastRefreshedAt,
+    refreshFailureReason: reason,
+    refreshFailedAt: new Date().toISOString(),
+    refreshBlockedUntil: resolveRefreshBlockedUntil(),
+  })
+}
+
+const clearPrWorktreeRefreshFailure = async (store: GithubReviewStore, worktree: GithubPrWorktree) => {
+  if (!worktree.refreshFailureReason && !worktree.refreshFailedAt && !worktree.refreshBlockedUntil) return
+  await store.upsertPrWorktree({
+    repository: worktree.repository,
+    prNumber: worktree.prNumber,
+    worktreeName: worktree.worktreeName,
+    worktreePath: worktree.worktreePath,
+    baseSha: worktree.baseSha,
+    headSha: worktree.headSha,
+    lastRefreshedAt: worktree.lastRefreshedAt,
+    refreshFailureReason: null,
+    refreshFailedAt: null,
+    refreshBlockedUntil: null,
+  })
+}
 
 const hasFreshWorktreeRefreshFailure = (key: string) => {
   const failedAt = worktreeRefreshFailures.get(key)
@@ -357,6 +406,7 @@ const maybeRefreshWorktreeSnapshot = async (
   const { headRef, baseRef } = input
   const existing = await store.getPrWorktree({ repository: input.repository, prNumber: input.prNumber })
   if (existing?.headSha && input.headSha && existing.headSha === input.headSha) return
+  if (existing && isRefreshBlockedByStore(existing)) return
   const refreshKey = buildWorktreeRefreshKey({
     repository: input.repository,
     prNumber: input.prNumber,
@@ -373,6 +423,9 @@ const maybeRefreshWorktreeSnapshot = async (
 
   const runRefresh = async () => {
     try {
+      if (existing?.refreshFailureReason || existing?.refreshFailedAt || existing?.refreshBlockedUntil) {
+        await clearPrWorktreeRefreshFailure(store, existing)
+      }
       await getWorktreeSnapshot()({
         repository: input.repository,
         prNumber: input.prNumber,
@@ -381,9 +434,15 @@ const maybeRefreshWorktreeSnapshot = async (
       })
       clearWorktreeRefreshFailureTimeout(refreshKey)
       worktreeRefreshFailures.delete(refreshKey)
+      if (existing) {
+        await clearPrWorktreeRefreshFailure(store, existing)
+      }
     } catch (error) {
       if (isMissingRefError(error)) {
         markWorktreeRefreshFailure(refreshKey)
+        if (existing) {
+          await markPrWorktreeRefreshFailure(store, existing, String(error))
+        }
       }
       console.warn('[github-review-ingest] worktree snapshot refresh failed', {
         repository: input.repository,

@@ -366,8 +366,8 @@ spec:
                           x-kubernetes-validations:
                           - message: workflow step parameters.prompt is not allowed;
                               use ImplementationSpec.spec.text
-                            rule: '!has(self.parameters) || !has(self.parameters,
-                              ''prompt'')'
+                            rule: '!has(self.parameters) || self.parameters.keys().all(key,
+                              key != ''prompt'')'
                         retries:
                           format: int32
                           type: integer
@@ -489,7 +489,8 @@ spec:
                 allowed; configure Agent.spec.defaults instead
               rule: '!has(self.systemPrompt) && !has(self.systemPromptRef)'
             - message: spec.parameters.prompt is not allowed; use ImplementationSpec.spec.text
-              rule: '!has(self.parameters) || !has(self.parameters, ''prompt'')'
+              rule: '!has(self.parameters) || self.parameters.keys().all(key, key
+                != ''prompt'')'
           status:
             properties:
               artifacts:

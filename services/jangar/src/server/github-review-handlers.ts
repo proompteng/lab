@@ -6,12 +6,18 @@ import {
 } from '~/server/github-review-actions'
 import { type GithubWriteAudit } from '~/data/github'
 import { isGithubRepoAllowed, loadGithubReviewConfig } from '~/server/github-review-config'
-import { createGithubReviewStore } from '~/server/github-review-store'
+import { createGithubReviewStore, type GithubPrWorktree } from '~/server/github-review-store'
 import { refreshWorktreeSnapshot, type WorktreeSnapshotResult } from '~/server/github-worktree-snapshot'
 
 const DEFAULT_REPOSITORY = 'proompteng/lab'
 const WORKTREE_REFRESH_TIMEOUT_MS = 4_000
-const WORKTREE_REFRESH_FAILURE_TTL_MS = 60_000
+const resolveWorktreeRefreshFailureTtlMs = () => {
+  const rawTtl = process.env.JANGAR_GITHUB_WORKTREE_REFRESH_FAILURE_TTL_SECONDS?.trim()
+  const parsed = rawTtl ? Number.parseInt(rawTtl, 10) : NaN
+  return Number.isFinite(parsed) && parsed > 0 ? parsed * 1_000 : 60_000
+}
+
+const WORKTREE_REFRESH_FAILURE_TTL_MS = resolveWorktreeRefreshFailureTtlMs()
 const REFRESH_WORKTREE_NOT_FOUND_ERROR = /Unable to resolve git ref:/
 const refreshInFlight = new Map<string, Promise<WorktreeSnapshotResult>>()
 const worktreeRefreshFailures = new Map<string, number>()
@@ -47,6 +53,55 @@ const hasFreshWorktreeRefreshFailure = (key: string) => {
   clearWorktreeRefreshFailureTimeout(key)
   worktreeRefreshFailures.delete(key)
   return false
+}
+
+const resolveRefreshBlockedUntil = () => {
+  return new Date(Date.now() + WORKTREE_REFRESH_FAILURE_TTL_MS).toISOString()
+}
+
+const isRefreshBlockedByStore = (worktree: GithubPrWorktree | null) => {
+  const blockedAt = worktree?.refreshBlockedUntil
+  if (!blockedAt) return false
+  const blockedUntil = Date.parse(blockedAt)
+  return Number.isFinite(blockedUntil) && blockedUntil > Date.now()
+}
+
+const markPrWorktreeRefreshFailure = async (
+  store: ReturnType<typeof createGithubReviewStore>,
+  worktree: GithubPrWorktree,
+  reason: string,
+) => {
+  await store.upsertPrWorktree({
+    repository: worktree.repository,
+    prNumber: worktree.prNumber,
+    worktreeName: worktree.worktreeName,
+    worktreePath: worktree.worktreePath,
+    baseSha: worktree.baseSha,
+    headSha: worktree.headSha,
+    lastRefreshedAt: worktree.lastRefreshedAt,
+    refreshFailureReason: reason,
+    refreshFailedAt: new Date().toISOString(),
+    refreshBlockedUntil: resolveRefreshBlockedUntil(),
+  })
+}
+
+const clearPrWorktreeRefreshFailure = async (
+  store: ReturnType<typeof createGithubReviewStore>,
+  worktree: GithubPrWorktree,
+) => {
+  if (!worktree.refreshFailureReason && !worktree.refreshFailedAt && !worktree.refreshBlockedUntil) return
+  await store.upsertPrWorktree({
+    repository: worktree.repository,
+    prNumber: worktree.prNumber,
+    worktreeName: worktree.worktreeName,
+    worktreePath: worktree.worktreePath,
+    baseSha: worktree.baseSha,
+    headSha: worktree.headSha,
+    lastRefreshedAt: worktree.lastRefreshedAt,
+    refreshFailureReason: null,
+    refreshFailedAt: null,
+    refreshBlockedUntil: null,
+  })
 }
 
 const isMissingRefError = (error: unknown) => {
@@ -92,7 +147,11 @@ const GITHUB_LOGIN_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-const queueWorktreeRefresh = (input: { repository: string; prNumber: number; headRef: string; baseRef: string }) => {
+const queueWorktreeRefresh = (
+  store: ReturnType<typeof createGithubReviewStore>,
+  input: { repository: string; prNumber: number; headRef: string; baseRef: string },
+  existingWorktree: GithubPrWorktree | null,
+) => {
   const key = buildWorktreeRefreshKey(input)
   const existing = refreshInFlight.get(key)
   if (existing) return existing
@@ -100,11 +159,17 @@ const queueWorktreeRefresh = (input: { repository: string; prNumber: number; hea
     .then((snapshot) => {
       clearWorktreeRefreshFailureTimeout(key)
       worktreeRefreshFailures.delete(key)
+      if (existingWorktree) {
+        void clearPrWorktreeRefreshFailure(store, existingWorktree)
+      }
       return snapshot
     })
     .catch((error) => {
       if (isMissingRefError(error)) {
         markWorktreeRefreshFailure(key)
+        if (existingWorktree) {
+          void markPrWorktreeRefreshFailure(store, existingWorktree, String(error))
+        }
       }
       console.warn('[github-review] worktree snapshot refresh failed', {
         repository: input.repository,
@@ -145,6 +210,7 @@ const maybeAutoRefreshFiles = async (
   if (!input.headRef || !input.baseRef) return false
   const existing = await store.getPrWorktree({ repository: input.repository, prNumber: input.prNumber })
   if (existing?.headSha && input.headSha && existing.headSha === input.headSha) return false
+  if (existing && isRefreshBlockedByStore(existing)) return false
 
   const refreshKey = buildWorktreeRefreshKey({
     repository: input.repository,
@@ -154,12 +220,16 @@ const maybeAutoRefreshFiles = async (
   })
   if (hasFreshWorktreeRefreshFailure(refreshKey)) return false
 
-  const task = queueWorktreeRefresh({
-    repository: input.repository,
-    prNumber: input.prNumber,
-    headRef: input.headRef,
-    baseRef: input.baseRef,
-  })
+  const task = queueWorktreeRefresh(
+    store,
+    {
+      repository: input.repository,
+      prNumber: input.prNumber,
+      headRef: input.headRef,
+      baseRef: input.baseRef,
+    },
+    existing,
+  )
   void task.catch(() => {})
   return true
 }
@@ -278,6 +348,9 @@ export const getPullFilesHandler = async (
     }
 
     const worktree = await store.getPrWorktree({ repository, prNumber })
+    if (worktree && isRefreshBlockedByStore(worktree)) {
+      return jsonResponse({ ok: true, status: 'refreshing' }, 202)
+    }
     const commitSha = worktree?.headSha ?? pull.pull.headSha
     const files = await store.listFiles({
       repository,
@@ -339,13 +412,21 @@ export const refreshPullFilesHandler = async (
     if (hasFreshWorktreeRefreshFailure(refreshKey)) {
       return jsonResponse({ ok: true, status: 'refreshing' }, 202)
     }
+    const worktree = await store.getPrWorktree({ repository, prNumber })
+    if (worktree && isRefreshBlockedByStore(worktree)) {
+      return jsonResponse({ ok: true, status: 'refreshing' }, 202)
+    }
 
-    const refreshTask = queueWorktreeRefresh({
-      repository,
-      prNumber,
-      headRef: pull.pull.headRef,
-      baseRef: pull.pull.baseRef,
-    })
+    const refreshTask = queueWorktreeRefresh(
+      store,
+      {
+        repository,
+        prNumber,
+        headRef: pull.pull.headRef,
+        baseRef: pull.pull.baseRef,
+      },
+      worktree,
+    )
     const outcome = await Promise.race([
       refreshTask.then((snapshot) => ({ status: 'done' as const, snapshot })),
       delay(WORKTREE_REFRESH_TIMEOUT_MS).then(() => ({ status: 'timeout' as const })),

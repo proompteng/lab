@@ -132,6 +132,9 @@ export type GithubPrWorktree = {
   baseSha: string | null
   headSha: string | null
   lastRefreshedAt: string
+  refreshFailureReason?: string | null
+  refreshFailedAt?: string | null
+  refreshBlockedUntil?: string | null
 }
 
 export type GithubWriteAudit = {
@@ -744,6 +747,9 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
         base_sha: input.baseSha,
         head_sha: input.headSha,
         last_refreshed_at: input.lastRefreshedAt,
+        refresh_failure_reason: input.refreshFailureReason ?? null,
+        refresh_failed_at: input.refreshFailedAt ?? null,
+        refresh_blocked_until: input.refreshBlockedUntil ?? null,
       })
       .onConflict((oc) =>
         oc.columns(['repository', 'pr_number']).doUpdateSet({
@@ -752,6 +758,9 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
           base_sha: input.baseSha,
           head_sha: input.headSha,
           last_refreshed_at: input.lastRefreshedAt,
+          refresh_failure_reason: input.refreshFailureReason ?? null,
+          refresh_failed_at: input.refreshFailedAt ?? null,
+          refresh_blocked_until: input.refreshBlockedUntil ?? null,
         }),
       )
       .execute()
@@ -769,6 +778,9 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
         'base_sha',
         'head_sha',
         'last_refreshed_at',
+        'refresh_failure_reason',
+        'refresh_failed_at',
+        'refresh_blocked_until',
       ])
       .where('repository', '=', input.repository)
       .where('pr_number', '=', input.prNumber)
@@ -782,6 +794,9 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
       baseSha: row.base_sha ?? null,
       headSha: row.head_sha ?? null,
       lastRefreshedAt: row.last_refreshed_at ? String(row.last_refreshed_at) : new Date().toISOString(),
+      refreshFailureReason: row.refresh_failure_reason ?? null,
+      refreshFailedAt: row.refresh_failed_at ? String(row.refresh_failed_at) : null,
+      refreshBlockedUntil: row.refresh_blocked_until ? String(row.refresh_blocked_until) : null,
     }
   }
 

@@ -290,6 +290,9 @@ export const refreshWorktreeSnapshot = async (input: {
         baseSha,
         headSha,
         lastRefreshedAt: receivedAt,
+        refreshFailureReason: null,
+        refreshFailedAt: null,
+        refreshBlockedUntil: null,
       })
     } finally {
       await store.close()

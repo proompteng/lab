@@ -21,6 +21,7 @@ import * as removePromptTuningMigration from '~/server/migrations/20260220_remov
 import * as torghutMarketContextAgentsMigration from '~/server/migrations/20260226_torghut_market_context_agents'
 import * as torghutMarketContextRunLifecycleMigration from '~/server/migrations/20260228_torghut_market_context_run_lifecycle'
 import * as jangarGithubWriteActionsAuditContextMigration from '~/server/migrations/20260303_jangar_github_write_actions_audit_context'
+import * as jangarGithubWorktreeRefreshStateMigration from '~/server/migrations/20260304_jangar_github_worktree_refresh_state'
 
 type MigrationMap = Record<string, Migration>
 
@@ -55,6 +56,7 @@ const migrations: MigrationMap = {
   '20260226_torghut_market_context_agents': torghutMarketContextAgentsMigration,
   '20260228_torghut_market_context_run_lifecycle': torghutMarketContextRunLifecycleMigration,
   '20260303_jangar_github_write_actions_audit_context': jangarGithubWriteActionsAuditContextMigration,
+  '20260304_jangar_github_worktree_refresh_state': jangarGithubWorktreeRefreshStateMigration,
 }
 
 const migrationProvider = new StaticMigrationProvider(migrations)

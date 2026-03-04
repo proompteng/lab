@@ -224,10 +224,62 @@ describe('github review ingest', () => {
     const first = await handler(payload)
     expect(first.ok).toBe(true)
     expect(snapshotMock).toHaveBeenCalledTimes(1)
+    expect(store.upsertPrWorktree).toHaveBeenCalledTimes(1)
+    const blockedState = (store.upsertPrWorktree as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.at(0)
+    expect(blockedState).toMatchObject({
+      repository: 'proompteng/lab',
+      prNumber: 3001,
+      refreshFailureReason: 'Error: Unable to resolve git ref: origin/missing-branch',
+      refreshBlockedUntil: expect.any(String),
+    })
 
     const second = await handler(payload)
     expect(second.ok).toBe(true)
     expect(snapshotMock).toHaveBeenCalledTimes(1)
     expect(store.upsertPrState).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips refresh when db suppression is active for missing refs', async () => {
+    const handler = await requireHandler()
+    const store = requireStore()
+
+    ;(store.getPrWorktree as ReturnType<typeof vi.fn>).mockResolvedValue({
+      repository: 'proompteng/lab',
+      prNumber: 3002,
+      worktreeName: 'proompteng-lab-3002',
+      worktreePath: '/tmp/proompteng-lab-3002',
+      baseSha: 'base-sha',
+      headSha: 'stale-head-sha',
+      lastRefreshedAt: '2025-01-01T00:00:00Z',
+      refreshBlockedUntil: new Date(Date.now() + 60_000).toISOString(),
+      refreshFailureReason: 'previously missing ref',
+      refreshFailedAt: '2025-01-01T00:00:00Z',
+    })
+
+    const payload: GithubWebhookEvent = {
+      event: 'pull_request',
+      action: 'opened',
+      deliveryId: 'delivery-4',
+      repository: 'proompteng/lab',
+      sender: 'octocat',
+      payload: {
+        pull_request: {
+          number: 3002,
+          title: 'Skip because db suppression',
+          state: 'open',
+          head: { ref: 'feature-missing', sha: 'abc3002' },
+          base: { ref: 'main', sha: 'def3002', repo: { full_name: 'proompteng/lab' } },
+          user: { login: 'octocat' },
+          labels: [{ name: 'backend' }],
+        },
+      },
+    }
+
+    const result = await handler(payload)
+    expect(result.ok).toBe(true)
+    expect(store.getPrWorktree).toHaveBeenCalled()
+    expect(store.recordEvent).toHaveBeenCalled()
+    expect(store.upsertPrState).toHaveBeenCalled()
+    expect(globalState.__githubWorktreeSnapshotMock).not.toHaveBeenCalled()
   })
 })
