@@ -4,6 +4,11 @@ import { resolvePrimitiveKind } from '~/server/primitives-control-plane'
 import { asRecord, asString, errorResponse, normalizeNamespace, okResponse } from '~/server/primitives-http'
 import { createKubernetesClient } from '~/server/primitives-kube'
 import { createKubectlWatchStream } from '~/server/primitives-watch'
+import {
+  buildCacheFreshnessState,
+  cacheStateToResponse,
+  resolveCacheFreshnessConfig,
+} from '~/server/control-plane-cache-freshness'
 
 export const Route = createFileRoute('/api/agents/control-plane/resources')({
   server: {
@@ -145,6 +150,8 @@ export const listPrimitiveResources = async (
 
     if (canUseCache) {
       const cluster = (process.env.JANGAR_CONTROL_PLANE_CACHE_CLUSTER ?? 'default').trim() || 'default'
+      const cacheCheckedAt = new Date()
+      const cacheConfig = resolveCacheFreshnessConfig()
       let store: ReturnType<typeof createControlPlaneCacheStore> | null = null
       try {
         store = createControlPlaneCacheStore()
@@ -158,13 +165,36 @@ export const listPrimitiveResources = async (
           runtime,
           limit,
         })
-        return okResponse({
-          ok: true,
-          kind: resolved.kind,
-          namespace,
-          total: result.total,
-          items: result.items,
-        })
+        const freshnessStates = result.items.map((item) =>
+          buildCacheFreshnessState(item.lastSeenAt, cacheCheckedAt, cacheConfig),
+        )
+        const staleCount = freshnessStates.filter((state) => state.isStale).length
+        if (staleCount > 0 && !cacheConfig.allowStale) {
+          // Explicitly require live reads when cached list has stale rows and stale reads are disabled.
+        } else {
+          const oldestAgeSeconds = freshnessStates.reduce((max, state) => {
+            if (state.ageSeconds == null) return max
+            return Math.max(max, state.ageSeconds)
+          }, 0)
+          const representative = freshnessStates[0] ?? buildCacheFreshnessState(null, cacheCheckedAt, cacheConfig)
+          return okResponse({
+            ok: true,
+            kind: resolved.kind,
+            namespace,
+            total: result.total,
+            items: result.items.map((item) => item.resource),
+            cache: {
+              ...cacheStateToResponse({
+                ...representative,
+                isFresh: staleCount === 0,
+                isStale: staleCount > 0,
+                stale: staleCount > 0,
+              }),
+              stale_count: staleCount,
+              oldest_age_seconds: oldestAgeSeconds,
+            },
+          })
+        }
       } catch {
         // Fall back to kubectl list for unsupported selectors / transient DB issues.
       } finally {
