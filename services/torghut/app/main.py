@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
+from threading import Lock
 from typing import Any, cast
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
@@ -63,6 +64,8 @@ RUNTIME_PROFITABILITY_LOOKBACK_HOURS = 72
 RUNTIME_PROFITABILITY_SCHEMA_VERSION = "torghut.runtime-profitability.v1"
 LEAN_LANE_MANAGER = LeanLaneManager()
 WHITEPAPER_WORKFLOW = WhitepaperWorkflowService()
+_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = Lock()
+_TRADING_DEPENDENCY_HEALTH_CACHE: dict[str, dict[str, object]] = {}
 
 
 def _extract_bearer_token(authorization_header: str | None) -> str | None:
@@ -119,20 +122,28 @@ def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
             signing_key=_env_or_none("INNGEST_SIGNING_KEY"),
         )
     except Exception as exc:  # pragma: no cover - configuration/runtime dependent
-        logger.warning("Failed to initialize Inngest client for whitepaper workflow: %s", exc)
+        logger.warning(
+            "Failed to initialize Inngest client for whitepaper workflow: %s", exc
+        )
         app.state.whitepaper_inngest_registered = False
         WHITEPAPER_WORKFLOW.set_inngest_client(None)
         return None
 
     requested_event_name = (
-        _env_or_none("WHITEPAPER_INNGEST_EVENT_NAME") or "torghut/whitepaper.analysis.requested"
+        _env_or_none("WHITEPAPER_INNGEST_EVENT_NAME")
+        or "torghut/whitepaper.analysis.requested"
     )
-    requested_fn_id = _env_or_none("WHITEPAPER_INNGEST_FUNCTION_ID") or "torghut-whitepaper-analysis-v1"
+    requested_fn_id = (
+        _env_or_none("WHITEPAPER_INNGEST_FUNCTION_ID")
+        or "torghut-whitepaper-analysis-v1"
+    )
     finalized_event_name = (
-        _env_or_none("WHITEPAPER_INNGEST_FINALIZED_EVENT_NAME") or "torghut/whitepaper.analysis.finalized"
+        _env_or_none("WHITEPAPER_INNGEST_FINALIZED_EVENT_NAME")
+        or "torghut/whitepaper.analysis.finalized"
     )
     finalized_fn_id = (
-        _env_or_none("WHITEPAPER_INNGEST_FINALIZE_FUNCTION_ID") or "torghut-whitepaper-synthesis-index-v1"
+        _env_or_none("WHITEPAPER_INNGEST_FINALIZE_FUNCTION_ID")
+        or "torghut-whitepaper-synthesis-index-v1"
     )
 
     @client.create_function(
@@ -156,7 +167,9 @@ def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
                 return result
             except Exception:
                 session.rollback()
-                logger.exception("Inngest requested whitepaper run failed for run_id=%s", run_id)
+                logger.exception(
+                    "Inngest requested whitepaper run failed for run_id=%s", run_id
+                )
                 raise
 
     @client.create_function(
@@ -169,7 +182,11 @@ def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
         if not run_id:
             raise ValueError("run_id_required")
         if not whitepaper_semantic_indexing_enabled():
-            return {"run_id": run_id, "skipped": True, "reason": "semantic_indexing_disabled"}
+            return {
+                "run_id": run_id,
+                "skipped": True,
+                "reason": "semantic_indexing_disabled",
+            }
         with SessionLocal() as session:
             try:
                 result = WHITEPAPER_WORKFLOW.index_synthesis_semantic_content(
@@ -180,7 +197,9 @@ def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
                 return result
             except Exception:
                 session.rollback()
-                logger.exception("Inngest finalized whitepaper indexing failed for run_id=%s", run_id)
+                logger.exception(
+                    "Inngest finalized whitepaper indexing failed for run_id=%s", run_id
+                )
                 raise
 
     try:
@@ -271,6 +290,94 @@ def healthz() -> dict[str, str]:
     return {"status": "ok", "service": "torghut"}
 
 
+def _readiness_dependency_cache_key(include_database_contract: bool) -> str:
+    trading_mode = int(settings.trading_enabled)
+    cache_mode = int(settings.trading_readiness_dependency_cache_enabled)
+    return f"readyz:{trading_mode}:{cache_mode}:{int(include_database_contract)}"
+
+
+def _readiness_dependency_checks(
+    session: Session,
+    *,
+    include_database_contract: bool,
+) -> tuple[dict[str, object], datetime]:
+    postgres_status = _check_postgres(session)
+    if settings.trading_enabled:
+        clickhouse_status = _check_clickhouse()
+        alpaca_status = _check_alpaca()
+    else:
+        clickhouse_status = {"ok": True, "detail": "skipped (trading disabled)"}
+        alpaca_status = {"ok": True, "detail": "skipped (trading disabled)"}
+
+    dependencies: dict[str, object] = {
+        "postgres": postgres_status,
+        "clickhouse": clickhouse_status,
+        "alpaca": alpaca_status,
+    }
+
+    if include_database_contract:
+        database_contract = _evaluate_database_contract(session)
+        dependencies["database"] = {
+            "ok": bool(database_contract.get("ok")),
+            "detail": "ok"
+            if bool(database_contract.get("ok"))
+            else "database contract failed",
+            "schema_current": bool(database_contract.get("schema_current")),
+            "schema_current_heads": database_contract.get("schema_current_heads"),
+            "expected_heads": database_contract.get("expected_heads"),
+            "schema_head_signature": database_contract.get("schema_head_signature"),
+            "checked_at": database_contract.get("checked_at"),
+            "account_scope_ready": bool(database_contract.get("account_scope_ready")),
+            "account_scope_errors": database_contract.get("account_scope_errors", []),
+        }
+
+    return dependencies, datetime.now(timezone.utc)
+
+
+def _readiness_dependency_snapshot(
+    session: Session,
+    *,
+    include_database_contract: bool,
+) -> tuple[dict[str, object], datetime, bool]:
+    if (
+        not settings.trading_readiness_dependency_cache_enabled
+        or settings.trading_readiness_dependency_cache_ttl_seconds <= 0
+    ):
+        dependencies, checked_at = _readiness_dependency_checks(
+            session,
+            include_database_contract=include_database_contract,
+        )
+        return dependencies, checked_at, False
+
+    cache_ttl = timedelta(
+        seconds=settings.trading_readiness_dependency_cache_ttl_seconds
+    )
+    now = datetime.now(timezone.utc)
+    cache_key = _readiness_dependency_cache_key(include_database_contract)
+
+    with _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK:
+        cache_entry = _TRADING_DEPENDENCY_HEALTH_CACHE.get(cache_key)
+        if cache_entry:
+            cache_checked_at = cast(datetime, cache_entry["checked_at"])
+            if now - cache_checked_at < cache_ttl:
+                return (
+                    cast(dict[str, object], cache_entry["dependencies"]),
+                    cache_checked_at,
+                    True,
+                )
+
+    dependencies, checked_at = _readiness_dependency_checks(
+        session,
+        include_database_contract=include_database_contract,
+    )
+    with _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK:
+        _TRADING_DEPENDENCY_HEALTH_CACHE[cache_key] = {
+            "checked_at": checked_at,
+            "dependencies": dependencies,
+        }
+    return dependencies, checked_at, False
+
+
 def _evaluate_trading_health_payload(
     session: Session,
     *,
@@ -292,37 +399,23 @@ def _evaluate_trading_health_payload(
         else:
             scheduler_detail = "trading loop not running"
 
-    postgres_status = _check_postgres(session)
-    if settings.trading_enabled:
-        clickhouse_status = _check_clickhouse()
-        alpaca_status = _check_alpaca()
-    else:
-        clickhouse_status = {"ok": True, "detail": "skipped (trading disabled)"}
-        alpaca_status = {"ok": True, "detail": "skipped (trading disabled)"}
-
-    dependencies = {
-        "postgres": postgres_status,
-        "clickhouse": clickhouse_status,
-        "alpaca": alpaca_status,
+    dependencies, checked_at, cache_used = _readiness_dependency_snapshot(
+        session,
+        include_database_contract=include_database_contract,
+    )
+    dependencies = dict(dependencies)
+    dependency_statuses = [
+        cast(dict[str, object], checks).get("ok", True)
+        for name, checks in dependencies.items()
+        if name != "readiness_cache"
+    ]
+    dependencies["readiness_cache"] = {
+        "checked_at": checked_at.isoformat(),
+        "cache_ttl_seconds": settings.trading_readiness_dependency_cache_ttl_seconds,
+        "cache_used": cache_used,
     }
 
-    if include_database_contract:
-        database_contract = _evaluate_database_contract(session)
-        dependencies["database"] = {
-            "ok": bool(database_contract.get("ok")),
-            "detail": "ok" if bool(database_contract.get("ok")) else "database contract failed",
-            "schema_current": bool(database_contract.get("schema_current")),
-            "schema_current_heads": database_contract.get("schema_current_heads"),
-            "expected_heads": database_contract.get("expected_heads"),
-            "schema_head_signature": database_contract.get("schema_head_signature"),
-            "checked_at": database_contract.get("checked_at"),
-            "account_scope_ready": bool(
-                database_contract.get("account_scope_ready")
-            ),
-            "account_scope_errors": database_contract.get("account_scope_errors", []),
-        }
-
-    overall_ok = scheduler_ok and all(dep["ok"] for dep in dependencies.values())
+    overall_ok = scheduler_ok and all(bool(dep) for dep in dependency_statuses)
     status = "ok" if overall_ok else "degraded"
     status_code = 200 if overall_ok else 503
 
@@ -426,9 +519,7 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             "schema_current": bool(database_contract.get("schema_current")),
             "current_heads": database_contract.get("schema_current_heads"),
             "expected_heads": database_contract.get("expected_heads"),
-            "schema_head_signature": database_contract.get(
-                "schema_head_signature"
-            ),
+            "schema_head_signature": database_contract.get("schema_head_signature"),
         }
         account_scope_status = {
             "account_scope_ready": bool(database_contract.get("account_scope_ready")),
@@ -500,7 +591,9 @@ def whitepaper_status() -> dict[str, object]:
         "workflow_enabled": whitepaper_workflow_enabled(),
         "kafka_enabled": whitepaper_kafka_enabled(),
         "inngest_enabled": whitepaper_inngest_enabled(),
-        "inngest_registered": bool(getattr(app.state, "whitepaper_inngest_registered", False)),
+        "inngest_registered": bool(
+            getattr(app.state, "whitepaper_inngest_registered", False)
+        ),
         "inngest_event_name": os.getenv(
             "WHITEPAPER_INNGEST_EVENT_NAME",
             "torghut/whitepaper.analysis.requested",
@@ -637,14 +730,28 @@ def approve_whitepaper_for_engineering(
 
     _require_whitepaper_control_token(request)
 
-    approved_by = str(payload.get("approved_by") or payload.get("approvedBy") or "").strip()
-    approval_reason = str(payload.get("approval_reason") or payload.get("approvalReason") or "").strip()
-    approval_source = str(payload.get("approval_source") or payload.get("approvalSource") or "jangar_ui").strip()
-    target_scope = str(payload.get("target_scope") or payload.get("targetScope") or "").strip() or None
+    approved_by = str(
+        payload.get("approved_by") or payload.get("approvedBy") or ""
+    ).strip()
+    approval_reason = str(
+        payload.get("approval_reason") or payload.get("approvalReason") or ""
+    ).strip()
+    approval_source = str(
+        payload.get("approval_source") or payload.get("approvalSource") or "jangar_ui"
+    ).strip()
+    target_scope = (
+        str(payload.get("target_scope") or payload.get("targetScope") or "").strip()
+        or None
+    )
     repository = str(payload.get("repository") or "").strip() or None
     base = str(payload.get("base") or "").strip() or None
     head = str(payload.get("head") or "").strip() or None
-    rollout_profile = str(payload.get("rollout_profile") or payload.get("rolloutProfile") or "").strip() or None
+    rollout_profile = (
+        str(
+            payload.get("rollout_profile") or payload.get("rolloutProfile") or ""
+        ).strip()
+        or None
+    )
 
     try:
         result = WHITEPAPER_WORKFLOW.approve_for_engineering(
@@ -667,7 +774,9 @@ def approve_whitepaper_for_engineering(
     except Exception as exc:
         session.rollback()
         logger.exception("Whitepaper manual approval failed for run_id=%s", run_id)
-        raise HTTPException(status_code=500, detail=f"whitepaper_manual_approval_failed:{exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"whitepaper_manual_approval_failed:{exc}"
+        ) from exc
     session.commit()
     return cast(dict[str, object], result)
 
@@ -695,11 +804,15 @@ def get_whitepaper_run(
         .first()
     )
 
-    pr_rows = session.execute(
-        select(WhitepaperDesignPullRequest)
-        .where(WhitepaperDesignPullRequest.analysis_run_id == row.id)
-        .order_by(WhitepaperDesignPullRequest.attempt.asc())
-    ).scalars().all()
+    pr_rows = (
+        session.execute(
+            select(WhitepaperDesignPullRequest)
+            .where(WhitepaperDesignPullRequest.analysis_run_id == row.id)
+            .order_by(WhitepaperDesignPullRequest.attempt.asc())
+        )
+        .scalars()
+        .all()
+    )
     trigger_row = session.execute(
         select(WhitepaperEngineeringTrigger).where(
             WhitepaperEngineeringTrigger.analysis_run_id == row.id
@@ -707,11 +820,15 @@ def get_whitepaper_run(
     ).scalar_one_or_none()
     rollout_rows: Sequence[WhitepaperRolloutTransition] = []
     if trigger_row is not None:
-        rollout_rows = session.execute(
-            select(WhitepaperRolloutTransition)
-            .where(WhitepaperRolloutTransition.trigger_id == trigger_row.id)
-            .order_by(WhitepaperRolloutTransition.created_at.asc())
-        ).scalars().all()
+        rollout_rows = (
+            session.execute(
+                select(WhitepaperRolloutTransition)
+                .where(WhitepaperRolloutTransition.trigger_id == trigger_row.id)
+                .order_by(WhitepaperRolloutTransition.created_at.asc())
+            )
+            .scalars()
+            .all()
+        )
 
     return jsonable_encoder(
         {
@@ -826,7 +943,9 @@ def search_whitepapers(
     """Hybrid semantic + lexical whitepaper search over indexed chunks."""
 
     if not whitepaper_semantic_indexing_enabled():
-        raise HTTPException(status_code=409, detail="whitepaper_semantic_search_disabled")
+        raise HTTPException(
+            status_code=409, detail="whitepaper_semantic_search_disabled"
+        )
 
     normalized_scope = scope.strip().lower()
     if normalized_scope not in {"all", "full_text", "synthesis"}:
@@ -846,7 +965,9 @@ def search_whitepapers(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Whitepaper search failed")
-        raise HTTPException(status_code=500, detail=f"whitepaper_search_failed:{exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"whitepaper_search_failed:{exc}"
+        ) from exc
 
     return cast(dict[str, object], jsonable_encoder(result))
 
@@ -1948,9 +2069,8 @@ def _load_runtime_profitability_gate_rollback_attribution(
     actuation_gates = _to_str_map(actuation_payload.get("gates"))
     actuation_root = _to_str_map(actuation_payload)
     actuation_audit = _to_str_map(actuation_payload.get("audit"))
-    actuation_readiness = _to_str_map(
-        actuation_audit.get("rollback_readiness_readout")
-    )
+    actuation_readiness = _to_str_map(actuation_audit.get("rollback_readiness_readout"))
+
     def _optional_trace_id(value: object) -> str | None:
         if value is None:
             return None
@@ -1993,8 +2113,9 @@ def _load_runtime_profitability_gate_rollback_attribution(
     return {
         "gate_report_artifact": gate_artifact_path or None,
         "gate_report_run_id": (
-            str(actuation_payload.get("run_id") or gate_payload.get("run_id") or "")
-            .strip()
+            str(
+                actuation_payload.get("run_id") or gate_payload.get("run_id") or ""
+            ).strip()
             or None
         ),
         "gate_report_trace_id": (
@@ -2027,7 +2148,8 @@ def _load_runtime_profitability_gate_rollback_attribution(
             "artifact_path": actuation_artifact_path or None,
             "actuation_allowed": bool(actuation_root.get("actuation_allowed")),
             "recommendation_trace_id": (
-                str(actuation_gates.get("recommendation_trace_id") or "").strip() or None
+                str(actuation_gates.get("recommendation_trace_id") or "").strip()
+                or None
             ),
             "gate_report_trace_id": (
                 str(actuation_gates.get("gate_report_trace_id") or "").strip() or None

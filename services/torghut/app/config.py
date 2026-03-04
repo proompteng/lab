@@ -1227,6 +1227,22 @@ class Settings(BaseSettings):
             "TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", "CLICKHOUSE_TIMEOUT_SECONDS"
         ),
     )
+    trading_readiness_dependency_cache_enabled: bool = Field(
+        default=True,
+        alias="TRADING_READINESS_DEPENDENCY_CACHE_ENABLED",
+        description=(
+            "Cache readiness dependency checks for probe stability while avoiding constant "
+            "dependency calls under high probe frequency."
+        ),
+    )
+    trading_readiness_dependency_cache_ttl_seconds: int = Field(
+        default=8,
+        alias="TRADING_READINESS_DEPENDENCY_CACHE_TTL_SECONDS",
+        description=(
+            "Maximum cache age for readiness dependency checks (in seconds). Set to 0 to "
+            "force synchronous checks on every request."
+        ),
+    )
 
     # Jangar gateway (recommended for LLM calls in-cluster).
     jangar_base_url: Optional[str] = Field(default=None, alias="JANGAR_BASE_URL")
@@ -1651,15 +1667,14 @@ class Settings(BaseSettings):
                     f"TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS[{key}] must be >= 0"
                 )
             normalized_correlation_caps[normalized_key] = value
-        self.trading_allocator_correlation_group_caps = (
-            normalized_correlation_caps
-        )
+        self.trading_allocator_correlation_group_caps = normalized_correlation_caps
 
     def _normalize_runtime_regime_confidence_thresholds_by_entropy_band(self) -> None:
         normalized: dict[str, tuple[float, float]] = {}
-        for key, thresholds in (
-            self.trading_runtime_regime_confidence_thresholds_by_entropy_band.items()
-        ):
+        for (
+            key,
+            thresholds,
+        ) in self.trading_runtime_regime_confidence_thresholds_by_entropy_band.items():
             normalized_key = str(key).strip().lower()
             if not normalized_key:
                 continue
@@ -1853,9 +1868,10 @@ class Settings(BaseSettings):
                 )
 
     def _validate_runtime_regime_confidence_thresholds_by_entropy_band(self) -> None:
-        for entropy_band, thresholds in (
-            self.trading_runtime_regime_confidence_thresholds_by_entropy_band.items()
-        ):
+        for (
+            entropy_band,
+            thresholds,
+        ) in self.trading_runtime_regime_confidence_thresholds_by_entropy_band.items():
             if len(thresholds) != 2:
                 raise ValueError(
                     "TRADING_RUNTIME_REGIME_CONFIDENCE_THRESHOLDS_BY_ENTROPY_BAND"

@@ -15,7 +15,12 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import get_session
-from app.main import _assert_dspy_cutover_migration_guard, app
+from app.main import (
+    _TRADING_DEPENDENCY_HEALTH_CACHE,
+    _assert_dspy_cutover_migration_guard,
+    _readiness_dependency_cache_key,
+    app,
+)
 from app.trading.scheduler import TradingScheduler
 from app.config import settings
 from app.models import (
@@ -30,6 +35,7 @@ from app.models import (
 
 class TestTradingApi(TestCase):
     def setUp(self) -> None:
+        _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             future=True,
@@ -139,6 +145,7 @@ class TestTradingApi(TestCase):
             session.commit()
 
     def tearDown(self) -> None:
+        _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         app.dependency_overrides.clear()
 
     def test_trading_decisions_endpoint(self) -> None:
@@ -148,7 +155,9 @@ class TestTradingApi(TestCase):
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["symbol"], "AAPL")
 
-    def test_dspy_cutover_migration_guard_assertion_raises_for_legacy_toggles(self) -> None:
+    def test_dspy_cutover_migration_guard_assertion_raises_for_legacy_toggles(
+        self,
+    ) -> None:
         original_runtime_mode = settings.llm_dspy_runtime_mode
         original_fail_mode_enforcement = settings.llm_fail_mode_enforcement
         original_fail_mode = settings.llm_fail_mode
@@ -382,6 +391,112 @@ class TestTradingApi(TestCase):
         finally:
             settings.trading_enabled = original
 
+    @patch(
+        "app.main._evaluate_database_contract",
+        return_value={
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+            "checked_at": "2026-03-04T00:00:00+00:00",
+            "account_scope_ready": True,
+            "account_scope_errors": [],
+        },
+    )
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_reuses_dependency_checks_within_cache_ttl(
+        self,
+        _mock_alpaca: object,
+        _mock_clickhouse: object,
+        _mock_postgres: object,
+        _mock_contract: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_cache_enabled = settings.trading_readiness_dependency_cache_enabled
+        original_cache_ttl = settings.trading_readiness_dependency_cache_ttl_seconds
+        settings.trading_enabled = True
+        settings.trading_readiness_dependency_cache_enabled = True
+        settings.trading_readiness_dependency_cache_ttl_seconds = 8
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(_mock_postgres.call_count, 1)
+            self.assertEqual(_mock_clickhouse.call_count, 1)
+            self.assertEqual(_mock_alpaca.call_count, 1)
+            payload = response.json()
+            self.assertEqual(
+                payload["dependencies"]["readiness_cache"]["cache_used"], True
+            )
+            self.assertIn("checked_at", payload["dependencies"]["readiness_cache"])
+        finally:
+            settings.trading_enabled = original
+            settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
+            settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
+
+    @patch(
+        "app.main._evaluate_database_contract",
+        return_value={
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+            "checked_at": "2026-03-04T00:00:00+00:00",
+            "account_scope_ready": True,
+            "account_scope_errors": [],
+        },
+    )
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_refreshes_dependency_checks_after_cache_ttl(
+        self,
+        _mock_alpaca: object,
+        _mock_clickhouse: object,
+        _mock_postgres: object,
+        _mock_contract: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_cache_enabled = settings.trading_readiness_dependency_cache_enabled
+        original_cache_ttl = settings.trading_readiness_dependency_cache_ttl_seconds
+        settings.trading_enabled = True
+        settings.trading_readiness_dependency_cache_enabled = True
+        settings.trading_readiness_dependency_cache_ttl_seconds = 8
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+
+            cache_key = _readiness_dependency_cache_key(include_database_contract=True)
+            _TRADING_DEPENDENCY_HEALTH_CACHE[cache_key]["checked_at"] = datetime.now(
+                timezone.utc
+            ) - timedelta(seconds=120)
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(_mock_postgres.call_count, 2)
+            self.assertEqual(_mock_clickhouse.call_count, 2)
+            self.assertEqual(_mock_alpaca.call_count, 2)
+            payload = response.json()
+            self.assertEqual(
+                payload["dependencies"]["readiness_cache"]["cache_used"], False
+            )
+        finally:
+            settings.trading_enabled = original
+            settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
+            settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
+
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": False, "detail": "down"})
     @patch(
@@ -460,6 +575,8 @@ class TestTradingApi(TestCase):
                 payload["dependencies"]["database"]["schema_head_signature"], "7f8e4d0"
             )
             self.assertIn("checked_at", payload["dependencies"]["database"])
+            self.assertIn("readiness_cache", payload["dependencies"])
+            self.assertIn("cache_used", payload["dependencies"]["readiness_cache"])
         finally:
             settings.trading_enabled = original
 
@@ -595,7 +712,10 @@ class TestTradingApi(TestCase):
                 payload["dependencies"]["database"]["schema_current"], True
             )
             self.assertFalse(payload["dependencies"]["database"]["account_scope_ready"])
-            self.assertIn("legacy unique index detected", payload["dependencies"]["database"]["account_scope_errors"][0])
+            self.assertIn(
+                "legacy unique index detected",
+                payload["dependencies"]["database"]["account_scope_errors"][0],
+            )
             self.assertEqual(
                 payload["dependencies"]["database"]["schema_head_signature"], "7f8e4d0"
             )
