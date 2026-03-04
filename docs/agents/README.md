@@ -34,6 +34,7 @@ When documents disagree, use this precedence order:
 If you are changing behavior, update 1-3 first, then ensure 4-5 describe the resulting system accurately.
 
 For env and gRPC source-of-truth changes in this branch:
+
 - Update chart contracts in `charts/agents/templates/validation.yaml`.
 - Configure precedence and migration details in:
   - `designs/chart-env-vars-merge-precedence.md`
@@ -152,6 +153,7 @@ For env and gRPC source-of-truth changes in this branch:
 - [designs/controller-controllers-deployment-grpc-off.md](designs/controller-controllers-deployment-grpc-off.md)
 - [designs/controller-controllers-deployment-migrations-skip.md](designs/controller-controllers-deployment-migrations-skip.md)
 - [designs/controller-failed-reconcile-events.md](designs/controller-failed-reconcile-events.md)
+- [designs/jangar-control-plane-operability-reliability-assessment.md](designs/jangar-control-plane-operability-reliability-assessment.md)
 - [designs/controller-finalizer-conventions.md](designs/controller-finalizer-conventions.md)
 - [designs/controller-kubectl-version-compat.md](designs/controller-kubectl-version-compat.md)
 - [designs/controller-namespace-scope-parse-validate.md](designs/controller-namespace-scope-parse-validate.md)
