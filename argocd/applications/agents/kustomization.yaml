@@ -32,6 +32,9 @@ resources:
   - nats-service.yaml
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
 helmGlobals:
   chartHome: ../../../charts
 helmCharts:
