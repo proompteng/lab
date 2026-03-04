@@ -20,6 +20,13 @@ export type ControlPlaneCacheResource = {
   status: Record<string, unknown>
 }
 
+export type ControlPlaneCacheResourceRow = {
+  resource: ControlPlaneCacheResource
+  lastSeenAt: Timestamp | null
+  updatedAt: Timestamp | null
+  resourceUpdatedAt: Timestamp | null
+}
+
 export type UpsertControlPlaneCacheResourceInput = {
   key: ControlPlaneCacheKey
   uid: string | null
@@ -59,9 +66,9 @@ export type ControlPlaneCacheStore = {
   upsertResource: (input: UpsertControlPlaneCacheResourceInput) => Promise<void>
   markDeleted: (key: ControlPlaneCacheKey) => Promise<void>
   markNotSeenSince: (input: { cluster: string; kind: string; namespace: string; since: Timestamp }) => Promise<void>
-  getResource: (key: ControlPlaneCacheKey) => Promise<ControlPlaneCacheResource | null>
+  getResource: (key: ControlPlaneCacheKey) => Promise<ControlPlaneCacheResourceRow | null>
   listResources: (input: ListControlPlaneCacheResourcesInput) => Promise<{
-    items: ControlPlaneCacheResource[]
+    items: ControlPlaneCacheResourceRow[]
     total: number
   }>
 }
@@ -203,7 +210,7 @@ export const createControlPlaneCacheStore = (options: StoreOptions = {}): Contro
     await ready
     const row = await db
       .selectFrom('agents_control_plane.resources_current')
-      .select(['resource'])
+      .select(['resource', 'last_seen_at', 'updated_at', 'resource_updated_at'])
       .where('cluster', '=', key.cluster)
       .where('kind', '=', key.kind)
       .where('namespace', '=', key.namespace)
@@ -211,7 +218,12 @@ export const createControlPlaneCacheStore = (options: StoreOptions = {}): Contro
       .where('deleted_at', 'is', null)
       .executeTakeFirst()
     if (!row) return null
-    return row.resource as unknown as ControlPlaneCacheResource
+    return {
+      resource: row.resource as unknown as ControlPlaneCacheResource,
+      lastSeenAt: row.last_seen_at,
+      updatedAt: row.updated_at,
+      resourceUpdatedAt: row.resource_updated_at,
+    }
   }
 
   const listResources: ControlPlaneCacheStore['listResources'] = async (input) => {
@@ -244,7 +256,10 @@ export const createControlPlaneCacheStore = (options: StoreOptions = {}): Contro
     const [{ count }] = await base.select((eb) => eb.fn.countAll<string>().as('count')).execute()
     const total = Number.parseInt(count ?? '0', 10) || 0
 
-    let list = base.select(['resource']).orderBy('resource_updated_at', 'desc').orderBy('name', 'asc')
+    let list = base
+      .select(['resource', 'last_seen_at', 'updated_at', 'resource_updated_at'])
+      .orderBy('resource_updated_at', 'desc')
+      .orderBy('name', 'asc')
 
     if (limit) {
       list = list.limit(limit)
@@ -253,7 +268,12 @@ export const createControlPlaneCacheStore = (options: StoreOptions = {}): Contro
     const rows = await list.execute()
     return {
       total,
-      items: rows.map((row) => row.resource as unknown as ControlPlaneCacheResource),
+      items: rows.map((row) => ({
+        resource: row.resource as unknown as ControlPlaneCacheResource,
+        lastSeenAt: row.last_seen_at,
+        updatedAt: row.updated_at,
+        resourceUpdatedAt: row.resource_updated_at,
+      })),
     }
   }
 

@@ -14,6 +14,11 @@ import {
 import { createKubernetesClient } from '~/server/primitives-kube'
 import { createPrimitivesStore } from '~/server/primitives-store'
 import { createKubectlWatchStream } from '~/server/primitives-watch'
+import {
+  buildCacheFreshnessState,
+  cacheStateToResponse,
+  resolveCacheFreshnessConfig,
+} from '~/server/control-plane-cache-freshness'
 
 export const Route = createFileRoute('/api/agents/control-plane/resource')({
   server: {
@@ -44,6 +49,11 @@ export const getPrimitiveResource = async (
   const kube = deps.kubeClient ?? createKubernetesClient()
   const stream = url.searchParams.get('stream') === 'true' || url.searchParams.get('stream') === '1'
 
+  const resolveCacheEnabled = () => {
+    const cacheFlag = (process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED ?? '').trim().toLowerCase()
+    return cacheFlag === '1' || cacheFlag === 'true' || cacheFlag === 'yes' || cacheFlag === 'on'
+  }
+
   try {
     if (stream) {
       const args = ['get', resolved.resource, name, '-n', namespace, '-o', 'json', '--watch', '--output-watch-events']
@@ -70,8 +80,7 @@ export const getPrimitiveResource = async (
       })
     }
 
-    const cacheFlag = (process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED ?? '').trim().toLowerCase()
-    const cacheEnabled = cacheFlag === '1' || cacheFlag === 'true' || cacheFlag === 'yes' || cacheFlag === 'on'
+    const cacheEnabled = resolveCacheEnabled()
     const cacheKinds = new Set([
       'Agent',
       'AgentRun',
@@ -84,12 +93,25 @@ export const getPrimitiveResource = async (
     if (cacheEnabled && cacheKinds.has(resolved.kind)) {
       const cluster = (process.env.JANGAR_CONTROL_PLANE_CACHE_CLUSTER ?? 'default').trim() || 'default'
       let store: ReturnType<typeof createControlPlaneCacheStore> | null = null
+      const cacheConfig = resolveCacheFreshnessConfig()
+      const cacheCheckedAt = new Date()
       try {
         store = createControlPlaneCacheStore()
         await store.ready
         const cached = await store.getResource({ cluster, kind: resolved.kind, namespace, name })
         if (cached) {
-          return okResponse({ ok: true, kind: resolved.kind, namespace, resource: cached })
+          const freshness = buildCacheFreshnessState(cached.lastSeenAt, cacheCheckedAt, cacheConfig)
+          if (!freshness.isFresh && !cacheConfig.allowStale) {
+            // Explicitly require live reads when cache data is stale and stale reads are disabled.
+          } else {
+            return okResponse({
+              ok: true,
+              kind: resolved.kind,
+              namespace,
+              resource: cached.resource,
+              cache: cacheStateToResponse(freshness),
+            })
+          }
         }
       } catch {
         // Fall back to kubectl get for transient DB issues.
