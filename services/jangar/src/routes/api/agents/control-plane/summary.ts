@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { type AgentPrimitiveKind, resolvePrimitiveKind } from '~/server/primitives-control-plane'
 import { asRecord, asString, normalizeNamespace, okResponse } from '~/server/primitives-http'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
-import { createControlPlaneCacheStore } from '~/server/control-plane-cache-store'
+import { createControlPlaneCacheStore, type ControlPlaneCacheStore } from '~/server/control-plane-cache-store'
 import {
   buildCacheFreshnessState,
   cacheStateToResponse,
@@ -123,7 +123,7 @@ export const getControlPlaneSummary = async (
   request: Request,
   deps: {
     kubeClient?: Pick<KubernetesClient, 'list'>
-    cacheStoreFactory?: typeof createControlPlaneCacheStore
+    cacheStoreFactory?: () => ControlPlaneCacheStore
   } = {},
 ) => {
   const url = new URL(request.url)
@@ -131,8 +131,8 @@ export const getControlPlaneSummary = async (
   const kube = deps.kubeClient ?? createKubernetesClient()
   const cacheStoreFactory = deps.cacheStoreFactory ?? createControlPlaneCacheStore
 
-  let cacheStore: ReturnType<typeof createControlPlaneCacheStore> | null = null
-  const getCacheStore = async () => {
+  let cacheStore: ControlPlaneCacheStore | null = null
+  const getCacheStore = async (): Promise<ControlPlaneCacheStore> => {
     if (cacheStore) return cacheStore
     cacheStore = cacheStoreFactory()
     await cacheStore.ready
