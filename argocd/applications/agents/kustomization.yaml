@@ -43,4 +43,4 @@ helmCharts:
     namespace: agents
     valuesFile: values.yaml
     version: 0.9.4
-    includeCRDs: true
+    includeCRDs: false
