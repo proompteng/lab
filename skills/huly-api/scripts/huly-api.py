@@ -38,6 +38,8 @@ DEFAULT_DOCUMENT_PARENT = 'document:ids:NoParent'
 DEFAULT_RANK = '0|zzzzzz:'
 DEFAULT_TEAMSPACE = 'PROOMPTENG'
 DEFAULT_TRACKER_URL = 'https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues'
+MAX_INLINE_MISSION_BODY_CHARS = 900
+TRUNCATION_NOTICE = '\n\n[Truncated for Huly storage compatibility. Full details are in the channel update.]'
 
 
 @dataclass
@@ -195,6 +197,18 @@ def build_upsert_mission_context_message(*, metadata: dict[str, str]) -> str:
     if not segments:
         return ''
     return ' | '.join(segments)
+
+
+def ensure_inline_body_limit(body: str) -> str:
+    text = body.strip()
+    if len(text) <= MAX_INLINE_MISSION_BODY_CHARS:
+        return text
+
+    reserved = len(TRUNCATION_NOTICE)
+    cutoff = MAX_INLINE_MISSION_BODY_CHARS - reserved
+    if cutoff < 1:
+        return text[:MAX_INLINE_MISSION_BODY_CHARS]
+    return f'{text[:cutoff].rstrip()}{TRUNCATION_NOTICE}'
 
 
 def is_worker_scoped_token_source(source: str) -> bool:
@@ -627,6 +641,7 @@ def create_or_update_issue(
     status: str,
     priority: int,
 ) -> dict[str, Any]:
+    body = ensure_inline_body_limit(body)
     project = resolve_project(context, project_ref)
     project_id = str(project.get('_id') or '')
     project_identifier = str(project.get('identifier') or '').strip()
@@ -724,6 +739,7 @@ def create_or_update_document(
     body: str,
     mission_id: str,
 ) -> dict[str, Any]:
+    body = ensure_inline_body_limit(body)
     teamspace = resolve_teamspace(context, teamspace_ref)
     teamspace_id = str(teamspace.get('_id') or '')
     if not teamspace_id:
