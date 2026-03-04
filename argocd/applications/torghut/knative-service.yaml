@@ -26,7 +26,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:77850cb550ef7078ffe70dc4be5a4552daaeda9d197ad56dc594c898c3a5947f
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:6bf54586aab618047fd10613e591e1b90b4f9cd8335b96112d36030e5ee863b8
           ports:
             - name: http1
               containerPort: 8181
@@ -74,9 +74,9 @@ spec:
             - name: CLICKHOUSE_TIMEOUT_SECONDS
               value: "10"
             - name: TRADING_ENABLED
-              value: "false"
-            - name: TRADING_KILL_SWITCH_ENABLED
               value: "true"
+            - name: TRADING_KILL_SWITCH_ENABLED
+              value: "false"
             - name: TRADING_FEATURE_FLAGS_ENABLED
               value: "false"
             - name: TRADING_FEATURE_FLAGS_URL
@@ -412,9 +412,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.562.0-240-gd2c5dccc
+              value: v0.562.0-219-gf4510305
             - name: TORGHUT_COMMIT
-              value: d2c5dccccbcae7add3bb0d15659e579538021b52
+              value: f45103058baf1b47917c057f7c0b3fa8b5d227b0
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config
