@@ -1,5 +1,10 @@
 import { spawn } from 'node:child_process'
 import { recordKubeWatchError, recordKubeWatchEvent, recordKubeWatchRestart } from '~/server/metrics'
+import {
+  recordWatchReliabilityError,
+  recordWatchReliabilityEvent,
+  recordWatchReliabilityRestart,
+} from '~/server/control-plane-watch-reliability'
 
 type WatchEvent = {
   type?: string
@@ -108,6 +113,10 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
       restartTimer = null
       start()
     }, restartDelayMs)
+    recordWatchReliabilityRestart({
+      resource: normalizedResource,
+      namespace: normalizedNamespace,
+    })
   }
 
   const start = () => {
@@ -142,6 +151,10 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
           namespace: normalizedNamespace,
           type: eventType,
         })
+        recordWatchReliabilityEvent({
+          resource: normalizedResource,
+          namespace: normalizedNamespace,
+        })
         void onEvent(payload)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -149,6 +162,10 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
           resource: normalizedResource,
           namespace: normalizedNamespace,
           reason: 'parse_error',
+        })
+        recordWatchReliabilityError({
+          resource: normalizedResource,
+          namespace: normalizedNamespace,
         })
         onError?.(new Error(`${logPrefix} failed to parse watch event: ${message}`))
       }
@@ -175,6 +192,10 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
             namespace: normalizedNamespace,
             reason: 'stderr_message',
           })
+          recordWatchReliabilityError({
+            resource: normalizedResource,
+            namespace: normalizedNamespace,
+          })
           onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stderr: ${message}`))
         }
       })
@@ -184,6 +205,10 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
         namespace: normalizedNamespace,
         reason: 'stderr_unavailable',
       })
+      recordWatchReliabilityError({
+        resource: normalizedResource,
+        namespace: normalizedNamespace,
+      })
       onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stderr unavailable`))
     }
     child.on('error', (error) => {
@@ -191,6 +216,10 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
         resource: normalizedResource,
         namespace: normalizedNamespace,
         reason: 'spawn_error',
+      })
+      recordWatchReliabilityError({
+        resource: normalizedResource,
+        namespace: normalizedNamespace,
       })
       onError?.(error instanceof Error ? error : new Error(String(error)))
       scheduleRestart('spawn_error')
@@ -202,6 +231,10 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
           resource: normalizedResource,
           namespace: normalizedNamespace,
           reason: `close_${String(code ?? 'unknown')}`,
+        })
+        recordWatchReliabilityError({
+          resource: normalizedResource,
+          namespace: normalizedNamespace,
         })
         onError?.(new Error(`${logPrefix} ${resource} (${namespace}) closed with code ${code ?? 'unknown'}`))
       }

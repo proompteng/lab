@@ -127,6 +127,36 @@ export const ControlPlaneStatusPanel = ({
         </div>
 
         <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Watch reliability
+          </div>
+          <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-foreground">Kubernetes watch health</span>
+              <StatusBadge label={status.watch_reliability.status} />
+            </div>
+            <div className="text-muted-foreground">
+              Window: {status.watch_reliability.window_minutes}m · Streams: {status.watch_reliability.observed_streams}
+            </div>
+            <div className="text-muted-foreground">
+              Events: {renderSummaryValue(status.watch_reliability.total_events)} · Errors:{' '}
+              {renderSummaryValue(status.watch_reliability.total_errors)} · Restarts:{' '}
+              {renderSummaryValue(status.watch_reliability.total_restarts)}
+            </div>
+            {status.watch_reliability.streams.length > 0 ? (
+              <ul className="space-y-1 pt-1 text-muted-foreground">
+                {status.watch_reliability.streams.map((entry) => (
+                  <li key={`${entry.resource}:${entry.namespace}`} className="text-[11px]">
+                    {entry.resource}/{entry.namespace}: events {entry.events} · errors {entry.errors} · restarts{' '}
+                    {entry.restarts}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="space-y-2">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Dependencies</div>
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">

@@ -6,6 +6,10 @@ import { getDb } from '~/server/db'
 import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
+import {
+  getWatchReliabilitySummary,
+  type ControlPlaneWatchReliabilitySummary,
+} from '~/server/control-plane-watch-reliability'
 
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
@@ -54,6 +58,16 @@ export type NamespaceStatus = {
   degraded_components: string[]
 }
 
+export type ControlPlaneWatchReliability = {
+  status: ControlPlaneWatchReliabilitySummary['status']
+  window_minutes: number
+  observed_streams: number
+  total_events: number
+  total_errors: number
+  total_restarts: number
+  streams: ControlPlaneWatchReliabilitySummary['streams']
+}
+
 export type ControlPlaneStatus = {
   service: string
   generated_at: string
@@ -73,6 +87,7 @@ export type ControlPlaneStatus = {
   runtime_adapters: RuntimeAdapterStatus[]
   database: DatabaseStatus
   grpc: GrpcStatus
+  watch_reliability: ControlPlaneWatchReliability
   namespaces: NamespaceStatus[]
 }
 
@@ -89,6 +104,7 @@ export type ControlPlaneStatusDeps = {
   getOrchestrationControllerHealth?: () => ControllerHealth
   resolveTemporalAdapter?: () => Promise<RuntimeAdapterStatus>
   checkDatabase?: () => Promise<DatabaseStatus>
+  getWatchReliabilitySummary?: () => ControlPlaneWatchReliabilitySummary
 }
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
@@ -284,6 +300,7 @@ export const buildControlPlaneStatus = async (
 
   const database = await (deps.checkDatabase ?? checkDatabase)()
   const grpcStatus = options.grpc
+  const watchReliability = (deps.getWatchReliabilitySummary ?? getWatchReliabilitySummary)()
 
   const degradedComponents = [
     ...controllers
@@ -292,6 +309,7 @@ export const buildControlPlaneStatus = async (
     ...runtimeAdapters.filter((adapter) => adapter.status === 'degraded').map((adapter) => `runtime:${adapter.name}`),
     ...(database.status === 'healthy' ? [] : ['database']),
     ...(grpcStatus.enabled && grpcStatus.status !== 'healthy' ? ['grpc'] : []),
+    ...(watchReliability.status === 'degraded' ? ['watch_reliability'] : []),
   ]
 
   const now = (deps.now ?? (() => new Date()))()
@@ -316,6 +334,15 @@ export const buildControlPlaneStatus = async (
     runtime_adapters: runtimeAdapters,
     database,
     grpc: grpcStatus,
+    watch_reliability: {
+      status: watchReliability.status,
+      window_minutes: watchReliability.window_minutes,
+      observed_streams: watchReliability.observed_streams,
+      total_events: watchReliability.total_events,
+      total_errors: watchReliability.total_errors,
+      total_restarts: watchReliability.total_restarts,
+      streams: watchReliability.streams,
+    },
     namespaces: [
       {
         namespace: options.namespace,
