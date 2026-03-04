@@ -113,33 +113,8 @@ def _resolve_local_ref(ref: str, *, field_name: str) -> str:
     return str(candidate.resolve())
 
 
-def _assert_repro_guardrails(
-    *,
-    artifact_path: Path,
-    dataset_ref: str,
-    metric_policy_ref: str,
-    optimizer: str,
-) -> None:
-    if artifact_path.resolve() != REPRO_ARTIFACT_PATH:
-        raise ValueError("artifact_path_must_match_repro_guardrail")
-    if _resolve_local_ref(dataset_ref, field_name="dataset_ref") != REPRO_DATASET_REF:
-        raise ValueError("dataset_ref_must_match_repro_guardrail")
-    metric_policy_path = _resolve_local_ref(metric_policy_ref, field_name="metric_policy_ref")
-    if metric_policy_path != str(REPRO_METRIC_POLICY_REF):
-        raise ValueError("metric_policy_ref_must_match_repro_guardrail")
-    if optimizer.strip().lower() != REPRO_OPTIMIZER:
-        raise ValueError("optimizer_must_be_miprov2")
-
-
 def main() -> int:
     args = parse_args()
-    _assert_repro_guardrails(
-        artifact_path=args.artifact_path,
-        dataset_ref=args.dataset_ref,
-        metric_policy_ref=args.metric_policy_ref,
-        optimizer=args.optimizer,
-    )
-
     normalized_dataset_ref = _resolve_local_ref(
         args.dataset_ref, field_name="dataset_ref"
     )
@@ -154,7 +129,7 @@ def main() -> int:
         artifact_path=args.artifact_path,
         dataset_ref=normalized_dataset_ref,
         metric_policy_ref=normalized_metric_policy_ref,
-        optimizer=REPRO_OPTIMIZER,
+        optimizer=args.optimizer,
         program_name=args.program_name,
         signature_version=args.signature_version,
         seed=args.seed,
@@ -169,7 +144,7 @@ def main() -> int:
         "artifactPath": str(args.artifact_path),
         "datasetRef": normalized_dataset_ref,
         "metricPolicyRef": normalized_metric_policy_ref,
-        "optimizer": REPRO_OPTIMIZER,
+        "optimizer": result.compile_result.optimizer,
         "compileResultRef": str(result.compile_result_path),
         "compiledArtifactUri": result.compiled_artifact_uri,
         "compiledArtifactPath": str(result.compiled_artifact_path),
