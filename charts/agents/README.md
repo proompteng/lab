@@ -384,6 +384,9 @@ envFromSecretRefs:
   - `JANGAR_GRPC_ENABLED` = `grpc.enabled`
   - `JANGAR_GRPC_HOST` = `0.0.0.0`
   - `JANGAR_GRPC_PORT` = `grpc.port`
+  - `JANGAR_CONTROL_PLANE_CACHE_ENABLED` (enable cache reads; defaults to `0` in controllers-only mode, `1` in control-plane mode)
+  - `JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS` (default: `120`; controls freshness window for cache row reuse)
+  - `JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE` (default: `true`; set to `false`/`0` for strict cache freshness)
 - For controller keys, pin in `controllers.env.vars` (or `env.vars` when not reserved/managed) when you intentionally diverge from defaults:
   - `JANGAR_GRPC_ENABLED=0`
   - `JANGAR_GRPC_HOST=0.0.0.0`
