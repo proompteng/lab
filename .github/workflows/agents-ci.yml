@@ -172,6 +172,7 @@ jobs:
             shift 2
 
             local heartbeat_pid
+            local timeout_status=0
             local status=0
 
             (
@@ -188,10 +189,11 @@ jobs:
               KIND_HEARTBEAT_PID="${heartbeat_pid}"
             fi
 
-            if timeout "${timeout_minutes}m" "$@"; then
+            if timeout -k 30s "${timeout_minutes}m" "$@"; then
               status=0
             else
               status=$?
+              timeout_status="$status"
             fi
 
             if [ "${phase}" = "Docker build" ]; then
@@ -202,6 +204,13 @@ jobs:
               kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
               wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
               KIND_HEARTBEAT_PID=0
+            fi
+
+            if [ "${status}" -ne 0 ]; then
+              echo "::error::${phase} failed with exit code ${status} for ${IMAGE}."
+              if [ "${timeout_status}" -eq 124 ]; then
+                echo "::error::${phase} exceeded ${timeout_minutes}m timeout for ${IMAGE}."
+              fi
             fi
 
             return "${status}"
