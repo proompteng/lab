@@ -174,6 +174,9 @@ jobs:
             cp -R "${WORKSPACE}/packages/cx-tools/." "${PRUNE_DIR}/json/packages/cx-tools/"
           fi
 
+          find "${PRUNE_DIR}/full" "${PRUNE_DIR}/json" \
+            -type d -name node_modules -prune -exec rm -rf {} +
+
           copy_pruned_workspace_dist() {
             local pkg_dir
             local rel_path
