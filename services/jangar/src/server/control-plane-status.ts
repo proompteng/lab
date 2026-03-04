@@ -849,16 +849,17 @@ const buildRolloutReliability = async (deps: {
 
   const inactiveSchedules = stages.filter((stage) => !stage.is_active).length
   const staleSchedules = stages.filter((stage) => stage.is_stale).length
+  const observedSchedules = stages.length
 
   const isDegraded = stages.length === 0 || inactiveSchedules > 0 || staleSchedules > 0
   const message = isDegraded
-    ? `rollout reliability degraded: ${inactiveSchedules} inactive schedules and ${staleSchedules} stale schedules`
-    : 'rollout reliability healthy'
+    ? `rollout reliability degraded: ${observedSchedules} stages observed, ${inactiveSchedules} inactive, ${staleSchedules} stale`
+    : `rollout reliability healthy: ${stages.length} stages observed`
 
   return {
     status: isDegraded ? 'degraded' : 'healthy',
     window_minutes: windowMinutes,
-    observed_schedules: stages.length,
+    observed_schedules: observedSchedules,
     inactive_schedules: inactiveSchedules,
     stale_schedules: staleSchedules,
     message,
