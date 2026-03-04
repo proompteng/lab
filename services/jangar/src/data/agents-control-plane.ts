@@ -152,6 +152,26 @@ export type WorkflowsReliabilityStatus = {
   top_failure_reasons: string[]
 }
 
+export type DeploymentRolloutStatus = {
+  name: string
+  namespace: string
+  status: 'healthy' | 'degraded' | 'unknown' | 'disabled'
+  desired_replicas: number
+  ready_replicas: number
+  available_replicas: number
+  updated_replicas: number
+  unavailable_replicas: number
+  message: string
+}
+
+export type ControlPlaneRolloutHealth = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  observed_deployments: number
+  degraded_deployments: number
+  deployments: DeploymentRolloutStatus[]
+  message: string
+}
+
 export type ControlPlaneWatchReliabilityStream = {
   resource: string
   namespace: string
@@ -208,6 +228,7 @@ export type ControlPlaneStatus = {
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
+  rollout_health: ControlPlaneRolloutHealth
   namespaces: NamespaceStatus[]
 }
 

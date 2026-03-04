@@ -23,6 +23,7 @@ const DEFAULT_WORKFLOWS_SWARMS = ['jangar-control-plane']
 const DEFAULT_WORKFLOWS_NAMESPACES = ['agents']
 const DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = 2
 const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
+const DEFAULT_ROLLOUT_DEPLOYMENTS = ['agents']
 const MAX_TOP_FAILURE_REASONS = 5
 const MIN_WINDOW_MINUTES = 1
 const MAX_WINDOW_MINUTES = 24 * 60
@@ -70,6 +71,26 @@ export type WorkflowsReliabilityStatus = {
   backoff_limit_exceeded_jobs: number
   window_minutes: number
   top_failure_reasons: string[]
+}
+
+type DeploymentRolloutStatus = {
+  name: string
+  namespace: string
+  status: 'healthy' | 'degraded' | 'unknown' | 'disabled'
+  desired_replicas: number
+  ready_replicas: number
+  available_replicas: number
+  updated_replicas: number
+  unavailable_replicas: number
+  message: string
+}
+
+type ControlPlaneRolloutHealth = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  observed_deployments: number
+  degraded_deployments: number
+  deployments: DeploymentRolloutStatus[]
+  message: string
 }
 
 export type DatabaseStatus = {
@@ -124,6 +145,7 @@ export type ControlPlaneStatus = {
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
   workflows: WorkflowsReliabilityStatus
+  rollout_health: ControlPlaneRolloutHealth
   namespaces: NamespaceStatus[]
 }
 
@@ -334,6 +356,184 @@ const resolveWorkflowNamespaces = (optionsNamespace: string) => {
   } catch (error) {
     console.warn(`[jangar] failed to parse JANGAR_AGENTS_CONTROLLER_NAMESPACES: ${normalizeMessage(error)}`)
     return fallback
+  }
+}
+
+const readRolloutDeploymentNames = () => {
+  const configured = parseEnvStringList('JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS')
+  if (configured.length > 0) return uniqueStrings(configured)
+  return [...DEFAULT_ROLLOUT_DEPLOYMENTS]
+}
+
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
+
+const readDeploymentCondition = (deployment: Record<string, unknown>, conditionType: string) => {
+  const status = asRecord(deployment.status) ?? {}
+  const conditions = asArray(status.conditions)
+  return conditions.find((condition) => {
+    const parsedCondition = asRecord(condition)
+    if (!parsedCondition) return false
+    return asString(parsedCondition.type) === conditionType
+  })
+}
+
+const safeDeploymentNumber = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.floor(value))
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0
+  }
+  return 0
+}
+
+const buildDeploymentRolloutEntry = (
+  deployment: Record<string, unknown>,
+  namespace: string,
+): DeploymentRolloutStatus => {
+  const metadata = asRecord(deployment.metadata)
+  const status = asRecord(deployment.status)
+  const spec = asRecord(deployment.spec)
+  if (!metadata || !status || !spec) {
+    return {
+      name: asString(deployment.name) ?? '',
+      namespace,
+      status: 'unknown',
+      desired_replicas: 0,
+      ready_replicas: 0,
+      available_replicas: 0,
+      updated_replicas: 0,
+      unavailable_replicas: 0,
+      message: 'invalid deployment status payload',
+    }
+  }
+
+  const name = asString(metadata.name) ?? ''
+  const desiredReplicas = safeDeploymentNumber(spec.replicas)
+  const readyReplicas = safeDeploymentNumber(status.readyReplicas)
+  const availableReplicas = safeDeploymentNumber(status.availableReplicas)
+  const updatedReplicas = safeDeploymentNumber(status.updatedReplicas)
+  const unavailableReplicas = safeDeploymentNumber(status.unavailableReplicas)
+
+  if (desiredReplicas === 0) {
+    return {
+      name,
+      namespace,
+      status: 'disabled',
+      desired_replicas: desiredReplicas,
+      ready_replicas: readyReplicas,
+      available_replicas: availableReplicas,
+      updated_replicas: updatedReplicas,
+      unavailable_replicas: unavailableReplicas,
+      message: 'scaled to zero replicas',
+    }
+  }
+
+  const availableCondition = readDeploymentCondition(deployment, 'Available')
+  const progressingCondition = readDeploymentCondition(deployment, 'Progressing')
+  const availableConditionHealthy = (asString(availableCondition?.status) ?? '').toLowerCase() === 'true'
+  const progressingConditionHealthy = (asString(progressingCondition?.status) ?? '').toLowerCase() === 'true'
+  const isReplicaMismatch =
+    readyReplicas < desiredReplicas ||
+    availableReplicas < desiredReplicas ||
+    updatedReplicas < desiredReplicas ||
+    unavailableReplicas > 0
+
+  const reasons: string[] = []
+  if (!availableConditionHealthy) {
+    reasons.push('available condition is false')
+  }
+  if (!progressingConditionHealthy) {
+    reasons.push('progressing condition is not true')
+  }
+  if (isReplicaMismatch) {
+    reasons.push(
+      `replicas are behind: ready=${readyReplicas}, available=${availableReplicas}, updated=${updatedReplicas}, desired=${desiredReplicas}`,
+    )
+  }
+
+  const isHealthy = reasons.length === 0
+  if (isHealthy) {
+    return {
+      name,
+      namespace,
+      status: 'healthy',
+      desired_replicas: desiredReplicas,
+      ready_replicas: readyReplicas,
+      available_replicas: availableReplicas,
+      updated_replicas: updatedReplicas,
+      unavailable_replicas: unavailableReplicas,
+      message: 'deployment rollout healthy',
+    }
+  }
+
+  return {
+    name,
+    namespace,
+    status: 'degraded',
+    desired_replicas: desiredReplicas,
+    ready_replicas: readyReplicas,
+    available_replicas: availableReplicas,
+    updated_replicas: updatedReplicas,
+    unavailable_replicas: unavailableReplicas,
+    message: reasons.join('; '),
+  }
+}
+
+const unknownRolloutHealth = (): ControlPlaneRolloutHealth => ({
+  status: 'unknown',
+  observed_deployments: 0,
+  degraded_deployments: 0,
+  deployments: [],
+  message: 'rollout health unavailable (kubernetes query failed)',
+})
+
+const buildRolloutHealth = async ({
+  namespace,
+  kube,
+}: {
+  namespace: string
+  kube: KubernetesClient
+}): Promise<ControlPlaneRolloutHealth> => {
+  const names = readRolloutDeploymentNames()
+  const response = await kube.list('deployments', namespace)
+  const items = parseItems(response)
+  const byName = new Map<string, Record<string, unknown>>()
+  for (const item of items) {
+    const metadata = asRecord(item.metadata) ?? {}
+    const itemName = asString(metadata.name)
+    if (itemName) {
+      byName.set(itemName, item)
+    }
+  }
+
+  const deployments: DeploymentRolloutStatus[] = names.map((name) => {
+    const deployment = byName.get(name)
+    if (!deployment) {
+      return {
+        name,
+        namespace,
+        status: 'degraded',
+        desired_replicas: 0,
+        ready_replicas: 0,
+        available_replicas: 0,
+        updated_replicas: 0,
+        unavailable_replicas: 0,
+        message: `deployment ${name} not found in namespace ${namespace}`,
+      }
+    }
+    return buildDeploymentRolloutEntry(deployment, namespace)
+  })
+  const degradedDeployments = deployments.filter((deployment) => deployment.status === 'degraded').length
+  const isDegraded = degradedDeployments > 0
+
+  return {
+    status: isDegraded ? 'degraded' : 'healthy',
+    observed_deployments: deployments.length,
+    degraded_deployments: degradedDeployments,
+    deployments,
+    message: isDegraded
+      ? `${degradedDeployments} configured deployment(s) degraded in rollout`
+      : `${deployments.length} configured deployment(s) healthy`,
   }
 }
 
@@ -553,6 +753,12 @@ export const buildControlPlaneStatus = async (
   const database = await (deps.checkDatabase ?? checkDatabase)()
   const grpcStatus = options.grpc
   const watchReliability = (deps.getWatchReliabilitySummary ?? getWatchReliabilitySummary)()
+  let rolloutHealth: ControlPlaneRolloutHealth
+  try {
+    rolloutHealth = await buildRolloutHealth({ namespace: options.namespace, kube: createKubernetesClient() })
+  } catch {
+    rolloutHealth = unknownRolloutHealth()
+  }
   const warningBackoffThreshold = resolveWorkflowThreshold(
     process.env.JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
     DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
@@ -588,6 +794,7 @@ export const buildControlPlaneStatus = async (
     ...(watchReliability.status === 'degraded' ? ['watch_reliability'] : []),
     ...(isWorkflowsWarning || isWorkflowsDegraded ? ['workflows'] : []),
     ...(isWorkflowsDegraded ? ['runtime:workflows'] : []),
+    ...(rolloutHealth.status === 'degraded' ? ['rollout_health'] : []),
   ]
 
   return {
@@ -618,6 +825,7 @@ export const buildControlPlaneStatus = async (
       total_restarts: watchReliability.total_restarts,
       streams: watchReliability.streams,
     },
+    rollout_health: rolloutHealth,
     workflows,
     namespaces: [
       {

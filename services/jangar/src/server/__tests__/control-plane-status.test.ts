@@ -15,6 +15,27 @@ vi.mock('~/server/primitives-kube', async () => {
   }
 })
 
+const setRolloutDeploymentList = (items: unknown[] = []) => {
+  kubeClientMocks.createKubernetesClient.mockReturnValue({
+    list: vi.fn(async () => ({ items })),
+  })
+}
+
+const healthyRolloutDeployment = {
+  metadata: { name: 'agents' },
+  spec: { replicas: 1 },
+  status: {
+    readyReplicas: 1,
+    availableReplicas: 1,
+    updatedReplicas: 1,
+    unavailableReplicas: 0,
+    conditions: [
+      { type: 'Available', status: 'True' },
+      { type: 'Progressing', status: 'True' },
+    ],
+  },
+}
+
 const healthyController = {
   enabled: true,
   started: true,
@@ -91,6 +112,7 @@ const watchReliabilityDegraded: ControlPlaneWatchReliability = {
 
 describe('control-plane status', () => {
   afterEach(() => {
+    kubeClientMocks.createKubernetesClient.mockReset()
     vi.clearAllMocks()
     delete process.env.JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD
     delete process.env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD
@@ -99,6 +121,7 @@ describe('control-plane status', () => {
   })
 
   it('returns healthy summary when components are healthy', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment])
     const status = await buildControlPlaneStatus(
       {
         namespace: 'agents',
@@ -148,9 +171,13 @@ describe('control-plane status', () => {
     expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)
     expect(status.watch_reliability).toEqual(watchReliabilityHealthy)
     expect(status.watch_reliability.streams).toHaveLength(2)
+    expect(status.rollout_health.status).toBe('healthy')
+    expect(status.rollout_health.observed_deployments).toBe(1)
+    expect(status.rollout_health.degraded_deployments).toBe(0)
   })
 
   it('marks degraded components when controllers or database fail', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment])
     const degradedController = {
       enabled: true,
       started: false,
@@ -208,6 +235,7 @@ describe('control-plane status', () => {
   it('marks workflows as degraded when backoff count crosses warning threshold', async () => {
     process.env.JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = '2'
     process.env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = '3'
+    setRolloutDeploymentList([healthyRolloutDeployment])
 
     const status = await buildControlPlaneStatus(
       {
