@@ -12,6 +12,11 @@ import {
   type ControlPlaneWatchReliabilitySummary,
 } from '~/server/control-plane-watch-reliability'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
+import type {
+  ControlPlaneRolloutHealth,
+  DeploymentRolloutStatus,
+  RolloutFailureReason,
+} from '~/data/agents-control-plane'
 
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
@@ -22,6 +27,8 @@ const DEFAULT_WORKFLOW_MONITOR_SWARMS = 'jangar-control-plane,torghut-quant'
 const DEFAULT_ROLLOUT_MONITOR_SWARMS = 'jangar-control-plane,torghut-quant'
 const DEFAULT_ROLLOUT_WINDOW_MINUTES = 120
 const WORKFLOW_WINDOW_REASON_LIMIT = 5
+const ROLLOUT_WINDOW_REASON_LIMIT = 5
+const DEFAULT_ROLLOUT_DEPLOYMENTS = 'agents'
 
 type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>
 
@@ -101,6 +108,9 @@ export type ControlPlaneRolloutStageReliability = {
   last_transition_at: string
   is_active: boolean
   is_stale: boolean
+  failed_runs_last_window: number
+  backoff_failures_last_window: number
+  top_failure_reasons: RolloutFailureReason[]
   reasons: string[]
 }
 
@@ -151,6 +161,7 @@ export type ControlPlaneStatus = {
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
+  rollout_health: ControlPlaneRolloutHealth
   namespaces: NamespaceStatus[]
 }
 
@@ -263,6 +274,173 @@ const readBackoffDegradeThreshold = () => {
   return clampPositiveNumber(parsed, DEFAULT_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD)
 }
 
+const readRolloutDeploymentNames = () => {
+  const raw = process.env.JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS?.trim()
+  const fallback = DEFAULT_ROLLOUT_DEPLOYMENTS
+  const names = (raw && raw.length > 0 ? raw : fallback)
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0)
+  return names.length > 0 ? names : fallback.split(',')
+}
+
+const toLowerStatusText = (value: unknown) => {
+  const raw = asString(value)
+  return raw?.toLowerCase() ?? ''
+}
+
+const readDeploymentCondition = (deployment: Record<string, unknown>, conditionType: string) => {
+  const status = asRecord(deployment.status)
+  const conditions = asArray(status.conditions).map(asRecord)
+  return conditions.find((condition) => asString(condition.type) === conditionType)
+}
+
+const buildDeploymentRolloutEntry = (
+  deployment: Record<string, unknown>,
+  namespace: string,
+): DeploymentRolloutStatus => {
+  const metadata = asRecord(deployment.metadata)
+  const status = asRecord(deployment.status)
+  const spec = asRecord(deployment.spec)
+
+  const name = asString(metadata.name) ?? ''
+  const desiredReplicas = asNumber(spec.replicas, 0)
+  const readyReplicas = asNumber(status.readyReplicas, 0)
+  const availableReplicas = asNumber(status.availableReplicas, 0)
+  const updatedReplicas = asNumber(status.updatedReplicas, 0)
+  const unavailableReplicas = asNumber(status.unavailableReplicas, 0)
+  const observedGeneration = asNumber(status.observedGeneration, 0)
+  const generation = asNumber(metadata.generation, 0)
+
+  if (desiredReplicas === 0) {
+    return {
+      name,
+      namespace,
+      status: 'disabled',
+      desired_replicas: desiredReplicas,
+      ready_replicas: readyReplicas,
+      available_replicas: availableReplicas,
+      updated_replicas: updatedReplicas,
+      unavailable_replicas: unavailableReplicas,
+      message: 'scaled to zero replicas',
+    }
+  }
+
+  const availableCondition = readDeploymentCondition(deployment, 'Available')
+  const progressingCondition = readDeploymentCondition(deployment, 'Progressing')
+  const available = toLowerStatusText(availableCondition?.status)
+  const progressing = toLowerStatusText(progressingCondition?.status)
+
+  const isReplicaMismatch =
+    readyReplicas < desiredReplicas || availableReplicas < desiredReplicas || updatedReplicas < desiredReplicas
+  const isUnavailable = unavailableReplicas > 0
+  const isUnavailableCondition = available === 'false'
+  const isProgressing = progressing === 'true'
+  const isObservedGenerationStale = generation > 0 && observedGeneration > 0 && observedGeneration < generation
+
+  const messageParts = [] as string[]
+  if (isReplicaMismatch) {
+    messageParts.push(
+      `replicas are behind: ready=${readyReplicas}, available=${availableReplicas}, updated=${updatedReplicas}, desired=${desiredReplicas}`,
+    )
+  }
+  if (isUnavailable) {
+    messageParts.push(`unavailable replicas: ${unavailableReplicas}`)
+  }
+  if (isUnavailableCondition) {
+    messageParts.push('available condition is false')
+  }
+  if (!isProgressing && progressingCondition) {
+    messageParts.push('progressing condition is not true')
+  }
+  if (isObservedGenerationStale) {
+    messageParts.push(`observedGeneration behind: observed=${observedGeneration}, generation=${generation}`)
+  }
+
+  const isHealthy = messageParts.length === 0
+  if (isHealthy) {
+    return {
+      name,
+      namespace,
+      status: 'healthy',
+      desired_replicas: desiredReplicas,
+      ready_replicas: readyReplicas,
+      available_replicas: availableReplicas,
+      updated_replicas: updatedReplicas,
+      unavailable_replicas: unavailableReplicas,
+      message: 'deployment rollout healthy',
+    }
+  }
+
+  return {
+    name,
+    namespace,
+    status: 'degraded',
+    desired_replicas: desiredReplicas,
+    ready_replicas: readyReplicas,
+    available_replicas: availableReplicas,
+    updated_replicas: updatedReplicas,
+    unavailable_replicas: unavailableReplicas,
+    message: messageParts.join('; '),
+  }
+}
+
+const buildRolloutHealth = async (deps: {
+  kube: Pick<KubernetesClient, 'list'>
+  namespace: string
+}): Promise<ControlPlaneRolloutHealth> => {
+  const names = readRolloutDeploymentNames()
+  const response = await deps.kube.list('deployments', deps.namespace)
+  const record = asRecord(response)
+  const items = asArray(record.items).map(asRecord)
+
+  const byName = new Map<string, Record<string, unknown>>()
+  for (const item of items) {
+    const name = asString(asRecord(item.metadata).name)
+    if (name) {
+      byName.set(name, item)
+    }
+  }
+
+  const deployments: DeploymentRolloutStatus[] = names.map((name) => {
+    const deployment = byName.get(name)
+    if (!deployment) {
+      return {
+        name,
+        namespace: deps.namespace,
+        status: 'degraded',
+        desired_replicas: 0,
+        ready_replicas: 0,
+        available_replicas: 0,
+        updated_replicas: 0,
+        unavailable_replicas: 0,
+        message: `deployment not found in namespace ${deps.namespace}`,
+      }
+    }
+    return buildDeploymentRolloutEntry(deployment, deps.namespace)
+  })
+
+  const degradedDeployments = deployments.filter((deployment) => deployment.status === 'degraded').length
+  const isDegraded = degradedDeployments > 0
+
+  return {
+    status: isDegraded ? 'degraded' : 'healthy',
+    observed_deployments: deployments.length,
+    degraded_deployments: degradedDeployments,
+    deployments,
+    message: isDegraded
+      ? `${degradedDeployments} configured deployment(s) degraded in rollout`
+      : `${deployments.length} configured deployment(s) healthy`,
+  }
+}
+
+const unknownRolloutHealth = (): ControlPlaneRolloutHealth => ({
+  status: 'unknown',
+  observed_deployments: 0,
+  degraded_deployments: 0,
+  deployments: [],
+  message: 'rollout health unavailable (kubernetes query failed)',
+})
 const isWorkflowJobName = (name: string, swarms: string[]) =>
   swarms.some((swarm) => name === swarm || name.startsWith(`${swarm}-`))
 
@@ -271,6 +449,40 @@ const toTopFailureReasons = (entries: Map<string, number>) =>
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, WORKFLOW_WINDOW_REASON_LIMIT)
     .map(([reason, count]) => ({ reason, count }))
+
+const toTopRolloutFailureReasons = (entries: Map<string, number>) =>
+  [...entries.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, ROLLOUT_WINDOW_REASON_LIMIT)
+    .map(([reason, count]) => ({ reason, count }))
+
+type RolloutScheduleJobStats = {
+  failedRuns: number
+  backoffFailures: number
+  failureReasons: Map<string, number>
+}
+
+const createRolloutScheduleJobStats = (): RolloutScheduleJobStats => ({
+  failedRuns: 0,
+  backoffFailures: 0,
+  failureReasons: new Map(),
+})
+
+const resolveScheduleFromJobName = (jobName: string, scheduleNames: string[]) => {
+  const isStepJob = /-step-\d+-attempt-/.test(jobName)
+  if (!isStepJob) {
+    return null
+  }
+
+  const strippedAttempt = jobName.replace(/-attempt-[^/]+$/, '')
+  const scheduleCandidate = strippedAttempt.replace(/-step-\d+$/, '')
+  for (const scheduleName of scheduleNames) {
+    if (scheduleCandidate === scheduleName || scheduleCandidate.startsWith(`${scheduleName}-`)) {
+      return scheduleName
+    }
+  }
+  return null
+}
 
 const MIGRATION_TABLE_CANDIDATES = ['kysely_migration', 'kysely_migrations'] as const
 
@@ -472,9 +684,11 @@ const buildRolloutReliability = async (deps: {
 
   const schedulesResponse = await deps.kube.list('schedules.schedules.proompteng.ai', deps.options.namespace)
   const cronResponse = await deps.kube.list('cronjob', deps.options.namespace)
+  const jobsResponse = await deps.kube.list('jobs', deps.options.namespace)
 
   const scheduleItems = asArray(asRecord(schedulesResponse).items).map(asRecord)
   const cronItems = asArray(asRecord(cronResponse).items).map(asRecord)
+  const jobItems = asArray(asRecord(jobsResponse).items).map(asRecord)
 
   const cronHealthBySchedule = new Map<
     string,
@@ -528,6 +742,44 @@ const buildRolloutReliability = async (deps: {
     })
   }
 
+  const scheduleNames = scheduleItems
+    .map((schedule) => asString(asRecord(schedule.metadata).name))
+    .filter(Boolean) as string[]
+  const scheduleStatsByName = new Map<string, RolloutScheduleJobStats>()
+
+  for (const job of jobItems) {
+    const metadata = asRecord(job.metadata)
+    const jobName = asString(metadata.name) ?? ''
+    if (!jobName) continue
+
+    const createdAtMs = parseTimestampMs(metadata.creationTimestamp)
+    if (createdAtMs === null || createdAtMs < windowStartMs) {
+      continue
+    }
+
+    const scheduleName = resolveScheduleFromJobName(jobName, scheduleNames)
+    if (!scheduleName) {
+      continue
+    }
+
+    const status = asRecord(job.status)
+    if (asNumber(status.failed, 0) <= 0) {
+      continue
+    }
+
+    const conditions = asArray(status.conditions).map(asRecord)
+    const failedCondition = conditions.find((condition) => asString(condition.type) === 'Failed')
+    const reason = asString(failedCondition?.reason) ?? 'Failed'
+
+    const stats = scheduleStatsByName.get(scheduleName) ?? createRolloutScheduleJobStats()
+    stats.failedRuns += 1
+    if (reason === 'BackoffLimitExceeded') {
+      stats.backoffFailures += 1
+    }
+    stats.failureReasons.set(reason, (stats.failureReasons.get(reason) ?? 0) + 1)
+    scheduleStatsByName.set(scheduleName, stats)
+  }
+
   const stages = scheduleItems
     .map((schedule) => {
       const metadata = asRecord(schedule.metadata)
@@ -561,6 +813,15 @@ const buildRolloutReliability = async (deps: {
       if (isStale) {
         reasons.push(`no successful run in last ${windowMinutes}m`)
       }
+      const jobStats = scheduleStatsByName.get(name)
+      const failedRuns = jobStats?.failedRuns ?? 0
+      const backoffFailures = jobStats?.backoffFailures ?? 0
+      if (failedRuns > 0) {
+        reasons.push(`${failedRuns} failed runs in last ${windowMinutes}m`)
+      }
+      if (backoffFailures > 0) {
+        reasons.push(`${backoffFailures} backoff failures in last ${windowMinutes}m`)
+      }
 
       const transitionTime = conditions.find((condition) => asString(condition.type) === 'Ready')?.lastTransitionTime
       const lastTransitionAt = asString(transitionTime)
@@ -575,6 +836,9 @@ const buildRolloutReliability = async (deps: {
         last_transition_at: asString(lastTransitionAt) || asString(cronHealth?.transitionTime) || '',
         is_active: isActive,
         is_stale: isStale,
+        failed_runs_last_window: failedRuns,
+        backoff_failures_last_window: backoffFailures,
+        top_failure_reasons: jobStats ? toTopRolloutFailureReasons(jobStats.failureReasons) : [],
         reasons,
       }
       return stageObj
@@ -819,6 +1083,12 @@ export const buildControlPlaneStatus = async (
   const database = await (deps.checkDatabase ?? checkDatabase)()
   const grpcStatus = options.grpc
   const watchReliability = (deps.getWatchReliabilitySummary ?? getWatchReliabilitySummary)()
+  let rolloutHealth: ControlPlaneRolloutHealth
+  try {
+    rolloutHealth = await buildRolloutHealth({ kube, namespace: options.namespace })
+  } catch {
+    rolloutHealth = unknownRolloutHealth()
+  }
 
   const degradedComponents = [
     ...controllers
@@ -830,6 +1100,7 @@ export const buildControlPlaneStatus = async (
     ...(database.status === 'healthy' ? [] : ['database']),
     ...(grpcStatus.enabled && grpcStatus.status !== 'healthy' ? ['grpc'] : []),
     ...(watchReliability.status === 'degraded' ? ['watch_reliability'] : []),
+    ...(rolloutHealth.status === 'degraded' ? ['rollout_health'] : []),
   ]
 
   const leaderElection = getLeaderElectionStatus()
@@ -864,6 +1135,7 @@ export const buildControlPlaneStatus = async (
       total_restarts: watchReliability.total_restarts,
       streams: watchReliability.streams,
     },
+    rollout_health: rolloutHealth,
     namespaces: [
       {
         namespace: options.namespace,

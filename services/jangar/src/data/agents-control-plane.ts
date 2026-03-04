@@ -121,6 +121,11 @@ export type WorkflowFailureReason = {
   count: number
 }
 
+export type RolloutFailureReason = {
+  reason: string
+  count: number
+}
+
 export type WorkflowReliabilityStatus = {
   status: 'healthy' | 'degraded' | 'unknown'
   window_minutes: number
@@ -142,6 +147,9 @@ export type ControlPlaneRolloutStageReliability = {
   last_transition_at: string
   is_active: boolean
   is_stale: boolean
+  failed_runs_last_window: number
+  backoff_failures_last_window: number
+  top_failure_reasons: RolloutFailureReason[]
   reasons: string[]
 }
 
@@ -152,6 +160,26 @@ export type ControlPlaneRolloutReliability = {
   inactive_schedules: number
   stale_schedules: number
   stages: ControlPlaneRolloutStageReliability[]
+}
+
+export type DeploymentRolloutStatus = {
+  name: string
+  namespace: string
+  status: 'healthy' | 'degraded' | 'unknown' | 'disabled'
+  desired_replicas: number
+  ready_replicas: number
+  available_replicas: number
+  updated_replicas: number
+  unavailable_replicas: number
+  message: string
+}
+
+export type ControlPlaneRolloutHealth = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  observed_deployments: number
+  degraded_deployments: number
+  deployments: DeploymentRolloutStatus[]
+  message: string
 }
 
 export type DatabaseMigrationConsistency = {
@@ -231,6 +259,7 @@ export type ControlPlaneStatus = {
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
+  rollout_health: ControlPlaneRolloutHealth
   namespaces: NamespaceStatus[]
 }
 
