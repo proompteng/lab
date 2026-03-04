@@ -1,62 +1,28 @@
-import { Effect } from 'effect'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
-const { CodexAppServerClientMock, ctorCalls, stopMock } = vi.hoisted(() => {
-  const calls: Array<Record<string, unknown>> = []
-  const stop = vi.fn()
-  const mock = vi.fn(function (this: unknown, options: Record<string, unknown>) {
-    calls.push(options)
-    return {
-      stop,
-    }
-  })
-  return {
-    CodexAppServerClientMock: mock,
-    ctorCalls: calls,
-    stopMock: stop,
-  }
-})
+import { __private } from '~/server/codex-client'
 
-vi.mock('@proompteng/codex', () => ({
-  CodexAppServerClient: CodexAppServerClientMock,
-}))
-
-import { getCodexClient, resetCodexClient } from '~/server/codex-client'
-
-const readSummaryConfig = () => {
-  const options = ctorCalls.at(-1)
-  if (!options) throw new Error('codex client constructor was not called')
-  const threadConfig = options.threadConfig as Record<string, unknown>
-  return threadConfig.model_reasoning_summary
-}
-
-describe('codex-client reasoning summary config', () => {
-  beforeEach(() => {
-    ctorCalls.length = 0
-    stopMock.mockReset()
-    delete process.env.JANGAR_CODEX_MODEL_REASONING_SUMMARY
-    resetCodexClient()
-  })
-
+describe('codex-client thread config', () => {
   afterEach(() => {
-    delete process.env.JANGAR_CODEX_MODEL_REASONING_SUMMARY
-    resetCodexClient()
+    delete process.env.JANGAR_MCP_URL
+    delete process.env.UI_PORT
+    delete process.env.PORT
   })
 
-  it('defaults model reasoning summary to none', async () => {
-    await Effect.runPromise(getCodexClient())
-    expect(readSummaryConfig()).toBe('none')
+  it('does not set model reasoning summary', () => {
+    const threadConfig = __private.resolveThreadConfig()
+    expect(threadConfig).not.toHaveProperty('model_reasoning_summary')
   })
 
-  it('accepts valid model reasoning summary overrides', async () => {
-    process.env.JANGAR_CODEX_MODEL_REASONING_SUMMARY = 'concise'
-    await Effect.runPromise(getCodexClient())
-    expect(readSummaryConfig()).toBe('concise')
+  it('uses explicit JANGAR_MCP_URL when provided', () => {
+    process.env.JANGAR_MCP_URL = 'https://example.test/mcp'
+    const threadConfig = __private.resolveThreadConfig()
+    expect(threadConfig.mcp_servers.memories.url).toBe('https://example.test/mcp')
   })
 
-  it('falls back to none for invalid model reasoning summary values', async () => {
-    process.env.JANGAR_CODEX_MODEL_REASONING_SUMMARY = 'invalid'
-    await Effect.runPromise(getCodexClient())
-    expect(readSummaryConfig()).toBe('none')
+  it('falls back to port-based mcp url when env override is missing', () => {
+    process.env.UI_PORT = '9090'
+    const threadConfig = __private.resolveThreadConfig()
+    expect(threadConfig.mcp_servers.memories.url).toBe('http://127.0.0.1:9090/mcp')
   })
 })

@@ -133,8 +133,6 @@ spec:
               value: /workspace/.bun-install-cache
             - name: CODEX_CWD
               value: /workspace/lab
-            - name: JANGAR_CODEX_MODEL_REASONING_SUMMARY
-              value: none
             - name: CODEX_REPO_SLUG
               value: proompteng/lab
             - name: CODEX_REPO_URL
