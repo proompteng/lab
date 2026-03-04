@@ -58,7 +58,6 @@ spec:
               masquerade: {}
               ports:
                 - port: 22
-                - port: 3389
       networks:
         - name: default
           pod: {}
