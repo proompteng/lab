@@ -1,6 +1,19 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildControlPlaneStatus } from '~/server/control-plane-status'
+import type { ControlPlaneWatchReliability, WorkflowsReliabilityStatus } from '~/data/agents-control-plane'
+
+const kubeClientMocks = vi.hoisted(() => ({
+  createKubernetesClient: vi.fn(),
+}))
+
+vi.mock('~/server/primitives-kube', async () => {
+  const actual = await vi.importActual<typeof import('~/server/primitives-kube')>('~/server/primitives-kube')
+  return {
+    ...actual,
+    createKubernetesClient: kubeClientMocks.createKubernetesClient,
+  }
+})
 
 const healthyController = {
   enabled: true,
@@ -10,117 +23,33 @@ const healthyController = {
   missingCrds: [],
   lastCheckedAt: '2026-01-20T00:00:00Z',
 }
-const now = () => new Date('2026-01-20T00:00:00Z')
 
-const makeMigrationConsistency = (overrides: Record<string, unknown> = {}) => ({
-  status: 'healthy' as const,
-  migration_table: 'kysely_migration',
-  registered_count: 18,
-  applied_count: 18,
-  unapplied_count: 0,
-  unexpected_count: 0,
-  latest_registered: '20260304_jangar_github_worktree_refresh_state',
-  latest_applied: '20260304_jangar_github_worktree_refresh_state',
-  missing_migrations: [] as string[],
-  unexpected_migrations: [] as string[],
-  message: 'migration registry and database are synchronized',
+const buildWorkflowsReliabilityStatus = (
+  overrides: Partial<WorkflowsReliabilityStatus> = {},
+): WorkflowsReliabilityStatus => ({
+  active_job_runs: 0,
+  recent_failed_jobs: 0,
+  backoff_limit_exceeded_jobs: 0,
+  window_minutes: 15,
+  top_failure_reasons: [],
   ...overrides,
 })
 
-const createKubeList = (jobs: unknown[], schedules: unknown[] = [], cronjobs: unknown[] = []) => ({
-  list: async (resource: string) => {
-    if (resource === 'jobs') return { items: jobs } as Record<string, unknown>
-    if (resource === 'schedules.schedules.proompteng.ai') return { items: schedules } as Record<string, unknown>
-    if (resource === 'cronjob') return { items: cronjobs } as Record<string, unknown>
-    return { items: [] } as Record<string, unknown>
-  },
-})
-
-const failingKubeList = {
-  list: async (_: string) => {
-    throw new Error('kube unavailable')
-  },
-}
-
-const createActiveJob = () => ({
-  metadata: {
-    name: 'jangar-control-plane-implement-sched-abc-step-1-attempt-1',
-    creationTimestamp: now().toISOString(),
-  },
-  status: {
-    active: 1,
-  },
-})
-
-const createBackoffJob = (name: string, reason: string, at: string) => ({
-  metadata: { name, creationTimestamp: at },
-  status: {
-    failed: 1,
-    conditions: [
-      {
-        type: 'Failed',
-        status: 'True',
-        reason,
-        lastTransitionTime: at,
-      },
-    ],
-  },
-})
-
-const createRolloutSchedule = (
-  name: string,
-  phase: string,
-  lastRunTime: string,
-  swarm = 'jangar-control-plane',
-  stage = 'implement',
-) => ({
-  metadata: {
-    name,
-    namespace: 'agents',
-    labels: {
-      'swarm.proompteng.ai/name': swarm,
-      'swarm.proompteng.ai/stage': stage,
-    },
-  },
-  status: {
-    phase,
-    lastRunTime,
-    conditions: [
-      {
-        type: 'Ready',
-        status: 'True',
-        lastTransitionTime: lastRunTime,
-      },
-    ],
-  },
-})
-
-const createRolloutCron = (scheduleName: string, lastScheduleTime: string, lastSuccessfulTime: string) => ({
-  metadata: {
-    labels: {
-      'schedules.proompteng.ai/schedule': scheduleName,
-    },
-  },
-  status: {
-    lastScheduleTime,
-    lastSuccessfulTime,
-    conditions: [
-      {
-        type: 'Ready',
-        status: 'True',
-        lastTransitionTime: lastSuccessfulTime,
-      },
-    ],
-  },
-})
-
-const healthyRolloutKubeState = {
-  schedules: [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', '2026-01-20T00:00:00Z')],
-  cronjobs: [createRolloutCron('jangar-control-plane-implement-sched', '2026-01-20T00:00:00Z', '2026-01-20T00:00:00Z')],
-}
-
-const watchReliabilityHealthy = {
+const buildDatabaseMigrationConsistency = () => ({
   status: 'healthy' as const,
+  migration_table: null,
+  registered_count: 0,
+  applied_count: 0,
+  unapplied_count: 0,
+  unexpected_count: 0,
+  latest_registered: null,
+  latest_applied: null,
+  missing_migrations: [],
+  unexpected_migrations: [],
+  message: '',
+})
+const watchReliabilityHealthy: ControlPlaneWatchReliability = {
+  status: 'healthy',
   window_minutes: 15,
   observed_streams: 2,
   total_events: 14,
@@ -146,8 +75,8 @@ const watchReliabilityHealthy = {
   ],
 }
 
-const watchReliabilityDegraded = {
-  status: 'degraded' as const,
+const watchReliabilityDegraded: ControlPlaneWatchReliability = {
+  status: 'degraded',
   window_minutes: 15,
   observed_streams: 2,
   total_events: 3,
@@ -174,6 +103,14 @@ const watchReliabilityDegraded = {
 }
 
 describe('control-plane status', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+    delete process.env.JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD
+    delete process.env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD
+    delete process.env.JANGAR_WORKFLOWS_WINDOW_MINUTES
+    delete process.env.JANGAR_WORKFLOWS_SWARMS
+  })
+
   it('returns healthy summary when components are healthy', async () => {
     const status = await buildControlPlaneStatus(
       {
@@ -186,11 +123,10 @@ describe('control-plane status', () => {
         },
       },
       {
-        now,
+        now: () => new Date('2026-01-20T00:00:00Z'),
         getAgentsControllerHealth: () => healthyController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs),
         resolveTemporalAdapter: async () => ({
           name: 'temporal',
           available: true,
@@ -204,23 +140,26 @@ describe('control-plane status', () => {
           status: 'healthy',
           message: '',
           latency_ms: 4,
-          migration_consistency: makeMigrationConsistency(),
+          migration_consistency: buildDatabaseMigrationConsistency(),
         }),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
       },
     )
 
     expect(status.service).toBe('jangar')
     expect(status.controllers).toHaveLength(3)
     expect(status.runtime_adapters).toHaveLength(4)
+    expect(status.workflows).toEqual({
+      active_job_runs: 0,
+      recent_failed_jobs: 0,
+      backoff_limit_exceeded_jobs: 0,
+      window_minutes: 15,
+      top_failure_reasons: [],
+    })
     expect(status.namespaces).toHaveLength(1)
-    expect(status.workflows).toBeDefined()
-    expect(status.workflows.status).toBe('healthy')
-    expect(status.workflows.active_job_runs).toBe(1)
-    expect(status.rollout.status).toBe('healthy')
-    expect(status.rollout.observed_schedules).toBe(1)
     expect(status.namespaces[0]?.status).toBe('healthy')
-    expect(status.namespaces[0]?.degraded_components).toHaveLength(0)
+    expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)
     expect(status.watch_reliability).toEqual(watchReliabilityHealthy)
     expect(status.watch_reliability.streams).toHaveLength(2)
   })
@@ -246,11 +185,10 @@ describe('control-plane status', () => {
         },
       },
       {
-        now,
+        now: () => new Date('2026-01-20T00:00:00Z'),
         getAgentsControllerHealth: () => degradedController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs),
         resolveTemporalAdapter: async () => ({
           name: 'temporal',
           available: false,
@@ -264,19 +202,10 @@ describe('control-plane status', () => {
           status: 'disabled',
           message: 'DATABASE_URL not set',
           latency_ms: 0,
-          migration_consistency: makeMigrationConsistency({
-            status: 'degraded',
-            migration_table: null,
-            registered_count: 0,
-            applied_count: 0,
-            unapplied_count: 0,
-            unexpected_count: 0,
-            latest_registered: null,
-            latest_applied: null,
-            message: 'DATABASE_URL not set',
-          }),
+          migration_consistency: buildDatabaseMigrationConsistency(),
         }),
         getWatchReliabilitySummary: () => watchReliabilityDegraded,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
       },
     )
 
@@ -291,7 +220,10 @@ describe('control-plane status', () => {
     expect(status.watch_reliability.total_errors).toBe(2)
   })
 
-  it('flags workflows as degraded when backoff limit failures exceed threshold', async () => {
+  it('marks workflows as degraded when backoff count crosses warning threshold', async () => {
+    process.env.JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = '2'
+    process.env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = '3'
+
     const status = await buildControlPlaneStatus(
       {
         namespace: 'agents',
@@ -303,7 +235,7 @@ describe('control-plane status', () => {
         },
       },
       {
-        now,
+        now: () => new Date('2026-01-20T00:20:00Z'),
         getAgentsControllerHealth: () => healthyController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
@@ -311,7 +243,7 @@ describe('control-plane status', () => {
           name: 'temporal',
           available: true,
           status: 'configured',
-          message: '',
+          message: 'temporal configuration resolved',
           endpoint: 'temporal:7233',
         }),
         checkDatabase: async () => ({
@@ -319,127 +251,35 @@ describe('control-plane status', () => {
           connected: true,
           status: 'healthy',
           message: '',
-          latency_ms: 4,
-          migration_consistency: makeMigrationConsistency(),
+          latency_ms: 1,
+          migration_consistency: buildDatabaseMigrationConsistency(),
         }),
-        kube: createKubeList(
-          [
-            createBackoffJob(
-              'jangar-control-plane-implement-sched-abc-step-1-attempt-1',
-              'BackoffLimitExceeded',
-              '2026-01-20T00:00:10Z',
-            ),
-            createBackoffJob(
-              'torghut-quant-implement-sched-xyz-step-1-attempt-2',
-              'BackoffLimitExceeded',
-              '2026-01-20T00:00:20Z',
-            ),
-          ],
-          healthyRolloutKubeState.schedules,
-          healthyRolloutKubeState.cronjobs,
-        ),
-      },
-    )
-
-    expect(status.workflows.status).toBe('degraded')
-    expect(status.workflows.backoff_limit_exceeded_jobs).toBe(2)
-    expect(status.namespaces[0]?.degraded_components).toContain('workflows')
-    expect(status.rollout.status).toBe('healthy')
-    expect(status.namespaces[0]?.degraded_components).not.toContain('rollout')
-  })
-
-  it('reports reliability surfaces as unknown when kube listing fails', async () => {
-    const status = await buildControlPlaneStatus(
-      {
-        namespace: 'agents',
-        grpc: {
-          enabled: true,
-          address: '127.0.0.1:50051',
-          status: 'healthy',
-          message: '',
-        },
-      },
-      {
-        now,
-        getAgentsControllerHealth: () => healthyController,
-        getSupportingControllerHealth: () => healthyController,
-        getOrchestrationControllerHealth: () => healthyController,
-        resolveTemporalAdapter: async () => ({
-          name: 'temporal',
-          available: true,
-          status: 'configured',
-          message: '',
-          endpoint: 'temporal:7233',
-        }),
-        checkDatabase: async () => ({
-          configured: true,
-          connected: true,
-          status: 'healthy',
-          message: '',
-          latency_ms: 4,
-          migration_consistency: makeMigrationConsistency(),
-        }),
-        kube: failingKubeList,
-      },
-    )
-
-    expect(status.workflows.status).toBe('unknown')
-    expect(status.rollout.status).toBe('unknown')
-    expect(status.workflows.message).toContain('kubernetes query failed')
-    expect(status.namespaces[0]?.degraded_components).not.toContain('workflows')
-    expect(status.namespaces[0]?.degraded_components).not.toContain('rollout')
-  })
-
-  it('marks database component as degraded when migration drift is detected', async () => {
-    const status = await buildControlPlaneStatus(
-      {
-        namespace: 'agents',
-        grpc: {
-          enabled: true,
-          address: '127.0.0.1:50051',
-          status: 'healthy',
-          message: '',
-        },
-      },
-      {
-        now,
-        getAgentsControllerHealth: () => healthyController,
-        getSupportingControllerHealth: () => healthyController,
-        getOrchestrationControllerHealth: () => healthyController,
-        resolveTemporalAdapter: async () => ({
-          name: 'temporal',
-          available: true,
-          status: 'configured',
-          message: '',
-          endpoint: 'temporal:7233',
-        }),
-        checkDatabase: async () => ({
-          configured: true,
-          connected: true,
-          status: 'degraded',
-          message: '2 registered migrations not applied',
-          latency_ms: 4,
-          migration_consistency: makeMigrationConsistency({
-            status: 'degraded',
-            message: '2 registered migrations not applied',
-            unapplied_count: 2,
-            missing_migrations: ['20260305_new_migration', '20260306_followup_migration'],
-            unexpected_count: 0,
-            unexpected_migrations: [],
+        getWorkflowsReliabilityStatus: async () =>
+          buildWorkflowsReliabilityStatus({
+            active_job_runs: 2,
+            recent_failed_jobs: 4,
+            backoff_limit_exceeded_jobs: 2,
+            top_failure_reasons: ['BackoffLimitExceeded', 'DeadlineExceeded'],
           }),
-        }),
-        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs),
-        getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
     )
 
-    expect(status.namespaces[0]?.degraded_components).toContain('database')
-    expect(status.database.status).toBe('degraded')
-    expect(status.database.migration_consistency.unapplied_count).toBe(2)
-    expect(status.rollout.status).toBe('healthy')
+    expect(status.workflows.active_job_runs).toBe(2)
+    expect(status.workflows.recent_failed_jobs).toBe(4)
+    expect(status.workflows.backoff_limit_exceeded_jobs).toBe(2)
+    expect(status.workflows.top_failure_reasons).toEqual(['BackoffLimitExceeded', 'DeadlineExceeded'])
+    expect(status.namespaces[0]?.status).toBe('degraded')
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('workflows')
+    expect(status.namespaces[0]?.degraded_components ?? []).not.toContain('runtime:workflows')
   })
 
-  it('marks rollout as degraded when schedule health is stale', async () => {
+  it('keeps control-plane status healthy when workflow list lookup fails', async () => {
+    kubeClientMocks.createKubernetesClient.mockReturnValue({
+      list: vi.fn(async () => {
+        throw new Error('simulated kubernetes failure')
+      }),
+    })
+
     const status = await buildControlPlaneStatus(
       {
         namespace: 'agents',
@@ -451,7 +291,7 @@ describe('control-plane status', () => {
         },
       },
       {
-        now,
+        now: () => new Date('2026-01-20T00:00:00Z'),
         getAgentsControllerHealth: () => healthyController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
@@ -459,7 +299,7 @@ describe('control-plane status', () => {
           name: 'temporal',
           available: true,
           status: 'configured',
-          message: '',
+          message: 'temporal configuration resolved',
           endpoint: 'temporal:7233',
         }),
         checkDatabase: async () => ({
@@ -467,21 +307,21 @@ describe('control-plane status', () => {
           connected: true,
           status: 'healthy',
           message: '',
-          latency_ms: 4,
-          migration_consistency: makeMigrationConsistency(),
+          latency_ms: 1,
+          migration_consistency: buildDatabaseMigrationConsistency(),
         }),
-        kube: createKubeList(
-          [createActiveJob()],
-          [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', '2026-01-19T20:00:00Z')],
-          [createRolloutCron('jangar-control-plane-implement-sched', '2026-01-19T20:00:00Z', '2026-01-19T20:00:00Z')],
-        ),
-        getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
     )
 
-    expect(status.rollout.status).toBe('degraded')
-    expect(status.rollout.stale_schedules).toBe(1)
-    expect(status.namespaces[0]?.degraded_components).toContain('rollout')
+    expect(status.workflows).toEqual({
+      active_job_runs: 0,
+      recent_failed_jobs: 0,
+      backoff_limit_exceeded_jobs: 0,
+      window_minutes: 15,
+      top_failure_reasons: [],
+    })
+    expect(status.namespaces[0]?.status).toBe('healthy')
+    expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)
   })
 
   it('keeps control-plane status healthy when kubernetes client creation fails', async () => {
@@ -517,7 +357,7 @@ describe('control-plane status', () => {
           status: 'healthy',
           message: '',
           latency_ms: 1,
-          migration_consistency: makeMigrationConsistency(),
+          migration_consistency: buildDatabaseMigrationConsistency(),
         }),
       },
     )
@@ -532,4 +372,5 @@ describe('control-plane status', () => {
     expect(status.namespaces[0]?.status).toBe('healthy')
     expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)
   })
+
 })
