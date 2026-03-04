@@ -186,6 +186,13 @@ Control-plane status endpoint behavior (`/api/agents/control-plane/status`) is d
   - `total_events`
   - `total_errors`
   - `total_restarts`
+- `status.rollout` includes rollout-stage reliability:
+  - `status`
+  - `window_minutes`
+  - `observed_schedules`
+  - `inactive_schedules`
+  - `stale_schedules`
+  - `stages`
 
 ## Terminal backend
 
@@ -237,6 +244,14 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
   - Promote degraded workflow status to hard degradation at this threshold.
 - `JANGAR_WORKFLOWS_SWARMS` (optional)
   - Comma-separated list of swarm names included in workflow status rollups (defaults to `jangar-control-plane`).
+- `JANGAR_CONTROL_PLANE_ROLLOUT_MONITORS` (optional)
+  - Comma-separated list of swarms included in rollout reliability monitoring.
+- `JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_SWARMS` (optional)
+  - Legacy fallback for rollout monitor selection.
+- `JANGAR_CONTROL_PLANE_WORKFLOW_SWARMS` (optional)
+  - Legacy fallback for rollout monitor selection.
+- `JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_WINDOW_MINUTES` (optional; default: `120`)
+  - Rollout staleness window for stage-schedule reliability.
 - `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (optional; default: `agents`)
   - Namespaces to scan for workflow jobs before label filtering.
 - `JANGAR_CONTROL_PLANE_WATCH_HEALTH_WINDOW_MINUTES` (optional; default: `15`)

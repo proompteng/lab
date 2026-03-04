@@ -104,6 +104,79 @@ const watchReliabilityDegraded: ControlPlaneWatchReliability = {
   ],
 }
 
+const scheduleMetadataLabels = {
+  'swarm.proompteng.ai/name': 'jangar-control-plane',
+}
+
+const buildRolloutSchedule = ({
+  name,
+  stage,
+  phase = 'Active',
+  namespace = 'agents',
+  lastRunAt = '2026-01-20T00:15:00Z',
+  lastSuccessfulRunAt,
+  labels = {},
+  reason,
+}: {
+  name: string
+  stage: string
+  phase?: string
+  namespace?: string
+  lastRunAt?: string
+  lastSuccessfulRunAt?: string | null
+  labels?: Record<string, string>
+  reason?: string
+}) => ({
+  apiVersion: 'schedules.proompteng.ai/v1alpha1',
+  kind: 'Schedule',
+  metadata: {
+    name,
+    namespace,
+    labels: {
+      ...scheduleMetadataLabels,
+      'swarm.proompteng.ai/stage': stage,
+      ...labels,
+    },
+  },
+  status: {
+    phase,
+    lastRunTime: lastRunAt,
+    ...(lastSuccessfulRunAt === undefined ? {} : { lastSuccessfulRunAt: lastSuccessfulRunAt }),
+    ...(reason == null
+      ? {}
+      : { conditions: [{ type: 'Ready', status: 'False', reason, lastTransitionTime: lastRunAt }] }),
+  },
+})
+
+const buildRolloutCronJob = ({
+  scheduleName,
+  namespace = 'agents',
+  suspended = false,
+  lastScheduleTime,
+  lastSuccessfulTime,
+}: {
+  scheduleName: string
+  namespace?: string
+  suspended?: boolean
+  lastScheduleTime?: string
+  lastSuccessfulTime?: string
+}) => ({
+  apiVersion: 'batch/v1',
+  kind: 'CronJob',
+  metadata: {
+    name: `${scheduleName}-cron`,
+    namespace,
+    labels: {
+      'schedules.proompteng.ai/schedule': scheduleName,
+    },
+  },
+  spec: { suspend: suspended },
+  status: {
+    ...(lastScheduleTime == null ? {} : { lastScheduleTime }),
+    ...(lastSuccessfulTime == null ? {} : { lastSuccessfulTime }),
+  },
+})
+
 describe('control-plane status', () => {
   afterEach(() => {
     vi.clearAllMocks()
@@ -111,6 +184,10 @@ describe('control-plane status', () => {
     delete process.env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD
     delete process.env.JANGAR_WORKFLOWS_WINDOW_MINUTES
     delete process.env.JANGAR_WORKFLOWS_SWARMS
+    delete process.env.JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_WINDOW_MINUTES
+    delete process.env.JANGAR_CONTROL_PLANE_ROLLOUT_MONITORS
+    delete process.env.JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_SWARMS
+    delete process.env.JANGAR_CONTROL_PLANE_WORKFLOW_SWARMS
   })
 
   it('returns healthy summary when components are healthy', async () => {
@@ -277,6 +354,171 @@ describe('control-plane status', () => {
     expect(status.namespaces[0]?.status).toBe('degraded')
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('workflows')
     expect(status.namespaces[0]?.degraded_components ?? []).not.toContain('runtime:workflows')
+  })
+
+  it('builds healthy rollout summary from schedule and cronjob status', async () => {
+    kubeClientMocks.createKubernetesClient.mockReturnValue({
+      list: vi.fn(async (resource: string) => {
+        if (resource === 'schedules.schedules.proompteng.ai') {
+          return {
+            items: [
+              buildRolloutSchedule({
+                name: 'jangar-control-plane-discover-sched',
+                stage: 'discover',
+                lastRunAt: '2026-01-20T00:15:00Z',
+              }),
+              buildRolloutSchedule({
+                name: 'jangar-control-plane-implement-sched',
+                stage: 'implement',
+                lastRunAt: '2026-01-20T00:12:00Z',
+              }),
+            ],
+          }
+        }
+        if (resource === 'cronjob') {
+          return {
+            items: [
+              buildRolloutCronJob({
+                scheduleName: 'jangar-control-plane-discover-sched',
+                lastScheduleTime: '2026-01-20T00:16:00Z',
+                lastSuccessfulTime: '2026-01-20T00:16:00Z',
+              }),
+              buildRolloutCronJob({
+                scheduleName: 'jangar-control-plane-implement-sched',
+                lastScheduleTime: '2026-01-20T00:13:00Z',
+                lastSuccessfulTime: '2026-01-20T00:13:00Z',
+              }),
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+    })
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:20:00Z'),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => ({
+          name: 'temporal',
+          available: true,
+          status: 'configured',
+          message: 'temporal configuration resolved',
+          endpoint: 'temporal:7233',
+        }),
+        checkDatabase: async () => ({
+          configured: true,
+          connected: true,
+          status: 'healthy',
+          message: '',
+          latency_ms: 1,
+          migration_consistency: buildDatabaseMigrationConsistency(),
+        }),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+      },
+    )
+
+    expect(status.rollout.status).toBe('healthy')
+    expect(status.rollout.observed_schedules).toBe(2)
+    expect(status.rollout.inactive_schedules).toBe(0)
+    expect(status.rollout.stale_schedules).toBe(0)
+    expect(status.namespaces[0]?.degraded_components ?? []).not.toContain('rollout')
+  })
+
+  it('marks rollout as degraded when schedules are stale or missing cronjobs', async () => {
+    process.env.JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_WINDOW_MINUTES = '10'
+    kubeClientMocks.createKubernetesClient.mockReturnValue({
+      list: vi.fn(async (resource: string) => {
+        if (resource === 'schedules.schedules.proompteng.ai') {
+          return {
+            items: [
+              buildRolloutSchedule({
+                name: 'jangar-control-plane-discover-sched',
+                stage: 'discover',
+                lastRunAt: '2026-01-20T00:20:00Z',
+              }),
+              buildRolloutSchedule({
+                name: 'jangar-control-plane-implement-sched',
+                stage: 'implement',
+                lastRunAt: '2026-01-20T00:05:00Z',
+              }),
+            ],
+          }
+        }
+        if (resource === 'cronjob') {
+          return {
+            items: [
+              buildRolloutCronJob({
+                scheduleName: 'jangar-control-plane-implement-sched',
+                lastScheduleTime: '2026-01-20T00:12:00Z',
+                lastSuccessfulTime: '2026-01-20T00:12:00Z',
+              }),
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+    })
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:30:00Z'),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => ({
+          name: 'temporal',
+          available: true,
+          status: 'configured',
+          message: 'temporal configuration resolved',
+          endpoint: 'temporal:7233',
+        }),
+        checkDatabase: async () => ({
+          configured: true,
+          connected: true,
+          status: 'healthy',
+          message: '',
+          latency_ms: 1,
+          migration_consistency: buildDatabaseMigrationConsistency(),
+        }),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+      },
+    )
+
+    expect(status.rollout.status).toBe('degraded')
+    expect(status.rollout.inactive_schedules).toBe(1)
+    expect(status.rollout.stale_schedules).toBe(1)
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('rollout')
+    expect(status.namespaces[0]?.status).toBe('degraded')
+    expect(status.rollout.stages).toHaveLength(2)
+    expect(status.rollout.stages.find((stage) => stage.name === 'jangar-control-plane-discover-sched')?.is_active).toBe(
+      false,
+    )
+    expect(status.rollout.stages.find((stage) => stage.name === 'jangar-control-plane-implement-sched')?.is_stale).toBe(
+      true,
+    )
   })
 
   it('keeps control-plane status healthy when workflow list lookup fails', async () => {

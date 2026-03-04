@@ -25,12 +25,19 @@ const DEFAULT_WORKFLOWS_NAMESPACES = ['agents']
 const DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = 2
 const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
 const MAX_TOP_FAILURE_REASONS = 5
+const DEFAULT_ROLLOUT_MONITORS = ['jangar-control-plane']
+const DEFAULT_ROLLOUT_MONITOR_WINDOW_MINUTES = 120
 const MIN_WINDOW_MINUTES = 1
 const MAX_WINDOW_MINUTES = 24 * 60
 const KUBERNETES_QUERY_FAILURE_MESSAGE_PREFIX = 'kubernetes query failed'
+const KUBERNETES_QUERY_FAILURE_ROLLOUT_SUFFIX = 'kubernetes query failed: rollout reliability failed'
 
 const WORKFLOW_JOB_RESOURCE = 'jobs.batch'
 const WORKFLOW_SCHEDULE_LABEL_SELECTOR = 'schedules.proompteng.ai/schedule'
+const ROLLOUT_SCHEDULE_RESOURCE = 'schedules.schedules.proompteng.ai'
+const ROLLOUT_CRONJOB_RESOURCE = 'cronjob'
+const ROLLOUT_STAGE_LABEL = 'swarm.proompteng.ai/stage'
+const ROLLOUT_SCHEDULE_LABEL = 'schedules.proompteng.ai/schedule'
 const SWARM_LABEL_SELECTOR = 'swarm.proompteng.ai/name'
 
 const STATUS_MS_PER_MINUTE = 60 * 1000
@@ -43,6 +50,14 @@ type WorkflowsReliabilityStatusInput = {
   namespaces: string[]
   windowMinutes: number
   swarms: string[]
+  kube: KubernetesClient
+}
+
+type RolloutReliabilityStatusInput = {
+  now: Date
+  namespace: string
+  swarms: string[]
+  windowMinutes: number
   kube: KubernetesClient
 }
 
@@ -120,6 +135,30 @@ export type ControlPlaneWatchReliability = {
   streams: ControlPlaneWatchReliabilitySummary['streams']
 }
 
+export type ControlPlaneRolloutStageReliability = {
+  name: string
+  namespace: string
+  swarm: string
+  stage: string
+  phase: string
+  last_run_at: string | null
+  last_successful_run_at: string | null
+  last_transition_at: string | null
+  is_active: boolean
+  is_stale: boolean
+  reasons: string[]
+}
+
+export type ControlPlaneRolloutReliability = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  message: string
+  window_minutes: number
+  observed_schedules: number
+  inactive_schedules: number
+  stale_schedules: number
+  stages: ControlPlaneRolloutStageReliability[]
+}
+
 export type ControlPlaneStatus = {
   service: string
   generated_at: string
@@ -137,6 +176,7 @@ export type ControlPlaneStatus = {
   }
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
+  rollout: ControlPlaneRolloutReliability
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
@@ -159,6 +199,7 @@ export type ControlPlaneStatusDeps = {
   checkDatabase?: () => Promise<DatabaseStatus>
   getWatchReliabilitySummary?: () => ControlPlaneWatchReliabilitySummary
   getWorkflowsReliabilityStatus?: (input: WorkflowsReliabilityStatusInput) => Promise<WorkflowsReliabilityStatus>
+  getRolloutReliabilityStatus?: (input: RolloutReliabilityStatusInput) => Promise<ControlPlaneRolloutReliability>
 }
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
@@ -494,6 +535,119 @@ const parseItems = (payload: unknown) => {
   })
 }
 
+const resolveRolloutMonitors = () => {
+  const monitors = parseEnvStringList('JANGAR_CONTROL_PLANE_ROLLOUT_MONITORS')
+  if (monitors.length > 0) return uniqueStrings(monitors)
+  const legacyMonitorSwarms = parseEnvStringList('JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_SWARMS')
+  if (legacyMonitorSwarms.length > 0) return uniqueStrings(legacyMonitorSwarms)
+  const legacyWorkflowsMonitors = parseEnvStringList('JANGAR_CONTROL_PLANE_WORKFLOW_SWARMS')
+  if (legacyWorkflowsMonitors.length > 0) return uniqueStrings(legacyWorkflowsMonitors)
+  return [...DEFAULT_ROLLOUT_MONITORS]
+}
+
+const resolveRolloutWindowMinutes = () =>
+  toSafeInt(
+    process.env.JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_WINDOW_MINUTES,
+    DEFAULT_ROLLOUT_MONITOR_WINDOW_MINUTES,
+    MIN_WINDOW_MINUTES,
+    MAX_WINDOW_MINUTES,
+  )
+
+const buildEmptyRolloutReliabilityStatus = (
+  windowMinutes: number,
+  status: ControlPlaneRolloutReliability['status'],
+  message: string,
+): ControlPlaneRolloutReliability => ({
+  status,
+  message,
+  window_minutes: windowMinutes,
+  observed_schedules: 0,
+  inactive_schedules: 0,
+  stale_schedules: 0,
+  stages: [],
+})
+
+const parseCronSuspended = (cron: Record<string, unknown> | null | undefined) => {
+  const spec = asRecord(cron?.spec) ?? {}
+  const suspended = spec.suspend
+  if (typeof suspended === 'boolean') return suspended
+  if (typeof suspended === 'string') {
+    const normalized = suspended.trim().toLowerCase()
+    if (normalized === 'true' || normalized === '1') return true
+    if (normalized === 'false' || normalized === '0') return false
+  }
+  return false
+}
+
+const buildRolloutStageReliability = (
+  scheduleName: string,
+  scheduleNamespace: string,
+  nowMs: number,
+  windowMinutes: number,
+  schedule: Record<string, unknown>,
+  cronResource: Record<string, unknown> | undefined,
+) => {
+  const status = asRecord(schedule.status) ?? {}
+  const metadata = asRecord(schedule.metadata) ?? {}
+  const labels = asRecord(metadata.labels) ?? {}
+  const phase = asString(status.phase) || 'unknown'
+  const stage = asString(labels[ROLLOUT_STAGE_LABEL]) || 'unknown'
+  const swarm = asString(labels[SWARM_LABEL_SELECTOR]) || 'unknown'
+  const lastRunAtMs = parseIsoMs(status.lastRunTime)
+  const lastSuccessfulRunAtMs =
+    parseIsoMs(status.lastSuccessfulRunTime) ??
+    parseIsoMs(readNested(asRecord(cronResource?.status) ?? {}, ['lastSuccessfulTime'])) ??
+    null
+  const lastTransitionAtMs = Array.isArray(status.conditions)
+    ? status.conditions
+        .map((condition) => parseIsoMs(readNested(condition, ['lastTransitionTime'])))
+        .filter((value): value is number => value !== null)
+        .sort((left, right) => right - left)[0]
+    : null
+
+  const isCronPresent = cronResource !== undefined
+  const isCronSuspended = parseCronSuspended(cronResource)
+  const isActive = phase === 'Active' && isCronPresent && !isCronSuspended
+  const isStale = lastRunAtMs === null ? true : nowMs - lastRunAtMs > windowMinutes * STATUS_MS_PER_MINUTE
+  const reasons = dedupeSorted(resolveConditionReasons(schedule))
+
+  if (!isActive) {
+    if (!isCronPresent) reasons.push('missing cronjob')
+    if (isCronSuspended) reasons.push('cronjob suspended')
+    if (phase !== 'Active') reasons.push(`schedule phase is ${phase}`)
+  }
+  if (isStale) reasons.push('schedule execution is stale')
+  const dedupedReasons = dedupeSorted(reasons)
+
+  return {
+    name: scheduleName,
+    namespace: scheduleNamespace,
+    swarm,
+    stage,
+    phase,
+    last_run_at: lastRunAtMs === null ? null : new Date(lastRunAtMs).toISOString(),
+    last_successful_run_at: lastSuccessfulRunAtMs === null ? null : new Date(lastSuccessfulRunAtMs).toISOString(),
+    last_transition_at: lastTransitionAtMs === null ? null : new Date(lastTransitionAtMs).toISOString(),
+    is_active: isActive,
+    is_stale: isStale,
+    reasons: dedupedReasons,
+  }
+}
+
+const resolveConditionReasons = (resource: Record<string, unknown> | null | undefined) => {
+  const status = asRecord(resource?.status) ?? {}
+  const conditions = Array.isArray(status.conditions) ? status.conditions : []
+  const seen = new Set<string>()
+  for (const condition of conditions) {
+    const conditionRecord = asRecord(condition)
+    if (!conditionRecord) continue
+    const reason = asString(conditionRecord.reason)
+    if (!reason) continue
+    seen.add(reason)
+  }
+  return [...seen]
+}
+
 const extractJobConditions = (job: Record<string, unknown>) => {
   const status = asRecord(job.status) ?? {}
   const conditions = status.conditions
@@ -505,6 +659,102 @@ const extractJobConditions = (job: Record<string, unknown>) => {
 
 const isBackoffLimitExceededCondition = (condition: Record<string, unknown>) =>
   asString(condition.reason) === 'BackoffLimitExceeded'
+
+const resolveRolloutReliabilityStatus = async ({
+  now,
+  namespace,
+  swarms,
+  windowMinutes,
+  kube,
+}: RolloutReliabilityStatusInput): Promise<ControlPlaneRolloutReliability> => {
+  const nowMs = now.getTime()
+  const uniqueSwarms = uniqueStrings(swarms)
+  const selector = uniqueSwarms.length > 0 ? `${SWARM_LABEL_SELECTOR} in (${Array.from(uniqueSwarms).join(',')})` : null
+
+  const [schedulesPayload, cronPayload] = await Promise.all([
+    kube.list(ROLLOUT_SCHEDULE_RESOURCE, namespace, selector ? `${selector}` : undefined),
+    kube.list(ROLLOUT_CRONJOB_RESOURCE, namespace, selector ? `${selector}` : undefined),
+  ])
+
+  const scheduleItems = parseItems(schedulesPayload)
+  const cronItems = parseItems(cronPayload)
+  const cronBySchedule = new Map<string, Record<string, unknown>>()
+  for (const cronItem of cronItems) {
+    const scheduleName = asString(readNested(cronItem, ['metadata', 'labels', ROLLOUT_SCHEDULE_LABEL]))
+    if (!scheduleName) continue
+    cronBySchedule.set(scheduleName, cronItem)
+  }
+
+  const stages: ControlPlaneRolloutStageReliability[] = []
+  let inactiveSchedules = 0
+  let staleSchedules = 0
+
+  for (const schedule of scheduleItems) {
+    const metadata = asRecord(schedule.metadata) ?? {}
+    const scheduleName = asString(metadata.name)
+    if (!scheduleName) continue
+    const scheduleNamespace = asString(metadata.namespace) ?? namespace
+    const cronResource = cronBySchedule.get(scheduleName)
+    const stage = buildRolloutStageReliability(
+      scheduleName,
+      scheduleNamespace,
+      nowMs,
+      windowMinutes,
+      schedule,
+      cronResource,
+    )
+    if (!stage.is_active) inactiveSchedules += 1
+    if (stage.is_stale) staleSchedules += 1
+    stages.push(stage)
+  }
+
+  stages.sort((left, right) => {
+    const namespaceCompare = left.namespace.localeCompare(right.namespace)
+    if (namespaceCompare !== 0) return namespaceCompare
+    if (left.swarm !== right.swarm) return left.swarm.localeCompare(right.swarm)
+    if (left.stage !== right.stage) return left.stage.localeCompare(right.stage)
+    return left.name.localeCompare(right.name)
+  })
+
+  if (stages.length === 0) {
+    return buildEmptyRolloutReliabilityStatus(windowMinutes, 'unknown', 'no matching rollout schedules found')
+  }
+
+  if (inactiveSchedules > 0 || staleSchedules > 0) {
+    return {
+      status: 'degraded',
+      message: `${inactiveSchedules} inactive schedule(s), ${staleSchedules} stale schedule(s)`,
+      window_minutes: windowMinutes,
+      observed_schedules: stages.length,
+      inactive_schedules: inactiveSchedules,
+      stale_schedules: staleSchedules,
+      stages,
+    }
+  }
+
+  return {
+    status: 'healthy',
+    message: '',
+    window_minutes: windowMinutes,
+    observed_schedules: stages.length,
+    inactive_schedules: 0,
+    stale_schedules: 0,
+    stages,
+  }
+}
+
+const buildRolloutReliabilityStatus = async (input: RolloutReliabilityStatusInput) => {
+  try {
+    return await resolveRolloutReliabilityStatus(input)
+  } catch (error) {
+    console.warn(`[jangar] failed to collect rollout reliability status: ${normalizeMessage(error)}`)
+    return buildEmptyRolloutReliabilityStatus(
+      input.windowMinutes,
+      'unknown',
+      `${KUBERNETES_QUERY_FAILURE_ROLLOUT_SUFFIX} ${normalizeMessage(error)}`,
+    )
+  }
+}
 
 const resolveWorkflowsReliabilityStatus = async ({
   now,
@@ -708,6 +958,7 @@ export const buildControlPlaneStatus = async (
     warningBackoffThreshold,
   )
   const windowMinutes = resolveWorkflowWindowMinutes()
+  const rolloutWindowMinutes = resolveRolloutWindowMinutes()
   let workflows = buildEmptyWorkflowsReliabilityStatus(windowMinutes, 'healthy', '')
   try {
     workflows = await (deps.getWorkflowsReliabilityStatus ?? resolveWorkflowsReliabilityStatus)({
@@ -725,6 +976,28 @@ export const buildControlPlaneStatus = async (
       `${KUBERNETES_QUERY_FAILURE_MESSAGE_PREFIX}: ${normalizeMessage(error)}`,
     )
     console.warn(`[jangar] failed to collect workflow reliability status: ${normalizeMessage(error)}`)
+  }
+
+  let rollout: ControlPlaneRolloutReliability = buildEmptyRolloutReliabilityStatus(
+    rolloutWindowMinutes,
+    'unknown',
+    'kubernetes client unavailable',
+  )
+  try {
+    rollout = await (deps.getRolloutReliabilityStatus ?? buildRolloutReliabilityStatus)({
+      now,
+      namespace: options.namespace,
+      swarms: resolveRolloutMonitors(),
+      windowMinutes: rolloutWindowMinutes,
+      kube: createKubernetesClient(),
+    })
+  } catch (error) {
+    rollout = buildEmptyRolloutReliabilityStatus(
+      rolloutWindowMinutes,
+      'unknown',
+      `${KUBERNETES_QUERY_FAILURE_ROLLOUT_SUFFIX}: ${normalizeMessage(error)}`,
+    )
+    console.warn(`[jangar] failed to collect rollout reliability status: ${normalizeMessage(error)}`)
   }
 
   const isWorkflowsWarning =
@@ -751,6 +1024,7 @@ export const buildControlPlaneStatus = async (
     ...(database.status === 'healthy' ? [] : ['database']),
     ...(grpcStatus.enabled && grpcStatus.status !== 'healthy' ? ['grpc'] : []),
     ...(watchReliability.status === 'degraded' ? ['watch_reliability'] : []),
+    ...(rollout.status === 'degraded' ? ['rollout'] : []),
     ...(isWorkflowsWarning || isWorkflowsDegraded ? ['workflows'] : []),
     ...(isWorkflowsDegraded ? ['runtime:workflows'] : []),
   ]
@@ -774,6 +1048,7 @@ export const buildControlPlaneStatus = async (
     runtime_adapters: runtimeAdapters,
     database,
     grpc: grpcStatus,
+    rollout,
     watch_reliability: {
       status: watchReliability.status,
       window_minutes: watchReliability.window_minutes,
