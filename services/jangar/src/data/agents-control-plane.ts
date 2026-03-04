@@ -131,12 +131,27 @@ export type WorkflowReliabilityStatus = {
   message: string
 }
 
+export type DatabaseMigrationConsistency = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  migration_table: string | null
+  registered_count: number
+  applied_count: number
+  unapplied_count: number
+  unexpected_count: number
+  latest_registered: string | null
+  latest_applied: string | null
+  missing_migrations: string[]
+  unexpected_migrations: string[]
+  message: string
+}
+
 export type DatabaseStatus = {
   configured: boolean
   connected: boolean
   status: 'healthy' | 'degraded' | 'disabled'
   message: string
   latency_ms: number
+  migration_consistency: DatabaseMigrationConsistency
 }
 
 export type GrpcStatus = {

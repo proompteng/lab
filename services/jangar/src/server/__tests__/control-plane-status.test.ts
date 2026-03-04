@@ -12,6 +12,21 @@ const healthyController = {
 }
 const now = () => new Date('2026-01-20T00:00:00Z')
 
+const makeMigrationConsistency = (overrides: Record<string, unknown> = {}) => ({
+  status: 'healthy' as const,
+  migration_table: 'kysely_migration',
+  registered_count: 18,
+  applied_count: 18,
+  unapplied_count: 0,
+  unexpected_count: 0,
+  latest_registered: '20260304_jangar_github_worktree_refresh_state',
+  latest_applied: '20260304_jangar_github_worktree_refresh_state',
+  missing_migrations: [] as string[],
+  unexpected_migrations: [] as string[],
+  message: 'migration registry and database are synchronized',
+  ...overrides,
+})
+
 const createKubeList = (jobs: unknown[]) => ({
   list: async () => ({ items: jobs }) as Record<string, unknown>,
 })
@@ -132,6 +147,7 @@ describe('control-plane status', () => {
           status: 'healthy',
           message: '',
           latency_ms: 4,
+          migration_consistency: makeMigrationConsistency(),
         }),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
@@ -189,6 +205,17 @@ describe('control-plane status', () => {
           status: 'disabled',
           message: 'DATABASE_URL not set',
           latency_ms: 0,
+          migration_consistency: makeMigrationConsistency({
+            status: 'degraded',
+            migration_table: null,
+            registered_count: 0,
+            applied_count: 0,
+            unapplied_count: 0,
+            unexpected_count: 0,
+            latest_registered: null,
+            latest_applied: null,
+            message: 'DATABASE_URL not set',
+          }),
         }),
         getWatchReliabilitySummary: () => watchReliabilityDegraded,
       },
@@ -234,6 +261,7 @@ describe('control-plane status', () => {
           status: 'healthy',
           message: '',
           latency_ms: 4,
+          migration_consistency: makeMigrationConsistency(),
         }),
         kube: createKubeList([
           createBackoffJob(
@@ -284,6 +312,7 @@ describe('control-plane status', () => {
           status: 'healthy',
           message: '',
           latency_ms: 4,
+          migration_consistency: makeMigrationConsistency(),
         }),
         kube: failingKubeList,
       },
@@ -292,5 +321,53 @@ describe('control-plane status', () => {
     expect(status.workflows.status).toBe('unknown')
     expect(status.workflows.message).toContain('kubernetes query failed')
     expect(status.namespaces[0]?.degraded_components).not.toContain('workflows')
+  })
+
+  it('marks database component as degraded when migration drift is detected', async () => {
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now,
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => ({
+          name: 'temporal',
+          available: true,
+          status: 'configured',
+          message: '',
+          endpoint: 'temporal:7233',
+        }),
+        checkDatabase: async () => ({
+          configured: true,
+          connected: true,
+          status: 'degraded',
+          message: '2 registered migrations not applied',
+          latency_ms: 4,
+          migration_consistency: makeMigrationConsistency({
+            status: 'degraded',
+            message: '2 registered migrations not applied',
+            unapplied_count: 2,
+            missing_migrations: ['20260305_new_migration', '20260306_followup_migration'],
+            unexpected_count: 0,
+            unexpected_migrations: [],
+          }),
+        }),
+        kube: createKubeList([createActiveJob()]),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+      },
+    )
+
+    expect(status.namespaces[0]?.degraded_components).toContain('database')
+    expect(status.database.status).toBe('degraded')
+    expect(status.database.migration_consistency.unapplied_count).toBe(2)
   })
 })
