@@ -838,7 +838,6 @@ const buildRolloutReliability = async (deps: {
       failureReasons: Map<string, number>
     }
   >()
-  const rolloutFailureReasons = new Map<string, Map<string, number>>()
 
   for (const item of rolloutJobs) {
     const metadata = asRecord(item.metadata)

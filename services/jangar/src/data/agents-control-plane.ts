@@ -120,8 +120,6 @@ export type WorkflowFailureReason = {
   reason: string
   count: number
 }
-export type RolloutFailureReason = WorkflowFailureReason
-
 export type RolloutFailureReason = {
   reason: string
   count: number
@@ -177,17 +175,6 @@ export type DeploymentRolloutStageReliability = {
   reasons: string[]
   recent_failed_jobs: number
   backoff_limit_exceeded_jobs: number
-}
-
-export type ControlPlaneRolloutReliability = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  window_minutes: number
-  observed_schedules: number
-  inactive_schedules: number
-  stale_schedules: number
-  backoff_limit_exceeded_jobs: number
-  backoff_limit_exceeded_threshold: number
-  stages: DeploymentRolloutStageReliability[]
 }
 
 export type DeploymentRolloutStatus = {
@@ -293,7 +280,6 @@ export type ControlPlaneStatus = {
    * Keep this field in sync with generated CRD annotations for CEL checks.
    */
   workflows: WorkflowsReliabilityStatus
-  rollout: ControlPlaneRolloutReliability
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
