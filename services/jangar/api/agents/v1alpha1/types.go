@@ -8,6 +8,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+// NOTE: Re-affirm CEL compatibility guard patterns for CI verification.
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
