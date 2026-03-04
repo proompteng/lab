@@ -235,7 +235,7 @@ jobs:
           IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
           # Use docker.io for Bun base image in CI builds to avoid mirror image metadata drift.
-          if timeout 45m DOCKER_BUILDKIT=1 docker build \
+          if DOCKER_BUILDKIT=1 timeout 45m docker build \
             -f "${WORKSPACE}/services/jangar/Dockerfile" \
             --target control-plane \
             -t "${IMAGE}" \
@@ -247,9 +247,8 @@ jobs:
             && kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
             echo "Built and loaded local image ${IMAGE}."
           else
-            echo "Failed to build/load local image; falling back to public image for smoke test."
-            echo "BUILT_JANGAR_IMAGE_REPOSITORY=ghcr.io/proompteng/jangar" >> "${GITHUB_ENV}"
-            echo "BUILT_JANGAR_IMAGE_TAG=latest" >> "${GITHUB_ENV}"
+            echo "Failed to build/load local image." >&2
+            exit 1
           fi
 
       - name: Run agents integration smoke test
