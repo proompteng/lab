@@ -117,6 +117,7 @@ class TestLLMDSPyWorkflow(TestCase):
         self.assertEqual(
             payload["policy"]["secretBindingRef"], "codex-whitepaper-github-token"
         )
+        self.assertEqual(payload["agentRef"]["name"], "codex-spark-agent")
         self.assertEqual(payload["ttlSecondsAfterFinished"], 14400)
         self.assertIsInstance(payload["parameters"]["datasetRef"], str)
         self.assertEqual(payload["parameters"]["issueNumber"], "0")

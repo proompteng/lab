@@ -28,6 +28,7 @@ DSPyWorkflowLane = Literal[
     "dataset-build", "compile", "eval", "gepa-experiment", "promote"
 ]
 
+_DEFAULT_DSPY_AGENT_NAME = "codex-spark-agent"
 _IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
     "dataset-build": "torghut-dspy-dataset-build-v1",
     "compile": "torghut-dspy-compile-mipro-v1",
@@ -372,7 +373,7 @@ def build_dspy_agentrun_payload(
     issue_number: str = "0",
     priority_id: str | None = None,
     namespace: str = "agents",
-    agent_name: str = "codex-agent",
+    agent_name: str = _DEFAULT_DSPY_AGENT_NAME,
     vcs_ref_name: str = "github",
     secret_binding_ref: str = "codex-github-token",
     ttl_seconds_after_finished: int = 14_400,
@@ -411,7 +412,7 @@ def build_dspy_agentrun_payload(
     return {
         "namespace": namespace.strip() or "agents",
         "idempotencyKey": normalized_idempotency,
-        "agentRef": {"name": agent_name.strip() or "codex-agent"},
+        "agentRef": {"name": agent_name.strip() or _DEFAULT_DSPY_AGENT_NAME},
         "implementationSpecRef": {"name": implementation_spec_ref},
         "runtime": {"type": "job"},
         "vcsRef": {"name": vcs_ref_name.strip() or "github"},
@@ -798,7 +799,7 @@ def orchestrate_dspy_agentrun_workflow(
     | None = None,
     include_gepa_experiment: bool = False,
     namespace: str = "agents",
-    agent_name: str = "codex-agent",
+    agent_name: str = _DEFAULT_DSPY_AGENT_NAME,
     vcs_ref_name: str = "github",
     secret_binding_ref: str = "codex-github-token",
     ttl_seconds_after_finished: int = 14_400,

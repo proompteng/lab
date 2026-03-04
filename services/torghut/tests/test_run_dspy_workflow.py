@@ -66,6 +66,7 @@ class TestRunDSPyWorkflowScript(TestCase):
             call_kwargs = orchestrate_mock.call_args.kwargs
             self.assertEqual(call_kwargs["artifact_root"], str(artifact_root.resolve()))
             self.assertEqual(call_kwargs["priority_id"], "P-1")
+            self.assertEqual(call_kwargs["agent_name"], "codex-spark-agent")
 
             output = json.loads((print_mock.call_args.args[0]))
             self.assertEqual(output["artifactRoot"], str(artifact_root.resolve()))
