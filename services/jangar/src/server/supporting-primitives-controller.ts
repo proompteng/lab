@@ -690,7 +690,7 @@ const STAGE_AGENT_ROLE: Record<StageName, string> = {
   discover: 'architector',
   plan: 'architector',
   implement: 'implementor',
-  verify: 'release-manager',
+  verify: 'deployer',
 }
 
 const STAGE_LAST_RUN_KEY: Record<StageName, string> = {

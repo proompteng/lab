@@ -80,7 +80,7 @@ spec:
       - Risks
       - Next Actions
       - Huly artifact IDs
-      - Handoff to implementor and release manager
+      - Handoff to implementor and deployer
 
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
@@ -176,7 +176,7 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
-  name: swarm-release-manager-v1
+  name: swarm-deployer-v1
   namespace: agents
 spec:
   contract:
@@ -186,9 +186,9 @@ spec:
       - head
       - swarmName
       - objective
-  summary: 'Finalize open PRs and drive safe merge/deployment verification.'
+  summary: 'Merge PRs and drive verified cluster rollout.'
   text: |
-    You are Codex in swarm mode. Act as release manager and drive merged delivery.
+    You are Codex in swarm mode. Act as deployer and drive merged delivery to healthy in-cluster rollout.
 
     Priority order:
     1) Safety and merge gates.
@@ -207,7 +207,7 @@ spec:
     Inputs:
     - swarmAgentWorkerId (optional)
     - swarmAgentIdentity (optional)
-    - swarmHumanName (optional, default release manager)
+    - swarmHumanName (optional, default deployer)
     - swarmTeamName (optional, default Swarm Team)
     - hulyApiBaseUrl (optional)
     - hulyWorkspace (optional)
@@ -241,15 +241,18 @@ spec:
        - resolve merge conflicts against ${base},
        - run targeted validations for touched paths,
        - merge only when required checks pass and risk is explicit.
-    8) Confirm deployment progress via CI/CD and GitOps signals (for example Argo/workload health). If blocked, report exact blocker and current state.
-    9) Update all Huly artifacts (issue, channel message, mission doc) via:
+    8) After merge, drive rollout to cluster through GitOps reconciliation and wait for healthy state:
+       - verify sync/rollout status from CI/CD + GitOps signals (for example Argo app sync, workload readiness, error-free events),
+       - if rollout is blocked, report exact blocker, impacted workloads, and current state.
+    9) Do not declare success until merged commit is confirmed as rolled out (or explicitly blocked with evidence).
+    10) Update all Huly artifacts (issue, channel message, mission doc) via:
        `python3 skills/huly-api/scripts/huly-api.py --operation upsert-mission --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --project "${hulyProject}" --teamspace "${hulyTeamspaceName}" --channel "${activeHulyChannel}" --message "${ownerUpdateMessage}" ...`
 
     Communication contract (strict):
     - Use first person as ${swarmHumanName} for ${swarmTeamName}.
     - Plain text only, 3-6 sentences, max 1200 chars.
     - No headings, JSON, escaped `\n`, or metadata dumps.
-    - Include only progress, key risk, deployment status, next action. Include ${hulyChannelUrl}.
+    - Include only progress, merge outcome, rollout status, key risk, next action. Include ${hulyChannelUrl}.
 
     Output contract:
     - `ownerUpdateMessage`: concise teammate update.

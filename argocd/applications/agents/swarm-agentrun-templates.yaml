@@ -160,7 +160,7 @@ spec:
   agentRef:
     name: codex-spark-agent
   implementationSpecRef:
-    name: swarm-release-manager-v1
+    name: swarm-deployer-v1
   runtime:
     type: workflow
     config:
@@ -179,10 +179,10 @@ spec:
     issueTitle: Jangar Engineering verify mission
     swarmName: jangar-control-plane
     swarmStage: verify
-    swarmAgentRole: release-manager
+    swarmAgentRole: deployer
     swarmAgentWorkerId: worker-jangar-verify
-    swarmAgentIdentity: release-manager-jangar-verify
-    swarmHumanName: release manager
+    swarmAgentIdentity: deployer-jangar-verify
+    swarmHumanName: deployer
     swarmTeamName: Jangar Engineering
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
@@ -194,7 +194,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: review and finalize open Jangar PRs, resolve comments/conflicts, merge, and confirm deployment rollout
+    objective: merge production-ready Jangar PRs and roll out the merged changes in-cluster via GitOps with health verification
   vcsRef:
     name: github
   vcsPolicy:
@@ -367,7 +367,7 @@ spec:
   agentRef:
     name: codex-spark-agent
   implementationSpecRef:
-    name: swarm-release-manager-v1
+    name: swarm-deployer-v1
   runtime:
     type: workflow
     config:
@@ -386,10 +386,10 @@ spec:
     issueTitle: Torghut Traders verify mission
     swarmName: torghut-quant
     swarmStage: verify
-    swarmAgentRole: release-manager
+    swarmAgentRole: deployer
     swarmAgentWorkerId: worker-torghut-verify
-    swarmAgentIdentity: release-manager-torghut-verify
-    swarmHumanName: release manager
+    swarmAgentIdentity: deployer-torghut-verify
+    swarmHumanName: deployer
     swarmTeamName: Torghut Traders
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
@@ -401,7 +401,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: review and finalize open Torghut PRs, resolve comments/conflicts, merge, and confirm deployment rollout
+    objective: merge production-ready Torghut PRs and roll out the merged changes in-cluster via GitOps with health verification
   vcsRef:
     name: github
   vcsPolicy:
