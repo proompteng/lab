@@ -217,7 +217,8 @@ jobs:
             if timeout 8m bun --cwd "${BUILD_DIR}/services/jangar" --bun vite build --logLevel warn; then
               bun --cwd "${BUILD_DIR}/services/jangar" run copy:grpc-proto
             else
-              echo "Prebuild failed or timed out; continuing with Docker image build."
+              echo "Prebuild failed or timed out; cleaning partial .output and continuing with Docker image build."
+              rm -rf "${BUILD_DIR}/services/jangar/.output"
             fi
           elif [ -f "${OUTPUT_ENTRY}" ] && [ -f "${OUTPUT_PROTO}" ]; then
             echo "Using local services/jangar .output from workspace"
