@@ -41,8 +41,14 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: assess current system/code/data state and propose PR-ready design improvements for the Jangar control plane
+    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates the Jangar control plane
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
   secrets:
+    - github-token
     - codex-auth
     - huly-api-jangar
 ---
@@ -89,8 +95,14 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: convert approved design needs into executable PR-ready implementation and test plans
+    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates the Jangar control plane
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
   secrets:
+    - github-token
     - codex-auth
     - huly-api-jangar
 ---
@@ -248,8 +260,14 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: assess current system/code/data state and propose PR-ready design improvements for Torghut quant
+    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates Torghut quant
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
   secrets:
+    - github-token
     - codex-auth
     - huly-api-torghut
 ---
@@ -296,8 +314,14 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: convert approved design needs into executable PR-ready implementation and test plans
+    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates Torghut quant
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
   secrets:
+    - github-token
     - codex-auth
     - huly-api-torghut
 ---
