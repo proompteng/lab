@@ -3,14 +3,14 @@
 ## Status
 
 - Version: `v6`
-- Date: `2026-03-01`
+- Date: `2026-03-03`
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
-- Implementation status: `Planned` (strict matrix status for this index file)
-- Implementation status (strict): `Implemented=0`, `Partial=5`, `Planned=9` of 14
-- Evidence: `implementation-status-matrix-2026-02-21.md`
-- Evidence sync: `implementation-audit.md`
-- Rollout gap: child documents marked partial/planned in this pack are not yet represented by one closed phase in runtime.
+- Implementation status: `Completed` (program closure passed against all v6/13 definition-of-done criteria on `2026-03-03`)
+- Implementation status (strict): `Implemented=14`, `Partial=0`, `Planned=0` of 14
+- Evidence: `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
+- Evidence sync: `14-legacy-gap-disposition-map-2026-03-03.md` (signed v4/v5 disposition completeness)
+- Rollout status: v6 pack controls are represented by merged runtime/control-plane closure phases in `main` (`#3921` through `#3960`).
 
 ## Purpose
 

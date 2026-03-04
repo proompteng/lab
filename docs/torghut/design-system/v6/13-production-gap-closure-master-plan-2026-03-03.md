@@ -350,9 +350,9 @@ Program is complete only when all are true:
 
 ## First 14-Day Execution Backlog
 
-1. Complete Wave 0 policy convergence PRs.
-2. Add policy parity tests and startup enforcement.
-3. Enable profitability-stage manifest enforcement in runtime policy.
+1. Complete Wave 0 policy convergence PRs. (Completed `2026-03-03`; PR `#3921`)
+2. Add policy parity tests and startup enforcement. (Completed `2026-03-03`; PR `#3921`)
+3. Enable profitability-stage manifest enforcement in runtime policy. (Completed `2026-03-03`; PR `#3921`)
 4. Add contamination registry checks to promotion prerequisites. (Completed `2026-03-03`)
-5. Publish rollout dashboard for Wave 0 and Wave 1 gates.
+5. Publish rollout dashboard for Wave 0 and Wave 1 gates. (Completed `2026-03-03`; `docs/runbooks/torghut-quant-control-plane.md`)
 6. Enforce profitability stage-manifest replay-hash contract checks. (Completed `2026-03-03`)
