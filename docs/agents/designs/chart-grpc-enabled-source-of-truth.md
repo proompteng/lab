@@ -103,3 +103,4 @@ helm template charts/agents \
 
 - Service and env-var drift: managed mode ensures `grpc.enabled` and control-plane gRPC env vars remain aligned.
 - Contradictory overrides: validation fails in chart render, preventing silent drift.
+- Runtime diagnostics: malformed `JANGAR_GRPC_*` env values degrade control-plane status and include explicit reason text, preventing hidden control-plane observability blind spots.

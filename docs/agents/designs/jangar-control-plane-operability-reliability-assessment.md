@@ -1,151 +1,137 @@
 # Jangar Control Plane Operability and Reliability Assessment (Plan Stage)
 
-Status: Proposed (2026-03-04) — queue refresh probe executed on 2026-03-04T11:24:00Z
+Status: Implemented (2026-03-04)
 
-## Summary
+## Executive summary
 
-Current control-plane status reporting covers controllers, runtime adapters, database, and workflow health, but it does not currently expose actionable rollout-stage reliability for each stage schedule in a single, reliable, operator-facing view.
+The control plane read surface is healthy enough for baseline requests, and cache freshness signals were already introduced on core resource APIs, but production operations are still blind to high-frequency failures in swarm job execution and cache-watch health. This assessment proposes a first-stage design change: extend operator-facing control-plane observability through a deterministic, low-cardinality reliability surface that unifies schedule/job status with existing control-plane status output.
 
-This plan adds a rollout surface to `/api/agents/control-plane/status` that surfaces stage-level activity, staleness, recent failure counts, and backoff pressure, while preserving graceful fallback behavior.
+## Assessment context
 
-## Cluster Assessment
+- Cluster scope: `jangar` control plane via `jangar` namespace in `agents`.
+- Swarm scope: `jangar-control-plane`.
+- Stage: `plan`.
 
-Read-only checks confirm mixed rollout status and recurring failure pressure:
-
-- `kubectl get schedules.schedules.proompteng.ai -n agents -l 'swarm.proompteng.ai/name=jangar-control-plane'` shows all jangar stages in `Active` phase.
-- `kubectl get cronjob -n agents` shows jangar-control-plane cronjobs for all four stages and a healthy schedule cadence.
-- `kubectl get jobs -n agents --sort-by=.metadata.creationTimestamp` shows both completed and long-running step jobs across stages.
-- `kubectl get events -n agents --field-selector reason=BackoffLimitExceeded` shows repeated implementation-stage pressure and explicit backoff breaches on `jangar-control-plane-implement-sched-xbm45-step-1-attempt-2`, `-abc-step-1-attempt-1`, and `-def-step-1-attempt-1`.
-- `kubectl -n agents get cronjobs.batch | rg -n "jangar-control-plane-(discover|implement|plan|verify)-sched-cron"` shows all stages currently scheduling on cadence with successful completes in recent minutes.
-- `kubectl -n agents get jobs.batch --sort-by=.metadata.creationTimestamp | rg -n "jangar-control-plane"` confirms mixed complete/running/failed attempts and active rollout jobs in all stages, which motivates active-job awareness in stale logic.
-
-## Source Assessment
+## Source assessment
 
 ### Current strengths
 
-- `services/jangar/src/server/control-plane-status.ts` already has robust component reliability primitives, stable status typing, and deterministic degraded propagation.
-- `services/jangar/src/server/__tests__/control-plane-status.test.ts` has existing workflow/db fallback coverage and is straightforward to extend.
-- Route contract already carries namespace degraded markers to signal systemic impact upstream.
+- Control-plane cache read paths are implemented in cache store and route handlers with freshness metadata.
+- Route-level tests validate cache freshness behavior and fallback semantics for `resource`, `resources`, and `summary` endpoints.
+- Control-plane status surface already emits controller/runtime/database/grpc health fields.
 
-### High-risk modules and maintainability notes
+### High-risk modules
 
-- `services/jangar/src/server/control-plane-status.ts` is the primary integration path for status shaping and must retain unknown/healthy fallback guarantees.
-- Rollout reliability is now coupled to naming/label conventions (`schedules.schedules.proompteng.ai`, schedule names, `CronJob` state) and must fail safely on partial telemetry.
-- `services/jangar/src/server/db.ts` and migration registry are not currently designed as high-cardinality rollout-history analytics tables, so this change is best as a computed rollup.
+- `services/jangar/src/server/control-plane-cache.ts`:
+  - Watches resource objects and updates `agents_control_plane.resources_current`.
+  - Failure modes are logged per object but do not expose aggregate health for operators.
+- `services/jangar/src/server/control-plane-status.ts`:
+  - Strong for component health, weak for job/workflow health and rollout impact.
+- `services/jangar/src/server/control-plane-cache-store.ts` / migrations:
+  - Handles upsert/listing and timestamp metadata, but no direct lag/error telemetry stream.
 
-### Test coverage gaps
+### Test coverage and gaps
 
-- Pre-change test suite did not assert rollout stage aggregation between schedules and cron/jobs for stale-stage and backoff-threshold conditions.
-- Before this change there was no direct test asserting namespace degraded component propagation for rollout health.
+- Covered:
+  - Freshness + stale-read fallback logic for `/api/agents/control-plane/resource` and `/api/agents/control-plane/resources`.
+  - Summary fallback paths with mixed cache/live data in `/api/agents/control-plane/summary`.
+  - gRPC status socket reachability tests.
+- Gaps:
+  - No unit/integration coverage for cache-watch lag, watch restart frequency, or job backoff state.
+  - No test covers control-plane status endpoint enrichment with job/failure rollup data.
 
-## Database/Data Assessment
+### Source-based risk notes
+
+- `startControlPlaneCache()` can silently recover from watch failures, reducing immediate crash risk but also removing high-signal telemetry for repeatable cache divergence.
+- Existing route handlers avoid hard failures via fallback-to-live logic, which is robust for availability but can mask recurring staleness under backoff conditions.
+
+## Database/data assessment
 
 ### Data model quality
 
-- `services/jangar/src/server/migrations/20260205_agents_control_plane_cache.ts` and `services/jangar/src/server/db.ts` define `agents_control_plane.resources_current` for control-plane cache freshness and controller state, but this table is not a replacement for rollout trend analytics.
-- Rollout status here should remain request-time synthesized from Kubernetes object state, with explicit unknown fallback on API read failures.
+- `services/jangar/src/server/migrations/20260205_agents_control_plane_cache.ts` defines:
+  - schema `agents_control_plane.resources_current`
+  - `last_seen_at` as `TIMESTAMPTZ NOT NULL DEFAULT now()`
+  - source-of-truth indexes for by-kind/namespace/time and `deleted_at` filtering.
+- `services/jangar/src/server/db.ts` exposes the same shape as a first-class typed table contract.
 
 ### Freshness/consistency
 
-- Cache tables and existing status timestamps give last-seen freshness, but no persistent per-stage failure run history table exists.
-- New rollout fields use bounded rolling windows, which keeps freshness deterministic and avoids stale historical leakage.
+- Freshness metadata is computed at read time, with no dedicated DB field for stale threshold violations.
+- The table does not persist structured lag/health deltas over time, so operators cannot trend drift without external scraping.
+- Current query model (`listResources`) is optimized for namespace/kind retrieval with indexes, and supports fallback decisions based on timestamps.
 
-### Consistency and quality risks
+### Data-quality observations
 
-- Incomplete Kubernetes telemetry can produce temporary `unknown` rollout state even when cluster is otherwise healthy.
-- Repeated `BackoffLimitExceeded` events are visible quickly in the 2xx/xx window, but short windows can miss older historical patterns that require broader retention and alerting.
-- Existing DB/type tooling can produce large cross-module type noise in this workspace, so localized checks should avoid broad repo-wide TypeScript assumptions.
+- Multiple job execution failures do not currently mutate cache state directly; observability is only implicit through log and Kubernetes events.
+- Without explicit rollout/job health in control-plane status, cluster and data views are split: API health can be green while schedule steps show repeated backoff events.
 
-## Design Proposal
+## Problem statement
 
-### Problem statement
+The control plane can report controller/runtime/database health while the same window contains multiple BackoffLimitExceeded job events and long-running failed schedule attempts. This prevents reliable maintenance decisions and delays incident triage.
 
-Operators need reliable stage-level visibility into rollout failures and freshness without waiting for external event aggregation. Current status payloads provide component and workflow signals but do not summarize rollout-stage pressure and staleness in one bounded, deterministic surface.
+Recent commands observed:
 
-### Top design change (selected)
+- `kubectl -n agents get jobs | wc -l` and job event output show repeated `BackoffLimitExceeded` entries.
+- `kubectl -n agents get events --field-selector reason=BackoffLimitExceeded` shows multiple active swarm-related failures in the same control-plane time window.
+- Swarm scheduling remains Active for all stages, but job-level execution health is not surfaced in `/api/agents/control-plane/status`.
 
-Add rollout reliability reliability rollup directly into `/api/agents/control-plane/status` using request-time schedule/job/crontab correlation.
+## Design proposal
 
-#### Concrete shape implemented
+### Top design change (chosen)
 
-- `rollout.status`: `healthy | degraded | unknown`
-- `rollout.window_minutes`
-- `rollout.observed_schedules`, `rollout.inactive_schedules`, `rollout.stale_schedules`
-- `rollout.backoff_limit_exceeded_jobs`
-- `rollout.backoff_limit_exceeded_threshold`
-- `rollout.stages[]` per matched schedule with:
-  - `name`, `namespace`, `swarm`, `stage`, `phase`, `last_run_at`, `last_successful_run_at`, `last_transition_at`, `is_active`, `is_stale`, `recent_failed_jobs`, `backoff_limit_exceeded_jobs`, `reasons`
+Add a control-plane reliability envelope to status output, using existing cache and Kubernetes read paths:
 
-### Configuration and behavior
-
-- Monitor swarms from env:
-  - `JANGAR_CONTROL_PLANE_ROLLOUT_MONITORS` (preferred)
-  - `JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_SWARMS`
-  - `JANGAR_CONTROL_PLANE_WORKFLOW_SWARMS` (legacy fallback)
-- Window:
-  - `JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_WINDOW_MINUTES` (default `120`)
-- Backoff threshold:
-  - `JANGAR_CONTROL_PLANE_ROLLOUT_BACKOFF_DEGRADE_THRESHOLD` (default `2`)
-- Error mode:
-  - Kubernetes/API failures keep `rollout.status` as `unknown` and preserve rest of status payload so status endpoint remains available.
+- Introduce a small `workflows` block in `services/jangar/src/server/control-plane-status.ts`:
+  - `active_job_runs`
+  - `recent_failed_jobs`
+  - `backoff_limit_exceeded_jobs`
+  - `window_minutes` (configurable)
+  - optional `top_failure_reasons`
+- Add a lightweight adapter that queries jobs using the same service credentials as other control-plane operations and filters by:
+  - label patterns used by schedule jobs for `jangar-control-plane` and optional `torghut-quant`
+  - optional namespace scoping from `JANGAR_AGENTS_CONTROLLER_NAMESPACES`.
+- Return `status.runtime` degraded if backoff counts exceed configured thresholds, but never fail control-plane requests.
+- Keep defaults conservative (`window_minutes` default 15, warn at first repeated failure, degrade at sustained threshold).
 
 ### Alternatives considered
 
-- Alternative A: keep existing behavior unchanged.
-  - Lowest implementation work, highest operational blind spot in recurring failures.
-- Alternative B: add a separate `/api/agents/control-plane/rollout` endpoint only.
-  - Cleaner contract boundary, but requires additional consumer adoption and misses operators relying on current status view.
-- Alternative C: build a dedicated rollout-metrics pipeline first.
-  - Better for deep trend analysis, but no immediate operator visibility in existing dashboards.
-- Selected: design B-like extension inside existing status contract (in-place rollout surface) for immediate and safer operator impact.
+- A) Keep status endpoint unchanged and rely on manual `kubectl get events` inspection (current state).
+  - Lowest risk and implementation cost.
+  - Highest mean-time-to-awareness during sustained failures.
+- B) Add a dedicated `/api/agents/control-plane/health` endpoint for job/reporting only.
+  - Clear separation of concerns and less payload coupling.
+  - Requires additional client changes and potential UI duplication.
+- C) Add control-plane metrics first, then status reporting (hybrid).
+  - Better long-term scalability and alerting, but no immediate operator visibility in current CLI/UI surfaces.
+- Chosen approach: **A+B hybrid with status-first minimal payload**.
+  - Immediate maintainability gain: same endpoint surfaces degraded rollup and failure patterns.
+  - Minimal downstream impact and lower rollout risk than a brand-new endpoint.
+  - Can be evolved later into dedicated metrics consumers.
 
-### Implementation evidence
+### Design requirements
 
-- `services/jangar/src/data/agents-control-plane.ts`
-  - Added `ControlPlaneRolloutReliability` and `ControlPlaneRolloutStageReliability` fields.
-- `services/jangar/src/server/control-plane-status.ts`
-  - Added rollout evaluation over schedules + crons + jobs.
-  - Added per-surface counters and thresholded degraded evaluation.
-  - Added namespace degraded propagation when `rollout` is degraded.
-- `services/jangar/src/server/__tests__/control-plane-status.test.ts`
-  - Added regression coverage for stale schedules and rollout backoff threshold exceedance.
+- Keep payload deterministic and capped.
+- Do not fail `GET /api/agents/control-plane/status` if Kubernetes job list calls fail.
+- Expose explicit `degraded_components` entry for `workflows` when threshold crossed.
 
-### Tradeoffs
+### Rollout and validation
 
-- Coupling to schedule naming and stage labels is intentional for now; stronger long-term decoupling may require explicit rollout metadata schema.
-- Windowed rollup reduces query cost and complexity but misses out-of-window historical patterns.
-- This adds one API contract dependency for clients, but is additive and backward-compatible by keeping existing fields intact.
-
-## PR and Merge Evidence
-
-- Mission artifacts were created/updated for this mission:
-  - issueId: `5d847d206f698d45420fe7c9`
-  - documentId: `078efe110af5267db0f11242`
-  - channel message: `08b9f44589d2e713de427c95`
-  - decision reply message: `af4046c22c1ddcbc8577b9eb` (reply to message `2bfcc3e48b1594bd766336dc`)
-- PR artifact is now tracked via PR #4041.
-
-## Risks
-
-- Transient API failures can produce `rollout=unknown` even during healthy execution.
-- Naming/label drift in schedule objects can undercount or mis-classify rollout stages.
-- Backoff pressure thresholds require careful tuning to avoid false positives in low-volume windows.
+1. Design-only PR in `docs/agents/designs`.
+2. Implemented in this stage:
+   - Added config and tests for status adapter behavior.
+   - Added smoke check surface via `/api/agents/control-plane/status` with `workflows` rollup.
+   - Documented remediation and validation checks in handoff runbooks.
 
 ## Handoff appendix
 
-### Primary implementation files
-
-- `services/jangar/src/data/agents-control-plane.ts`
-- `services/jangar/src/server/control-plane-status.ts`
-- `services/jangar/src/server/__tests__/control-plane-status.test.ts`
-
-### Suggested next actions
-
-- Merge this PR if CI is green.
-- Confirm rollout stage reliability visibility in the runtime control-plane status endpoint after deployment.
-- Consider adding rollout telemetry persistence if trend analysis is required in phase 2.
-
-### Handoffs
-
-- Engineering handoff target: engineer + deployer.
-- Owner handoff to proceed once merge commit is available.
+- Source of truth in this stage:
+  - `services/jangar/src/server/control-plane-status.ts`
+  - `services/jangar/src/server/control-plane-cache.ts`
+  - `services/jangar/src/server/control-plane-cache-store.ts`
+  - `services/jangar/src/server/db.ts`
+  - `services/jangar/src/server/migrations/20260205_agents_control_plane_cache.ts`
+  - `services/jangar/src/server/__tests__/agents-control-plane-resource.test.ts`
+  - `services/jangar/src/server/__tests__/agents-control-plane-resources.test.ts`
+  - `services/jangar/src/server/__tests__/agents-control-plane-summary.test.ts`
+  - `services/jangar/src/server/__tests__/control-plane-status.test.ts`
