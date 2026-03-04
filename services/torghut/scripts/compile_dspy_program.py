@@ -110,7 +110,7 @@ def main() -> int:
         "artifactPath": str(args.artifact_path),
         "datasetRef": args.dataset_ref,
         "metricPolicyRef": args.metric_policy_ref,
-        "optimizer": args.optimizer,
+        "optimizer": result.compile_result.optimizer,
         "compileResultRef": str(result.compile_result_path),
         "compiledArtifactUri": result.compiled_artifact_uri,
         "compiledArtifactPath": str(result.compiled_artifact_path),
