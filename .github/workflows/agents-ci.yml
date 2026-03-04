@@ -146,6 +146,9 @@ jobs:
           WORKSPACE="${GITHUB_WORKSPACE}"
           IMAGE_REPOSITORY="${AGENTS_IMAGE_REPOSITORY:-jangar-local}"
           IMAGE_TAG="${AGENTS_IMAGE_TAG:-ci-${GITHUB_SHA:-unknown}}"
+          PUBLIC_IMAGE_REPOSITORY="${AGENTS_PUBLIC_IMAGE_REPOSITORY:-ghcr.io/proompteng/jangar}"
+          PUBLIC_IMAGE_TAG="${AGENTS_PUBLIC_IMAGE_TAG:-latest}"
+          BUILD_PRELOADED=1
           PRUNE_DIR="$(mktemp -d /tmp/jangar-prune-XXXXXX)"
           KIND_IMAGE_TAR="${RUNNER_TEMP:-/tmp}/jangar-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}-${IMAGE_TAG}.tar"
           BUILD_HEARTBEAT_PID=0
@@ -356,11 +359,19 @@ jobs:
             "${PRUNE_DIR}"; then
             echo "Built local image ${IMAGE}."
           else
-            run_step_failure "Failed to build local image" "$?"
+            BUILD_PRELOADED=0
+            echo "::warning::Failed to build local image ${IMAGE}; falling back to ${PUBLIC_IMAGE_REPOSITORY}:${PUBLIC_IMAGE_TAG}."
           fi
 
-          if ! run_kind_load_with_fallback; then
-            run_step_failure "Failed to load local image into kind" "$?"
+          if [ "${BUILD_PRELOADED}" -eq 1 ] && ! run_kind_load_with_fallback; then
+            BUILD_PRELOADED=0
+            echo "::warning::Failed to preload local image ${IMAGE} into kind; falling back to ${PUBLIC_IMAGE_REPOSITORY}:${PUBLIC_IMAGE_TAG}."
+          fi
+
+          if [ "${BUILD_PRELOADED}" -eq 0 ]; then
+            IMAGE_REPOSITORY="${PUBLIC_IMAGE_REPOSITORY}"
+            IMAGE_TAG="${PUBLIC_IMAGE_TAG}"
+            IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
           fi
 
       - name: Run agents integration smoke test
