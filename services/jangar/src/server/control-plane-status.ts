@@ -115,9 +115,6 @@ export type ControlPlaneRolloutStageReliability = {
   reasons: string[]
   recent_failed_jobs: number
   backoff_limit_exceeded_jobs: number
-  failed_runs_last_window: number
-  backoff_failures_last_window: number
-  top_failure_reasons: RolloutFailureReason[]
 }
 
 export type ControlPlaneRolloutReliability = {
