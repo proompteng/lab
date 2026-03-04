@@ -10,10 +10,15 @@ import {
   getWatchReliabilitySummary,
   type ControlPlaneWatchReliabilitySummary,
 } from '~/server/control-plane-watch-reliability'
+import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
 
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
+const DEFAULT_WORKFLOW_MONITOR_WINDOW_MINUTES = 15
+const DEFAULT_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD = 2
+const DEFAULT_WORKFLOW_MONITOR_SWARMS = 'jangar-control-plane,torghut-quant'
+const WORKFLOW_WINDOW_REASON_LIMIT = 5
 
 type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>
 
@@ -52,6 +57,21 @@ export type GrpcStatus = {
   message: string
 }
 
+export type WorkflowFailureReason = {
+  reason: string
+  count: number
+}
+
+export type WorkflowReliabilityStatus = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  window_minutes: number
+  active_job_runs: number
+  recent_failed_jobs: number
+  backoff_limit_exceeded_jobs: number
+  top_failure_reasons: WorkflowFailureReason[]
+  message: string
+}
+
 export type NamespaceStatus = {
   namespace: string
   status: 'healthy' | 'degraded'
@@ -85,6 +105,7 @@ export type ControlPlaneStatus = {
   }
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
+  workflows: WorkflowReliabilityStatus
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
@@ -105,9 +126,154 @@ export type ControlPlaneStatusDeps = {
   resolveTemporalAdapter?: () => Promise<RuntimeAdapterStatus>
   checkDatabase?: () => Promise<DatabaseStatus>
   getWatchReliabilitySummary?: () => ControlPlaneWatchReliabilitySummary
+  kube?: Pick<KubernetesClient, 'list'>
 }
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
+const normalizeText = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
+const asRecord = (value: unknown): Record<string, unknown> => {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+const asString = (value: unknown): string | null => {
+  const normalized = normalizeText(value)
+  return normalized.length > 0 ? normalized : null
+}
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
+const asNumber = (value: unknown, fallback: number): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    return Number.isFinite(parsed) ? parsed : fallback
+  }
+  return fallback
+}
+
+const clampPositiveNumber = (value: number, fallback: number) => {
+  const parsed = Math.floor(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const parseTimestampMs = (value: unknown): number | null => {
+  const raw = asString(value)
+  if (!raw) return null
+  const parsed = Date.parse(raw)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+const readWorkflowMonitorSwarms = () => {
+  const raw = process.env.JANGAR_CONTROL_PLANE_WORKFLOW_SWARMS?.trim()
+  const fallback = DEFAULT_WORKFLOW_MONITOR_SWARMS
+  const resolved = raw && raw.length > 0 ? raw : fallback
+  const names = resolved
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0)
+  return names.length > 0 ? names : fallback.split(',')
+}
+
+const readWorkflowWindowMinutes = () => {
+  const raw = process.env.JANGAR_CONTROL_PLANE_WORKFLOW_WINDOW_MINUTES
+  if (!raw) return DEFAULT_WORKFLOW_MONITOR_WINDOW_MINUTES
+  const parsed = asNumber(raw.trim(), DEFAULT_WORKFLOW_MONITOR_WINDOW_MINUTES)
+  return clampPositiveNumber(parsed, DEFAULT_WORKFLOW_MONITOR_WINDOW_MINUTES)
+}
+
+const readBackoffDegradeThreshold = () => {
+  const raw = process.env.JANGAR_CONTROL_PLANE_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD
+  if (!raw) return DEFAULT_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD
+  const parsed = asNumber(raw.trim(), DEFAULT_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD)
+  return clampPositiveNumber(parsed, DEFAULT_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD)
+}
+
+const isWorkflowJobName = (name: string, swarms: string[]) =>
+  swarms.some((swarm) => name === swarm || name.startsWith(`${swarm}-`))
+
+const toTopFailureReasons = (entries: Map<string, number>) =>
+  [...entries.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, WORKFLOW_WINDOW_REASON_LIMIT)
+    .map(([reason, count]) => ({ reason, count }))
+
+const buildWorkflowReliability = async (deps: {
+  now: Date
+  kube: Pick<KubernetesClient, 'list'>
+  options: ControlPlaneStatusOptions
+}): Promise<WorkflowReliabilityStatus> => {
+  const swarms = readWorkflowMonitorSwarms()
+  const windowMinutes = readWorkflowWindowMinutes()
+  const threshold = readBackoffDegradeThreshold()
+  const nowMs = deps.now.getTime()
+  const windowStartMs = nowMs - windowMinutes * 60_000
+
+  const response = await deps.kube.list('jobs', deps.options.namespace)
+  const record = asRecord(response)
+  const items = asArray(record.items).map(asRecord)
+
+  let activeJobRuns = 0
+  let recentFailedJobs = 0
+  let backoffLimitExceededJobs = 0
+  const failureReasons = new Map<string, number>()
+
+  for (const item of items) {
+    const metadata = asRecord(item.metadata)
+    const jobName = asString(metadata.name) ?? ''
+    if (!isWorkflowJobName(jobName, swarms)) continue
+
+    const createdAtMs = parseTimestampMs(metadata.creationTimestamp)
+    if (createdAtMs === null || createdAtMs < windowStartMs) {
+      continue
+    }
+
+    const status = asRecord(item.status)
+    const conditions = asArray(status.conditions).map(asRecord)
+    const failedCondition = conditions.find((condition) => asString(condition.type) === 'Failed')
+    const failed = asNumber(status.failed, 0) > 0
+    const active = asNumber(status.active, 0)
+    if (active > 0) {
+      activeJobRuns += active
+    }
+    if (!failed) {
+      continue
+    }
+
+    const failedAtMs = failedCondition ? parseTimestampMs(failedCondition.lastTransitionTime) : null
+    if (failedAtMs !== null && failedAtMs < windowStartMs) {
+      continue
+    }
+
+    recentFailedJobs += 1
+    const reason = asString(failedCondition?.reason) ?? 'Failed'
+    failureReasons.set(reason, (failureReasons.get(reason) ?? 0) + 1)
+    if (reason === 'BackoffLimitExceeded') {
+      backoffLimitExceededJobs += 1
+    }
+  }
+
+  const isDegraded = backoffLimitExceededJobs >= threshold
+  const message = isDegraded
+    ? `workflow reliability degraded: ${backoffLimitExceededJobs} backoff failures in last ${windowMinutes}m`
+    : `workflow reliability healthy: ${recentFailedJobs} failed jobs and ${activeJobRuns} active jobs in last ${windowMinutes}m`
+
+  return {
+    status: isDegraded ? 'degraded' : 'healthy',
+    window_minutes: windowMinutes,
+    active_job_runs: activeJobRuns,
+    recent_failed_jobs: recentFailedJobs,
+    backoff_limit_exceeded_jobs: backoffLimitExceededJobs,
+    top_failure_reasons: toTopFailureReasons(failureReasons),
+    message,
+  }
+}
+
+const unknownWorkflowReliability = (windowMinutes: number): WorkflowReliabilityStatus => ({
+  status: 'unknown',
+  window_minutes: windowMinutes,
+  active_job_runs: 0,
+  recent_failed_jobs: 0,
+  backoff_limit_exceeded_jobs: 0,
+  top_failure_reasons: [],
+  message: 'workflow reliability unavailable (kubernetes query failed)',
+})
 
 const buildControllerStatus = (name: string, health: ControllerHealth): ControllerStatus => {
   const scopeNamespaces = Array.isArray(health.namespaces) ? health.namespaces : []
@@ -298,6 +464,15 @@ export const buildControlPlaneStatus = async (
     },
   ]
 
+  const now = (deps.now ?? (() => new Date()))()
+  const kube = deps.kube ?? createKubernetesClient()
+  let workflows: WorkflowReliabilityStatus
+  try {
+    workflows = await buildWorkflowReliability({ now, kube, options })
+  } catch {
+    workflows = unknownWorkflowReliability(readWorkflowWindowMinutes())
+  }
+
   const database = await (deps.checkDatabase ?? checkDatabase)()
   const grpcStatus = options.grpc
   const watchReliability = (deps.getWatchReliabilitySummary ?? getWatchReliabilitySummary)()
@@ -307,12 +482,12 @@ export const buildControlPlaneStatus = async (
       .filter((controller) => controller.status === 'degraded' || controller.status === 'disabled')
       .map((controller) => controller.name),
     ...runtimeAdapters.filter((adapter) => adapter.status === 'degraded').map((adapter) => `runtime:${adapter.name}`),
+    ...(workflows.status === 'degraded' ? ['workflows'] : []),
     ...(database.status === 'healthy' ? [] : ['database']),
     ...(grpcStatus.enabled && grpcStatus.status !== 'healthy' ? ['grpc'] : []),
     ...(watchReliability.status === 'degraded' ? ['watch_reliability'] : []),
   ]
 
-  const now = (deps.now ?? (() => new Date()))()
   const leaderElection = getLeaderElectionStatus()
 
   return {
@@ -332,6 +507,7 @@ export const buildControlPlaneStatus = async (
     },
     controllers,
     runtime_adapters: runtimeAdapters,
+    workflows,
     database,
     grpc: grpcStatus,
     watch_reliability: {
