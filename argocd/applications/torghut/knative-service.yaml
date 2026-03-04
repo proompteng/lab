@@ -424,7 +424,7 @@ spec:
               port: http1
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http1
           resources:
             requests:

@@ -373,6 +373,49 @@ class TestTradingApi(TestCase):
         finally:
             settings.trading_enabled = original
 
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_returns_200_when_dependencies_are_healthy(
+        self, _mock_clickhouse: object, _mock_alpaca: object
+    ) -> None:
+        original = settings.trading_enabled
+        settings.trading_enabled = True
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ok")
+            self.assertTrue(payload["dependencies"]["postgres"]["ok"])
+            self.assertTrue(payload["dependencies"]["clickhouse"]["ok"])
+            self.assertTrue(payload["dependencies"]["alpaca"]["ok"])
+        finally:
+            settings.trading_enabled = original
+
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_postgres", return_value={"ok": False, "detail": "down"})
+    def test_readyz_returns_503_when_dependency_degraded(
+        self, _mock_postgres: object, _mock_alpaca: object
+    ) -> None:
+        original = settings.trading_enabled
+        settings.trading_enabled = True
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 503)
+            payload = response.json()
+            self.assertEqual(payload["status"], "degraded")
+            self.assertFalse(payload["dependencies"]["postgres"]["ok"])
+            self.assertEqual(payload["dependencies"]["postgres"]["detail"], "down")
+        finally:
+            settings.trading_enabled = original
+
     def test_trading_status_includes_llm_evaluation(self) -> None:
         response = self.client.get("/trading/status")
         self.assertEqual(response.status_code, 200)

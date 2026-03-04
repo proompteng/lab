@@ -89,10 +89,14 @@ def compile_dspy_program_artifacts(
         compile_metrics_name, "compile_metrics_name"
     )
 
-    dataset_path = _resolve_local_ref_path(normalized_dataset_ref, field_name="dataset_ref")
+    dataset_path = _resolve_local_ref_path(
+        normalized_dataset_ref, field_name="dataset_ref"
+    )
     metric_policy_path = _resolve_local_ref_path(
         normalized_metric_policy_ref, field_name="metric_policy_ref"
     )
+    canonical_dataset_ref = _canonical_local_ref(dataset_path)
+    canonical_metric_policy_ref = _canonical_local_ref(metric_policy_path)
 
     canonical_dataset_ref = str(dataset_path)
     canonical_metric_policy_ref = str(metric_policy_path)
@@ -102,11 +106,11 @@ def compile_dspy_program_artifacts(
         metric_policy_path, field_name="metric_policy_ref"
     )
 
-    output_dir = Path(normalized_artifact_ref)
+    output_dir = Path(normalized_artifact_ref).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     compiled_artifact_uri = _build_artifact_uri(
-        artifact_path=normalized_artifact_ref,
+        artifact_path=str(output_dir),
         artifact_name=normalized_compiled_artifact_name,
     )
     compiled_artifact_path = output_dir / normalized_compiled_artifact_name
@@ -241,7 +245,11 @@ def _resolve_local_ref_path(ref: str, *, field_name: str) -> Path:
         candidate = Path.cwd() / candidate
     if not candidate.exists() or not candidate.is_file():
         raise ValueError(f"{field_name}_not_found")
-    return candidate
+    return candidate.resolve()
+
+
+def _canonical_local_ref(path: Path) -> str:
+    return path.resolve().as_uri()
 
 
 def _load_json_mapping(path: Path, *, field_name: str) -> dict[str, Any]:
