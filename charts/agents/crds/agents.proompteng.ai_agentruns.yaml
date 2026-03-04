@@ -363,7 +363,7 @@ spec:
                             type: string
                           maxProperties: 100
                           type: object
-                        x-kubernetes-validations:
+                          x-kubernetes-validations:
                           - message: workflow step parameters.prompt is not allowed;
                               use ImplementationSpec.spec.text
                             rule: '!has(self.parameters, ''prompt'')'
