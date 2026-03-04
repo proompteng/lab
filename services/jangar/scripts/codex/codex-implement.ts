@@ -194,7 +194,7 @@ const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): Req
     workerId: resolve('swarmAgentWorkerId', 'swarmAgentWorkerId'),
     workerIdentity: resolve('swarmAgentIdentity', 'swarmAgentIdentity'),
     workerRole: resolve('swarmAgentRole', 'swarmAgentRole'),
-    objective: payloadObjective ?? resolve('objective'),
+    objective: payloadObjective ?? resolve('objective', 'swarmRequirementObjective'),
     payload,
     payloadBytes: resolve('swarmRequirementPayloadBytes', 'swarmRequirementPayloadBytes'),
     payloadTruncated: parseBool(parameters.swarmRequirementPayloadTruncated),
