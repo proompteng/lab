@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agents-alloy
+  namespace: agents
+data:
+  config.river: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    discovery.kubernetes "agents_pods" {
+      role = "pod"
+
+      namespaces {
+        names = ["agents"]
+      }
+
+      selectors {
+        role  = "pod"
+        field = "metadata.namespace=agents"
+      }
+    }
+
+    discovery.relabel "agents_pod_logs" {
+      targets = discovery.kubernetes.agents_pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        regex         = "agents-alloy-.*"
+        action        = "drop"
+      }
+    }
+
+    loki.source.kubernetes "agents_pod_logs" {
+      targets    = discovery.relabel.agents_pod_logs.output
+      forward_to = [loki.process.agents_pod_logs.receiver]
+    }
+
+    loki.process "agents_pod_logs" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          job       = "agents",
+          namespace = "agents",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"
+      }
+    }
