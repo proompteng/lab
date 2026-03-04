@@ -712,7 +712,15 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
           : 0
         const jobName = asString(stepStatus.jobRef?.name) ?? ''
         const jobNamespace = asString(stepStatus.jobRef?.namespace) ?? namespace
-        let prefetchedJobForTimeout: Record<string, unknown> | null = null
+        let timedOutJob: Record<string, unknown> | null = null
+        const isJobTerminal = (job: Record<string, unknown> | null) => {
+          if (!job) return false
+          const status = asRecord(job.status) ?? {}
+          const succeeded = Number(status.succeeded ?? 0)
+          const failed = Number(status.failed ?? 0)
+          if (succeeded > 0 || deps.isJobComplete(job)) return true
+          return failed > 0 && deps.isJobFailed(job)
+        }
         const applyTimeoutOutcome = () => {
           if (stepStatus.attempt < maxAttempts) {
             setWorkflowStepPhase(stepStatus, 'Retrying', 'Step timed out; retrying')
@@ -756,21 +764,12 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
           const startedAt = stepStatus.startedAt
           const startTime = startedAt ? Date.parse(startedAt) : Number.NaN
           if (Number.isFinite(startTime) && now >= startTime + stepSpec.timeoutSeconds * 1000) {
-            let terminalJobStateObserved = false
             if (jobName) {
-              prefetchedJobForTimeout = await kube.get('job', jobName, jobNamespace)
-              if (prefetchedJobForTimeout) {
-                const prefetchedStatus = asRecord(prefetchedJobForTimeout.status) ?? {}
-                const prefetchedSucceeded = Number(prefetchedStatus.succeeded ?? 0)
-                const prefetchedFailed = Number(prefetchedStatus.failed ?? 0)
-                const terminalSuccess = prefetchedSucceeded > 0 || deps.isJobComplete(prefetchedJobForTimeout)
-                const terminalFailure = prefetchedFailed > 0 && deps.isJobFailed(prefetchedJobForTimeout)
-                terminalJobStateObserved = terminalSuccess || terminalFailure
+              timedOutJob = await kube.get('job', jobName, jobNamespace)
+              if (!isJobTerminal(timedOutJob)) {
+                applyTimeoutOutcome()
+                break
               }
-            }
-            if (!terminalJobStateObserved) {
-              applyTimeoutOutcome()
-              break
             }
           }
         }
@@ -794,7 +793,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
           }
           break
         }
-        const job = prefetchedJobForTimeout ?? (await kube.get('job', jobName, jobNamespace))
+        const job = timedOutJob ?? (await kube.get('job', jobName, jobNamespace))
         if (!job) {
           if (!stepStatus.jobObservedAt) {
             setWorkflowStepPhase(stepStatus, 'Running', 'Waiting for job to be created')
