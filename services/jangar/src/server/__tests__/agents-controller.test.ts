@@ -3626,7 +3626,7 @@ describe('agents controller reconcileAgentRun', () => {
     const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
     const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
     expect(status.phase).toBe('Failed')
-    expect(workflow.phase).toBe('Failed')
+    expect(workflow.phase).toBeUndefined()
     expect(steps[0]?.phase).toBe('Failed')
   })
 
