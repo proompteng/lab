@@ -2404,7 +2404,7 @@ describe('agents controller reconcileAgentRun', () => {
     expect(steps[0]?.phase).toBe('Running')
     expect(steps[1]?.phase).toBe('Pending')
 
-    const firstJobName = (firstSteps[0]?.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+    const firstJobName = (steps[0]?.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
     expect(firstJobName).toBeTruthy()
 
     jobStatuses.set(firstJobName ?? '', {
