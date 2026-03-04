@@ -366,7 +366,7 @@ spec:
                           x-kubernetes-validations:
                           - message: workflow step parameters.prompt is not allowed;
                               use ImplementationSpec.spec.text
-                            rule: self == nil || self.keys().all(k, k != 'prompt')
+                            rule: '!has(self.parameters) || !has(self.parameters.prompt)'
                         retries:
                           format: int32
                           type: integer
@@ -480,15 +480,15 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: spec.implementationSpecRef or spec.implementation is required
-              rule: self.implementationSpecRef != nil || self.implementation != nil
+              rule: has(self.implementationSpecRef) || has(self.implementation)
             - message: Only one of spec.systemPrompt or spec.systemPromptRef may be
                 set
-              rule: self.systemPrompt == nil || self.systemPromptRef == nil
+              rule: '!(has(self.systemPrompt) && has(self.systemPromptRef))'
             - message: AgentRun-level systemPrompt/systemPromptRef overrides are not
                 allowed; configure Agent.spec.defaults instead
-              rule: self.systemPrompt == nil && self.systemPromptRef == nil
+              rule: '!has(self.systemPrompt) && !has(self.systemPromptRef)'
             - message: spec.parameters.prompt is not allowed; use ImplementationSpec.spec.text
-              rule: self.parameters == nil || self.parameters.keys().all(k, k != 'prompt')
+              rule: '!has(self.parameters) || !has(self.parameters.prompt)'
           status:
             properties:
               artifacts:
