@@ -129,6 +129,7 @@ export const createImplementationContractTools = (resolveParam: ResolveParam) =>
       if (typeof value !== 'string') continue
       const trimmed = value.trim()
       if (!trimmed) continue
+      if (key.trim().toLowerCase() === 'prompt') continue
       metadata[key] = trimmed
     }
 
@@ -141,7 +142,6 @@ export const createImplementationContractTools = (resolveParam: ResolveParam) =>
     const resolvedIssueTitle = metadata.issueTitle ?? resolveParam(parameters, ['issueTitle'])
     const resolvedIssueBody = metadata.issueBody ?? resolveParam(parameters, ['issueBody'])
     const resolvedIssueUrl = metadata.issueUrl ?? resolveParam(parameters, ['issueUrl'])
-    const resolvedPrompt = metadata.prompt ?? resolveParam(parameters, ['prompt'])
     const base = metadata.base ?? resolveParam(parameters, ['base'])
     const head = metadata.head ?? resolveParam(parameters, ['head'])
     const stage = metadata.stage ?? resolveParam(parameters, ['stage'])
@@ -168,7 +168,7 @@ export const createImplementationContractTools = (resolveParam: ResolveParam) =>
     const renderedText = renderParameterTemplate(text, templateContext)
     const issueTitle = renderParameterTemplate(resolvedIssueTitle || renderedSummary, templateContext)
     const issueBody = renderParameterTemplate(resolvedIssueBody || renderedText, templateContext)
-    const prompt = renderParameterTemplate(resolvedPrompt || renderedText || renderedSummary, templateContext)
+    const prompt = renderedText || renderedSummary
 
     setMetadataIfMissing(metadata, 'issueTitle', issueTitle)
     setMetadataIfMissing(metadata, 'issueBody', issueBody)

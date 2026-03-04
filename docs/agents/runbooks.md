@@ -49,6 +49,8 @@ The Application renders `argocd/applications/agents` (Helm + kustomize) and inst
 into the `agents` namespace using `argocd/applications/agents/values.yaml`.
 Update the values file with your Jangar image tag, database secret, and (optional) runner image via `runner.image.*`.
 The chart defaults `controller.jobTtlSecondsAfterFinished` to a safe value; set it to `0` to disable job cleanup.
+Runner image env precedence is: `env.vars.JANGAR_AGENT_RUNNER_IMAGE` > `runner.image.*` >
+`runtime.agentRunnerImage` (legacy fallback).
 
 If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
 Guardrail rules that fail install-time validation:

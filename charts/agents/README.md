@@ -485,10 +485,17 @@ controller:
 
 Set defaults for AgentRun and Schedule workload images when the CRD does not specify one:
 
-- `runtime.agentRunnerImage` → `JANGAR_AGENT_RUNNER_IMAGE`
+- `runner.image.repository`/`runner.image.tag`/`runner.image.digest` → `JANGAR_AGENT_RUNNER_IMAGE` (recommended)
+- `runtime.agentRunnerImage` → `JANGAR_AGENT_RUNNER_IMAGE` (legacy compatibility fallback)
 - `runtime.agentImage` → `JANGAR_AGENT_IMAGE`
 - `runtime.scheduleRunnerImage` → `JANGAR_SCHEDULE_RUNNER_IMAGE`
 - `runtime.scheduleServiceAccount` → `JANGAR_SCHEDULE_SERVICE_ACCOUNT`
+
+Effective `JANGAR_AGENT_RUNNER_IMAGE` precedence in rendered Deployments:
+
+1. `env.vars.JANGAR_AGENT_RUNNER_IMAGE` (explicit operator override)
+2. `runner.image.*`
+3. `runtime.agentRunnerImage`
 
 ### Agent comms subjects (optional)
 
@@ -673,7 +680,13 @@ If your agent-runner uses NATS for context streaming, set `NATS_URL` in the Agen
 
 ## Runner image defaults
 
-The chart sets `JANGAR_AGENT_RUNNER_IMAGE` from `runner.image.*` to avoid missing workload image errors.
+The chart emits a single `JANGAR_AGENT_RUNNER_IMAGE` env var per container with this precedence:
+
+1. `env.vars.JANGAR_AGENT_RUNNER_IMAGE`
+2. `runner.image.*`
+3. `runtime.agentRunnerImage`
+
+Use `runner.image.*` as the normal configuration path. `runtime.agentRunnerImage` is kept only for compatibility.
 Override `runner.image.repository`, `runner.image.tag`, or `runner.image.digest` to point at your own build.
 
 ## Job TTL behavior

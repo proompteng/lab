@@ -51,6 +51,8 @@ type AgentRunPayload = {
   secrets?: string[]
   policy?: Record<string, unknown>
   ttlSecondsAfterFinished?: number
+  systemPrompt?: unknown
+  systemPromptRef?: unknown
 }
 
 type WorkflowStepPayload = {
@@ -288,6 +290,12 @@ const parseWorkflowSteps = (value: Record<string, unknown> | null): WorkflowStep
       const message = error instanceof Error ? error.message : String(error)
       throw new Error(`workflow.steps[${index}] ${message}`)
     }
+    const forbiddenStepPromptKey = Object.keys(parameters ?? {}).find((key) => key.trim().toLowerCase() === 'prompt')
+    if (forbiddenStepPromptKey) {
+      throw new Error(
+        `workflow.steps[${index}].parameters.${forbiddenStepPromptKey} is not allowed; use ImplementationSpec.spec.text`,
+      )
+    }
 
     const implementationSpecRef = asRecord(step.implementationSpecRef)
     const implementationSpecName = asString(implementationSpecRef?.name)
@@ -319,6 +327,11 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   if (idempotencyKeyRaw != null && !idempotencyKey) {
     throw new Error('idempotencyKey must be a string')
   }
+  if (payload.systemPrompt != null || payload.systemPromptRef != null) {
+    throw new Error(
+      'AgentRun-level systemPrompt/systemPromptRef overrides are not allowed; configure Agent.spec.defaults instead',
+    )
+  }
 
   const implementationSpecRef = asRecord(payload.implementationSpecRef)
   const implementationSpecName = asString(implementationSpecRef?.name)
@@ -330,6 +343,10 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   if (!runtimeType) throw new Error('runtime.type is required')
 
   const parameters = normalizeParameterMap(asRecord(payload.parameters))
+  const forbiddenPromptKey = Object.keys(parameters ?? {}).find((key) => key.trim().toLowerCase() === 'prompt')
+  if (forbiddenPromptKey) {
+    throw new Error(`parameters.${forbiddenPromptKey} is not allowed; use ImplementationSpec.spec.text`)
+  }
   const policy = asRecord(payload.policy) ?? undefined
   const secrets = Array.isArray(payload.secrets)
     ? payload.secrets.filter((item) => typeof item === 'string')

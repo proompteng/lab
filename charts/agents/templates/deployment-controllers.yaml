@@ -165,7 +165,10 @@ spec:
             - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
               value: {{ .Values.workflowRuntime.native.systemImprovementOrchestrationNamespace | quote }}
             {{- end }}
-            {{- if and .Values.runtime.agentRunnerImage (not (hasKey $envVars "JANGAR_AGENT_RUNNER_IMAGE")) }}
+            {{- if and (not (hasKey $envVars "JANGAR_AGENT_RUNNER_IMAGE")) .Values.runner.image.repository }}
+            - name: JANGAR_AGENT_RUNNER_IMAGE
+              value: "{{ .Values.runner.image.repository }}:{{ .Values.runner.image.tag }}{{- if .Values.runner.image.digest }}@{{ .Values.runner.image.digest }}{{ end }}"
+            {{- else if and .Values.runtime.agentRunnerImage (not (hasKey $envVars "JANGAR_AGENT_RUNNER_IMAGE")) }}
             - name: JANGAR_AGENT_RUNNER_IMAGE
               value: {{ .Values.runtime.agentRunnerImage | quote }}
             {{- end }}
@@ -203,10 +206,6 @@ spec:
             {{- end }}
             - name: JANGAR_IMAGE
               value: "{{ $imageRepo }}:{{ $imageTag }}{{- if $imageDigest }}@{{ $imageDigest }}{{ end }}"
-            {{- if .Values.runner.image.repository }}
-            - name: JANGAR_AGENT_RUNNER_IMAGE
-              value: "{{ .Values.runner.image.repository }}:{{ .Values.runner.image.tag }}{{- if .Values.runner.image.digest }}@{{ .Values.runner.image.digest }}{{ end }}"
-            {{- end }}
             {{- if hasKey .Values.controller "jobTtlSecondsAfterFinished" }}
             - name: JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS
               value: {{ .Values.controller.jobTtlSecondsAfterFinished | quote }}

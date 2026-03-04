@@ -1,6 +1,6 @@
-# AgentRun Creation Guide (Prompt Precedence)
+# AgentRun Creation Guide (Prompt Contract)
 
-Status: Current (2026-02-11)
+Status: Current (2026-03-04)
 
 Docs index: [README](README.md)
 
@@ -11,25 +11,22 @@ turning a “ship code + chart” task into a docs-only PR).
 
 This guide focuses on prompt precedence and the minimum fields needed for reliable runs.
 
-## Prompt Precedence (The Common Failure Mode)
+## Prompt Source Rules (No Run-Level Overrides)
 
 The Codex runner ultimately receives a single “user prompt” string in the generated run payload (`run.json.prompt`).
 
-Precedence (highest first):
+Allowed sources (highest first):
 
-1. `AgentRun.spec.parameters.prompt` (if set)
-2. `ImplementationSpec.spec.text` (when `spec.implementationSpecRef` is used)
-3. `AgentRun.spec.implementation.inline.text` (when inline implementations are used)
+1. `ImplementationSpec.spec.text` (when `spec.implementationSpecRef` is used)
+2. `AgentRun.spec.implementation.inline.text` (when inline implementations are used)
 
-Rule:
+Disallowed:
 
-If you are running an ImplementationSpec, do not set `AgentRun.spec.parameters.prompt` unless you intentionally want to
-override the ImplementationSpec text.
+- `AgentRun.spec.parameters.prompt`
+- `AgentRun.spec.workflow.steps[].parameters.prompt`
 
-Why:
-
-`parameters.prompt` is treated as authoritative. If you set it to something like “Implement docs/...”, the runner will
-optimize for that smaller scope even if the referenced ImplementationSpec asks for code, chart, and validation changes.
+`parameters.prompt` is rejected at API/controller validation time and CRD validation. Use
+`ImplementationSpec.spec.text` as the task source of truth.
 
 ## Minimal AgentRun (Reference An ImplementationSpec, No Prompt Override)
 
@@ -95,6 +92,19 @@ Image resolution order (highest first):
 2. `JANGAR_AGENT_RUNNER_IMAGE`
 3. `JANGAR_AGENT_IMAGE`
 
+Runner image entry points by interface:
+
+- HTTP `/v1/agent-runs`: `spec.workload.image` (and workflow step `spec.workflow.steps[].workload.image`)
+- gRPC `SubmitAgentRun`: `workload.image` (mapped into `AgentRun.spec.workload.image`)
+- Native `OrchestrationRun` AgentRun steps: `step.workload.image` (mapped into submitted `AgentRun.spec.workload.image`)
+- Controller fallback defaults: `JANGAR_AGENT_RUNNER_IMAGE`, then `JANGAR_AGENT_IMAGE`
+
+Chart default wiring for `JANGAR_AGENT_RUNNER_IMAGE` (highest first):
+
+1. `env.vars.JANGAR_AGENT_RUNNER_IMAGE`
+2. `runner.image.*`
+3. `runtime.agentRunnerImage` (legacy fallback)
+
 Safe default for normal runs:
 
 - Do not set `spec.workload.image`; let the controller-provided default image drive execution.
@@ -118,12 +128,11 @@ kubectl get cm -n agents <run-spec-configmap> -o yaml | rg -n 'run.json:|\"promp
 
 If `run.json.prompt` contains your ImplementationSpec `text`, you did not override the prompt.
 
-If `run.json.prompt` contains your `parameters.prompt`, you did override it.
+If `run.json.prompt` does not contain the expected ImplementationSpec text, fail the run setup and fix the spec.
 
 ## Verify System Prompt Is Actually Enforced
 
-If the Agent relies on `defaults.systemPromptRef` or run-level `systemPromptRef`, validate the runtime pod before
-trusting results:
+If the Agent relies on `defaults.systemPromptRef`, validate the runtime pod before trusting results:
 
 ```bash
 RUN=leader-election-implementation-20260207-run
@@ -181,36 +190,29 @@ Notes:
 - Ensure loop state volumes are PVC-backed and reused across iterations.
 - Conditional loops use CEL expressions under `workflow.steps[].loop.condition.expression`.
 
-## When To Use `parameters.prompt` (And When Not To)
+## `parameters.prompt` Policy
 
-Use `parameters.prompt` when:
-
-- You are doing an ad-hoc run without an ImplementationSpec, or you are intentionally overriding the spec’s text for a
-  narrow one-off (for example, “summarize logs”).
-
-Avoid `parameters.prompt` when:
-
-- The ImplementationSpec is the source of truth for deliverables (code + chart + validation).
-- You are using a “design doc” ImplementationSpec and want it implemented as written.
+`spec.parameters.prompt` is not supported for AgentRuns. Define the task in `ImplementationSpec.spec.text` (or
+`spec.implementation.inline.text` for inline runs).
 
 ## System Prompt Versus User Prompt
 
 System prompt:
 
 - Configures “how the agent behaves” (process, constraints, formatting, safety).
-- Comes from Agent defaults and optional per-run overrides.
+- Comes from Agent defaults only (`Agent.spec.defaults.systemPrompt` or `Agent.spec.defaults.systemPromptRef`).
 - See `docs/agents/designs/custom-system-prompt-agent-runs.md`.
 
 User prompt:
 
 - Describes “what to do” for this run.
-- Comes from `parameters.prompt` or `ImplementationSpec.spec.text` (depending on what you set).
+- Comes from `ImplementationSpec.spec.text` (or inline implementation text).
 
 Do not use system prompt customization to compensate for an incorrect user prompt.
 
 ## Common Pitfalls Checklist
 
-- You set `spec.parameters.prompt` and unintentionally narrowed the task scope.
+- You tried to use `spec.parameters.prompt` (this is rejected by validation).
 - You used a multi-step workflow (`plan` + `implement`) for a design-doc run that should have been a single `implement` step.
 - You referenced the wrong `ImplementationSpec` (check `spec.implementationSpecRef.name`).
 - You assumed `${parameter}` placeholders were auto-expanded in prompt text without verifying `run.json.prompt`.

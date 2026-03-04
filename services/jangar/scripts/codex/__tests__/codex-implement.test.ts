@@ -928,6 +928,22 @@ describe('runCodexImplementation', () => {
     expect(notify.pr_url).toBe('https://example.test/pull/456')
   }, 40_000)
 
+  it('fails implementation runs when pull requests are required and PR_URL is missing', async () => {
+    process.env.VCS_PULL_REQUESTS_ENABLED = 'true'
+    delete process.env.CODEX_REQUIRE_PULL_REQUEST
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow(
+      'Implementation run completed without creating a pull request (missing PR_URL output)',
+    )
+  }, 40_000)
+
+  it('allows implementation runs without PR_URL when CODEX_REQUIRE_PULL_REQUEST is false', async () => {
+    process.env.VCS_PULL_REQUESTS_ENABLED = 'true'
+    process.env.CODEX_REQUIRE_PULL_REQUEST = 'false'
+
+    await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
+  }, 40_000)
+
   it('throws when the event file is missing', async () => {
     await expect(runCodexImplementation(join(workdir, 'missing.json'))).rejects.toThrow(/Event payload file not found/)
   }, 40_000)

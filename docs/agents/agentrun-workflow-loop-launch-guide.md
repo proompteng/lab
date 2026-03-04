@@ -117,6 +117,7 @@ spec:
 Runner image safety:
 
 - Default: do not set `spec.workload.image` in AgentRun manifests.
+- Workflow steps may also set `spec.workflow.steps[].workload.image`; if omitted, step jobs inherit top-level `spec.workload`.
 - The controller resolves runner image in this order:
   1. `AgentRun.spec.workload.image`
   2. `JANGAR_AGENT_RUNNER_IMAGE`
@@ -161,7 +162,7 @@ Your `ImplementationSpec.spec.text` should explicitly require:
 - write per-iteration notes (for example `${artifactPath}/iteration-<n>.md`),
 - continue from existing branch/worktree, not a fresh unrelated location.
 
-Avoid `spec.parameters.prompt` unless intentionally overriding the ImplementationSpec text.
+Do not set `spec.parameters.prompt`; AgentRuns use `ImplementationSpec.spec.text` (or inline implementation text).
 
 ## Launch Commands
 

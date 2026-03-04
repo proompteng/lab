@@ -17,6 +17,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
+import { Effect } from 'effect'
 
 import { runCli } from './lib/cli'
 import { pushCodexEventsToLoki, type RunCodexSessionResult, runCodexSession } from './lib/codex-runner'
@@ -30,6 +31,7 @@ import {
 } from './lib/codex-utils'
 import { ensureFileDirectory } from './lib/fs'
 import { type CodexLogger, consoleLogger, createCodexLogger } from './lib/logger'
+import { evaluatePullRequestPolicy } from './lib/pull-request-policy'
 import { runCodexProgressComment } from './codex-progress-comment'
 
 interface ImplementationEventPayload {
@@ -2291,6 +2293,18 @@ export const runCodexImplementation = async (eventPath: string) => {
     const prUrlRaw = await readOptionalTextFile(prUrlPath, logger)
     const prNumber = prNumberRaw ? parseOptionalPrNumber(prNumberRaw) : null
     prUrl = prUrlRaw ? prUrlRaw : null
+    const pullRequestsEnabled = parseBoolean(process.env.VCS_PULL_REQUESTS_ENABLED, false)
+    const requirePullRequest = parseBoolean(process.env.CODEX_REQUIRE_PULL_REQUEST, pullRequestsEnabled)
+    const pullRequestPolicyDecision = Effect.runSync(
+      evaluatePullRequestPolicy({
+        stage,
+        requirePullRequest,
+        prUrl,
+      }),
+    )
+    if (!pullRequestPolicyDecision.ok) {
+      throw new Error(pullRequestPolicyDecision.message)
+    }
     const headSha = commitSha ?? null
     try {
       await ensureFileDirectory(headShaPath)

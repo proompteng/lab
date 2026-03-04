@@ -97,6 +97,7 @@ type AgentRunReconcilerDependencies = {
     agentRun: Record<string, unknown>,
     implementation: Record<string, unknown>,
     memory: Record<string, unknown> | null,
+    systemPrompt?: string | null,
   ) => Promise<RuntimeRef>
   submitTemporalRun: (
     agentRun: Record<string, unknown>,
@@ -906,7 +907,12 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             },
           )
         } else if (runtimeType === 'custom') {
-          newRuntimeRef = await submitCustomRun(agentRun, implResource, memory)
+          newRuntimeRef = await submitCustomRun(
+            agentRun,
+            implResource,
+            memory,
+            systemPromptResolution.resolvedSystemPrompt,
+          )
         } else if (runtimeType === 'temporal') {
           newRuntimeRef = await submitTemporalRun(
             agentRun,
@@ -916,7 +922,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             memory,
             vcsContext,
             resolvedParameters,
-            systemPromptResolution.systemPrompt,
+            systemPromptResolution.resolvedSystemPrompt,
           )
         } else {
           throw new Error(`unknown runtime type: ${runtimeType}`)

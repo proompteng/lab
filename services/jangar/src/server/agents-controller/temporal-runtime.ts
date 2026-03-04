@@ -73,17 +73,30 @@ export const createTemporalRuntimeTools = (deps: TemporalRuntimeDependencies) =>
     agentRun: Record<string, unknown>,
     implementation: Record<string, unknown>,
     memory: Record<string, unknown> | null,
+    systemPrompt?: string | null,
   ) => {
     const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
     const endpoint = asString(runtimeConfig.endpoint)
     if (!endpoint) {
       throw new Error('spec.runtime.config.endpoint is required for custom runtime')
     }
-    const payload = runtimeConfig.payload ?? {
+    const payloadBase = runtimeConfig.payload ?? {
       agentRun,
       implementation,
       memory,
     }
+    const payload =
+      typeof systemPrompt === 'string' && systemPrompt.trim().length > 0
+        ? payloadBase && typeof payloadBase === 'object' && !Array.isArray(payloadBase)
+          ? {
+              ...(payloadBase as Record<string, unknown>),
+              systemPrompt,
+            }
+          : {
+              payload: payloadBase,
+              systemPrompt,
+            }
+        : payloadBase
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
