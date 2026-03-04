@@ -25,6 +25,7 @@ dspy: Any = _dspy
 _SAFE_DEFAULT_CHECKS = ["risk_engine", "order_firewall", "execution_policy"]
 _DSPY_OPENAI_BASE_PATH = "/openai/v1"
 _DSPY_OPENAI_CHAT_COMPLETION_SUFFIX = "/chat/completions"
+_DSPY_TEMPERATURE_ONE_MODEL_PREFIXES = ("gpt-5",)
 
 
 class DSPyCommitteeProgram(Protocol):
@@ -155,7 +156,7 @@ class LiveDSPyCommitteeProgram:
 
         lm_kwargs: dict[str, Any] = {
             "model": normalized_model,
-            "temperature": 0.0,
+            "temperature": _resolve_dspy_temperature(normalized_model),
             "max_tokens": 900,
         }
         api_base = _coerce_dspy_api_base(
@@ -281,6 +282,15 @@ def _coerce_dspy_api_base(
     return (
         f"{parsed.scheme}://{parsed.netloc}{base_path}"
     )
+
+
+def _resolve_dspy_temperature(model_name: str) -> float:
+    normalized = model_name.strip().lower()
+    _, _, model_id = normalized.partition("/")
+    candidate = model_id if model_id else normalized
+    if candidate.startswith(_DSPY_TEMPERATURE_ONE_MODEL_PREFIXES):
+        return 1.0
+    return 0.0
 
 
 __all__ = [
