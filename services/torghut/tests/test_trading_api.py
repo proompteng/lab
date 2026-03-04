@@ -375,8 +375,24 @@ class TestTradingApi(TestCase):
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+        },
+    )
     def test_readyz_returns_200_when_dependencies_are_healthy(
-        self, _mock_clickhouse: object, _mock_alpaca: object
+        self,
+        _mock_schema: object,
+        _mock_account_scope: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
     ) -> None:
         original = settings.trading_enabled
         settings.trading_enabled = True
@@ -397,8 +413,24 @@ class TestTradingApi(TestCase):
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_postgres", return_value={"ok": False, "detail": "down"})
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+        },
+    )
     def test_readyz_returns_503_when_dependency_degraded(
-        self, _mock_postgres: object, _mock_alpaca: object
+        self,
+        _mock_schema: object,
+        _mock_account_scope: object,
+        _mock_postgres: object,
+        _mock_alpaca: object,
     ) -> None:
         original = settings.trading_enabled
         settings.trading_enabled = True
@@ -415,6 +447,97 @@ class TestTradingApi(TestCase):
             self.assertEqual(payload["dependencies"]["postgres"]["detail"], "down")
         finally:
             settings.trading_enabled = original
+
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": False,
+            "current_heads": ["0010_execution_provenance_and_governance_trace"],
+            "expected_heads": ["0011_autonomy_lifecycle_and_promotion_audit"],
+        },
+    )
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_returns_503_when_schema_contract_fails(
+        self,
+        _mock_postgres: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
+        _mock_schema: object,
+        _mock_account_scope: object,
+    ) -> None:
+        original = settings.trading_enabled
+        settings.trading_enabled = True
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 503)
+            payload = response.json()
+            self.assertEqual(payload["status"], "degraded")
+            self.assertFalse(payload["dependencies"]["database"]["ok"])
+            self.assertFalse(payload["dependencies"]["database"]["schema_current"])
+            self.assertEqual(
+                payload["dependencies"]["database"]["account_scope_errors"], []
+            )
+        finally:
+            settings.trading_enabled = original
+
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={
+            "account_scope_ready": False,
+            "account_scope_errors": ["legacy unique index detected"],
+        },
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+        },
+    )
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_returns_503_when_account_scope_contract_fails(
+        self,
+        _mock_postgres: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
+        _mock_schema: object,
+        _mock_account_scope: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_multi = settings.trading_multi_account_enabled
+        settings.trading_enabled = True
+        settings.trading_multi_account_enabled = True
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 503)
+            payload = response.json()
+            self.assertEqual(payload["status"], "degraded")
+            self.assertFalse(payload["dependencies"]["database"]["ok"])
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_current"], True
+            )
+            self.assertFalse(payload["dependencies"]["database"]["account_scope_ready"])
+            self.assertIn("legacy unique index detected", payload["dependencies"]["database"]["account_scope_errors"][0])
+        finally:
+            settings.trading_enabled = original
+            settings.trading_multi_account_enabled = original_multi
 
     def test_trading_status_includes_llm_evaluation(self) -> None:
         response = self.client.get("/trading/status")

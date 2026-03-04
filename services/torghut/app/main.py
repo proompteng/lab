@@ -304,6 +304,20 @@ def _evaluate_trading_health_payload(
         "alpaca": alpaca_status,
     }
 
+    database_contract = _evaluate_database_contract(session)
+    if settings.trading_enabled:
+        dependencies["database"] = {
+            "ok": bool(database_contract.get("ok")),
+            "detail": "ok" if bool(database_contract.get("ok")) else "database contract failed",
+            "schema_current": bool(database_contract.get("schema_current")),
+            "schema_current_heads": database_contract.get("schema_current_heads"),
+            "expected_heads": database_contract.get("expected_heads"),
+            "account_scope_ready": bool(
+                database_contract.get("account_scope_ready")
+            ),
+            "account_scope_errors": database_contract.get("account_scope_errors", []),
+        }
+
     overall_ok = scheduler_ok and all(dep["ok"] for dep in dependencies.values())
     status = "ok" if overall_ok else "degraded"
     status_code = 200 if overall_ok else 503
@@ -316,6 +330,60 @@ def _evaluate_trading_health_payload(
         },
         status_code,
     )
+
+
+def _evaluate_database_contract(session: Session) -> dict[str, object]:
+    """Collect schema and account-scope readiness checks used by /readyz and /db-check."""
+
+    if not settings.trading_enabled:
+        return {
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": [],
+            "expected_heads": [],
+            "account_scope_ready": True,
+            "account_scope_errors": [],
+        }
+
+    try:
+        schema_status = check_schema_current(session)
+        account_scope_status = check_account_scope_invariants(session)
+    except SQLAlchemyError as exc:
+        return {
+            "ok": False,
+            "error": f"database unavailable: {exc}",
+            "schema_current": False,
+            "schema_current_heads": [],
+            "expected_heads": [],
+            "account_scope_ready": False,
+            "account_scope_errors": [str(exc)],
+        }
+    except RuntimeError as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "schema_current": False,
+            "schema_current_heads": [],
+            "expected_heads": [],
+            "account_scope_ready": False,
+            "account_scope_errors": [str(exc)],
+        }
+
+    account_scope_checks = dict(account_scope_status)
+    if not settings.trading_multi_account_enabled:
+        account_scope_checks["account_scope_ready"] = True
+        account_scope_checks["account_scope_errors"] = []
+
+    schema_current = bool(schema_status.get("schema_current"))
+    account_scope_ready = bool(account_scope_checks.get("account_scope_ready"))
+    return {
+        "ok": schema_current and account_scope_ready,
+        "schema_current": schema_current,
+        "schema_current_heads": schema_status.get("current_heads", []),
+        "expected_heads": schema_status.get("expected_heads", []),
+        "account_scope_ready": account_scope_ready,
+        "account_scope_errors": account_scope_checks.get("account_scope_errors", []),
+    }
 
 
 @app.get("/readyz")
@@ -346,12 +414,31 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
     """Verify database connectivity and Alembic schema head alignment."""
 
     try:
-        schema_status = check_schema_current(session)
-        account_scope_status = check_account_scope_invariants(session)
+        database_contract = _evaluate_database_contract(session)
+        schema_status = {
+            "schema_current": bool(database_contract.get("schema_current")),
+            "current_heads": database_contract.get("schema_current_heads"),
+            "expected_heads": database_contract.get("expected_heads"),
+        }
+        account_scope_status = {
+            "account_scope_ready": bool(database_contract.get("account_scope_ready")),
+            "account_scope_errors": database_contract.get("account_scope_errors", []),
+        }
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="database unavailable") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if database_contract.get("error"):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": database_contract.get("error"),
+                "schema_current": False,
+                "account_scope_ready": account_scope_status.get("account_scope_ready"),
+            },
+        )
+
     if not bool(schema_status.get("schema_current")):
         raise HTTPException(
             status_code=503,
