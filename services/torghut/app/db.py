@@ -304,4 +304,10 @@ def check_schema_current(session: Session) -> dict[str, object]:
         "current_heads": current_heads,
         "expected_heads": list(expected_heads),
         "expected_heads_signature": _schema_heads_signature(expected_heads),
+        "schema_missing_heads": sorted(expected_heads_set - current_heads_set),
+        "schema_unexpected_heads": sorted(current_heads_set - expected_heads_set),
+        "schema_head_count_expected": len(expected_heads),
+        "schema_head_count_current": len(current_heads),
+        "schema_head_delta_count": len(expected_heads_set - current_heads_set)
+        + len(current_heads_set - expected_heads_set),
     }
