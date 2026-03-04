@@ -177,11 +177,12 @@ export type DatabaseStatus = {
   migration_consistency: DatabaseMigrationConsistency
 }
 
-export type GrpcStatus = {
-  enabled: boolean
-  address: string
-  status: 'healthy' | 'degraded' | 'disabled'
-  message: string
+export type WorkflowsReliabilityStatus = {
+  active_job_runs: number
+  recent_failed_jobs: number
+  backoff_limit_exceeded_jobs: number
+  window_minutes: number
+  top_failure_reasons: string[]
 }
 
 export type ControlPlaneWatchReliabilityStream = {
@@ -201,6 +202,13 @@ export type ControlPlaneWatchReliability = {
   total_errors: number
   total_restarts: number
   streams: ControlPlaneWatchReliabilityStream[]
+}
+
+export type GrpcStatus = {
+  enabled: boolean
+  address: string
+  status: 'healthy' | 'degraded' | 'disabled'
+  message: string
 }
 
 export type NamespaceStatus = {
@@ -231,6 +239,7 @@ export type ControlPlaneStatus = {
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
+  workflows: WorkflowsReliabilityStatus
   namespaces: NamespaceStatus[]
 }
 
