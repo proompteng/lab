@@ -244,6 +244,7 @@ jobs:
             -t "${IMAGE}" \
             --build-arg "JANGAR_VERSION=${JANGAR_VERSION}" \
             --build-arg "JANGAR_COMMIT=${JANGAR_COMMIT}" \
+            --build-arg "BUN_BASE_IMAGE=docker.io/oven/bun" \
             --secret "id=codexauth,src=${CODEX_AUTH_PATH}" \
             "${PRUNE_DIR}"
           kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"
