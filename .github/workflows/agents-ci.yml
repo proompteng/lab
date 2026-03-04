@@ -211,8 +211,6 @@ jobs:
             else
               echo "Prebuild failed or timed out; continuing with Docker image build."
             fi
-            mkdir -p "${PRUNE_DIR}/full/services/jangar"
-            cp -R "${BUILD_DIR}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
           elif [ -f "${OUTPUT_ENTRY}" ] && [ -f "${OUTPUT_PROTO}" ]; then
             echo "Using local services/jangar .output from workspace"
             mkdir -p "${PRUNE_DIR}/full/services/jangar"
