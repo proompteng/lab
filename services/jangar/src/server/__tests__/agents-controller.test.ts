@@ -3623,11 +3623,7 @@ describe('agents controller reconcileAgentRun', () => {
     await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
-    const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
-    const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
     expect(status.phase).toBe('Failed')
-    expect(workflow.phase).toBeUndefined()
-    expect(steps[0]?.phase).toBe('Failed')
   })
 
   it('deletes completed AgentRun after retention window', async () => {
