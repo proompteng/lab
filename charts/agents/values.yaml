@@ -46,6 +46,12 @@ controllers:
     minAvailable: 1
     maxUnavailable: ''
     annotations: {}
+  service:
+    enabled: false
+    type: ClusterIP
+    port: 50051
+    annotations: {}
+    labels: {}
   deploymentStrategy: {}
   image:
     repository: ''

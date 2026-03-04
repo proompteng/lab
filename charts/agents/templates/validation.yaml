@@ -111,6 +111,12 @@
 {{- end -}}
 {{- end }}
 {{- end }}
+{{- $controllersGrpcEnabledRaw := lower (trim (toString (index $controllersResolvedEnvVars "JANGAR_GRPC_ENABLED" | default "0"))) -}}
+{{- $controllersGrpcEnabled := regexMatch "^(1|true|yes|on)$" $controllersGrpcEnabledRaw -}}
+{{- $controllersServiceEnabled := .Values.controllers.service.enabled | default false -}}
+{{- if and $controllersEnabled $controllersGrpcEnabled (not $controllersServiceEnabled) }}
+{{- $errors = append $errors (printf "controllers.service.enabled must be true when controllers.env.vars.JANGAR_GRPC_ENABLED is true; add --set controllers.service.enabled=true to expose the controller gRPC listener.") -}}
+{{- end }}
 
 {{- $validationInputs := list
   (dict

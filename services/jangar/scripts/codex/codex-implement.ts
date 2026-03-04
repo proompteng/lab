@@ -22,6 +22,16 @@ import { Effect } from 'effect'
 import { runCli } from './lib/cli'
 import { pushCodexEventsToLoki, type RunCodexSessionResult, runCodexSession } from './lib/codex-runner'
 import {
+  listChannelMessages,
+  postChannelMessage,
+  type HulyListChannelMessagesResult,
+  type HulyPostChannelMessageResult,
+  type HulyUpsertMissionResult,
+  type HulyVerifyChatAccessResult,
+  upsertMission,
+  verifyChatAccess,
+} from './lib/huly-api-client'
+import {
   buildDiscordChannelCommand,
   copyAgentLogIfNeeded,
   parseBoolean,
@@ -33,6 +43,17 @@ import { ensureFileDirectory } from './lib/fs'
 import { type CodexLogger, consoleLogger, createCodexLogger } from './lib/logger'
 import { evaluatePullRequestPolicy } from './lib/pull-request-policy'
 import { runCodexProgressComment } from './codex-progress-comment'
+
+const GOVERNING_DESIGN_DOCUMENTS = [
+  'docs/agents/designs/autonomous-jangar-torghut-production-system.md',
+  'docs/agents/swarm-end-to-end-runbook.md',
+]
+const GOVERNING_DESIGN_DOCUMENT = GOVERNING_DESIGN_DOCUMENTS.join(' | ')
+
+type SwarmRequirementPayloadMetadata = {
+  objective?: string
+  acceptance?: string[]
+}
 
 interface ImplementationEventPayload {
   prompt?: string
@@ -92,9 +113,34 @@ type RequirementMetadata = {
   payload?: string
   payloadBytes?: string
   payloadTruncated?: boolean
+  acceptance?: string[]
   workerId?: string
   workerIdentity?: string
   workerRole?: string
+}
+
+type HulyRequirementArtifacts = {
+  activeChannel: string
+  actorId?: string
+  latestPeerMessageId?: string
+  latestPeerMessage?: string
+  verification?: HulyVerifyChatAccessResult
+  listMessages?: HulyListChannelMessagesResult
+  replyMessage?: HulyPostChannelMessageResult
+  ownerMessage?: HulyPostChannelMessageResult
+  mission?: HulyUpsertMissionResult
+}
+
+type HulyArtifactsForNotify = {
+  channel?: string
+  actorId?: string
+  latestPeerMessageId?: string
+  replyMessageId?: string
+  ownerMessageId?: string
+  missionId?: string
+  missionStatus?: string
+  missionStage?: string
+  missionIssue?: string
 }
 
 const asStringMap = (value: Record<string, string | number | boolean> | undefined): Record<string, string> => {
@@ -159,6 +205,399 @@ const isHulyRequirementChannel = (channel: string | undefined | null) => {
   }
 }
 
+const resolveHulyChannelFromCandidate = (value: string | null | undefined) => {
+  const normalized = normalizeNullableStringValue(value)
+  if (normalized && isHulyRequirementChannel(normalized)) {
+    return normalized
+  }
+  return undefined
+}
+
+const resolveActiveHulyChannel = (requirementMetadata: RequirementMetadata) => {
+  const candidates = [
+    requirementMetadata.channel,
+    process.env.hulyChannelName,
+    process.env.HULY_CHANNEL_NAME,
+    process.env.hulyChannelUrl,
+    process.env.HULY_CHANNEL_URL,
+  ]
+
+  return candidates
+    .map((candidate) => resolveHulyChannelFromCandidate(candidate))
+    .find((candidate): candidate is string => candidate !== undefined)
+}
+
+const summarizeText = (value: string | undefined, max = 260) => {
+  if (!value) {
+    return ''
+  }
+  const trimmed = value.trim()
+  if (trimmed.length <= max) {
+    return trimmed
+  }
+  return `${trimmed.slice(0, max)}…`
+}
+
+const resolveLatestPeerMessage = (
+  payload: HulyListChannelMessagesResult | undefined,
+  actorId?: string,
+): { messageId: string; message: string } | undefined => {
+  const messages = payload?.messages
+  if (!messages || messages.length === 0) {
+    return undefined
+  }
+
+  for (const message of messages) {
+    const messageId = normalizeNullableStringValue(message.messageId)
+    const text = normalizeNullableStringValue(message.message)
+    if (!messageId || !text) {
+      continue
+    }
+    if (actorId && typeof message.createdBy === 'string' && message.createdBy === actorId) {
+      continue
+    }
+    return { messageId, message: text }
+  }
+
+  const fallback = messages.find((entry) => {
+    const messageId = normalizeNullableStringValue(entry.messageId)
+    const message = normalizeNullableStringValue(entry.message)
+    return Boolean(messageId && message)
+  })
+
+  if (!fallback?.messageId || !fallback?.message) {
+    return undefined
+  }
+
+  return { messageId: String(fallback.messageId), message: String(fallback.message) }
+}
+
+const buildHulyReplyMessage = ({
+  messageId,
+  message,
+  objective,
+  decision,
+  issueNumber,
+  stage,
+  prUrl,
+  tests,
+  gaps,
+}: {
+  messageId: string
+  message: string
+  objective?: string
+  decision: 'completed' | 'failed'
+  issueNumber: string
+  stage: string
+  prUrl?: string | null
+  tests?: string[]
+  gaps?: string[]
+}) => {
+  const objectiveLine = objective ? ` Objective: ${objective}.` : ''
+  const testLine = tests && tests.length > 0 ? ` Tests: ${tests.join(', ')}.` : ''
+  const gapLine = gaps && gaps.length > 0 ? ` Risks: ${gaps.join('; ')}.` : ''
+  const prLine = prUrl ? ` PR: ${prUrl}.` : ''
+  return `Replying to message ${messageId}: Cross-swarm handoff decision for jangar issue #${issueNumber} at stage ${stage} is ${decision}.${objectiveLine} Context: ${summarizeText(message, 120)}.${testLine}${gapLine}${prLine}`
+}
+
+const buildOwnerUpdateMessage = ({
+  decision,
+  issueNumber,
+  repository,
+  requirementMetadata,
+  runSummary,
+  tests,
+  prUrl,
+  stage,
+  gaps,
+}: {
+  decision: 'completed' | 'failed'
+  repository: string
+  issueNumber: string
+  stage: string
+  requirementMetadata: RequirementMetadata
+  runSummary?: string | null
+  tests?: string[]
+  gaps?: string[]
+  prUrl?: string | null
+}) => {
+  const lines = [
+    'Cross-swarm handoff update',
+    `Repository: ${repository}`,
+    `Issue: #${issueNumber}`,
+    `Target stage: ${stage}`,
+    `Decision: ${decision}`,
+    `Design doc: ${GOVERNING_DESIGN_DOCUMENT}`,
+    requirementMetadata.id ? `Requirement ID: ${requirementMetadata.id}` : 'Requirement ID: unavailable',
+    requirementMetadata.signal ? `Signal: ${requirementMetadata.signal}` : 'Signal: unavailable',
+    requirementMetadata.source ? `Source: ${requirementMetadata.source}` : 'Source: unavailable',
+    `Target: ${requirementMetadata.target ?? 'jangar-control-plane'}`,
+  ]
+
+  if (requirementMetadata.objective) {
+    lines.push(`Objective: ${requirementMetadata.objective}`)
+  }
+
+  if (runSummary) {
+    lines.push(`Summary: ${summarizeText(runSummary, 220)}`)
+  }
+
+  lines.push(`Owner-facing status: ${decision === 'completed' ? 'completed' : 'failed pending follow-up'}`)
+
+  lines.push(
+    `Validation results: ${tests && tests.length > 0 ? tests.join('; ') : 'no explicit test list in final message'}`,
+  )
+
+  lines.push(`Key risks: ${gaps && gaps.length > 0 ? gaps.join('; ') : 'none identified'}`)
+
+  if (requirementMetadata.acceptance && requirementMetadata.acceptance.length > 0) {
+    lines.push(`Acceptance criteria: ${requirementMetadata.acceptance.join('; ')}`)
+  }
+
+  if (prUrl) {
+    lines.push(`PR: ${prUrl}`)
+  }
+
+  if (tests && tests.length > 0) {
+    lines.push(`Tests: ${tests.join(', ')}`)
+  }
+
+  if (gaps && gaps.length > 0) {
+    lines.push(`Gaps: ${gaps.join('; ')}`)
+  }
+
+  lines.push('Validation: huly artifacts issued and PR/branch context captured')
+  lines.push('Rollback path: rollback commit or reopen requirement and re-run mission')
+  return lines.join('\n')
+}
+
+const buildMissionDetails = ({
+  requirementMetadata,
+  repository,
+  issueNumber,
+  prUrl,
+  tests,
+  gaps,
+  summary,
+}: {
+  repository: string
+  issueNumber: string
+  requirementMetadata: RequirementMetadata
+  prUrl?: string | null
+  tests?: string[]
+  gaps?: string[]
+  summary?: string | null
+}) => {
+  const details = [
+    `- Repository: ${repository}`,
+    `- Issue: #${issueNumber}`,
+    `- Design document: ${GOVERNING_DESIGN_DOCUMENT}`,
+  ]
+
+  if (requirementMetadata.id) {
+    details.push(`- Requirement ID: ${requirementMetadata.id}`)
+  }
+  if (requirementMetadata.signal) {
+    details.push(`- Signal: ${requirementMetadata.signal}`)
+  }
+  if (requirementMetadata.source) {
+    details.push(`- Source: ${requirementMetadata.source}`)
+  }
+  if (requirementMetadata.target) {
+    details.push(`- Target: ${requirementMetadata.target}`)
+  }
+
+  if (summary) {
+    details.push(`- Summary: ${summarizeText(summary, 360)}`)
+  }
+
+  if (prUrl) {
+    details.push(`- PR: ${prUrl}`)
+  }
+
+  if (tests && tests.length > 0) {
+    details.push(`- Tests: ${tests.join(', ')}`)
+  }
+
+  if (gaps && gaps.length > 0) {
+    details.push(`- Risks/Gaps: ${gaps.join('; ')}`)
+  }
+
+  if (requirementMetadata.acceptance && requirementMetadata.acceptance.length > 0) {
+    details.push(`- Acceptance criteria: ${requirementMetadata.acceptance.join('; ')}`)
+  }
+
+  return details.join('\n')
+}
+
+const resolveHulyMissionTitle = ({
+  repository,
+  issueNumber,
+  requirementMetadata,
+}: {
+  repository: string
+  issueNumber: string
+  requirementMetadata: RequirementMetadata
+}) => {
+  if (requirementMetadata.id) {
+    return `Cross-swarm mission ${requirementMetadata.id} (${repository}#${issueNumber})`
+  }
+  return `Cross-swarm mission ${repository}#${issueNumber}`
+}
+
+const resolveHulyMissionId = ({
+  repository,
+  issueNumber,
+  requirementMetadata,
+}: {
+  repository: string
+  issueNumber: string
+  requirementMetadata: RequirementMetadata
+}) => {
+  if (requirementMetadata.id) {
+    return requirementMetadata.id
+  }
+  return `${repository}-issue-${issueNumber}`
+}
+
+const resolveHulyWorkerContext = (requirementMetadata: RequirementMetadata) => ({
+  workerId: requirementMetadata.workerId,
+  workerIdentity: requirementMetadata.workerIdentity,
+})
+
+const collectHulyArtifactsForNotify = (artifacts?: HulyRequirementArtifacts): HulyArtifactsForNotify | undefined => {
+  if (!artifacts) {
+    return undefined
+  }
+  return {
+    channel: artifacts.activeChannel,
+    actorId: artifacts.actorId,
+    latestPeerMessageId: artifacts.latestPeerMessageId,
+    replyMessageId: artifacts.replyMessage?.messageId,
+    ownerMessageId: artifacts.ownerMessage?.messageId,
+    missionId: artifacts.mission?.missionId,
+    missionStatus: artifacts.mission?.status,
+    missionStage: artifacts.mission?.stage,
+    missionIssue: artifacts.mission?.issue?.issueIdentifier,
+  }
+}
+
+const buildHulyArtifactsFromRun = async ({
+  artifacts,
+  logger,
+  repository,
+  issueNumber,
+  requirementMetadata,
+  stage,
+  tests,
+  gaps,
+  prUrl,
+  decision,
+  runSummary,
+  activeChannel,
+  workerContext,
+  includeReplyMessage,
+  latestPeerMessageId,
+  latestPeerMessage,
+}: {
+  artifacts: HulyRequirementArtifacts
+  logger: CodexLogger
+  repository: string
+  issueNumber: string
+  requirementMetadata: RequirementMetadata
+  stage: string
+  tests?: string[]
+  gaps?: string[]
+  prUrl?: string | null
+  decision: 'completed' | 'failed'
+  runSummary?: string | null
+  activeChannel: string
+  workerContext: ReturnType<typeof resolveHulyWorkerContext>
+  includeReplyMessage: boolean
+  latestPeerMessageId?: string
+  latestPeerMessage?: string
+}): Promise<HulyRequirementArtifacts> => {
+  const decisionSuffix = decision === 'completed' ? 'implementation completed' : 'implementation failed'
+  const details = buildMissionDetails({
+    repository,
+    issueNumber,
+    requirementMetadata,
+    prUrl,
+    tests,
+    gaps,
+    summary: runSummary,
+  })
+
+  if (includeReplyMessage && latestPeerMessageId && latestPeerMessage) {
+    const replyMessage = buildHulyReplyMessage({
+      messageId: latestPeerMessageId,
+      message: latestPeerMessage,
+      objective: requirementMetadata.objective,
+      decision,
+      issueNumber,
+      stage,
+      prUrl,
+      tests,
+      gaps,
+    })
+    try {
+      artifacts.replyMessage = await postChannelMessage({
+        channel: activeChannel,
+        message: replyMessage,
+        workerId: workerContext.workerId,
+        workerIdentity: workerContext.workerIdentity,
+      })
+    } catch (error) {
+      logger.warn('Failed to post Huly reply message for requirement handoff', error)
+      throw error
+    }
+  }
+
+  const ownerUpdateMessage = buildOwnerUpdateMessage({
+    decision,
+    repository,
+    issueNumber,
+    stage,
+    requirementMetadata,
+    runSummary,
+    tests,
+    prUrl,
+    gaps,
+  })
+  try {
+    artifacts.ownerMessage = await postChannelMessage({
+      channel: activeChannel,
+      message: ownerUpdateMessage,
+      workerId: workerContext.workerId,
+      workerIdentity: workerContext.workerIdentity,
+    })
+  } catch (error) {
+    logger.warn('Failed to post Huly owner update for requirement handoff', error)
+    throw error
+  }
+
+  const missionId = resolveHulyMissionId({ repository, issueNumber, requirementMetadata })
+  try {
+    artifacts.mission = await upsertMission({
+      missionId,
+      title: resolveHulyMissionTitle({ repository, issueNumber, requirementMetadata }),
+      summary: `Cross-swarm handoff ${decisionSuffix} for issue ${repository}#${issueNumber}`,
+      details,
+      channel: activeChannel,
+      message: ownerUpdateMessage,
+      stage,
+      status: decision === 'completed' ? 'completed' : 'failed',
+      workerId: workerContext.workerId,
+      workerIdentity: workerContext.workerIdentity,
+    })
+  } catch (error) {
+    logger.warn('Failed to upsert Huly mission for requirement handoff', error)
+    throw error
+  }
+
+  return artifacts
+}
+
 const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): RequirementMetadata => {
   const parameters = asStringMap(event.parameters)
   const resolve = (primary: keyof ImplementationEventPayload, fallback?: string) => {
@@ -176,17 +615,8 @@ const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): Req
   }
 
   const payload = resolve('swarmRequirementPayload', 'swarmRequirementPayload')
-  let payloadObjective: string | undefined
-  if (payload) {
-    try {
-      const parsed = JSON.parse(payload)
-      if (parsed && typeof parsed === 'object' && typeof parsed.objective === 'string') {
-        payloadObjective = parsed.objective.trim()
-      }
-    } catch {
-      // ignore malformed JSON payloads
-    }
-  }
+  const parsedPayload = parseSwarmRequirementPayload(payload)
+  const payloadObjective = parsedPayload.objective
 
   return {
     id: resolve('swarmRequirementId', 'swarmRequirementId'),
@@ -200,8 +630,45 @@ const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): Req
     workerRole: resolve('swarmAgentRole', 'swarmAgentRole'),
     objective: payloadObjective ?? resolve('objective') ?? resolve('swarmRequirementObjective'),
     payload,
+    acceptance: parsedPayload.acceptance,
     payloadBytes: resolve('swarmRequirementPayloadBytes', 'swarmRequirementPayloadBytes'),
     payloadTruncated: parseBool(parameters.swarmRequirementPayloadTruncated),
+  }
+}
+
+const parseSwarmRequirementPayload = (payload: string | undefined) => {
+  const trimmed = payload?.trim()
+  if (!trimmed) {
+    return {} as SwarmRequirementPayloadMetadata
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as { [key: string]: unknown }
+    if (!parsed || typeof parsed !== 'object') {
+      return {} as SwarmRequirementPayloadMetadata
+    }
+
+    const objective =
+      typeof parsed.objective === 'string' && parsed.objective.trim().length > 0 ? parsed.objective.trim() : undefined
+
+    const rawAcceptance =
+      typeof parsed.acceptance === 'string'
+        ? parsed.acceptance
+        : Array.isArray(parsed.acceptance)
+          ? parsed.acceptance.join(';')
+          : undefined
+
+    const acceptance =
+      typeof rawAcceptance === 'string'
+        ? rawAcceptance
+            .split(';')
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0)
+        : []
+
+    return { objective, acceptance } as SwarmRequirementPayloadMetadata
+  } catch {
+    return {} as SwarmRequirementPayloadMetadata
   }
 }
 
@@ -244,6 +711,10 @@ const buildCrossSwarmRequirementScopePrompt = (basePrompt: string, requirement: 
 
   if (requirement.payload) {
     lines.push(`Payload:\n${prettyRequirementPayload(requirement.payload)}`)
+  }
+
+  if (requirement.acceptance && requirement.acceptance.length > 0) {
+    lines.push(`Acceptance criteria:\n${requirement.acceptance.map((entry) => `- ${entry}`).join('\n')}`)
   }
 
   if (requirement.workerId || requirement.workerIdentity || requirement.workerRole) {
@@ -805,6 +1276,7 @@ const buildNotifyPayload = ({
   iterationCycle,
   iterations,
   requirementMetadata,
+  hulyArtifacts,
 }: {
   repository: string
   issueNumber: string
@@ -838,6 +1310,7 @@ const buildNotifyPayload = ({
   iterationCycle?: number | null
   iterations?: number | null
   requirementMetadata?: RequirementMetadata
+  hulyArtifacts?: HulyRequirementArtifacts
 }): CodexNotifyPayload => {
   return {
     type: 'agent-turn-complete',
@@ -913,6 +1386,7 @@ const buildNotifyPayload = ({
     swarmAgentWorkerId: requirementMetadata?.workerId ?? null,
     swarmAgentIdentity: requirementMetadata?.workerIdentity ?? null,
     swarmAgentRole: requirementMetadata?.workerRole ?? null,
+    hulyArtifacts: collectHulyArtifactsForNotify(hulyArtifacts),
   }
 }
 
@@ -1923,9 +2397,15 @@ export const runCodexImplementation = async (eventPath: string) => {
   }
 
   const event = await readEventPayload(eventPath)
-  const requirementMetadata = extractSwarmRequirementMetadata(event)
-
-  let prompt = buildCrossSwarmRequirementScopePrompt(event.prompt?.trim() ?? '', requirementMetadata)
+  const extractedRequirementMetadata = extractSwarmRequirementMetadata(event)
+  const resolvedHulyChannel = resolveActiveHulyChannel(extractedRequirementMetadata)
+  const requirementMetadata = {
+    ...extractedRequirementMetadata,
+    channel: extractedRequirementMetadata.channel ?? resolvedHulyChannel,
+  }
+  const basePrompt = event.prompt?.trim() ?? ''
+  let prompt = buildCrossSwarmRequirementScopePrompt(basePrompt, requirementMetadata)
+  const crossSwarmHulyChannel = resolveActiveHulyChannel(requirementMetadata)
 
   const repository = event.repository?.trim()
   if (!repository) {
@@ -2117,6 +2597,45 @@ export const runCodexImplementation = async (eventPath: string) => {
     phase: 'started',
     requirementMetadata,
   })
+
+  const hulyWorkerContext = resolveHulyWorkerContext(requirementMetadata)
+  let hulyArtifacts: HulyRequirementArtifacts | undefined
+  const hulyAccessMessage = `Jangar implementation worker ${repository}#${issueNumber} is ready to handle cross-swarm handoff`
+
+  if (crossSwarmHulyChannel) {
+    try {
+      const listResult = await listChannelMessages({
+        channel: crossSwarmHulyChannel,
+        workerId: hulyWorkerContext.workerId,
+        workerIdentity: hulyWorkerContext.workerIdentity,
+        requireWorkerToken: true,
+      })
+
+      const accessResult = await verifyChatAccess({
+        channel: crossSwarmHulyChannel,
+        message: hulyAccessMessage,
+        workerId: hulyWorkerContext.workerId,
+        workerIdentity: hulyWorkerContext.workerIdentity,
+        requireWorkerToken: true,
+      })
+
+      const actorId =
+        normalizeNullableStringValue(accessResult.actorId) || normalizeNullableStringValue(accessResult.expectedActorId)
+      const latestPeerMessage = resolveLatestPeerMessage(listResult, actorId ?? undefined)
+
+      hulyArtifacts = {
+        activeChannel: crossSwarmHulyChannel,
+        actorId: actorId ?? undefined,
+        latestPeerMessageId: latestPeerMessage?.messageId,
+        latestPeerMessage: latestPeerMessage?.message,
+        verification: accessResult,
+        listMessages: listResult,
+      }
+    } catch (error) {
+      logger.warn('Failed Huly cross-swarm initialization for implementation handoff', error)
+      throw error
+    }
+  }
 
   const systemPromptPath = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_PATH))
   const payloadSystemPrompt = normalizeOptionalString(sanitizeNullableString(event.systemPrompt))
@@ -2450,6 +2969,93 @@ export const runCodexImplementation = async (eventPath: string) => {
       }
     }
 
+    console.log(`Codex execution logged to ${outputPath}`)
+    try {
+      const jsonStats = await stat(jsonOutputPath)
+      if (jsonStats.size > 0) {
+        console.log(`Codex JSON events stored at ${jsonOutputPath}`)
+      }
+    } catch {
+      // ignore missing json log
+    }
+
+    const summary = extractSummary(lastAssistantMessage)
+    const tests = extractTests(lastAssistantMessage)
+    const gaps = extractKnownGaps(lastAssistantMessage)
+    const hulyDecision = 'completed' as const
+    const natsDecision = 'pass'
+
+    if (hulyArtifacts && crossSwarmHulyChannel) {
+      hulyArtifacts = await buildHulyArtifactsFromRun({
+        artifacts: hulyArtifacts,
+        logger,
+        repository,
+        issueNumber,
+        requirementMetadata,
+        stage,
+        tests,
+        gaps,
+        prUrl,
+        decision: hulyDecision,
+        runSummary: summary,
+        activeChannel: crossSwarmHulyChannel,
+        workerContext: hulyWorkerContext,
+        includeReplyMessage: true,
+        latestPeerMessageId: hulyArtifacts.latestPeerMessageId,
+        latestPeerMessage: hulyArtifacts.latestPeerMessage,
+      })
+    }
+    const nextPrompt = 'None'
+    await publishNatsEvent(logger, {
+      kind: 'run-summary',
+      content: summary ?? `${stage} run completed`,
+      attrs: enrichRunNatsAttrs(
+        {
+          stage,
+          decision: natsDecision,
+          prUrl,
+          ciUrl: null,
+          iteration,
+          iterationCycle,
+        },
+        requirementMetadata,
+      ),
+    })
+    await publishNatsEvent(logger, {
+      kind: 'run-gaps',
+      content: gaps.length > 0 ? gaps.join('; ') : 'None',
+      attrs: enrichRunNatsAttrs(
+        {
+          stage,
+          missingItems: gaps,
+          suggestedFixes: gaps.length > 0 ? gaps : [],
+          iteration,
+          iterationCycle,
+        },
+        requirementMetadata,
+      ),
+    })
+    await publishNatsEvent(logger, {
+      kind: 'run-next-prompt',
+      content: nextPrompt ?? 'None',
+      attrs: enrichRunNatsAttrs({ stage, decision: natsDecision, iteration, iterationCycle }, requirementMetadata),
+    })
+    await publishNatsEvent(logger, {
+      kind: 'run-outcome',
+      content: `${stage} completed`,
+      attrs: enrichRunNatsAttrs(
+        {
+          stage,
+          decision: natsDecision,
+          prUrl,
+          ciUrl: null,
+          tests,
+          iteration,
+          iterationCycle,
+        },
+        requirementMetadata,
+      ),
+    })
     const notifyPayload = buildNotifyPayload({
       repository,
       issueNumber,
@@ -2483,6 +3089,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       iterationCycle,
       iterations,
       requirementMetadata,
+      hulyArtifacts,
     })
     try {
       await ensureFileDirectory(notifyPath)
@@ -2492,71 +3099,6 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
     await postNotifyPayload(notifyPayload, logger)
 
-    console.log(`Codex execution logged to ${outputPath}`)
-    try {
-      const jsonStats = await stat(jsonOutputPath)
-      if (jsonStats.size > 0) {
-        console.log(`Codex JSON events stored at ${jsonOutputPath}`)
-      }
-    } catch {
-      // ignore missing json log
-    }
-
-    const summary = extractSummary(lastAssistantMessage)
-    const tests = extractTests(lastAssistantMessage)
-    const gaps = extractKnownGaps(lastAssistantMessage)
-    const decision = 'pass'
-    const nextPrompt = 'None'
-    await publishNatsEvent(logger, {
-      kind: 'run-summary',
-      content: summary ?? `${stage} run completed`,
-      attrs: enrichRunNatsAttrs(
-        {
-          stage,
-          decision,
-          prUrl,
-          ciUrl: null,
-          iteration,
-          iterationCycle,
-        },
-        requirementMetadata,
-      ),
-    })
-    await publishNatsEvent(logger, {
-      kind: 'run-gaps',
-      content: gaps.length > 0 ? gaps.join('; ') : 'None',
-      attrs: enrichRunNatsAttrs(
-        {
-          stage,
-          missingItems: gaps,
-          suggestedFixes: gaps.length > 0 ? gaps : [],
-          iteration,
-          iterationCycle,
-        },
-        requirementMetadata,
-      ),
-    })
-    await publishNatsEvent(logger, {
-      kind: 'run-next-prompt',
-      content: nextPrompt ?? 'None',
-      attrs: enrichRunNatsAttrs({ stage, decision, iteration, iterationCycle }, requirementMetadata),
-    })
-    await publishNatsEvent(logger, {
-      kind: 'run-outcome',
-      content: `${stage} completed`,
-      attrs: enrichRunNatsAttrs(
-        {
-          stage,
-          decision,
-          prUrl,
-          ciUrl: null,
-          tests,
-          iteration,
-          iterationCycle,
-        },
-        requirementMetadata,
-      ),
-    })
     await postProgressComment({
       logger,
       repository,
@@ -2584,6 +3126,34 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
   } finally {
     if (!runSucceeded) {
+      if (crossSwarmHulyChannel && hulyArtifacts) {
+        const summary = extractSummary(lastAssistantMessage)
+        const tests = extractTests(lastAssistantMessage)
+        const gaps = extractKnownGaps(lastAssistantMessage)
+        try {
+          hulyArtifacts = await buildHulyArtifactsFromRun({
+            artifacts: hulyArtifacts,
+            logger,
+            repository,
+            issueNumber,
+            requirementMetadata,
+            stage,
+            tests,
+            gaps,
+            prUrl,
+            decision: 'failed',
+            runSummary: summary,
+            activeChannel: crossSwarmHulyChannel,
+            workerContext: hulyWorkerContext,
+            includeReplyMessage: Boolean(hulyArtifacts.latestPeerMessageId && hulyArtifacts.latestPeerMessage),
+            latestPeerMessageId: hulyArtifacts.latestPeerMessageId,
+            latestPeerMessage: hulyArtifacts.latestPeerMessage,
+          })
+        } catch (error) {
+          logger.warn('Failed to publish failure handoff artifacts to Huly', error)
+        }
+      }
+
       await postProgressComment({
         logger,
         repository,

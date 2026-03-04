@@ -341,6 +341,7 @@ Enable gRPC for agentctl or in-cluster clients:
 
 - `grpc.enabled=true`
 - `grpc.manageEnvVar=true` (default) keeps control-plane `JANGAR_GRPC_*` values chart-owned and deterministic.
+- `controllers.service.enabled=true` to expose controller `agentctl` gRPC when `controllers.env.vars.JANGAR_GRPC_ENABLED=true`.
 - `grpc.manageEnvVar=false` if you want manual ownership in values.
 - Source-of-truth for gRPC in managed mode:
   - `JANGAR_GRPC_ENABLED` = `grpc.enabled`
@@ -350,6 +351,12 @@ Enable gRPC for agentctl or in-cluster clients:
   - `JANGAR_GRPC_ENABLED=0`
   - `JANGAR_GRPC_HOST=0.0.0.0`
   - `JANGAR_GRPC_PORT=<grpc.port>`
+- Controller-only service options:
+  - `controllers.service.enabled` (default `false`)
+  - `controllers.service.type` (default `ClusterIP`)
+  - `controllers.service.port` (default `50051`)
+  - `controllers.service.labels`
+  - `controllers.service.annotations`
 - `env.vars` is merged into both component maps, but controller reserved keys are intentionally owned by `controllers.env.vars` (or chart defaults). For controllers, avoid putting reserved keys in `env.vars`.
 - In managed mode, `env.vars`, `controlPlane.env.vars`, and `controllers.env.vars` must agree on managed `JANGAR_GRPC_*` values or render fails.
 - Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token.

@@ -63,14 +63,6 @@ Status: Draft (2026-03-04)
   - `cd services/jangar && bunx tsc --noEmit --project tsconfig.paths.json`.
   - Existing Jangar control-plane tests for migration and controller/watch behavior.
 
-### Reliability follow-up
-
-- Add a generation guardrail so `charts/agents/crds/agents.proompteng.ai_agentruns.yaml` and all
-  `schemas/custom` mirrors are always emitted from one source path and diffed in CI.
-- This can be done by adding a focused regression test that fails if any
-  `x-kubernetes-validations` rule in the schema mirror set deviates from generated CRD output for the same
-  CEL expression family.
-
 ## Rollout and Risks
 
 - Rollout impact is additive and validation-only; controller runtime is unchanged.

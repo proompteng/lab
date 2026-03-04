@@ -58,11 +58,107 @@ const runnerMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../lib/codex-runner', () => runnerMocks)
+const hulyApiMocks = vi.hoisted(() => ({
+  listChannelMessages: vi.fn<
+    (input: {
+      channel: string
+      workerId?: string
+      workerIdentity?: string
+      limit?: number
+      requireWorkerToken?: boolean
+    }) => Promise<{
+      messages: Array<{
+        messageId: string
+        message: string
+        createdBy: string
+      }>
+      count?: number
+      channelId?: string
+    }>
+  >(async ({ channel, limit }) => {
+    const message = channel.includes('latest') ? 'Upstream decision context' : 'Seed message from source worker'
+    const count = limit ?? 10
+    return {
+      count,
+      messages: [
+        {
+          messageId: 'msg-777',
+          message: `${message} :: ${channel}`,
+          createdBy: 'source-worker',
+        },
+      ],
+    }
+  }),
+  verifyChatAccess: vi.fn<
+    (input: {
+      channel: string
+      message: string
+      workerId?: string
+      workerIdentity?: string
+      requireWorkerToken?: boolean
+    }) => Promise<{
+      actorId: string
+      channelMessage?: { messageId?: string }
+      expectedActorId?: string
+    }>
+  >(async () => ({
+    actorId: 'worker-actor-id',
+  })),
+  postChannelMessage: vi.fn<
+    (input: {
+      channel: string
+      message: string
+      workerId?: string
+      workerIdentity?: string
+      requireWorkerToken?: boolean
+    }) => Promise<{
+      messageId: string
+    }>
+  >(async ({ message }) => ({
+    messageId: `posted-${message.slice(0, 8).replace(/\s+/g, '-') || 'msg'}`,
+    action: 'posted',
+  })),
+  upsertMission: vi.fn<
+    (input: {
+      missionId: string
+      title: string
+      summary: string
+      details?: string
+      channel: string
+      message: string
+      stage?: string
+      status?: string
+      workerId?: string
+      workerIdentity?: string
+      requireWorkerToken?: boolean
+    }) => Promise<{
+      missionId: string
+      stage?: string
+      status?: string
+      issue?: {
+        issueIdentifier?: string
+      }
+    }>
+  >(async ({ missionId, stage, status, channel }) => ({
+    missionId,
+    stage,
+    status,
+    issue: {
+      issueIdentifier: `MISSION-${missionId.slice(0, 8)}-${channel.includes('TORGHUT') ? 'OK' : 'GEN'}`,
+    },
+  })),
+}))
+
+vi.mock('../lib/huly-api-client', () => hulyApiMocks)
 
 const runCodexSessionMock = runnerMocks.runCodexSession
 const pushCodexEventsToLokiMock = runnerMocks.pushCodexEventsToLoki
 const buildDiscordChannelCommandMock = utilMocks.buildDiscordChannelCommand
 const runCodexProgressCommentMock = progressCommentMocks.runCodexProgressComment
+const listChannelMessagesMock = hulyApiMocks.listChannelMessages
+const verifyChatAccessMock = hulyApiMocks.verifyChatAccess
+const postChannelMessageMock = hulyApiMocks.postChannelMessage
+const upsertMissionMock = hulyApiMocks.upsertMission
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -165,6 +261,36 @@ describe('runCodexImplementation', () => {
       forcedTermination: false,
     }))
     runCodexProgressCommentMock.mockReset()
+    listChannelMessagesMock.mockReset()
+    verifyChatAccessMock.mockReset()
+    postChannelMessageMock.mockReset()
+    upsertMissionMock.mockReset()
+    listChannelMessagesMock.mockImplementation(async ({ channel, limit }) => ({
+      count: limit ?? 3,
+      messages: [
+        {
+          messageId: 'msg-latest',
+          message: `Cross-swarm source message for ${channel}`,
+          createdBy: 'source-worker',
+        },
+      ],
+    }))
+    verifyChatAccessMock.mockImplementation(async () => ({
+      actorId: 'worker-actor-id',
+      expectedActorId: 'worker-actor-id',
+    }))
+    postChannelMessageMock.mockImplementation(async ({ message }) => ({
+      messageId: `msg-${(message || 'update').slice(0, 8).replace(/\s+/g, '-')}`,
+      action: 'posted',
+    }))
+    upsertMissionMock.mockImplementation(async ({ missionId, stage, status, channel }) => ({
+      missionId,
+      stage,
+      status,
+      issue: {
+        issueIdentifier: `MISSION-${missionId.slice(0, 8)}-${channel.includes('TORGHUT') ? 'OK' : 'GEN'}`,
+      },
+    }))
     pushCodexEventsToLokiMock.mockReset()
     pushCodexEventsToLokiMock.mockImplementation(async () => {})
     buildDiscordChannelCommandMock.mockClear()
@@ -541,6 +667,175 @@ describe('runCodexImplementation', () => {
     expect(notify.swarmAgentWorkerId).toBe('worker-0027jshz')
     expect(notify.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-0027jshz')
     expect(notify.swarmAgentRole).toBeNull()
+  }, 40_000)
+
+  it('uses environment fallback channel resolution for Huly handoff', async () => {
+    process.env.hulyChannelName = 'huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1'
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'Validate Huly env fallback channel',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    expect(listChannelMessagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1',
+      }),
+    )
+    expect(verifyChatAccessMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1',
+      }),
+    )
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as { hulyArtifacts?: { channel?: string } }
+    expect(notify.hulyArtifacts?.channel).toBe('huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1')
+  }, 40_000)
+
+  it('creates Huly reply, owner update, and mission artifacts for completed cross-swarm runs', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm handoff artifacts',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772433239',
+      swarmRequirementId: '00gc1i45',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772433239',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'Post-merge validation from torghut to jangar.',
+      swarmAgentWorkerId: 'worker-0027ilba',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027ilba',
+      swarmAgentRole: 'implement',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    expect(listChannelMessagesMock).toHaveBeenCalledTimes(1)
+    expect(verifyChatAccessMock).toHaveBeenCalledTimes(1)
+    expect(postChannelMessageMock).toHaveBeenCalledTimes(2)
+    const replyCall = postChannelMessageMock.mock.calls.find((call) => {
+      const args = call?.[0] as
+        | {
+            channel: string
+            message: string
+            workerId?: string
+            workerIdentity?: string
+          }
+        | undefined
+      return args?.message?.startsWith('Replying to message')
+    })
+    expect(replyCall).toBeDefined()
+    expect(replyCall?.[0]?.message).toContain('Replying to message msg-latest')
+    expect(replyCall?.[0]?.message).toContain('decision for jangar issue #42 at stage implementation is completed')
+    expect(upsertMissionMock).toHaveBeenCalledTimes(1)
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as {
+      hulyArtifacts?: {
+        latestPeerMessageId?: string
+        replyMessageId?: string
+        missionId?: string
+        missionStatus?: string
+      }
+    }
+    expect(notify.hulyArtifacts?.latestPeerMessageId).toBe('msg-latest')
+    expect(notify.hulyArtifacts?.replyMessageId).toBeDefined()
+    expect(notify.hulyArtifacts?.missionId).toBe('00gc1i45')
+    expect(notify.hulyArtifacts?.missionStatus).toBe('completed')
+  }, 40_000)
+
+  it('captures acceptance criteria from cross-swarm payload and includes release-note fields in owner update', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm handoff with acceptance',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772433239',
+      swarmRequirementId: '00gc1i45',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772433239',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'Post-merge validation requires artifacts and rollback visibility.',
+      swarmRequirementPayload:
+        '{"acceptance":["create issue/chat/doc artifacts","complete handoff"],"objective":"Post-merge requirement validation"}',
+      swarmAgentWorkerId: 'worker-0027ilba',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027ilba',
+      swarmAgentRole: 'implement',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toContain('Acceptance criteria:')
+    expect(invocation?.prompt).toContain('- create issue/chat/doc artifacts')
+
+    const ownerMessageCall = postChannelMessageMock.mock.calls.find((call) => {
+      const args = call?.[0] as
+        | {
+            channel: string
+            message: string
+            workerId?: string
+            workerIdentity?: string
+          }
+        | undefined
+      return args?.message?.includes('Cross-swarm handoff update')
+    })
+    expect(ownerMessageCall?.[0]?.message).toContain('Owner-facing status: completed')
+    expect(ownerMessageCall?.[0]?.message).toContain('Validation results:')
+    expect(ownerMessageCall?.[0]?.message).toContain(
+      'Acceptance criteria: create issue/chat/doc artifacts; complete handoff',
+    )
+
+    const missionDetails = upsertMissionMock.mock.calls[0]?.[0]
+    expect(missionDetails?.details).toContain('Acceptance criteria: create issue/chat/doc artifacts; complete handoff')
+    expect(missionDetails?.message).toContain('Validation results:')
+    expect(missionDetails?.message).toContain('Owner-facing status: completed')
+  }, 40_000)
+
+  it('posts failure Huly mission handoff artifacts when implementation fails', async () => {
+    runCodexSessionMock.mockRejectedValueOnce(new Error('session failed'))
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate cross-swarm failure handoff',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772433239',
+      swarmRequirementId: '00gc1i45',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772433239',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'Post-merge validation with run failure.',
+      swarmAgentWorkerId: 'worker-0027ilba',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027ilba',
+      swarmAgentRole: 'implement',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow('session failed')
+
+    expect(upsertMissionMock).toHaveBeenCalledTimes(1)
+    const status = upsertMissionMock.mock.calls[0]?.[0]?.status
+    expect(status).toBe('failed')
   }, 40_000)
 
   it('accepts worker identity metadata from parameters map', async () => {

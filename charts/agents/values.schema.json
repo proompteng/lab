@@ -158,6 +158,17 @@
           },
           "additionalProperties": false
         },
+        "service": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "type": { "type": "string" },
+            "port": { "type": "integer" },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
         "deploymentStrategy": {
           "type": "object",
           "properties": {
