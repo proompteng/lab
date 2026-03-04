@@ -82,6 +82,19 @@ class TestLLMDSPyCompiler(TestCase):
                 compile_result_payload["metricBundle"]["rowCountsBySplit"],
                 {"eval": 1, "test": 1, "train": 1},
             )
+            compile_metrics_payload = json.loads(
+                result.compile_metrics_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                compile_metrics_payload["artifactHash"], result.compile_result.artifact_hash
+            )
+            self.assertEqual(
+                compile_metrics_payload["reproducibilityHash"],
+                result.compile_result.reproducibility_hash,
+            )
+            self.assertEqual(
+                len(compile_metrics_payload["reproducibilityHash"]), 64
+            )
 
     def test_compile_result_hashes_are_stable_for_fixed_inputs(self) -> None:
         with TemporaryDirectory() as tmp:

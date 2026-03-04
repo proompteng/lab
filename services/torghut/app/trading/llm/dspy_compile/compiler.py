@@ -88,6 +88,9 @@ def compile_dspy_program_artifacts(
         normalized_metric_policy_ref, field_name="metric_policy_ref"
     )
 
+    canonical_dataset_ref = str(dataset_path)
+    canonical_metric_policy_ref = str(metric_policy_path)
+
     dataset_payload = _load_json_mapping(dataset_path, field_name="dataset_ref")
     metric_policy_payload = _load_yaml_mapping(
         metric_policy_path, field_name="metric_policy_ref"
@@ -109,11 +112,11 @@ def compile_dspy_program_artifacts(
     dataset_rows = sum(row_counts_by_split.values())
 
     metric_bundle: dict[str, Any] = {
-        "datasetRef": normalized_dataset_ref,
+        "datasetRef": canonical_dataset_ref,
         "datasetHash": dataset_hash,
         "datasetRows": dataset_rows,
         "rowCountsBySplit": row_counts_by_split,
-        "metricPolicyRef": normalized_metric_policy_ref,
+        "metricPolicyRef": canonical_metric_policy_ref,
         "metricPolicyHash": metric_policy_hash,
         "optimizer": normalized_optimizer,
         "policy": cast(dict[str, Any], metric_policy_payload.get("policy") or {}),
@@ -137,9 +140,9 @@ def compile_dspy_program_artifacts(
         "signatureVersions": signature_versions,
         "optimizer": normalized_optimizer,
         "seed": normalized_seed,
-        "datasetRef": normalized_dataset_ref,
+        "datasetRef": canonical_dataset_ref,
         "datasetHash": dataset_hash,
-        "metricPolicyRef": normalized_metric_policy_ref,
+        "metricPolicyRef": canonical_metric_policy_ref,
         "metricPolicyHash": metric_policy_hash,
         "compileMetrics": metric_bundle,
         "compiledPrompt": {
@@ -169,15 +172,18 @@ def compile_dspy_program_artifacts(
     )
 
     compile_metrics_path = output_dir / normalized_compile_metrics_name
+    compile_metrics_payload: dict[str, Any] = {
+        "schemaVersion": COMPILE_METRICS_SCHEMA_VERSION,
+        "programName": normalized_program_name,
+        "optimizer": normalized_optimizer,
+        "artifactHash": compile_result.artifact_hash,
+        "reproducibilityHash": compile_result.reproducibility_hash,
+        "metricBundleHash": metric_bundle_hash,
+        "metricBundle": metric_bundle,
+    }
     _write_canonical_json(
         compile_metrics_path,
-        {
-            "schemaVersion": COMPILE_METRICS_SCHEMA_VERSION,
-            "programName": normalized_program_name,
-            "optimizer": normalized_optimizer,
-            "metricBundleHash": metric_bundle_hash,
-            "metricBundle": metric_bundle,
-        },
+        compile_metrics_payload,
     )
 
     return DSPyCompileArtifactResult(

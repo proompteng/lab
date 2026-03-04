@@ -6,8 +6,22 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from app.trading.llm.dspy_compile.compiler import compile_dspy_program_artifacts
+
+REPRO_ARTIFACT_PATH = Path("/tmp/torghut-dspy-spark-repro-20260304-045659/compile")
+REPRO_DATASET_REF = (
+    "/tmp/torghut-dspy-spark-repro-20260304-045659/dataset-build/dspy-dataset.json"
+)
+REPRO_METRIC_POLICY_REF = (
+    Path(__file__).resolve().parents[1]
+    / "config"
+    / "trading"
+    / "llm"
+    / "dspy-metrics.yaml"
+)
+REPRO_OPTIMIZER = "miprov2"
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,23 +33,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--head", required=True, help="Head branch name.")
     parser.add_argument(
         "--artifact-path",
-        required=True,
         type=Path,
+        default=REPRO_ARTIFACT_PATH,
         help="Directory where compile artifacts are written.",
     )
     parser.add_argument(
         "--dataset-ref",
-        required=True,
+        default=REPRO_DATASET_REF,
         help="Local path or file:// URI to dspy-dataset.json.",
     )
     parser.add_argument(
         "--metric-policy-ref",
-        required=True,
+        default=str(REPRO_METRIC_POLICY_REF),
         help="Local path or file:// URI to metric policy YAML.",
     )
     parser.add_argument(
         "--optimizer",
-        required=True,
+        default=REPRO_OPTIMIZER,
         help="DSPy optimizer id (for example miprov2).",
     )
     parser.add_argument(
@@ -86,16 +100,61 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _resolve_local_ref(ref: str, *, field_name: str) -> str:
+    parsed = urlsplit(ref)
+    if parsed.scheme not in {"", "file"}:
+        raise ValueError(f"{field_name}_must_be_local_path")
+    if parsed.scheme == "file":
+        candidate = Path(unquote(parsed.path))
+    else:
+        candidate = Path(ref)
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    return str(candidate.resolve())
+
+
+def _assert_repro_guardrails(
+    *,
+    artifact_path: Path,
+    dataset_ref: str,
+    metric_policy_ref: str,
+    optimizer: str,
+) -> None:
+    if artifact_path.resolve() != REPRO_ARTIFACT_PATH:
+        raise ValueError("artifact_path_must_match_repro_guardrail")
+    if _resolve_local_ref(dataset_ref, field_name="dataset_ref") != REPRO_DATASET_REF:
+        raise ValueError("dataset_ref_must_match_repro_guardrail")
+    metric_policy_path = _resolve_local_ref(metric_policy_ref, field_name="metric_policy_ref")
+    if metric_policy_path != str(REPRO_METRIC_POLICY_REF):
+        raise ValueError("metric_policy_ref_must_match_repro_guardrail")
+    if optimizer.strip().lower() != REPRO_OPTIMIZER:
+        raise ValueError("optimizer_must_be_miprov2")
+
+
 def main() -> int:
     args = parse_args()
+    _assert_repro_guardrails(
+        artifact_path=args.artifact_path,
+        dataset_ref=args.dataset_ref,
+        metric_policy_ref=args.metric_policy_ref,
+        optimizer=args.optimizer,
+    )
+
+    normalized_dataset_ref = _resolve_local_ref(
+        args.dataset_ref, field_name="dataset_ref"
+    )
+    normalized_metric_policy_ref = _resolve_local_ref(
+        args.metric_policy_ref, field_name="metric_policy_ref"
+    )
+
     result = compile_dspy_program_artifacts(
         repository=args.repository,
         base=args.base,
         head=args.head,
         artifact_path=args.artifact_path,
-        dataset_ref=args.dataset_ref,
-        metric_policy_ref=args.metric_policy_ref,
-        optimizer=args.optimizer,
+        dataset_ref=normalized_dataset_ref,
+        metric_policy_ref=normalized_metric_policy_ref,
+        optimizer=REPRO_OPTIMIZER,
         program_name=args.program_name,
         signature_version=args.signature_version,
         seed=args.seed,
@@ -108,13 +167,14 @@ def main() -> int:
     payload = {
         "ok": True,
         "artifactPath": str(args.artifact_path),
-        "datasetRef": args.dataset_ref,
-        "metricPolicyRef": args.metric_policy_ref,
-        "optimizer": args.optimizer,
+        "datasetRef": normalized_dataset_ref,
+        "metricPolicyRef": normalized_metric_policy_ref,
+        "optimizer": REPRO_OPTIMIZER,
         "compileResultRef": str(result.compile_result_path),
         "compiledArtifactUri": result.compiled_artifact_uri,
         "compiledArtifactPath": str(result.compiled_artifact_path),
         "compileMetricsRef": str(result.compile_metrics_path),
+        "metricBundleHash": result.metric_bundle_hash,
         "artifactHash": result.compile_result.artifact_hash,
         "reproducibilityHash": result.compile_result.reproducibility_hash,
     }
