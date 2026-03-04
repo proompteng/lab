@@ -175,6 +175,27 @@ Control-plane status endpoint behavior (`/api/control-plane/status`) is delibera
 - `JANGAR_GRPC_ENABLED` uses a strict boolean parser (`true/false`, `1/0`, `yes/no`, `on/off`, case-insensitive, no whitespace).
 - invalid `JANGAR_GRPC_ENABLED`, `JANGAR_GRPC_PORT`, or malformed `JANGAR_GRPC_ADDRESS` values return `grpc.status = degraded` with explanatory messages.
 - an empty/unset `JANGAR_GRPC_ENABLED` disables gRPC (`disabled` status) and does not perform socket checks.
+- `status.workflows` includes bounded rollout/job rollup:
+  - `active_job_runs`
+  - `recent_failed_jobs`
+  - `backoff_limit_exceeded_jobs`
+  - `top_failure_reasons`
+- `status.watch_reliability` includes bounded stream-level watch diagnostics:
+  - `status`
+  - `observed_streams`
+  - `total_events`
+  - `total_errors`
+  - `total_restarts`
+- `status.rollout` includes rollout-stage reliability:
+  - `status`
+  - `window_minutes`
+  - `observed_schedules`
+  - `inactive_schedules`
+  - `stale_schedules`
+  - `message`
+  - `stages`
+- Rollout stage `last_run_at` is derived from Schedule `lastRunTime` with a CronJob `lastScheduleTime` fallback when schedule run timestamps are missing.
+
 
 ## Terminal backend
 

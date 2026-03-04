@@ -747,6 +747,7 @@ const buildRolloutReliability = async (deps: {
 
   const inactiveSchedules = stages.filter((stage) => !stage.is_active).length
   const staleSchedules = stages.filter((stage) => stage.is_stale).length
+  const observedSchedules = stages.length
 
   const isDegraded =
     stages.length === 0 || inactiveSchedules > 0 || staleSchedules > 0 || (hasBackoffPressure && stages.length > 0)
@@ -754,7 +755,7 @@ const buildRolloutReliability = async (deps: {
   return {
     status: isDegraded ? 'degraded' : 'healthy',
     window_minutes: windowMinutes,
-    observed_schedules: stages.length,
+    observed_schedules: observedSchedules,
     inactive_schedules: inactiveSchedules,
     stale_schedules: staleSchedules,
     backoff_limit_exceeded_jobs: totalBackoffLimitExceededJobs,
