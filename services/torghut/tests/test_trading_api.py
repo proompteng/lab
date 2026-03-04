@@ -184,6 +184,7 @@ class TestTradingApi(TestCase):
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
         },
     )
     @patch(
@@ -202,6 +203,8 @@ class TestTradingApi(TestCase):
         self.assertTrue(payload["schema_current"])
         self.assertEqual(payload["current_heads"], payload["expected_heads"])
         self.assertTrue(payload["account_scope_ready"])
+        self.assertEqual(payload["schema_head_signature"], "7f8e4d0")
+        self.assertIn("checked_at", payload)
 
     @patch(
         "app.main.check_schema_current",
@@ -212,6 +215,7 @@ class TestTradingApi(TestCase):
                 "0011_autonomy_lifecycle_and_promotion_audit",
                 "0011_execution_tca_simulator_divergence",
             ],
+            "schema_head_signature": "7f8e4d0",
         },
     )
     @patch(
@@ -228,6 +232,8 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertEqual(payload["detail"]["error"], "database schema mismatch")
         self.assertFalse(payload["detail"]["schema_current"])
+        self.assertEqual(payload["detail"]["schema_head_signature"], "7f8e4d0")
+        self.assertIn("checked_at", payload["detail"])
 
     @patch(
         "app.main.check_schema_current",
@@ -235,6 +241,7 @@ class TestTradingApi(TestCase):
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
         },
     )
     def test_db_check_enforces_account_scope_when_multi_account_enabled(
@@ -263,6 +270,8 @@ class TestTradingApi(TestCase):
             payload["detail"]["error"], "database account scope schema mismatch"
         )
         self.assertIn("account_scope_errors", payload["detail"])
+        self.assertEqual(payload["detail"]["schema_head_signature"], "7f8e4d0")
+        self.assertIn("checked_at", payload["detail"])
 
     @patch(
         "app.main.check_schema_current",
@@ -270,6 +279,7 @@ class TestTradingApi(TestCase):
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
         },
     )
     def test_db_check_allows_account_scope_issues_when_multi_account_disabled(
@@ -294,6 +304,8 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["account_scope_ready"], True)
+        self.assertEqual(payload["schema_head_signature"], "7f8e4d0")
+        self.assertIn("checked_at", payload)
 
     def test_trading_executions_endpoint(self) -> None:
         response = self.client.get("/trading/executions?symbol=AAPL")
@@ -343,6 +355,7 @@ class TestTradingApi(TestCase):
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
         },
     )
     def test_trading_health_ok(
@@ -381,6 +394,7 @@ class TestTradingApi(TestCase):
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
         },
     )
     def test_trading_health_dependency_failure(
@@ -417,6 +431,7 @@ class TestTradingApi(TestCase):
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
         },
     )
     def test_readyz_returns_200_when_dependencies_are_healthy(
@@ -440,6 +455,11 @@ class TestTradingApi(TestCase):
             self.assertTrue(payload["dependencies"]["postgres"]["ok"])
             self.assertTrue(payload["dependencies"]["clickhouse"]["ok"])
             self.assertTrue(payload["dependencies"]["alpaca"]["ok"])
+            self.assertTrue(payload["dependencies"]["database"]["schema_current"])
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_head_signature"], "7f8e4d0"
+            )
+            self.assertIn("checked_at", payload["dependencies"]["database"])
         finally:
             settings.trading_enabled = original
 
@@ -455,6 +475,7 @@ class TestTradingApi(TestCase):
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
         },
     )
     def test_readyz_returns_503_when_dependency_degraded(
@@ -477,6 +498,8 @@ class TestTradingApi(TestCase):
             self.assertEqual(payload["status"], "degraded")
             self.assertFalse(payload["dependencies"]["postgres"]["ok"])
             self.assertEqual(payload["dependencies"]["postgres"]["detail"], "down")
+            self.assertIn("database", payload["dependencies"])
+            self.assertIn("checked_at", payload["dependencies"]["database"])
         finally:
             settings.trading_enabled = original
 
@@ -490,6 +513,7 @@ class TestTradingApi(TestCase):
             "schema_current": False,
             "current_heads": ["0010_execution_provenance_and_governance_trace"],
             "expected_heads": ["0011_autonomy_lifecycle_and_promotion_audit"],
+            "schema_head_signature": "7f8e4d0",
         },
     )
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
@@ -519,6 +543,10 @@ class TestTradingApi(TestCase):
             self.assertEqual(
                 payload["dependencies"]["database"]["account_scope_errors"], []
             )
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_head_signature"], "7f8e4d0"
+            )
+            self.assertIn("checked_at", payload["dependencies"]["database"])
         finally:
             settings.trading_enabled = original
 
@@ -535,6 +563,7 @@ class TestTradingApi(TestCase):
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
         },
     )
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
@@ -567,6 +596,10 @@ class TestTradingApi(TestCase):
             )
             self.assertFalse(payload["dependencies"]["database"]["account_scope_ready"])
             self.assertIn("legacy unique index detected", payload["dependencies"]["database"]["account_scope_errors"][0])
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_head_signature"], "7f8e4d0"
+            )
+            self.assertIn("checked_at", payload["dependencies"]["database"])
         finally:
             settings.trading_enabled = original
             settings.trading_multi_account_enabled = original_multi
