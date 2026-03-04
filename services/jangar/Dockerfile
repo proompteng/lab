@@ -1,4 +1,4 @@
-# syntax=mirror.gcr.io/docker/dockerfile:1.6
+# syntax=docker/dockerfile:1.6
 # Bun image for jangar worker + UI + Codex app-server
 #
 # NOTE: This Dockerfile is intended to be built from a Turbo-pruned context produced by:
