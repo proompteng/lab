@@ -78,7 +78,7 @@ jobs:
         run: scripts/agents/validate-agents.sh
 
   integration:
-    runs-on: arc-arm64
+    runs-on: ubuntu-latest
     needs: validate
     env:
       # ARC runners run with hostNetwork=true; a shared "kind" docker bridge subnet can collide across pods.
