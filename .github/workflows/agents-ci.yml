@@ -235,7 +235,7 @@ jobs:
           IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
           # Use docker.io for Bun base image in CI builds to avoid mirror image metadata drift.
-          if DOCKER_BUILDKIT=1 timeout 45m docker build \
+          if timeout 45m env DOCKER_BUILDKIT=1 docker build \
             -f "${WORKSPACE}/services/jangar/Dockerfile" \
             --target control-plane \
             -t "${IMAGE}" \
@@ -243,11 +243,17 @@ jobs:
             --build-arg "JANGAR_COMMIT=${JANGAR_COMMIT}" \
             --build-arg "BUN_BASE_IMAGE=docker.io/oven/bun" \
             --progress=plain \
-            "${PRUNE_DIR}" \
-            && kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
-            echo "Built and loaded local image ${IMAGE}."
+            "${PRUNE_DIR}"; then
+            echo "Built local image ${IMAGE}."
           else
-            echo "Failed to build/load local image." >&2
+            echo "Failed to build local image." >&2
+            exit 1
+          fi
+
+          if timeout 10m kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
+            echo "Loaded local image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}."
+          else
+            echo "Failed to load local image into kind." >&2
             exit 1
           fi
 
