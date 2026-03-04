@@ -222,6 +222,13 @@ jobs:
             fi
 
             echo "kind load docker-image failed; retrying with image-archive path."
+            if ! run_with_progress "docker save image archive" "${KIND_LOAD_TIMEOUT_MINUTES}" docker save --output "${KIND_IMAGE_TAR}" "${IMAGE}"; then
+              echo "Failed to save local image archive ${KIND_IMAGE_TAR}."
+              return 1
+            fi
+
+            echo "Saved image archive ${KIND_IMAGE_TAR}."
+
             if run_with_progress "kind load image-archive" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load image-archive "${KIND_IMAGE_TAR}" --name "${KIND_CLUSTER_NAME}"; then
               echo "Loaded local image archive ${KIND_IMAGE_TAR} into kind cluster ${KIND_CLUSTER_NAME}."
               return 0
@@ -343,11 +350,6 @@ jobs:
             run_step_failure "Failed to build local image" "$?"
           fi
 
-          if run_with_progress "docker save image archive" "${KIND_LOAD_TIMEOUT_MINUTES}" docker save --output "${KIND_IMAGE_TAR}" "${IMAGE}"; then
-            echo "Saved image archive ${KIND_IMAGE_TAR}."
-          else
-            run_step_failure "Failed to save local image archive" "$?"
-          fi
           if ! run_kind_load_with_fallback; then
             run_step_failure "Failed to load local image into kind" "$?"
           fi
