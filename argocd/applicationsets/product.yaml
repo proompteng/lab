@@ -79,6 +79,13 @@ spec:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
                 enabled: "false"
+              - name: forgejo
+                path: argocd/applications/forgejo
+                namespace: forgejo
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: manual
+                enabled: "true"
               - name: kitty-krew
                 path: argocd/applications/kitty-krew
                 namespace: kitty-krew
