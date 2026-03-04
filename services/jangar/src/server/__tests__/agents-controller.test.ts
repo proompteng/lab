@@ -4015,3 +4015,5 @@ describe('agents controller reconcileMemory', () => {
     expect(condition?.reason).toBe('SecretKeyMissing')
   })
 })
+
+// Regression: validate defensive workflow step status handling.
