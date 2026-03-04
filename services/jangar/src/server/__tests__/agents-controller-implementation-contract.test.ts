@@ -33,7 +33,7 @@ describe('agents controller implementation-contract module', () => {
       codexStage: 'implementation',
       baseBranch: 'main',
       headBranch: 'codex/123',
-      prompt: '   ',
+      prompt: 'do-not-override',
     }
 
     const context = buildEventContext(implementation, parameters)

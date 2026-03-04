@@ -257,6 +257,92 @@ describe('primitives endpoints', () => {
     expect(body.details?.existingAgentRunName).toBe('demo-agent-run-1')
   })
 
+  it('rejects AgentRun-level system prompt overrides at API boundary', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock({
+      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+    })
+
+    const request = buildRequest(
+      'http://localhost/v1/agent-runs',
+      {
+        agentRef: { name: 'demo-agent' },
+        namespace: 'jangar',
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        systemPrompt: 'forbidden',
+      },
+      { 'Idempotency-Key': 'demo-agent-run-system-prompt-override-1' },
+    )
+
+    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+    expect(response.status).toBe(400)
+    expect(kube.apply).not.toHaveBeenCalled()
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toContain('systemPrompt/systemPromptRef overrides are not allowed')
+  })
+
+  it('rejects parameters.prompt overrides at API boundary', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock({
+      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+    })
+
+    const request = buildRequest(
+      'http://localhost/v1/agent-runs',
+      {
+        agentRef: { name: 'demo-agent' },
+        namespace: 'jangar',
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        parameters: {
+          prompt: 'forbidden',
+        },
+      },
+      { 'Idempotency-Key': 'demo-agent-run-prompt-param-override-1' },
+    )
+
+    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+    expect(response.status).toBe(400)
+    expect(kube.apply).not.toHaveBeenCalled()
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toContain('parameters.prompt is not allowed')
+  })
+
+  it('rejects workflow step parameters.prompt overrides at API boundary', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock({
+      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+    })
+
+    const request = buildRequest(
+      'http://localhost/v1/agent-runs',
+      {
+        agentRef: { name: 'demo-agent' },
+        namespace: 'jangar',
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workflow: {
+          steps: [
+            {
+              name: 'step-one',
+              parameters: {
+                prompt: 'forbidden',
+              },
+            },
+          ],
+        },
+      },
+      { 'Idempotency-Key': 'demo-agent-run-workflow-step-prompt-override-1' },
+    )
+
+    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+    expect(response.status).toBe(400)
+    expect(kube.apply).not.toHaveBeenCalled()
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toContain('workflow.steps[0].parameters.prompt is not allowed')
+  })
+
   it('reclaims stale AgentRun idempotency reservations', async () => {
     const scope = new Map<string, AgentRunIdempotencyRecord>()
     const kubeResources: Record<string, Record<string, unknown> | null> = {

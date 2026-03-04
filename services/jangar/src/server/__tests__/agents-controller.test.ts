@@ -583,7 +583,10 @@ describe('agents controller reconcileAgentRun', () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
@@ -635,7 +638,10 @@ describe('agents controller reconcileAgentRun', () => {
       const kube = buildKube({
         get: vi.fn(async (resource: string) => {
           if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
           }
           if (resource === RESOURCE_MAP.AgentProvider) {
             return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
@@ -745,7 +751,10 @@ describe('agents controller reconcileAgentRun', () => {
       get: vi.fn(async (resource: string, name?: string) => {
         if (resource === RESOURCE_MAP.AgentRun && name === 'stale-run') return null
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
@@ -813,7 +822,11 @@ describe('agents controller reconcileAgentRun', () => {
         if (resource === RESOURCE_MAP.Agent) {
           return {
             metadata: { name: 'agent-1' },
-            spec: { providerRef: { name: 'provider-1' }, memoryRef: { name: 'default-memory' } },
+            spec: {
+              providerRef: { name: 'provider-1' },
+              defaults: { systemPrompt: 'default-agent-prompt' },
+              memoryRef: { name: 'default-memory' },
+            },
           }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
@@ -849,7 +862,7 @@ describe('agents controller reconcileAgentRun', () => {
         if (resource === RESOURCE_MAP.Agent) {
           return {
             metadata: { name: 'agent-1' },
-            spec: { providerRef: { name: 'provider-1' } },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
           }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
@@ -888,7 +901,7 @@ describe('agents controller reconcileAgentRun', () => {
         if (resource === RESOURCE_MAP.Agent) {
           return {
             metadata: { name: 'agent-1' },
-            spec: { providerRef: { name: 'provider-1' } },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
           }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
@@ -919,6 +932,94 @@ describe('agents controller reconcileAgentRun', () => {
     expect(condition?.reason).toBe('InvalidContract')
   })
 
+  it('rejects top-level parameters.prompt even when AgentRun bypasses HTTP API', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        parameters: { prompt: 'forbidden override' },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Failed')
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('ForbiddenParameterKey')
+    expect(condition?.message).toContain('spec.parameters.prompt is not allowed')
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
+  it('rejects workflow step parameters.prompt even when AgentRun bypasses HTTP API', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workflow: {
+          steps: [
+            {
+              name: 'step-one',
+              parameters: {
+                prompt: 'forbidden override',
+              },
+            },
+          ],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Failed')
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('ForbiddenParameterKey')
+    expect(condition?.message).toContain('workflow step step-one')
+    expect(condition?.message).toContain('spec.parameters.prompt is not allowed')
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
   it('accepts mapped metadata keys for required contract fields', async () => {
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
@@ -932,7 +1033,7 @@ describe('agents controller reconcileAgentRun', () => {
         if (resource === RESOURCE_MAP.Agent) {
           return {
             metadata: { name: 'agent-1' },
-            spec: { providerRef: { name: 'provider-1' } },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
           }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
@@ -1154,7 +1255,10 @@ describe('agents controller reconcileAgentRun', () => {
       apply,
       get: vi.fn(async (resource: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return {
@@ -1226,6 +1330,7 @@ describe('agents controller reconcileAgentRun', () => {
               metadata: { name: 'agent-1' },
               spec: {
                 providerRef: { name: 'provider-1' },
+                defaults: { systemPrompt: 'default-agent-prompt' },
                 security: { allowedSecrets: ['codex-nats-credentials'] },
               },
             }
@@ -1289,7 +1394,10 @@ describe('agents controller reconcileAgentRun', () => {
       apply,
       get: vi.fn(async (resource: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
@@ -1319,7 +1427,7 @@ describe('agents controller reconcileAgentRun', () => {
     expect(jobSpec.backoffLimit).toBe(2)
   })
 
-  it('includes inline systemPrompt in run payload and stores hash', async () => {
+  it('uses Agent default inline systemPrompt in run payload and stores hash', async () => {
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
       const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
@@ -1356,7 +1464,6 @@ describe('agents controller reconcileAgentRun', () => {
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
         workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
-        systemPrompt: 'from-run',
       },
     })
 
@@ -1373,10 +1480,10 @@ describe('agents controller reconcileAgentRun', () => {
     const runJson = JSON.parse(
       String((specConfigMap?.data as Record<string, unknown>)?.['run.json'] ?? '{}'),
     ) as Record<string, unknown>
-    expect(runJson.systemPrompt).toBe('from-run')
+    expect(runJson.systemPrompt).toBe('from-agent')
 
     const status = getLastStatus(kube)
-    expect(status.systemPromptHash).toBe(createHash('sha256').update('from-run').digest('hex'))
+    expect(status.systemPromptHash).toBe(createHash('sha256').update('from-agent').digest('hex'))
 
     const podSpec = (job?.spec as Record<string, unknown> | undefined)?.template as Record<string, unknown> | undefined
     const podSpecSpec = (podSpec?.spec as Record<string, unknown> | undefined) ?? {}
@@ -1387,14 +1494,59 @@ describe('agents controller reconcileAgentRun', () => {
     const expectedHashVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_EXPECTED_HASH') as
       | Record<string, unknown>
       | undefined
-    expect(expectedHashVar?.value).toBe(createHash('sha256').update('from-run').digest('hex'))
+    expect(expectedHashVar?.value).toBe(createHash('sha256').update('from-agent').digest('hex'))
     const requiredVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_REQUIRED') as
       | Record<string, unknown>
       | undefined
     expect(requiredVar?.value).toBe('true')
   })
 
-  it('mounts ConfigMap systemPromptRef and stores hash without inline prompt leakage', async () => {
+  it('rejects AgentRun-level inline systemPrompt overrides', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: {
+              providerRef: { name: 'provider-1' },
+              defaults: { systemPrompt: 'from-agent' },
+            },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        systemPrompt: 'from-run',
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Failed')
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('SystemPromptOverrideNotAllowed')
+    expect(condition?.message).toContain('AgentRun-level systemPrompt/systemPromptRef overrides are not allowed')
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
+  it('mounts Agent default ConfigMap systemPromptRef and stores hash without inline prompt leakage', async () => {
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
       const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
@@ -1404,7 +1556,19 @@ describe('agents controller reconcileAgentRun', () => {
       apply,
       get: vi.fn(async (resource: string, name: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: {
+              providerRef: { name: 'provider-1' },
+              defaults: {
+                systemPromptRef: {
+                  kind: 'ConfigMap',
+                  name: 'prompt-config',
+                  key: 'prompt',
+                },
+              },
+            },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return {
@@ -1428,12 +1592,6 @@ describe('agents controller reconcileAgentRun', () => {
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
         workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
-        systemPrompt: 'inline-ignored',
-        systemPromptRef: {
-          kind: 'ConfigMap',
-          name: 'prompt-config',
-          key: 'prompt',
-        },
       },
     })
 
@@ -1491,7 +1649,7 @@ describe('agents controller reconcileAgentRun', () => {
     expect(requiredVar?.value).toBe('true')
   })
 
-  it('mounts Secret systemPromptRef when allowlisted and included in spec.secrets', async () => {
+  it('mounts Agent default Secret systemPromptRef when allowlisted and included in spec.secrets', async () => {
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
       const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
@@ -1506,6 +1664,13 @@ describe('agents controller reconcileAgentRun', () => {
             spec: {
               providerRef: { name: 'provider-1' },
               security: { allowedSecrets: ['prompt-secret'] },
+              defaults: {
+                systemPromptRef: {
+                  kind: 'Secret',
+                  name: 'prompt-secret',
+                  key: 'prompt',
+                },
+              },
             },
           }
         }
@@ -1532,11 +1697,6 @@ describe('agents controller reconcileAgentRun', () => {
         runtime: { type: 'job', config: {} },
         workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         secrets: ['prompt-secret'],
-        systemPromptRef: {
-          kind: 'Secret',
-          name: 'prompt-secret',
-          key: 'prompt',
-        },
       },
     })
 
@@ -1588,7 +1748,7 @@ describe('agents controller reconcileAgentRun', () => {
     expect(requiredVar?.value).toBe('true')
   })
 
-  it('rejects Secret systemPromptRef when not included in spec.secrets', async () => {
+  it('rejects Agent default Secret systemPromptRef when not included in spec.secrets', async () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {
         if (resource === RESOURCE_MAP.Agent) {
@@ -1597,6 +1757,13 @@ describe('agents controller reconcileAgentRun', () => {
             spec: {
               providerRef: { name: 'provider-1' },
               security: { allowedSecrets: ['prompt-secret'] },
+              defaults: {
+                systemPromptRef: {
+                  kind: 'Secret',
+                  name: 'prompt-secret',
+                  key: 'prompt',
+                },
+              },
             },
           }
         }
@@ -1619,11 +1786,6 @@ describe('agents controller reconcileAgentRun', () => {
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
         workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
-        systemPromptRef: {
-          kind: 'Secret',
-          name: 'prompt-secret',
-          key: 'prompt',
-        },
       },
     })
 
@@ -1637,7 +1799,7 @@ describe('agents controller reconcileAgentRun', () => {
     expect(kube.apply).not.toHaveBeenCalled()
   })
 
-  it('rejects Secret systemPromptRef when secret is not allowlisted by the Agent', async () => {
+  it('rejects Agent default Secret systemPromptRef when secret is not allowlisted by the Agent', async () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {
         if (resource === RESOURCE_MAP.Agent) {
@@ -1646,6 +1808,13 @@ describe('agents controller reconcileAgentRun', () => {
             spec: {
               providerRef: { name: 'provider-1' },
               security: { allowedSecrets: ['some-other-secret'] },
+              defaults: {
+                systemPromptRef: {
+                  kind: 'Secret',
+                  name: 'prompt-secret',
+                  key: 'prompt',
+                },
+              },
             },
           }
         }
@@ -1669,11 +1838,6 @@ describe('agents controller reconcileAgentRun', () => {
         runtime: { type: 'job', config: {} },
         workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         secrets: ['prompt-secret'],
-        systemPromptRef: {
-          kind: 'Secret',
-          name: 'prompt-secret',
-          key: 'prompt',
-        },
       },
     })
 
@@ -1705,7 +1869,10 @@ describe('agents controller reconcileAgentRun', () => {
         apply,
         get: vi.fn(async (resource: string) => {
           if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
           }
           if (resource === RESOURCE_MAP.AgentProvider) {
             return {
@@ -1831,7 +1998,10 @@ describe('agents controller reconcileAgentRun', () => {
         apply,
         get: vi.fn(async (resource: string) => {
           if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
           }
           if (resource === RESOURCE_MAP.AgentProvider) {
             return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
@@ -1964,7 +2134,10 @@ describe('agents controller reconcileAgentRun', () => {
         apply,
         get: vi.fn(async (resource: string) => {
           if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
           }
           if (resource === RESOURCE_MAP.AgentProvider) {
             return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
@@ -2001,7 +2174,10 @@ describe('agents controller reconcileAgentRun', () => {
       const kube = buildKube({
         get: vi.fn(async (resource: string) => {
           if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
           }
           if (resource === RESOURCE_MAP.AgentProvider) {
             return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
@@ -2048,6 +2224,7 @@ describe('agents controller reconcileAgentRun', () => {
               metadata: { name: 'agent-1' },
               spec: {
                 providerRef: { name: 'provider-1' },
+                defaults: { systemPrompt: 'default-agent-prompt' },
                 security: { allowedSecrets: ['some-other-secret'] },
               },
             }
@@ -2078,7 +2255,7 @@ describe('agents controller reconcileAgentRun', () => {
     }
   })
 
-  it('mounts ConfigMap systemPromptRef for workflow step jobs and stores hash', async () => {
+  it('mounts Agent default ConfigMap systemPromptRef for workflow step jobs and stores hash', async () => {
     let lastJob: Record<string, unknown> | null = null
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
@@ -2093,7 +2270,15 @@ describe('agents controller reconcileAgentRun', () => {
       apply,
       get: vi.fn(async (resource: string, name: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: {
+              providerRef: { name: 'provider-1' },
+              defaults: {
+                systemPromptRef: { kind: 'ConfigMap', name: 'prompt-config', key: 'prompt' },
+              },
+            },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
@@ -2115,7 +2300,6 @@ describe('agents controller reconcileAgentRun', () => {
         runtime: { type: 'workflow', config: {} },
         workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         workflow: { steps: [{ name: 'step-one' }] },
-        systemPromptRef: { kind: 'ConfigMap', name: 'prompt-config', key: 'prompt' },
       },
     })
 
@@ -2178,7 +2362,10 @@ describe('agents controller reconcileAgentRun', () => {
       apply,
       get: vi.fn(async (resource: string, name: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return {
@@ -2291,7 +2478,10 @@ describe('agents controller reconcileAgentRun', () => {
         apply,
         get: vi.fn(async (resource: string, name: string) => {
           if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
           }
           if (resource === RESOURCE_MAP.AgentProvider) {
             return {
@@ -2451,7 +2641,10 @@ describe('agents controller reconcileAgentRun', () => {
         apply,
         get: vi.fn(async (resource: string, name: string) => {
           if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
           }
           if (resource === RESOURCE_MAP.AgentProvider) {
             return {
@@ -2617,7 +2810,10 @@ describe('agents controller reconcileAgentRun', () => {
         apply,
         get: vi.fn(async (resource: string, name: string) => {
           if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
           }
           if (resource === RESOURCE_MAP.AgentProvider) {
             return {
@@ -2724,7 +2920,10 @@ describe('agents controller reconcileAgentRun', () => {
         apply,
         get: vi.fn(async (resource: string, name: string) => {
           if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
           }
           if (resource === RESOURCE_MAP.AgentProvider) {
             return {
@@ -2831,7 +3030,10 @@ describe('agents controller reconcileAgentRun', () => {
         apply,
         get: vi.fn(async (resource: string, name: string) => {
           if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
           }
           if (resource === RESOURCE_MAP.AgentProvider) {
             return {
@@ -2942,7 +3144,10 @@ describe('agents controller reconcileAgentRun', () => {
         apply,
         get: vi.fn(async (resource: string, name: string) => {
           if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
           }
           if (resource === RESOURCE_MAP.AgentProvider) {
             return {
@@ -3060,7 +3265,10 @@ describe('agents controller reconcileAgentRun', () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return {
@@ -3118,7 +3326,10 @@ describe('agents controller reconcileAgentRun', () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return {
@@ -3189,7 +3400,10 @@ describe('agents controller reconcileAgentRun', () => {
       apply,
       get: vi.fn(async (resource: string, name: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return {
@@ -3289,7 +3503,10 @@ describe('agents controller reconcileAgentRun', () => {
       apply,
       get: vi.fn(async (resource: string, name: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }

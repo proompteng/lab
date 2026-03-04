@@ -1,6 +1,6 @@
 # Custom System Prompt for Agent Runs
 
-Status: Implemented (2026-02-07)
+Status: Implemented (2026-03-04 policy update)
 
 Docs index: [README](../README.md)
 
@@ -8,12 +8,13 @@ Note: Clusters will accept/run the new fields once the updated `charts/agents` C
 
 ## Summary
 
-Agent runs now support per-run system prompts with Agent-level defaults. Prompts can be provided inline or by reference (Secret/ConfigMap). Codex runs apply the resolved prompt and record a SHA-256 hash for audit without logging prompt contents.
+Agent runs enforce Agent-level system prompts. Prompts are configured on `Agent.spec.defaults` (inline or Secret/ConfigMap
+ref), applied by all runtimes, and recorded via SHA-256 hash for audit without logging prompt contents.
 
 ## Goals (Shipped)
 
-- Per-run custom system prompt for AgentRun executions, with optional defaults at Agent level.
-- Prompts can be supplied inline or by reference (ConfigMap/Secret).
+- Agent-level system prompt configuration for AgentRun executions.
+- Prompts supplied from Agent defaults inline or by reference (ConfigMap/Secret).
 - Codex job/workflow runs apply the system prompt without breaking existing runs.
 - Auditability via hashes/metadata without leaking prompt contents.
 
@@ -25,8 +26,8 @@ Agent runs now support per-run system prompts with Agent-level defaults. Prompts
 
 ## Current State (Implemented)
 
-- CRDs add `systemPrompt` / `systemPromptRef` on `AgentRun.spec` and `Agent.spec.defaults`, plus `status.systemPromptHash` on `AgentRun`. See `services/jangar/api/agents/v1alpha1/types.go` and `charts/agents/crds/`.
-- Jangar resolves a system prompt using precedence rules, applies security checks, and records a SHA-256 hash in `AgentRun.status`. See `services/jangar/src/server/agents-controller.ts`.
+- CRDs include `systemPrompt` / `systemPromptRef` on `AgentRun.spec` and `Agent.spec.defaults`, plus `status.systemPromptHash` on `AgentRun`. Controller policy rejects run-level overrides on AgentRun and only uses Agent defaults.
+- Jangar resolves a system prompt from Agent defaults, applies security checks, and records a SHA-256 hash in `AgentRun.status`. See `services/jangar/src/server/agents-controller.ts`.
 - `codex-implement` resolves system prompt from `CODEX_SYSTEM_PROMPT_PATH` (preferred) or the event payload, logs only hash/length, and passes it to Codex. See `services/jangar/scripts/codex/codex-implement.ts`.
 - `CodexRunner` forwards the system prompt as `--config developer_instructions=<toml-string>` when non-empty. See `packages/codex/src/runner.ts`.
 - Argo templates accept inline + Secret/ConfigMap system prompt inputs and set `CODEX_SYSTEM_PROMPT_PATH` when a ref is supplied. See `argocd/applications/froussard/*workflow-template*.yaml`.
@@ -65,11 +66,9 @@ Validation:
 
 ## Resolution Order
 
-1. `AgentRun.spec.systemPromptRef`
-2. `AgentRun.spec.systemPrompt`
-3. `Agent.spec.defaults.systemPromptRef`
-4. `Agent.spec.defaults.systemPrompt`
-5. No system prompt override
+1. `Agent.spec.defaults.systemPromptRef`
+2. `Agent.spec.defaults.systemPrompt`
+3. Fail run with `MissingSystemPromptConfiguration`
 
 Notes:
 
@@ -78,7 +77,8 @@ Notes:
 
 ## Controller Behavior (Jangar)
 
-- Resolves system prompt per the precedence above.
+- Rejects `AgentRun.spec.systemPrompt` and `AgentRun.spec.systemPromptRef`.
+- Resolves system prompt from Agent defaults only.
 - Inline prompt: included in the run payload (`systemPrompt` in event JSON).
 - Ref prompt: mounted into the runtime pod as `/workspace/.codex/system-prompt.txt`, and `CODEX_SYSTEM_PROMPT_PATH` is set.
 - Ref prompt: the prompt contents are not injected into the run payload.
@@ -95,7 +95,7 @@ Security constraints:
 
 ## Runtime Behavior (Codex)
 
-- `codex-implement` prefers `CODEX_SYSTEM_PROMPT_PATH` when the file exists and is non-empty; otherwise it falls back to `event.systemPrompt`.
+- `codex-implement` prefers `CODEX_SYSTEM_PROMPT_PATH` when the file exists and is non-empty; otherwise it uses `event.systemPrompt`.
 - The resolved system prompt is passed to `CodexRunner` as `--config developer_instructions=<toml-string>`.
 - Prompt contents are never logged; only hash and length are logged. A `systemPromptHash` attribute is attached to the NATS `run-started` event.
 - `developer_instructions` is encoded as a quoted TOML string literal (do not attempt manual shell-escaping).
@@ -141,7 +141,7 @@ argo submit \
 
 ## Data Flow (Codex, Inline Prompt)
 
-1. AgentRun created with `spec.systemPrompt`.
+1. Agent default is configured with `spec.defaults.systemPrompt`.
 2. Jangar resolves the system prompt and adds it to the event payload.
 3. `agent-runner` writes event JSON to disk.
 4. `codex-implement` reads event JSON and extracts `systemPrompt`.
@@ -149,7 +149,7 @@ argo submit \
 
 ## Data Flow (Codex, Ref Prompt)
 
-1. AgentRun created with `spec.systemPromptRef`.
+1. Agent default is configured with `spec.defaults.systemPromptRef`.
 2. Jangar mounts the Secret/ConfigMap into `/workspace/.codex/system-prompt.txt` and exports `CODEX_SYSTEM_PROMPT_PATH`.
 3. `codex-implement` reads `CODEX_SYSTEM_PROMPT_PATH` (preferred) and resolves the prompt.
 4. `CodexRunner` invokes `codex exec --config developer_instructions="<prompt>"`.
@@ -163,10 +163,8 @@ argo submit \
 
 ## Limitations
 
-- Temporal runtime only receives inline `systemPrompt` in the payload. `systemPromptRef` is not mounted and is ignored for temporal runs.
-- Custom runtime uses `spec.runtime.config.payload` (if set) else `{agentRun, implementation, memory}`. It does not receive the resolved system prompt (after applying Agent defaults or reading refs) unless you include it explicitly.
-- No per-workflow-step system prompt overrides; workflow steps all share the resolved prompt.
-- `systemPrompt` is not injected into any additional contract metadata beyond the event payload and `systemPromptHash` status field.
+- No per-workflow-step system prompt overrides; workflow steps all share the resolved Agent default prompt.
+- `systemPrompt` is not injected into additional contract metadata beyond runtime payloads and `systemPromptHash`.
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 

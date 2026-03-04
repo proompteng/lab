@@ -1,6 +1,8 @@
 import { asRecord, asString, readNested } from '~/server/primitives-http'
+import { Effect } from 'effect'
 
 import { isNonBlankString, sha256Hex } from './template-hash'
+import { evaluateSystemPromptPolicy } from './system-prompt-policy'
 
 export const SYSTEM_PROMPT_INLINE_MAX_LENGTH = 16_384
 
@@ -57,12 +59,20 @@ export const resolveSystemPrompt = async (options: {
   const defaults = asRecord(readNested(options.agent, ['spec', 'defaults'])) ?? {}
   const maxInlineLength = options.maxInlineLength ?? SYSTEM_PROMPT_INLINE_MAX_LENGTH
 
-  const candidates: Array<{ type: 'ref'; raw: unknown } | { type: 'inline'; raw: unknown }> = [
-    { type: 'ref', raw: spec.systemPromptRef },
-    { type: 'inline', raw: spec.systemPrompt },
-    { type: 'ref', raw: defaults.systemPromptRef },
-    { type: 'inline', raw: defaults.systemPrompt },
-  ]
+  const policy = Effect.runSync(
+    evaluateSystemPromptPolicy({
+      hasRunOverride: spec.systemPrompt != null || spec.systemPromptRef != null,
+      hasDefaultRef: defaults.systemPromptRef != null,
+      hasDefaultInline: defaults.systemPrompt != null,
+    }),
+  )
+  if (!policy.ok) {
+    return policy
+  }
+
+  const candidates: Array<{ type: 'ref'; raw: unknown } | { type: 'inline'; raw: unknown }> = policy.candidateOrder.map(
+    (type) => (type === 'ref' ? { type, raw: defaults.systemPromptRef } : { type, raw: defaults.systemPrompt }),
+  )
 
   for (const candidate of candidates) {
     if (candidate.raw == null) continue
@@ -89,6 +99,7 @@ export const resolveSystemPrompt = async (options: {
         systemPrompt: value,
         systemPromptRef: null,
         systemPromptHash: sha256Hex(value),
+        resolvedSystemPrompt: value,
       }
     }
 
@@ -153,13 +164,13 @@ export const resolveSystemPrompt = async (options: {
       systemPrompt: null,
       systemPromptRef: ref,
       systemPromptHash: sha256Hex(contents),
+      resolvedSystemPrompt: contents,
     }
   }
 
   return {
-    ok: true as const,
-    systemPrompt: null,
-    systemPromptRef: null,
-    systemPromptHash: null,
+    ok: false as const,
+    reason: 'MissingSystemPromptConfiguration',
+    message: 'Agent.spec.defaults.systemPrompt or Agent.spec.defaults.systemPromptRef is required',
   }
 }

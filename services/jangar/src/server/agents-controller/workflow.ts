@@ -4,6 +4,7 @@ import { parseBooleanEnv, parseNumberEnv, parseOptionalNumber } from './env-conf
 
 const PARAMETERS_MAX_ENTRIES = 100
 const PARAMETERS_MAX_VALUE_BYTES = 2048
+const FORBIDDEN_PARAMETER_KEYS = new Set(['prompt'])
 
 const WORKFLOW_LOOPS_ENABLED_ENV = 'JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED'
 const WORKFLOW_LOOP_MAX_ITERATIONS_ENV = 'JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS'
@@ -137,6 +138,14 @@ export const validateParameters = (params: Record<string, unknown>) => {
     }
   }
   for (const [key, value] of entries) {
+    const normalizedKey = key.trim().toLowerCase()
+    if (FORBIDDEN_PARAMETER_KEYS.has(normalizedKey)) {
+      return {
+        ok: false as const,
+        reason: 'ForbiddenParameterKey',
+        message: `spec.parameters.${key} is not allowed; use ImplementationSpec.spec.text`,
+      }
+    }
     if (typeof value !== 'string') {
       return {
         ok: false as const,

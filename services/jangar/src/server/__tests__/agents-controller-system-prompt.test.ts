@@ -15,7 +15,7 @@ describe('agents controller system-prompt module', () => {
     })
   })
 
-  it('resolves inline system prompt from AgentRun spec', async () => {
+  it('rejects AgentRun-level inline system prompt overrides', async () => {
     const kube = { get: vi.fn() }
     const result = await resolveSystemPrompt({
       kube,
@@ -27,15 +27,15 @@ describe('agents controller system-prompt module', () => {
     })
 
     expect(result).toEqual({
-      ok: true,
-      systemPrompt: 'be concise',
-      systemPromptRef: null,
-      systemPromptHash: sha256Hex('be concise'),
+      ok: false,
+      reason: 'SystemPromptOverrideNotAllowed',
+      message:
+        'AgentRun-level systemPrompt/systemPromptRef overrides are not allowed; configure Agent.spec.defaults instead',
     })
     expect(kube.get).not.toHaveBeenCalled()
   })
 
-  it('falls back to agent defaults when AgentRun prompt fields are absent', async () => {
+  it('resolves inline system prompt from Agent defaults', async () => {
     const kube = { get: vi.fn() }
     const result = await resolveSystemPrompt({
       kube,
@@ -51,15 +51,16 @@ describe('agents controller system-prompt module', () => {
       systemPrompt: 'from-defaults',
       systemPromptRef: null,
       systemPromptHash: sha256Hex('from-defaults'),
+      resolvedSystemPrompt: 'from-defaults',
     })
   })
 
-  it('rejects inline prompts above maxInlineLength', async () => {
+  it('rejects agent default inline prompts above maxInlineLength', async () => {
     const result = await resolveSystemPrompt({
       kube: { get: vi.fn() },
       namespace: 'agents',
-      agentRun: { spec: { systemPrompt: '12345' } },
-      agent: null,
+      agentRun: { spec: {} },
+      agent: { spec: { defaults: { systemPrompt: '12345' } } },
       runSecrets: [],
       allowedSecrets: [],
       maxInlineLength: 4,
@@ -72,7 +73,7 @@ describe('agents controller system-prompt module', () => {
     })
   })
 
-  it('rejects secret refs that are not in spec.secrets', async () => {
+  it('rejects AgentRun-level secret ref system prompt overrides', async () => {
     const result = await resolveSystemPrompt({
       kube: { get: vi.fn() },
       namespace: 'agents',
@@ -84,12 +85,13 @@ describe('agents controller system-prompt module', () => {
 
     expect(result).toEqual({
       ok: false,
-      reason: 'SecretNotAllowed',
-      message: 'system prompt secret prompt-secret is not included in spec.secrets',
+      reason: 'SystemPromptOverrideNotAllowed',
+      message:
+        'AgentRun-level systemPrompt/systemPromptRef overrides are not allowed; configure Agent.spec.defaults instead',
     })
   })
 
-  it('loads prompt content from referenced secret and returns hash', async () => {
+  it('loads prompt content from agent default secret ref and returns hash', async () => {
     const kube = {
       get: vi.fn().mockResolvedValue({
         data: { 'prompt.txt': Buffer.from('from-secret').toString('base64') },
@@ -98,8 +100,8 @@ describe('agents controller system-prompt module', () => {
     const result = await resolveSystemPrompt({
       kube,
       namespace: 'agents',
-      agentRun: { spec: { systemPromptRef: { kind: 'Secret', name: 'prompt-secret', key: 'prompt.txt' } } },
-      agent: null,
+      agentRun: { spec: {} },
+      agent: { spec: { defaults: { systemPromptRef: { kind: 'Secret', name: 'prompt-secret', key: 'prompt.txt' } } } },
       runSecrets: ['prompt-secret'],
       allowedSecrets: ['prompt-secret'],
     })
@@ -110,6 +112,24 @@ describe('agents controller system-prompt module', () => {
       systemPrompt: null,
       systemPromptRef: { kind: 'Secret', name: 'prompt-secret', key: 'prompt.txt' },
       systemPromptHash: sha256Hex('from-secret'),
+      resolvedSystemPrompt: 'from-secret',
+    })
+  })
+
+  it('fails when Agent defaults have no system prompt configured', async () => {
+    const result = await resolveSystemPrompt({
+      kube: { get: vi.fn() },
+      namespace: 'agents',
+      agentRun: { spec: {} },
+      agent: { spec: {} },
+      runSecrets: [],
+      allowedSecrets: [],
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'MissingSystemPromptConfiguration',
+      message: 'Agent.spec.defaults.systemPrompt or Agent.spec.defaults.systemPromptRef is required',
     })
   })
 })
