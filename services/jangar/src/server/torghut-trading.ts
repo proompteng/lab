@@ -267,6 +267,26 @@ export type TorghutTradingSummary = {
   rejections: {
     rejectedCount: number
     topReasons: { reason: string; count: number }[]
+    sessionSplit: {
+      preOpenCount: number
+      postOpenCount: number
+    }
+    perAccountSplit: {
+      alpacaAccountLabel: string
+      preOpenCount: number
+      postOpenCount: number
+    }[]
+    rolling5DayTrend: {
+      windowStartUtc: string
+      windowEndUtc: string
+      byDay: {
+        day: string
+        rejectedCount: number
+        preOpenCount: number
+        postOpenCount: number
+        topReasons: { reason: string; count: number }[]
+      }[]
+    }
   }
   equity: {
     available: boolean
@@ -278,13 +298,132 @@ export type TorghutTradingSummary = {
   }
 }
 
+const MARKET_OPEN_HOUR = 9
+const MARKET_OPEN_MINUTE = 30
+
+type SessionBucket = {
+  rejectedCount: number
+  preOpenCount: number
+  postOpenCount: number
+  reasonCounts: Map<string, number>
+}
+
+const toMarketParts = (value: string, tz: string) => {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return null
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+
+  const record: Record<string, string> = {}
+  for (const part of parts) {
+    if (part.type !== 'literal') record[part.type] = part.value
+  }
+
+  const year = Number.parseInt(record.year ?? '', 10)
+  const month = Number.parseInt(record.month ?? '', 10)
+  const day = Number.parseInt(record.day ?? '', 10)
+  const hour = Number.parseInt(record.hour ?? '', 10)
+  const minute = Number.parseInt(record.minute ?? '', 10)
+  if (![year, month, day, hour, minute].every((value) => Number.isFinite(value))) return null
+
+  return {
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    key: `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+  }
+}
+
+const classifySessionByMarketTime = (createdAt: string, tz: string): 'pre-open' | 'post-open' => {
+  const marketParts = toMarketParts(createdAt, tz)
+  if (!marketParts) return 'pre-open'
+  if (marketParts.hour > MARKET_OPEN_HOUR) return 'post-open'
+  if (marketParts.hour < MARKET_OPEN_HOUR) return 'pre-open'
+  return marketParts.minute >= MARKET_OPEN_MINUTE ? 'post-open' : 'pre-open'
+}
+
+const formatSessionReasonTop = (bucket: SessionBucket, limit = 12) =>
+  [...bucket.reasonCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([reason, count]) => ({ reason, count }))
+
+const addReasonCounts = (bucket: SessionBucket, decision: TorghutRejectedDecisionRow) => {
+  for (const reason of decision.riskReasons) {
+    for (const key of splitRiskReason(reason)) {
+      bucket.reasonCounts.set(key, (bucket.reasonCounts.get(key) ?? 0) + 1)
+    }
+  }
+}
+
+const shiftUtcDayWindowStart = (value: string, dayOffset: number) =>
+  new Date(Date.parse(value) - dayOffset * 24 * 60 * 60 * 1000).toISOString()
+
+const buildRolling5DayRejectionTrend = (
+  decisions: TorghutRejectedDecisionRow[],
+  interval: { tz: string; startUtc: string; endUtc: string },
+) => {
+  const windowStartUtc = shiftUtcDayWindowStart(interval.startUtc, 4)
+  const byDay = new Map<string, SessionBucket>()
+
+  for (const decision of decisions) {
+    if (decision.createdAt < windowStartUtc || decision.createdAt >= interval.endUtc) continue
+
+    const marketParts = toMarketParts(decision.createdAt, interval.tz)
+    if (!marketParts) continue
+
+    const bucket = byDay.get(marketParts.key) ?? {
+      rejectedCount: 0,
+      preOpenCount: 0,
+      postOpenCount: 0,
+      reasonCounts: new Map(),
+    }
+    bucket.rejectedCount += 1
+    const session = classifySessionByMarketTime(decision.createdAt, interval.tz)
+    if (session === 'pre-open') {
+      bucket.preOpenCount += 1
+    } else {
+      bucket.postOpenCount += 1
+    }
+    addReasonCounts(bucket, decision)
+    byDay.set(marketParts.key, bucket)
+  }
+
+  const days = [...byDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-5)
+    .map(([day, bucket]) => ({
+      day,
+      rejectedCount: bucket.rejectedCount,
+      preOpenCount: bucket.preOpenCount,
+      postOpenCount: bucket.postOpenCount,
+      topReasons: formatSessionReasonTop(bucket, 6),
+    }))
+
+  return {
+    windowStartUtc,
+    windowEndUtc: interval.endUtc,
+    byDay: days,
+  }
+}
+
 export const buildTorghutTradingSummary = async (params: {
   pool: Pool
   interval: { tz: string; day: string; startUtc: string; endUtc: string }
   strategyId?: string | null
 }) => {
   const strategyId = params.strategyId ?? null
-  const [executions, rejections, strategies, snapshots] = await Promise.all([
+  const [executions, rejections, rollingRejections, strategies, snapshots] = await Promise.all([
     listTorghutTradingFilledExecutions({
       pool: params.pool,
       startUtc: params.interval.startUtc,
@@ -298,6 +437,13 @@ export const buildTorghutTradingSummary = async (params: {
       endUtc: params.interval.endUtc,
       strategyId,
       limit: 2000,
+    }),
+    listTorghutTradingRejectedDecisions({
+      pool: params.pool,
+      startUtc: shiftUtcDayWindowStart(params.interval.startUtc, 4),
+      endUtc: params.interval.endUtc,
+      strategyId,
+      limit: 5000,
     }),
     listTorghutTradingStrategies({ pool: params.pool, limit: 500 }),
     listTorghutTradingPositionSnapshots({
@@ -318,13 +464,41 @@ export const buildTorghutTradingSummary = async (params: {
   const pnl = computeRealizedPnlAverageCostLongOnly(executions)
 
   const reasonsCount = new Map<string, number>()
+  const sessionSplit = {
+    preOpenCount: 0,
+    postOpenCount: 0,
+  }
+  const byAccountSplit = new Map<
+    string,
+    {
+      alpacaAccountLabel: string
+      preOpenCount: number
+      postOpenCount: number
+    }
+  >()
+
   for (const decision of rejections) {
+    const session = classifySessionByMarketTime(decision.createdAt, params.interval.tz)
+    if (session === 'pre-open') sessionSplit.preOpenCount += 1
+    else sessionSplit.postOpenCount += 1
+
+    const byAccount = byAccountSplit.get(decision.alpacaAccountLabel) ?? {
+      alpacaAccountLabel: decision.alpacaAccountLabel,
+      preOpenCount: 0,
+      postOpenCount: 0,
+    }
+    if (session === 'pre-open') byAccount.preOpenCount += 1
+    else byAccount.postOpenCount += 1
+    byAccountSplit.set(decision.alpacaAccountLabel, byAccount)
+
     for (const reason of decision.riskReasons) {
       for (const key of splitRiskReason(reason)) {
         reasonsCount.set(key, (reasonsCount.get(key) ?? 0) + 1)
       }
     }
   }
+
+  const rollingTrend = buildRolling5DayRejectionTrend(rollingRejections, params.interval)
   const topReasons = [...reasonsCount.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 12)
@@ -367,6 +541,15 @@ export const buildTorghutTradingSummary = async (params: {
     rejections: {
       rejectedCount: rejections.length,
       topReasons,
+      sessionSplit,
+      perAccountSplit: [...byAccountSplit.values()].sort((a, b) =>
+        a.alpacaAccountLabel.localeCompare(b.alpacaAccountLabel),
+      ),
+      rolling5DayTrend: {
+        windowStartUtc: rollingTrend.windowStartUtc,
+        windowEndUtc: rollingTrend.windowEndUtc,
+        byDay: rollingTrend.byDay,
+      },
     },
     equity: {
       available: equityByAccount.length > 0,
@@ -385,4 +568,6 @@ export const parseTorghutTradingStrategyId = (url: URL) => {
 
 export const __private = {
   splitRiskReason,
+  classifySessionByMarketTime,
+  buildRolling5DayRejectionTrend,
 }
