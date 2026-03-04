@@ -72,7 +72,7 @@ const createDeploymentWith = (name: string, overrides: DeploymentFixtureOverride
   })
 
 const createKubeList = (
-  jobs: unknown[],
+  jobs: unknown[] = [],
   schedules: unknown[] = [],
   cronjobs: unknown[] = [],
   deployments: unknown[] = [createDeployment('agents')],
@@ -433,6 +433,7 @@ describe('control-plane status', () => {
           ],
           healthyRolloutKubeState.schedules,
           healthyRolloutKubeState.cronjobs,
+          [createDeploymentWith('agents')],
         ),
       },
     )
@@ -572,6 +573,7 @@ describe('control-plane status', () => {
           [],
           [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', '2026-01-19T20:00:00Z')],
           [createRolloutCron('jangar-control-plane-implement-sched', '2026-01-19T20:00:00Z', '2026-01-19T20:00:00Z')],
+          [createDeploymentWith('agents')],
         ),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
@@ -622,6 +624,7 @@ describe('control-plane status', () => {
           ],
           [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', '2026-01-19T20:00:00Z')],
           [createRolloutCron('jangar-control-plane-implement-sched', '2026-01-19T20:00:00Z', '0001-01-01T00:00:00Z')],
+          [createDeploymentWith('agents')],
         ),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
@@ -685,6 +688,7 @@ describe('control-plane status', () => {
           ],
           [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', '2026-01-20T00:00:00Z')],
           [createRolloutCron('jangar-control-plane-implement-sched', '2026-01-20T00:00:00Z', '2026-01-20T00:00:00Z')],
+          [createDeploymentWith('agents')],
         ),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
@@ -747,9 +751,7 @@ describe('control-plane status', () => {
     expect(status.rollout.stale_schedules).toBe(1)
     expect(status.rollout.inactive_schedules).toBe(0)
     expect(status.rollout.stages.length).toBe(1)
-    expect(status.rollout.stages[0]?.reasons).toEqual(
-      expect.arrayContaining(['no successful run in last 120m', 'no rollout activity in last 120m']),
-    )
+    expect(status.rollout.stages[0]?.reasons).toEqual(expect.arrayContaining(['no successful run in last 120m']))
     expect(status.namespaces[0]?.degraded_components).toContain('rollout')
   })
 

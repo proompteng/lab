@@ -109,6 +109,9 @@ export type ControlPlaneRolloutStageReliability = {
   last_transition_at: string
   is_active: boolean
   is_stale: boolean
+  failed_runs_last_window: number
+  backoff_failures_last_window: number
+  top_failure_reasons: RolloutFailureReason[]
   reasons: string[]
   recent_failed_jobs: number
   backoff_limit_exceeded_jobs: number
@@ -832,6 +835,7 @@ const buildRolloutReliability = async (deps: {
       failedJobs: number
       backoffLimitExceededJobs: number
       activeJobs: number
+      failureReasons: Map<string, number>
     }
   >()
   const rolloutFailureReasons = new Map<string, Map<string, number>>()
@@ -859,6 +863,7 @@ const buildRolloutReliability = async (deps: {
       failedJobs: 0,
       backoffLimitExceededJobs: 0,
       activeJobs: 0,
+      failureReasons: new Map<string, number>(),
     }
     if (active > 0) {
       summary.activeJobs += active
@@ -879,11 +884,8 @@ const buildRolloutReliability = async (deps: {
     }
 
     summary.failedJobs += 1
-
     const reason = asString(failedCondition?.reason) ?? 'Failed'
-    const reasonCounts = rolloutFailureReasons.get(scheduleName) ?? new Map<string, number>()
-    reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1)
-    rolloutFailureReasons.set(scheduleName, reasonCounts)
+    summary.failureReasons.set(reason, (summary.failureReasons.get(reason) ?? 0) + 1)
 
     if (reason === 'BackoffLimitExceeded') {
       summary.backoffLimitExceededJobs += 1
@@ -1002,12 +1004,12 @@ const buildRolloutReliability = async (deps: {
         last_transition_at: asString(lastTransitionAt) || asString(cronHealth?.transitionTime) || '',
         is_active: isActive,
         is_stale: isStale,
-        recent_failed_jobs: recentFailedJobs,
-        backoff_limit_exceeded_jobs: backoffLimitExceededJobs,
         failed_runs_last_window: recentFailedJobs,
         backoff_failures_last_window: backoffLimitExceededJobs,
-        top_failure_reasons: toTopRolloutFailureReasons(rolloutFailureReasons.get(name) ?? new Map()),
+        top_failure_reasons: toTopRolloutFailureReasons(failureSummary?.failureReasons ?? new Map()),
         reasons,
+        recent_failed_jobs: recentFailedJobs,
+        backoff_limit_exceeded_jobs: backoffLimitExceededJobs,
       }
       return stageObj
     })

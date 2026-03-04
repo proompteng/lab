@@ -120,6 +120,7 @@ export type WorkflowFailureReason = {
   reason: string
   count: number
 }
+export type RolloutFailureReason = WorkflowFailureReason
 
 export type RolloutFailureReason = {
   reason: string
@@ -157,6 +158,36 @@ export type WorkflowsReliabilityStatus = {
   window_minutes: number
   top_failure_reasons: WorkflowFailureReason[]
   message: string
+}
+
+export type DeploymentRolloutStageReliability = {
+  name: string
+  namespace: string
+  swarm: string
+  stage: string
+  phase: string
+  last_run_at: string
+  last_successful_run_at: string
+  last_transition_at: string
+  is_active: boolean
+  is_stale: boolean
+  failed_runs_last_window: number
+  backoff_failures_last_window: number
+  top_failure_reasons: WorkflowFailureReason[]
+  reasons: string[]
+  recent_failed_jobs: number
+  backoff_limit_exceeded_jobs: number
+}
+
+export type ControlPlaneRolloutReliability = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  window_minutes: number
+  observed_schedules: number
+  inactive_schedules: number
+  stale_schedules: number
+  backoff_limit_exceeded_jobs: number
+  backoff_limit_exceeded_threshold: number
+  stages: DeploymentRolloutStageReliability[]
 }
 
 export type DeploymentRolloutStatus = {
@@ -266,6 +297,7 @@ export type ControlPlaneStatus = {
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
+  rollout: ControlPlaneRolloutReliability
   rollout_health: ControlPlaneRolloutHealth
   namespaces: NamespaceStatus[]
 }
