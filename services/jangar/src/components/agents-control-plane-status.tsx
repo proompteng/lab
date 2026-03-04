@@ -176,7 +176,7 @@ export const ControlPlaneStatusPanel = ({
               <span>Window: {renderSummaryValue(status.workflows.window_minutes)}m</span>
             </div>
             <div className="text-muted-foreground">
-              Top failure reasons: {formatFailureReasons(status.workflows.top_failure_reasons)}
+              Top failure reasons: {formatFailureReasons(status.workflows.top_failure_reasons ?? [])}
             </div>
           </div>
         </div>

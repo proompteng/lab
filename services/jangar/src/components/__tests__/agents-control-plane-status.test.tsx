@@ -150,4 +150,21 @@ describe('ControlPlaneStatusPanel', () => {
 
     expect(normalizedHtml).toContain('Failure trend: —')
   })
+
+  it('handles missing workflow failure reasons without crashing', () => {
+    const statusWithMissingWorkflowReasons = {
+      ...baseStatus,
+      workflows: {
+        ...baseStatus.workflows,
+        top_failure_reasons: undefined as unknown as Array<{ reason: string; count: number }>,
+      },
+    }
+
+    const html = renderToString(
+      <ControlPlaneStatusPanel status={statusWithMissingWorkflowReasons} error={null} isLoading={false} />,
+    )
+    const normalizedHtml = html.replace(/<!-- -->/g, '')
+
+    expect(normalizedHtml).toContain('Top failure reasons: —')
+  })
 })
