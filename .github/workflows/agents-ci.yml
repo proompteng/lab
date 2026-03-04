@@ -147,7 +147,88 @@ jobs:
           IMAGE_REPOSITORY="${AGENTS_IMAGE_REPOSITORY:-jangar-local}"
           IMAGE_TAG="${AGENTS_IMAGE_TAG:-ci-${GITHUB_SHA:-unknown}}"
           PRUNE_DIR="$(mktemp -d /tmp/jangar-prune-XXXXXX)"
-          trap 'rm -rf "${PRUNE_DIR}"' EXIT
+          KIND_IMAGE_TAR="${RUNNER_TEMP:-/tmp}/jangar-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}-${IMAGE_TAG}.tar"
+          BUILD_HEARTBEAT_PID=0
+          KIND_HEARTBEAT_PID=0
+          cleanup_preload_resources() {
+            if [ "${BUILD_HEARTBEAT_PID}" != "0" ]; then
+              kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+              wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+            fi
+            if [ "${KIND_HEARTBEAT_PID}" != "0" ]; then
+              kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
+              wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
+            fi
+            if [ -f "${KIND_IMAGE_TAR}" ]; then
+              rm -f "${KIND_IMAGE_TAR}"
+            fi
+            rm -rf "${PRUNE_DIR}"
+          }
+          trap cleanup_preload_resources EXIT
+
+          run_with_progress() {
+            local phase="$1"
+            local timeout_minutes="$2"
+            shift 2
+
+            local heartbeat_pid
+            local status=0
+
+            (
+              while :; do
+                echo "[progress] ${phase} for ${IMAGE} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+                sleep 120
+              done
+            ) &
+            heartbeat_pid=$!
+
+            if [ "${phase}" = "Docker build" ]; then
+              BUILD_HEARTBEAT_PID="${heartbeat_pid}"
+            else
+              KIND_HEARTBEAT_PID="${heartbeat_pid}"
+            fi
+
+            if timeout "${timeout_minutes}m" "$@"; then
+              status=0
+            else
+              status=$?
+            fi
+
+            if [ "${phase}" = "Docker build" ]; then
+              kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+              wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+              BUILD_HEARTBEAT_PID=0
+            else
+              kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
+              wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
+              KIND_HEARTBEAT_PID=0
+            fi
+
+            return "${status}"
+          }
+
+          run_step_failure() {
+            local message="$1"
+            local code="$2"
+            echo "${message}; exit code=${code}." >&2
+            echo "${message}" >&2
+            exit 1
+          }
+
+          run_kind_load_with_fallback() {
+            if run_with_progress "kind load docker-image" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
+              echo "Loaded local image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}."
+              return 0
+            fi
+
+            echo "kind load docker-image failed; retrying with image-archive path."
+            if run_with_progress "kind load image-archive" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load image-archive "${KIND_IMAGE_TAR}" --name "${KIND_CLUSTER_NAME}"; then
+              echo "Loaded local image archive ${KIND_IMAGE_TAR} into kind cluster ${KIND_CLUSTER_NAME}."
+              return 0
+            fi
+            return 1
+          }
+
           echo "BUILT_JANGAR_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >> "${GITHUB_ENV}"
           echo "BUILT_JANGAR_IMAGE_TAG=${IMAGE_TAG}" >> "${GITHUB_ENV}"
 
@@ -247,16 +328,10 @@ jobs:
           BUILD_TIMEOUT_MINUTES=90
           KIND_LOAD_TIMEOUT_MINUTES=20
 
-          (
-            while :; do
-              echo "[progress] waiting on Docker build for ${IMAGE} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-              sleep 120
-            done
-          ) &
-          BUILD_HEARTBEAT_PID=$!
-          if timeout "${BUILD_TIMEOUT_MINUTES}m" env DOCKER_BUILDKIT=1 docker build \
+          if run_with_progress "Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
             -f "${WORKSPACE}/services/jangar/Dockerfile" \
             --target control-plane \
+            --network=host \
             -t "${IMAGE}" \
             --build-arg "JANGAR_VERSION=${JANGAR_VERSION}" \
             --build-arg "JANGAR_COMMIT=${JANGAR_COMMIT}" \
@@ -265,35 +340,13 @@ jobs:
             "${PRUNE_DIR}"; then
             echo "Built local image ${IMAGE}."
           else
-            BUILD_STATUS=$?
-            kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
-            wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
-            echo "Failed to build local image; exit code=${BUILD_STATUS}." >&2
-            echo "Failed to build local image." >&2
-            exit 1
+            run_step_failure "Failed to build local image" "$?"
           fi
-          kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
-          wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
 
-          (
-            while :; do
-              echo "[progress] waiting on kind image load for ${IMAGE} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-              sleep 120
-            done
-          ) &
-          KIND_HEARTBEAT_PID=$!
-          if timeout "${KIND_LOAD_TIMEOUT_MINUTES}m" kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
-            echo "Loaded local image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}."
-          else
-            KIND_LOAD_STATUS=$?
-            kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
-            wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
-            echo "Failed to load local image into kind; exit code=${KIND_LOAD_STATUS}." >&2
-            echo "Failed to load local image into kind." >&2
-            exit 1
+          docker save --output "${KIND_IMAGE_TAR}" "${IMAGE}"
+          if ! run_kind_load_with_fallback; then
+            run_step_failure "Failed to load local image into kind" "$?"
           fi
-          kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
-          wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
 
       - name: Run agents integration smoke test
         env:
