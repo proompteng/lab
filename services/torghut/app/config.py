@@ -1246,6 +1246,14 @@ class Settings(BaseSettings):
             "force synchronous checks on every request."
         ),
     )
+    trading_startup_readiness_grace_seconds: int = Field(
+        default=45,
+        alias="TRADING_STARTUP_READINESS_GRACE_SECONDS",
+        description=(
+            "Grace window (in seconds) where startup delay is allowed while "
+            "readiness remains optimistic during scheduler startup initialization."
+        ),
+    )
 
     # Jangar gateway (recommended for LLM calls in-cluster).
     jangar_base_url: Optional[str] = Field(default=None, alias="JANGAR_BASE_URL")

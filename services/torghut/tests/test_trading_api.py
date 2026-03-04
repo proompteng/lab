@@ -711,6 +711,106 @@ class TestTradingApi(TestCase):
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
 
+    @patch(
+        "app.main._evaluate_database_contract",
+        return_value={
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+            "checked_at": "2026-03-04T00:00:00+00:00",
+            "account_scope_ready": True,
+            "account_scope_errors": [],
+        },
+    )
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_allows_startup_grace_window(
+        self,
+        _mock_alpaca: object,
+        _mock_clickhouse: object,
+        _mock_postgres: object,
+        _mock_contract: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_source = settings.trading_universe_source
+        original_grace = settings.trading_startup_readiness_grace_seconds
+        settings.trading_enabled = True
+        settings.trading_universe_source = "jangar"
+        settings.trading_startup_readiness_grace_seconds = 45
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = False
+            scheduler.state.startup_started_at = datetime.now(timezone.utc)
+            scheduler.state.universe_source_status = "ok"
+            scheduler.state.universe_source_reason = "jangar_fetch_ok"
+            scheduler.state.universe_symbols_count = 2
+            scheduler.state.universe_cache_age_seconds = 0
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ok")
+            self.assertTrue(payload["scheduler"]["ok"])
+            self.assertIn("readiness grace", payload["scheduler"]["detail"])
+            self.assertTrue(payload["scheduler"]["startup_readiness_grace_active"])
+        finally:
+            settings.trading_enabled = original
+            settings.trading_universe_source = original_source
+            settings.trading_startup_readiness_grace_seconds = original_grace
+            _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
+
+    @patch(
+        "app.main._evaluate_database_contract",
+        return_value={
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+            "checked_at": "2026-03-04T00:00:00+00:00",
+            "account_scope_ready": True,
+            "account_scope_errors": [],
+        },
+    )
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_rejects_after_startup_grace_expires(
+        self,
+        _mock_alpaca: object,
+        _mock_clickhouse: object,
+        _mock_postgres: object,
+        _mock_contract: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_source = settings.trading_universe_source
+        original_grace = settings.trading_startup_readiness_grace_seconds
+        settings.trading_enabled = True
+        settings.trading_universe_source = "jangar"
+        settings.trading_startup_readiness_grace_seconds = 30
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = False
+            scheduler.state.startup_started_at = datetime.now(timezone.utc) - timedelta(
+                seconds=61
+            )
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 503)
+            payload = response.json()
+            self.assertEqual(payload["status"], "degraded")
+            self.assertFalse(payload["scheduler"]["ok"])
+            self.assertIn("trading loop", payload["scheduler"]["detail"])
+            self.assertFalse(payload["scheduler"]["startup_readiness_grace_active"])
+        finally:
+            settings.trading_enabled = original
+            settings.trading_universe_source = original_source
+            settings.trading_startup_readiness_grace_seconds = original_grace
+            _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
+
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_postgres", return_value={"ok": False, "detail": "down"})
     @patch(

@@ -1029,6 +1029,7 @@ class TradingMetrics:
 @dataclass
 class TradingState:
     running: bool = False
+    startup_started_at: Optional[datetime] = None
     last_run_at: Optional[datetime] = None
     last_reconcile_at: Optional[datetime] = None
     last_error: Optional[str] = None
@@ -5425,7 +5426,8 @@ class TradingScheduler:
             self._pipelines = [self._build_pipeline_for_account(lane) for lane in lanes]
             self._pipeline = self._pipelines[0] if self._pipelines else None
         self._stop_event.clear()
-        self.state.running = True
+        self.state.startup_started_at = datetime.now(timezone.utc)
+        self.state.running = False
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
@@ -5438,6 +5440,7 @@ class TradingScheduler:
         except asyncio.CancelledError:
             pass
         self._task = None
+        self.state.startup_started_at = None
         self.state.running = False
         active_pipelines = self._pipelines or (
             [self._pipeline] if self._pipeline is not None else []
@@ -5448,6 +5451,7 @@ class TradingScheduler:
         self._pipeline = None
 
     async def _run_loop(self) -> None:
+        self.state.running = True
         poll_interval = settings.trading_poll_ms / 1000
         reconcile_interval = settings.trading_reconcile_ms / 1000
         autonomy_interval = max(30, settings.trading_autonomy_interval_seconds)

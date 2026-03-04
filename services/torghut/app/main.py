@@ -413,12 +413,39 @@ def _evaluate_trading_health_payload(
 
     scheduler_ok = True
     scheduler_detail = "ok"
+
+    startup_grace_seconds = max(0, settings.trading_startup_readiness_grace_seconds)
+    in_startup_grace = False
+    startup_started_at = scheduler.state.startup_started_at
     if settings.trading_enabled and not scheduler.state.running:
-        scheduler_ok = False
-        if scheduler.state.last_run_at is None:
-            scheduler_detail = "trading loop not started"
+        if (
+            startup_started_at is not None
+            and startup_grace_seconds > 0
+            and datetime.now(timezone.utc) - startup_started_at
+            <= timedelta(seconds=startup_grace_seconds)
+        ):
+            in_startup_grace = True
+            scheduler_ok = True
+            scheduler_detail = (
+                f"trading loop starting (within {startup_grace_seconds}s readiness grace)"
+            )
         else:
-            scheduler_detail = "trading loop not running"
+            scheduler_ok = False
+            scheduler_detail = (
+                "trading loop not started"
+                if scheduler.state.last_run_at is None
+                else "trading loop not running"
+            )
+
+    scheduler_payload: dict[str, object] = {
+        "ok": scheduler_ok,
+        "detail": scheduler_detail,
+        "running": scheduler.state.running,
+    }
+    if startup_started_at is not None:
+        scheduler_payload["startup_started_at"] = startup_started_at.isoformat()
+        scheduler_payload["startup_readiness_grace_seconds"] = startup_grace_seconds
+        scheduler_payload["startup_readiness_grace_active"] = in_startup_grace
 
     dependencies, checked_at, cache_used = _readiness_dependency_snapshot(
         session,
@@ -444,7 +471,7 @@ def _evaluate_trading_health_payload(
     return (
         {
             "status": status,
-            "scheduler": {"ok": scheduler_ok, "detail": scheduler_detail},
+            "scheduler": scheduler_payload,
             "dependencies": dependencies,
         },
         status_code,
