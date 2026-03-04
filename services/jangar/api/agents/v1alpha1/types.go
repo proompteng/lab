@@ -127,7 +127,7 @@ type WorkflowStep struct {
 	ImplementationSpecRef *LocalRef             `json:"implementationSpecRef,omitempty"`
 	Implementation        *InlineImplementation `json:"implementation,omitempty"`
 	// +kubebuilder:validation:MaxProperties=100
-		// +kubebuilder:validation:XValidation:rule="!has(self.parameters) || !has(self.parameters, 'prompt')",message="workflow step parameters.prompt is not allowed; use ImplementationSpec.spec.text"
+	// +kubebuilder:validation:XValidation:rule="!has(self.parameters) || !has(self.parameters, 'prompt')",message="workflow step parameters.prompt is not allowed; use ImplementationSpec.spec.text"
 	Parameters          map[string]string `json:"parameters,omitempty"`
 	Workload            *WorkloadSpec     `json:"workload,omitempty"`
 	Retries             int32             `json:"retries,omitempty"`
