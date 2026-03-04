@@ -1,6 +1,6 @@
 # Control Plane Summary Cache Freshness Design
 
-Status: Draft (2026-03-04)
+Status: Approved (2026-03-04)
 
 ## Scope
 
@@ -8,7 +8,7 @@ This design extends the existing control-plane cache freshness contract to the c
 
 ## Problem statement
 
-The summary endpoint currently performs live `kubectl`/Kubernetes list operations for every primitive on every request. That creates:
+The summary endpoint previously performed live `kubectl`/Kubernetes list operations for every primitive on every request. That created:
 
 - repeated control-plane load with no visibility into stale index usage,
 - longer tail latency when Kubernetes list operations are slow,
@@ -35,6 +35,20 @@ A prior cache contract file already exists for resource/resources endpoints, but
 
 - `resources.<Kind>` may include a `cache` object when cache-backed data is returned.
 - Existing `total` and `phases` fields remain unchanged for backward compatibility.
+
+### Assessment evidence captured in this mission
+
+- **Source review**:
+  - Hot surface: `services/jangar/src/routes/api/agents/control-plane/summary.ts`
+  - Related control-plane cache stack: `services/jangar/src/server/control-plane-cache.ts`, `services/jangar/src/server/control-plane-cache-store.ts`, `services/jangar/src/routes/api/agents/control-plane/resource.ts`, `services/jangar/src/routes/api/agents/control-plane/resources.ts`
+  - Test coverage added in:
+    - `services/jangar/src/server/__tests__/agents-control-plane-resource.test.ts`
+    - `services/jangar/src/server/__tests__/agents-control-plane-resources.test.ts`
+
+- **Database/state coupling**:
+  - Cache reads are sourced from `agents_control_plane.resources_current`, which already stores `last_seen_at` and `resource_updated_at`.
+  - Freshness computation uses `JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS` and `JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE`.
+  - No new schema migration needed for this design change.
 
 ### Alternatives and tradeoffs
 

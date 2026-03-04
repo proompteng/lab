@@ -208,7 +208,7 @@ export const getControlPlaneSummary = async (
 
   if (cacheStore) {
     try {
-      await cacheStore.close()
+      await (cacheStore as ControlPlaneCacheStore).close()
     } catch {
       // ignore
     }

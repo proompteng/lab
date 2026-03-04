@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, stat } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
-import { createTemporalClient, type TemporalClient } from '@proompteng/temporal-bun-sdk/client'
-import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk/config'
-import { VersioningBehavior } from '@proompteng/temporal-bun-sdk/worker'
+import { createTemporalClient, loadTemporalConfig, type TemporalClient } from '@proompteng/temporal-bun-sdk'
 import { Context, Effect, Layer, pipe } from 'effect'
 import * as TSemaphore from 'effect/TSemaphore'
 
@@ -13,6 +11,7 @@ const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PO
 const DEFAULT_TASK_QUEUE = 'bumba'
 const WORKTREE_DIR_NAME = '.worktrees'
 const BUMBA_WORKTREE_NAME = 'bumba'
+const AUTO_UPGRADE_VERSIONING_BEHAVIOR = 2 as const
 
 export type StartEnrichFileInput = {
   filePath: string
@@ -368,7 +367,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
                       workflowId,
                       workflowType: 'enrichFile',
                       taskQueue,
-                      versioningBehavior: VersioningBehavior.AUTO_UPGRADE,
+                      versioningBehavior: AUTO_UPGRADE_VERSIONING_BEHAVIOR,
                       args: [
                         {
                           repoRoot,
@@ -423,7 +422,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
                       workflowId,
                       workflowType: 'enrichRepository',
                       taskQueue,
-                      versioningBehavior: VersioningBehavior.AUTO_UPGRADE,
+                      versioningBehavior: AUTO_UPGRADE_VERSIONING_BEHAVIOR,
                       args: [
                         {
                           repoRoot,
