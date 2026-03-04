@@ -139,6 +139,19 @@ jobs:
           kubectl_version: v1.29.4
           wait: 180s
 
+      - name: Preload Jangar image into kind
+        run: |
+          set -euo pipefail
+          IMAGE_REPO=$(awk '/^[[:space:]]*repository:/{print $2; exit}' charts/agents/values-ci.yaml)
+          IMAGE_TAG=$(awk '/^[[:space:]]*tag:/{print $2; exit}' charts/agents/values-ci.yaml | tr -d "'\"")
+          IMAGE_DIGEST=$(awk '/^[[:space:]]*digest:/{print $2; exit}' charts/agents/values-ci.yaml | tr -d "'\"")
+          IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
+          if [ "${IMAGE_DIGEST}" != "''" ] && [ -n "${IMAGE_DIGEST}" ]; then
+            IMAGE="${IMAGE}@${IMAGE_DIGEST}"
+          fi
+          docker pull "${IMAGE}"
+          kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"
+
       - name: Run agents integration smoke test
         env:
           AGENTS_NAMESPACE: agents-ci
