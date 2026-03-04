@@ -207,7 +207,9 @@ const upsertComment = async (
 const markerPresence = (body: string, marker: string) => (body.includes(marker) ? 1 : 0)
 
 export const runCodexProgressComment = async ({ args, body, stdin }: RunOptions = {}) => {
-  const argv = args ?? process.argv.slice(2)
+  // When invoked programmatically with an explicit body, ignore process argv
+  // from the parent command (for example codex-implement event-file argument).
+  const argv = args ?? (body !== undefined ? [] : process.argv.slice(2))
   const input = stdin ?? process.stdin
 
   let options: Options
