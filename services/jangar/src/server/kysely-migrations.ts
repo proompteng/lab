@@ -2,6 +2,7 @@ import { type Migration, type MigrationProvider, Migrator, sql } from 'kysely'
 
 import type { Db } from '~/server/db'
 import * as initMigration from '~/server/migrations/20251228_init'
+import * as codexJudgeRunMetadataMigration from '~/server/migrations/20251229_codex_judge_run_metadata'
 import * as codexJudgeTimeoutsMigration from '~/server/migrations/20251229_codex_judge_timeouts'
 import * as rerunSubmissionsMigration from '~/server/migrations/20251229_codex_rerun_submissions'
 import * as workflowCommsAgentMessagesMigration from '~/server/migrations/20251229_workflow_comms_agent_messages'
@@ -19,6 +20,7 @@ import * as torghutQuantControlPlaneMigration from '~/server/migrations/20260212
 import * as removePromptTuningMigration from '~/server/migrations/20260220_remove_prompt_tuning'
 import * as torghutMarketContextAgentsMigration from '~/server/migrations/20260226_torghut_market_context_agents'
 import * as torghutMarketContextRunLifecycleMigration from '~/server/migrations/20260228_torghut_market_context_run_lifecycle'
+import * as jangarGithubWriteActionsAuditContextMigration from '~/server/migrations/20260303_jangar_github_write_actions_audit_context'
 
 type MigrationMap = Record<string, Migration>
 
@@ -34,6 +36,7 @@ class StaticMigrationProvider implements MigrationProvider {
 
 const migrations: MigrationMap = {
   '20251228_init': initMigration,
+  '20251229_codex_judge_run_metadata': codexJudgeRunMetadataMigration,
   '20251229_codex_judge_timeouts': codexJudgeTimeoutsMigration,
   '20251229_codex_rerun_submissions': rerunSubmissionsMigration,
   '20251229_workflow_comms_agent_messages': workflowCommsAgentMessagesMigration,
@@ -51,6 +54,7 @@ const migrations: MigrationMap = {
   '20260220_remove_prompt_tuning': removePromptTuningMigration,
   '20260226_torghut_market_context_agents': torghutMarketContextAgentsMigration,
   '20260228_torghut_market_context_run_lifecycle': torghutMarketContextRunLifecycleMigration,
+  '20260303_jangar_github_write_actions_audit_context': jangarGithubWriteActionsAuditContextMigration,
 }
 
 const migrationProvider = new StaticMigrationProvider(migrations)
@@ -116,4 +120,8 @@ export const ensureMigrations = async (db: Db) => {
     migrationPromises.delete(db)
     throw error
   }
+}
+
+export const __test__ = {
+  getRegisteredMigrations: () => Object.keys(migrations).sort(),
 }
