@@ -375,7 +375,7 @@ spec:
             - name: LLM_DSPY_RUNTIME_MODE
               value: active
             - name: LLM_DSPY_ARTIFACT_HASH
-              value: df087a5e643d6478b1ebe51bf44ad2d0e2228825c1c0a8e9dc345729d6a3bbff
+              value: 373bb47d4588d86a6fcf682e8b127420305a27860ba91c3508448f037e4adca8
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE
               value: pass_through_reduced_size
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER
