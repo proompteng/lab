@@ -3,6 +3,7 @@
 import json
 import logging
 import tempfile
+import os
 from functools import lru_cache
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
@@ -1680,6 +1681,69 @@ class Settings(BaseSettings):
             normalized_correlation_caps[normalized_key] = value
         self.trading_allocator_correlation_group_caps = normalized_correlation_caps
 
+    @staticmethod
+    def _normalize_allocator_alias_payload(
+        raw: str,
+        *,
+        mode: str,
+    ) -> dict[str, str | float]:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError("allocator alias payload must be valid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("allocator alias payload must be a JSON object")
+
+        parsed_map = cast(dict[object, object], parsed)
+
+        if mode == "correlation_symbol_groups":
+            normalized: dict[str, str | float] = {}
+            for key, value in parsed_map.items():
+                normalized_key = str(key).strip().upper()
+                normalized_value = str(value).strip().lower()
+                if not normalized_key or not normalized_value:
+                    continue
+                normalized[normalized_key] = normalized_value
+            return normalized
+
+        if mode == "correlation_group_caps":
+            normalized: dict[str, str | float] = {}
+            for key, value in parsed_map.items():
+                normalized_key = str(key).strip().lower()
+                if not normalized_key:
+                    continue
+                normalized[normalized_key] = float(str(value))
+            return normalized
+
+        raise ValueError(f"unknown allocator alias normalization mode: {mode}")
+
+    def _validate_allocator_alias_environment_parity(self) -> None:
+        alias_pairs: tuple[tuple[str, str, str], ...] = (
+            (
+                "TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS",
+                "TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS",
+                "correlation_symbol_groups",
+            ),
+            (
+                "TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS",
+                "TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS",
+                "correlation_group_caps",
+            ),
+        )
+        for canonical_env, legacy_env, mode in alias_pairs:
+            canonical_raw = os.environ.get(canonical_env)
+            legacy_raw = os.environ.get(legacy_env)
+            if canonical_raw is None or legacy_raw is None:
+                continue
+            canonical = self._normalize_allocator_alias_payload(
+                canonical_raw, mode=mode
+            )
+            legacy = self._normalize_allocator_alias_payload(legacy_raw, mode=mode)
+            if canonical != legacy:
+                raise ValueError(
+                    f"{canonical_env} and {legacy_env} differ; set only one canonical form"
+                )
+
     def _normalize_runtime_regime_confidence_thresholds_by_entropy_band(self) -> None:
         normalized: dict[str, tuple[float, float]] = {}
         for (
@@ -2013,6 +2077,7 @@ class Settings(BaseSettings):
             raise ValueError("POSTHOG_API_KEY is required when POSTHOG_ENABLED=true")
 
     def model_post_init(self, __context: Any) -> None:
+        self._validate_allocator_alias_environment_parity()
         self._apply_feature_flag_overrides()
         self._apply_trading_defaults()
         self._normalize_optional_url_settings()
