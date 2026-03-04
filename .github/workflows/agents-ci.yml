@@ -141,7 +141,7 @@ jobs:
 
       - name: Build and preload local Jangar control-plane image into kind
         run: |
-          set -euo pipefail
+          set -euxo pipefail
 
           WORKSPACE="${GITHUB_WORKSPACE}"
           IMAGE_REPOSITORY="${AGENTS_IMAGE_REPOSITORY:-jangar-local}"
@@ -162,8 +162,17 @@ jobs:
             echo "CI run detected; skipping prebuild step and relying on Dockerfile build."
           fi
 
+          run_step() {
+            local label="$1"
+            shift
+            echo "::group::${label}"
+            "$@"
+            echo "::endgroup::"
+          }
+
+          PREP_TIMEOUT_MINUTES=25
           echo "Pruning jangar build context to ${PRUNE_DIR}"
-          bunx turbo prune --scope=@proompteng/jangar --docker --out-dir="${PRUNE_DIR}"
+          run_step "Prune turbo context" timeout "${PREP_TIMEOUT_MINUTES}m" bunx turbo prune --scope=@proompteng/jangar --docker --out-dir="${PRUNE_DIR}"
           cp "${WORKSPACE}/tsconfig.base.json" "${PRUNE_DIR}/tsconfig.base.json"
           if [ -d "${WORKSPACE}/skills" ]; then
             mkdir -p "${PRUNE_DIR}/skills"
