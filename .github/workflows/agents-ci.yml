@@ -173,6 +173,29 @@ jobs:
             cp -R "${WORKSPACE}/packages/cx-tools" "${PRUNE_DIR}/json/packages/cx-tools"
           fi
 
+          copy_pruned_workspace_dist() {
+            local pkg_dir
+            local rel_path
+            local src_dir
+
+            shopt -s nullglob
+            for pkg_dir in "${PRUNE_DIR}/full/packages/"* "${PRUNE_DIR}/full/services/"*; do
+              [ -d "${pkg_dir}" ] || continue
+              rel_path="${pkg_dir#${PRUNE_DIR}/full/}"
+              src_dir="${WORKSPACE}/${rel_path}"
+
+              if [ ! -d "${src_dir}/dist" ]; then
+                continue
+              fi
+
+              cp -R "${src_dir}/dist" "${pkg_dir}"
+              mkdir -p "${PRUNE_DIR}/json/${rel_path}"
+              cp -R "${src_dir}/dist" "${PRUNE_DIR}/json/${rel_path}"
+            done
+            shopt -u nullglob
+          }
+          copy_pruned_workspace_dist
+
           if [ "${BUILD_OUTPUT}" = "1" ]; then
             echo "Building services/jangar .output in pruned context"
             BUILD_DIR="${PRUNE_DIR}/full"

@@ -228,7 +228,7 @@ export const ControlPlaneStatusPanel = ({
                         Reasons: {stage.reasons.length > 0 ? stage.reasons.join(', ') : '—'}
                       </div>
                       <div className="text-muted-foreground text-[11px]">
-                        Failure trend: {formatFailureReasons(stage.top_failure_reasons)}
+                        Failure trend: {formatFailureReasons(stage.top_failure_reasons ?? [])}
                       </div>
                     </li>
                   ))}
