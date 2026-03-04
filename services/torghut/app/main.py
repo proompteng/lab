@@ -467,6 +467,7 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             detail={
                 "error": "database account scope schema mismatch",
                 "checked_at": database_contract.get("checked_at"),
+                "schema_head_signature": database_contract.get("schema_head_signature"),
                 **account_scope_status,
             },
         )
