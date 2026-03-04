@@ -116,44 +116,6 @@ export type RuntimeAdapterStatus = {
   endpoint: string
 }
 
-export type WorkflowFailureReason = {
-  reason: string
-  count: number
-}
-
-export type WorkflowReliabilityStatus = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  window_minutes: number
-  active_job_runs: number
-  recent_failed_jobs: number
-  backoff_limit_exceeded_jobs: number
-  top_failure_reasons: WorkflowFailureReason[]
-  message: string
-}
-
-export type ControlPlaneRolloutStageReliability = {
-  name: string
-  namespace: string
-  swarm: string
-  stage: string
-  phase: string
-  last_run_at: string
-  last_successful_run_at: string
-  last_transition_at: string
-  is_active: boolean
-  is_stale: boolean
-  reasons: string[]
-}
-
-export type ControlPlaneRolloutReliability = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  window_minutes: number
-  observed_schedules: number
-  inactive_schedules: number
-  stale_schedules: number
-  stages: ControlPlaneRolloutStageReliability[]
-}
-
 export type DatabaseMigrationConsistency = {
   status: 'healthy' | 'degraded' | 'unknown'
   migration_table: string | null
@@ -234,8 +196,6 @@ export type ControlPlaneStatus = {
   }
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
-  workflows: WorkflowReliabilityStatus
-  rollout: ControlPlaneRolloutReliability
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
