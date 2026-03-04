@@ -170,11 +170,22 @@ Environment variables:
 - `JANGAR_GRPC_ADDRESS` (optional override for `host:port`)
 - `JANGAR_GRPC_TOKEN` (optional shared token)
 
-Control-plane status endpoint behavior (`/api/control-plane/status`) is deliberate:
+Control-plane status endpoint behavior (`/api/agents/control-plane/status`) is deliberate:
 
 - `JANGAR_GRPC_ENABLED` uses a strict boolean parser (`true/false`, `1/0`, `yes/no`, `on/off`, case-insensitive, no whitespace).
 - invalid `JANGAR_GRPC_ENABLED`, `JANGAR_GRPC_PORT`, or malformed `JANGAR_GRPC_ADDRESS` values return `grpc.status = degraded` with explanatory messages.
 - an empty/unset `JANGAR_GRPC_ENABLED` disables gRPC (`disabled` status) and does not perform socket checks.
+- `status.workflows` includes bounded rollout/job rollup:
+  - `active_job_runs`
+  - `recent_failed_jobs`
+  - `backoff_limit_exceeded_jobs`
+  - `top_failure_reasons`
+- `status.watch_reliability` includes bounded stream-level watch diagnostics:
+  - `status`
+  - `observed_streams`
+  - `total_events`
+  - `total_errors`
+  - `total_restarts`
 
 ## Terminal backend
 
@@ -218,6 +229,20 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
 - `JANGAR_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
 - `DATABASE_URL` (required to use MCP memories tools)
 - `PGSSLMODE` (optional; defaults to `require`; Jangar does not support `sslrootcert` URL params for Bun’s Postgres client)
+- `JANGAR_WORKFLOWS_WINDOW_MINUTES` (optional; default: `15`)
+  - Time window used for workflow rollup counts in `status.workflows`.
+- `JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD` (optional; default: `2`)
+  - Mark workflow status as degraded when backoff failures cross this warning threshold.
+- `JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD` (optional; default: `3`)
+  - Promote degraded workflow status to hard degradation at this threshold.
+- `JANGAR_WORKFLOWS_SWARMS` (optional)
+  - Comma-separated list of swarm names included in workflow status rollups (defaults to `jangar-control-plane`).
+- `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (optional; default: `agents`)
+  - Namespaces to scan for workflow jobs before label filtering.
+- `JANGAR_CONTROL_PLANE_WATCH_HEALTH_WINDOW_MINUTES` (optional; default: `15`)
+  - Watch reliability rolling-window duration for `status.watch_reliability`.
+- `JANGAR_CONTROL_PLANE_WATCH_HEALTH_STREAM_LIMIT` (optional; default: `20`)
+  - Maximum number of watch streams returned in `status.watch_reliability.streams`.
 
 Control-plane cache freshness (API read path):
 
