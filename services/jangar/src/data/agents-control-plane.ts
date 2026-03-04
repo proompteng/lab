@@ -131,6 +131,29 @@ export type WorkflowReliabilityStatus = {
   message: string
 }
 
+export type ControlPlaneRolloutStageReliability = {
+  name: string
+  namespace: string
+  swarm: string
+  stage: string
+  phase: string
+  last_run_at: string
+  last_successful_run_at: string
+  last_transition_at: string
+  is_active: boolean
+  is_stale: boolean
+  reasons: string[]
+}
+
+export type ControlPlaneRolloutReliability = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  window_minutes: number
+  observed_schedules: number
+  inactive_schedules: number
+  stale_schedules: number
+  stages: ControlPlaneRolloutStageReliability[]
+}
+
 export type DatabaseMigrationConsistency = {
   status: 'healthy' | 'degraded' | 'unknown'
   migration_table: string | null
@@ -204,6 +227,7 @@ export type ControlPlaneStatus = {
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
   workflows: WorkflowReliabilityStatus
+  rollout: ControlPlaneRolloutReliability
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
