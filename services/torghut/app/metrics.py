@@ -304,6 +304,10 @@ _SERVICE_LABEL_GAUGES: dict[str, tuple[str, str]] = {
         "torghut_trading_signal_lag_seconds",
         "Latest signal ingestion lag in seconds.",
     ),
+    "trading_shorts_enabled": (
+        "torghut_trading_shorts_enabled",
+        "Whether shorting is currently enabled in runtime configuration.",
+    ),
     "no_signal_streak": (
         "torghut_trading_no_signal_streak",
         "Consecutive no-signal autonomy cycles.",
