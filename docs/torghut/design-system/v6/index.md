@@ -7,7 +7,7 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Completed` (program closure passed against all v6/13 definition-of-done criteria on `2026-03-03`)
-- Implementation status (strict): `Implemented=14`, `Partial=0`, `Planned=0` of 14
+- Implementation status (strict): `Implemented=14`, `Partial=0`, `Planned=1` of 15
 - Evidence: `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence sync: `14-legacy-gap-disposition-map-2026-03-03.md` (signed v4/v5 disposition completeness)
 - Rollout status: v6 pack controls are represented by merged runtime/control-plane closure phases in `main` (`#3921` through `#3960`).
@@ -46,6 +46,7 @@ This pack is positioned as the next architecture layer above:
 12. `12-posthog-agent-observability-and-error-tracking-production-design.md`
 13. `13-production-gap-closure-master-plan-2026-03-03.md`
 14. `14-legacy-gap-disposition-map-2026-03-03.md`
+15. `15-live-execution-quality-and-profitability-recovery-plan-2026-03-04.md`
 
 ## Recommended Build Order
 
@@ -63,6 +64,7 @@ This pack is positioned as the next architecture layer above:
 12. `07-hmm-regime-state-and-autonomous-llm-control-plane-2026-02-28.md`
 13. `13-production-gap-closure-master-plan-2026-03-03.md`
 14. `14-legacy-gap-disposition-map-2026-03-03.md`
+15. `15-live-execution-quality-and-profitability-recovery-plan-2026-03-04.md`
 
 ## Why This Sequence
 

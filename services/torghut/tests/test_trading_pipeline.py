@@ -300,15 +300,28 @@ class FakeLLMReviewEngine:
         response = LLMReviewResponse(
             verdict=self.verdict,
             confidence=self.confidence,
-            confidence_band=self.confidence_band or (
-                "high" if self.confidence >= 0.75 else "medium" if self.confidence >= 0.5 else "low"
+            confidence_band=self.confidence_band
+            or (
+                "high"
+                if self.confidence >= 0.75
+                else "medium"
+                if self.confidence >= 0.5
+                else "low"
             ),
             calibrated_probabilities=self.calibrated_probabilities
             or _default_probabilities(self.verdict, self.confidence),
             uncertainty={
-                "score": self.uncertainty_score if self.uncertainty_score is not None else (1.0 - self.confidence),
+                "score": self.uncertainty_score
+                if self.uncertainty_score is not None
+                else (1.0 - self.confidence),
                 "band": self.uncertainty_band
-                or ("low" if self.confidence >= 0.75 else "medium" if self.confidence >= 0.5 else "high"),
+                or (
+                    "low"
+                    if self.confidence >= 0.75
+                    else "medium"
+                    if self.confidence >= 0.5
+                    else "high"
+                ),
             },
             calibration_metadata=(
                 {"quality_score": self.calibration_quality_score}
@@ -508,11 +521,15 @@ class TestTradingPipeline(TestCase):
             )
 
             self.assertIs(
-                pipeline._execution_client_for_symbol("MSFT", symbol_allowlist={"MSFT"}),
+                pipeline._execution_client_for_symbol(
+                    "MSFT", symbol_allowlist={"MSFT"}
+                ),
                 lean_adapter,
             )
             self.assertIs(
-                pipeline._execution_client_for_symbol("AAPL", symbol_allowlist={"MSFT"}),
+                pipeline._execution_client_for_symbol(
+                    "AAPL", symbol_allowlist={"MSFT"}
+                ),
                 lean_adapter,
             )
             self.assertIs(
@@ -520,7 +537,9 @@ class TestTradingPipeline(TestCase):
                 lean_adapter,
             )
         finally:
-            config.settings.trading_execution_adapter = original["trading_execution_adapter"]
+            config.settings.trading_execution_adapter = original[
+                "trading_execution_adapter"
+            ]
             config.settings.trading_execution_adapter_policy = original[
                 "trading_execution_adapter_policy"
             ]
@@ -646,8 +665,12 @@ class TestTradingPipeline(TestCase):
                     params={"price": Decimal("100")},
                 )
                 executor = OrderExecutor()
-                decision_row = executor.ensure_decision(session, decision, strategy, "paper")
-                decision_row.created_at = datetime.now(timezone.utc) - timedelta(seconds=300)
+                decision_row = executor.ensure_decision(
+                    session, decision, strategy, "paper"
+                )
+                decision_row.created_at = datetime.now(timezone.utc) - timedelta(
+                    seconds=300
+                )
                 session.add(decision_row)
                 session.commit()
 
@@ -689,7 +712,9 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(
                     pipeline.state.metrics.planned_decisions_timeout_rejected_total, 1
                 )
-                self.assertEqual(pipeline.state.metrics.planned_decisions_stale_total, 1)
+                self.assertEqual(
+                    pipeline.state.metrics.planned_decisions_stale_total, 1
+                )
         finally:
             config.settings.trading_planned_decision_timeout_seconds = original_timeout
 
@@ -971,7 +996,9 @@ class TestTradingPipeline(TestCase):
                 "trading_static_symbols_raw"
             ]
 
-    def test_runtime_uncertainty_gate_resolves_strictest_action_across_sources(self) -> None:
+    def test_runtime_uncertainty_gate_resolves_strictest_action_across_sources(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             gate_path = Path(tmpdir) / "gate-report.json"
             gate_path.write_text(
@@ -1011,7 +1038,9 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(gate.action, "fail")
             self.assertEqual(gate.source, "autonomy_gate_report")
 
-    def test_pipeline_runtime_uncertainty_gate_defaults_degrade_when_inputs_missing(self) -> None:
+    def test_pipeline_runtime_uncertainty_gate_defaults_degrade_when_inputs_missing(
+        self,
+    ) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -1036,15 +1065,18 @@ class TestTradingPipeline(TestCase):
             params={},
         )
 
-        gate, _runtime_payload = pipeline._resolve_runtime_uncertainty_gate_from_inputs(decision), pipeline._resolve_runtime_uncertainty_gate(
-            decision
+        gate, _runtime_payload = (
+            pipeline._resolve_runtime_uncertainty_gate_from_inputs(decision),
+            pipeline._resolve_runtime_uncertainty_gate(decision),
         )
         self.assertEqual(gate.action, "degrade")
         self.assertEqual(gate.source, "uncertainty_input_missing")
         self.assertEqual(_runtime_payload.action, "degrade")
         self.assertEqual(_runtime_payload.source, "uncertainty_input_missing")
 
-    def test_pipeline_runtime_uncertainty_gate_stale_decision_payload_abstains(self) -> None:
+    def test_pipeline_runtime_uncertainty_gate_stale_decision_payload_abstains(
+        self,
+    ) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -1081,7 +1113,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "decision_runtime_payload_stale")
         self.assertEqual(gate.reason, "decision_runtime_payload_generated_at_stale")
 
-    def test_pipeline_runtime_regime_gate_defaults_degrade_when_inputs_missing(self) -> None:
+    def test_pipeline_runtime_regime_gate_defaults_degrade_when_inputs_missing(
+        self,
+    ) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -1111,7 +1145,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "missing")
         self.assertEqual(gate.reason, "missing")
 
-    def test_pipeline_runtime_regime_gate_degrades_for_uncertain_regime_posterior(self) -> None:
+    def test_pipeline_runtime_regime_gate_degrades_for_uncertain_regime_posterior(
+        self,
+    ) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -1152,7 +1188,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "regime_hmm_confidence")
         self.assertEqual(gate.reason, "regime_hmm_confidence_is_uncertain")
 
-    def test_pipeline_runtime_regime_gate_abstains_for_high_entropy_low_confidence(self) -> None:
+    def test_pipeline_runtime_regime_gate_abstains_for_high_entropy_low_confidence(
+        self,
+    ) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -1193,7 +1231,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "regime_hmm_confidence")
         self.assertEqual(gate.reason, "regime_hmm_confidence_too_low")
 
-    def test_pipeline_runtime_regime_gate_invalid_regime_gate_action_fails_closed(self) -> None:
+    def test_pipeline_runtime_regime_gate_invalid_regime_gate_action_fails_closed(
+        self,
+    ) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -1225,7 +1265,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "decision_regime_gate_invalid_action")
         self.assertEqual(gate.reason, "decision_regime_gate_invalid_action")
 
-    def test_pipeline_runtime_regime_gate_unknown_regime_without_label_fails_closed(self) -> None:
+    def test_pipeline_runtime_regime_gate_unknown_regime_without_label_fails_closed(
+        self,
+    ) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -1267,7 +1309,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "regime_hmm_unknown_regime")
         self.assertEqual(gate.reason, "hmm_unknown")
 
-    def test_pipeline_runtime_regime_gate_invalid_regime_id_without_label_fails_closed(self) -> None:
+    def test_pipeline_runtime_regime_gate_invalid_regime_id_without_label_fails_closed(
+        self,
+    ) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -1309,7 +1353,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "regime_hmm_unknown_regime")
         self.assertEqual(gate.reason, "hmm_unknown")
 
-    def test_pipeline_runtime_regime_gate_invalid_schema_version_fails_closed(self) -> None:
+    def test_pipeline_runtime_regime_gate_invalid_schema_version_fails_closed(
+        self,
+    ) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -1552,7 +1598,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "regime_hmm_stale")
         self.assertEqual(gate.reason, "aging_output")
 
-    def test_pipeline_runtime_regime_gate_stale_hmm_is_fail_closed_and_preserves_lineage(self) -> None:
+    def test_pipeline_runtime_regime_gate_stale_hmm_is_fail_closed_and_preserves_lineage(
+        self,
+    ) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -1607,7 +1655,10 @@ class TestTradingPipeline(TestCase):
             regime_artifact.get("model_id"),
             "hmm-regime-v1.2.0",
         )
-    def test_pipeline_runtime_regime_gate_fallback_to_defensive_is_fail_closed(self) -> None:
+
+    def test_pipeline_runtime_regime_gate_fallback_to_defensive_is_fail_closed(
+        self,
+    ) -> None:
         pipeline = TradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -1693,7 +1744,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(gate.source, "regime_hmm_unknown_regime")
         self.assertEqual(gate.reason, "hmm_unknown")
 
-    def test_pipeline_runtime_uncertainty_gate_report_parse_error_fails_closed(self) -> None:
+    def test_pipeline_runtime_uncertainty_gate_report_parse_error_fails_closed(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -1793,10 +1846,14 @@ class TestTradingPipeline(TestCase):
                 "trading_static_symbols_raw"
             ]
 
-    def test_pipeline_runtime_uncertainty_gate_report_stale_in_autonomy_path_abstains(self) -> None:
+    def test_pipeline_runtime_uncertainty_gate_report_stale_in_autonomy_path_abstains(
+        self,
+    ) -> None:
         stale_report = {
             "uncertainty_gate_action": "pass",
-            "generated_at": (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat().replace(
+            "generated_at": (datetime.now(timezone.utc) - timedelta(minutes=45))
+            .isoformat()
+            .replace(
                 "+00:00",
                 "Z",
             ),
@@ -1947,8 +2004,12 @@ class TestTradingPipeline(TestCase):
                     )
 
                 self.assertEqual(len(alpaca_client.submitted), 0)
-                self.assertEqual(state.metrics.runtime_regime_gate_action_total.get("abstain"), 1)
-                self.assertEqual(state.metrics.runtime_regime_gate_blocked_total.get("abstain"), 1)
+                self.assertEqual(
+                    state.metrics.runtime_regime_gate_action_total.get("abstain"), 1
+                )
+                self.assertEqual(
+                    state.metrics.runtime_regime_gate_blocked_total.get("abstain"), 1
+                )
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -2083,17 +2144,27 @@ class TestTradingPipeline(TestCase):
                     )
                     regime_artifact = regime_payload.get("artifact")
                     self.assertIsInstance(regime_artifact, dict)
-                    self.assertEqual(regime_artifact.get("model_id"), "hmm-regime-v1.2.0")
+                    self.assertEqual(
+                        regime_artifact.get("model_id"), "hmm-regime-v1.2.0"
+                    )
                     self.assertEqual(regime_artifact.get("feature_schema"), "hmm-v1")
-                    self.assertEqual(regime_artifact.get("training_run_id"), "run-2026-03-02")
-                    self.assertEqual(regime_payload.get("hmm_state_posterior"), {"R2": "0.75"})
+                    self.assertEqual(
+                        regime_artifact.get("training_run_id"), "run-2026-03-02"
+                    )
+                    self.assertEqual(
+                        regime_payload.get("hmm_state_posterior"), {"R2": "0.75"}
+                    )
                     self.assertEqual(regime_payload.get("hmm_entropy"), "1.23")
                     self.assertEqual(regime_payload.get("hmm_entropy_band"), "medium")
                     self.assertEqual(regime_payload.get("hmm_transition_shock"), False)
 
                 self.assertEqual(len(alpaca_client.submitted), 0)
-                self.assertEqual(state.metrics.runtime_regime_gate_action_total.get("abstain"), 1)
-                self.assertEqual(state.metrics.runtime_regime_gate_blocked_total.get("abstain"), 1)
+                self.assertEqual(
+                    state.metrics.runtime_regime_gate_action_total.get("abstain"), 1
+                )
+                self.assertEqual(
+                    state.metrics.runtime_regime_gate_blocked_total.get("abstain"), 1
+                )
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -2209,7 +2280,9 @@ class TestTradingPipeline(TestCase):
 
                     gate_payload = params.get("runtime_uncertainty_gate")
                     assert isinstance(gate_payload, dict)
-                    self.assertEqual(gate_payload.get("source"), "regime_hmm_non_authoritative")
+                    self.assertEqual(
+                        gate_payload.get("source"), "regime_hmm_non_authoritative"
+                    )
                     regime_gate = gate_payload.get("regime_gate")
                     assert isinstance(regime_gate, dict)
                     self.assertEqual(regime_gate.get("action"), "abstain")
@@ -2241,8 +2314,12 @@ class TestTradingPipeline(TestCase):
                     self.assertEqual(regime_payload.get("hmm_transition_shock"), False)
 
                 self.assertEqual(len(alpaca_client.submitted), 0)
-                self.assertEqual(state.metrics.runtime_regime_gate_action_total.get("abstain"), 1)
-                self.assertEqual(state.metrics.runtime_regime_gate_blocked_total.get("abstain"), 1)
+                self.assertEqual(
+                    state.metrics.runtime_regime_gate_action_total.get("abstain"), 1
+                )
+                self.assertEqual(
+                    state.metrics.runtime_regime_gate_blocked_total.get("abstain"), 1
+                )
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -2250,12 +2327,16 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
             ]
-            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
             config.settings.trading_static_symbols_raw = original[
                 "trading_static_symbols_raw"
             ]
 
-    def test_pipeline_runtime_regime_gate_unparseable_payload_fails_closed(self) -> None:
+    def test_pipeline_runtime_regime_gate_unparseable_payload_fails_closed(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -2359,9 +2440,7 @@ class TestTradingPipeline(TestCase):
                 gate_payload = params.get("runtime_uncertainty_gate")
                 assert isinstance(gate_payload, dict)
                 self.assertEqual(gate_payload.get("action"), "abstain")
-                self.assertEqual(
-                    gate_payload.get("source"), "regime_hmm_unparseable"
-                )
+                self.assertEqual(gate_payload.get("source"), "regime_hmm_unparseable")
                 regime_gate = gate_payload.get("regime_gate")
                 assert isinstance(regime_gate, dict)
                 self.assertEqual(regime_gate.get("action"), "abstain")
@@ -2370,8 +2449,12 @@ class TestTradingPipeline(TestCase):
                 )
 
             self.assertEqual(len(alpaca_client.submitted), 0)
-            self.assertEqual(state.metrics.runtime_regime_gate_action_total.get("abstain"), 1)
-            self.assertEqual(state.metrics.runtime_regime_gate_blocked_total.get("abstain"), 1)
+            self.assertEqual(
+                state.metrics.runtime_regime_gate_action_total.get("abstain"), 1
+            )
+            self.assertEqual(
+                state.metrics.runtime_regime_gate_blocked_total.get("abstain"), 1
+            )
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -2386,7 +2469,9 @@ class TestTradingPipeline(TestCase):
                 "trading_static_symbols_raw"
             ]
 
-    def test_pipeline_runtime_uncertainty_abstain_allows_risk_reducing_exit(self) -> None:
+    def test_pipeline_runtime_uncertainty_abstain_allows_risk_reducing_exit(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -2610,12 +2695,9 @@ class TestTradingPipeline(TestCase):
         from app import config
 
         original = {
-            "qty_multipliers":
-                config.settings.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime,
-            "max_participation_rates":
-                config.settings.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime,
-            "min_execution_seconds":
-                config.settings.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime,
+            "qty_multipliers": config.settings.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime,
+            "max_participation_rates": config.settings.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime,
+            "min_execution_seconds": config.settings.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime,
         }
 
         config.settings.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime = {
@@ -2658,19 +2740,23 @@ class TestTradingPipeline(TestCase):
                 },
             )
 
-            updated_decision, payload, reason = pipeline._apply_runtime_uncertainty_gate(
-                decision,
-                positions=[],
+            updated_decision, payload, reason = (
+                pipeline._apply_runtime_uncertainty_gate(
+                    decision,
+                    positions=[],
+                )
             )
 
             self.assertIsNone(reason)
             self.assertEqual(payload.get("degrade_qty_multiplier"), "0.25")
-            self.assertEqual(
-                payload.get("max_participation_rate_override"), "0.03"
-            )
+            self.assertEqual(payload.get("max_participation_rate_override"), "0.03")
             self.assertEqual(payload.get("min_execution_seconds"), 180)
             self.assertEqual(
-                str(updated_decision.params["allocator"]["max_participation_rate_override"]),
+                str(
+                    updated_decision.params["allocator"][
+                        "max_participation_rate_override"
+                    ]
+                ),
                 "0.03",
             )
             self.assertEqual(updated_decision.params.get("execution_seconds"), 180)
@@ -2686,7 +2772,9 @@ class TestTradingPipeline(TestCase):
                 "min_execution_seconds"
             ]
 
-    def test_pipeline_runtime_uncertainty_uses_projected_positions_within_run(self) -> None:
+    def test_pipeline_runtime_uncertainty_uses_projected_positions_within_run(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -2784,7 +2872,9 @@ class TestTradingPipeline(TestCase):
                     }
                     self.assertEqual(status_counts.get("submitted"), 1)
                     self.assertEqual(status_counts.get("rejected"), 1)
-                    rejected = next(item for item in decisions if item.status == "rejected")
+                    rejected = next(
+                        item for item in decisions if item.status == "rejected"
+                    )
                     decision_json = rejected.decision_json
                     assert isinstance(decision_json, dict)
                     self.assertIn(
@@ -3053,7 +3143,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(payload.get("regime_action_blocked"), "decision_regime_gate")
         self.assertIsNone(payload.get("uncertainty_action_blocked"))
 
-    def test_runtime_uncertainty_gate_does_not_bypass_kill_switch_precedence(self) -> None:
+    def test_runtime_uncertainty_gate_does_not_bypass_kill_switch_precedence(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -3156,7 +3248,9 @@ class TestTradingPipeline(TestCase):
                 "trading_static_symbols_raw"
             ]
 
-    def test_pipeline_persists_adaptive_policy_and_records_fallback_metric(self) -> None:
+    def test_pipeline_persists_adaptive_policy_and_records_fallback_metric(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -3856,7 +3950,9 @@ class TestTradingPipeline(TestCase):
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 gate_path = Path(tmpdir) / "gate-report.json"
-                gate_path.write_text('{"uncertainty_gate_action":"pass"}', encoding="utf-8")
+                gate_path.write_text(
+                    '{"uncertainty_gate_action":"pass"}', encoding="utf-8"
+                )
                 signal = SignalEnvelope(
                     event_ts=datetime.now(timezone.utc),
                     symbol="AAPL",
@@ -4063,7 +4159,9 @@ class TestTradingPipeline(TestCase):
                 self.assertIsInstance(committee_veto_alignment, dict)
                 assert isinstance(committee_veto_alignment, dict)
                 self.assertFalse(committee_veto_alignment.get("committee_veto", True))
-                self.assertFalse(committee_veto_alignment.get("deterministic_veto", True))
+                self.assertFalse(
+                    committee_veto_alignment.get("deterministic_veto", True)
+                )
 
             config.settings.trading_mode = "live"
             config.settings.trading_live_enabled = True
@@ -4399,7 +4497,9 @@ class TestTradingPipeline(TestCase):
                     reviews[0].response_json.get("effective_verdict"), "veto"
                 )
                 self.assertEqual(len(executions), 0)
-                self.assertEqual(reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked")
+                self.assertEqual(
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                )
                 self.assertEqual(engine.review_calls, 0)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
@@ -4426,9 +4526,7 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_shadow_completed_at = original[
                 "llm_shadow_completed_at"
             ]
-            config.settings.llm_model_version_lock = original[
-                "llm_model_version_lock"
-            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
             config.settings.llm_adjustment_approved = original[
                 "llm_adjustment_approved"
             ]
@@ -4699,7 +4797,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
             config.settings.trading_static_symbols_raw = original[
                 "trading_static_symbols_raw"
             ]
@@ -4731,7 +4831,9 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_rollout_stage = original["llm_rollout_stage"]
             config.settings.jangar_base_url = original["jangar_base_url"]
 
-    def test_pipeline_llm_dspy_live_runtime_gate_blocks_when_stage_not_stage3(self) -> None:
+    def test_pipeline_llm_dspy_live_runtime_gate_blocks_when_stage_not_stage3(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -4833,7 +4935,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
             config.settings.trading_static_symbols_raw = original[
                 "trading_static_symbols_raw"
             ]
@@ -4959,7 +5063,9 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
-                self.assertEqual(reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked")
+                self.assertEqual(
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
         finally:
@@ -5000,7 +5106,9 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_rollout_stage = original["llm_rollout_stage"]
             config.settings.jangar_base_url = original["jangar_base_url"]
 
-    def test_pipeline_llm_dspy_live_runtime_gate_blocks_malformed_artifact_hash(self) -> None:
+    def test_pipeline_llm_dspy_live_runtime_gate_blocks_malformed_artifact_hash(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -5066,7 +5174,9 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
-            with patch("app.trading.scheduler.DSPyReviewRuntime.from_settings") as from_settings:
+            with patch(
+                "app.trading.scheduler.DSPyReviewRuntime.from_settings"
+            ) as from_settings:
                 pipeline = TradingPipeline(
                     alpaca_client=FakeAlpacaClient(),
                     order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -5089,7 +5199,9 @@ class TestTradingPipeline(TestCase):
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
-                self.assertEqual(reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked")
+                self.assertEqual(
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                )
                 self.assertEqual(len(executions), 0)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
@@ -5198,7 +5310,9 @@ class TestTradingPipeline(TestCase):
             )
 
             engine = CountingLLMReviewEngine()
-            with patch("app.trading.scheduler.DSPyReviewRuntime.from_settings") as from_settings:
+            with patch(
+                "app.trading.scheduler.DSPyReviewRuntime.from_settings"
+            ) as from_settings:
                 pipeline = TradingPipeline(
                     alpaca_client=FakeAlpacaClient(),
                     order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -5265,7 +5379,9 @@ class TestTradingPipeline(TestCase):
             ]
             config.settings.llm_rollout_stage = original["llm_rollout_stage"]
 
-    def test_pipeline_llm_dspy_live_runtime_gate_blocks_bootstrap_artifact_hash(self) -> None:
+    def test_pipeline_llm_dspy_live_runtime_gate_blocks_bootstrap_artifact_hash(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -5304,7 +5420,9 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_min_confidence = 0.0
         config.settings.llm_dspy_runtime_mode = "active"
         config.settings.jangar_base_url = "http://jangar.test"
-        config.settings.llm_dspy_artifact_hash = DSPyReviewRuntime.bootstrap_artifact_hash()
+        config.settings.llm_dspy_artifact_hash = (
+            DSPyReviewRuntime.bootstrap_artifact_hash()
+        )
         config.settings.llm_rollout_stage = "stage3"
         _set_llm_guardrails(config)
 
@@ -5357,7 +5475,9 @@ class TestTradingPipeline(TestCase):
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
-                self.assertEqual(reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked")
+                self.assertEqual(
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                )
                 self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
@@ -5399,7 +5519,172 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_rollout_stage = original["llm_rollout_stage"]
             config.settings.jangar_base_url = original["jangar_base_url"]
 
-    def test_pipeline_llm_dspy_live_runtime_gate_blocks_without_jangar_base_url(self) -> None:
+    def test_pipeline_llm_dspy_live_runtime_gate_can_pass_through_with_degraded_qty(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_fail_open_live_approved": config.settings.llm_fail_open_live_approved,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "llm_dspy_live_runtime_block_fail_mode": config.settings.llm_dspy_live_runtime_block_fail_mode,
+            "llm_dspy_live_runtime_block_qty_multiplier": config.settings.llm_dspy_live_runtime_block_qty_multiplier,
+            "jangar_base_url": config.settings.jangar_base_url,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "pass_through"
+        config.settings.llm_fail_mode_enforcement = "configured"
+        config.settings.llm_fail_open_live_approved = True
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "active"
+        config.settings.jangar_base_url = "http://jangar.test"
+        config.settings.llm_dspy_artifact_hash = (
+            DSPyReviewRuntime.bootstrap_artifact_hash()
+        )
+        config.settings.llm_rollout_stage = "stage3"
+        config.settings.llm_dspy_live_runtime_block_fail_mode = (
+            "pass_through_reduced_size"
+        )
+        config.settings.llm_dspy_live_runtime_block_qty_multiplier = 0.5
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="live",
+                session_factory=self.session_local,
+                llm_review_engine=CountingLLMReviewEngine(),
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                decisions = session.execute(select(TradeDecision)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(
+                    reviews[0].rationale,
+                    "llm_dspy_live_runtime_gate_blocked",
+                )
+                self.assertEqual(
+                    reviews[0].response_json.get("fallback"), "pass_through"
+                )
+                self.assertEqual(decisions[0].status, "submitted")
+                self.assertEqual(len(executions), 1)
+                self.assertLess(executions[0].submitted_qty, Decimal("10"))
+                self.assertGreaterEqual(executions[0].submitted_qty, Decimal("1"))
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_fail_open_live_approved = original[
+                "llm_fail_open_live_approved"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.llm_dspy_live_runtime_block_fail_mode = original[
+                "llm_dspy_live_runtime_block_fail_mode"
+            ]
+            config.settings.llm_dspy_live_runtime_block_qty_multiplier = original[
+                "llm_dspy_live_runtime_block_qty_multiplier"
+            ]
+            config.settings.jangar_base_url = original["jangar_base_url"]
+
+    def test_pipeline_llm_dspy_live_runtime_gate_blocks_without_jangar_base_url(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -5491,7 +5776,9 @@ class TestTradingPipeline(TestCase):
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
-                self.assertEqual(reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked")
+                self.assertEqual(
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                )
                 self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
@@ -6429,7 +6716,9 @@ class TestTradingPipeline(TestCase):
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 gate_path = Path(tmpdir) / "gate-report.json"
-                gate_path.write_text('{"uncertainty_gate_action":"pass"}', encoding="utf-8")
+                gate_path.write_text(
+                    '{"uncertainty_gate_action":"pass"}', encoding="utf-8"
+                )
                 signal = SignalEnvelope(
                     event_ts=datetime.now(timezone.utc),
                     symbol="AAPL",

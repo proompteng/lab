@@ -376,6 +376,10 @@ spec:
               value: active
             - name: LLM_DSPY_ARTIFACT_HASH
               value: df087a5e643d6478b1ebe51bf44ad2d0e2228825c1c0a8e9dc345729d6a3bbff
+            - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE
+              value: pass_through_reduced_size
+            - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER
+              value: "0.5"
             - name: LLM_DSPY_PROGRAM_NAME
               value: trade-review-committee-v1
             - name: LLM_DSPY_SIGNATURE_VERSION

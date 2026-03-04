@@ -69,6 +69,11 @@ from .regime_hmm import (
     resolve_legacy_regime_label,
     resolve_regime_route_label,
 )
+from .quantity_rules import (
+    fractional_equities_enabled_for_trade,
+    min_qty_for_symbol,
+    quantize_qty_for_symbol,
+)
 from .autonomy import (
     DriftThresholds,
     DriftTriggerPolicy,
@@ -101,7 +106,9 @@ _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
 _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
 _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
 _RUNTIME_UNCERTAINTY_GATE_MAX_STALENESS_SECONDS = 15 * 60
-_RUNTIME_REGIME_CONFIDENCE_DEGRADE_BY_ENTROPY_BAND: dict[str, tuple[Decimal, Decimal]] = {
+_RUNTIME_REGIME_CONFIDENCE_DEGRADE_BY_ENTROPY_BAND: dict[
+    str, tuple[Decimal, Decimal]
+] = {
     "low": (Decimal("0.65"), Decimal("0.45")),
     "medium": (Decimal("0.75"), Decimal("0.55")),
     "high": (Decimal("0.85"), Decimal("0.70")),
@@ -1813,16 +1820,18 @@ class TradingPipeline:
         uncertainty_action = "pass"
         if isinstance(uncertainty_gate_payload, Mapping):
             uncertainty_gate_map = cast(Mapping[str, Any], uncertainty_gate_payload)
-            uncertainty_action = str(
-                uncertainty_gate_map.get("action") or "pass"
-            ).strip().lower()
+            uncertainty_action = (
+                str(uncertainty_gate_map.get("action") or "pass").strip().lower()
+            )
         elif str(gate_payload.get("action") or "pass").strip().lower() in {
             "pass",
             "degrade",
             "abstain",
             "fail",
         }:
-            uncertainty_action = str(gate_payload.get("action") or "pass").strip().lower()
+            uncertainty_action = (
+                str(gate_payload.get("action") or "pass").strip().lower()
+            )
         regime_gate_payload = gate_payload.get("regime_gate")
         regime_action = "pass"
         if isinstance(regime_gate_payload, Mapping):
@@ -1841,8 +1850,7 @@ class TradingPipeline:
             self.state.metrics.record_runtime_regime_gate(
                 cast(RuntimeUncertaintyGateAction, regime_action),
                 blocked=(
-                    gate_rejection is not None
-                    and regime_action in {"abstain", "fail"}
+                    gate_rejection is not None and regime_action in {"abstain", "fail"}
                 ),
             )
             self.state.last_runtime_regime_gate_action = regime_action
@@ -1862,8 +1870,7 @@ class TradingPipeline:
                     uncertainty_gate_map.get("source")
                     or gate_payload.get("source")
                     or ""
-                )
-                .strip()
+                ).strip()
                 or None
             )
             uncertainty_reason = str(uncertainty_gate_map.get("reason") or "").strip()
@@ -2010,10 +2017,7 @@ class TradingPipeline:
             )
         if extra_properties:
             properties.update(
-                {
-                    str(key): value
-                    for key, value in extra_properties.items()
-                }
+                {str(key): value for key, value in extra_properties.items()}
             )
         emitted, drop_reason = capture_posthog_event(
             event_name,
@@ -2037,8 +2041,8 @@ class TradingPipeline:
         positions: list[dict[str, Any]],
         snapshot: Optional[MarketSnapshot],
     ) -> tuple[StrategyDecision, Any] | None:
-        regime_label, regime_source, regime_fallback = _resolve_decision_regime_label_with_source(
-            decision
+        regime_label, regime_source, regime_fallback = (
+            _resolve_decision_regime_label_with_source(decision)
         )
         self.state.metrics.record_decision_regime_resolution(
             source=regime_source,
@@ -2480,15 +2484,11 @@ class TradingPipeline:
             if configured_qty_multiplier is not None:
                 qty_multiplier = Decimal(str(configured_qty_multiplier))
 
-            configured_max_participation_rate = (
-                settings.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime.get(
-                    regime_key
-                )
+            configured_max_participation_rate = settings.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime.get(
+                regime_key
             )
             if configured_max_participation_rate is not None:
-                max_participation_rate = Decimal(
-                    str(configured_max_participation_rate)
-                )
+                max_participation_rate = Decimal(str(configured_max_participation_rate))
 
             configured_min_execution_seconds = settings.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime.get(
                 regime_key
@@ -2636,11 +2636,15 @@ class TradingPipeline:
                     )
         if not candidates:
             candidates.append(
-                RuntimeUncertaintyGate(action="degrade", source="uncertainty_input_missing")
+                RuntimeUncertaintyGate(
+                    action="degrade", source="uncertainty_input_missing"
+                )
             )
         return _select_strictest_runtime_uncertainty_gate(candidates)
 
-    def _resolve_runtime_regime_gate(self, decision: StrategyDecision) -> RuntimeUncertaintyGate:
+    def _resolve_runtime_regime_gate(
+        self, decision: StrategyDecision
+    ) -> RuntimeUncertaintyGate:
         params = decision.params
 
         regime_gate = params.get("regime_gate")
@@ -2709,7 +2713,9 @@ class TradingPipeline:
             )
 
         try:
-            regime_context = resolve_hmm_context(cast(Mapping[str, Any], raw_regime_hmm))
+            regime_context = resolve_hmm_context(
+                cast(Mapping[str, Any], raw_regime_hmm)
+            )
         except Exception as exc:
             logger.warning(
                 "Failed to parse decision regime_hmm payload source=%s error=%s",
@@ -2727,7 +2733,8 @@ class TradingPipeline:
             decision
         )
         regime_stale = bool(
-            regime_context.guardrail.stale or regime_context.guardrail.fallback_to_defensive
+            regime_context.guardrail.stale
+            or regime_context.guardrail.fallback_to_defensive
         )
         regime_label = regime_label or regime_context.regime_id
         if regime_context.transition_shock:
@@ -2747,8 +2754,7 @@ class TradingPipeline:
                 regime_label=regime_label,
                 regime_stale=True,
                 reason=(
-                    regime_context.guardrail_reason
-                    or "regime_context_guardrail_stale"
+                    regime_context.guardrail_reason or "regime_context_guardrail_stale"
                 ),
             )
         if not regime_context.is_authoritative:
@@ -2799,8 +2805,8 @@ class TradingPipeline:
         if top_posterior_probability is None:
             return None
 
-        degrade_threshold, abstain_threshold = self._resolve_regime_confidence_thresholds(
-            regime_context.entropy_band
+        degrade_threshold, abstain_threshold = (
+            self._resolve_regime_confidence_thresholds(regime_context.entropy_band)
         )
         if top_posterior_probability < abstain_threshold:
             return RuntimeUncertaintyGate(
@@ -2924,19 +2930,11 @@ class TradingPipeline:
         current_override = _optional_decimal(
             allocator.get("max_participation_rate_override")
         )
-        if (
-            current_override is None
-            or current_override > max_participation_rate
-        ):
-            allocator["max_participation_rate_override"] = str(
-                max_participation_rate
-            )
+        if current_override is None or current_override > max_participation_rate:
+            allocator["max_participation_rate_override"] = str(max_participation_rate)
         params["allocator"] = allocator
         execution_seconds = _optional_int(params.get("execution_seconds"))
-        if (
-            execution_seconds is None
-            or execution_seconds < min_execution_seconds
-        ):
+        if execution_seconds is None or execution_seconds < min_execution_seconds:
             params["execution_seconds"] = min_execution_seconds
 
         qty = _optional_decimal(decision.qty)
@@ -2945,9 +2943,7 @@ class TradingPipeline:
             scaled = (qty * degrade_qty_multiplier).quantize(Decimal("1"))
             adjusted_qty = max(Decimal("1"), scaled)
         payload["degrade_qty_multiplier"] = str(degrade_qty_multiplier)
-        payload["max_participation_rate_override"] = str(
-            max_participation_rate
-        )
+        payload["max_participation_rate_override"] = str(max_participation_rate)
         payload["min_execution_seconds"] = min_execution_seconds
         payload["adjusted_qty"] = str(adjusted_qty)
         return (
@@ -3260,18 +3256,92 @@ class TradingPipeline:
         risk_flags: list[str],
         policy_resolution: Optional[dict[str, Any]] = None,
     ) -> tuple[StrategyDecision, Optional[str]]:
+        block_fail_mode = settings.llm_dspy_live_runtime_block_fail_mode
+        effective_fail_mode = "veto" if block_fail_mode == "veto" else "pass_through"
+        passthrough_decision = decision
+        if block_fail_mode == "pass_through_reduced_size":
+            passthrough_decision = self._degrade_llm_runtime_block_qty(
+                decision=decision,
+                positions=positions,
+                reason=reason,
+                risk_flags=risk_flags,
+            )
         return self._handle_llm_unavailable(
             session,
-            decision,
+            passthrough_decision,
             decision_row,
             account,
             positions,
             reason=reason,
             shadow_mode=False,
-            effective_fail_mode="veto",
+            effective_fail_mode=effective_fail_mode,
             risk_flags=risk_flags,
             market_context=None,
             policy_resolution=policy_resolution,
+        )
+
+    @staticmethod
+    def _degrade_llm_runtime_block_qty(
+        *,
+        decision: StrategyDecision,
+        positions: list[dict[str, Any]],
+        reason: str,
+        risk_flags: list[str],
+    ) -> StrategyDecision:
+        multiplier = Decimal(str(settings.llm_dspy_live_runtime_block_qty_multiplier))
+        if multiplier >= Decimal("1"):
+            return decision
+
+        current_qty = Decimal("0")
+        for position in positions:
+            if str(position.get("symbol") or "").upper() != decision.symbol.upper():
+                continue
+            raw_qty = position.get("qty") or position.get("quantity")
+            if raw_qty is None:
+                continue
+            try:
+                qty = Decimal(str(raw_qty))
+            except (ArithmeticError, ValueError):
+                continue
+            side = str(position.get("side") or "").lower()
+            if side == "short":
+                qty = -abs(qty)
+            current_qty += qty
+
+        scaled_qty = decision.qty * multiplier
+        fractional_equities_enabled = fractional_equities_enabled_for_trade(
+            action=decision.action,
+            global_enabled=settings.trading_fractional_equities_enabled,
+            allow_shorts=settings.trading_allow_shorts,
+            position_qty=current_qty,
+            requested_qty=scaled_qty,
+        )
+        quantized_qty = quantize_qty_for_symbol(
+            decision.symbol,
+            scaled_qty,
+            fractional_equities_enabled=fractional_equities_enabled,
+        )
+        min_qty = min_qty_for_symbol(
+            decision.symbol, fractional_equities_enabled=fractional_equities_enabled
+        )
+        if quantized_qty < min_qty:
+            if decision.qty >= min_qty:
+                quantized_qty = min_qty
+            else:
+                quantized_qty = decision.qty
+        if quantized_qty <= 0 or quantized_qty >= decision.qty:
+            return decision
+
+        updated_params = dict(decision.params)
+        updated_params["llm_runtime_block_degrade"] = {
+            "reason": reason,
+            "risk_flags": list(risk_flags),
+            "qty_multiplier": str(multiplier),
+            "original_qty": str(decision.qty),
+            "degraded_qty": str(quantized_qty),
+        }
+        return decision.model_copy(
+            update={"qty": quantized_qty, "params": updated_params}
         )
 
     def _run_llm_review_request(
@@ -3552,9 +3622,7 @@ class TradingPipeline:
         error: Exception,
     ) -> tuple[StrategyDecision, Optional[str]]:
         self.state.metrics.llm_error_total += 1
-        unsupported_state_error = isinstance(
-            error, DSPyRuntimeUnsupportedStateError
-        )
+        unsupported_state_error = isinstance(error, DSPyRuntimeUnsupportedStateError)
         if not unsupported_state_error:
             engine.circuit_breaker.record_error()
         if unsupported_state_error:
@@ -3683,7 +3751,9 @@ class TradingPipeline:
                     "adjustment_allowed": settings.llm_adjustment_allowed,
                     "min_qty_multiplier": str(settings.llm_min_qty_multiplier),
                     "max_qty_multiplier": str(settings.llm_max_qty_multiplier),
-                    "allowed_order_types": sorted(allowed_order_types(decision.order_type)),
+                    "allowed_order_types": sorted(
+                        allowed_order_types(decision.order_type)
+                    ),
                 },
                 "trading_mode": settings.trading_mode,
                 "prompt_version": f"dspy:{settings.llm_dspy_signature_version}",
@@ -3871,7 +3941,9 @@ class TradingPipeline:
             response_payload_json,
             artifact_source="runtime_persisted_review",
         )
-        if not isinstance(response_payload_json.get("committee_veto_alignment"), Mapping):
+        if not isinstance(
+            response_payload_json.get("committee_veto_alignment"), Mapping
+        ):
             response_payload_json["committee_veto_alignment"] = (
                 _build_committee_veto_alignment_payload(
                     committee_veto=_committee_trace_has_veto(response_payload_json),
@@ -4357,13 +4429,24 @@ def _build_dspy_lineage(response_json: Mapping[str, Any]) -> dict[str, Any]:
         dspy_payload = {
             str(key): value for key, value in cast(Mapping[str, Any], payload).items()
         }
-    mode = _normalize_optional_text(dspy_payload.get("mode")) or settings.llm_dspy_runtime_mode
-    program_name = _normalize_optional_text(dspy_payload.get("program_name")) or settings.llm_dspy_program_name
-    signature_version = _normalize_optional_text(dspy_payload.get("signature_version")) or settings.llm_dspy_signature_version
-    artifact_hash = _normalize_optional_text(dspy_payload.get("artifact_hash")) or _normalize_optional_text(
-        settings.llm_dspy_artifact_hash
+    mode = (
+        _normalize_optional_text(dspy_payload.get("mode"))
+        or settings.llm_dspy_runtime_mode
     )
-    artifact_source = _normalize_optional_text(dspy_payload.get("artifact_source")) or "runtime"
+    program_name = (
+        _normalize_optional_text(dspy_payload.get("program_name"))
+        or settings.llm_dspy_program_name
+    )
+    signature_version = (
+        _normalize_optional_text(dspy_payload.get("signature_version"))
+        or settings.llm_dspy_signature_version
+    )
+    artifact_hash = _normalize_optional_text(
+        dspy_payload.get("artifact_hash")
+    ) or _normalize_optional_text(settings.llm_dspy_artifact_hash)
+    artifact_source = (
+        _normalize_optional_text(dspy_payload.get("artifact_source")) or "runtime"
+    )
     return {
         "mode": mode,
         "program_name": program_name,
@@ -4381,7 +4464,9 @@ def _attach_dspy_lineage(
 ) -> None:
     payload = response_json.get("dspy")
     if isinstance(payload, Mapping):
-        dspy_payload = {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
+        dspy_payload = {
+            str(key): value for key, value in cast(Mapping[str, Any], payload).items()
+        }
         if _normalize_optional_text(dspy_payload.get("artifact_source")) is None:
             dspy_payload["artifact_source"] = artifact_source
         if error is not None and error.strip() and "error" not in dspy_payload:
@@ -4405,7 +4490,9 @@ def _committee_trace_has_veto(response_json: Mapping[str, Any]) -> bool:
     for role_payload in cast(Mapping[str, Any], committee_roles).values():
         if not isinstance(role_payload, Mapping):
             continue
-        verdict = _normalize_optional_text(cast(Mapping[str, Any], role_payload).get("verdict"))
+        verdict = _normalize_optional_text(
+            cast(Mapping[str, Any], role_payload).get("verdict")
+        )
         if verdict == "veto":
             return True
     return False
@@ -4650,9 +4737,7 @@ class TradingScheduler:
             account_label=lane.label,
             price_fetcher=price_fetcher,
             strategy_catalog=strategy_catalog,
-            order_feed_ingestor=OrderFeedIngestor(
-                default_account_label=lane.label
-            ),
+            order_feed_ingestor=OrderFeedIngestor(default_account_label=lane.label),
         )
 
     def _build_pipeline(self) -> TradingPipeline:
@@ -5210,9 +5295,9 @@ class TradingScheduler:
 
     def _load_last_gate_provenance(self) -> dict[str, str | None]:
         gate_path_raw = self.state.last_autonomy_gates
-        actuation_path_raw = (
-            str(self.state.last_autonomy_actuation_intent or "").strip()
-        )
+        actuation_path_raw = str(
+            self.state.last_autonomy_actuation_intent or ""
+        ).strip()
         payload: dict[str, Any] = {}
         actuation_payload: dict[str, Any] = {}
         if gate_path_raw:
@@ -5640,7 +5725,9 @@ class TradingScheduler:
             or ("live" if promotion_target == "live" else "unknown")
         )
         priority_id = os.getenv("PRIORITY_ID") or os.getenv("CODEX_PRIORITY_ID") or ""
-        design_ref = design_doc if design_doc is not None else os.getenv("DESIGN_DOC", "")
+        design_ref = (
+            design_doc if design_doc is not None else os.getenv("DESIGN_DOC", "")
+        )
         return {
             "repository": repository,
             "base": base_ref,
@@ -6021,10 +6108,7 @@ class TradingScheduler:
                         "execution_context": dict(
                             execution_context
                             or self._build_autonomy_execution_context(
-                                artifact_root=(
-                                    artifact_root
-                                    or run_output_dir.parent
-                                ),
+                                artifact_root=(artifact_root or run_output_dir.parent),
                                 promotion_target=promotion_target,
                             )
                         ),
@@ -6100,9 +6184,7 @@ class TradingScheduler:
         self.state.last_autonomy_candidate_id = result.candidate_id
         self.state.last_autonomy_gates = str(result.gate_report_path)
         self.state.last_autonomy_actuation_intent = (
-            str(result.actuation_intent_path)
-            if result.actuation_intent_path
-            else None
+            str(result.actuation_intent_path) if result.actuation_intent_path else None
         )
         self.state.last_autonomy_phase_manifest = str(result.phase_manifest_path)
         self.state.last_autonomy_reason = None
@@ -6120,9 +6202,7 @@ class TradingScheduler:
                 cast(Mapping[str, Any], gate_report)
             )
         actuation_payload: dict[str, Any] = {}
-        actuation_gates_payload: Mapping[str, Any] = cast(
-            Mapping[str, Any], {}
-        )
+        actuation_gates_payload: Mapping[str, Any] = cast(Mapping[str, Any], {})
         actuation_allowed = False
         if result.actuation_intent_path is not None:
             try:
@@ -6251,7 +6331,9 @@ class TradingScheduler:
                 self._append_runtime_governance_to_phase_manifest(
                     manifest_path=Path(last_manifest),
                     requested_promotion_target=requested_promotion_target,
-                    drift_governance_payload=cast(Mapping[str, Any], drift_governance_payload),
+                    drift_governance_payload=cast(
+                        Mapping[str, Any], drift_governance_payload
+                    ),
                     now=now,
                 )
         else:
@@ -6309,11 +6391,15 @@ class TradingScheduler:
         artifact_refs_payload = drift_governance_payload.get("artifact_refs", [])
         action_payload = drift_governance_payload.get("action")
         detection_payload = drift_governance_payload.get("detection")
-        drift_status = str(
-            drift_governance_payload.get("drift_status")
-            or self.state.drift_status
-            or "skipped"
-        ).strip().lower()
+        drift_status = (
+            str(
+                drift_governance_payload.get("drift_status")
+                or self.state.drift_status
+                or "skipped"
+            )
+            .strip()
+            .lower()
+        )
         has_payload_values = (
             drift_governance_payload.get("rollback_triggered")
             or isinstance(action_payload, Mapping)
@@ -6403,7 +6489,9 @@ class TradingScheduler:
             and rollback_triggered
             and isinstance(self.state.rollback_incident_evidence_path, str)
         ):
-            rollback_incident_evidence = self.state.rollback_incident_evidence_path.strip()
+            rollback_incident_evidence = (
+                self.state.rollback_incident_evidence_path.strip()
+            )
 
         governance_status = (
             "fail"
