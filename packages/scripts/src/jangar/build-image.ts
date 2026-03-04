@@ -63,6 +63,11 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
       cpSync(agentctlSource, resolve(dir, 'full/services/jangar/agentctl'), { recursive: true })
       cpSync(agentctlSource, resolve(dir, 'json/services/jangar/agentctl'), { recursive: true })
     }
+    const cxToolsSource = resolve(repoRoot, 'packages/cx-tools')
+    if (existsSync(cxToolsSource)) {
+      cpSync(cxToolsSource, resolve(dir, 'full/packages/cx-tools'), { recursive: true })
+      cpSync(cxToolsSource, resolve(dir, 'json/packages/cx-tools'), { recursive: true })
+    }
     // By default we do NOT copy a locally-built `.output` into the Docker build context.
     // Copying `.output` can silently ship stale server bundles if the local build was done on a different commit.
     // If you really need the faster path, opt in explicitly.
