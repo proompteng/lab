@@ -1,4 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const kubeClientMocks = vi.hoisted(() => ({
+  createKubernetesClient: vi.fn(),
+}))
+
+vi.mock('~/server/primitives-kube', async () => {
+  const actual = await vi.importActual<typeof import('~/server/primitives-kube')>('~/server/primitives-kube')
+  return {
+    ...actual,
+    createKubernetesClient: kubeClientMocks.createKubernetesClient,
+  }
+})
 
 import { buildControlPlaneStatus } from '~/server/control-plane-status'
 
@@ -230,7 +242,18 @@ const watchReliabilityDegraded = {
 }
 
 describe('control-plane status', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('returns healthy summary when components are healthy', async () => {
+    const kube = {
+      list: vi.fn(async () => ({
+        items: [],
+      })),
+    }
+    kubeClientMocks.createKubernetesClient.mockReturnValue(kube as never)
+
     const status = await buildControlPlaneStatus(
       {
         namespace: 'agents',
@@ -779,5 +802,56 @@ describe('control-plane status', () => {
       { reason: 'BackoffLimitExceeded', count: 1 },
       { reason: 'ImagePullBackOff', count: 1 },
     ])
+  })
+
+  it('keeps control-plane status healthy when kubernetes client creation fails', async () => {
+    kubeClientMocks.createKubernetesClient.mockImplementation(() => {
+      throw new Error('simulated kube client creation failure')
+    })
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => ({
+          name: 'temporal',
+          available: true,
+          status: 'configured',
+          message: 'temporal configuration resolved',
+          endpoint: 'temporal:7233',
+        }),
+        checkDatabase: async () => ({
+          configured: true,
+          connected: true,
+          status: 'healthy',
+          message: '',
+          latency_ms: 1,
+          migration_consistency: makeMigrationConsistency(),
+        }),
+      },
+    )
+
+    expect(status.workflows).toEqual({
+      status: 'healthy',
+      message: 'workflow reliability healthy: 0 failed jobs and 0 active jobs in last 15m',
+      active_job_runs: 0,
+      recent_failed_jobs: 0,
+      backoff_limit_exceeded_jobs: 0,
+      window_minutes: 15,
+      top_failure_reasons: [],
+    })
+    expect(status.namespaces[0]?.status).toBe('healthy')
+    expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)
   })
 })
