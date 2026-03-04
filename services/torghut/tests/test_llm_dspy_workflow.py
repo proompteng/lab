@@ -222,6 +222,9 @@ class TestLLMDSPyWorkflow(TestCase):
             self.assertEqual(loaded.artifact_hash, compile_result.artifact_hash)
             self.assertEqual(loaded.gate_compatibility, "pass")
             self.assertEqual(loaded.promotion_target, "paper")
+            self.assertIsInstance(loaded.metadata_json, dict)
+            assert isinstance(loaded.metadata_json, dict)
+            self.assertEqual(loaded.metadata_json.get("executor"), "dspy_live")
 
     def test_orchestrate_dspy_agentrun_workflow_submits_lanes_and_persists_rows(
         self,
@@ -345,6 +348,76 @@ class TestLLMDSPyWorkflow(TestCase):
                 self.assertIsInstance(lineage, dict)
                 assert isinstance(lineage, dict)
                 self.assertIn("dataset-build", lineage)
+
+    def test_orchestrate_dspy_agentrun_workflow_blocks_promote_without_artifact_hash(
+        self,
+    ) -> None:
+        responses = [
+            {
+                "agentRun": {"id": "record-dataset"},
+                "resource": {
+                    "metadata": {"name": "run-dataset", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-compile"},
+                "resource": {
+                    "metadata": {"name": "run-compile", "namespace": "agents"}
+                },
+            },
+            {
+                "agentRun": {"id": "record-eval"},
+                "resource": {"metadata": {"name": "run-eval", "namespace": "agents"}},
+            },
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir) / "artifacts" / "dspy" / "run-no-hash"
+            lane_overrides = _build_dspy_lane_overrides(artifact_root=artifact_root)
+            lane_overrides["promote"].pop("artifactHash", None)
+
+            with patch(
+                "app.trading.llm.dspy_compile.workflow.submit_jangar_agentrun",
+                side_effect=responses,
+            ) as submit_mock:
+                with patch(
+                    "app.trading.llm.dspy_compile.workflow.wait_for_jangar_agentrun_terminal_status",
+                    side_effect=["succeeded", "succeeded", "succeeded"],
+                ):
+                    with Session(self.engine) as session:
+                        with self.assertRaisesRegex(
+                            RuntimeError, "dspy_promote_artifact_hash_missing"
+                        ):
+                            orchestrate_dspy_agentrun_workflow(
+                                session,
+                                base_url="http://jangar.test",
+                                repository="proompteng/lab",
+                                base="main",
+                                head="codex/dspy-no-hash",
+                                artifact_root=str(artifact_root),
+                                run_prefix="torghut-dspy-run-no-hash",
+                                auth_token="token-123",
+                                lane_parameter_overrides=lane_overrides,
+                                include_gepa_experiment=False,
+                            )
+
+            self.assertEqual(submit_mock.call_count, 3)
+
+        with Session(self.engine) as session:
+            promote_row = session.execute(
+                select(LLMDSPyWorkflowArtifact).where(
+                    LLMDSPyWorkflowArtifact.run_key
+                    == "torghut-dspy-run-no-hash:promote"
+                )
+            ).scalar_one()
+            self.assertEqual(promote_row.status, "blocked")
+            metadata = promote_row.metadata_json or {}
+            self.assertIsInstance(metadata, dict)
+            assert isinstance(metadata, dict)
+            orchestration = metadata.get("orchestration") or {}
+            self.assertIsInstance(orchestration, dict)
+            assert isinstance(orchestration, dict)
+            self.assertIn("artifact_hash_missing", orchestration.get("gateFailures") or [])
 
     def test_orchestrate_dspy_agentrun_workflow_promotes_with_falsey_eval_report_override(
         self,

@@ -64,6 +64,21 @@ def _normalize_local_path(candidate_ref: str) -> Path | None:
     return candidate.resolve()
 
 
+def _load_local_artifact_payload(path_ref: str) -> dict[str, Any] | None:
+    candidate = _normalize_local_path(path_ref)
+    if candidate is None:
+        return None
+    if not candidate.exists() or not candidate.is_file():
+        return None
+    try:
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return cast(dict[str, Any], payload)
+
+
 def _parse_iso_datetime(value: object) -> datetime | None:
     if not isinstance(value, str):
         return None
@@ -314,8 +329,11 @@ def upsert_workflow_artifact_record(
         if response_payload is not None
         else None
     )
+    metadata_payload = dict(metadata) if metadata is not None else {}
+    if compile_result is not None and "executor" not in metadata_payload:
+        metadata_payload["executor"] = "dspy_live"
     row.metadata_json = (
-        coerce_json_payload(dict(metadata)) if metadata is not None else None
+        coerce_json_payload(metadata_payload) if metadata_payload else None
     )
 
     if compile_result is not None:
@@ -825,6 +843,42 @@ def orchestrate_dspy_agentrun_workflow(
     overrides_by_lane = lane_parameter_overrides or {}
     responses: dict[DSPyWorkflowLane, dict[str, Any]] = {}
     lineage_by_lane: dict[str, dict[str, Any]] = {}
+    compile_result_snapshot: DSPyCompileResult | None = None
+    eval_report_snapshot: DSPyEvalReport | None = None
+    promotion_record_snapshot: DSPyPromotionRecord | None = None
+
+    def _load_compile_result_snapshot() -> DSPyCompileResult | None:
+        payload = _load_local_artifact_payload(
+            f"{artifact_root_normalized}/compile/dspy-compile-result.json"
+        )
+        if payload is None:
+            return None
+        try:
+            return DSPyCompileResult.model_validate(payload)
+        except Exception:
+            return None
+
+    def _load_eval_report_snapshot() -> DSPyEvalReport | None:
+        payload = _load_local_artifact_payload(
+            f"{artifact_root_normalized}/eval/dspy-eval-report.json"
+        )
+        if payload is None:
+            return None
+        try:
+            return DSPyEvalReport.model_validate(payload)
+        except Exception:
+            return None
+
+    def _load_promotion_record_snapshot() -> DSPyPromotionRecord | None:
+        payload = _load_local_artifact_payload(
+            f"{artifact_root_normalized}/promote/dspy-promotion-record.json"
+        )
+        if payload is None:
+            return None
+        try:
+            return DSPyPromotionRecord.model_validate(payload)
+        except Exception:
+            return None
 
     for lane_index, lane in enumerate(lanes):
         raw_lane_overrides = overrides_by_lane.get(lane, {})
@@ -836,6 +890,42 @@ def orchestrate_dspy_agentrun_workflow(
         gate_snapshot: dict[str, Any] | None = None
 
         if lane == "promote":
+            artifact_hash_override = str(lane_overrides.get("artifactHash") or "").strip()
+            if not artifact_hash_override:
+                compile_result_snapshot = compile_result_snapshot or _load_compile_result_snapshot()
+                if compile_result_snapshot is not None:
+                    lane_overrides["artifactHash"] = compile_result_snapshot.artifact_hash
+                else:
+                    run_key = f"{normalized_run_prefix}:{lane}"
+                    idempotency_key = _sanitize_idempotency_key(
+                        f"{normalized_run_prefix}-{lane}"
+                    )
+                    upsert_workflow_artifact_record(
+                        session,
+                        run_key=run_key,
+                        lane=lane,
+                        status="blocked",
+                        implementation_spec_ref=_IMPLEMENTATION_SPEC_BY_LANE[lane],
+                        idempotency_key=idempotency_key,
+                        request_payload=None,
+                        response_payload=None,
+                        compile_result=None,
+                        eval_report=None,
+                        promotion_record=None,
+                        metadata={
+                            "orchestration": {
+                                "runPrefix": normalized_run_prefix,
+                                "laneOrder": lane_index,
+                                "blockedAt": datetime.now(timezone.utc).isoformat(),
+                                "priorityId": priority_id,
+                                "lineageByLane": _json_copy(lineage_by_lane),
+                                "gateFailures": ["artifact_hash_missing"],
+                            }
+                        },
+                    )
+                    session.commit()
+                    raise RuntimeError("dspy_promote_artifact_hash_missing")
+
             gate_snapshot = _resolve_promotion_gate_snapshot(
                 lane_overrides,
                 requested_eval_report_ref=requested_eval_report_ref,
@@ -950,6 +1040,18 @@ def orchestrate_dspy_agentrun_workflow(
                 poll_interval_seconds=poll_interval_seconds,
                 max_wait_seconds=max_wait_seconds,
             )
+
+            if lane in {"compile", "eval", "promote"}:
+                compile_result_snapshot = (
+                    compile_result_snapshot or _load_compile_result_snapshot()
+                )
+            if lane in {"eval", "promote"}:
+                eval_report_snapshot = eval_report_snapshot or _load_eval_report_snapshot()
+            if lane == "promote":
+                promotion_record_snapshot = (
+                    promotion_record_snapshot or _load_promotion_record_snapshot()
+                )
+
             upsert_workflow_artifact_record(
                 session,
                 run_key=run_key,
@@ -959,10 +1061,17 @@ def orchestrate_dspy_agentrun_workflow(
                 idempotency_key=idempotency_key,
                 request_payload=payload,
                 response_payload=response_payload,
-                compile_result=None,
-                eval_report=None,
-                promotion_record=None,
+                compile_result=compile_result_snapshot
+                if lane in {"compile", "eval", "promote"}
+                else None,
+                eval_report=eval_report_snapshot if lane in {"eval", "promote"} else None,
+                promotion_record=promotion_record_snapshot if lane == "promote" else None,
                 metadata={
+                    **(
+                        {"executor": "dspy_live"}
+                        if compile_result_snapshot is not None
+                        else {}
+                    ),
                     "orchestration": {
                         "runPrefix": normalized_run_prefix,
                         "laneOrder": lane_index,

@@ -81,6 +81,30 @@ class TestRunDSPyWorkflowScript(TestCase):
             self.assertIn("- priority_id: P-1", iteration_report)
             self.assertIn("- responses: compile, dataset-build, eval, promote", iteration_report)
 
+    def test_build_lane_overrides_includes_promote_artifact_hash_when_provided(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir) / "artifacts" / "dspy" / "run-hash"
+            argv = [
+                "run_dspy_workflow.py",
+                "--repository",
+                "proompteng/lab",
+                "--base",
+                "main",
+                "--head",
+                "codex/dspy-live-hash",
+                "--run-prefix",
+                "torghut-dspy-run-hash",
+                "--artifact-root",
+                str(artifact_root),
+                "--artifact-hash",
+                "b" * 64,
+            ]
+            with patch.object(sys, "argv", argv):
+                args = run_dspy_workflow.parse_args()
+
+        overrides = run_dspy_workflow._build_lane_overrides(args)
+        self.assertEqual(overrides["promote"]["artifactHash"], "b" * 64)
+
     def test_main_records_failure_iteration_report_when_orchestration_fails(
         self,
     ) -> None:
