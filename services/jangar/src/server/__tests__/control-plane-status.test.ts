@@ -122,7 +122,7 @@ const buildRolloutSchedule = ({
   stage: string
   phase?: string
   namespace?: string
-  lastRunAt?: string
+  lastRunAt?: string | null
   lastSuccessfulRunAt?: string | null
   labels?: Record<string, string>
   reason?: string
@@ -140,7 +140,7 @@ const buildRolloutSchedule = ({
   },
   status: {
     phase,
-    lastRunTime: lastRunAt,
+    ...(lastRunAt == null ? {} : { lastRunTime: lastRunAt }),
     ...(lastSuccessfulRunAt === undefined ? {} : { lastSuccessfulRunAt: lastSuccessfulRunAt }),
     ...(reason == null
       ? {}
@@ -519,6 +519,81 @@ describe('control-plane status', () => {
     expect(status.rollout.stages.find((stage) => stage.name === 'jangar-control-plane-implement-sched')?.is_stale).toBe(
       true,
     )
+  })
+
+  it('uses cronjob lastScheduleTime for rollout staleness fallback', async () => {
+    kubeClientMocks.createKubernetesClient.mockReturnValue({
+      list: vi.fn(async (resource: string) => {
+        if (resource === 'schedules.schedules.proompteng.ai') {
+          return {
+            items: [
+              buildRolloutSchedule({
+                name: 'jangar-control-plane-discover-sched',
+                stage: 'discover',
+                lastRunAt: null,
+                lastSuccessfulRunAt: null,
+              }),
+            ],
+          }
+        }
+        if (resource === 'cronjob') {
+          return {
+            items: [
+              buildRolloutCronJob({
+                scheduleName: 'jangar-control-plane-discover-sched',
+                lastScheduleTime: '2026-01-20T00:24:00Z',
+                lastSuccessfulTime: '2026-01-20T00:24:00Z',
+              }),
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+    })
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:30:00Z'),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => ({
+          name: 'temporal',
+          available: true,
+          status: 'configured',
+          message: 'temporal configuration resolved',
+          endpoint: 'temporal:7233',
+        }),
+        checkDatabase: async () => ({
+          configured: true,
+          connected: true,
+          status: 'healthy',
+          message: '',
+          latency_ms: 1,
+          migration_consistency: buildDatabaseMigrationConsistency(),
+        }),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+      },
+    )
+
+    expect(status.rollout.status).toBe('healthy')
+    expect(status.rollout.stale_schedules).toBe(0)
+    expect(status.rollout.observed_schedules).toBe(1)
+    const stage = status.rollout.stages[0]
+    expect(stage?.is_stale).toBe(false)
+    expect(stage?.is_active).toBe(true)
+    expect(stage?.last_run_at).toBe('2026-01-20T00:24:00.000Z')
+    expect(stage?.last_successful_run_at).toBe('2026-01-20T00:24:00.000Z')
   })
 
   it('keeps control-plane status healthy when workflow list lookup fails', async () => {

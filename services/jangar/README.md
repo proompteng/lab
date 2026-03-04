@@ -193,6 +193,7 @@ Control-plane status endpoint behavior (`/api/agents/control-plane/status`) is d
   - `inactive_schedules`
   - `stale_schedules`
   - `stages`
+- Rollout stage `last_run_at` is derived from Schedule `lastRunTime` with a CronJob `lastScheduleTime` fallback when schedule run timestamps are missing.
 
 ## Terminal backend
 

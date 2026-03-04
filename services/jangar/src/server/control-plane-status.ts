@@ -593,11 +593,17 @@ const buildRolloutStageReliability = (
   const phase = asString(status.phase) || 'unknown'
   const stage = asString(labels[ROLLOUT_STAGE_LABEL]) || 'unknown'
   const swarm = asString(labels[SWARM_LABEL_SELECTOR]) || 'unknown'
-  const lastRunAtMs = parseIsoMs(status.lastRunTime)
+  const cronStatus = asRecord(cronResource?.status) ?? {}
+  const cronLastRunAtMs = parseIsoMs(readNested(cronStatus, ['lastScheduleTime']))
+  const lastRunAtMs = (() => {
+    const scheduleLastRunMs = parseIsoMs(status.lastRunTime)
+    if (scheduleLastRunMs !== null && cronLastRunAtMs !== null) {
+      return Math.max(scheduleLastRunMs, cronLastRunAtMs)
+    }
+    return scheduleLastRunMs ?? cronLastRunAtMs
+  })()
   const lastSuccessfulRunAtMs =
-    parseIsoMs(status.lastSuccessfulRunTime) ??
-    parseIsoMs(readNested(asRecord(cronResource?.status) ?? {}, ['lastSuccessfulTime'])) ??
-    null
+    parseIsoMs(status.lastSuccessfulRunTime) ?? parseIsoMs(readNested(cronStatus, ['lastSuccessfulTime'])) ?? null
   const lastTransitionAtMs = Array.isArray(status.conditions)
     ? status.conditions
         .map((condition) => parseIsoMs(readNested(condition, ['lastTransitionTime'])))
