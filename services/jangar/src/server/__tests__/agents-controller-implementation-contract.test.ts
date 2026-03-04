@@ -57,6 +57,36 @@ describe('agents controller implementation-contract module', () => {
     })
   })
 
+  it('renders parameterized implementation text for prompt and issue body', () => {
+    const implementation = {
+      source: {
+        provider: 'github',
+      },
+      summary: 'Compile ${repository}',
+      text: 'Run compile for ${datasetRef} with {{parameters.optimizer}} -> ${artifactPath}',
+      contract: {
+        requiredKeys: ['repository', 'datasetRef', 'optimizer', 'artifactPath'],
+      },
+    }
+
+    const parameters = {
+      repository: 'proompteng/lab',
+      datasetRef: 'artifacts/dspy/run-1/dataset-build/dspy-dataset.json',
+      optimizer: 'miprov2',
+      artifactPath: 'artifacts/dspy/run-1/compile',
+    }
+
+    const context = buildEventContext(implementation, parameters)
+    expect(context.missingRequiredKeys).toEqual([])
+    expect(context.payload.prompt).toBe(
+      'Run compile for artifacts/dspy/run-1/dataset-build/dspy-dataset.json with miprov2 -> artifacts/dspy/run-1/compile',
+    )
+    expect(context.payload.issueBody).toBe(
+      'Run compile for artifacts/dspy/run-1/dataset-build/dspy-dataset.json with miprov2 -> artifacts/dspy/run-1/compile',
+    )
+    expect(context.payload.issueTitle).toBe('Compile proompteng/lab')
+  })
+
   it('falls back to github external id when repository metadata is missing', () => {
     const implementation = {
       source: {

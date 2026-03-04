@@ -1,4 +1,5 @@
 import { asRecord, asString } from '~/server/primitives-http'
+import { renderTemplate, resolvePath } from './template-hash'
 
 export type ImplementationContractMapping = { from: string; to: string }
 
@@ -78,6 +79,31 @@ const setMetadataIfMissing = (metadata: Record<string, string>, key: string, val
   metadata[key] = value
 }
 
+const stringifyTemplateValue = (value: unknown) => {
+  if (value == null) return ''
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+const renderParameterTemplate = (template: string, context: Record<string, unknown>) => {
+  const rendered = renderTemplate(template, context)
+  return rendered.replace(/\$\{\s*([^}]+)\s*\}/g, (_match, rawPath) => {
+    const path = String(rawPath).trim()
+    if (!path) return ''
+    const value = resolvePath(context, path) ?? context[path]
+    return stringifyTemplateValue(value)
+  })
+}
+
+const buildTemplateContext = (metadata: Record<string, string>, parameters: Record<string, string>) => {
+  const flat = { ...metadata, ...parameters }
+  return {
+    ...flat,
+    metadata,
+    parameters,
+    inputs: parameters,
+  }
+}
+
 type ResolveParam = (params: Record<string, string>, keys: string[]) => string
 
 export const createImplementationContractTools = (resolveParam: ResolveParam) => {
@@ -113,16 +139,13 @@ export const createImplementationContractTools = (resolveParam: ResolveParam) =>
     let issueNumber = metadata.issueNumber ?? resolveParam(parameters, ['issueNumber'])
 
     const resolvedIssueTitle = metadata.issueTitle ?? resolveParam(parameters, ['issueTitle'])
-    const issueTitle = resolvedIssueTitle || summary
     const resolvedIssueBody = metadata.issueBody ?? resolveParam(parameters, ['issueBody'])
-    const issueBody = resolvedIssueBody || text
     const resolvedIssueUrl = metadata.issueUrl ?? resolveParam(parameters, ['issueUrl'])
-    const issueUrl = resolvedIssueUrl || sourceUrl
     const resolvedPrompt = metadata.prompt ?? resolveParam(parameters, ['prompt'])
-    const prompt = resolvedPrompt || text || summary
     const base = metadata.base ?? resolveParam(parameters, ['base'])
     const head = metadata.head ?? resolveParam(parameters, ['head'])
     const stage = metadata.stage ?? resolveParam(parameters, ['stage'])
+    const issueUrl = resolvedIssueUrl || sourceUrl
 
     if ((!repository || !issueNumber) && provider === 'github' && externalId) {
       const parsed = parseGithubExternalId(externalId)
@@ -134,13 +157,21 @@ export const createImplementationContractTools = (resolveParam: ResolveParam) =>
 
     setMetadataIfMissing(metadata, 'repository', repository)
     setMetadataIfMissing(metadata, 'issueNumber', issueNumber)
-    setMetadataIfMissing(metadata, 'issueTitle', issueTitle)
-    setMetadataIfMissing(metadata, 'issueBody', issueBody)
     setMetadataIfMissing(metadata, 'issueUrl', issueUrl)
     setMetadataIfMissing(metadata, 'url', issueUrl)
     setMetadataIfMissing(metadata, 'base', base)
     setMetadataIfMissing(metadata, 'head', head)
     setMetadataIfMissing(metadata, 'stage', stage)
+
+    const templateContext = buildTemplateContext(metadata, parameters)
+    const renderedSummary = renderParameterTemplate(summary, templateContext)
+    const renderedText = renderParameterTemplate(text, templateContext)
+    const issueTitle = renderParameterTemplate(resolvedIssueTitle || renderedSummary, templateContext)
+    const issueBody = renderParameterTemplate(resolvedIssueBody || renderedText, templateContext)
+    const prompt = renderParameterTemplate(resolvedPrompt || renderedText || renderedSummary, templateContext)
+
+    setMetadataIfMissing(metadata, 'issueTitle', issueTitle)
+    setMetadataIfMissing(metadata, 'issueBody', issueBody)
     setMetadataIfMissing(metadata, 'prompt', prompt)
 
     const payload: Record<string, unknown> = {}
