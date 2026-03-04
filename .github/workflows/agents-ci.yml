@@ -155,6 +155,10 @@ jobs:
           if [ ! -f "${OUTPUT_ENTRY}" ] || [ ! -f "${OUTPUT_PROTO}" ]; then
             BUILD_OUTPUT=1
           fi
+          if [ "${CI:-false}" = "true" ]; then
+            BUILD_OUTPUT=0
+            echo "CI run detected; skipping prebuild step and relying on Dockerfile build."
+          fi
 
           echo "Pruning jangar build context to ${PRUNE_DIR}"
           bunx turbo prune --scope=@proompteng/jangar --docker --out-dir="${PRUNE_DIR}"
