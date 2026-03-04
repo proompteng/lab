@@ -77,8 +77,8 @@ def compile_dspy_program_artifacts(
     )
     normalized_seed = _require_value(seed, "seed")
     normalized_artifact_ref = _require_value(str(artifact_path), "artifact_path")
-    requested_dataset_ref = _require_value(dataset_ref, "dataset_ref")
-    requested_metric_policy_ref = _require_value(metric_policy_ref, "metric_policy_ref")
+    normalized_dataset_ref = _require_value(dataset_ref, "dataset_ref")
+    normalized_metric_policy_ref = _require_value(metric_policy_ref, "metric_policy_ref")
     normalized_compiled_artifact_name = _normalize_artifact_file_name(
         compiled_artifact_name, "compiled_artifact_name"
     )
@@ -90,13 +90,13 @@ def compile_dspy_program_artifacts(
     )
 
     dataset_path = _resolve_local_ref_path(
-        requested_dataset_ref, field_name="dataset_ref"
+        normalized_dataset_ref, field_name="dataset_ref"
     )
     metric_policy_path = _resolve_local_ref_path(
-        requested_metric_policy_ref, field_name="metric_policy_ref"
+        normalized_metric_policy_ref, field_name="metric_policy_ref"
     )
-    normalized_dataset_ref = _canonical_local_ref(dataset_path)
-    normalized_metric_policy_ref = _canonical_local_ref(metric_policy_path)
+    canonical_dataset_ref = _canonical_local_ref(dataset_path)
+    canonical_metric_policy_ref = _canonical_local_ref(metric_policy_path)
 
     dataset_payload = _load_json_mapping(dataset_path, field_name="dataset_ref")
     metric_policy_payload = _load_yaml_mapping(
@@ -119,11 +119,11 @@ def compile_dspy_program_artifacts(
     dataset_rows = sum(row_counts_by_split.values())
 
     metric_bundle: dict[str, Any] = {
-        "datasetRef": normalized_dataset_ref,
+        "datasetRef": canonical_dataset_ref,
         "datasetHash": dataset_hash,
         "datasetRows": dataset_rows,
         "rowCountsBySplit": row_counts_by_split,
-        "metricPolicyRef": normalized_metric_policy_ref,
+        "metricPolicyRef": canonical_metric_policy_ref,
         "metricPolicyHash": metric_policy_hash,
         "optimizer": normalized_optimizer,
         "policy": cast(dict[str, Any], metric_policy_payload.get("policy") or {}),
@@ -147,9 +147,9 @@ def compile_dspy_program_artifacts(
         "signatureVersions": signature_versions,
         "optimizer": normalized_optimizer,
         "seed": normalized_seed,
-        "datasetRef": normalized_dataset_ref,
+        "datasetRef": canonical_dataset_ref,
         "datasetHash": dataset_hash,
-        "metricPolicyRef": normalized_metric_policy_ref,
+        "metricPolicyRef": canonical_metric_policy_ref,
         "metricPolicyHash": metric_policy_hash,
         "compileMetrics": metric_bundle,
         "compiledPrompt": {
