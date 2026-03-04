@@ -175,13 +175,19 @@ jobs:
 
           if [ "${BUILD_OUTPUT}" = "1" ]; then
             echo "Building services/jangar .output in pruned context"
-            BUILD_DIR="${PRUNE_DIR}/build"
-            mkdir -p "${BUILD_DIR}"
-            cp -R "${PRUNE_DIR}/json/." "${BUILD_DIR}/"
+            BUILD_DIR="${PRUNE_DIR}/full"
             cp "${PRUNE_DIR}/tsconfig.base.json" "${BUILD_DIR}/tsconfig.base.json"
-            (cd "${BUILD_DIR}" && bun install --no-save --ignore-scripts)
-            cp -R "${PRUNE_DIR}/full/." "${BUILD_DIR}/"
-            (cd "${BUILD_DIR}/services/jangar" && bun run build)
+            if [ -f "${PRUNE_DIR}/bun.lock" ]; then
+              cp "${PRUNE_DIR}/bun.lock" "${BUILD_DIR}/bun.lock"
+            fi
+            bun install --cwd "${BUILD_DIR}" --ignore-scripts --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk --filter @proompteng/jangar
+            bun run --cwd "${BUILD_DIR}" --filter @proompteng/otel build
+            bun run --cwd "${BUILD_DIR}" --filter @proompteng/temporal-bun-sdk build
+            if timeout 8m bun --cwd "${BUILD_DIR}/services/jangar" --bun vite build --logLevel warn; then
+              bun --cwd "${BUILD_DIR}/services/jangar" run copy:grpc-proto
+            else
+              echo "Prebuild failed or timed out; continuing with Docker image build."
+            fi
             mkdir -p "${PRUNE_DIR}/full/services/jangar"
             cp -R "${BUILD_DIR}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
           elif [ -f "${OUTPUT_ENTRY}" ] && [ -f "${OUTPUT_PROTO}" ]; then
