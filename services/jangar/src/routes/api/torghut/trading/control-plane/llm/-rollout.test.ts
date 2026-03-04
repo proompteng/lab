@@ -30,7 +30,7 @@ describe('getLlmRolloutHandler', () => {
               effective_fail_mode: 'pass_through',
               circuit: {
                 open: true,
-                open_until: '2026-02-20T12:03:00Z',
+                open_until: '2026-02-20T12:02:00Z',
                 cooldown_seconds: 600,
                 window_seconds: 300,
                 max_errors: 3,
@@ -59,12 +59,12 @@ describe('getLlmRolloutHandler', () => {
     expect(body.llmRollout.configuredRolloutStage).toBe('stage1')
     expect(body.llmRollout.effectiveFailMode).toBe('pass_through')
     expect(body.llmRollout.governanceEvidenceComplete).toBe(false)
-    expect(body.llmRollout.rolloutChecks).toEqual([])
-    expect(body.llmRollout.allowRequests).toBe(true)
+    expect(body.llmRollout.rolloutChecks).toEqual(['llm_rollout_circuit_open_too_long'])
+    expect(body.llmRollout.allowRequests).toBe(false)
     expect(body.llmRollout.stageRiskProfile.maxRecentErrors).toBe(1)
     expect(body.llmCircuit.open).toBe(true)
-    expect(body.llmCircuit.cooldownRemainingSeconds).toBe(180)
-    expect(body.llmCircuit.openDurationSeconds).toBe(180)
+    expect(body.llmCircuit.cooldownRemainingSeconds).toBe(120)
+    expect(body.llmCircuit.openDurationSeconds).toBe(120)
 
     vi.useRealTimers()
   })
@@ -118,6 +118,7 @@ describe('getLlmRolloutHandler', () => {
       'llm_rollout_evidence_missing',
       'llm_rollout_recent_error_threshold_exceeded',
       'llm_rollout_circuit_open_too_long',
+      'llm_rollout_circuit_error_budget_exceeded',
     ])
     expect(body.llmRollout.stageRiskProfile.maxRecentErrors).toBe(1)
   })
