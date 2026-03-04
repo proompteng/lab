@@ -116,6 +116,21 @@ export type RuntimeAdapterStatus = {
   endpoint: string
 }
 
+export type WorkflowFailureReason = {
+  reason: string
+  count: number
+}
+
+export type WorkflowReliabilityStatus = {
+  status: 'healthy' | 'degraded' | 'unknown'
+  window_minutes: number
+  active_job_runs: number
+  recent_failed_jobs: number
+  backoff_limit_exceeded_jobs: number
+  top_failure_reasons: WorkflowFailureReason[]
+  message: string
+}
+
 export type DatabaseStatus = {
   configured: boolean
   connected: boolean
@@ -173,6 +188,7 @@ export type ControlPlaneStatus = {
   }
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
+  workflows: WorkflowReliabilityStatus
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability

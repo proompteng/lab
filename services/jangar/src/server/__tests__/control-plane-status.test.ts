@@ -10,6 +10,42 @@ const healthyController = {
   missingCrds: [],
   lastCheckedAt: '2026-01-20T00:00:00Z',
 }
+const now = () => new Date('2026-01-20T00:00:00Z')
+
+const createKubeList = (jobs: unknown[]) => ({
+  list: async () => ({ items: jobs }) as Record<string, unknown>,
+})
+
+const failingKubeList = {
+  list: async () => {
+    throw new Error('kube unavailable')
+  },
+}
+
+const createActiveJob = () => ({
+  metadata: {
+    name: 'jangar-control-plane-implement-sched-abc-step-1-attempt-1',
+    creationTimestamp: now().toISOString(),
+  },
+  status: {
+    active: 1,
+  },
+})
+
+const createBackoffJob = (name: string, reason: string, at: string) => ({
+  metadata: { name, creationTimestamp: at },
+  status: {
+    failed: 1,
+    conditions: [
+      {
+        type: 'Failed',
+        status: 'True',
+        reason,
+        lastTransitionTime: at,
+      },
+    ],
+  },
+})
 
 const watchReliabilityHealthy = {
   status: 'healthy' as const,
@@ -78,10 +114,11 @@ describe('control-plane status', () => {
         },
       },
       {
-        now: () => new Date('2026-01-20T00:00:00Z'),
+        now,
         getAgentsControllerHealth: () => healthyController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
+        kube: createKubeList([createActiveJob()]),
         resolveTemporalAdapter: async () => ({
           name: 'temporal',
           available: true,
@@ -104,6 +141,9 @@ describe('control-plane status', () => {
     expect(status.controllers).toHaveLength(3)
     expect(status.runtime_adapters).toHaveLength(4)
     expect(status.namespaces).toHaveLength(1)
+    expect(status.workflows).toBeDefined()
+    expect(status.workflows.status).toBe('healthy')
+    expect(status.workflows.active_job_runs).toBe(1)
     expect(status.namespaces[0]?.status).toBe('healthy')
     expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)
     expect(status.watch_reliability).toEqual(watchReliabilityHealthy)
@@ -131,10 +171,11 @@ describe('control-plane status', () => {
         },
       },
       {
-        now: () => new Date('2026-01-20T00:00:00Z'),
+        now,
         getAgentsControllerHealth: () => degradedController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
+        kube: createKubeList([createActiveJob()]),
         resolveTemporalAdapter: async () => ({
           name: 'temporal',
           available: false,
@@ -162,5 +203,94 @@ describe('control-plane status', () => {
     expect(degraded).not.toContain('grpc')
     expect(status.watch_reliability.status).toBe('degraded')
     expect(status.watch_reliability.total_errors).toBe(2)
+  })
+
+  it('flags workflows as degraded when backoff limit failures exceed threshold', async () => {
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now,
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => ({
+          name: 'temporal',
+          available: true,
+          status: 'configured',
+          message: '',
+          endpoint: 'temporal:7233',
+        }),
+        checkDatabase: async () => ({
+          configured: true,
+          connected: true,
+          status: 'healthy',
+          message: '',
+          latency_ms: 4,
+        }),
+        kube: createKubeList([
+          createBackoffJob(
+            'jangar-control-plane-implement-sched-abc-step-1-attempt-1',
+            'BackoffLimitExceeded',
+            '2026-01-20T00:00:10Z',
+          ),
+          createBackoffJob(
+            'torghut-quant-implement-sched-xyz-step-1-attempt-2',
+            'BackoffLimitExceeded',
+            '2026-01-20T00:00:20Z',
+          ),
+        ]),
+      },
+    )
+
+    expect(status.workflows.status).toBe('degraded')
+    expect(status.workflows.backoff_limit_exceeded_jobs).toBe(2)
+    expect(status.namespaces[0]?.degraded_components).toContain('workflows')
+  })
+
+  it('reports workflow reliability as unknown when kube listing fails', async () => {
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now,
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => ({
+          name: 'temporal',
+          available: true,
+          status: 'configured',
+          message: '',
+          endpoint: 'temporal:7233',
+        }),
+        checkDatabase: async () => ({
+          configured: true,
+          connected: true,
+          status: 'healthy',
+          message: '',
+          latency_ms: 4,
+        }),
+        kube: failingKubeList,
+      },
+    )
+
+    expect(status.workflows.status).toBe('unknown')
+    expect(status.workflows.message).toContain('kubernetes query failed')
+    expect(status.namespaces[0]?.degraded_components).not.toContain('workflows')
   })
 })
