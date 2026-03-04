@@ -22,7 +22,7 @@ import { startResourceWatch } from '~/server/kube-watch'
 type MockWatchProcess = EventEmitter & {
   stdout: EventEmitter & { setEncoding: (encoding: string | undefined) => void }
   stderr: EventEmitter & { setEncoding: (encoding: string | undefined) => void }
-  kill: vi.Mock
+  kill: ReturnType<typeof vi.fn>
 }
 
 const createMockWatchProcess = () => {
