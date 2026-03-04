@@ -715,7 +715,7 @@ describe('supporting primitives controller', () => {
     )
     expect(parameters.swarmAgentWorkerId).toMatch(/^worker-/)
     expect(parameters.swarmAgentIdentity).toMatch(/^vw-/)
-    expect(parameters.swarmAgentRole).toBe('implementor')
+    expect(parameters.swarmAgentRole).toBe('engineer')
     expect(parameters.hulyApiBaseUrl).toBe('https://huly.proompteng.ai')
     expect(parameters.hulySkillRef).toBe('skills/huly-api/SKILL.md')
     const runSecrets = Array.isArray(requirementRun.spec.secrets) ? (requirementRun.spec.secrets as string[]) : []

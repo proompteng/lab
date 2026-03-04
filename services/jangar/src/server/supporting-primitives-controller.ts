@@ -689,7 +689,7 @@ const STAGE_CADENCE_KEY: Record<StageName, string> = {
 const STAGE_AGENT_ROLE: Record<StageName, string> = {
   discover: 'architector',
   plan: 'architector',
-  implement: 'implementor',
+  implement: 'engineer',
   verify: 'deployer',
 }
 
