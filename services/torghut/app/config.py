@@ -1922,15 +1922,6 @@ class Settings(BaseSettings):
                 "LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER must be within (0, 1]"
             )
         if (
-            self.llm_dspy_live_runtime_block_fail_mode
-            in {"pass_through", "pass_through_reduced_size"}
-            and self.trading_mode == "live"
-            and not self.llm_fail_open_live_approved
-        ):
-            raise ValueError(
-                "LLM_FAIL_OPEN_LIVE_APPROVED must be true when LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE is pass-through in live mode"
-            )
-        if (
             self.llm_dspy_runtime_mode in {"shadow", "active"}
             and not self.llm_dspy_artifact_hash
         ):

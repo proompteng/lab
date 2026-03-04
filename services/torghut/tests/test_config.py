@@ -219,22 +219,9 @@ class TestConfig(TestCase):
         self.assertFalse(allowed)
         self.assertIn("dspy_bootstrap_artifact_forbidden", reasons)
 
-    def test_rejects_live_dspy_runtime_block_pass_through_without_approval(
+    def test_allows_live_dspy_runtime_block_pass_through_without_fail_open_approval(
         self,
     ) -> None:
-        with self.assertRaises(ValidationError):
-            Settings(
-                TRADING_MODE="live",
-                TRADING_LIVE_ENABLED=True,
-                TRADING_UNIVERSE_SOURCE="jangar",
-                LLM_DSPY_RUNTIME_MODE="active",
-                LLM_DSPY_ARTIFACT_HASH="a" * 64,
-                LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE="pass_through_reduced_size",
-                LLM_FAIL_OPEN_LIVE_APPROVED=False,
-                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
-            )
-
-    def test_allows_live_dspy_runtime_block_pass_through_with_approval(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
             TRADING_LIVE_ENABLED=True,
@@ -242,7 +229,7 @@ class TestConfig(TestCase):
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="a" * 64,
             LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE="pass_through_reduced_size",
-            LLM_FAIL_OPEN_LIVE_APPROVED=True,
+            LLM_FAIL_OPEN_LIVE_APPROVED=False,
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         self.assertEqual(

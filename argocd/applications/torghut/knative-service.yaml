@@ -359,7 +359,7 @@ spec:
             - name: LLM_FAIL_MODE_ENFORCEMENT
               value: strict_veto
             - name: LLM_FAIL_OPEN_LIVE_APPROVED
-              value: "true"
+              value: "false"
             - name: LLM_ABSTAIN_FAIL_MODE
               value: veto
             - name: LLM_ESCALATE_FAIL_MODE
