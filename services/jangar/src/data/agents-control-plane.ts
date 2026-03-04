@@ -201,6 +201,9 @@ export type ControlPlaneStatus = {
   }
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
+  /**
+   * Keep this field in sync with generated CRD annotations for CEL checks.
+   */
   workflows: WorkflowsReliabilityStatus
   database: DatabaseStatus
   grpc: GrpcStatus
