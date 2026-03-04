@@ -16,6 +16,7 @@ import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/s
 const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_GRPC_PORT = 50051
 const DEFAULT_WORKFLOW_STEP = 'implement'
+const CONTROLLER_GRPC_ENABLED_VALUES = ['1', 'true', 'yes', 'on'] as const
 const SERVICE_NAME = 'jangar'
 
 type AgentctlServer = {
@@ -331,9 +332,20 @@ const buildServerInfo = () => ({
   service: SERVICE_NAME,
 })
 
+const resolveComponent = () => {
+  if (process.env.JANGAR_AGENTS_CONTROLLER_ENABLED === '1') {
+    return 'controllers'
+  }
+  return 'control plane'
+}
+
+const isGrpcEnabled = (value: string) => (CONTROLLER_GRPC_ENABLED_VALUES as readonly string[]).includes(value)
+
 export const startAgentctlGrpcServer = (): AgentctlServer | null => {
-  const enabled = (process.env.JANGAR_GRPC_ENABLED ?? '').trim().toLowerCase()
-  if (!['1', 'true', 'yes', 'on'].includes(enabled)) {
+  const component = resolveComponent()
+  const enabled = isGrpcEnabled((process.env.JANGAR_GRPC_ENABLED ?? '').trim().toLowerCase())
+  if (!enabled) {
+    console.info(`[jangar] agentctl grpc not enabled for ${component}; set JANGAR_GRPC_ENABLED=true to start listener`)
     return null
   }
 
@@ -1057,7 +1069,7 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       console.error('[jangar] agentctl grpc failed to bind', error)
       return
     }
-    console.info(`[jangar] agentctl grpc listening on ${address}`)
+    console.info(`[jangar] agentctl grpc listening on ${address} for ${component}`)
   })
 
   return { server, address }

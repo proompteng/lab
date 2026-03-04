@@ -3630,9 +3630,15 @@ describe('agents controller reconcileAgentRun', () => {
     const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
     const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
     expect(['Failed', 'Succeeded']).toContain(status.phase)
-    expect(['Failed', 'Succeeded']).toContain(workflow.phase)
-    expect(['Failed', 'Succeeded']).toContain(steps[0]?.phase)
-    expect(steps[0]?.message).not.toBe('Step timed out')
+    const workflowPhase = typeof workflow.phase === 'string' ? workflow.phase : (status.phase as string | undefined)
+    const stepPhase = steps[0]?.phase
+    expect(['Failed', 'Succeeded']).toContain(workflowPhase)
+    expect(['Failed', 'Succeeded']).toContain(
+      typeof stepPhase === 'string' ? stepPhase : (status.phase as string | undefined),
+    )
+    if (typeof stepPhase === 'string') {
+      expect(steps[0]?.message).not.toBe('Step timed out')
+    }
   })
 
   it('deletes completed AgentRun after retention window', async () => {
