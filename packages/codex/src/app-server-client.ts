@@ -437,7 +437,6 @@ export class CodexAppServerClient {
       sandboxPolicy: toSandboxPolicy(this.sandbox),
       model: turnOptions.model ?? this.defaultModel,
       effort: turnOptions.effort ?? this.defaultEffort,
-      summary: null,
       personality: null,
       outputSchema: null,
       collaborationMode: null,
