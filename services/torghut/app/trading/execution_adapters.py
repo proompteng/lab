@@ -295,7 +295,9 @@ class SimulationExecutionAdapter:
             return None
 
         try:
-            producer = KafkaProducer(
+            return cast(
+                Any,
+                KafkaProducer(
                 bootstrap_servers=[item.strip() for item in bootstrap_servers.split(',') if item.strip()],
                 value_serializer=None,
                 key_serializer=None,
@@ -303,8 +305,8 @@ class SimulationExecutionAdapter:
                 request_timeout_ms=2_000,
                 max_block_ms=2_000,
                 **self._kafka_security_kwargs,
+                ),
             )
-            return producer
         except Exception as exc:  # pragma: no cover - environment-dependent
             self._producer_init_error = f'kafka_producer_init_failed:{exc}'
             logger.warning(

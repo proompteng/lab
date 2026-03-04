@@ -204,17 +204,20 @@ class OrderFeedIngestor:
         except Exception as exc:  # pragma: no cover - import guarded at runtime
             raise RuntimeError('kafka-python dependency is required for order-feed ingestion') from exc
 
-        return KafkaConsumer(
-            *settings.trading_order_feed_topics,
-            bootstrap_servers=settings.trading_order_feed_bootstrap_server_list,
-            group_id=settings.trading_order_feed_group_id,
-            client_id=settings.trading_order_feed_client_id,
-            enable_auto_commit=False,
-            auto_offset_reset=settings.trading_order_feed_auto_offset_reset,
-            consumer_timeout_ms=max(settings.trading_order_feed_poll_ms, 1000),
-            value_deserializer=None,
-            key_deserializer=None,
-            **settings.trading_order_feed_kafka_security_kwargs,
+        return cast(
+            Any,
+            KafkaConsumer(
+                *settings.trading_order_feed_topics,
+                bootstrap_servers=settings.trading_order_feed_bootstrap_server_list,
+                group_id=settings.trading_order_feed_group_id,
+                client_id=settings.trading_order_feed_client_id,
+                enable_auto_commit=False,
+                auto_offset_reset=settings.trading_order_feed_auto_offset_reset,
+                consumer_timeout_ms=max(settings.trading_order_feed_poll_ms, 1000),
+                value_deserializer=None,
+                key_deserializer=None,
+                **settings.trading_order_feed_kafka_security_kwargs,
+            ),
         )
 
 
