@@ -59,9 +59,10 @@ class TestLLMDSPyCompiler(TestCase):
             self.assertTrue(result.compile_metrics_path.exists())
             self.assertEqual(len(result.compile_result.artifact_hash), 64)
             self.assertEqual(len(result.compile_result.reproducibility_hash), 64)
+            compiled_artifact_path = artifact_dir.resolve() / "dspy-compiled-program.json"
             self.assertEqual(
                 result.compile_result.compiled_artifact_uri,
-                f"{artifact_dir}/dspy-compiled-program.json",
+                f"{compiled_artifact_path}",
             )
 
             compile_result_payload = json.loads(
@@ -69,7 +70,7 @@ class TestLLMDSPyCompiler(TestCase):
             )
             self.assertEqual(
                 compile_result_payload["compiledArtifactUri"],
-                f"{artifact_dir}/dspy-compiled-program.json",
+                f"{compiled_artifact_path}",
             )
             self.assertEqual(compile_result_payload["optimizer"], "miprov2")
             self.assertEqual(
