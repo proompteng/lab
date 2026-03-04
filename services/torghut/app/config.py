@@ -992,14 +992,18 @@ class Settings(BaseSettings):
         alias="TRADING_ALLOCATOR_REGIME_CAPACITY_MULTIPLIERS",
         description="Regime->symbol capacity multiplier map used by allocator (JSON object).",
     )
-    trading_runtime_uncertainty_degrade_qty_multipliers_by_regime: dict[str, float] = Field(
-        default_factory=dict,
-        alias="TRADING_RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIERS_BY_REGIME",
-        description=(
-            "Regime->qty multiplier map used when runtime uncertainty gate selects degrade."
-        ),
+    trading_runtime_uncertainty_degrade_qty_multipliers_by_regime: dict[str, float] = (
+        Field(
+            default_factory=dict,
+            alias="TRADING_RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIERS_BY_REGIME",
+            description=(
+                "Regime->qty multiplier map used when runtime uncertainty gate selects degrade."
+            ),
+        )
     )
-    trading_runtime_uncertainty_degrade_max_participation_rate_by_regime: dict[str, float] = Field(
+    trading_runtime_uncertainty_degrade_max_participation_rate_by_regime: dict[
+        str, float
+    ] = Field(
         default_factory=dict,
         alias="TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE_BY_REGIME",
         description=(
@@ -1007,7 +1011,9 @@ class Settings(BaseSettings):
             "selects degrade."
         ),
     )
-    trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime: dict[str, float] = Field(
+    trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime: dict[
+        str, float
+    ] = Field(
         default_factory=dict,
         alias="TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS_BY_REGIME",
         description=(
@@ -1365,6 +1371,16 @@ class Settings(BaseSettings):
         default=8,
         alias="LLM_DSPY_TIMEOUT_SECONDS",
     )
+    llm_dspy_live_runtime_block_fail_mode: Literal[
+        "veto", "pass_through", "pass_through_reduced_size"
+    ] = Field(
+        default="veto",
+        alias="LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE",
+    )
+    llm_dspy_live_runtime_block_qty_multiplier: float = Field(
+        default=0.5,
+        alias="LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER",
+    )
     llm_dspy_compile_metrics_policy_ref: str = Field(
         default="config/trading/llm/dspy-metrics.yaml",
         alias="LLM_DSPY_COMPILE_METRICS_POLICY_REF",
@@ -1460,14 +1476,23 @@ class Settings(BaseSettings):
         deprecated_universe_explicit = (
             "trading_universe_crypto_enabled" in self.model_fields_set
         )
-        if not crypto_explicit and (deprecated_ws_explicit or deprecated_universe_explicit):
-            ws_enabled = self.trading_ws_crypto_enabled if deprecated_ws_explicit else True
+        if not crypto_explicit and (
+            deprecated_ws_explicit or deprecated_universe_explicit
+        ):
+            ws_enabled = (
+                self.trading_ws_crypto_enabled if deprecated_ws_explicit else True
+            )
             universe_enabled = (
-                self.trading_universe_crypto_enabled if deprecated_universe_explicit else True
+                self.trading_universe_crypto_enabled
+                if deprecated_universe_explicit
+                else True
             )
             self.trading_crypto_enabled = bool(ws_enabled and universe_enabled)
         elif crypto_explicit and (
-            (deprecated_ws_explicit and self.trading_ws_crypto_enabled != self.trading_crypto_enabled)
+            (
+                deprecated_ws_explicit
+                and self.trading_ws_crypto_enabled != self.trading_crypto_enabled
+            )
             or (
                 deprecated_universe_explicit
                 and self.trading_universe_crypto_enabled != self.trading_crypto_enabled
@@ -1644,10 +1669,8 @@ class Settings(BaseSettings):
                 self.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime
             )
         )
-        self.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime = (
-            self._normalize_regime_keyed_float_map(
-                self.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime
-            )
+        self.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime = self._normalize_regime_keyed_float_map(
+            self.trading_runtime_uncertainty_degrade_max_participation_rate_by_regime
         )
         raw_execution = self._normalize_regime_keyed_float_map(
             self.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime
@@ -1754,15 +1777,11 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TRADING_ALLOCATOR_MAX_MULTIPLIER must be >= TRADING_ALLOCATOR_MIN_MULTIPLIER"
             )
-        if not (
-            0 <= self.trading_allocator_regime_low_confidence_threshold <= 1
-        ):
+        if not (0 <= self.trading_allocator_regime_low_confidence_threshold <= 1):
             raise ValueError(
                 "TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_THRESHOLD must be within [0, 1]"
             )
-        if not (
-            0 <= self.trading_allocator_regime_low_confidence_multiplier <= 1
-        ):
+        if not (0 <= self.trading_allocator_regime_low_confidence_multiplier <= 1):
             raise ValueError(
                 "TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_MULTIPLIER must be within [0, 1]"
             )
@@ -1810,9 +1829,10 @@ class Settings(BaseSettings):
             for key, value in values.items():
                 if value > 1:
                     raise ValueError(f"{name}[{key}] must be <= 1")
-        for key, value in (
-            self.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime.items()
-        ):
+        for (
+            key,
+            value,
+        ) in self.trading_runtime_uncertainty_degrade_min_execution_seconds_by_regime.items():
             if value < 0:
                 raise ValueError(
                     "TRADING_RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS_BY_REGIME"
@@ -1897,6 +1917,19 @@ class Settings(BaseSettings):
             raise ValueError("LLM_DSPY_TIMEOUT_SECONDS must be > 0")
         if self.llm_dspy_agentrun_ttl_seconds < 0:
             raise ValueError("LLM_DSPY_AGENTRUN_TTL_SECONDS must be >= 0")
+        if not 0 < self.llm_dspy_live_runtime_block_qty_multiplier <= 1:
+            raise ValueError(
+                "LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER must be within (0, 1]"
+            )
+        if (
+            self.llm_dspy_live_runtime_block_fail_mode
+            in {"pass_through", "pass_through_reduced_size"}
+            and self.trading_mode == "live"
+            and not self.llm_fail_open_live_approved
+        ):
+            raise ValueError(
+                "LLM_FAIL_OPEN_LIVE_APPROVED must be true when LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE is pass-through in live mode"
+            )
         if (
             self.llm_dspy_runtime_mode in {"shadow", "active"}
             and not self.llm_dspy_artifact_hash
@@ -2090,7 +2123,8 @@ class Settings(BaseSettings):
                 continue
             if resolved_label in seen_labels:
                 logger.warning(
-                    "Duplicate TRADING_ACCOUNTS_JSON label dropped label=%s", resolved_label
+                    "Duplicate TRADING_ACCOUNTS_JSON label dropped label=%s",
+                    resolved_label,
                 )
                 continue
             seen_labels.add(resolved_label)
@@ -2240,14 +2274,11 @@ class Settings(BaseSettings):
                 reasons.append("dspy_jangar_base_url_invalid")
             elif not parsed_base_url.hostname:
                 reasons.append("dspy_jangar_base_url_invalid")
-            elif (parsed_base_url.query or parsed_base_url.fragment):
+            elif parsed_base_url.query or parsed_base_url.fragment:
                 reasons.append("dspy_jangar_base_url_invalid")
-            elif (
-                normalized_base_path
-                and normalized_base_path not in (
-                    "/openai/v1",
-                    "/openai/v1/chat/completions",
-                )
+            elif normalized_base_path and normalized_base_path not in (
+                "/openai/v1",
+                "/openai/v1/chat/completions",
             ):
                 reasons.append("dspy_jangar_base_url_invalid")
 
@@ -2259,9 +2290,10 @@ class Settings(BaseSettings):
                 reasons.append("dspy_artifact_hash_invalid_length")
             elif any(ch not in string.hexdigits for ch in normalized_hash):
                 reasons.append("dspy_artifact_hash_not_hex")
-            elif normalized_hash == (
-                _dspy_bootstrap_artifact_hash() or ""
-            ) and self.llm_dspy_runtime_mode == "active":
+            elif (
+                normalized_hash == (_dspy_bootstrap_artifact_hash() or "")
+                and self.llm_dspy_runtime_mode == "active"
+            ):
                 reasons.append("dspy_bootstrap_artifact_forbidden")
 
         if not self.llm_allowed_models:

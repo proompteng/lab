@@ -46,7 +46,9 @@ class TestConfig(TestCase):
         )
         self.assertEqual(settings.trading_universe_source, "static")
 
-    def test_deprecated_live_enabled_sets_trading_mode_when_mode_not_provided(self) -> None:
+    def test_deprecated_live_enabled_sets_trading_mode_when_mode_not_provided(
+        self,
+    ) -> None:
         settings = Settings(
             TRADING_ENABLED=False,
             TRADING_AUTONOMY_ENABLED=False,
@@ -217,6 +219,37 @@ class TestConfig(TestCase):
         self.assertFalse(allowed)
         self.assertIn("dspy_bootstrap_artifact_forbidden", reasons)
 
+    def test_rejects_live_dspy_runtime_block_pass_through_without_approval(
+        self,
+    ) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                TRADING_MODE="live",
+                TRADING_LIVE_ENABLED=True,
+                TRADING_UNIVERSE_SOURCE="jangar",
+                LLM_DSPY_RUNTIME_MODE="active",
+                LLM_DSPY_ARTIFACT_HASH="a" * 64,
+                LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE="pass_through_reduced_size",
+                LLM_FAIL_OPEN_LIVE_APPROVED=False,
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
+    def test_allows_live_dspy_runtime_block_pass_through_with_approval(self) -> None:
+        settings = Settings(
+            TRADING_MODE="live",
+            TRADING_LIVE_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="jangar",
+            LLM_DSPY_RUNTIME_MODE="active",
+            LLM_DSPY_ARTIFACT_HASH="a" * 64,
+            LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE="pass_through_reduced_size",
+            LLM_FAIL_OPEN_LIVE_APPROVED=True,
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(
+            settings.llm_dspy_live_runtime_block_fail_mode,
+            "pass_through_reduced_size",
+        )
+
     def test_live_dspy_runtime_gate_blocks_without_jangar_base_url(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
@@ -244,7 +277,9 @@ class TestConfig(TestCase):
         self.assertFalse(allowed)
         self.assertIn("dspy_jangar_base_url_invalid", reasons)
 
-    def test_live_dspy_runtime_gate_rejects_empty_hostname_jangar_base_url(self) -> None:
+    def test_live_dspy_runtime_gate_rejects_empty_hostname_jangar_base_url(
+        self,
+    ) -> None:
         settings = Settings(
             TRADING_MODE="live",
             TRADING_LIVE_ENABLED=True,
@@ -258,7 +293,9 @@ class TestConfig(TestCase):
         self.assertFalse(allowed)
         self.assertIn("dspy_jangar_base_url_invalid", reasons)
 
-    def test_live_dspy_runtime_gate_blocks_jangar_path_with_query_or_fragment(self) -> None:
+    def test_live_dspy_runtime_gate_blocks_jangar_path_with_query_or_fragment(
+        self,
+    ) -> None:
         settings = Settings(
             TRADING_MODE="live",
             TRADING_LIVE_ENABLED=True,
@@ -286,7 +323,9 @@ class TestConfig(TestCase):
         self.assertFalse(allowed)
         self.assertIn("dspy_jangar_base_url_invalid", reasons)
 
-    def test_live_dspy_runtime_gate_allows_openai_compatible_jangar_base_url(self) -> None:
+    def test_live_dspy_runtime_gate_allows_openai_compatible_jangar_base_url(
+        self,
+    ) -> None:
         settings = Settings(
             TRADING_MODE="live",
             TRADING_LIVE_ENABLED=True,
@@ -329,7 +368,9 @@ class TestConfig(TestCase):
         self.assertTrue(allowed)
         self.assertNotIn("dspy_jangar_base_url_invalid", reasons)
 
-    def test_live_dspy_runtime_gate_blocks_legacy_fail_open_cutover_toggles(self) -> None:
+    def test_live_dspy_runtime_gate_blocks_legacy_fail_open_cutover_toggles(
+        self,
+    ) -> None:
         settings = Settings(
             TRADING_MODE="live",
             TRADING_LIVE_ENABLED=True,
@@ -455,7 +496,9 @@ class TestConfig(TestCase):
             {"riskoff": 180},
         )
 
-    def test_runtime_uncertainty_degrade_regime_maps_reject_invalid_values(self) -> None:
+    def test_runtime_uncertainty_degrade_regime_maps_reject_invalid_values(
+        self,
+    ) -> None:
         with self.assertRaises(ValidationError):
             Settings(
                 TRADING_UNIVERSE_SOURCE="static",
@@ -723,7 +766,9 @@ class TestConfig(TestCase):
 
         self.assertEqual(call_count, 1)
 
-    def test_feature_flag_invalid_payload_short_circuit_remaining_remote_lookups(self) -> None:
+    def test_feature_flag_invalid_payload_short_circuit_remaining_remote_lookups(
+        self,
+    ) -> None:
         call_count = 0
 
         class _Response:
@@ -803,7 +848,9 @@ class TestConfig(TestCase):
             manifest_keys,
         )
 
-    def test_trading_accounts_registry_falls_back_to_single_account_when_disabled(self) -> None:
+    def test_trading_accounts_registry_falls_back_to_single_account_when_disabled(
+        self,
+    ) -> None:
         settings = Settings(
             TRADING_MULTI_ACCOUNT_ENABLED=False,
             TRADING_ACCOUNT_LABEL="paper-a",
@@ -827,7 +874,12 @@ class TestConfig(TestCase):
             TRADING_ACCOUNTS_JSON=json.dumps(
                 {
                     "accounts": [
-                        {"label": "paper-a", "enabled": True, "api_key": "k1", "secret_key": "s1"},
+                        {
+                            "label": "paper-a",
+                            "enabled": True,
+                            "api_key": "k1",
+                            "secret_key": "s1",
+                        },
                         {"label": "paper-b", "enabled": False},
                         {"label": "paper-c", "enabled": True},
                     ]
@@ -854,7 +906,11 @@ class TestConfig(TestCase):
                             "enabled": True,
                             "api_key": "primary-key",
                         },
-                        {"label": "  paper-b  ", "enabled": True, "api_key": "dupe-key"},
+                        {
+                            "label": "  paper-b  ",
+                            "enabled": True,
+                            "api_key": "dupe-key",
+                        },
                         {
                             "label": "paper-c",
                             "enabled": True,
@@ -866,5 +922,7 @@ class TestConfig(TestCase):
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         accounts = settings.trading_accounts
-        self.assertEqual([account.label for account in accounts], ["paper-b", "paper-c"])
+        self.assertEqual(
+            [account.label for account in accounts], ["paper-b", "paper-c"]
+        )
         self.assertEqual(accounts[0].api_key, "primary-key")

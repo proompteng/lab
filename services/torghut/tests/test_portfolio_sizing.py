@@ -498,8 +498,12 @@ class TestPortfolioSizing(TestCase):
         )
 
         self.assertEqual(len(results), 2)
-        approved = next(result for result in results if result.decision.symbol == "AAPL")
-        rejected = next(result for result in results if result.decision.symbol == "MSFT")
+        approved = next(
+            result for result in results if result.decision.symbol == "AAPL"
+        )
+        rejected = next(
+            result for result in results if result.decision.symbol == "MSFT"
+        )
         self.assertTrue(approved.approved)
         self.assertIn(ALLOCATOR_CLIP_CORRELATION_CAPACITY, approved.reason_codes)
         self.assertEqual(approved.decision.qty, Decimal("5"))
@@ -543,7 +547,9 @@ class TestPortfolioSizing(TestCase):
         result = sizer.size(decision, account={"equity": "50000"}, positions=[])
         self.assertTrue(result.approved)
         self.assertEqual(result.decision.qty, Decimal("10"))
-        self.assertNotIn("allocator_regime_multiplier", result.audit["output"]["methods"])
+        self.assertNotIn(
+            "allocator_regime_multiplier", result.audit["output"]["methods"]
+        )
 
     def test_allocator_from_settings_consumes_normalized_correlation_maps(self) -> None:
         original_values = {
@@ -587,12 +593,12 @@ class TestPortfolioSizing(TestCase):
             config.settings.trading_allocator_correlation_group_notional_caps = (
                 original_values["trading_allocator_correlation_group_notional_caps"]
             )
-            config.settings.trading_allocator_symbol_correlation_groups = original_values[
-                "trading_allocator_symbol_correlation_groups"
-            ]
-            config.settings.trading_allocator_correlation_symbol_groups = original_values[
-                "trading_allocator_correlation_symbol_groups"
-            ]
+            config.settings.trading_allocator_symbol_correlation_groups = (
+                original_values["trading_allocator_symbol_correlation_groups"]
+            )
+            config.settings.trading_allocator_correlation_symbol_groups = (
+                original_values["trading_allocator_correlation_symbol_groups"]
+            )
 
     def test_volatility_scaling_and_symbol_cap(self) -> None:
         sizer = PortfolioSizer(
@@ -745,7 +751,9 @@ class TestPortfolioSizing(TestCase):
         self.assertTrue(result.approved)
         self.assertEqual(result.decision.qty, Decimal("5"))
 
-    def test_symbol_capacity_exhaustion_reports_capacity_reason_not_qty_min(self) -> None:
+    def test_symbol_capacity_exhaustion_reports_capacity_reason_not_qty_min(
+        self,
+    ) -> None:
         sizer = PortfolioSizer(
             PortfolioSizingConfig(
                 notional_per_position=None,
@@ -779,6 +787,88 @@ class TestPortfolioSizing(TestCase):
         portfolio_output = result.audit.get("output", {})
         self.assertEqual(portfolio_output.get("status"), "rejected")
         self.assertIn("cap_per_symbol_zero", portfolio_output.get("methods", []))
+
+    def test_symbol_capacity_clip_below_one_share_reports_capacity_reason(self) -> None:
+        sizer = PortfolioSizer(
+            PortfolioSizingConfig(
+                notional_per_position=None,
+                volatility_target=None,
+                volatility_floor=Decimal("0"),
+                max_positions=None,
+                max_notional_per_symbol=Decimal("1000"),
+                max_position_pct_equity=None,
+                max_gross_exposure=None,
+                max_net_exposure=None,
+            )
+        )
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="NVDA",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("2"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        positions = [{"symbol": "NVDA", "qty": "9.5", "market_value": "950"}]
+
+        result = sizer.size(decision, account={"equity": "10000"}, positions=positions)
+
+        self.assertFalse(result.approved)
+        self.assertIn("symbol_capacity_exhausted", result.reasons)
+        self.assertNotIn("qty_below_min", result.reasons)
+        portfolio_output = result.audit.get("output", {})
+        self.assertIn("cap_per_symbol", portfolio_output.get("methods", []))
+        self.assertEqual(
+            portfolio_output.get("limiting_constraint"), "symbol_capacity_exhausted"
+        )
+
+    def test_sell_inventory_clip_below_one_share_reports_inventory_reason(self) -> None:
+        original_allow_shorts = config.settings.trading_allow_shorts
+        config.settings.trading_allow_shorts = False
+        try:
+            sizer = PortfolioSizer(
+                PortfolioSizingConfig(
+                    notional_per_position=None,
+                    volatility_target=None,
+                    volatility_floor=Decimal("0"),
+                    max_positions=None,
+                    max_notional_per_symbol=None,
+                    max_position_pct_equity=None,
+                    max_gross_exposure=None,
+                    max_net_exposure=None,
+                )
+            )
+            decision = StrategyDecision(
+                strategy_id="s1",
+                symbol="NVDA",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("2"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("100")},
+            )
+            positions = [{"symbol": "NVDA", "qty": "0.5", "market_value": "50"}]
+
+            result = sizer.size(
+                decision, account={"equity": "10000"}, positions=positions
+            )
+
+            self.assertFalse(result.approved)
+            self.assertIn("sell_inventory_unavailable", result.reasons)
+            self.assertNotIn("qty_below_min", result.reasons)
+            portfolio_output = result.audit.get("output", {})
+            self.assertIn("cap_sell_inventory", portfolio_output.get("methods", []))
+            self.assertEqual(
+                portfolio_output.get("limiting_constraint"),
+                "sell_inventory_unavailable",
+            )
+        finally:
+            config.settings.trading_allow_shorts = original_allow_shorts
 
     def test_allocator_clips_fractional_crypto_qty(self) -> None:
         allocator = PortfolioAllocator(
@@ -970,7 +1060,9 @@ class TestPortfolioSizing(TestCase):
         finally:
             config.settings.trading_allow_shorts = original_allow_shorts
 
-    def test_sizer_allows_fractional_sell_after_inventory_clip_when_enabled(self) -> None:
+    def test_sizer_allows_fractional_sell_after_inventory_clip_when_enabled(
+        self,
+    ) -> None:
         original_allow_shorts = config.settings.trading_allow_shorts
         config.settings.trading_allow_shorts = False
         config.settings.trading_fractional_equities_enabled = True
@@ -1039,14 +1131,18 @@ class TestPortfolioSizing(TestCase):
             )
             positions = [{"symbol": "NVDA", "qty": "3", "market_value": "300"}]
 
-            result = sizer.size(decision, account={"equity": "10000"}, positions=positions)
+            result = sizer.size(
+                decision, account={"equity": "10000"}, positions=positions
+            )
 
             self.assertTrue(result.approved)
             self.assertEqual(result.decision.qty, Decimal("3"))
         finally:
             config.settings.trading_allow_shorts = original_allow_shorts
 
-    def test_allocator_allows_fractional_sell_after_capacity_clip_when_enabled(self) -> None:
+    def test_allocator_allows_fractional_sell_after_capacity_clip_when_enabled(
+        self,
+    ) -> None:
         original_allow_shorts = config.settings.trading_allow_shorts
         config.settings.trading_allow_shorts = False
         config.settings.trading_fractional_equities_enabled = True
@@ -1136,7 +1232,9 @@ class TestPortfolioSizing(TestCase):
     def test_sizer_from_settings_does_not_couple_per_trade_cap_to_symbol_capacity(
         self,
     ) -> None:
-        original_max_position_pct_equity = config.settings.trading_max_position_pct_equity
+        original_max_position_pct_equity = (
+            config.settings.trading_max_position_pct_equity
+        )
         original_max_notional_per_symbol = (
             config.settings.trading_portfolio_max_notional_per_symbol
         )
