@@ -85,7 +85,7 @@ type AgentRun struct {
 // +kubebuilder:validation:XValidation:rule="self.implementationSpecRef != nil || self.implementation != nil",message="spec.implementationSpecRef or spec.implementation is required"
 // +kubebuilder:validation:XValidation:rule="self.systemPrompt == nil || self.systemPromptRef == nil",message="Only one of spec.systemPrompt or spec.systemPromptRef may be set"
 // +kubebuilder:validation:XValidation:rule="self.systemPrompt == nil && self.systemPromptRef == nil",message="AgentRun-level systemPrompt/systemPromptRef overrides are not allowed; configure Agent.spec.defaults instead"
-// +kubebuilder:validation:XValidation:rule="self.parameters == nil || !('prompt' in self.parameters)",message="spec.parameters.prompt is not allowed; use ImplementationSpec.spec.text"
+// +kubebuilder:validation:XValidation:rule="self.parameters == nil || self.parameters.keys().all(k, k != 'prompt')",message="spec.parameters.prompt is not allowed; use ImplementationSpec.spec.text"
 type AgentRunSpec struct {
 	AgentRef              LocalRef              `json:"agentRef"`
 	ImplementationSpecRef *LocalRef             `json:"implementationSpecRef,omitempty"`
@@ -127,9 +127,8 @@ type WorkflowStep struct {
 	ImplementationSpecRef *LocalRef             `json:"implementationSpecRef,omitempty"`
 	Implementation        *InlineImplementation `json:"implementation,omitempty"`
 	// +kubebuilder:validation:MaxProperties=100
-	// +kubebuilder:validation:XValidation:rule="!('prompt' in self.parameters)",message="workflow step parameters.prompt is not allowed; use ImplementationSpec.spec.text"
-	// +kubebuilder:validation:XValidation:rule="!('prompt' in self.parameters)",message="workflow step parameters.prompt is not allowed; use ImplementationSpec.spec.text"
-	Parameters          map[string]string `json:"parameters,omitempty"`
+		// +kubebuilder:validation:XValidation:rule="self == nil || self.keys().all(k, k != 'prompt')",message="workflow step parameters.prompt is not allowed; use ImplementationSpec.spec.text"
+		Parameters          map[string]string `json:"parameters,omitempty"`
 	Workload            *WorkloadSpec     `json:"workload,omitempty"`
 	Retries             int32             `json:"retries,omitempty"`
 	RetryBackoffSeconds int32             `json:"retryBackoffSeconds,omitempty"`
