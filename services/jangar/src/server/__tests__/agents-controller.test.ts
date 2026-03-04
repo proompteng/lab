@@ -3570,7 +3570,10 @@ describe('agents controller reconcileAgentRun', () => {
       apply,
       get: vi.fn(async (resource: string, name: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default system prompt' } },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }

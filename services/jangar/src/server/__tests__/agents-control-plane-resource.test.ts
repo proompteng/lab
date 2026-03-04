@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const cacheStoreMocks = vi.hoisted(() => ({
   createControlPlaneCacheStore: vi.fn(),
@@ -63,11 +63,11 @@ describe('agents control-plane resource route', () => {
     const kube = {
       get: vi.fn(async () => ({ status: 'miss', metadata: { name: 'agent-a' } })),
     }
-    kubeClientMocks.createKubernetesClient.mockReturnValue(kube)
+    kubeClientMocks.createKubernetesClient.mockReturnValue(kube as never)
 
     const response = await getPrimitiveResource(
       new Request('http://localhost/api/agents/control-plane/resource?kind=Agent&name=agent-a&namespace=agents'),
-      { kubeClient: kube },
+      { kubeClient: kube as never },
     )
 
     expect(response.status).toBe(200)
@@ -111,11 +111,11 @@ describe('agents control-plane resource route', () => {
         status: {},
       })),
     }
-    kubeClientMocks.createKubernetesClient.mockReturnValue(kube)
+    kubeClientMocks.createKubernetesClient.mockReturnValue(kube as never)
 
     const response = await getPrimitiveResource(
       new Request('http://localhost/api/agents/control-plane/resource?kind=Agent&name=agent-a&namespace=agents'),
-      { kubeClient: kube },
+      { kubeClient: kube as never },
     )
 
     expect(response.status).toBe(200)
