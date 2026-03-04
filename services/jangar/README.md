@@ -196,7 +196,6 @@ Control-plane status endpoint behavior (`/api/control-plane/status`) is delibera
   - `stages`
 - Rollout stage `last_run_at` is derived from Schedule `lastRunTime` with a CronJob `lastScheduleTime` fallback when schedule run timestamps are missing.
 
-
 ## Terminal backend
 
 Jangar terminals are intended to run against a dedicated terminal backend deployment (`jangar-terminal` in GitOps). The main Jangar service proxies session APIs to that backend.
