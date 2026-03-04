@@ -38,6 +38,9 @@ type JangarMetrics = {
   torghutMarketContextRunEvents: Counter
   torghutMarketContextDispatchAttempts: Counter
   torghutMarketContextDispatchStuck: Counter
+  kubeWatchEvents: Counter
+  kubeWatchErrors: Counter
+  kubeWatchRestarts: Counter
 }
 
 type MetricsState = {
@@ -71,6 +74,11 @@ const recordCounter = (counter: Counter | undefined, value: number, attributes?:
 const recordHistogram = (histogram: Histogram | undefined, value: number, attributes?: MetricsAttributes) => {
   if (!histogram) return
   histogram.record(value, attributes)
+}
+
+const normalizeWatchLabel = (value: string) => {
+  const trimmed = value.trim()
+  return trimmed ? trimmed : 'unknown'
 }
 
 export const recordSseConnection = (stream: SseStream, state: 'opened' | 'closed') => {
@@ -202,6 +210,33 @@ export const recordTorghutMarketContextDispatchAttempt = (
 export const recordTorghutMarketContextDispatchStuck = (domain: 'fundamentals' | 'news', status: 'submitted') => {
   if (!metricsState.enabled) return
   recordCounter(metricsState.metrics?.torghutMarketContextDispatchStuck, 1, { domain, status })
+}
+
+export const recordKubeWatchEvent = (params: { resource: string; namespace: string; type: string }) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.kubeWatchEvents, 1, {
+    resource: normalizeWatchLabel(params.resource),
+    namespace: normalizeWatchLabel(params.namespace),
+    event_type: normalizeWatchLabel(params.type),
+  })
+}
+
+export const recordKubeWatchError = (params: { resource: string; namespace: string; reason: string }) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.kubeWatchErrors, 1, {
+    resource: normalizeWatchLabel(params.resource),
+    namespace: normalizeWatchLabel(params.namespace),
+    reason: normalizeWatchLabel(params.reason),
+  })
+}
+
+export const recordKubeWatchRestart = (params: { resource: string; namespace: string; reason: string }) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.kubeWatchRestarts, 1, {
+    resource: normalizeWatchLabel(params.resource),
+    namespace: normalizeWatchLabel(params.namespace),
+    reason: normalizeWatchLabel(params.reason),
+  })
 }
 
 type OtlpProtocol = 'http/json' | 'http/protobuf' | 'grpc'
@@ -551,6 +586,15 @@ const createMetricsState = (): MetricsState => {
       ),
       torghutMarketContextDispatchStuck: meter.createCounter('jangar_torghut_market_context_dispatch_stuck_total', {
         description: 'Count of market-context dispatch states observed stuck in submitted status.',
+      }),
+      kubeWatchEvents: meter.createCounter('jangar_kube_watch_events_total', {
+        description: 'Count of Kubernetes watch events observed by resource/namespace/type.',
+      }),
+      kubeWatchErrors: meter.createCounter('jangar_kube_watch_errors_total', {
+        description: 'Count of Kubernetes watch processing errors by resource/namespace/reason.',
+      }),
+      kubeWatchRestarts: meter.createCounter('jangar_kube_watch_restarts_total', {
+        description: 'Count of Kubernetes watch restarts by resource/namespace/reason.',
       }),
     }
 

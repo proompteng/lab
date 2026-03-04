@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { recordKubeWatchError, recordKubeWatchEvent, recordKubeWatchRestart } from '~/server/metrics'
 
 type WatchEvent = {
   type?: string
@@ -92,8 +93,15 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
   let stopped = false
   let child: ReturnType<typeof spawn> | null = null
   let restartTimer: NodeJS.Timeout | null = null
+  const normalizedResource = resource.trim() ? resource.trim() : 'unknown'
+  const normalizedNamespace = namespace.trim() ? namespace.trim() : 'unknown'
 
-  const scheduleRestart = () => {
+  const scheduleRestart = (reason: string) => {
+    recordKubeWatchRestart({
+      resource: normalizedResource,
+      namespace: normalizedNamespace,
+      reason,
+    })
     if (stopped) return
     if (restartTimer) clearTimeout(restartTimer)
     restartTimer = setTimeout(() => {
@@ -127,10 +135,21 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
       try {
         const payload = JSON.parse(jsonText) as WatchEvent
         if (!payload || typeof payload !== 'object') return
-        if (payload.type === 'BOOKMARK') return
+        const eventType = typeof payload.type === 'string' ? payload.type : 'UNKNOWN'
+        if (eventType === 'BOOKMARK') return
+        recordKubeWatchEvent({
+          resource: normalizedResource,
+          namespace: normalizedNamespace,
+          type: eventType,
+        })
         void onEvent(payload)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
+        recordKubeWatchError({
+          resource: normalizedResource,
+          namespace: normalizedNamespace,
+          reason: 'parse_error',
+        })
         onError?.(new Error(`${logPrefix} failed to parse watch event: ${message}`))
       }
     })
@@ -139,6 +158,11 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
       child.stdout.setEncoding('utf8')
       child.stdout.on('data', (chunk) => parse(String(chunk)))
     } else {
+      recordKubeWatchError({
+        resource: normalizedResource,
+        namespace: normalizedNamespace,
+        reason: 'stdout_unavailable',
+      })
       onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stdout unavailable`))
     }
     if (child.stderr) {
@@ -146,22 +170,42 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
       child.stderr.on('data', (chunk) => {
         const message = String(chunk).trim()
         if (message) {
+          recordKubeWatchError({
+            resource: normalizedResource,
+            namespace: normalizedNamespace,
+            reason: 'stderr_message',
+          })
           onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stderr: ${message}`))
         }
       })
     } else {
+      recordKubeWatchError({
+        resource: normalizedResource,
+        namespace: normalizedNamespace,
+        reason: 'stderr_unavailable',
+      })
       onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stderr unavailable`))
     }
     child.on('error', (error) => {
+      recordKubeWatchError({
+        resource: normalizedResource,
+        namespace: normalizedNamespace,
+        reason: 'spawn_error',
+      })
       onError?.(error instanceof Error ? error : new Error(String(error)))
-      scheduleRestart()
+      scheduleRestart('spawn_error')
     })
     child.on('close', (code) => {
       if (stopped) return
       if (code !== 0) {
+        recordKubeWatchError({
+          resource: normalizedResource,
+          namespace: normalizedNamespace,
+          reason: `close_${String(code ?? 'unknown')}`,
+        })
         onError?.(new Error(`${logPrefix} ${resource} (${namespace}) closed with code ${code ?? 'unknown'}`))
       }
-      scheduleRestart()
+      scheduleRestart(code === 0 ? 'closed' : 'nonzero_exit')
     })
   }
 
