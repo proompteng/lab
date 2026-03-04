@@ -104,11 +104,6 @@ _RECOVERABLE_EMERGENCY_STOP_PREFIXES: tuple[str, ...] = (
 )
 
 
-def _coerce_non_empty_reason(reason: str | None) -> str:
-    normalized = reason.strip() if reason is not None else ""
-    return normalized or "unknown"
-
-
 def _normalize_emergency_stop_reason_entry(raw: str) -> str:
     normalized = raw.strip()
     return normalized or "unknown"
