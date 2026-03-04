@@ -865,6 +865,9 @@ describe('control-plane status', () => {
     expect(rolloutStage).toBeDefined()
     expect(rolloutStage?.failed_runs_last_window).toBe(2)
     expect(rolloutStage?.backoff_failures_last_window).toBe(1)
+    expect(rolloutStage?.recent_failed_jobs).toBe(2)
+    expect(rolloutStage?.backoff_limit_exceeded_jobs).toBe(1)
+    expect(rolloutStage?.reasons).toEqual(expect.arrayContaining(['backoff failures: 1']))
     expect(rolloutStage?.top_failure_reasons).toEqual([
       { reason: 'BackoffLimitExceeded', count: 1 },
       { reason: 'ImagePullBackOff', count: 1 },
