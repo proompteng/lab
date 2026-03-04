@@ -342,6 +342,7 @@ Enable gRPC for agentctl or in-cluster clients:
 - `grpc.enabled=true`
 - `grpc.manageEnvVar=true` (default) keeps control-plane `JANGAR_GRPC_*` values chart-owned and deterministic.
 - `controllers.service.enabled=true` to expose controller `agentctl` gRPC when `controllers.env.vars.JANGAR_GRPC_ENABLED=true`.
+- Controller `JANGAR_GRPC_HOST` and `JANGAR_GRPC_PORT` are still rendered from chart defaults (`0.0.0.0`, `grpc.port`) when unset so an explicit controller opt-in remains externally reachable once `controllers.service.enabled` is true.
 - `grpc.manageEnvVar=false` if you want manual ownership in values.
 - Source-of-truth for gRPC in managed mode:
   - `JANGAR_GRPC_ENABLED` = `grpc.enabled`
@@ -383,6 +384,9 @@ envFromSecretRefs:
   - `JANGAR_GRPC_ENABLED` = `grpc.enabled`
   - `JANGAR_GRPC_HOST` = `0.0.0.0`
   - `JANGAR_GRPC_PORT` = `grpc.port`
+  - `JANGAR_CONTROL_PLANE_CACHE_ENABLED` (enable cache reads; defaults to `0` in controllers-only mode, `1` in control-plane mode)
+  - `JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS` (default: `120`; controls freshness window for cache row reuse)
+  - `JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE` (default: `true`; set to `false`/`0` for strict cache freshness)
 - For controller keys, pin in `controllers.env.vars` (or `env.vars` when not reserved/managed) when you intentionally diverge from defaults:
   - `JANGAR_GRPC_ENABLED=0`
   - `JANGAR_GRPC_HOST=0.0.0.0`

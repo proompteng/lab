@@ -2,8 +2,7 @@ import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 import { sql } from 'kysely'
 
 import { getAgentsControllerHealth } from '~/server/agents-controller'
-import { getDb, type Db } from '~/server/db'
-import { getRegisteredMigrationNames } from '~/server/kysely-migrations'
+import { getDb } from '~/server/db'
 import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
@@ -11,17 +10,39 @@ import {
   getWatchReliabilitySummary,
   type ControlPlaneWatchReliabilitySummary,
 } from '~/server/control-plane-watch-reliability'
+import { asRecord, asString, readNested } from '~/server/primitives-http'
+import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
+import { parseEnvStringList, parseOptionalNumber } from '~/server/agents-controller/env-config'
 
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
-const DEFAULT_WORKFLOW_MONITOR_WINDOW_MINUTES = 15
-const DEFAULT_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD = 2
-const DEFAULT_WORKFLOW_MONITOR_SWARMS = 'jangar-control-plane,torghut-quant'
-const WORKFLOW_WINDOW_REASON_LIMIT = 5
+const DEFAULT_WORKFLOWS_WINDOW_MINUTES = 15
+const DEFAULT_WORKFLOWS_SWARMS = ['jangar-control-plane']
+const DEFAULT_WORKFLOWS_NAMESPACES = ['agents']
+const DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = 2
+const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
+const MAX_TOP_FAILURE_REASONS = 5
+const MIN_WINDOW_MINUTES = 1
+const MAX_WINDOW_MINUTES = 24 * 60
+
+const WORKFLOW_JOB_RESOURCE = 'jobs.batch'
+const WORKFLOW_SCHEDULE_LABEL_SELECTOR = 'schedules.proompteng.ai/schedule'
+const SWARM_LABEL_SELECTOR = 'swarm.proompteng.ai/name'
+
+const STATUS_MS_PER_MINUTE = 60 * 1000
 
 type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>
+
+type WorkflowsReliabilityStatusInput = {
+  now: Date
+  namespace: string
+  namespaces: string[]
+  windowMinutes: number
+  swarms: string[]
+  kube: KubernetesClient
+}
 
 export type ControllerStatus = {
   name: string
@@ -43,48 +64,26 @@ export type RuntimeAdapterStatus = {
   endpoint: string
 }
 
+export type WorkflowsReliabilityStatus = {
+  active_job_runs: number
+  recent_failed_jobs: number
+  backoff_limit_exceeded_jobs: number
+  window_minutes: number
+  top_failure_reasons: string[]
+}
+
 export type DatabaseStatus = {
   configured: boolean
   connected: boolean
   status: 'healthy' | 'degraded' | 'disabled'
   message: string
   latency_ms: number
-  migration_consistency: {
-    status: 'healthy' | 'degraded' | 'unknown'
-    migration_table: string | null
-    registered_count: number
-    applied_count: number
-    unapplied_count: number
-    unexpected_count: number
-    latest_registered: string | null
-    latest_applied: string | null
-    missing_migrations: string[]
-    unexpected_migrations: string[]
-    message: string
-  }
 }
-
-type DatabaseMigrationConsistency = DatabaseStatus['migration_consistency']
 
 export type GrpcStatus = {
   enabled: boolean
   address: string
   status: 'healthy' | 'degraded' | 'disabled'
-  message: string
-}
-
-export type WorkflowFailureReason = {
-  reason: string
-  count: number
-}
-
-export type WorkflowReliabilityStatus = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  window_minutes: number
-  active_job_runs: number
-  recent_failed_jobs: number
-  backoff_limit_exceeded_jobs: number
-  top_failure_reasons: WorkflowFailureReason[]
   message: string
 }
 
@@ -121,10 +120,10 @@ export type ControlPlaneStatus = {
   }
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
-  workflows: WorkflowReliabilityStatus
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
+  workflows: WorkflowsReliabilityStatus
   namespaces: NamespaceStatus[]
 }
 
@@ -142,253 +141,10 @@ export type ControlPlaneStatusDeps = {
   resolveTemporalAdapter?: () => Promise<RuntimeAdapterStatus>
   checkDatabase?: () => Promise<DatabaseStatus>
   getWatchReliabilitySummary?: () => ControlPlaneWatchReliabilitySummary
-  kube?: Pick<KubernetesClient, 'list'>
+  getWorkflowsReliabilityStatus?: (input: WorkflowsReliabilityStatusInput) => Promise<WorkflowsReliabilityStatus>
 }
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
-const normalizeText = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
-const asRecord = (value: unknown): Record<string, unknown> => {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
-}
-const asString = (value: unknown): string | null => {
-  const normalized = normalizeText(value)
-  return normalized.length > 0 ? normalized : null
-}
-const dedupeSorted = (items: string[]) => [...new Set(items)].sort()
-const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
-const asNumber = (value: unknown, fallback: number): number => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value, 10)
-    return Number.isFinite(parsed) ? parsed : fallback
-  }
-  return fallback
-}
-
-const clampPositiveNumber = (value: number, fallback: number) => {
-  const parsed = Math.floor(value)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-const parseTimestampMs = (value: unknown): number | null => {
-  const raw = asString(value)
-  if (!raw) return null
-  const parsed = Date.parse(raw)
-  return Number.isNaN(parsed) ? null : parsed
-}
-
-const readWorkflowMonitorSwarms = () => {
-  const raw = process.env.JANGAR_CONTROL_PLANE_WORKFLOW_SWARMS?.trim()
-  const fallback = DEFAULT_WORKFLOW_MONITOR_SWARMS
-  const resolved = raw && raw.length > 0 ? raw : fallback
-  const names = resolved
-    .split(',')
-    .map((name) => name.trim())
-    .filter((name) => name.length > 0)
-  return names.length > 0 ? names : fallback.split(',')
-}
-
-const readWorkflowWindowMinutes = () => {
-  const raw = process.env.JANGAR_CONTROL_PLANE_WORKFLOW_WINDOW_MINUTES
-  if (!raw) return DEFAULT_WORKFLOW_MONITOR_WINDOW_MINUTES
-  const parsed = asNumber(raw.trim(), DEFAULT_WORKFLOW_MONITOR_WINDOW_MINUTES)
-  return clampPositiveNumber(parsed, DEFAULT_WORKFLOW_MONITOR_WINDOW_MINUTES)
-}
-
-const readBackoffDegradeThreshold = () => {
-  const raw = process.env.JANGAR_CONTROL_PLANE_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD
-  if (!raw) return DEFAULT_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD
-  const parsed = asNumber(raw.trim(), DEFAULT_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD)
-  return clampPositiveNumber(parsed, DEFAULT_WORKFLOW_BACKOFF_DEGRADE_THRESHOLD)
-}
-
-const isWorkflowJobName = (name: string, swarms: string[]) =>
-  swarms.some((swarm) => name === swarm || name.startsWith(`${swarm}-`))
-
-const toTopFailureReasons = (entries: Map<string, number>) =>
-  [...entries.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, WORKFLOW_WINDOW_REASON_LIMIT)
-    .map(([reason, count]) => ({ reason, count }))
-
-const MIGRATION_TABLE_CANDIDATES = ['kysely_migration', 'kysely_migrations'] as const
-
-const buildDatabaseMigrationConsistencyUnknown = (message: string): DatabaseMigrationConsistency => ({
-  status: 'unknown',
-  migration_table: null,
-  registered_count: 0,
-  applied_count: 0,
-  unapplied_count: 0,
-  unexpected_count: 0,
-  latest_registered: null,
-  latest_applied: null,
-  missing_migrations: [],
-  unexpected_migrations: [],
-  message,
-})
-
-const checkMigrationTable = async (db: Db): Promise<string | null> => {
-  const checkExists = async (table: (typeof MIGRATION_TABLE_CANDIDATES)[number]) => {
-    const response = await sql<{ exists: boolean }>`
-      SELECT EXISTS (
-        SELECT 1
-        FROM information_schema.tables
-        WHERE table_schema = 'public'
-          AND table_name = ${table}
-      ) AS exists
-    `.execute(db)
-    const row = response.rows[0]
-    return row?.exists === true ? table : null
-  }
-
-  for (const table of MIGRATION_TABLE_CANDIDATES) {
-    const migrationTable = await checkExists(table)
-    if (migrationTable) {
-      return migrationTable
-    }
-  }
-
-  return null
-}
-
-const readAppliedMigrations = async (db: Db, migrationTable: string) => {
-  const response = await sql<{
-    name: string | null
-  }>`SELECT name FROM ${sql.ref(migrationTable)} ORDER BY name`.execute(db)
-  return dedupeSorted(response.rows.map((row) => asString(row.name)).filter(Boolean) as string[])
-}
-
-const buildDatabaseMigrationConsistency = async (db: Db): Promise<DatabaseMigrationConsistency> => {
-  const registered = dedupeSorted(getRegisteredMigrationNames())
-  const latestRegistered = registered.at(-1) ?? null
-
-  const migrationTable = await checkMigrationTable(db)
-  if (!migrationTable) {
-    return {
-      ...buildDatabaseMigrationConsistencyUnknown('kysely migration table not found'),
-      status: 'degraded' as const,
-      registered_count: registered.length,
-      latest_registered: latestRegistered,
-    }
-  }
-
-  const applied = await readAppliedMigrations(db, migrationTable)
-  const appliedSet = new Set(applied)
-  const registeredSet = new Set(registered)
-
-  const missingMigrations = registered.filter((migration) => !appliedSet.has(migration))
-  const unexpectedMigrations = applied.filter((migration) => !registeredSet.has(migration))
-  const status: DatabaseMigrationConsistency['status'] =
-    missingMigrations.length === 0 && unexpectedMigrations.length === 0 ? 'healthy' : 'degraded'
-
-  const messageParts = []
-  if (status === 'healthy') {
-    messageParts.push('migration registry and database are synchronized')
-  } else {
-    if (missingMigrations.length > 0) {
-      messageParts.push(`${missingMigrations.length} registered migrations not applied`)
-    }
-    if (unexpectedMigrations.length > 0) {
-      messageParts.push(`${unexpectedMigrations.length} migrations applied but unregistered`)
-    }
-  }
-  const latestApplied = applied.at(-1) ?? null
-
-  return {
-    status,
-    migration_table: migrationTable,
-    registered_count: registered.length,
-    applied_count: applied.length,
-    unapplied_count: missingMigrations.length,
-    unexpected_count: unexpectedMigrations.length,
-    latest_registered: latestRegistered,
-    latest_applied: latestApplied,
-    missing_migrations: missingMigrations,
-    unexpected_migrations: unexpectedMigrations,
-    message: messageParts.join('; '),
-  }
-}
-
-const buildWorkflowReliability = async (deps: {
-  now: Date
-  kube: Pick<KubernetesClient, 'list'>
-  options: ControlPlaneStatusOptions
-}): Promise<WorkflowReliabilityStatus> => {
-  const swarms = readWorkflowMonitorSwarms()
-  const windowMinutes = readWorkflowWindowMinutes()
-  const threshold = readBackoffDegradeThreshold()
-  const nowMs = deps.now.getTime()
-  const windowStartMs = nowMs - windowMinutes * 60_000
-
-  const response = await deps.kube.list('jobs', deps.options.namespace)
-  const record = asRecord(response)
-  const items = asArray(record.items).map(asRecord)
-
-  let activeJobRuns = 0
-  let recentFailedJobs = 0
-  let backoffLimitExceededJobs = 0
-  const failureReasons = new Map<string, number>()
-
-  for (const item of items) {
-    const metadata = asRecord(item.metadata)
-    const jobName = asString(metadata.name) ?? ''
-    if (!isWorkflowJobName(jobName, swarms)) continue
-
-    const createdAtMs = parseTimestampMs(metadata.creationTimestamp)
-    if (createdAtMs === null || createdAtMs < windowStartMs) {
-      continue
-    }
-
-    const status = asRecord(item.status)
-    const conditions = asArray(status.conditions).map(asRecord)
-    const failedCondition = conditions.find((condition) => asString(condition.type) === 'Failed')
-    const failed = asNumber(status.failed, 0) > 0
-    const active = asNumber(status.active, 0)
-    if (active > 0) {
-      activeJobRuns += active
-    }
-    if (!failed) {
-      continue
-    }
-
-    const failedAtMs = failedCondition ? parseTimestampMs(failedCondition.lastTransitionTime) : null
-    if (failedAtMs !== null && failedAtMs < windowStartMs) {
-      continue
-    }
-
-    recentFailedJobs += 1
-    const reason = asString(failedCondition?.reason) ?? 'Failed'
-    failureReasons.set(reason, (failureReasons.get(reason) ?? 0) + 1)
-    if (reason === 'BackoffLimitExceeded') {
-      backoffLimitExceededJobs += 1
-    }
-  }
-
-  const isDegraded = backoffLimitExceededJobs >= threshold
-  const message = isDegraded
-    ? `workflow reliability degraded: ${backoffLimitExceededJobs} backoff failures in last ${windowMinutes}m`
-    : `workflow reliability healthy: ${recentFailedJobs} failed jobs and ${activeJobRuns} active jobs in last ${windowMinutes}m`
-
-  return {
-    status: isDegraded ? 'degraded' : 'healthy',
-    window_minutes: windowMinutes,
-    active_job_runs: activeJobRuns,
-    recent_failed_jobs: recentFailedJobs,
-    backoff_limit_exceeded_jobs: backoffLimitExceededJobs,
-    top_failure_reasons: toTopFailureReasons(failureReasons),
-    message,
-  }
-}
-
-const unknownWorkflowReliability = (windowMinutes: number): WorkflowReliabilityStatus => ({
-  status: 'unknown',
-  window_minutes: windowMinutes,
-  active_job_runs: 0,
-  recent_failed_jobs: 0,
-  backoff_limit_exceeded_jobs: 0,
-  top_failure_reasons: [],
-  message: 'workflow reliability unavailable (kubernetes query failed)',
-})
 
 const buildControllerStatus = (name: string, health: ControllerHealth): ControllerStatus => {
   const scopeNamespaces = Array.isArray(health.namespaces) ? health.namespaces : []
@@ -506,22 +262,18 @@ const checkDatabase = async (): Promise<DatabaseStatus> => {
       status: 'disabled',
       message: 'DATABASE_URL not set',
       latency_ms: 0,
-      migration_consistency: buildDatabaseMigrationConsistencyUnknown('DATABASE_URL not set'),
     }
   }
 
   const start = Date.now()
   try {
     await sql`select 1`.execute(db)
-    const migration_consistency = await buildDatabaseMigrationConsistency(db)
-
     return {
       configured: true,
       connected: true,
-      status: migration_consistency.status === 'healthy' ? 'healthy' : 'degraded',
-      message: migration_consistency.message,
+      status: 'healthy',
+      message: '',
       latency_ms: Math.max(0, Date.now() - start),
-      migration_consistency,
     }
   } catch (error) {
     return {
@@ -530,11 +282,221 @@ const checkDatabase = async (): Promise<DatabaseStatus> => {
       status: 'degraded',
       message: normalizeMessage(error),
       latency_ms: Math.max(0, Date.now() - start),
-      migration_consistency: {
-        ...buildDatabaseMigrationConsistencyUnknown(normalizeMessage(error)),
-        registered_count: getRegisteredMigrationNames().length,
-      },
     }
+  }
+}
+
+const uniqueStrings = (values: string[]) => {
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const value of values) {
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    unique.push(value)
+  }
+  return unique
+}
+
+const toSafeInt = (value: unknown, fallback: number, min: number, max: number) => {
+  const parsed = parseOptionalNumber(value)
+  if (parsed === undefined) return fallback
+  const normalized = Math.max(min, Math.min(max, Math.floor(parsed)))
+  return Number.isFinite(normalized) ? normalized : fallback
+}
+
+const resolveWorkflowWindowMinutes = () =>
+  toSafeInt(
+    process.env.JANGAR_WORKFLOWS_WINDOW_MINUTES ?? process.env.JANGAR_WORKFLOW_WINDOW_MINUTES,
+    DEFAULT_WORKFLOWS_WINDOW_MINUTES,
+    MIN_WINDOW_MINUTES,
+    MAX_WINDOW_MINUTES,
+  )
+
+const resolveWorkflowThreshold = (raw: string | undefined, fallback: number, min: number) =>
+  toSafeInt(raw, fallback, min, Number.MAX_SAFE_INTEGER)
+
+const resolveWorkflowSwarms = () => {
+  const configured = parseEnvStringList('JANGAR_WORKFLOWS_SWARMS')
+  if (configured.length > 0) return uniqueStrings(configured)
+  const legacy = parseEnvStringList('JANGAR_WORKFLOW_SWARMS')
+  if (legacy.length > 0) return uniqueStrings(legacy)
+  return [...DEFAULT_WORKFLOWS_SWARMS]
+}
+
+const resolveWorkflowNamespaces = (optionsNamespace: string) => {
+  const fallback = uniqueStrings([optionsNamespace, ...DEFAULT_WORKFLOWS_NAMESPACES])
+  try {
+    const parsed = parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
+      fallback,
+      label: 'workflow reliability status',
+    })
+    return uniqueStrings(parsed)
+  } catch (error) {
+    console.warn(`[jangar] failed to parse JANGAR_AGENTS_CONTROLLER_NAMESPACES: ${normalizeMessage(error)}`)
+    return fallback
+  }
+}
+
+const safeNumber = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
+
+const parseIsoMs = (value: unknown): number | null => {
+  const text = asString(value)
+  if (!text) return null
+  const parsed = Date.parse(text)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const parseItems = (payload: unknown) => {
+  const parsed = asRecord(payload)
+  if (!parsed) return []
+  const rawItems = parsed.items
+  if (!Array.isArray(rawItems)) return []
+  return rawItems.filter((item): item is Record<string, unknown> => {
+    return item !== null && typeof item === 'object' && !Array.isArray(item)
+  })
+}
+
+const extractJobConditions = (job: Record<string, unknown>) => {
+  const status = asRecord(job.status) ?? {}
+  const conditions = status.conditions
+  if (!Array.isArray(conditions)) return []
+  return conditions.filter((condition): condition is Record<string, unknown> => {
+    return condition !== null && typeof condition === 'object' && !Array.isArray(condition)
+  })
+}
+
+const isBackoffLimitExceededCondition = (condition: Record<string, unknown>) =>
+  asString(condition.reason) === 'BackoffLimitExceeded'
+
+const resolveWorkflowsReliabilityStatus = async ({
+  now,
+  namespace,
+  namespaces,
+  windowMinutes,
+  swarms,
+  kube,
+}: WorkflowsReliabilityStatusInput) => {
+  const nowMs = now.getTime()
+  const windowStartMs = nowMs - windowMinutes * STATUS_MS_PER_MINUTE
+
+  let activeJobRuns = 0
+  let recentFailedJobs = 0
+  let backoffLimitExceededJobs = 0
+  const reasonsMap = new Map<string, number>()
+
+  const uniqueNamespaces = uniqueStrings(namespaces)
+  const uniqueSwarms = uniqueStrings(swarms)
+  const scopeSwarms = new Set(uniqueSwarms)
+
+  const namespaceScope = uniqueNamespaces.length > 0 ? uniqueNamespaces : [namespace]
+  const selectorSwarms =
+    scopeSwarms.size > 0 ? `${SWARM_LABEL_SELECTOR} in (${Array.from(scopeSwarms).join(',')})` : null
+  const labelSelector = selectorSwarms
+    ? `${WORKFLOW_SCHEDULE_LABEL_SELECTOR},${selectorSwarms}`
+    : WORKFLOW_SCHEDULE_LABEL_SELECTOR
+
+  for (const currentNamespace of namespaceScope) {
+    try {
+      const jobsPayload = await kube.list(WORKFLOW_JOB_RESOURCE, currentNamespace, labelSelector)
+      const jobs = parseItems(jobsPayload)
+
+      for (const job of jobs) {
+        const metadata = asRecord(job.metadata) ?? {}
+        const labels = asRecord(metadata.labels) ?? {}
+        const swarm = asString(labels[SWARM_LABEL_SELECTOR])
+        if (!swarm || !scopeSwarms.has(swarm)) {
+          continue
+        }
+
+        const status = asRecord(job.status) ?? {}
+        const active = safeNumber(status.active)
+        if (active !== undefined && active > 0) {
+          activeJobRuns += 1
+        }
+
+        const failed = safeNumber(status.failed)
+        const completionTimeMs = parseIsoMs(readNested(job, ['status', 'completionTime']))
+        const creationTimeMs = parseIsoMs(readNested(job, ['metadata', 'creationTimestamp']))
+        const referenceMs =
+          completionTimeMs ??
+          parseIsoMs(readNested(job, ['status', 'startTime'])) ??
+          parseIsoMs(readNested(job, ['status', 'lastTransitionTime'])) ??
+          creationTimeMs
+
+        if (
+          failed !== undefined &&
+          failed > 0 &&
+          referenceMs !== null &&
+          referenceMs >= windowStartMs &&
+          referenceMs <= nowMs
+        ) {
+          recentFailedJobs += 1
+        }
+
+        const conditionReasons = new Set<string>()
+        let hasBackoffLimitExceeded = false
+
+        for (const condition of extractJobConditions(job)) {
+          const reason = asString(condition.reason)
+          const transitionMs = parseIsoMs(readNested(condition, ['lastTransitionTime']))
+          const eventMs = transitionMs ?? referenceMs
+          if (!reason || eventMs === null || eventMs < windowStartMs || eventMs > nowMs) continue
+
+          conditionReasons.add(reason)
+          if (isBackoffLimitExceededCondition(condition)) {
+            hasBackoffLimitExceeded = true
+          }
+        }
+
+        if (
+          conditionReasons.size > 0 &&
+          failed !== undefined &&
+          failed > 0 &&
+          referenceMs !== null &&
+          referenceMs >= windowStartMs &&
+          referenceMs <= nowMs
+        ) {
+          for (const reason of conditionReasons) {
+            const normalized = reason.trim()
+            if (!normalized) continue
+            reasonsMap.set(normalized, (reasonsMap.get(normalized) ?? 0) + 1)
+          }
+        }
+
+        if (
+          hasBackoffLimitExceeded &&
+          failed !== undefined &&
+          failed > 0 &&
+          referenceMs !== null &&
+          referenceMs >= windowStartMs &&
+          referenceMs <= nowMs
+        ) {
+          backoffLimitExceededJobs += 1
+        }
+      }
+    } catch (error) {
+      console.warn(
+        `[jangar] failed to collect workflow reliability metrics for namespace ${currentNamespace}: ${normalizeMessage(error)}`,
+      )
+    }
+  }
+
+  const topFailureReasons = Array.from(reasonsMap.entries())
+    .sort((left, right) => {
+      if (right[1] !== left[1]) return right[1] - left[1]
+      return left[0].localeCompare(right[0])
+    })
+    .slice(0, MAX_TOP_FAILURE_REASONS)
+    .map(([reason]) => reason)
+
+  // Keep payload bounded and deterministic.
+  return {
+    active_job_runs: activeJobRuns,
+    recent_failed_jobs: recentFailedJobs,
+    backoff_limit_exceeded_jobs: backoffLimitExceededJobs,
+    window_minutes: windowMinutes,
+    top_failure_reasons: topFailureReasons,
   }
 }
 
@@ -542,6 +504,7 @@ export const buildControlPlaneStatus = async (
   options: ControlPlaneStatusOptions,
   deps: ControlPlaneStatusDeps = {},
 ): Promise<ControlPlaneStatus> => {
+  const now = (deps.now ?? (() => new Date()))()
   const agentsHealth = (deps.getAgentsControllerHealth ?? getAgentsControllerHealth)()
   const supportingHealth = (deps.getSupportingControllerHealth ?? getSupportingControllerHealth)()
   const orchestrationHealth = (deps.getOrchestrationControllerHealth ?? getOrchestrationControllerHealth)()
@@ -587,31 +550,45 @@ export const buildControlPlaneStatus = async (
     },
   ]
 
-  const now = (deps.now ?? (() => new Date()))()
-  const kube = deps.kube ?? createKubernetesClient()
-  let workflows: WorkflowReliabilityStatus
-  try {
-    workflows = await buildWorkflowReliability({ now, kube, options })
-  } catch {
-    workflows = unknownWorkflowReliability(readWorkflowWindowMinutes())
-  }
-
   const database = await (deps.checkDatabase ?? checkDatabase)()
   const grpcStatus = options.grpc
   const watchReliability = (deps.getWatchReliabilitySummary ?? getWatchReliabilitySummary)()
+  const warningBackoffThreshold = resolveWorkflowThreshold(
+    process.env.JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
+    DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
+    1,
+  )
+  const degradedBackoffThreshold = resolveWorkflowThreshold(
+    process.env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD,
+    DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD,
+    warningBackoffThreshold,
+  )
+
+  const workflows = await (deps.getWorkflowsReliabilityStatus ?? resolveWorkflowsReliabilityStatus)({
+    now,
+    namespace: options.namespace,
+    namespaces: resolveWorkflowNamespaces(options.namespace),
+    windowMinutes: resolveWorkflowWindowMinutes(),
+    swarms: resolveWorkflowSwarms(),
+    kube: createKubernetesClient(),
+  })
+
+  const isWorkflowsWarning = workflows.backoff_limit_exceeded_jobs >= warningBackoffThreshold
+  const isWorkflowsDegraded = workflows.backoff_limit_exceeded_jobs >= degradedBackoffThreshold
+
+  const leaderElection = getLeaderElectionStatus()
 
   const degradedComponents = [
     ...controllers
       .filter((controller) => controller.status === 'degraded' || controller.status === 'disabled')
       .map((controller) => controller.name),
     ...runtimeAdapters.filter((adapter) => adapter.status === 'degraded').map((adapter) => `runtime:${adapter.name}`),
-    ...(workflows.status === 'degraded' ? ['workflows'] : []),
     ...(database.status === 'healthy' ? [] : ['database']),
     ...(grpcStatus.enabled && grpcStatus.status !== 'healthy' ? ['grpc'] : []),
     ...(watchReliability.status === 'degraded' ? ['watch_reliability'] : []),
+    ...(isWorkflowsWarning || isWorkflowsDegraded ? ['workflows'] : []),
+    ...(isWorkflowsDegraded ? ['runtime:workflows'] : []),
   ]
-
-  const leaderElection = getLeaderElectionStatus()
 
   return {
     service: options.service ?? 'jangar',
@@ -630,7 +607,6 @@ export const buildControlPlaneStatus = async (
     },
     controllers,
     runtime_adapters: runtimeAdapters,
-    workflows,
     database,
     grpc: grpcStatus,
     watch_reliability: {
@@ -642,6 +618,7 @@ export const buildControlPlaneStatus = async (
       total_restarts: watchReliability.total_restarts,
       streams: watchReliability.streams,
     },
+    workflows,
     namespaces: [
       {
         namespace: options.namespace,

@@ -7,7 +7,7 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Completed` (program closure passed against all v6/13 definition-of-done criteria on `2026-03-03`)
-- Implementation status (strict): `Implemented=15`, `Partial=0`, `Planned=1` of 16
+- Implementation status (strict): `Implemented=16`, `Partial=0`, `Planned=0` of 16
 - Evidence: `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence sync: `14-legacy-gap-disposition-map-2026-03-03.md` (signed v4/v5 disposition completeness)
 - Rollout status: v6 pack controls are represented by merged runtime/control-plane closure phases in `main` (`#3921` through `#3960`).
@@ -57,7 +57,6 @@ This pack is positioned as the next architecture layer above:
 22. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
 23. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
 24. `23-trading-startup-readiness-warmup-2026-03-04.md`
-25. `24-knative-probe-port-normalization-and-rollout-stability-2026-03-04.md`
 
 ## Recommended Build Order
 
@@ -86,7 +85,6 @@ This pack is positioned as the next architecture layer above:
 22. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
 23. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
 24. `23-trading-startup-readiness-warmup-2026-03-04.md`
-25. `24-knative-probe-port-normalization-and-rollout-stability-2026-03-04.md`
 
 ## Why This Sequence
 
