@@ -514,6 +514,43 @@ class TestConfig(TestCase):
                 DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
             )
 
+    def test_runtime_regime_confidence_thresholds_by_entropy_band_are_normalized(self) -> None:
+        settings = Settings(
+            TRADING_UNIVERSE_SOURCE="static",
+            TRADING_ENABLED=False,
+            TRADING_RUNTIME_REGIME_CONFIDENCE_THRESHOLDS_BY_ENTROPY_BAND={
+                " High ": [0.80, 0.60],
+                " low ": [0.66, 0.46],
+            },
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(
+            settings.trading_runtime_regime_confidence_thresholds_by_entropy_band,
+            {"high": (0.80, 0.60), "low": (0.66, 0.46)},
+        )
+
+    def test_runtime_regime_confidence_thresholds_by_entropy_band_reject_invalid_values(
+        self,
+    ) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                TRADING_UNIVERSE_SOURCE="static",
+                TRADING_ENABLED=False,
+                TRADING_RUNTIME_REGIME_CONFIDENCE_THRESHOLDS_BY_ENTROPY_BAND={
+                    "low": [1.05, 0.45],
+                },
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+        with self.assertRaises(ValidationError):
+            Settings(
+                TRADING_UNIVERSE_SOURCE="static",
+                TRADING_ENABLED=False,
+                TRADING_RUNTIME_REGIME_CONFIDENCE_THRESHOLDS_BY_ENTROPY_BAND={
+                    "low": [0.55, 0.65],
+                },
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
     def test_allocator_rejects_negative_strategy_budget_cap(self) -> None:
         with self.assertRaises(ValidationError):
             Settings(
