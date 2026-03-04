@@ -64,7 +64,7 @@ describe('getLlmRolloutHandler', () => {
     expect(body.llmRollout.stageRiskProfile.maxRecentErrors).toBe(1)
     expect(body.llmCircuit.open).toBe(true)
     expect(body.llmCircuit.cooldownRemainingSeconds).toBe(120)
-    expect(body.llmCircuit.openDurationSeconds).toBe(120)
+    expect(body.llmCircuit.openDurationSeconds).toBe(480)
 
     vi.useRealTimers()
   })
