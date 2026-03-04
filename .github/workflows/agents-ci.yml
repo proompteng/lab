@@ -228,12 +228,6 @@ jobs:
             echo "Skipping prebuilt .output reuse: missing generated index/proto artifacts"
           fi
 
-          CODEX_AUTH_PATH="${HOME}/.codex/auth.json"
-          if [ ! -f "${CODEX_AUTH_PATH}" ]; then
-            CODEX_AUTH_PATH="${PRUNE_DIR}/codex-auth.json"
-            printf '{}' > "${CODEX_AUTH_PATH}"
-          fi
-
           JANGAR_VERSION="$(git -C "${WORKSPACE}" rev-parse --short HEAD)"
           JANGAR_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
           IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
@@ -246,7 +240,6 @@ jobs:
             --build-arg "JANGAR_VERSION=${JANGAR_VERSION}" \
             --build-arg "JANGAR_COMMIT=${JANGAR_COMMIT}" \
             --build-arg "BUN_BASE_IMAGE=docker.io/oven/bun" \
-            --secret "id=codexauth,src=${CODEX_AUTH_PATH}" \
             "${PRUNE_DIR}"
           kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"
 
