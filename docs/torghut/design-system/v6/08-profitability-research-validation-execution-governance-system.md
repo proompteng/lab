@@ -62,7 +62,9 @@ Required top-level fields:
   - `base`
   - `head`
   - `artifact_path`
+  - `design_doc`
   - `run_id`
+`run_context.design_doc` is mandatory and must be a non-empty design document reference path for the active governance specification.
 - `stages`
   - `research`
   - `validation`
