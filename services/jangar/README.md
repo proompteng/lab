@@ -170,6 +170,12 @@ Environment variables:
 - `JANGAR_GRPC_ADDRESS` (optional override for `host:port`)
 - `JANGAR_GRPC_TOKEN` (optional shared token)
 
+Control-plane status endpoint behavior (`/api/control-plane/status`) is deliberate:
+
+- `JANGAR_GRPC_ENABLED` uses a strict boolean parser (`true/false`, `1/0`, `yes/no`, `on/off`, case-insensitive, no whitespace).
+- invalid `JANGAR_GRPC_ENABLED`, `JANGAR_GRPC_PORT`, or malformed `JANGAR_GRPC_ADDRESS` values return `grpc.status = degraded` with explanatory messages.
+- an empty/unset `JANGAR_GRPC_ENABLED` disables gRPC (`disabled` status) and does not perform socket checks.
+
 ## Terminal backend
 
 Jangar terminals are intended to run against a dedicated terminal backend deployment (`jangar-terminal` in GitOps). The main Jangar service proxies session APIs to that backend.

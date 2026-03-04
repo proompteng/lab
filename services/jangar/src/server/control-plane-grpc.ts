@@ -5,10 +5,45 @@ import type { GrpcStatus } from '~/server/control-plane-status'
 const DEFAULT_GRPC_PORT = 50051
 const DEFAULT_GRPC_HEALTH_TIMEOUT_MS = 750
 
-const parseBooleanFlag = (value: string): boolean => ['1', 'true', 'yes', 'on'].includes(value.toLowerCase())
+type ParsedBooleanFlag = {
+  value: boolean
+  valid: boolean
+}
+
+const parseBooleanFlag = (value: string): ParsedBooleanFlag => {
+  if (!value) {
+    return { value: false, valid: true }
+  }
+
+  const normalized = value.toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return { value: true, valid: true }
+  }
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return { value: false, valid: true }
+  }
+  return { value: false, valid: false }
+}
+
+const parseGrpcPort = (portInput: string, fallback: number): number | null => {
+  const trimmed = portInput.trim()
+  if (!trimmed) {
+    return fallback
+  }
+
+  if (!/^\d+$/.test(trimmed)) {
+    return null
+  }
+
+  const port = Number.parseInt(trimmed, 10)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return null
+  }
+  return port
+}
 
 const parseGrpcTimeoutMs = (): number => {
-  const timeout = Number.parseInt(process.env.JANGAR_GRPC_HEALTH_TIMEOUT_MS?.trim() ?? '', 10)
+  const timeout = Number(process.env.JANGAR_GRPC_HEALTH_TIMEOUT_MS?.trim() ?? '')
   if (!Number.isFinite(timeout) || timeout <= 0) {
     return DEFAULT_GRPC_HEALTH_TIMEOUT_MS
   }
@@ -30,7 +65,11 @@ const parseGrpcAddress = (addressInput: string) => {
   if (separatorIndex < 1 || separatorIndex === address.length - 1) return null
 
   const host = address.slice(0, separatorIndex)
-  const port = Number.parseInt(address.slice(separatorIndex + 1), 10)
+  const portToken = address.slice(separatorIndex + 1).trim()
+  if (!/^\d+$/.test(portToken)) {
+    return null
+  }
+  const port = Number.parseInt(portToken, 10)
   if (!host || !Number.isFinite(port) || port < 1 || port > 65535) return null
 
   return { host, port, address }
@@ -54,8 +93,17 @@ const checkGrpcEndpointReachability = async (host: string, port: number, timeout
 }
 
 export const resolveGrpcStatus = async (): Promise<GrpcStatus> => {
-  const enabled = parseBooleanFlag((process.env.JANGAR_GRPC_ENABLED ?? '').trim())
-  if (!enabled) {
+  const parsedEnabled = parseBooleanFlag((process.env.JANGAR_GRPC_ENABLED ?? '').trim())
+  if (!parsedEnabled.valid) {
+    return {
+      enabled: false,
+      address: '',
+      status: 'degraded',
+      message: `invalid JANGAR_GRPC_ENABLED value ${JSON.stringify(process.env.JANGAR_GRPC_ENABLED ?? '').trim()}`,
+    }
+  }
+
+  if (!parsedEnabled.value) {
     return {
       enabled: false,
       address: '',
@@ -65,15 +113,58 @@ export const resolveGrpcStatus = async (): Promise<GrpcStatus> => {
   }
 
   const host = (process.env.JANGAR_GRPC_HOST ?? '').trim() || '127.0.0.1'
-  const port = Number.parseInt(process.env.JANGAR_GRPC_PORT ?? '', 10) || DEFAULT_GRPC_PORT
-  const address = process.env.JANGAR_GRPC_ADDRESS?.trim() || `${host}:${port}`
-  const parsedAddress = parseGrpcAddress(address)
+
+  const addressOverride = process.env.JANGAR_GRPC_ADDRESS?.trim()
+  if (!addressOverride) {
+    const resolvedPort = parseGrpcPort(process.env.JANGAR_GRPC_PORT ?? '', DEFAULT_GRPC_PORT)
+    if (resolvedPort === null) {
+      return {
+        enabled: true,
+        address: '',
+        status: 'degraded',
+        message: `invalid JANGAR_GRPC_PORT value ${JSON.stringify(process.env.JANGAR_GRPC_PORT ?? '').trim()}`,
+      }
+    }
+
+    const parsedAddress = parseGrpcAddress(`${host}:${resolvedPort}`)
+    if (!parsedAddress) {
+      return {
+        enabled: true,
+        address: `${host}:${resolvedPort}`,
+        status: 'degraded',
+        message: `invalid gRPC address ${JSON.stringify(`${host}:${resolvedPort}`)}`,
+      }
+    }
+
+    const reachabilityError = await checkGrpcEndpointReachability(
+      parsedAddress.host,
+      parsedAddress.port,
+      parseGrpcTimeoutMs(),
+    )
+    if (reachabilityError) {
+      return {
+        enabled: true,
+        address: parsedAddress.address,
+        status: 'degraded',
+        message: `gRPC endpoint not reachable (${reachabilityError})`,
+      }
+    }
+
+    return {
+      enabled: true,
+      address: parsedAddress.address,
+      status: 'healthy',
+      message: '',
+    }
+  }
+
+  const parsedAddress = parseGrpcAddress(addressOverride)
   if (!parsedAddress) {
     return {
       enabled: true,
-      address,
+      address: addressOverride,
       status: 'degraded',
-      message: `invalid gRPC address ${JSON.stringify(address)}`,
+      message: `invalid gRPC address ${JSON.stringify(addressOverride)}`,
     }
   }
 
@@ -93,7 +184,7 @@ export const resolveGrpcStatus = async (): Promise<GrpcStatus> => {
 
   return {
     enabled: true,
-    address,
+    address: parsedAddress.address,
     status: 'healthy',
     message: '',
   }

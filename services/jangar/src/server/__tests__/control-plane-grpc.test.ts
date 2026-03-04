@@ -25,7 +25,7 @@ const createReusableTcpServer = async (): Promise<{ port: number; close: () => P
     const server = createServer(() => {})
 
     server.listen(0, '127.0.0.1', () => {
-      const { address, port } = server.address() as { address: string; port: number }
+      const { port } = server.address() as { address: string; port: number }
       if (typeof port !== 'number') {
         void server.close()
         reject(new Error('failed to resolve ephemeral test port'))
@@ -62,6 +62,37 @@ describe('resolveGrpcStatus', () => {
       status: 'disabled',
       message: 'gRPC disabled',
     })
+  })
+
+  it('returns degraded when JANGAR_GRPC_ENABLED has an invalid value', async () => {
+    const status = await withEnv(
+      {
+        JANGAR_GRPC_ENABLED: 'bogus',
+      },
+      () => resolveGrpcStatus(),
+    )
+
+    expect(status).toMatchObject({
+      enabled: false,
+      status: 'degraded',
+    })
+    expect(status.message).toContain('invalid JANGAR_GRPC_ENABLED value')
+  })
+
+  it('returns degraded when JANGAR_GRPC_PORT is malformed and no address override is set', async () => {
+    const status = await withEnv(
+      {
+        JANGAR_GRPC_ENABLED: '1',
+        JANGAR_GRPC_PORT: 'abc',
+      },
+      () => resolveGrpcStatus(),
+    )
+    expect(status).toMatchObject({
+      enabled: true,
+      status: 'degraded',
+      address: '',
+    })
+    expect(status.message).toContain('invalid JANGAR_GRPC_PORT')
   })
 
   it('marks gRPC as degraded when endpoint address is invalid', async () => {
