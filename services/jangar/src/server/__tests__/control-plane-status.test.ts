@@ -39,60 +39,13 @@ const makeMigrationConsistency = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
-const createKubeMap = (resources: {
-  jobs?: unknown[]
-  deployments?: unknown[]
-  schedules?: unknown[]
-  cronjobs?: unknown[]
-}) => ({
-  list: async (resource?: string) =>
-    ({
-      items:
-        resource === 'deployments'
-          ? (resources.deployments ?? [])
-          : resource === 'jobs'
-            ? (resources.jobs ?? [])
-            : resource === 'schedules.schedules.proompteng.ai'
-              ? (resources.schedules ?? [])
-              : resource === 'cronjob'
-                ? (resources.cronjobs ?? [])
-                : [],
-    }) as Record<string, unknown>,
-})
-
-const createKubeList = (
-  jobs: unknown[] = [],
-  schedules: unknown[] = [],
-  cronjobs: unknown[] = [],
-  deployments: unknown[] = [],
-) => createKubeMap({ jobs, schedules, cronjobs, deployments })
-
-type DeploymentFixtureOverrides = {
-  metadata?: Record<string, unknown>
-  spec?: Record<string, unknown>
-  status?: Record<string, unknown>
-}
-
-const createDeployment = (overrides: DeploymentFixtureOverrides = {}) => ({
-  metadata: {
-    name: 'agents',
-    generation: 3,
-    ...(overrides.metadata ?? {}),
+const createKubeList = (jobs: unknown[], schedules: unknown[] = [], cronjobs: unknown[] = []) => ({
+  list: async (resource: string) => {
+    if (resource === 'jobs') return { items: jobs } as Record<string, unknown>
+    if (resource === 'schedules.schedules.proompteng.ai') return { items: schedules } as Record<string, unknown>
+    if (resource === 'cronjob') return { items: cronjobs } as Record<string, unknown>
+    return { items: [] } as Record<string, unknown>
   },
-  spec: { replicas: 1, ...(overrides.spec ?? {}) },
-  status: {
-    readyReplicas: 1,
-    availableReplicas: 1,
-    updatedReplicas: 1,
-    unavailableReplicas: 0,
-    observedGeneration: 3,
-    conditions: [
-      { type: 'Available', status: 'True' },
-      { type: 'Progressing', status: 'True' },
-    ],
-    ...(overrides.status ?? {}),
-  },
-  ...overrides,
 })
 
 const failingKubeList = {
@@ -111,15 +64,6 @@ const createActiveJob = () => ({
   },
 })
 
-const createDeploymentWith = (name: string, overrides: DeploymentFixtureOverrides = {}) =>
-  createDeployment({
-    ...overrides,
-    metadata: {
-      ...overrides.metadata,
-      name,
-    },
-  })
-
 const createBackoffJob = (name: string, reason: string, at: string) => ({
   metadata: { name, creationTimestamp: at },
   status: {
@@ -134,6 +78,37 @@ const createBackoffJob = (name: string, reason: string, at: string) => ({
     ],
   },
 })
+
+const createRolloutJob = (
+  name: string,
+  at: string,
+  options: { activeJobs?: number; failed?: number; reason?: string; agentRunName?: string } = {},
+) => {
+  const { activeJobs = 1, failed = 0, reason = '', agentRunName = null } = options
+  const labels = agentRunName ? { 'agents.proompteng.ai/agent-run': agentRunName } : {}
+
+  return {
+    metadata: {
+      name,
+      creationTimestamp: at,
+      labels,
+    },
+    status: {
+      active: activeJobs,
+      failed,
+      conditions: reason
+        ? [
+            {
+              type: 'Failed',
+              status: 'True',
+              reason,
+              lastTransitionTime: at,
+            },
+          ]
+        : [],
+    },
+  }
+}
 
 const createRolloutSchedule = (
   name: string,
@@ -269,12 +244,7 @@ describe('control-plane status', () => {
         getAgentsControllerHealth: () => healthyController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        kube: createKubeMap({
-          jobs: [createActiveJob()],
-          deployments: [createDeploymentWith('agents')],
-          schedules: healthyRolloutKubeState.schedules,
-          cronjobs: healthyRolloutKubeState.cronjobs,
-        }),
+        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs),
         resolveTemporalAdapter: async () => ({
           name: 'temporal',
           available: true,
@@ -334,12 +304,7 @@ describe('control-plane status', () => {
         getAgentsControllerHealth: () => degradedController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        kube: createKubeMap({
-          jobs: [createActiveJob()],
-          deployments: [createDeploymentWith('agents')],
-          schedules: healthyRolloutKubeState.schedules,
-          cronjobs: healthyRolloutKubeState.cronjobs,
-        }),
+        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs),
         resolveTemporalAdapter: async () => ({
           name: 'temporal',
           available: false,
@@ -411,8 +376,8 @@ describe('control-plane status', () => {
           latency_ms: 4,
           migration_consistency: makeMigrationConsistency(),
         }),
-        kube: createKubeMap({
-          jobs: [
+        kube: createKubeList(
+          [
             createBackoffJob(
               'jangar-control-plane-implement-sched-abc-step-1-attempt-1',
               'BackoffLimitExceeded',
@@ -424,10 +389,9 @@ describe('control-plane status', () => {
               '2026-01-20T00:00:20Z',
             ),
           ],
-          schedules: healthyRolloutKubeState.schedules,
-          cronjobs: healthyRolloutKubeState.cronjobs,
-          deployments: [createDeploymentWith('agents')],
-        }),
+          healthyRolloutKubeState.schedules,
+          healthyRolloutKubeState.cronjobs,
+        ),
       },
     )
 
@@ -478,113 +442,6 @@ describe('control-plane status', () => {
     expect(status.workflows.message).toContain('kubernetes query failed')
     expect(status.namespaces[0]?.degraded_components).not.toContain('workflows')
     expect(status.namespaces[0]?.degraded_components).not.toContain('rollout')
-    expect(status.rollout_health.status).toBe('unknown')
-    expect(status.namespaces[0]?.degraded_components).not.toContain('rollout_health')
-  })
-
-  it('reports rollout health from deployment status', async () => {
-    const status = await buildControlPlaneStatus(
-      {
-        namespace: 'agents',
-        grpc: {
-          enabled: true,
-          address: '127.0.0.1:50051',
-          status: 'healthy',
-          message: '',
-        },
-      },
-      {
-        now,
-        getAgentsControllerHealth: () => healthyController,
-        getSupportingControllerHealth: () => healthyController,
-        getOrchestrationControllerHealth: () => healthyController,
-        resolveTemporalAdapter: async () => ({
-          name: 'temporal',
-          available: true,
-          status: 'configured',
-          message: '',
-          endpoint: 'temporal:7233',
-        }),
-        checkDatabase: async () => ({
-          configured: true,
-          connected: true,
-          status: 'healthy',
-          message: '',
-          latency_ms: 4,
-          migration_consistency: makeMigrationConsistency(),
-        }),
-        kube: createKubeMap({
-          jobs: [createActiveJob()],
-          schedules: healthyRolloutKubeState.schedules,
-          cronjobs: healthyRolloutKubeState.cronjobs,
-          deployments: [createDeploymentWith('agents')],
-        }),
-      },
-    )
-
-    expect(status.rollout_health.status).toBe('healthy')
-    expect(status.rollout_health.observed_deployments).toBe(1)
-    expect(status.rollout_health.degraded_deployments).toBe(0)
-    expect(status.namespaces[0]?.degraded_components).not.toContain('rollout_health')
-  })
-
-  it('marks rollout component degraded when deployment is unavailable', async () => {
-    const status = await buildControlPlaneStatus(
-      {
-        namespace: 'agents',
-        grpc: {
-          enabled: true,
-          address: '127.0.0.1:50051',
-          status: 'healthy',
-          message: '',
-        },
-      },
-      {
-        now,
-        getAgentsControllerHealth: () => healthyController,
-        getSupportingControllerHealth: () => healthyController,
-        getOrchestrationControllerHealth: () => healthyController,
-        resolveTemporalAdapter: async () => ({
-          name: 'temporal',
-          available: true,
-          status: 'configured',
-          message: '',
-          endpoint: 'temporal:7233',
-        }),
-        checkDatabase: async () => ({
-          configured: true,
-          connected: true,
-          status: 'healthy',
-          message: '',
-          latency_ms: 4,
-          migration_consistency: makeMigrationConsistency(),
-        }),
-        kube: createKubeMap({
-          jobs: [createActiveJob()],
-          deployments: [
-            createDeployment({
-              metadata: { name: 'agents' },
-              spec: { replicas: 1 },
-              status: {
-                readyReplicas: 0,
-                availableReplicas: 0,
-                updatedReplicas: 0,
-                unavailableReplicas: 1,
-                observedGeneration: 2,
-                conditions: [
-                  { type: 'Available', status: 'False' },
-                  { type: 'Progressing', status: 'True' },
-                ],
-              },
-            }),
-          ],
-        }),
-      },
-    )
-
-    expect(status.rollout_health.status).toBe('degraded')
-    expect(status.rollout_health.degraded_deployments).toBe(1)
-    expect(status.namespaces[0]?.degraded_components).toContain('rollout_health')
   })
 
   it('marks database component as degraded when migration drift is detected', async () => {
@@ -625,10 +482,7 @@ describe('control-plane status', () => {
             unexpected_migrations: [],
           }),
         }),
-        kube: createKubeMap({
-          jobs: [createActiveJob()],
-          deployments: [createDeploymentWith('agents')],
-        }),
+        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
     )
@@ -636,6 +490,7 @@ describe('control-plane status', () => {
     expect(status.namespaces[0]?.degraded_components).toContain('database')
     expect(status.database.status).toBe('degraded')
     expect(status.database.migration_consistency.unapplied_count).toBe(2)
+    expect(status.rollout.status).toBe('healthy')
   })
 
   it('marks rollout as degraded when schedule health is stale', async () => {
@@ -670,10 +525,9 @@ describe('control-plane status', () => {
           migration_consistency: makeMigrationConsistency(),
         }),
         kube: createKubeList(
-          [createActiveJob()],
+          [],
           [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', '2026-01-19T20:00:00Z')],
           [createRolloutCron('jangar-control-plane-implement-sched', '2026-01-19T20:00:00Z', '2026-01-19T20:00:00Z')],
-          [createDeploymentWith('agents')],
         ),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
@@ -723,7 +577,6 @@ describe('control-plane status', () => {
           [createActiveJob()],
           [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', '')],
           [createRolloutCron('jangar-control-plane-implement-sched', nowIso, nowIso)],
-          [createDeploymentWith('agents')],
         ),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
@@ -739,6 +592,63 @@ describe('control-plane status', () => {
     expect(rolloutStage?.last_run_at).toBe(nowIso)
     expect(rolloutStage?.is_stale).toBe(false)
     expect(rolloutStage?.is_active).toBe(true)
+  })
+
+  it('treats running rollout jobs as healthy despite no recent successful run', async () => {
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now,
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => ({
+          name: 'temporal',
+          available: true,
+          status: 'configured',
+          message: '',
+          endpoint: 'temporal:7233',
+        }),
+        checkDatabase: async () => ({
+          configured: true,
+          connected: true,
+          status: 'healthy',
+          message: '',
+          latency_ms: 4,
+          migration_consistency: makeMigrationConsistency(),
+        }),
+        kube: createKubeList(
+          [
+            createRolloutJob('unexpected-rollout-job-name-implement-step-1-attempt-1', '2026-01-20T00:00:10Z', {
+              activeJobs: 1,
+              agentRunName: 'jangar-control-plane-implement-sched-hx99p',
+            }),
+          ],
+          [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', '2026-01-19T20:00:00Z')],
+          [createRolloutCron('jangar-control-plane-implement-sched', '2026-01-19T20:00:00Z', '0001-01-01T00:00:00Z')],
+        ),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+      },
+    )
+
+    expect(status.rollout.status).toBe('healthy')
+    expect(status.rollout.stale_schedules).toBe(0)
+    expect(status.rollout.stages).toHaveLength(1)
+    expect(status.rollout.stages[0]?.is_stale).toBe(false)
+    expect(status.rollout.stages[0]).toMatchObject({
+      name: 'jangar-control-plane-implement-sched',
+      recent_failed_jobs: 0,
+      backoff_limit_exceeded_jobs: 0,
+    })
+    expect(status.namespaces[0]?.degraded_components).not.toContain('rollout')
   })
 
   it('surfaces failed-run and backoff metrics for rollout schedules', async () => {
@@ -775,33 +685,33 @@ describe('control-plane status', () => {
         kube: createKubeList(
           [
             createBackoffJob(
-              'jangar-control-plane-implement-sched-step-1-attempt-1',
+              'jangar-control-plane-implement-sched-abc-step-1-attempt-1',
               'BackoffLimitExceeded',
-              now().toISOString(),
+              '2026-01-20T00:00:10Z',
             ),
             createBackoffJob(
-              'jangar-control-plane-implement-sched-step-1-attempt-2',
-              'ImagePullBackOff',
-              now().toISOString(),
+              'jangar-control-plane-implement-sched-def-step-1-attempt-1',
+              'BackoffLimitExceeded',
+              '2026-01-20T00:00:20Z',
             ),
           ],
-          [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', now().toISOString())],
-          [createRolloutCron('jangar-control-plane-implement-sched', now().toISOString(), now().toISOString())],
-          [createDeploymentWith('agents')],
+          [createRolloutSchedule('jangar-control-plane-implement-sched', 'Active', '2026-01-20T00:00:00Z')],
+          [createRolloutCron('jangar-control-plane-implement-sched', '2026-01-20T00:00:00Z', '2026-01-20T00:00:00Z')],
         ),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
     )
 
-    expect(status.rollout.status).toBe('healthy')
-    const rolloutStage = status.rollout.stages.find((item) => item.name === 'jangar-control-plane-implement-sched')
-    expect(rolloutStage).toBeDefined()
-    expect(rolloutStage?.failed_runs_last_window).toBe(2)
-    expect(rolloutStage?.backoff_failures_last_window).toBe(1)
-    expect(rolloutStage?.top_failure_reasons).toEqual([
-      { reason: 'BackoffLimitExceeded', count: 1 },
-      { reason: 'ImagePullBackOff', count: 1 },
-    ])
+    expect(status.rollout.status).toBe('degraded')
+    expect(status.rollout.backoff_limit_exceeded_jobs).toBe(2)
+    expect(status.rollout.backoff_limit_exceeded_threshold).toBe(2)
+    expect(status.rollout.stages).toHaveLength(1)
+    expect(status.rollout.stages[0]).toMatchObject({
+      name: 'jangar-control-plane-implement-sched',
+      backoff_limit_exceeded_jobs: 2,
+      recent_failed_jobs: 2,
+    })
+    expect(status.namespaces[0]?.degraded_components).toContain('rollout')
   })
 
   it('keeps control-plane status healthy when kubernetes client creation fails', async () => {
