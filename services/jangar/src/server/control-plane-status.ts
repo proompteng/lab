@@ -120,6 +120,7 @@ export type ControlPlaneRolloutReliability = {
   observed_schedules: number
   inactive_schedules: number
   stale_schedules: number
+  message: string
   stages: ControlPlaneRolloutStageReliability[]
 }
 
@@ -669,6 +670,7 @@ const unknownRolloutReliability = (windowMinutes: number): ControlPlaneRolloutRe
   observed_schedules: 0,
   inactive_schedules: 0,
   stale_schedules: 0,
+  message: 'rollout reliability unavailable (kubernetes query failed)',
   stages: [],
 })
 
@@ -849,6 +851,9 @@ const buildRolloutReliability = async (deps: {
   const staleSchedules = stages.filter((stage) => stage.is_stale).length
 
   const isDegraded = stages.length === 0 || inactiveSchedules > 0 || staleSchedules > 0
+  const message = isDegraded
+    ? `rollout reliability degraded: ${inactiveSchedules} inactive schedules and ${staleSchedules} stale schedules`
+    : 'rollout reliability healthy'
 
   return {
     status: isDegraded ? 'degraded' : 'healthy',
@@ -856,6 +861,7 @@ const buildRolloutReliability = async (deps: {
     observed_schedules: stages.length,
     inactive_schedules: inactiveSchedules,
     stale_schedules: staleSchedules,
+    message,
     stages,
   }
 }

@@ -159,6 +159,7 @@ export type ControlPlaneRolloutReliability = {
   observed_schedules: number
   inactive_schedules: number
   stale_schedules: number
+  message: string
   stages: ControlPlaneRolloutStageReliability[]
 }
 
