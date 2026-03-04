@@ -333,8 +333,24 @@ class TestTradingApi(TestCase):
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+        },
+    )
     def test_trading_health_ok(
-        self, _mock_clickhouse: object, _mock_alpaca: object
+        self,
+        _mock_schema: object,
+        _mock_account_scope: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
     ) -> None:
         original = settings.trading_enabled
         settings.trading_enabled = True
@@ -355,8 +371,24 @@ class TestTradingApi(TestCase):
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": False, "detail": "down"})
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+        },
+    )
     def test_trading_health_dependency_failure(
-        self, _mock_clickhouse: object, _mock_alpaca: object
+        self,
+        _mock_schema: object,
+        _mock_account_scope: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
     ) -> None:
         original = settings.trading_enabled
         settings.trading_enabled = True
