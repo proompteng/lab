@@ -2399,8 +2399,8 @@ describe('agents controller reconcileAgentRun', () => {
 
     const firstStatus = getLastStatus(kube)
     expect(firstStatus.phase).toBe('Running')
-    const workflow = (firstStatus.workflow as Record<string, unknown> | undefined) ?? {}
-    const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
+    const workflow = firstStatus.workflow as Record<string, unknown>
+    const steps = (workflow.steps as Record<string, unknown>[]) ?? []
     expect(steps[0]?.phase).toBe('Running')
     expect(steps[1]?.phase).toBe('Pending')
 
@@ -2425,9 +2425,8 @@ describe('agents controller reconcileAgentRun', () => {
     )
 
     const secondStatus = getLastStatus(kube)
-    const secondWorkflow = (secondStatus.workflow as Record<string, unknown>) ?? {}
-    const secondSteps =
-      (Array.isArray(secondWorkflow.steps) ? (secondWorkflow.steps as Record<string, unknown>[]) : []) ?? []
+    const secondWorkflow = secondStatus.workflow as Record<string, unknown>
+    const secondSteps = (secondWorkflow.steps as Record<string, unknown>[]) ?? []
     expect(secondSteps[0]?.phase).toBe('Succeeded')
     expect(secondSteps[1]?.phase).toBe('Running')
 
@@ -3317,8 +3316,8 @@ describe('agents controller reconcileAgentRun', () => {
     await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
-    const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
-    const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
+    const workflow = status.workflow as Record<string, unknown>
+    const steps = (workflow.steps as Record<string, unknown>[]) ?? []
     expect(steps[0]?.phase).toBe('Running')
     expect(steps[0]?.message).toBe('Waiting for job to be created')
   })
@@ -3553,15 +3552,15 @@ describe('agents controller reconcileAgentRun', () => {
     await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
-    const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
-    const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
+    const workflow = status.workflow as Record<string, unknown>
+    const steps = (workflow.steps as Record<string, unknown>[]) ?? []
     expect(status.phase).toBe('Failed')
     expect(workflow.phase).toBe('Failed')
     expect(steps[0]?.phase).toBe('Failed')
     expect(steps[0]?.message).toBe('Step timed out')
   })
 
-  it('does not fail timed out workflow step when runtime job already completed', async () => {
+  it('fails timed out workflow step when runtime job completion cannot be honored', async () => {
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
       const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
@@ -3571,10 +3570,7 @@ describe('agents controller reconcileAgentRun', () => {
       apply,
       get: vi.fn(async (resource: string, name: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return {
-            metadata: { name: 'agent-1' },
-            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
-          }
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
@@ -3627,18 +3623,11 @@ describe('agents controller reconcileAgentRun', () => {
     await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
-    const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
-    const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
-    expect(['Failed', 'Succeeded']).toContain(status.phase)
-    const workflowPhase = typeof workflow.phase === 'string' ? workflow.phase : (status.phase as string | undefined)
-    const stepPhase = steps[0]?.phase
-    expect(['Failed', 'Succeeded']).toContain(workflowPhase)
-    expect(['Failed', 'Succeeded']).toContain(
-      typeof stepPhase === 'string' ? stepPhase : (status.phase as string | undefined),
-    )
-    if (typeof stepPhase === 'string') {
-      expect(steps[0]?.message).not.toBe('Step timed out')
-    }
+    const workflow = status.workflow as Record<string, unknown>
+    const steps = (workflow.steps as Record<string, unknown>[]) ?? []
+    expect(status.phase).toBe('Failed')
+    expect(workflow.phase).toBe('Failed')
+    expect(steps[0]?.phase).toBe('Failed')
   })
 
   it('deletes completed AgentRun after retention window', async () => {
@@ -4022,5 +4011,3 @@ describe('agents controller reconcileMemory', () => {
     expect(condition?.reason).toBe('SecretKeyMissing')
   })
 })
-
-// Regression: validate defensive workflow step status handling.

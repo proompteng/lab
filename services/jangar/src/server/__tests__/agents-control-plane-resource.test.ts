@@ -62,12 +62,12 @@ describe('agents control-plane resource route', () => {
     cacheStoreMocks.createControlPlaneCacheStore.mockReturnValue(cachedStore)
     const kube = {
       get: vi.fn(async () => ({ status: 'miss', metadata: { name: 'agent-a' } })),
-    } as unknown as ReturnType<(typeof import('~/server/primitives-kube'))['createKubernetesClient']>
+    }
     kubeClientMocks.createKubernetesClient.mockReturnValue(kube)
 
     const response = await getPrimitiveResource(
       new Request('http://localhost/api/agents/control-plane/resource?kind=Agent&name=agent-a&namespace=agents'),
-      { kubeClient: kube as never },
+      { kubeClient: kube },
     )
 
     expect(response.status).toBe(200)
@@ -110,12 +110,12 @@ describe('agents control-plane resource route', () => {
         spec: {},
         status: {},
       })),
-    } as unknown as ReturnType<(typeof import('~/server/primitives-kube'))['createKubernetesClient']>
+    }
     kubeClientMocks.createKubernetesClient.mockReturnValue(kube)
 
     const response = await getPrimitiveResource(
       new Request('http://localhost/api/agents/control-plane/resource?kind=Agent&name=agent-a&namespace=agents'),
-      { kubeClient: kube as never },
+      { kubeClient: kube },
     )
 
     expect(response.status).toBe(200)
