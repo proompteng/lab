@@ -83,6 +83,52 @@ describe('agents control-plane resources route', () => {
     expect(kube.list).not.toHaveBeenCalled()
   })
 
+  it('returns cached list with stale metadata when stale reads are allowed', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-20T00:00:10Z'))
+
+    process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED = 'on'
+    process.env.JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS = '5'
+    process.env.JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE = '1'
+
+    const cachedStore = {
+      ready: Promise.resolve(),
+      close: vi.fn(async () => undefined),
+      getDbNow: vi.fn(async () => new Date()),
+      upsertResource: vi.fn(),
+      markDeleted: vi.fn(),
+      markNotSeenSince: vi.fn(),
+      getResource: vi.fn(),
+      listResources: vi.fn(async () => ({
+        total: 1,
+        items: [cacheResource('agent-a', '2026-01-20T00:00:00Z')],
+      })),
+    }
+    cacheStoreMocks.createControlPlaneCacheStore.mockReturnValue(cachedStore)
+    const kube = {
+      list: vi.fn(async () => ({ items: [] })),
+    }
+    kubeClientMocks.createKubernetesClient.mockReturnValue(kube as never)
+
+    const response = await listPrimitiveResources(
+      new Request('http://localhost/api/agents/control-plane/resources?kind=Agent&namespace=agents'),
+      { kubeClient: kube as never },
+    )
+
+    expect(response.status).toBe(200)
+    const payload = (await response.json()) as Record<string, unknown>
+    expect(payload.ok).toBe(true)
+    expect(payload.kind).toBe('Agent')
+    expect(payload.cache).toMatchObject({
+      source: 'control-plane-cache',
+      stale: true,
+      fresh: false,
+      stale_count: 1,
+      oldest_age_seconds: 10,
+    })
+    expect(kube.list).not.toHaveBeenCalled()
+  })
+
   it('falls back to Kubernetes list when cache has stale rows and stale reads are disabled', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:03:00Z'))

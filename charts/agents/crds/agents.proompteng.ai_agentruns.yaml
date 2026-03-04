@@ -489,7 +489,7 @@ spec:
                 allowed; configure Agent.spec.defaults instead
               rule: '!has(self.systemPrompt) && !has(self.systemPromptRef)'
             - message: spec.parameters.prompt is not allowed; use ImplementationSpec.spec.text
-              rule: self.parameters == null || !('prompt' in self.parameters)
+              rule: '!has(self.parameters) || !has(self.parameters, ''prompt'')'
           status:
             properties:
               artifacts:

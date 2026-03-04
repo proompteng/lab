@@ -157,6 +157,24 @@ export const ControlPlaneStatusPanel = ({
         </div>
 
         <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Workflow reliability
+          </div>
+          <div className="rounded-none border p-3 border-border/60 bg-muted/30 space-y-1">
+            <div className="flex flex-wrap gap-4">
+              <span>Active runs: {renderSummaryValue(status.workflows.active_job_runs)}</span>
+              <span>Recent failed: {renderSummaryValue(status.workflows.recent_failed_jobs)}</span>
+              <span>Backoff limit exceeded: {renderSummaryValue(status.workflows.backoff_limit_exceeded_jobs)}</span>
+              <span>Window: {renderSummaryValue(status.workflows.window_minutes)}m</span>
+            </div>
+            <div className="text-muted-foreground">
+              Top failure reasons:{' '}
+              {status.workflows.top_failure_reasons.length > 0 ? status.workflows.top_failure_reasons.join(', ') : '—'}
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Dependencies</div>
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">

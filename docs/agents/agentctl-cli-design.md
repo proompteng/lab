@@ -132,6 +132,7 @@ runtime:workflow         agents     healthy
 runtime:job              agents     healthy
 runtime:temporal         agents     configured temporal configuration resolved
 runtime:custom           agents     unknown    custom runtime configured per AgentRun
+workflows                agents     healthy
 database                 agents     healthy
 grpc                     agents     healthy   127.0.0.1:50051
 ```
@@ -175,6 +176,13 @@ grpc                     agents     healthy   127.0.0.1:50051
     "address": "127.0.0.1:50051",
     "status": "healthy",
     "message": ""
+  },
+  "workflows": {
+    "active_job_runs": 2,
+    "recent_failed_jobs": 4,
+    "backoff_limit_exceeded_jobs": 2,
+    "window_minutes": 15,
+    "top_failure_reasons": ["BackoffLimitExceeded", "DeadlineExceeded"]
   },
   "namespaces": [
     {

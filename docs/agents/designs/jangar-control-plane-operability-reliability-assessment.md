@@ -1,136 +1,114 @@
-# Jangar Control Plane Operability and Reliability Assessment (Discover Follow-Up)
+# Jangar Control Plane Operability and Reliability Assessment
 
-Status: Proposed (2026-03-04) — queue refresh probe executed on 2026-03-04T10:44:55Z
+Status: Implemented (2026-03-04)
 
-## Summary
+## Executive summary
 
-Current control-plane status reporting confirms component-level health for controllers, runtime adapters, database connectivity, and workflow backoff behavior. A discover-stage follow-up design issue remains for the broader rollout-stage reliability surface, but this PR focuses on a narrower reliability gain: explicit provenance for control-plane resource cache fallback reads so operators can distinguish stale-cache responses from live reads during incident triage.
+The control-plane read surface is generally healthy for component-level observability, but stale cache fallbacks were previously opaque during incident triage. This discover-stage design and implementation adds explicit cache-fallback provenance to resource endpoints so operators can distinguish live replacement reads from stale cache snapshots without changing endpoint contracts.
 
-Discover follow-up adds explicit cache fallback provenance for control-plane resource endpoints so operators can distinguish cached responses from fallback live reads when stale cache rows are rejected.
+## Assessment context
 
-## Cluster Assessment
+- Cluster scope: `jangar` control-plane in `agents` namespace.
+- Swarm scope: `jangar-control-plane`.
+- Stage: `discover`.
 
-Read-only cluster inspection confirms mixed rollout health:
+## Cluster assessment
 
-- `kubectl -n agents get schedules.schedules.proompteng.ai -l swarm.proompteng.ai/name=jangar-control-plane -o wide` shows all stages (`discover`, `implement`, `plan`, `verify`) in `Active` phase.
-- `kubectl get cronjob -n agents -l swarm.proompteng.ai/name=jangar-control-plane -o wide` shows expected cronjobs for all four stages, updated in the last cycle with no suspended cron objects.
-- `kubectl get jobs --all-namespaces` filtered by `jangar-control-plane-.*sched` shows both completed and running step jobs across stages.
-- `kubectl get events -n agents` filtered for `BackoffLimitExceeded` shows repeated failures in implement-stage jobs, including `jangar-control-plane-implement-sched-xbm45-step-1-attempt-1` and related `torghut-quant` step jobs.
-- Health signal quality gap: while schedule CRDs and cron jobs remain visible, rollout failures and stale schedule execution are only surfaced via ad-hoc log/event inspection, not in status output used by operators.
+- `kubectl get swarm jangar-control-plane -o yaml` reports stage entries (`discover`, `implement`, `plan`, `verify`) active and `RequirementsBridge` blocked with queued requirement count.
+- `kubectl get schedules.schedules.proompteng.ai -n agents -l swarm.proompteng.ai/name=jangar-control-plane -o wide` shows all discovery/implement/plan/verify schedules active.
+- Job history shows repeated `BackoffLimitExceeded` on implement schedules and periodic successful runs on other stages.
+- `BackoffLimitExceeded` evidence remains in Kubernetes events rather than control-plane status payload, so a secondary interpretation path is still needed for rollout health.
 
-## Source Assessment
+## Source assessment
 
 ### Current strengths
 
-- `services/jangar/src/server/control-plane-status.ts` already has resilient component reliability primitives and deterministic degrade markers.
-- `services/jangar/src/server/__tests__/control-plane-status.test.ts` covers workflow and database fallback cases and is straightforward to extend with rollout fixtures.
-- Route-level summary surfaces and cache read/write paths already include timestamps and stale/freshness metadata that can be extended with provenance.
+- Route handlers in `services/jangar/src/routes/api/agents/control-plane/resource.ts` and `resources.ts` already support cache-first reads and fallback-to-live behavior.
+- Fallback and freshness handling is centralized in dedicated helper modules under `services/jangar/src/server`.
 
-### High-risk modules and maintainability notes
+### High-risk modules
 
-- `services/jangar/src/server/control-plane-cache.ts` and `services/jangar/src/routes/api/agents/control-plane/*.ts` are the highest-impact paths for this change.
-  - A fallback policy bug can silently degrade operator confidence if cache freshness semantics are not surfaced.
-  - Maintainability concern: the routes currently set `cache` to undefined for fallback paths, discarding useful freshness context.
-- `services/jangar/src/server/supporting-primitives-controller.ts` and cache store writes are coupled through event/watch timing; stale-cache windows can become indistinguishable from successful live reads.
-- `services/jangar/src/server/db.ts` + migrations define a compact cache model but no first-class schema for fallback/rollback provenance.
+- `services/jangar/src/routes/api/agents/control-plane/resource.ts` and `services/jangar/src/routes/api/agents/control-plane/resources.ts`.
+  - These routes are visible to operators and therefore must preserve backward compatibility while improving provenance.
+- `services/jangar/src/server/control-plane-cache-store.ts` and migrations.
+  - Snapshot-based cache can be stale; fallback transitions should remain observable.
 
-### Test coverage gaps
+### Test coverage and gaps
 
-- Existing tests did not cover cache-stale fallback provenance.
-- Existing tests did not assert a stable payload contract when stale cache rows are rejected and `allowStale=false`.
-- Existing suite does not cross-check stale cache behavior with resource-stream mode.
+- New regression coverage for stale-cache fallback provenance now exists in:
+  - `services/jangar/src/server/__tests__/agents-control-plane-resource.test.ts`
+  - `services/jangar/src/server/__tests__/agents-control-plane-resources.test.ts`
+- Remaining gaps:
+  - No system-level coverage for stream mode with stale cache and fallback path simultaneously.
+  - No dedicated rollout/job health contract in status endpoint in this PR (tracked as follow-up). 
 
-## Database/Data Assessment
+## Database/data assessment
 
 ### Data model quality
 
-- `services/jangar/src/server/migrations/20260205_agents_control_plane_cache.ts` and `services/jangar/src/server/db.ts` define `agents_control_plane.resources_current` with indexes for namespace/name/time, sufficient for cache health decisions but narrow in schema.
-- Control-plane status consumers currently read raw resource states; rollout health requires joining latest schedule (`schedules.schedules.proompteng.ai`) and cron (`CronJob`) records at request time.
+- Cache schema remains `agents_control_plane.resources_current` in `services/jangar/src/server/migrations/20260205_agents_control_plane_cache.ts` with indexed `(cluster, kind, namespace, name)` and timestamp fields for freshness decisions.
+- Read-path mapping in `services/jangar/src/server/db.ts` remains strongly typed and supports freshness computation.
 
 ### Freshness/consistency
 
-- `last_seen_at`, `created_at`, and `updated_at` exist in cache schemas, but there is no explicit historical SLA health metric table for rollout staleness or consecutive failures by stage.
-- On this read-only pass, no cache corruption pattern was observed at the control-plane DB layer, but rollout quality is under-modeled as status aggregation logic.
+- Freshness metadata is computed from `last_seen_at` and request-time in `control-plane-cache-freshness` helpers.
+- This PR preserves existing freshness metadata and adds provenance only on fallback transitions.
 
-### Consistency and quality risks
+### Data-quality observations
 
-- Schedule-to-job reconciliation is dynamic and cross-resource; if status queries fail, API must degrade gracefully rather than fail.
-- Without rollout rollup, repeated failures can exist while top-level controllers continue reporting healthy.
+- Snapshot cache remains a denormalized optimization layer, not the source of truth.
+- Observability of schedule/job drift and rollout health remains external to this cache model.
 
-## Design Proposal
+## Design proposal
 
 ### Problem statement
 
-Operators can currently receive stale cache snapshots without a clear indicator that a live read replaced the response. This produces ambiguity in incident handling, especially during implement-stage backoff churn and when cache freshness thresholds are exceeded.
+Fallback reads were previously represented as cache-free response paths even when the request path had just used cache staleness logic. This removed useful context exactly when staleness becomes a risk.
 
-### Top design change (selected)
+### Top design change (chosen)
 
-Add explicit cache fallback provenance to control-plane resource endpoints:
+Emit structured fallback provenance on the existing cache-aware endpoints:
+- `GET /api/agents/control-plane/resource/{kind}/{name}`
 - `GET /api/agents/control-plane/resources?kind=...`
-- `GET /api/agents/control-plane/resource/{kind}/{name}?namespace=...`
 
-The API now returns `cache` metadata and, when applicable, `cache_fallback` details describing why fallback occurred and what replacement path was used.
-
-### Concrete shape
-
-- `cache` fields on live response:
-  - `source: 'control-plane-cache'`
-  - `stale`, `fresh`, `age_seconds`, `max_age_seconds`
-  - `cache_fallback` (present only on fallback):
-    - `source: 'control-plane-cache'`
-    - `reason`: machine-readable explanation (e.g. `stale_cache_fallback_disabled`)
-    - `replacement`: fallback path description (e.g. `live-read`)
-
-### Configuration and behavior
-
-- Existing cache controls govern behavior:
-  - `JANGAR_CONTROL_PLANE_CACHE_ENABLED`
-  - `JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE`
-  - `JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS`
-  - `JANGAR_CONTROL_PLANE_CACHE_STALE_BUFFER_SECONDS`
-- On stale cache detection with `allowStale=false`, handlers continue fallback to Kubernetes as now, but now annotate `cache_fallback` in the response.
-- On fallback errors, existing behavior remains unchanged: route returns live read errors if both cache and API reads fail.
+When a stale cache row triggers live fallback (`allowStale=false`), include:
+- `cache.source = 'control-plane-cache'`
+- `cache.fresh`, `cache.stale`, `cache.age_seconds`, `cache.max_age_seconds`
+- `cache.cache_fallback` with `reason` and `replacement`
 
 ### Alternatives considered
 
-- Alternative A: keep current behavior unchanged.
-  - Lowest implementation cost, but ambiguity remains during stale-cache fallback events.
-- Alternative B: add a separate diagnostic endpoint for cache-fallback details.
-  - Cleaner contract, but operator tooling must learn a new endpoint and existing dashboards remain partially blind.
-- Alternative C: include raw warning text only in `message` with no structured metadata.
-  - Minimal schema change, but loses machine-usable indicators and prevents reliable alerting.
-- Selected: keep existing routes and data model, add structured `cache_fallback` metadata only in fallback responses. Low risk, immediate value, and keeps clients backward compatible.
+- Keep current behavior and return cache metadata without fallback provenance (lowest change, least operator clarity).
+- Add a dedicated fallback diagnostics endpoint (cleaner contract, extra endpoint adoption cost).
+- Add warning text only in an unstructured message field (insufficient for automation).
+
+Selected approach: retain endpoint compatibility and add structured `cache_fallback` only when needed.
 
 ### Implementation evidence
 
-- `services/jangar/src/routes/api/agents/control-plane/resources.ts`
-  - Added shared `buildCacheResponse` and fallback metadata capture for list endpoints.
 - `services/jangar/src/routes/api/agents/control-plane/resource.ts`
-  - Added shared cache response builder and fallback provenance for single-resource lookups.
-- `services/jangar/src/server/__tests__/agents-control-plane-resources.test.ts`
-  - Added assertion for fallback provenance payload on stale cache paths.
+  - Added `cache_fallback` metadata on stale-cache fallback single-resource reads.
+- `services/jangar/src/routes/api/agents/control-plane/resources.ts`
+  - Added shared cache response builder and list-level fallback provenance.
 - `services/jangar/src/server/__tests__/agents-control-plane-resource.test.ts`
-  - Added assertion for fallback provenance payload when stale cache is rejected.
+  - Added regression assertion for fallback payload.
+- `services/jangar/src/server/__tests__/agents-control-plane-resources.test.ts`
+  - Added regression assertion for fallback payload.
 
-### Future work
+## Risks
 
-- Evaluate a companion rollout reliability status surface in `/api/agents/control-plane/status` for long-lived schedule/job visibility (tracked as follow-up design scope).
+- Consumer impact is additive, but clients that assumed `cache` absent during fallback paths may require parser updates.
+- Remaining rollout/job observability gap remains to be solved in a follow-up control-plane status design.
 
-## Risks and tradeoffs
+## Rollout and validation
 
-- Heavily coupled to naming/labels (`swarm.proompteng.ai/stage` and schedule name conventions); stale metadata can occur when operators change those contracts.
-- Cross-resource correlation can under-report near boundary events (short-lived status transitions) depending on cron timing and API propagation.
-- Additional payload size remains bounded and request-safe, but still introduces one new contract dependency for API clients.
-
-## Rollout and validation plan
-
-1. Merge rollout reliability type and status aggregation changes with fallback-safe default (`unknown`) when Kubernetes queries fail.
-2. Expand tests around stale schedules and degraded-state propagation into `namespaces[0].degraded_components`.
-3. Merge plan-stage PR only after CI checks and cluster/owner checks in the same channel context are green.
+- Merge this change as the discover-stage deliverable.
+- Track the broader rollout reliability envelope as follow-up work in control-plane status design docs.
 
 ## Handoff appendix
 
-- Primary implementation files:
-  - `services/jangar/src/data/agents-control-plane.ts`
-  - `services/jangar/src/server/control-plane-status.ts`
-  - `services/jangar/src/server/__tests__/control-plane-status.test.ts`
+- Source of truth in this stage:
+  - `services/jangar/src/routes/api/agents/control-plane/resource.ts`
+  - `services/jangar/src/routes/api/agents/control-plane/resources.ts`
+  - `services/jangar/src/server/__tests__/agents-control-plane-resource.test.ts`
+  - `services/jangar/src/server/__tests__/agents-control-plane-resources.test.ts`

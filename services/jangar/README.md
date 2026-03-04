@@ -170,6 +170,12 @@ Environment variables:
 - `JANGAR_GRPC_ADDRESS` (optional override for `host:port`)
 - `JANGAR_GRPC_TOKEN` (optional shared token)
 
+Control-plane status endpoint behavior (`/api/control-plane/status`) is deliberate:
+
+- `JANGAR_GRPC_ENABLED` uses a strict boolean parser (`true/false`, `1/0`, `yes/no`, `on/off`, case-insensitive, no whitespace).
+- invalid `JANGAR_GRPC_ENABLED`, `JANGAR_GRPC_PORT`, or malformed `JANGAR_GRPC_ADDRESS` values return `grpc.status = degraded` with explanatory messages.
+- an empty/unset `JANGAR_GRPC_ENABLED` disables gRPC (`disabled` status) and does not perform socket checks.
+
 ## Terminal backend
 
 Jangar terminals are intended to run against a dedicated terminal backend deployment (`jangar-terminal` in GitOps). The main Jangar service proxies session APIs to that backend.
@@ -212,6 +218,25 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
 - `JANGAR_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
 - `DATABASE_URL` (required to use MCP memories tools)
 - `PGSSLMODE` (optional; defaults to `require`; Jangar does not support `sslrootcert` URL params for Bun’s Postgres client)
+
+Control-plane cache freshness (API read path):
+
+- `JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS` (optional; default: `120`)
+  - Number of seconds a cached row is considered fresh.
+- `JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE` (optional; default: `true`)
+  - Set to `false`/`0` to force live Kubernetes reads when cache rows exceed the freshness window.
+
+## Control-plane cache freshness behavior
+
+When cache reads are enabled for `/api/agents/control-plane/resource` and `/api/agents/control-plane/resources`, responses may include a `cache` object:
+
+- `source: "control-plane-cache"`
+- `stale`: `true` when row age is above `JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS`
+- `fresh`: negation of `stale` in list and per-item metadata
+- `age_seconds`: age in seconds (or `null` when cache timestamp unavailable)
+- `max_age_seconds`: configured stale window
+- `checked_at`: server-side cache-check timestamp
+- `as_of`: original cache row timestamp when present
 - `OPENAI_API_KEY` (API key used for embedding calls; required for hosted OpenAI, optional for self-hosted OpenAI-compatible endpoints like Ollama)
 - `OPENAI_API_BASE_URL` / `OPENAI_API_BASE` (optional; defaults to `https://api.openai.com/v1`)
 - `OPENAI_EMBEDDING_MODEL` (optional; defaults to `text-embedding-3-small` on OpenAI, or `qwen3-embedding-saigak:0.6b` for self-hosted bases)

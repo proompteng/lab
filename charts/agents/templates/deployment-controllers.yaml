@@ -380,11 +380,6 @@ spec:
             - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED
               value: "0"
             {{- end }}
-            {{- if .Values.grpc.enabled }}
-            {{- if not (hasKey $envVars "JANGAR_GRPC_ENABLED") }}
-            - name: JANGAR_GRPC_ENABLED
-              value: "true"
-            {{- end }}
             {{- if not (hasKey $envVars "JANGAR_GRPC_HOST") }}
             - name: JANGAR_GRPC_HOST
               value: "0.0.0.0"
@@ -392,6 +387,11 @@ spec:
             {{- if not (hasKey $envVars "JANGAR_GRPC_PORT") }}
             - name: JANGAR_GRPC_PORT
               value: {{ .Values.grpc.port | quote }}
+            {{- end }}
+            {{- if .Values.grpc.enabled }}
+            {{- if not (hasKey $envVars "JANGAR_GRPC_ENABLED") }}
+            - name: JANGAR_GRPC_ENABLED
+              value: "true"
             {{- end }}
             {{- end }}
             {{- if .Values.agentComms.enabled }}
