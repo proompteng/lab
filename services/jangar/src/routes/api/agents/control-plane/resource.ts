@@ -54,6 +54,25 @@ export const getPrimitiveResource = async (
     return cacheFlag === '1' || cacheFlag === 'true' || cacheFlag === 'yes' || cacheFlag === 'on'
   }
 
+  const buildCacheResponse = (
+    state: ReturnType<typeof buildCacheFreshnessState>,
+    cacheFallback?: {
+      reason: string
+      replacement: string
+    },
+  ) => ({
+    ...cacheStateToResponse(state),
+    ...(cacheFallback
+      ? {
+          cache_fallback: {
+            source: 'control-plane-cache',
+            reason: cacheFallback.reason,
+            replacement: cacheFallback.replacement,
+          },
+        }
+      : {}),
+  })
+
   try {
     if (stream) {
       const args = ['get', resolved.resource, name, '-n', namespace, '-o', 'json', '--watch', '--output-watch-events']
@@ -90,6 +109,8 @@ export const getPrimitiveResource = async (
       'VersionControlProvider',
     ])
 
+    let fallbackCacheMetadata: ReturnType<typeof buildCacheResponse> | null = null
+
     if (cacheEnabled && cacheKinds.has(resolved.kind)) {
       const cluster = (process.env.JANGAR_CONTROL_PLANE_CACHE_CLUSTER ?? 'default').trim() || 'default'
       let store: ReturnType<typeof createControlPlaneCacheStore> | null = null
@@ -107,7 +128,7 @@ export const getPrimitiveResource = async (
               kind: resolved.kind,
               namespace,
               resource: cached.resource,
-              cache: cacheStateToResponse(freshness),
+              cache: buildCacheResponse(freshness),
             })
           }
 
@@ -117,6 +138,10 @@ export const getPrimitiveResource = async (
             name,
             age_seconds: freshness.ageSeconds,
             max_age_seconds: freshness.maxAgeSeconds,
+          })
+          fallbackCacheMetadata = buildCacheResponse(freshness, {
+            reason: 'stale_cache_fallback_disabled',
+            replacement: 'live-read',
           })
         }
       } catch {
@@ -134,7 +159,14 @@ export const getPrimitiveResource = async (
     if (!resource) {
       return errorResponse(`${resolved.kind} not found`, 404, { name, namespace })
     }
-    return okResponse({ ok: true, kind: resolved.kind, namespace, resource })
+    const response = {
+      ok: true,
+      kind: resolved.kind,
+      namespace,
+      resource,
+      ...(fallbackCacheMetadata ? { cache: fallbackCacheMetadata } : {}),
+    }
+    return okResponse(response)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, 500, { kind: resolved.kind, namespace, name })

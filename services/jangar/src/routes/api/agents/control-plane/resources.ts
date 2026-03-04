@@ -96,6 +96,30 @@ const CACHE_KINDS = new Set([
   'VersionControlProvider',
 ])
 
+const buildCacheResponse = (
+  state: ReturnType<typeof buildCacheFreshnessState>,
+  params: {
+    stale_count?: number
+    oldest_age_seconds?: number
+    cache_fallback?: {
+      reason: string
+      replacement: string
+    }
+  } = {},
+) => ({
+  ...cacheStateToResponse(state),
+  ...(params.stale_count !== undefined ? { stale_count: params.stale_count } : {}),
+  ...(params.oldest_age_seconds !== undefined ? { oldest_age_seconds: params.oldest_age_seconds } : {}),
+  ...(params.cache_fallback
+    ? {
+        cache_fallback: {
+          source: 'control-plane-cache',
+          ...params.cache_fallback,
+        },
+      }
+    : {}),
+})
+
 export const listPrimitiveResources = async (
   request: Request,
   deps: { kubeClient?: ReturnType<typeof createKubernetesClient> } = {},
@@ -148,6 +172,8 @@ export const listPrimitiveResources = async (
       CACHE_KINDS.has(resolved.kind) &&
       (labelSelectorRaw == null || (labelEquals != null && labelEquals.length > 0))
 
+    let fallbackCacheMetadata: ReturnType<typeof buildCacheResponse> | null = null
+
     if (canUseCache) {
       const cluster = (process.env.JANGAR_CONTROL_PLANE_CACHE_CLUSTER ?? 'default').trim() || 'default'
       const cacheCheckedAt = new Date()
@@ -169,12 +195,35 @@ export const listPrimitiveResources = async (
           buildCacheFreshnessState(item.lastSeenAt, cacheCheckedAt, cacheConfig),
         )
         const staleCount = freshnessStates.filter((state) => state.isStale).length
-        const hasStaleRows = staleCount > 0
-        if (hasStaleRows && !cacheConfig.allowStale) {
-          const oldestAgeSeconds = freshnessStates.reduce((max, state) => {
-            if (state.ageSeconds == null) return max
-            return Math.max(max, state.ageSeconds)
-          }, 0)
+        const oldestAgeSeconds = freshnessStates.reduce((max, state) => {
+          if (state.ageSeconds == null) return max
+          return Math.max(max, state.ageSeconds)
+        }, 0)
+
+        const representative = freshnessStates[0] ?? buildCacheFreshnessState(null, cacheCheckedAt, cacheConfig)
+        const shouldFallback = staleCount > 0 && !cacheConfig.allowStale
+        const cacheState = buildCacheResponse(
+          {
+            ...representative,
+            isFresh: staleCount === 0,
+            isStale: staleCount > 0,
+            stale: staleCount > 0,
+          },
+          {
+            stale_count: staleCount,
+            oldest_age_seconds: oldestAgeSeconds,
+            ...(shouldFallback
+              ? {
+                  cache_fallback: {
+                    reason: 'stale_cache_fallback_disabled',
+                    replacement: 'live-read',
+                  },
+                }
+              : {}),
+          },
+        )
+
+        if (shouldFallback) {
           console.warn('[jangar][control-plane-cache] stale cache list detected, falling back to live list', {
             kind: resolved.kind,
             namespace,
@@ -182,28 +231,15 @@ export const listPrimitiveResources = async (
             stale_count: staleCount,
             oldest_age_seconds: oldestAgeSeconds,
           })
+          fallbackCacheMetadata = cacheState
         } else {
-          const oldestAgeSeconds = freshnessStates.reduce((max, state) => {
-            if (state.ageSeconds == null) return max
-            return Math.max(max, state.ageSeconds)
-          }, 0)
-          const representative = freshnessStates[0] ?? buildCacheFreshnessState(null, cacheCheckedAt, cacheConfig)
           return okResponse({
             ok: true,
             kind: resolved.kind,
             namespace,
             total: result.total,
             items: result.items.map((item) => item.resource),
-            cache: {
-              ...cacheStateToResponse({
-                ...representative,
-                isFresh: staleCount === 0,
-                isStale: staleCount > 0,
-                stale: staleCount > 0,
-              }),
-              stale_count: staleCount,
-              oldest_age_seconds: oldestAgeSeconds,
-            },
+            cache: cacheState,
           })
         }
       } catch {
@@ -227,7 +263,15 @@ export const listPrimitiveResources = async (
           })
         : summaries
     const sliced = limit ? filtered.slice(0, limit) : filtered
-    return okResponse({ ok: true, kind: resolved.kind, namespace, total: filtered.length, items: sliced })
+    const response = {
+      ok: true,
+      kind: resolved.kind,
+      namespace,
+      total: filtered.length,
+      items: sliced,
+      ...(fallbackCacheMetadata ? { cache: fallbackCacheMetadata } : {}),
+    }
+    return okResponse(response)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, 500, { kind: resolved.kind, namespace })

@@ -123,7 +123,16 @@ describe('agents control-plane resource route', () => {
     expect(payload.ok).toBe(true)
     expect(payload.kind).toBe('Agent')
     expect(payload.resource).toMatchObject({ apiVersion: 'agents.proompteng.ai/v1alpha1' })
-    expect(payload).not.toHaveProperty('cache')
+    expect(payload.cache).toMatchObject({
+      source: 'control-plane-cache',
+      stale: true,
+      fresh: false,
+      cache_fallback: {
+        source: 'control-plane-cache',
+        reason: 'stale_cache_fallback_disabled',
+        replacement: 'live-read',
+      },
+    })
     expect(kube.get).toHaveBeenCalledTimes(1)
   })
 })

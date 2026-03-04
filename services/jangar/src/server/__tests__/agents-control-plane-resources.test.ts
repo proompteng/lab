@@ -120,7 +120,17 @@ describe('agents control-plane resources route', () => {
     expect(response.status).toBe(200)
     const payload = (await response.json()) as Record<string, unknown>
     expect(payload.ok).toBe(true)
-    expect(payload.cache).toBeUndefined()
+    expect(payload.cache).toMatchObject({
+      source: 'control-plane-cache',
+      stale: true,
+      fresh: false,
+      stale_count: 1,
+      cache_fallback: {
+        source: 'control-plane-cache',
+        reason: 'stale_cache_fallback_disabled',
+        replacement: 'live-read',
+      },
+    })
     expect(payload.total).toBe(1)
     expect(Array.isArray(payload.items)).toBe(true)
     expect((payload.items as Array<{ metadata?: Record<string, unknown> }>)[0]?.metadata?.name).toBe('agent-live')
