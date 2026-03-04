@@ -253,6 +253,64 @@ class TestLLMDSPyRuntime(TestCase):
             settings.jangar_base_url = original_base
             settings.jangar_api_key = original_api_key
 
+    def test_live_artifact_uses_internal_api_key_placeholder_when_missing(self) -> None:
+        original_base = settings.jangar_base_url
+        original_api_key = settings.jangar_api_key
+        try:
+            settings.jangar_base_url = "http://jangar.jangar.svc.cluster.local"
+            settings.jangar_api_key = None
+            runtime = DSPyReviewRuntime(
+                mode="active",
+                artifact_hash="a" * 64,
+                program_name="trade-review-committee-v1",
+                signature_version="v1",
+                timeout_seconds=8,
+            )
+            manifest = DSPyArtifactManifest(
+                artifact_hash="a" * 64,
+                program_name="trade-review-committee-v1",
+                signature_version="v1",
+                executor="dspy_live",
+                compiled_prompt={},
+                source="database",
+            )
+
+            program = runtime._resolve_program(manifest)
+            self.assertIsInstance(program, LiveDSPyCommitteeProgram)
+            self.assertEqual(program.api_key, "jangar-internal")
+        finally:
+            settings.jangar_base_url = original_base
+            settings.jangar_api_key = original_api_key
+
+    def test_live_artifact_omits_placeholder_for_non_internal_hosts(self) -> None:
+        original_base = settings.jangar_base_url
+        original_api_key = settings.jangar_api_key
+        try:
+            settings.jangar_base_url = "https://gateway.example"
+            settings.jangar_api_key = None
+            runtime = DSPyReviewRuntime(
+                mode="active",
+                artifact_hash="a" * 64,
+                program_name="trade-review-committee-v1",
+                signature_version="v1",
+                timeout_seconds=8,
+            )
+            manifest = DSPyArtifactManifest(
+                artifact_hash="a" * 64,
+                program_name="trade-review-committee-v1",
+                signature_version="v1",
+                executor="dspy_live",
+                compiled_prompt={},
+                source="database",
+            )
+
+            program = runtime._resolve_program(manifest)
+            self.assertIsInstance(program, LiveDSPyCommitteeProgram)
+            self.assertIsNone(program.api_key)
+        finally:
+            settings.jangar_base_url = original_base
+            settings.jangar_api_key = original_api_key
+
     def test_active_runtime_review_uses_dspy_live_program(self) -> None:
         original_gate = self._enable_live_runtime_gate(
             jangar_base_url="https://jangar.openai.local/openai/v1"
