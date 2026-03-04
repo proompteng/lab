@@ -27,6 +27,9 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_autonomy_allow_live_promotion": "torghut_trading_autonomy_allow_live_promotion",
     "trading_evidence_continuity_enabled": "torghut_trading_evidence_continuity_enabled",
     "trading_universe_require_non_empty_jangar": "torghut_trading_universe_require_non_empty_jangar",
+    "trading_readiness_dependency_cache_enabled": (
+        "torghut_trading_readiness_dependency_cache_enabled"
+    ),
     "trading_execution_prefer_limit": "torghut_trading_execution_prefer_limit",
     "trading_allocator_enabled": "torghut_trading_allocator_enabled",
     "trading_forecast_router_enabled": "torghut_trading_forecast_router_enabled",

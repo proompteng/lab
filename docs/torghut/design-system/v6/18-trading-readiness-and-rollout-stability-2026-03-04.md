@@ -49,6 +49,13 @@ Introduce `/readyz` as a reusable, dependency-aware readiness contract and map K
 - `/readyz` returns the same dependency status shape and status-code semantics currently used by `/trading/health`.
 - Unit tests cover both healthy and degraded readiness conditions.
 
+## Rollout Validation Note
+
+- `/trading/health` now reports explicit Jangar freshness/readiness details under `dependencies.universe`.
+- Readiness is expected to remain green when Jangar is degraded but recoverable (`status=degraded`, stale cache within `TRADING_UNIVERSE_MAX_STALE_SECONDS`) while still surfacing `ok=true` with `detail=jangar stale cache in use`.
+- Readiness is expected to fail (`status=degraded`, `dependencies.universe.ok=false`) when Jangar is hard-failed or fail-safe blocked under `TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR`.
+- Any rollout check should include alerting on repeated transitions to `status=error` with `reason` suffix `_cache_stale`, not only on readiness flaps.
+
 ## Rollback Plan
 
 - Revert only `argocd/applications/torghut/knative-service.yaml` readiness path to `/healthz`.

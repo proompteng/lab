@@ -23,7 +23,14 @@ Adopt a dedicated `Dependency Freshness and Readiness` design for Jangar-backed 
 - Expose a dedicated readiness signal that reflects this contract before enabling critical trading phases.
 - Standardize warnings so repeated Jangar fetch failures do not create unbounded noisy log spikes when upstream is temporarily unavailable.
 
-## Implementation Plan (proposed in current branch)
+## Governing status
+
+- Status: `implemented`
+- Governing PR: `#4021`
+- Provenance: `docs/torghut/design-system/v6/18-trading-readiness-and-rollout-stability-2026-03-04.md` + this document.
+- Validation target date: `2026-03-04`.
+
+## Implementation Plan
 
 1. Add explicit freshness policy comments and examples in `services/torghut/app/trading/universe.py` around `_resolve_from_jangar()` and `_fallback_from_cache()`.
 2. Add an explicit readiness dependency field in trading health payloads consumed by `/trading/health` so the operator can observe when trading is degraded for universe staleness.
@@ -53,6 +60,19 @@ Adopt a dedicated `Dependency Freshness and Readiness` design for Jangar-backed 
 - Strongest operator visibility and governance come from explicit readiness-level metadata, not silent cache reuse.
 - Degraded mode provides continuity for short outages but requires disciplined alerting to avoid long-running stale behavior.
 - Static fallback has the highest continuity but the weakest scientific and operational correctness for symbol set provenance.
+
+## Risk register entry
+
+- Risk ID: TQ-19-01
+- Risk: prolonged trading on stale Jangar symbols while upstream outages continue past the freshness window.
+- Owner: Torghut platform team
+- Mitigation:
+  - hard-fail at `TRADING_UNIVERSE_MAX_STALE_SECONDS` by moving universe status to `error`,
+  - gate decisions when `TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR` is enabled,
+  - keep warning emission throttled by reason to avoid alert fatigue.
+- Rollback:
+  - revert the `UniverseResolver` changes to use fail-closed fetch-only behavior,
+  - keep `/readyz` dependency contract intact until fresh release is prepared.
 
 ## Risks
 
