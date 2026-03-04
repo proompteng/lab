@@ -325,10 +325,31 @@ def _readiness_dependency_checks(
             "schema_current": bool(database_contract.get("schema_current")),
             "schema_current_heads": database_contract.get("schema_current_heads"),
             "expected_heads": database_contract.get("expected_heads"),
+            "schema_missing_heads": database_contract.get(
+                "schema_missing_heads",
+                [],
+            ),
+            "schema_unexpected_heads": database_contract.get(
+                "schema_unexpected_heads",
+                [],
+            ),
+            "schema_head_count_expected": database_contract.get(
+                "schema_head_count_expected",
+            ),
+            "schema_head_count_current": database_contract.get(
+                "schema_head_count_current",
+            ),
+            "schema_head_delta_count": database_contract.get(
+                "schema_head_delta_count",
+            ),
             "schema_head_signature": database_contract.get("schema_head_signature"),
             "checked_at": database_contract.get("checked_at"),
             "account_scope_ready": bool(database_contract.get("account_scope_ready")),
             "account_scope_errors": database_contract.get("account_scope_errors", []),
+            "account_scope_warnings": database_contract.get(
+                "account_scope_warnings",
+                [],
+            ),
         }
 
     return dependencies, datetime.now(timezone.utc)
@@ -591,9 +612,13 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
         }
 
     account_scope_checks = dict(account_scope_status)
+    account_scope_warnings: list[str] = []
     if not settings.trading_multi_account_enabled:
         account_scope_checks["account_scope_ready"] = True
         account_scope_checks["account_scope_errors"] = []
+        account_scope_warnings.append(
+            "account scope checks are bypassed when trading_multi_account_enabled is false"
+        )
 
     schema_current = bool(schema_status.get("schema_current"))
     account_scope_ready = bool(account_scope_checks.get("account_scope_ready"))
@@ -602,6 +627,11 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
         "schema_current": schema_current,
         "schema_current_heads": schema_status.get("current_heads", []),
         "expected_heads": schema_status.get("expected_heads", []),
+        "schema_missing_heads": schema_status.get("schema_missing_heads", []),
+        "schema_unexpected_heads": schema_status.get("schema_unexpected_heads", []),
+        "schema_head_count_expected": schema_status.get("schema_head_count_expected"),
+        "schema_head_count_current": schema_status.get("schema_head_count_current"),
+        "schema_head_delta_count": schema_status.get("schema_head_delta_count"),
         "schema_head_signature": schema_status.get(
             "expected_heads_signature",
             schema_status.get("schema_head_signature"),
@@ -609,6 +639,7 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
         "checked_at": checked_at,
         "account_scope_ready": account_scope_ready,
         "account_scope_errors": account_scope_checks.get("account_scope_errors", []),
+        "account_scope_warnings": account_scope_warnings,
     }
 
 
@@ -649,10 +680,25 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             "current_heads": database_contract.get("schema_current_heads"),
             "expected_heads": database_contract.get("expected_heads"),
             "schema_head_signature": database_contract.get("schema_head_signature"),
+            "schema_missing_heads": database_contract.get("schema_missing_heads", []),
+            "schema_unexpected_heads": database_contract.get("schema_unexpected_heads", []),
+            "schema_head_count_expected": database_contract.get(
+                "schema_head_count_expected",
+            ),
+            "schema_head_count_current": database_contract.get(
+                "schema_head_count_current",
+            ),
+            "schema_head_delta_count": database_contract.get(
+                "schema_head_delta_count",
+            ),
         }
         account_scope_status = {
             "account_scope_ready": bool(database_contract.get("account_scope_ready")),
             "account_scope_errors": database_contract.get("account_scope_errors", []),
+            "account_scope_warnings": database_contract.get(
+                "account_scope_warnings",
+                [],
+            ),
         }
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="database unavailable") from exc
@@ -665,8 +711,14 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             detail={
                 "error": database_contract.get("error"),
                 "schema_current": False,
+                "schema_missing_heads": database_contract.get("schema_missing_heads", []),
+                "schema_unexpected_heads": database_contract.get("schema_unexpected_heads", []),
                 "checked_at": database_contract.get("checked_at"),
                 "account_scope_ready": account_scope_status.get("account_scope_ready"),
+                "account_scope_warnings": account_scope_status.get(
+                    "account_scope_warnings",
+                    [],
+                ),
             },
         )
 
@@ -676,6 +728,17 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             detail={
                 "error": "database schema mismatch",
                 "checked_at": database_contract.get("checked_at"),
+                "schema_missing_heads": database_contract.get("schema_missing_heads", []),
+                "schema_unexpected_heads": database_contract.get("schema_unexpected_heads", []),
+                "schema_head_count_expected": database_contract.get(
+                    "schema_head_count_expected",
+                ),
+                "schema_head_count_current": database_contract.get(
+                    "schema_head_count_current",
+                ),
+                "schema_head_delta_count": database_contract.get(
+                    "schema_head_delta_count",
+                ),
                 **schema_status,
             },
         )
@@ -688,6 +751,10 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
                 "error": "database account scope schema mismatch",
                 "checked_at": database_contract.get("checked_at"),
                 "schema_head_signature": database_contract.get("schema_head_signature"),
+                "account_scope_warnings": database_contract.get(
+                    "account_scope_warnings",
+                    [],
+                ),
                 **account_scope_status,
             },
         )

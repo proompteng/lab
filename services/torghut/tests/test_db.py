@@ -110,6 +110,11 @@ class TestDbSchemaCurrent(TestCase):
             status["expected_heads_signature"],
             hashlib.sha256("0011_demo_alpha,0012_demo_beta".encode("utf-8")).hexdigest(),
         )
+        self.assertEqual(status["schema_missing_heads"], ["0012_demo_beta"])
+        self.assertEqual(status["schema_unexpected_heads"], ["0012_demo_gamma"])
+        self.assertEqual(status["schema_head_count_expected"], 2)
+        self.assertEqual(status["schema_head_count_current"], 3)
+        self.assertEqual(status["schema_head_delta_count"], 2)
 
     def test_expected_schema_heads_cached(self) -> None:
         app_db._get_expected_schema_heads.cache_clear()

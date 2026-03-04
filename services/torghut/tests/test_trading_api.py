@@ -194,6 +194,11 @@ class TestTradingApi(TestCase):
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
             "schema_head_signature": "7f8e4d0",
+            "schema_missing_heads": [],
+            "schema_unexpected_heads": [],
+            "schema_head_count_expected": 1,
+            "schema_head_count_current": 1,
+            "schema_head_delta_count": 0,
         },
     )
     @patch(
@@ -213,6 +218,11 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["current_heads"], payload["expected_heads"])
         self.assertTrue(payload["account_scope_ready"])
         self.assertEqual(payload["schema_head_signature"], "7f8e4d0")
+        self.assertEqual(payload["schema_missing_heads"], [])
+        self.assertEqual(payload["schema_unexpected_heads"], [])
+        self.assertEqual(payload["schema_head_count_expected"], 1)
+        self.assertEqual(payload["schema_head_count_current"], 1)
+        self.assertEqual(payload["schema_head_delta_count"], 0)
         self.assertIn("checked_at", payload)
 
     @patch(
@@ -225,6 +235,14 @@ class TestTradingApi(TestCase):
                 "0011_execution_tca_simulator_divergence",
             ],
             "schema_head_signature": "7f8e4d0",
+            "schema_missing_heads": [
+                "0011_autonomy_lifecycle_and_promotion_audit",
+                "0011_execution_tca_simulator_divergence",
+            ],
+            "schema_unexpected_heads": ["0010_execution_provenance_and_governance_trace"],
+            "schema_head_count_expected": 2,
+            "schema_head_count_current": 1,
+            "schema_head_delta_count": 3,
         },
     )
     @patch(
@@ -241,6 +259,20 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertEqual(payload["detail"]["error"], "database schema mismatch")
         self.assertFalse(payload["detail"]["schema_current"])
+        self.assertEqual(
+            payload["detail"]["schema_missing_heads"],
+            [
+                "0011_autonomy_lifecycle_and_promotion_audit",
+                "0011_execution_tca_simulator_divergence",
+            ],
+        )
+        self.assertEqual(
+            payload["detail"]["schema_unexpected_heads"],
+            ["0010_execution_provenance_and_governance_trace"],
+        )
+        self.assertEqual(payload["detail"]["schema_head_count_expected"], 2)
+        self.assertEqual(payload["detail"]["schema_head_count_current"], 1)
+        self.assertEqual(payload["detail"]["schema_head_delta_count"], 3)
         self.assertEqual(payload["detail"]["schema_head_signature"], "7f8e4d0")
         self.assertIn("checked_at", payload["detail"])
 
@@ -251,6 +283,11 @@ class TestTradingApi(TestCase):
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
             "schema_head_signature": "7f8e4d0",
+            "schema_missing_heads": [],
+            "schema_unexpected_heads": [],
+            "schema_head_count_expected": 1,
+            "schema_head_count_current": 1,
+            "schema_head_delta_count": 0,
         },
     )
     def test_db_check_enforces_account_scope_when_multi_account_enabled(
@@ -289,6 +326,11 @@ class TestTradingApi(TestCase):
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
             "schema_head_signature": "7f8e4d0",
+            "schema_missing_heads": [],
+            "schema_unexpected_heads": [],
+            "schema_head_count_expected": 1,
+            "schema_head_count_current": 1,
+            "schema_head_delta_count": 0,
         },
     )
     def test_db_check_allows_account_scope_issues_when_multi_account_disabled(
@@ -313,6 +355,16 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["account_scope_ready"], True)
+        self.assertIn(
+            "account_scope_warnings",
+            payload["account_scope_checks"],
+        )
+        self.assertEqual(
+            payload["account_scope_checks"]["account_scope_warnings"],
+            [
+                "account scope checks are bypassed when trading_multi_account_enabled is false"
+            ],
+        )
         self.assertEqual(payload["schema_head_signature"], "7f8e4d0")
         self.assertIn("checked_at", payload)
 
@@ -715,6 +767,11 @@ class TestTradingApi(TestCase):
             "current_heads": ["0010_execution_provenance_and_governance_trace"],
             "expected_heads": ["0011_autonomy_lifecycle_and_promotion_audit"],
             "schema_head_signature": "7f8e4d0",
+            "schema_missing_heads": ["0011_autonomy_lifecycle_and_promotion_audit"],
+            "schema_unexpected_heads": ["0010_execution_provenance_and_governance_trace"],
+            "schema_head_count_expected": 1,
+            "schema_head_count_current": 1,
+            "schema_head_delta_count": 2,
         },
     )
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
@@ -745,9 +802,83 @@ class TestTradingApi(TestCase):
                 payload["dependencies"]["database"]["account_scope_errors"], []
             )
             self.assertEqual(
+                payload["dependencies"]["database"]["schema_missing_heads"],
+                ["0011_autonomy_lifecycle_and_promotion_audit"],
+            )
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_unexpected_heads"],
+                ["0010_execution_provenance_and_governance_trace"],
+            )
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_head_count_expected"], 1
+            )
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_head_count_current"], 1
+            )
+            self.assertEqual(payload["dependencies"]["database"]["schema_head_delta_count"], 2)
+            self.assertEqual(
                 payload["dependencies"]["database"]["schema_head_signature"], "7f8e4d0"
             )
             self.assertIn("checked_at", payload["dependencies"]["database"])
+        finally:
+            settings.trading_enabled = original
+
+    @patch("app.main._evaluate_database_contract")
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_surface_schema_head_drift_fields(
+        self,
+        _mock_postgres: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
+        _mock_contract: object,
+    ) -> None:
+        original = settings.trading_enabled
+        settings.trading_enabled = True
+        try:
+            app.state.trading_scheduler = TradingScheduler()
+            app.state.trading_scheduler.state.running = True
+            app.state.trading_scheduler.state.last_run_at = datetime.now(timezone.utc)
+            _mock_contract.return_value = {
+                "ok": False,
+                "schema_current": False,
+                "schema_current_heads": ["0012_demo_beta"],
+                "expected_heads": ["0011_demo_alpha"],
+                "schema_missing_heads": ["0011_demo_alpha"],
+                "schema_unexpected_heads": ["0012_demo_beta"],
+                "schema_head_count_expected": 1,
+                "schema_head_count_current": 1,
+                "schema_head_delta_count": 2,
+                "schema_head_signature": "sig-20260304",
+                "checked_at": "2026-03-04T00:00:00+00:00",
+                "account_scope_ready": True,
+                "account_scope_errors": [],
+                "account_scope_warnings": [],
+            }
+            response = self.client.get("/readyz")
+
+            self.assertEqual(response.status_code, 503)
+            payload = response.json()
+            self.assertEqual(payload["status"], "degraded")
+            self.assertFalse(payload["dependencies"]["database"]["ok"])
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_missing_heads"],
+                ["0011_demo_alpha"],
+            )
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_unexpected_heads"],
+                ["0012_demo_beta"],
+            )
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_head_count_expected"],
+                1,
+            )
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_head_count_current"],
+                1,
+            )
+            self.assertEqual(payload["dependencies"]["database"]["schema_head_delta_count"], 2)
         finally:
             settings.trading_enabled = original
 
