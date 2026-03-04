@@ -507,8 +507,8 @@ ENV JANGAR_BUILD_MINIFY=${JANGAR_BUILD_MINIFY}
 ENV JANGAR_BUILD_SOURCEMAP=${JANGAR_BUILD_SOURCEMAP}
 ENV CI=${JANGAR_BUILD_CI}
 ENV JANGAR_BUILD_LOG_LEVEL=${JANGAR_BUILD_LOG_LEVEL}
-RUN if [ -d .output ]; then \
-    echo "Using prebuilt .output from build context"; \
+RUN if [ -f .output/server/index.mjs ] && [ -f .output/server/proto/proompteng/jangar/v1/agentctl.proto ]; then \
+    echo "Using complete prebuilt .output from build context"; \
   else \
     if [ "$JANGAR_BUILD_LOG_LEVEL" = "info" ]; then \
       bun --bun vite build; \
