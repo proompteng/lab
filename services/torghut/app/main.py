@@ -404,6 +404,7 @@ def _evaluate_trading_health_payload(
         include_database_contract=include_database_contract,
     )
     dependencies = dict(dependencies)
+    dependencies["universe"] = _evaluate_universe_dependency(scheduler)
     dependency_statuses = [
         cast(dict[str, object], checks).get("ok", True)
         for name, checks in dependencies.items()
@@ -427,6 +428,134 @@ def _evaluate_trading_health_payload(
         },
         status_code,
     )
+
+
+def _evaluate_universe_dependency(
+    scheduler: TradingScheduler | None,
+) -> dict[str, object]:
+    if scheduler is None or settings.trading_universe_source != "jangar":
+        return {
+            "ok": True,
+            "detail": "skipped",
+            "source": settings.trading_universe_source,
+            "status": None,
+            "reason": None,
+            "symbols_count": None,
+            "cache_age_seconds": None,
+            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+        }
+
+    state = getattr(scheduler, "state", None)
+    if state is None:
+        return {
+            "ok": True,
+            "detail": "universe state unavailable",
+            "source": settings.trading_universe_source,
+            "status": None,
+            "reason": None,
+            "symbols_count": None,
+            "cache_age_seconds": None,
+            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+        }
+
+    universe_status = getattr(state, "universe_source_status", None)
+    universe_reason = getattr(state, "universe_source_reason", None)
+    universe_symbols_count = getattr(state, "universe_symbols_count", None)
+    universe_cache_age_seconds = getattr(state, "universe_cache_age_seconds", None)
+    universe_fail_safe_blocked = bool(
+        getattr(state, "universe_fail_safe_blocked", False)
+    )
+    max_stale_seconds = max(1, settings.trading_universe_max_stale_seconds)
+
+    if universe_status == "error":
+        return {
+            "ok": False,
+            "detail": "jangar universe unavailable",
+            "source": settings.trading_universe_source,
+            "status": universe_status,
+            "reason": universe_reason,
+            "symbols_count": universe_symbols_count,
+            "cache_age_seconds": universe_cache_age_seconds,
+            "max_stale_seconds": max_stale_seconds,
+            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+        }
+
+    if universe_status == "empty" and universe_fail_safe_blocked:
+        return {
+            "ok": False,
+            "detail": "jangar universe empty",
+            "source": settings.trading_universe_source,
+            "status": universe_status,
+            "reason": universe_reason,
+            "symbols_count": universe_symbols_count,
+            "cache_age_seconds": universe_cache_age_seconds,
+            "max_stale_seconds": max_stale_seconds,
+            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+        }
+
+    if universe_status == "degraded":
+        return {
+            "ok": not universe_fail_safe_blocked,
+            "detail": "jangar stale cache in use",
+            "source": settings.trading_universe_source,
+            "status": universe_status,
+            "reason": universe_reason,
+            "symbols_count": universe_symbols_count,
+            "cache_age_seconds": universe_cache_age_seconds,
+            "max_stale_seconds": max_stale_seconds,
+            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+        }
+
+    if universe_status == "ok":
+        return {
+            "ok": True,
+            "detail": "jangar universe fresh",
+            "source": settings.trading_universe_source,
+            "status": universe_status,
+            "reason": universe_reason,
+            "symbols_count": universe_symbols_count,
+            "cache_age_seconds": universe_cache_age_seconds,
+            "max_stale_seconds": max_stale_seconds,
+            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+        }
+
+    if universe_status in {"unknown", "not_evaluated", None}:
+        return {
+            "ok": True,
+            "detail": "universe not yet evaluated",
+            "source": settings.trading_universe_source,
+            "status": universe_status,
+            "reason": universe_reason,
+            "symbols_count": universe_symbols_count,
+            "cache_age_seconds": universe_cache_age_seconds,
+            "max_stale_seconds": max_stale_seconds,
+            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+        }
+
+    if universe_fail_safe_blocked:
+        return {
+            "ok": False,
+            "detail": f"jangar universe blocked: {universe_reason}",
+            "source": settings.trading_universe_source,
+            "status": universe_status,
+            "reason": universe_reason,
+            "symbols_count": universe_symbols_count,
+            "cache_age_seconds": universe_cache_age_seconds,
+            "max_stale_seconds": max_stale_seconds,
+            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+        }
+
+    return {
+        "ok": True,
+        "detail": "jangar universe ok",
+        "source": settings.trading_universe_source,
+        "status": universe_status,
+        "reason": universe_reason,
+        "symbols_count": universe_symbols_count,
+        "cache_age_seconds": universe_cache_age_seconds,
+        "max_stale_seconds": max_stale_seconds,
+        "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+    }
 
 
 def _evaluate_database_contract(session: Session) -> dict[str, object]:

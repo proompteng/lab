@@ -104,6 +104,22 @@ class UniverseResolver:
             fetched_at=None,
             cache_age_seconds=None,
         )
+        self._last_fetch_warning_at: datetime | None = None
+        self._last_fetch_warning_reason: str | None = None
+
+    def _should_emit_stale_cache_warning(self, reason: str, now: datetime) -> bool:
+        if reason != self._last_fetch_warning_reason:
+            self._last_fetch_warning_reason = reason
+            self._last_fetch_warning_at = now
+            return True
+        if self._last_fetch_warning_at is None:
+            self._last_fetch_warning_at = now
+            return True
+        age_seconds = (now - self._last_fetch_warning_at).total_seconds()
+        if age_seconds >= 60:
+            self._last_fetch_warning_at = now
+            return True
+        return False
 
     def get_symbols(self) -> set[str]:
         return self.get_resolution().symbols
@@ -164,10 +180,10 @@ class UniverseResolver:
         now = datetime.now(timezone.utc)
         url = settings.trading_jangar_symbols_url
         if not url:
-            logger.warning("JANGAR_SYMBOLS_URL not set; skipping universe fetch")
             return self._fallback_from_cache(
                 now=now,
                 reason='jangar_url_missing',
+                cause=RuntimeError("jangar_url_missing"),
             )
 
         cache_ttl = timedelta(seconds=settings.trading_universe_cache_seconds)
@@ -192,10 +208,10 @@ class UniverseResolver:
                 raw_status = getattr(response, 'status', 200)
                 status = raw_status if isinstance(raw_status, int) else 200
                 if status < 200 or status >= 300:
-                    logger.warning('Jangar symbols request failed with status=%s', status)
                     return self._fallback_from_cache(
                         now=now,
                         reason='jangar_http_error',
+                        cause=RuntimeError(f'jangar_http_status_{status}'),
                     )
                 payload = response.read().decode("utf-8")
         except ValueError as exc:
@@ -203,24 +219,24 @@ class UniverseResolver:
             reason = 'jangar_url_invalid_scheme'
             if message == 'missing_url_host':
                 reason = 'jangar_url_invalid_host'
-            logger.warning('Invalid Jangar symbols URL: %s', message)
             return self._fallback_from_cache(
                 now=now,
                 reason=reason,
+                cause=exc,
             )
         except Exception as exc:
-            logger.warning("Failed to fetch Jangar symbols: %s", exc)
             return self._fallback_from_cache(
                 now=now,
                 reason='jangar_fetch_failed',
+                cause=exc,
             )
         try:
             data = json.loads(payload)
         except json.JSONDecodeError as exc:
-            logger.warning("Failed to decode Jangar symbols payload: %s", exc)
             return self._fallback_from_cache(
                 now=now,
                 reason='jangar_payload_decode_failed',
+                cause=exc,
             )
 
         symbols = _filter_symbols(_parse_symbols(data))
@@ -239,8 +255,25 @@ class UniverseResolver:
             cache_age_seconds=0,
         )
 
-    def _fallback_from_cache(self, *, now: datetime, reason: str) -> UniverseResolution:
+    def _fallback_from_cache(
+        self,
+        *,
+        now: datetime,
+        reason: str,
+        cause: Exception | None = None,
+    ) -> UniverseResolution:
         if self._cache is None:
+            if self._should_emit_stale_cache_warning(reason, now):
+                logger.warning(
+                    "No cached Jangar universe available; cannot satisfy request reason=%s error=%s",
+                    reason,
+                    cause,
+                )
+            else:
+                logger.debug(
+                    "Suppressing repeated Jangar no-cache warning reason=%s",
+                    reason,
+                )
             return UniverseResolution(
                 symbols=set(),
                 source='jangar',
@@ -252,12 +285,20 @@ class UniverseResolver:
         age_seconds = int((now - self._cache.fetched_at).total_seconds())
         max_stale_seconds = max(1, settings.trading_universe_max_stale_seconds)
         if age_seconds <= max_stale_seconds:
-            logger.warning(
-                "Reusing cached Jangar universe after fetch failure reason=%s age_seconds=%s symbols=%s",
-                reason,
-                age_seconds,
-                len(self._cache.symbols),
-            )
+            warning_reason = f'{reason}_using_stale_cache'
+            if self._should_emit_stale_cache_warning(warning_reason, now):
+                logger.warning(
+                    "Reusing cached Jangar universe after fetch failure reason=%s age_seconds=%s symbols=%s",
+                    reason,
+                    age_seconds,
+                    len(self._cache.symbols),
+                )
+            else:
+                logger.debug(
+                    "Suppressing repeated Jangar stale-cache warning reason=%s age_seconds=%s",
+                    reason,
+                    age_seconds,
+                )
             return UniverseResolution(
                 symbols=set(self._cache.symbols),
                 source='jangar',
