@@ -238,6 +238,7 @@ jobs:
           JANGAR_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
           IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
+          # Use docker.io for Bun base image in CI builds to avoid mirror image metadata drift.
           DOCKER_BUILDKIT=1 docker build \
             -f "${WORKSPACE}/services/jangar/Dockerfile" \
             --target control-plane \
