@@ -2,7 +2,8 @@ import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 import { sql } from 'kysely'
 
 import { getAgentsControllerHealth } from '~/server/agents-controller'
-import { getDb } from '~/server/db'
+import { getDb, type Db } from '~/server/db'
+import { getRegisteredMigrationNames } from '~/server/kysely-migrations'
 import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
@@ -48,7 +49,22 @@ export type DatabaseStatus = {
   status: 'healthy' | 'degraded' | 'disabled'
   message: string
   latency_ms: number
+  migration_consistency: {
+    status: 'healthy' | 'degraded' | 'unknown'
+    migration_table: string | null
+    registered_count: number
+    applied_count: number
+    unapplied_count: number
+    unexpected_count: number
+    latest_registered: string | null
+    latest_applied: string | null
+    missing_migrations: string[]
+    unexpected_migrations: string[]
+    message: string
+  }
 }
+
+type DatabaseMigrationConsistency = DatabaseStatus['migration_consistency']
 
 export type GrpcStatus = {
   enabled: boolean
@@ -138,6 +154,7 @@ const asString = (value: unknown): string | null => {
   const normalized = normalizeText(value)
   return normalized.length > 0 ? normalized : null
 }
+const dedupeSorted = (items: string[]) => [...new Set(items)].sort()
 const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
 const asNumber = (value: unknown, fallback: number): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value
@@ -193,6 +210,104 @@ const toTopFailureReasons = (entries: Map<string, number>) =>
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, WORKFLOW_WINDOW_REASON_LIMIT)
     .map(([reason, count]) => ({ reason, count }))
+
+const MIGRATION_TABLE_CANDIDATES = ['kysely_migration', 'kysely_migrations'] as const
+
+const buildDatabaseMigrationConsistencyUnknown = (message: string): DatabaseMigrationConsistency => ({
+  status: 'unknown',
+  migration_table: null,
+  registered_count: 0,
+  applied_count: 0,
+  unapplied_count: 0,
+  unexpected_count: 0,
+  latest_registered: null,
+  latest_applied: null,
+  missing_migrations: [],
+  unexpected_migrations: [],
+  message,
+})
+
+const checkMigrationTable = async (db: Db): Promise<string | null> => {
+  const checkExists = async (table: (typeof MIGRATION_TABLE_CANDIDATES)[number]) => {
+    const response = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = ${table}
+      ) AS exists
+    `.execute(db)
+    const row = response.rows[0]
+    return row?.exists === true ? table : null
+  }
+
+  for (const table of MIGRATION_TABLE_CANDIDATES) {
+    const migrationTable = await checkExists(table)
+    if (migrationTable) {
+      return migrationTable
+    }
+  }
+
+  return null
+}
+
+const readAppliedMigrations = async (db: Db, migrationTable: string) => {
+  const response = await sql<{
+    name: string | null
+  }>`SELECT name FROM ${sql.ref(migrationTable)} ORDER BY name`.execute(db)
+  return dedupeSorted(response.rows.map((row) => asString(row.name)).filter(Boolean) as string[])
+}
+
+const buildDatabaseMigrationConsistency = async (db: Db): Promise<DatabaseMigrationConsistency> => {
+  const registered = dedupeSorted(getRegisteredMigrationNames())
+  const latestRegistered = registered.at(-1) ?? null
+
+  const migrationTable = await checkMigrationTable(db)
+  if (!migrationTable) {
+    return {
+      ...buildDatabaseMigrationConsistencyUnknown('kysely migration table not found'),
+      status: 'degraded' as const,
+      registered_count: registered.length,
+      latest_registered: latestRegistered,
+    }
+  }
+
+  const applied = await readAppliedMigrations(db, migrationTable)
+  const appliedSet = new Set(applied)
+  const registeredSet = new Set(registered)
+
+  const missingMigrations = registered.filter((migration) => !appliedSet.has(migration))
+  const unexpectedMigrations = applied.filter((migration) => !registeredSet.has(migration))
+  const status: DatabaseMigrationConsistency['status'] =
+    missingMigrations.length === 0 && unexpectedMigrations.length === 0 ? 'healthy' : 'degraded'
+
+  const messageParts = []
+  if (status === 'healthy') {
+    messageParts.push('migration registry and database are synchronized')
+  } else {
+    if (missingMigrations.length > 0) {
+      messageParts.push(`${missingMigrations.length} registered migrations not applied`)
+    }
+    if (unexpectedMigrations.length > 0) {
+      messageParts.push(`${unexpectedMigrations.length} migrations applied but unregistered`)
+    }
+  }
+  const latestApplied = applied.at(-1) ?? null
+
+  return {
+    status,
+    migration_table: migrationTable,
+    registered_count: registered.length,
+    applied_count: applied.length,
+    unapplied_count: missingMigrations.length,
+    unexpected_count: unexpectedMigrations.length,
+    latest_registered: latestRegistered,
+    latest_applied: latestApplied,
+    missing_migrations: missingMigrations,
+    unexpected_migrations: unexpectedMigrations,
+    message: messageParts.join('; '),
+  }
+}
 
 const buildWorkflowReliability = async (deps: {
   now: Date
@@ -391,18 +506,22 @@ const checkDatabase = async (): Promise<DatabaseStatus> => {
       status: 'disabled',
       message: 'DATABASE_URL not set',
       latency_ms: 0,
+      migration_consistency: buildDatabaseMigrationConsistencyUnknown('DATABASE_URL not set'),
     }
   }
 
   const start = Date.now()
   try {
     await sql`select 1`.execute(db)
+    const migration_consistency = await buildDatabaseMigrationConsistency(db)
+
     return {
       configured: true,
       connected: true,
-      status: 'healthy',
-      message: '',
+      status: migration_consistency.status === 'healthy' ? 'healthy' : 'degraded',
+      message: migration_consistency.message,
       latency_ms: Math.max(0, Date.now() - start),
+      migration_consistency,
     }
   } catch (error) {
     return {
@@ -411,6 +530,10 @@ const checkDatabase = async (): Promise<DatabaseStatus> => {
       status: 'degraded',
       message: normalizeMessage(error),
       latency_ms: Math.max(0, Date.now() - start),
+      migration_consistency: {
+        ...buildDatabaseMigrationConsistencyUnknown(normalizeMessage(error)),
+        registered_count: getRegisteredMigrationNames().length,
+      },
     }
   }
 }

@@ -59,6 +59,8 @@ const migrations: MigrationMap = {
   '20260304_jangar_github_worktree_refresh_state': jangarGithubWorktreeRefreshStateMigration,
 }
 
+export const getRegisteredMigrationNames = () => Object.keys(migrations).sort()
+
 const migrationProvider = new StaticMigrationProvider(migrations)
 const migrationPromises = new WeakMap<Db, Promise<void>>()
 
@@ -125,5 +127,5 @@ export const ensureMigrations = async (db: Db) => {
 }
 
 export const __test__ = {
-  getRegisteredMigrations: () => Object.keys(migrations).sort(),
+  getRegisteredMigrations: getRegisteredMigrationNames,
 }
