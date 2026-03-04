@@ -273,6 +273,8 @@ def healthz() -> dict[str, str]:
 
 def _evaluate_trading_health_payload(
     session: Session,
+    *,
+    include_database_contract: bool = False,
 ) -> tuple[dict[str, object], int]:
     """Build shared trading health payload and status code."""
 
@@ -304,8 +306,8 @@ def _evaluate_trading_health_payload(
         "alpaca": alpaca_status,
     }
 
-    database_contract = _evaluate_database_contract(session)
-    if settings.trading_enabled:
+    if include_database_contract:
+        database_contract = _evaluate_database_contract(session)
         dependencies["database"] = {
             "ok": bool(database_contract.get("ok")),
             "detail": "ok" if bool(database_contract.get("ok")) else "database contract failed",
@@ -380,7 +382,10 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
 def readyz(session: Session = Depends(get_session)) -> JSONResponse:
     """Readiness endpoint with dependency-aware status for rollout safety."""
 
-    payload, status_code = _evaluate_trading_health_payload(session)
+    payload, status_code = _evaluate_trading_health_payload(
+        session,
+        include_database_contract=True,
+    )
     return JSONResponse(
         status_code=status_code,
         content=jsonable_encoder(payload),
