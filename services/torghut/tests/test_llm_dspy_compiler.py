@@ -26,7 +26,9 @@ class TestLLMDSPyCompiler(TestCase):
                     {"rowId": "row-3", "split": "test"},
                 ],
             }
-            dataset_path.write_text(canonical_json(dataset_payload) + "\n", encoding="utf-8")
+            dataset_path.write_text(
+                canonical_json(dataset_payload) + "\n", encoding="utf-8"
+            )
             metric_policy_path.write_text(
                 "\n".join(
                     [
@@ -72,11 +74,11 @@ class TestLLMDSPyCompiler(TestCase):
             self.assertEqual(compile_result_payload["optimizer"], "miprov2")
             self.assertEqual(
                 compile_result_payload["metricBundle"]["metricPolicyRef"],
-                str(metric_policy_path),
+                metric_policy_path.resolve().as_uri(),
             )
             self.assertEqual(
                 compile_result_payload["metricBundle"]["datasetRef"],
-                str(dataset_path),
+                dataset_path.resolve().as_uri(),
             )
             self.assertEqual(
                 compile_result_payload["metricBundle"]["rowCountsBySplit"],
@@ -127,7 +129,9 @@ class TestLLMDSPyCompiler(TestCase):
                 created_at=created_at,
             )
 
-            self.assertEqual(first.compile_result.artifact_hash, second.compile_result.artifact_hash)
+            self.assertEqual(
+                first.compile_result.artifact_hash, second.compile_result.artifact_hash
+            )
             self.assertEqual(
                 first.compile_result.reproducibility_hash,
                 second.compile_result.reproducibility_hash,
@@ -135,6 +139,63 @@ class TestLLMDSPyCompiler(TestCase):
             self.assertEqual(
                 first.compile_result_path.read_text(encoding="utf-8"),
                 second.compile_result_path.read_text(encoding="utf-8"),
+            )
+
+    def test_compile_hashes_are_stable_for_path_and_file_uri_refs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_path = root / "dspy-dataset.json"
+            metric_policy_path = root / "dspy-metrics.yaml"
+            artifact_dir = root / "compile"
+
+            dataset_path.write_text(
+                canonical_json(
+                    {
+                        "schemaVersion": "torghut.dspy.dataset.v1",
+                        "rows": [{"rowId": "row-1", "split": "train"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            metric_policy_path.write_text(
+                "schemaVersion: torghut.dspy.metrics.v1\npolicy:\n  schemaValidRateMin: 0.995\n",
+                encoding="utf-8",
+            )
+
+            created_at = datetime(2026, 2, 27, 12, 45, tzinfo=timezone.utc)
+            from_path = compile_dspy_program_artifacts(
+                repository="proompteng/lab",
+                base="main",
+                head="codex/dspy-compile-test",
+                artifact_path=artifact_dir,
+                dataset_ref=str(dataset_path),
+                metric_policy_ref=str(metric_policy_path),
+                optimizer="miprov2",
+                created_at=created_at,
+            )
+            from_file_uri = compile_dspy_program_artifacts(
+                repository="proompteng/lab",
+                base="main",
+                head="codex/dspy-compile-test",
+                artifact_path=artifact_dir,
+                dataset_ref=dataset_path.resolve().as_uri(),
+                metric_policy_ref=metric_policy_path.resolve().as_uri(),
+                optimizer="miprov2",
+                created_at=created_at,
+            )
+
+            self.assertEqual(
+                from_path.compile_result.reproducibility_hash,
+                from_file_uri.compile_result.reproducibility_hash,
+            )
+            self.assertEqual(
+                from_path.compile_result.artifact_hash,
+                from_file_uri.compile_result.artifact_hash,
+            )
+            self.assertEqual(
+                from_path.compile_result.metric_bundle["datasetRef"],
+                dataset_path.resolve().as_uri(),
             )
 
     def test_compile_rejects_non_local_dataset_ref(self) -> None:
@@ -191,8 +252,12 @@ class TestLLMDSPyCompiler(TestCase):
                 fallback_rate=0.02,
                 latency_p95_ms=1200,
             )
-            self.assertEqual(result.compile_result.metric_bundle["schemaValidRate"], 0.998)
-            self.assertEqual(result.compile_result.metric_bundle["vetoAlignmentRate"], 0.81)
+            self.assertEqual(
+                result.compile_result.metric_bundle["schemaValidRate"], 0.998
+            )
+            self.assertEqual(
+                result.compile_result.metric_bundle["vetoAlignmentRate"], 0.81
+            )
             self.assertEqual(result.compile_result.metric_bundle["falseVetoRate"], 0.02)
             self.assertEqual(result.compile_result.metric_bundle["fallbackRate"], 0.02)
             self.assertEqual(result.compile_result.metric_bundle["latencyP95Ms"], 1200)
