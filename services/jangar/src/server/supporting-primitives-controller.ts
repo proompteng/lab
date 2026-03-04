@@ -686,6 +686,13 @@ const STAGE_CADENCE_KEY: Record<StageName, string> = {
   verify: 'verifyEvery',
 }
 
+const STAGE_AGENT_ROLE: Record<StageName, string> = {
+  discover: 'architector',
+  plan: 'architector',
+  implement: 'implementor',
+  verify: 'release-manager',
+}
+
 const STAGE_LAST_RUN_KEY: Record<StageName, string> = {
   discover: 'lastDiscoverAt',
   plan: 'lastPlanAt',
@@ -748,7 +755,7 @@ type SwarmHulyIntegration = {
 type SwarmAgentIdentity = {
   workerId: string
   identity: string
-  role: StageName
+  role: string
 }
 
 const normalizeLabelValue = (value: string) => {
@@ -847,7 +854,7 @@ const buildSwarmAgentIdentity = (input: { swarmName: string; stage: StageName; s
   return {
     workerId,
     identity,
-    role: input.stage,
+    role: STAGE_AGENT_ROLE[input.stage],
   } satisfies SwarmAgentIdentity
 }
 

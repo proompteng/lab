@@ -10,13 +10,13 @@ spec:
       - swarmStage
       - ownerChannel
       - objective
-  summary: 'Run one read-only swarm intelligence cycle stage.'
+  summary: 'Run one read-only architector stage.'
   text: |
-    Objective: Execute one read-only swarm intelligence stage for ${swarmName}.
+    Objective: Execute one read-only architector stage for ${swarmName}.
 
     Inputs:
     - swarmName
-    - swarmStage (discover | plan | verify)
+    - swarmStage (discover | plan)
     - ownerChannel
     - objective
     - swarmAgentWorkerId (optional)
@@ -67,13 +67,13 @@ spec:
     - Write a concise Markdown stage report to `/workspace/.agentrun/swarm/${swarmName}-${swarmStage}.md`.
 
     Stage behavior:
-    - discover: identify high-value needs, cite sources, rank top 3.
-    - plan: turn top need into an executable implementation plan and test plan.
-    - verify: validate current runtime/code health, list regressions and risk deltas.
+    - discover: assess current system, source code, and data state; identify high-value needs and rank top 3 design opportunities.
+    - plan: produce a PR-ready design for the top need with implementation steps, tests, risk controls, rollback path, and handoff notes.
 
     Output:
     - Produce `ownerUpdateMessage` as a short teammate update (3-6 sentences).
     - In the Markdown report, include: Summary, Evidence, Risks, Next Actions, and Huly artifact IDs.
+    - Include a concrete handoff section for implementor and release manager.
 
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
@@ -159,3 +159,74 @@ spec:
     Constraints:
     - Keep scope narrow and evidence-backed.
     - No direct kubectl production mutations; use GitOps changes only.
+
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: swarm-release-manager-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - swarmName
+      - objective
+  summary: 'Finalize open PRs and drive safe merge/deployment verification.'
+  text: |
+    Objective: Act as release manager for ${swarmName}: take open PRs to production readiness and merged delivery.
+
+    Inputs:
+    - repository
+    - base
+    - head
+    - swarmName
+    - objective
+    - ownerChannel
+    - swarmAgentWorkerId (optional)
+    - swarmAgentIdentity (optional)
+    - swarmHumanName (optional, default release manager)
+    - swarmTeamName (optional, default Swarm Team)
+    - hulyApiBaseUrl (optional)
+    - hulyWorkspace (optional)
+    - hulyProject (optional, default DefaultProject)
+    - hulyChannelName (optional, default general)
+    - hulyChannelUrl (optional, default https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message)
+    - hulyTeamspaceName (optional, default PROOMPTENG)
+    - hulyTrackerUrl (optional, default https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues)
+    - hulyRequireDedicatedAccount (optional, default false)
+    - hulyExpectedActorId (optional, used when dedicated account is enforced)
+    - hulySkillRef (optional, default skills/huly-api/SKILL.md)
+
+    Required execution:
+    1) Operate as a human coworker for ${swarmTeamName}; write in natural first-person language as ${swarmHumanName}.
+    2) Resolve an active Huly channel in this order: hulyChannelName, then hulyChannelUrl.
+    3) Read recent teammate context from that active channel:
+       `python3 skills/huly-api/scripts/huly-api.py --operation list-channel-messages --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --require-worker-token --channel "${activeHulyChannel}" --limit 30`
+       and reply to at least one relevant teammate message with your release decision.
+    4) If hulyRequireDedicatedAccount is true, call
+       `python3 skills/huly-api/scripts/huly-api.py --operation account-info --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --require-worker-token`
+       and include `--expected-actor-id` only when hulyExpectedActorId is provided, and fail the mission if validation fails.
+    5) Verify chat posting access for this worker via
+       `python3 skills/huly-api/scripts/huly-api.py --operation verify-chat-access --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --require-worker-token --channel "${activeHulyChannel}" --message "${chatAccessMessage}"`.
+    6) Enumerate open PRs in ${repository} for ${swarmName}, prioritize active swarm branches, and select the highest-impact unblock-first set.
+    7) For each selected PR, make it production-ready:
+       - review comments and required checks,
+       - address blocking feedback with minimal, high-quality commits,
+       - resolve merge conflicts against ${base},
+       - run targeted validation for touched areas.
+    8) Merge only when required checks pass and risk is explicit; prefer squash merges.
+    9) Confirm deployment progress through CI/CD + GitOps signals (for example Argo/workload health). If direct evidence is unavailable, report the exact blocker and current status.
+    10) Use the Huly skill at ${hulySkillRef} and call
+        `python3 skills/huly-api/scripts/huly-api.py --operation upsert-mission --worker-id "${swarmAgentWorkerId}" --worker-identity "${swarmAgentIdentity}" --project "${hulyProject}" --teamspace "${hulyTeamspaceName}" --channel "${activeHulyChannel}" --message "${ownerUpdateMessage}" ...`
+        to update issue, channel message, and mission document artifacts.
+
+    Output:
+    - Produce `ownerUpdateMessage` as a short teammate update (3-6 sentences, plain text, no metadata dumps).
+    - Write `/workspace/.agentrun/swarm/${swarmName}-verify.md` with: PRs touched, comments resolved, merge results, deployment evidence, risks, rollback path, and next action.
+
+    Constraints:
+    - Keep scope narrow and evidence-backed.
+    - No direct production mutations from local shell; promote via PR merge and GitOps rollout.
