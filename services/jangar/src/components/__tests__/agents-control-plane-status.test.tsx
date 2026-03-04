@@ -18,7 +18,7 @@ const baseStatus: ControlPlaneStatus = {
     last_transition_at: '2026-01-20T00:00:00Z',
     last_attempt_at: '2026-01-20T00:00:00Z',
     last_success_at: '2026-01-20T00:00:00Z',
-    last_error: 'none',
+    last_error: '',
   },
   controllers: [
     {
@@ -51,7 +51,7 @@ const baseStatus: ControlPlaneStatus = {
     observed_schedules: 0,
     inactive_schedules: 0,
     stale_schedules: 0,
-    message: 'healthy',
+    message: '',
     stages: [],
   },
   database: {
