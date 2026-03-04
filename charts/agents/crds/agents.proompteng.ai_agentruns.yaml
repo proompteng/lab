@@ -480,15 +480,15 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: spec.implementationSpecRef or spec.implementation is required
-              rule: self.implementationSpecRef != null || self.implementation != null
+              rule: self.implementationSpecRef != nil || self.implementation != nil
             - message: Only one of spec.systemPrompt or spec.systemPromptRef may be
                 set
-              rule: self.systemPrompt == null || self.systemPromptRef == null
+              rule: self.systemPrompt == nil || self.systemPromptRef == nil
             - message: AgentRun-level systemPrompt/systemPromptRef overrides are not
                 allowed; configure Agent.spec.defaults instead
-              rule: self.systemPrompt == null && self.systemPromptRef == null
+              rule: self.systemPrompt == nil && self.systemPromptRef == nil
             - message: spec.parameters.prompt is not allowed; use ImplementationSpec.spec.text
-              rule: self.parameters == null || !('prompt' in self.parameters)
+              rule: self.parameters == nil || !('prompt' in self.parameters)
           status:
             properties:
               artifacts:
