@@ -290,12 +290,9 @@ describe('control-plane status', () => {
         getAgentsControllerHealth: () => healthyController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        kube: createKubeList(
-          [createActiveJob()],
-          healthyRolloutKubeState.schedules,
-          healthyRolloutKubeState.cronjobs,
-          [createDeploymentWith('agents')],
-        ),
+        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs, [
+          createDeploymentWith('agents'),
+        ]),
         resolveTemporalAdapter: async () => ({
           name: 'temporal',
           available: true,
@@ -355,12 +352,9 @@ describe('control-plane status', () => {
         getAgentsControllerHealth: () => degradedController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        kube: createKubeList(
-          [createActiveJob()],
-          healthyRolloutKubeState.schedules,
-          healthyRolloutKubeState.cronjobs,
-          [createDeploymentWith('agents')],
-        ),
+        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs, [
+          createDeploymentWith('agents'),
+        ]),
         resolveTemporalAdapter: async () => ({
           name: 'temporal',
           available: false,
@@ -538,12 +532,9 @@ describe('control-plane status', () => {
             unexpected_migrations: [],
           }),
         }),
-        kube: createKubeList(
-          [createActiveJob()],
-          healthyRolloutKubeState.schedules,
-          healthyRolloutKubeState.cronjobs,
-          [createDeploymentWith('agents')],
-        ),
+        kube: createKubeList([createActiveJob()], healthyRolloutKubeState.schedules, healthyRolloutKubeState.cronjobs, [
+          createDeploymentWith('agents'),
+        ]),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
       },
     )
