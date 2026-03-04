@@ -1021,6 +1021,20 @@ class Settings(BaseSettings):
             "gate selects degrade."
         ),
     )
+    trading_runtime_regime_confidence_thresholds_by_entropy_band: dict[
+        str, tuple[float, float]
+    ] = Field(
+        default_factory=lambda: {
+            "low": (0.65, 0.45),
+            "medium": (0.75, 0.55),
+            "high": (0.85, 0.70),
+        },
+        alias="TRADING_RUNTIME_REGIME_CONFIDENCE_THRESHOLDS_BY_ENTROPY_BAND",
+        description=(
+            "Entropy-band->(degrade_threshold, abstain_threshold) pairs used by "
+            "runtime regime-confidence gating."
+        ),
+    )
     trading_allocator_strategy_notional_caps: dict[str, float] = Field(
         default_factory=dict,
         alias="TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS",
@@ -1653,6 +1667,17 @@ class Settings(BaseSettings):
             normalized_correlation_caps
         )
 
+    def _normalize_runtime_regime_confidence_thresholds_by_entropy_band(self) -> None:
+        normalized: dict[str, tuple[float, float]] = {}
+        for key, thresholds in (
+            self.trading_runtime_regime_confidence_thresholds_by_entropy_band.items()
+        ):
+            normalized_key = str(key).strip().lower()
+            if not normalized_key:
+                continue
+            normalized[normalized_key] = (float(thresholds[0]), float(thresholds[1]))
+        self.trading_runtime_regime_confidence_thresholds_by_entropy_band = normalized
+
     @staticmethod
     def _normalize_regime_keyed_float_map(values: dict[str, float]) -> dict[str, float]:
         normalized: dict[str, float] = {}
@@ -1839,6 +1864,32 @@ class Settings(BaseSettings):
                     f"[{key}] must be >= 0"
                 )
 
+    def _validate_runtime_regime_confidence_thresholds_by_entropy_band(self) -> None:
+        for entropy_band, thresholds in (
+            self.trading_runtime_regime_confidence_thresholds_by_entropy_band.items()
+        ):
+            if len(thresholds) != 2:
+                raise ValueError(
+                    "TRADING_RUNTIME_REGIME_CONFIDENCE_THRESHOLDS_BY_ENTROPY_BAND"
+                    f"[{entropy_band}] must contain exactly two values"
+                )
+            degrade_threshold, abstain_threshold = thresholds
+            if not (0 <= degrade_threshold <= 1):
+                raise ValueError(
+                    "TRADING_RUNTIME_REGIME_CONFIDENCE_THRESHOLDS_BY_ENTROPY_BAND"
+                    f"[{entropy_band}] degrade_threshold must be within [0, 1]"
+                )
+            if not (0 <= abstain_threshold <= 1):
+                raise ValueError(
+                    "TRADING_RUNTIME_REGIME_CONFIDENCE_THRESHOLDS_BY_ENTROPY_BAND"
+                    f"[{entropy_band}] abstain_threshold must be within [0, 1]"
+                )
+            if degrade_threshold < abstain_threshold:
+                raise ValueError(
+                    "TRADING_RUNTIME_REGIME_CONFIDENCE_THRESHOLDS_BY_ENTROPY_BAND"
+                    f"[{entropy_band}] requires degrade_threshold >= abstain_threshold"
+                )
+
     def _validate_fragility_settings(self) -> None:
         if not (
             0 <= self.trading_fragility_elevated_threshold <= 1
@@ -1960,9 +2011,11 @@ class Settings(BaseSettings):
             self.trading_allocator_regime_budget_multipliers,
         )
         self._normalize_allocator_settings()
+        self._normalize_runtime_regime_confidence_thresholds_by_entropy_band()
         self._normalize_runtime_uncertainty_degrade_maps()
         self._validate_allocator_map_settings()
         self._validate_runtime_uncertainty_degrade_map_settings()
+        self._validate_runtime_regime_confidence_thresholds_by_entropy_band()
         self._validate_fragility_settings()
         self._validate_llm_settings()
         self._validate_posthog_settings()

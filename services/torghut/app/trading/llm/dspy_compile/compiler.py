@@ -23,6 +23,12 @@ DEFAULT_SIGNATURE_VERSION = "v1"
 DEFAULT_COMPILED_ARTIFACT_NAME = "dspy-compiled-program.json"
 DEFAULT_COMPILE_RESULT_NAME = "dspy-compile-result.json"
 DEFAULT_COMPILE_METRICS_NAME = "dspy-compile-metrics.json"
+_MIPRO_OPTIMIZERS = {
+    "mipro",
+    "mipro-v2",
+    "mipro_v2",
+    "miprov2",
+}
 
 
 @dataclass(frozen=True)
@@ -64,7 +70,7 @@ def compile_dspy_program_artifacts(
     normalized_repository = _require_value(repository, "repository")
     normalized_base = _require_value(base, "base")
     normalized_head = _require_value(head, "head")
-    normalized_optimizer = _require_value(optimizer, "optimizer").lower()
+    normalized_optimizer = _normalize_optimizer(optimizer)
     normalized_program_name = _require_value(program_name, "program_name")
     normalized_signature_version = _require_value(
         signature_version, "signature_version"
@@ -73,13 +79,13 @@ def compile_dspy_program_artifacts(
     normalized_artifact_ref = _require_value(str(artifact_path), "artifact_path")
     normalized_dataset_ref = _require_value(dataset_ref, "dataset_ref")
     normalized_metric_policy_ref = _require_value(metric_policy_ref, "metric_policy_ref")
-    normalized_compiled_artifact_name = _require_value(
+    normalized_compiled_artifact_name = _normalize_artifact_file_name(
         compiled_artifact_name, "compiled_artifact_name"
     )
-    normalized_compile_result_name = _require_value(
+    normalized_compile_result_name = _normalize_artifact_file_name(
         compile_result_name, "compile_result_name"
     )
-    normalized_compile_metrics_name = _require_value(
+    normalized_compile_metrics_name = _normalize_artifact_file_name(
         compile_metrics_name, "compile_metrics_name"
     )
 
@@ -176,6 +182,7 @@ def compile_dspy_program_artifacts(
         "schemaVersion": COMPILE_METRICS_SCHEMA_VERSION,
         "programName": normalized_program_name,
         "optimizer": normalized_optimizer,
+        "compiledArtifactUri": compiled_artifact_uri,
         "artifactHash": compile_result.artifact_hash,
         "reproducibilityHash": compile_result.reproducibility_hash,
         "metricBundleHash": metric_bundle_hash,
@@ -200,6 +207,24 @@ def _require_value(value: str, field_name: str) -> str:
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"{field_name}_required")
+    return normalized
+
+
+def _normalize_optimizer(optimizer: str) -> str:
+    normalized = _require_value(optimizer, "optimizer").lower()
+    if normalized not in _MIPRO_OPTIMIZERS:
+        raise ValueError("optimizer_must_be_mipro")
+    if normalized in {"mipro-v2", "mipro_v2"}:
+        return "miprov2"
+    return normalized
+
+
+def _normalize_artifact_file_name(file_name: str, field_name: str) -> str:
+    normalized = _require_value(file_name, field_name)
+    if "/" in normalized or "\\" in normalized:
+        raise ValueError(f"{field_name}_must_be_file_name")
+    if normalized in {".", ".."}:
+        raise ValueError(f"{field_name}_must_be_file_name")
     return normalized
 
 

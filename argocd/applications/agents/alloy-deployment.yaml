@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agents-alloy
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agents-alloy
+    app.kubernetes.io/component: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agents-alloy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agents-alloy
+        app.kubernetes.io/component: observability
+    spec:
+      serviceAccountName: agents-alloy
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.11.2
+          imagePullPolicy: IfNotPresent
+          args:
+            - run
+            - /etc/alloy/config.river
+          ports:
+            - name: http-metrics
+              containerPort: 12345
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            # alloy image runs as UID 0; Kubernetes rejects runAsNonRoot=true.
+            runAsNonRoot: false
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+      volumes:
+        - name: config
+          configMap:
+            name: agents-alloy
+            items:
+              - key: config.river
+                path: config.river

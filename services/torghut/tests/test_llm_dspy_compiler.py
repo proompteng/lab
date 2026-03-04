@@ -241,3 +241,116 @@ class TestLLMDSPyCompiler(TestCase):
                     optimizer="miprov2",
                     schema_valid_rate=0.998,
                 )
+
+    def test_compile_metrics_persist_hashes(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_path = root / "dspy-dataset.json"
+            metric_policy_path = root / "dspy-metrics.yaml"
+            dataset_path.write_text(
+                canonical_json(
+                    {
+                        "schemaVersion": "torghut.dspy.dataset.v1",
+                        "rows": [{"rowId": "row-1", "split": "train"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            metric_policy_path.write_text(
+                "schemaVersion: torghut.dspy.metrics.v1\npolicy: {}\n",
+                encoding="utf-8",
+            )
+
+            result = compile_dspy_program_artifacts(
+                repository="proompteng/lab",
+                base="main",
+                head="codex/dspy-compile-test",
+                artifact_path=root / "compile",
+                dataset_ref=str(dataset_path),
+                metric_policy_ref=str(metric_policy_path),
+                optimizer="mipro-v2",
+            )
+
+            compile_metrics_payload = json.loads(
+                result.compile_metrics_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(compile_metrics_payload["optimizer"], "miprov2")
+            self.assertEqual(
+                compile_metrics_payload["compiledArtifactUri"],
+                result.compile_result.compiled_artifact_uri,
+            )
+            self.assertEqual(
+                compile_metrics_payload["artifactHash"],
+                result.compile_result.artifact_hash,
+            )
+            self.assertEqual(
+                compile_metrics_payload["reproducibilityHash"],
+                result.compile_result.reproducibility_hash,
+            )
+            self.assertEqual(len(compile_metrics_payload["metricBundleHash"]), 64)
+
+    def test_compile_rejects_non_mipro_optimizer(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_path = root / "dspy-dataset.json"
+            metric_policy_path = root / "dspy-metrics.yaml"
+            dataset_path.write_text(
+                canonical_json(
+                    {
+                        "schemaVersion": "torghut.dspy.dataset.v1",
+                        "rows": [{"rowId": "row-1", "split": "train"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            metric_policy_path.write_text(
+                "schemaVersion: torghut.dspy.metrics.v1\npolicy: {}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "optimizer_must_be_mipro"):
+                compile_dspy_program_artifacts(
+                    repository="proompteng/lab",
+                    base="main",
+                    head="codex/dspy-compile-test",
+                    artifact_path=root / "compile",
+                    dataset_ref=str(dataset_path),
+                    metric_policy_ref=str(metric_policy_path),
+                    optimizer="gepa",
+                )
+
+    def test_compile_rejects_artifact_name_outside_artifact_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_path = root / "dspy-dataset.json"
+            metric_policy_path = root / "dspy-metrics.yaml"
+            dataset_path.write_text(
+                canonical_json(
+                    {
+                        "schemaVersion": "torghut.dspy.dataset.v1",
+                        "rows": [{"rowId": "row-1", "split": "train"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            metric_policy_path.write_text(
+                "schemaVersion: torghut.dspy.metrics.v1\npolicy: {}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ValueError, "compiled_artifact_name_must_be_file_name"
+            ):
+                compile_dspy_program_artifacts(
+                    repository="proompteng/lab",
+                    base="main",
+                    head="codex/dspy-compile-test",
+                    artifact_path=root / "compile",
+                    dataset_ref=str(dataset_path),
+                    metric_policy_ref=str(metric_policy_path),
+                    optimizer="miprov2",
+                    compiled_artifact_name="../escape.json",
+                )

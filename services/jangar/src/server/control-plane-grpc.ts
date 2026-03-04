@@ -1,10 +1,61 @@
+import { connect } from 'node:net'
+
 import type { GrpcStatus } from '~/server/control-plane-status'
 
 const DEFAULT_GRPC_PORT = 50051
+const DEFAULT_GRPC_HEALTH_TIMEOUT_MS = 750
 
-export const resolveGrpcStatus = (): GrpcStatus => {
-  const enabled = (process.env.JANGAR_GRPC_ENABLED ?? '').trim().toLowerCase()
-  if (!['1', 'true', 'yes', 'on'].includes(enabled)) {
+const parseBooleanFlag = (value: string): boolean => ['1', 'true', 'yes', 'on'].includes(value.toLowerCase())
+
+const parseGrpcTimeoutMs = (): number => {
+  const timeout = Number.parseInt(process.env.JANGAR_GRPC_HEALTH_TIMEOUT_MS?.trim() ?? '', 10)
+  if (!Number.isFinite(timeout) || timeout <= 0) {
+    return DEFAULT_GRPC_HEALTH_TIMEOUT_MS
+  }
+  return timeout
+}
+
+const parseGrpcAddress = (addressInput: string) => {
+  const address = addressInput.trim()
+  if (!address) return null
+
+  const bracketMatch = /^\[(.+)]:(\d+)$/.exec(address)
+  if (bracketMatch && bracketMatch.length >= 3) {
+    const port = Number.parseInt(bracketMatch[2], 10)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null
+    return { host: bracketMatch[1], port, address }
+  }
+
+  const separatorIndex = address.lastIndexOf(':')
+  if (separatorIndex < 1 || separatorIndex === address.length - 1) return null
+
+  const host = address.slice(0, separatorIndex)
+  const port = Number.parseInt(address.slice(separatorIndex + 1), 10)
+  if (!host || !Number.isFinite(port) || port < 1 || port > 65535) return null
+
+  return { host, port, address }
+}
+
+const checkGrpcEndpointReachability = async (host: string, port: number, timeoutMs: number): Promise<string> => {
+  return await new Promise<string>((resolve) => {
+    const socket = connect({ host, port, timeout: timeoutMs }, () => {
+      socket.end()
+      resolve('')
+    })
+
+    socket.on('error', (error) => {
+      resolve(error instanceof Error ? error.message : String(error))
+    })
+    socket.on('timeout', () => {
+      socket.destroy()
+      resolve(`timeout after ${timeoutMs}ms`)
+    })
+  })
+}
+
+export const resolveGrpcStatus = async (): Promise<GrpcStatus> => {
+  const enabled = parseBooleanFlag((process.env.JANGAR_GRPC_ENABLED ?? '').trim())
+  if (!enabled) {
     return {
       enabled: false,
       address: '',
@@ -16,6 +67,29 @@ export const resolveGrpcStatus = (): GrpcStatus => {
   const host = (process.env.JANGAR_GRPC_HOST ?? '').trim() || '127.0.0.1'
   const port = Number.parseInt(process.env.JANGAR_GRPC_PORT ?? '', 10) || DEFAULT_GRPC_PORT
   const address = process.env.JANGAR_GRPC_ADDRESS?.trim() || `${host}:${port}`
+  const parsedAddress = parseGrpcAddress(address)
+  if (!parsedAddress) {
+    return {
+      enabled: true,
+      address,
+      status: 'degraded',
+      message: `invalid gRPC address ${JSON.stringify(address)}`,
+    }
+  }
+
+  const reachabilityError = await checkGrpcEndpointReachability(
+    parsedAddress.host,
+    parsedAddress.port,
+    parseGrpcTimeoutMs(),
+  )
+  if (reachabilityError) {
+    return {
+      enabled: true,
+      address: parsedAddress.address,
+      status: 'degraded',
+      message: `gRPC endpoint not reachable (${reachabilityError})`,
+    }
+  }
 
   return {
     enabled: true,

@@ -20,7 +20,7 @@ def _default_base_url() -> str:
 
 
 def _build_lane_overrides(args: argparse.Namespace) -> dict[str, dict[str, str]]:
-    artifact_root = args.artifact_root.rstrip("/")
+    artifact_root = args.artifact_root.strip().rstrip("/")
     dataset_ref = args.dataset_ref or f"{artifact_root}/dataset-build/dspy-dataset.json"
     compile_result_ref = (
         args.compile_result_ref or f"{artifact_root}/compile/dspy-compile-result.json"
@@ -28,6 +28,15 @@ def _build_lane_overrides(args: argparse.Namespace) -> dict[str, dict[str, str]]
     eval_report_ref = (
         args.eval_report_ref or f"{artifact_root}/eval/dspy-eval-report.json"
     )
+
+    promote_overrides: dict[str, str] = {
+        "evalReportRef": eval_report_ref,
+        "promotionTarget": args.promotion_target,
+        "approvalRef": args.approval_ref,
+    }
+    artifact_hash = str(args.artifact_hash or "").strip()
+    if artifact_hash:
+        promote_overrides["artifactHash"] = artifact_hash
 
     overrides: dict[str, dict[str, str]] = {
         "dataset-build": {
@@ -43,11 +52,7 @@ def _build_lane_overrides(args: argparse.Namespace) -> dict[str, dict[str, str]]
             "compileResultRef": compile_result_ref,
             "gatePolicyRef": args.gate_policy_ref,
         },
-        "promote": {
-            "evalReportRef": eval_report_ref,
-            "promotionTarget": args.promotion_target,
-            "approvalRef": args.approval_ref,
-        },
+        "promote": promote_overrides,
     }
 
     if args.include_gepa_experiment:
@@ -183,13 +188,18 @@ def parse_args() -> argparse.Namespace:
         choices=["paper", "shadow", "constrained_live", "scaled_live"],
     )
     parser.add_argument("--approval-ref", default="risk-committee")
+    parser.add_argument(
+        "--artifact-hash",
+        default="",
+        help="Optional compile artifact hash for promote lane contract.",
+    )
 
     parser.add_argument("--include-gepa-experiment", action="store_true")
     parser.add_argument("--gepa-baseline-ref", default="")
     parser.add_argument("--gepa-experiment-name", default="torghut-dspy-gepa-v1")
 
     parser.add_argument("--namespace", default="agents")
-    parser.add_argument("--agent-name", default="codex-agent")
+    parser.add_argument("--agent-name", default="codex-spark-agent")
     parser.add_argument("--vcs-ref-name", default="github")
     parser.add_argument(
         "--secret-binding-ref", default=settings.llm_dspy_secret_binding_ref
@@ -204,10 +214,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    artifact_root_text = args.artifact_root.strip()
-    if not artifact_root_text:
+    artifact_root_ref = args.artifact_root.strip()
+    if not artifact_root_ref:
         raise ValueError("artifact_root_required")
-    artifact_root = Path(artifact_root_text).resolve()
+    artifact_root = Path(artifact_root_ref).resolve()
+    args.artifact_root = artifact_root_ref
     lane_overrides = _build_lane_overrides(args)
 
     try:
@@ -218,7 +229,7 @@ def main() -> int:
                 repository=args.repository,
                 base=args.base,
                 head=args.head,
-                artifact_root=str(artifact_root),
+                artifact_root=artifact_root_ref,
                 run_prefix=args.run_prefix,
                 auth_token=(args.auth_token.strip() or None),
                 issue_number=args.issue_number,

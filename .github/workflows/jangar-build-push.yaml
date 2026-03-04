@@ -12,6 +12,7 @@ on:
       - 'packages/scripts/src/jangar/**'
       - 'packages/scripts/src/shared/**'
       - 'packages/codex/**'
+      - 'packages/cx-tools/**'
       - 'packages/otel/**'
       - 'packages/temporal-bun-sdk/**'
       - 'skills/**'
@@ -64,6 +65,11 @@ jobs:
             mkdir -p "$PRUNE_DIR/full/services/jangar" "$PRUNE_DIR/json/services/jangar"
             cp -R services/jangar/agentctl "$PRUNE_DIR/full/services/jangar/agentctl"
             cp -R services/jangar/agentctl "$PRUNE_DIR/json/services/jangar/agentctl"
+          fi
+          if [ -d packages/cx-tools ]; then
+            mkdir -p "$PRUNE_DIR/full/packages" "$PRUNE_DIR/json/packages"
+            cp -R packages/cx-tools "$PRUNE_DIR/full/packages/cx-tools"
+            cp -R packages/cx-tools "$PRUNE_DIR/json/packages/cx-tools"
           fi
           echo "context=$PRUNE_DIR" >> "$GITHUB_OUTPUT"
 

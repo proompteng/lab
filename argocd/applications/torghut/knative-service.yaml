@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-03-04T02:51:52Z"
+        client.knative.dev/updateTimestamp: "2026-03-04T06:50:36Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -26,7 +26,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:5e3871dc9f41f5338790b9f5f2a549ce01cef0efa2c0eb70b307343a5da8ef54
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:2f8711d87d6fff27acf97bd152865a63cda3b9682e95de11b5334b43d63e6b77
           ports:
             - name: http1
               containerPort: 8181
@@ -375,7 +375,7 @@ spec:
             - name: LLM_DSPY_RUNTIME_MODE
               value: active
             - name: LLM_DSPY_ARTIFACT_HASH
-              value: df087a5e643d6478b1ebe51bf44ad2d0e2228825c1c0a8e9dc345729d6a3bbff
+              value: 373bb47d4588d86a6fcf682e8b127420305a27860ba91c3508448f037e4adca8
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE
               value: pass_through_reduced_size
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER
@@ -412,9 +412,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.562.0-196-gf8ca537d
+              value: v0.562.0-212-gb3340912
             - name: TORGHUT_COMMIT
-              value: f8ca537d81c0e6cf84e7e9d2d55e9f33d49b38d1
+              value: b3340912f1fc7237060a17b91f90fd7c844098b8
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config

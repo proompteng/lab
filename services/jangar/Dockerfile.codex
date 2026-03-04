@@ -140,12 +140,12 @@ RUN mkdir -p /usr/local/node_modules/@proompteng \
     && cp -R /opt/proompteng/packages/codex /usr/local/node_modules/@proompteng/codex \
     && cp -R /opt/proompteng/packages/discord /usr/local/node_modules/@proompteng/discord \
     && cp -R /opt/proompteng/packages/cx-tools /usr/local/node_modules/@proompteng/cx-tools \
-    && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cli/cx-codex-run.js /usr/local/bin/cx-codex-run \
-    && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cli/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
-    && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cli/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
-    && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cli/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
-    && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cli/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
-    && chmod +x /usr/local/node_modules/@proompteng/cx-tools/dist/cli/cx-codex-run.js /usr/local/node_modules/@proompteng/cx-tools/dist/cli/cx-workflow-start.js /usr/local/node_modules/@proompteng/cx-tools/dist/cli/cx-workflow-query.js /usr/local/node_modules/@proompteng/cx-tools/dist/cli/cx-workflow-signal.js /usr/local/node_modules/@proompteng/cx-tools/dist/cli/cx-workflow-cancel.js \
+    && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
+    && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
+    && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
+    && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
+    && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
+    && chmod +x /usr/local/node_modules/@proompteng/cx-tools/dist/cx-codex-run.js /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-start.js /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-query.js /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-signal.js /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-cancel.js \
     && chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/agent-runner /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak /usr/local/bin/discord-channel.ts
 
 WORKDIR /workspace

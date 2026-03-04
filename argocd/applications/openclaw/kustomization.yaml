@@ -4,6 +4,4 @@ namespace: openclaw
 resources:
   - cloud-init-secret.yaml
   - virtualmachine.yaml
-  - service-rdp.yaml
-  - service-rdp-tailscale.yaml
   - service-ssh.yaml

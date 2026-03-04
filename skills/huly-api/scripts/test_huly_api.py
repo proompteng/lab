@@ -231,6 +231,97 @@ class HulyApiFormattingTests(unittest.TestCase):
         result = self.module.run_upsert_mission(args)
         self.assertEqual(result, 2)
 
+    def test_ensure_inline_body_limit_truncates_long_text(self):
+        module = self.module
+        text = 'a' * (module.MAX_INLINE_MISSION_BODY_CHARS + 200)
+        trimmed = module.ensure_inline_body_limit(text)
+        self.assertLessEqual(len(trimmed), module.MAX_INLINE_MISSION_BODY_CHARS)
+        self.assertTrue(trimmed.endswith(module.TRUNCATION_NOTICE))
+
+    def test_create_or_update_issue_clamps_body_before_tx(self):
+        module = self.module
+        context = module.HulyContext(
+            base_url='https://example.com',
+            token='token',
+            token_source='test',
+            workspace_id='workspace-1',
+            actor_id='actor-1',
+            timeout_seconds=30,
+        )
+        called = {}
+
+        original_resolve_project = module.resolve_project
+        original_find_issue_by_title = module.find_issue_by_title
+        original_create_tx_update_doc = module.create_tx_update_doc
+        original_submit_tx = module.submit_tx
+
+        module.resolve_project = lambda ctx, ref: {'_id': 'project-1', 'identifier': 'TSK'}
+        module.find_issue_by_title = lambda ctx, project_id, title: {'_id': 'issue-1'}
+        module.create_tx_update_doc = lambda **kwargs: called.setdefault('tx', kwargs) or {'_id': 'tx-1'}
+        module.submit_tx = lambda **kwargs: {}
+
+        try:
+            result = module.create_or_update_issue(
+                context=context,
+                project_ref='DefaultProject',
+                title='Issue title',
+                body='X' * 3000,
+                mission_id='swarm-test',
+                status='tracker:status:Backlog',
+                priority=2,
+            )
+            self.assertEqual(result['action'], 'updated')
+        finally:
+            module.resolve_project = original_resolve_project
+            module.find_issue_by_title = original_find_issue_by_title
+            module.create_tx_update_doc = original_create_tx_update_doc
+            module.submit_tx = original_submit_tx
+
+        description = called['tx']['operations']['description']
+        self.assertLessEqual(len(description), module.MAX_INLINE_MISSION_BODY_CHARS)
+        self.assertTrue(description.endswith(module.TRUNCATION_NOTICE))
+
+    def test_create_or_update_document_clamps_body_before_tx(self):
+        module = self.module
+        context = module.HulyContext(
+            base_url='https://example.com',
+            token='token',
+            token_source='test',
+            workspace_id='workspace-1',
+            actor_id='actor-1',
+            timeout_seconds=30,
+        )
+        called = {}
+
+        original_resolve_teamspace = module.resolve_teamspace
+        original_find_document_by_title = module.find_document_by_title
+        original_create_tx_update_doc = module.create_tx_update_doc
+        original_submit_tx = module.submit_tx
+
+        module.resolve_teamspace = lambda ctx, ref: {'_id': 'teamspace-1'}
+        module.find_document_by_title = lambda ctx, teamspace_id, title: {'_id': 'doc-1'}
+        module.create_tx_update_doc = lambda **kwargs: called.setdefault('tx', kwargs) or {'_id': 'tx-1'}
+        module.submit_tx = lambda **kwargs: {}
+
+        try:
+            result = module.create_or_update_document(
+                context=context,
+                teamspace_ref='PROOMPTENG',
+                title='Doc title',
+                body='Y' * 3000,
+                mission_id='swarm-test',
+            )
+            self.assertEqual(result['action'], 'updated')
+        finally:
+            module.resolve_teamspace = original_resolve_teamspace
+            module.find_document_by_title = original_find_document_by_title
+            module.create_tx_update_doc = original_create_tx_update_doc
+            module.submit_tx = original_submit_tx
+
+        content = called['tx']['operations']['content']
+        self.assertLessEqual(len(content), module.MAX_INLINE_MISSION_BODY_CHARS)
+        self.assertTrue(content.endswith(module.TRUNCATION_NOTICE))
+
 
 if __name__ == '__main__':
     unittest.main()

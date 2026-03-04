@@ -82,6 +82,7 @@ class TestDSPyTransportHardening(TestCase):
             captured["lm_kwargs"]["api_base"],
             "http://jangar.openai.local/openai/v1",
         )
+        self.assertEqual(captured["lm_kwargs"]["temperature"], 0.0)
 
     def test_live_program_prefers_api_completion_url(self) -> None:
         captured: dict[str, dict[str, object]] = {}
@@ -113,6 +114,33 @@ class TestDSPyTransportHardening(TestCase):
             captured["lm_kwargs"]["api_base"],
             "https://jangar.openai.local/openai/v1",
         )
+
+    def test_live_program_sets_supported_temperature_for_gpt5_models(self) -> None:
+        captured: dict[str, dict[str, object]] = {}
+
+        class _TrackingLM(_FakeLM):
+            def __init__(self, **kwargs) -> None:
+                super().__init__(**kwargs)
+                captured["lm_kwargs"] = kwargs
+
+        fake_dspy = SimpleNamespace(
+            Signature=type("Signature", (), {}),
+            LM=_TrackingLM,
+            InputField=lambda *_args, **_kwargs: None,
+            OutputField=lambda *_args, **_kwargs: None,
+            Predict=lambda *_args, **_kwargs: _FakePredictor(),
+            context=None,
+            configure=lambda **_kwargs: None,
+        )
+
+        with patch("app.trading.llm.dspy_programs.modules.dspy", fake_dspy):
+            program = LiveDSPyCommitteeProgram(
+                model_name="openai/gpt-5.3-codex-spark",
+                api_base="https://jangar.openai.local/openai/v1",
+            )
+            program._ensure_predictor()
+
+        self.assertEqual(captured["lm_kwargs"]["temperature"], 1.0)
 
     def test_live_program_rejects_non_dict_response_json(self) -> None:
         request_payload = SimpleNamespace(request_json='{"foo":"bar"}')
