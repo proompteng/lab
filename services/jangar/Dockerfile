@@ -490,6 +490,9 @@ RUN --mount=type=cache,id=bun-install-cache,target=/root/.bun/install/cache \
 
 FROM jangar-deps-dev AS jangar-build
 WORKDIR /app
+# Ensure workspace package/service directories do not retain dependency trees from
+# the previous install step that can collide with pruned context contents.
+RUN rm -rf /app/packages /app/services
 COPY full/ .
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
