@@ -1,9 +1,9 @@
 replicaCount: 1
 
 image:
-  repository: registry.ide-newton.ts.net/lab/jangar
-  tag: '95765432'
-  digest: sha256:44669d6e24474c9661977b3ad231caa532bc9548acd46ef5bca2905435394992
+  repository: ghcr.io/proompteng/jangar
+  tag: latest
+  digest: ''
   pullPolicy: IfNotPresent
 
 namespaceOverride: agents-ci
@@ -11,8 +11,8 @@ namespaceOverride: agents-ci
 grpc:
   enabled: false
 
-# The CI image is pinned to a known-good digest. It does not expose `/ready` yet, so use `/health`
-# for readiness to avoid the deployment being stuck NotReady during smoke tests.
+# The CI image should stay on a public registry for reliable pull in hosted CI environments and uses
+# `/health` for readiness to avoid a rollout stall during smoke tests.
 readinessProbe:
   path: /health
 
