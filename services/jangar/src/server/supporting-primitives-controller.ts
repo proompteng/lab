@@ -727,10 +727,6 @@ const SWARM_DEFAULT_HULY_BASE_URL = (() => {
   const value = asString(process.env.JANGAR_SWARM_HULY_BASE_URL)?.trim()
   return value && value.length > 0 ? value : 'https://huly.proompteng.ai'
 })()
-const SWARM_DEFAULT_HULY_SECRET_NAME = (() => {
-  const value = asString(process.env.JANGAR_SWARM_HULY_SECRET_NAME)?.trim()
-  return value && value.length > 0 ? value : ''
-})()
 const SWARM_DEFAULT_HULY_SKILL_REF = (() => {
   const value = asString(process.env.JANGAR_SWARM_HULY_SKILL_REF)?.trim()
   return value && value.length > 0 ? value : 'skills/huly-api/SKILL.md'
@@ -788,6 +784,15 @@ const mergeUniqueStrings = (...values: string[][]) => {
   return merged
 }
 
+const GLOBAL_HULY_SECRET = 'huly-api'
+
+const resolveSwarmRunSecrets = (existingSecrets: string[], explicitHulySecret?: string | null) => {
+  const filtered = existingSecrets.filter((secret) => secret !== GLOBAL_HULY_SECRET)
+  const explicit = explicitHulySecret?.trim()
+  if (!explicit) return filtered
+  return mergeUniqueStrings(filtered, [explicit])
+}
+
 const normalizeHulyBaseUrl = (value: string | null | undefined) => {
   if (!value) return ''
   const trimmed = value.trim()
@@ -819,7 +824,8 @@ const resolveSwarmHulyIntegration = (
   const ownerChannel = asString(owner.channel)
   const baseUrl =
     normalizeHulyBaseUrl(asString(huly.baseUrl)) || normalizeHulyBaseUrl(ownerChannel) || SWARM_DEFAULT_HULY_BASE_URL
-  const secretName = asString(authSecretRef.name)?.trim() || SWARM_DEFAULT_HULY_SECRET_NAME
+  // Avoid implicit global secret fallback; swarm runs should use explicit per-swarm auth secret refs.
+  const secretName = asString(authSecretRef.name)?.trim() ?? ''
   const workspace = asString(huly.workspace)?.trim() || undefined
   const project = asString(huly.project)?.trim() || undefined
   const skillRef = asString(huly.skillRef)?.trim() || SWARM_DEFAULT_HULY_SKILL_REF
@@ -1395,9 +1401,7 @@ const buildScheduleRunTemplate = (
     const spec = asRecord(target.spec) ?? {}
     const existingParameters = normalizeParameterMap(spec.parameters)
     const existingSecrets = parseStringList(spec.secrets)
-    const mergedSecrets = runtimeInjection.hulySecret
-      ? mergeUniqueStrings(existingSecrets, [runtimeInjection.hulySecret])
-      : existingSecrets
+    const mergedSecrets = resolveSwarmRunSecrets(existingSecrets, runtimeInjection.hulySecret)
     return {
       apiVersion: 'agents.proompteng.ai/v1alpha1',
       kind: 'AgentRun',
@@ -1925,7 +1929,7 @@ const reconcileSwarm = async (
       if (targetKind === 'AgentRun') {
         const existingParameters = normalizeParameterMap(targetSpec.parameters)
         const existingSecrets = parseStringList(targetSpec.secrets)
-        const mergedSecrets = huly.secretName ? mergeUniqueStrings(existingSecrets, [huly.secretName]) : existingSecrets
+        const mergedSecrets = resolveSwarmRunSecrets(existingSecrets, huly.secretName)
         await kube.apply({
           apiVersion: 'agents.proompteng.ai/v1alpha1',
           kind: 'AgentRun',
@@ -2636,10 +2640,12 @@ export const stopSupportingPrimitivesController = () => {
 export const __test__ = {
   applyResourceIfChanged,
   buildScheduleRunnerCommand,
+  buildScheduleRunTemplate,
   isSwarmStatusOnlyEvent,
   reconcileScheduleRunnerStatus,
   reconcileTool,
   reconcileSwarm,
+  resolveSwarmRunSecrets,
   resolveWatchedResourceForKind,
   shouldThrottleScheduleRunnerStatusReconcile,
   shouldThrottleSwarmStatusReconcile,

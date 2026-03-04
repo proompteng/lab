@@ -270,6 +270,27 @@ def maybe_parse_json(value: str) -> Any:
         return value
 
 
+def normalize_text_block(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ''
+
+    # Some callers pass JSON-escaped string literals (for example: "line1\\nline2").
+    if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+        parsed = maybe_parse_json(text)
+        if isinstance(parsed, str):
+            text = parsed
+
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    if '\\n' in text or '\\r' in text or '\\t' in text:
+        text = text.replace('\\r\\n', '\n').replace('\\n', '\n').replace('\\r', '\n').replace('\\t', '\t')
+
+    while '\n\n\n' in text:
+        text = text.replace('\n\n\n', '\n\n')
+
+    return text.strip()
+
+
 def parse_headers(raw_headers: list[str]) -> dict[str, str]:
     headers: dict[str, str] = {}
     for header in raw_headers:
@@ -303,6 +324,30 @@ def build_mission_provenance(
     if not lines:
         return ''
     return '\n'.join(['### Mission Metadata', *lines])
+
+
+def build_mission_provenance_compact(
+    *,
+    mission_id: str,
+    stage: str,
+    status: str,
+    swarm_agent_worker_id: str = '',
+    swarm_agent_identity: str = '',
+) -> str:
+    fields: list[str] = []
+    if mission_id:
+        fields.append(f'missionId={mission_id}')
+    if stage:
+        fields.append(f'stage={stage}')
+    if status:
+        fields.append(f'status={status}')
+    if swarm_agent_worker_id:
+        fields.append(f'swarmAgentWorkerId={swarm_agent_worker_id}')
+    if swarm_agent_identity:
+        fields.append(f'swarmAgentIdentity={swarm_agent_identity}')
+    if not fields:
+        return ''
+    return 'Mission Metadata: ' + ' | '.join(fields)
 
 
 def join_url(base_url: str, path: str) -> str:
@@ -962,7 +1007,7 @@ def run_account_info(args: argparse.Namespace) -> int:
 
 
 def run_verify_chat_access(args: argparse.Namespace) -> int:
-    chat_message = args.message.strip()
+    chat_message = normalize_text_block(args.message)
     if not chat_message:
         print('--message is required for verify-chat-access', file=sys.stderr)
         return 2
@@ -1100,7 +1145,7 @@ def run_create_document(args: argparse.Namespace) -> int:
 
 def run_post_channel_message(args: argparse.Namespace) -> int:
     context = build_context(args, for_platform_api=True)
-    message = args.message.strip()
+    message = normalize_text_block(args.message)
     if not message:
         print('--message is required for post-channel-message', file=sys.stderr)
         return 2
@@ -1136,11 +1181,11 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
         print('--title is required for upsert-mission', file=sys.stderr)
         return 2
 
-    summary = args.summary.strip()
+    summary = normalize_text_block(args.summary)
     if not summary:
         print('--summary is required for upsert-mission', file=sys.stderr)
         return 2
-    channel_message = args.message.strip()
+    channel_message = normalize_text_block(args.message)
     if not channel_message:
         print('--message is required for upsert-mission (worker-authored channel update)', file=sys.stderr)
         return 2
@@ -1149,7 +1194,7 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
 
     stage = args.stage.strip() or 'unknown'
     status = args.status.strip() or 'in-progress'
-    details = args.details.strip()
+    details = normalize_text_block(args.details)
     swarm_agent_worker_id = (
         resolve_mission_agent_worker_id(args)
     )
@@ -1158,6 +1203,13 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
     )
 
     metadata = build_mission_provenance(
+        mission_id=mission_id,
+        stage=stage,
+        status=status,
+        swarm_agent_worker_id=swarm_agent_worker_id,
+        swarm_agent_identity=swarm_agent_identity,
+    )
+    channel_metadata_header = build_mission_provenance_compact(
         mission_id=mission_id,
         stage=stage,
         status=status,
@@ -1190,7 +1242,7 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
     if context_section:
         document_body = f'{document_body}\n\n{context_section}'
 
-    channel_metadata = [metadata]
+    channel_metadata = [channel_metadata_header]
     if context_message:
         channel_metadata.append(context_message)
     channel_message_with_metadata = channel_message
