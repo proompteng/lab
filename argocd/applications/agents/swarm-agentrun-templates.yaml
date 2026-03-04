@@ -26,10 +26,10 @@ spec:
     issueTitle: Jangar Engineering discover mission
     swarmName: jangar-control-plane
     swarmStage: discover
-    swarmAgentRole: discover
+    swarmAgentRole: architector
     swarmAgentWorkerId: worker-jangar-discover
-    swarmAgentIdentity: amina-reyes-jangar-discover
-    swarmHumanName: Amina Reyes
+    swarmAgentIdentity: architector-jangar-discover
+    swarmHumanName: architector
     swarmTeamName: Jangar Engineering
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
@@ -41,8 +41,14 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: continuously discover platform work for the Jangar control plane
+    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates the Jangar control plane
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
   secrets:
+    - github-token
     - codex-auth
     - huly-api-jangar
 ---
@@ -74,10 +80,10 @@ spec:
     issueTitle: Jangar Engineering plan mission
     swarmName: jangar-control-plane
     swarmStage: plan
-    swarmAgentRole: plan
+    swarmAgentRole: architector
     swarmAgentWorkerId: worker-jangar-plan
-    swarmAgentIdentity: victor-chen-jangar-plan
-    swarmHumanName: Victor Chen
+    swarmAgentIdentity: architector-jangar-plan
+    swarmHumanName: architector
     swarmTeamName: Jangar Engineering
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
@@ -89,8 +95,14 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: produce executable plans for autonomous platform improvements
+    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates the Jangar control plane
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
   secrets:
+    - github-token
     - codex-auth
     - huly-api-jangar
 ---
@@ -125,12 +137,12 @@ spec:
     issueTitle: Jangar Engineering autonomous implementation mission
     swarmName: jangar-control-plane
     swarmStage: implement
-    swarmAgentRole: implement
+    swarmAgentRole: engineer
     swarmAgentWorkerId: worker-jangar-implement
-    swarmAgentIdentity: elise-novak-jangar-implement
-    swarmHumanName: Elise Novak
+    swarmAgentIdentity: engineer-jangar-implement
+    swarmHumanName: engineer
     swarmTeamName: Jangar Engineering
-    objective: autonomously implement platform improvements and requirement handoffs from Torghut
+    objective: grab the system design document, implement high-quality engineering changes, and deliver a production-ready PR
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
@@ -160,7 +172,7 @@ spec:
   agentRef:
     name: codex-spark-agent
   implementationSpecRef:
-    name: swarm-intelligence-cycle-v1
+    name: swarm-deployer-v1
   runtime:
     type: workflow
     config:
@@ -179,10 +191,10 @@ spec:
     issueTitle: Jangar Engineering verify mission
     swarmName: jangar-control-plane
     swarmStage: verify
-    swarmAgentRole: verify
+    swarmAgentRole: deployer
     swarmAgentWorkerId: worker-jangar-verify
-    swarmAgentIdentity: marco-silva-jangar-verify
-    swarmHumanName: Marco Silva
+    swarmAgentIdentity: deployer-jangar-verify
+    swarmHumanName: deployer
     swarmTeamName: Jangar Engineering
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
@@ -194,8 +206,14 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: verify runtime, delivery, and policy health for the control plane
+    objective: merge production-ready Jangar PRs and roll out the merged changes in-cluster via GitOps with health verification
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
   secrets:
+    - github-token
     - codex-auth
     - huly-api-jangar
 ---
@@ -227,10 +245,10 @@ spec:
     issueTitle: Torghut Traders discover mission
     swarmName: torghut-quant
     swarmStage: discover
-    swarmAgentRole: discover
+    swarmAgentRole: architector
     swarmAgentWorkerId: worker-torghut-discover
-    swarmAgentIdentity: tara-okoye-torghut-discover
-    swarmHumanName: Tara Okoye
+    swarmAgentIdentity: architector-torghut-discover
+    swarmHumanName: architector
     swarmTeamName: Torghut Traders
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
@@ -242,8 +260,14 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: discover alpha, execution, and risk-control opportunities for Torghut
+    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates Torghut quant
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
   secrets:
+    - github-token
     - codex-auth
     - huly-api-torghut
 ---
@@ -275,10 +299,10 @@ spec:
     issueTitle: Torghut Traders plan mission
     swarmName: torghut-quant
     swarmStage: plan
-    swarmAgentRole: plan
+    swarmAgentRole: architector
     swarmAgentWorkerId: worker-torghut-plan
-    swarmAgentIdentity: gideon-park-torghut-plan
-    swarmHumanName: Gideon Park
+    swarmAgentIdentity: architector-torghut-plan
+    swarmHumanName: architector
     swarmTeamName: Torghut Traders
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
@@ -290,8 +314,14 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: plan regime-aware quant improvements with explicit risk controls
+    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates Torghut quant
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
   secrets:
+    - github-token
     - codex-auth
     - huly-api-torghut
 ---
@@ -326,12 +356,12 @@ spec:
     issueTitle: Torghut Traders autonomous implementation mission
     swarmName: torghut-quant
     swarmStage: implement
-    swarmAgentRole: implement
+    swarmAgentRole: engineer
     swarmAgentWorkerId: worker-torghut-implement
-    swarmAgentIdentity: naomi-ibarra-torghut-implement
-    swarmHumanName: Naomi Ibarra
+    swarmAgentIdentity: engineer-torghut-implement
+    swarmHumanName: engineer
     swarmTeamName: Torghut Traders
-    objective: implement regime-aware quant and risk-control improvements via GitOps changes
+    objective: grab the system design document, implement high-quality engineering changes, and deliver a production-ready PR
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
@@ -361,7 +391,7 @@ spec:
   agentRef:
     name: codex-spark-agent
   implementationSpecRef:
-    name: swarm-intelligence-cycle-v1
+    name: swarm-deployer-v1
   runtime:
     type: workflow
     config:
@@ -380,10 +410,10 @@ spec:
     issueTitle: Torghut Traders verify mission
     swarmName: torghut-quant
     swarmStage: verify
-    swarmAgentRole: verify
+    swarmAgentRole: deployer
     swarmAgentWorkerId: worker-torghut-verify
-    swarmAgentIdentity: julian-hart-torghut-verify
-    swarmHumanName: Julian Hart
+    swarmAgentIdentity: deployer-torghut-verify
+    swarmHumanName: deployer
     swarmTeamName: Torghut Traders
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
@@ -395,7 +425,13 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: verify strategy health, guardrails, and market-regime readiness
+    objective: merge production-ready Torghut PRs and roll out the merged changes in-cluster via GitOps with health verification
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
   secrets:
+    - github-token
     - codex-auth
     - huly-api-torghut

@@ -76,6 +76,15 @@ const notFound = (error: unknown) => {
   return message.includes('NotFound') || message.includes('(NotFound)')
 }
 
+const isServerSideApplyConflict = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    message.includes('Apply failed with') &&
+    message.includes('conflicts with') &&
+    message.includes('subresource "status"')
+  )
+}
+
 export const createKubernetesClient = (): KubernetesClient => ({
   apply: async (resource) => {
     const metadata = (resource.metadata ?? {}) as Record<string, unknown>
@@ -95,12 +104,23 @@ export const createKubernetesClient = (): KubernetesClient => ({
     return parseJson(output, 'kubectl apply')
   },
   applyStatus: async (resource) => {
-    const output = await kubectl(
-      ['apply', '--server-side', '--subresource=status', '-f', '-', '-o', 'json'],
-      JSON.stringify(resource),
-      'kubectl apply status',
-    )
-    return parseJson(output, 'kubectl apply status')
+    const payload = JSON.stringify(resource)
+    try {
+      const output = await kubectl(
+        ['apply', '--server-side', '--subresource=status', '-f', '-', '-o', 'json'],
+        payload,
+        'kubectl apply status',
+      )
+      return parseJson(output, 'kubectl apply status')
+    } catch (error) {
+      if (!isServerSideApplyConflict(error)) throw error
+      const output = await kubectl(
+        ['apply', '--server-side', '--force-conflicts', '--subresource=status', '-f', '-', '-o', 'json'],
+        payload,
+        'kubectl apply status',
+      )
+      return parseJson(output, 'kubectl apply status')
+    }
   },
   createManifest: async (manifest, namespace) => {
     const args = ['create', '-f', '-', '-o', 'json']

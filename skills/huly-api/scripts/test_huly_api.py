@@ -55,6 +55,24 @@ class HulyApiFormattingTests(unittest.TestCase):
         self.assertIn('status: running', provenance)
         self.assertIn('swarmAgentWorkerId: worker-1', provenance)
         self.assertIn('swarmAgentIdentity: agent-abc', provenance)
+        compact = module.build_mission_provenance_compact(
+            mission_id='swarm-jangar-control-plane',
+            stage='implement',
+            status='running',
+            swarm_agent_worker_id='worker-1',
+            swarm_agent_identity='agent-abc',
+        )
+        self.assertEqual(
+            compact,
+            'Mission Metadata: missionId=swarm-jangar-control-plane | stage=implement | status=running | '
+            'swarmAgentWorkerId=worker-1 | swarmAgentIdentity=agent-abc',
+        )
+
+    def test_normalize_text_block_unescapes_newlines(self):
+        module = self.module
+        normalized = module.normalize_text_block('Owner Update:\\n\\n## Summary\\nLine one\\nLine two')
+        self.assertEqual(normalized, 'Owner Update:\n\n## Summary\nLine one\nLine two')
+
     def test_parser_includes_upsert_context_args(self):
         parser = self.module.build_parser()
         operation = parser._option_string_actions['--operation']
@@ -127,11 +145,11 @@ class HulyApiFormattingTests(unittest.TestCase):
                 '--title',
                 'Jangar plan mission',
                 '--summary',
-                'Plan the next delivery lane.',
+                'Plan the next delivery lane.\\nWith explicit checks.',
                 '--details',
-                'Include proof and PR links.',
+                'Include proof and PR links.\\nAttach tracker refs.',
                 '--message',
-                'Owner update: implementation started.',
+                'Owner update: implementation started.\\n\\n## Summary\\nCompleted first pass.',
                 '--worker-id',
                 'worker-1',
                 '--worker-identity',
@@ -211,8 +229,14 @@ class HulyApiFormattingTests(unittest.TestCase):
         self.assertIn('swarmAgentIdentity: agent-override', called['issue_body'])
         self.assertIn('swarmAgentWorkerId: worker-override', called['document_body'])
         self.assertIn('swarmAgentIdentity: agent-override', called['document_body'])
-        self.assertIn('swarmAgentWorkerId: worker-override', called['channel_message'])
-        self.assertIn('swarmAgentIdentity: agent-override', called['channel_message'])
+        self.assertIn('swarmAgentWorkerId=worker-override', called['channel_message'])
+        self.assertIn('swarmAgentIdentity=agent-override', called['channel_message'])
+        self.assertNotIn('\\n', called['channel_message'])
+        self.assertIn('\n## Summary\n', called['channel_message'])
+        self.assertIn('Mission Metadata: missionId=swarm-jangar-control-plane', called['channel_message'])
+        self.assertNotIn('### Mission Metadata', called['channel_message'])
+        self.assertIn('Plan the next delivery lane.\nWith explicit checks.', called['issue_body'])
+        self.assertIn('Include proof and PR links.\nAttach tracker refs.', called['document_body'])
 
     def test_upsert_mission_requires_message(self):
         parser = self.module.build_parser()

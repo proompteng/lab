@@ -149,6 +149,37 @@ describe('supporting primitives controller', () => {
     expect(command).not.toContain('\\${DELIVERY_ID}')
   })
 
+  it('strips global huly-api secret when building schedule run templates', () => {
+    const schedule = {
+      metadata: {
+        name: 'torghut-quant-discover-sched',
+        namespace: 'agents',
+        labels: {
+          'swarm.proompteng.ai/name': 'torghut-quant',
+        },
+        annotations: {
+          'swarm.proompteng.ai/huly-secret': 'huly-api-torghut',
+        },
+      },
+    } as Record<string, unknown>
+    const target = {
+      kind: 'AgentRun',
+      metadata: { namespace: 'agents' },
+      spec: {
+        agentRef: { name: 'codex-spark-agent' },
+        runtime: { type: 'job' },
+        secrets: ['codex-auth', 'huly-api'],
+      },
+    } as Record<string, unknown>
+
+    const template = __test__.buildScheduleRunTemplate(schedule, target, '__DELIVERY__')
+    const spec = (template as { spec?: Record<string, unknown> }).spec ?? {}
+    const secrets = Array.isArray(spec.secrets) ? (spec.secrets as string[]) : []
+    expect(secrets).toContain('codex-auth')
+    expect(secrets).toContain('huly-api-torghut')
+    expect(secrets).not.toContain('huly-api')
+  })
+
   it('skips apply for equivalent schedule resources', async () => {
     const apply = vi.fn().mockResolvedValue({})
     const get = vi.fn().mockResolvedValue({
@@ -574,6 +605,7 @@ describe('supporting primitives controller', () => {
             parameters: {
               staticKey: 'static-value',
             },
+            secrets: ['huly-api', 'keep-me'],
           },
         }
       }
@@ -683,12 +715,13 @@ describe('supporting primitives controller', () => {
     )
     expect(parameters.swarmAgentWorkerId).toMatch(/^worker-/)
     expect(parameters.swarmAgentIdentity).toMatch(/^vw-/)
-    expect(parameters.swarmAgentRole).toBe('implement')
+    expect(parameters.swarmAgentRole).toBe('engineer')
     expect(parameters.hulyApiBaseUrl).toBe('https://huly.proompteng.ai')
     expect(parameters.hulySkillRef).toBe('skills/huly-api/SKILL.md')
     const runSecrets = Array.isArray(requirementRun.spec.secrets) ? (requirementRun.spec.secrets as string[]) : []
     expect(runSecrets).not.toContain('huly-api')
-    expect(runSecrets).toHaveLength(0)
+    expect(runSecrets).toContain('keep-me')
+    expect(runSecrets).toHaveLength(1)
 
     const statusCall = applyStatus.mock.calls.at(-1)
     const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
