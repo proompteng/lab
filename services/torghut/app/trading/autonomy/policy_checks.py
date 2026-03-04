@@ -585,6 +585,14 @@ def _append_profitability_stage_manifest_reasons(
                 "artifact_ref": str(manifest_path),
             }
         )
+    elif not str(run_context.get("design_doc", "")).strip():
+        reasons.append("profitability_stage_manifest_design_doc_missing")
+        reason_details.append(
+            {
+                "reason": "profitability_stage_manifest_design_doc_missing",
+                "artifact_ref": str(manifest_path),
+            }
+        )
 
     stages_raw = manifest_payload.get("stages")
     stages = _as_dict(stages_raw)
