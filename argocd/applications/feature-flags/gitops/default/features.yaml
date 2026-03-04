@@ -165,6 +165,11 @@ flags:
     description: Requires market context for LLM reviews.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
+  - key: torghut_trading_readiness_dependency_cache_enabled
+    name: Torghut Trading Readiness Dependency Cache Enabled
+    description: Enables caching for readiness dependency checks in trading probes.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
   - key: torghut_llm_enabled
     name: Torghut LLM Enabled
     description: Global LLM review enablement for Torghut.
