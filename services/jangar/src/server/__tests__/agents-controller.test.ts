@@ -3108,8 +3108,8 @@ describe('agents controller reconcileAgentRun', () => {
     await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
-    const workflow = status.workflow as Record<string, unknown>
-    const steps = (workflow.steps as Record<string, unknown>[]) ?? []
+    const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
+    const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
     expect(steps[0]?.phase).toBe('Running')
     expect(steps[0]?.message).toBe('Waiting for job to be created')
   })
@@ -3335,8 +3335,8 @@ describe('agents controller reconcileAgentRun', () => {
     await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
-    const workflow = status.workflow as Record<string, unknown>
-    const steps = (workflow.steps as Record<string, unknown>[]) ?? []
+    const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
+    const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
     expect(status.phase).toBe('Failed')
     expect(workflow.phase).toBe('Failed')
     expect(steps[0]?.phase).toBe('Failed')
