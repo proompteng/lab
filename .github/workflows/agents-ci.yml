@@ -169,7 +169,7 @@ jobs:
             cp -R "${WORKSPACE}/services/jangar/agentctl/." "${PRUNE_DIR}/json/services/jangar/agentctl/"
           fi
           if [ -d "${WORKSPACE}/packages/cx-tools" ]; then
-            mkdir -p "${PRUNE_DIR}/full/packages/cx-tools" "${PRUNE_DIR}/json/packages/cx-tools"
+            mkdir -p "${PRUNE_DIR}/full/packages" "${PRUNE_DIR}/json/packages"
             cp -R "${WORKSPACE}/packages/cx-tools/." "${PRUNE_DIR}/full/packages/cx-tools/"
             cp -R "${WORKSPACE}/packages/cx-tools/." "${PRUNE_DIR}/json/packages/cx-tools/"
           fi
