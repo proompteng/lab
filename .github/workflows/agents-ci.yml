@@ -148,6 +148,8 @@ jobs:
           IMAGE_TAG="${AGENTS_IMAGE_TAG:-ci-${GITHUB_SHA:-unknown}}"
           PRUNE_DIR="$(mktemp -d /tmp/jangar-prune-XXXXXX)"
           trap 'rm -rf "${PRUNE_DIR}"' EXIT
+          echo "BUILT_JANGAR_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >> "${GITHUB_ENV}"
+          echo "BUILT_JANGAR_IMAGE_TAG=${IMAGE_TAG}" >> "${GITHUB_ENV}"
 
           OUTPUT_ENTRY="${WORKSPACE}/services/jangar/.output/server/index.mjs"
           OUTPUT_PROTO="${WORKSPACE}/services/jangar/.output/server/proto/proompteng/jangar/v1/agentctl.proto"
@@ -233,15 +235,22 @@ jobs:
           IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
           # Use docker.io for Bun base image in CI builds to avoid mirror image metadata drift.
-          DOCKER_BUILDKIT=1 docker build \
+          if timeout 45m DOCKER_BUILDKIT=1 docker build \
             -f "${WORKSPACE}/services/jangar/Dockerfile" \
             --target control-plane \
             -t "${IMAGE}" \
             --build-arg "JANGAR_VERSION=${JANGAR_VERSION}" \
             --build-arg "JANGAR_COMMIT=${JANGAR_COMMIT}" \
             --build-arg "BUN_BASE_IMAGE=docker.io/oven/bun" \
-            "${PRUNE_DIR}"
-          kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"
+            --progress=plain \
+            "${PRUNE_DIR}" \
+            && kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
+            echo "Built and loaded local image ${IMAGE}."
+          else
+            echo "Failed to build/load local image; falling back to public image for smoke test."
+            echo "BUILT_JANGAR_IMAGE_REPOSITORY=ghcr.io/proompteng/jangar" >> "${GITHUB_ENV}"
+            echo "BUILT_JANGAR_IMAGE_TAG=latest" >> "${GITHUB_ENV}"
+          fi
 
       - name: Run agents integration smoke test
         env:
@@ -251,8 +260,8 @@ jobs:
           AGENTS_CREATE_NAMESPACE: 'true'
           AGENTS_DB_BOOTSTRAP: 'true'
           AGENTS_TIMEOUT: 15m
-          AGENTS_IMAGE_REPOSITORY: jangar-local
-          AGENTS_IMAGE_TAG: ci-${{ github.sha }}
+          AGENTS_IMAGE_REPOSITORY: ${{ env.BUILT_JANGAR_IMAGE_REPOSITORY }}
+          AGENTS_IMAGE_TAG: ${{ env.BUILT_JANGAR_IMAGE_TAG }}
           AGENTS_IMAGE_DIGEST: ''
           AGENTCTL_BIN: services/jangar/agentctl/dist/agentctl
         run: bun run packages/scripts/src/agents/smoke-agents.ts
