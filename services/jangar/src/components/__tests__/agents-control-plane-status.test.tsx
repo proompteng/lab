@@ -51,6 +51,8 @@ const baseStatus: ControlPlaneStatus = {
     observed_schedules: 0,
     inactive_schedules: 0,
     stale_schedules: 0,
+    backoff_limit_exceeded_jobs: 0,
+    backoff_limit_exceeded_threshold: 2,
     stages: [],
   },
   database: {
