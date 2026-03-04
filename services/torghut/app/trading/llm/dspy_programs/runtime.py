@@ -23,6 +23,7 @@ _BOOTSTRAP_PROGRAM_NAME = "trade-review-committee-v1"
 _BOOTSTRAP_SIGNATURE_VERSION = "v1"
 _DSPY_OPENAI_BASE_PATH = "/openai/v1"
 _DSPY_OPENAI_CHAT_COMPLETIONS_PATH = "/chat/completions"
+_DSPY_INTERNAL_API_KEY_PLACEHOLDER = "jangar-internal"
 
 _BOOTSTRAP_ARTIFACT_BODY = {
     "schema_version": "torghut.dspy.runtime-artifact.v1",
@@ -385,12 +386,11 @@ class DSPyReviewRuntime:
             return self._program_cache
 
         if manifest.executor == "dspy_live":
+            api_base = _resolve_dspy_api_base()
             program = LiveDSPyCommitteeProgram(
                 model_name=_resolve_dspy_model_name(),
-                api_completion_url=_resolve_dspy_api_base(),
-                api_key=settings.jangar_api_key.strip()
-                if settings.jangar_api_key
-                else None,
+                api_completion_url=api_base,
+                api_key=_resolve_dspy_api_key(api_base),
             )
         else:
             program = HeuristicCommitteeProgram()
@@ -495,6 +495,18 @@ def _resolve_dspy_api_base() -> str:
 
 def _resolve_dspy_completion_url() -> str:
     return f"{_resolve_dspy_api_base()}{_DSPY_OPENAI_CHAT_COMPLETIONS_PATH}"
+
+
+def _resolve_dspy_api_key(api_base: str) -> str | None:
+    configured = (settings.jangar_api_key or "").strip()
+    if configured:
+        return configured
+
+    parsed = urlsplit(api_base)
+    host = (parsed.hostname or "").strip().lower()
+    if host in {"localhost", "127.0.0.1"} or host.endswith(".svc.cluster.local"):
+        return _DSPY_INTERNAL_API_KEY_PLACEHOLDER
+    return None
 
 
 __all__ = [

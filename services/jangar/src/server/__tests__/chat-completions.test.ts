@@ -101,6 +101,49 @@ describe('chat completions handler', () => {
     expect(response.headers.get('content-type')).toContain('text/event-stream')
   })
 
+  it('returns a non-stream completion payload when stream is false', async () => {
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: false,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    const payload = (await response.json()) as {
+      object?: string
+      choices?: Array<{ message?: { content?: string } }>
+    }
+    expect(payload.object).toBe('chat.completion')
+    expect(payload.choices?.[0]?.message?.content).toContain('hi there')
+  })
+
+  it('returns a non-stream completion payload when stream is omitted', async () => {
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    const payload = (await response.json()) as {
+      object?: string
+      choices?: Array<{ message?: { content?: string } }>
+    }
+    expect(payload.object).toBe('chat.completion')
+    expect(payload.choices?.[0]?.message?.content).toContain('hi there')
+  })
+
   it('renders plan deltas as markdown todos by default', async () => {
     const mockClient = {
       runTurnStream: vi.fn(async () => ({
