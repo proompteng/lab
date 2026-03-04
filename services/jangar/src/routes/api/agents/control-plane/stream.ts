@@ -88,7 +88,7 @@ const toSummary = (resource: Record<string, unknown>) => ({
 const buildStatus = async (namespace: string) =>
   buildControlPlaneStatus({
     namespace,
-    grpc: resolveGrpcStatus(),
+    grpc: await resolveGrpcStatus(),
   })
 
 const emitStatus = async (stream: NamespaceStream, namespace: string) => {
