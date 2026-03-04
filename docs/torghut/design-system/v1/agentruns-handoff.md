@@ -214,10 +214,78 @@ spec:
 Notes:
 
 - `ttlSecondsAfterFinished` is a top-level `AgentRun.spec` field (see `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`).
-- Avoid setting `spec.parameters.prompt` unless you intend to override the ImplementationSpec text (prompt precedence is documented in `docs/agents/agentrun-creation-guide.md`).
+- Avoid setting any prompt-overriding fields on the run request body (`spec.parameters.prompt`, `spec.workflow.steps[].parameters.prompt`) for production Torghut automation.
+- Avoid setting `spec.workload.image` unless you intentionally pin a specific runner image.
 - For design-doc implementation runs, prefer a single workflow step `implement`; add `plan` only when a separate planning phase is required.
 - Keep `AgentRun.metadata.name` <= 63 characters to avoid controller reconciliation failures on propagated label values.
 - Do not assume AgentRun parameters are shell env vars inside the runner; verify values via generated `run.json`/`agent-runner.json` payloads.
+
+### Torghut AgentRun prompt contract (authoritative)
+
+- **System prompt source**: `Agent.spec.defaults.systemPromptRef` is the required source of truth for Torghut production runs. If no ref is set, controller fallback is `Agent.spec.defaults.systemPrompt`.
+- **Run-level system prompt overrides are not allowed in operation**: `AgentRun.spec.systemPrompt` and `AgentRun.spec.systemPromptRef` are rejected by controller validation and are not part of allowed usage.
+- **Work prompt source**: The runnable “what to do” body is always the resolved `ImplementationSpec.spec.text` for `implementationSpecRef` runs (or `spec.implementation.inline.text` for inline runs).
+- **Not allowed operational usage**: `spec.parameters.prompt` and `spec.workflow.steps[].parameters.prompt` are not part of allowed production usage.
+- Runtime validation point: `run.json.prompt` must reflect the resolved `ImplementationSpec.spec.text` (or inline text). If it does not, fail the run setup before execution.
+
+### Production verification checklist (Torghut AgentRuns)
+
+Use this checklist before trusting any Torghut automation run in production.
+
+```bash
+RUN=torghut-health-report-v1-<run-id>
+NS=agents
+
+# 1) Confirm workflow-loop flags are enabled in the controller.
+kubectl -n "$NS" get deployment agents-controllers \
+  -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+  | rg 'JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED|JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS'
+
+# 2) Confirm runner image and entrypoint/args on the active worker pod.
+JOB=$(kubectl -n "$NS" get jobs -l agents.proompteng.ai/agent-run="$RUN" -o jsonpath='{.items[0].metadata.name}')
+POD=$(kubectl -n "$NS" get pod -l job-name="$JOB" -o jsonpath='{.items[0].metadata.name}')
+
+kubectl -n "$NS" get pod "$POD" -o jsonpath='{.spec.containers[0].image}{"\n"}'
+kubectl -n "$NS" get pod "$POD" -o jsonpath='{range .spec.containers[0].command[*]}{.}{" "}{end}{"\n"}'
+kubectl -n "$NS" get pod "$POD" -o jsonpath='{range .spec.containers[0].args[*]}{.}{" "}{end}{"\n"}'
+
+# 3) Validate the generated run payload is using the expected ImplementationSpec body.
+CM=$(kubectl -n "$NS" get cm -l "agents.proompteng.ai/agent-run=$RUN" -o jsonpath='{.items[0].metadata.name}')
+kubectl -n "$NS" get cm "$CM" -o jsonpath='{.data.run\.json}' | jq -r '.prompt' | sed -n '1,120p'
+
+# Optional: require a known phrase from the selected ImplementationSpec text.
+# rg -n "Torghut health report" (reads the generated payload; this is not a runtime env read-back)
+
+# 4) Verify system prompt hash parity: ConfigMap/configured hash, mounted prompt, and status hash must agree.
+EXPECTED=$(kubectl -n "$NS" get cm codex-agent-system-prompt -o jsonpath='{.data.system-prompt\.md}' \
+  | sha256sum | awk '{print $1}')
+STATUS_HASH=$(kubectl -n "$NS" get agentrun "$RUN" -o jsonpath='{.status.systemPromptHash}')
+MOUNTED_HASH=$(kubectl -n "$NS" exec "$POD" -- /bin/bash -lc \
+  'sha256sum /workspace/.codex/system-prompt.txt | awk "{print \$1}"')
+RUNTIME_EXPECTED_HASH=$(kubectl -n "$NS" exec "$POD" -- /bin/bash -lc \
+  'echo "$CODEX_SYSTEM_PROMPT_EXPECTED_HASH"')
+
+kubectl -n "$NS" get pod "$POD" \
+  -o jsonpath='{range .spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+  | rg 'CODEX_SYSTEM_PROMPT_PATH|CODEX_SYSTEM_PROMPT_EXPECTED_HASH|CODEX_SYSTEM_PROMPT_REQUIRED'
+
+echo "expectedFromConfigMap=$EXPECTED"
+echo "statusSystemPromptHash=$STATUS_HASH"
+echo "mountedPromptHash=$MOUNTED_HASH"
+echo "runtimeExpectedHash=$RUNTIME_EXPECTED_HASH"
+```
+
+Pass criteria:
+
+- Loop flags include:
+  - `JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED=true`
+  - `JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS=<configured-limit>`
+- Pod shows the expected runner image and the intended command/args for the operation.
+- `run.json` prompt renders from the target `ImplementationSpec` body (no run-level prompt override).
+- `CODEX_SYSTEM_PROMPT_PATH=/workspace/.codex/system-prompt.txt`
+- `CODEX_SYSTEM_PROMPT_REQUIRED=true`
+- `CODEX_SYSTEM_PROMPT_EXPECTED_HASH` equals both `mountedPromptHash` and `statusSystemPromptHash`.
+- If a named system-prompt ConfigMap is in use, its computed hash equals all three above values.
 
 ### Progress updates (post-2026-02-08)
 

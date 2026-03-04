@@ -99,6 +99,7 @@ describe('runCodexImplementation', () => {
     delete process.env.CODEX_SYSTEM_PROMPT_REQUIRED
     delete process.env.PR_NUMBER_PATH
     delete process.env.PR_URL_PATH
+    delete process.env.CODEX_PR_DISCOVERY_ENABLED
     delete process.env.CODEX_RUNTIME_LOG_PATH
     delete process.env.CODEX_SYSTEM_PROMPT_PATH
     delete process.env.PR_NUMBER_PATH
@@ -962,10 +963,49 @@ describe('runCodexImplementation', () => {
   it('fails implementation runs when pull requests are required and PR_URL is missing', async () => {
     process.env.VCS_PULL_REQUESTS_ENABLED = 'true'
     delete process.env.CODEX_REQUIRE_PULL_REQUEST
+    process.env.CODEX_PR_DISCOVERY_ENABLED = 'false'
 
     await expect(runCodexImplementation(eventPath)).rejects.toThrow(
       'Implementation run completed without creating a pull request (missing PR_URL output)',
     )
+  }, 40_000)
+
+  it('recovers missing PR artifact files by discovering PR metadata from GitHub', async () => {
+    process.env.VCS_PULL_REQUESTS_ENABLED = 'true'
+    delete process.env.CODEX_REQUIRE_PULL_REQUEST
+    process.env.CODEX_PR_DISCOVERY_ENABLED = 'true'
+
+    const binDir = join(workdir, '.bin')
+    await mkdir(binDir, { recursive: true })
+    const ghPath = join(binDir, 'gh')
+    await writeFile(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "pr" && "$2" == "list" ]]; then
+  echo '[{"number":4005,"url":"https://github.com/owner/repo/pull/4005"}]'
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+`,
+      'utf8',
+    )
+    await chmod(ghPath, 0o755)
+    process.env.PATH = `${binDir}:${ORIGINAL_ENV.PATH ?? process.env.PATH ?? ''}`
+
+    await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
+
+    await expect(readFile(join(workdir, '.codex-pr-number.txt'), 'utf8')).resolves.toContain('4005')
+    await expect(readFile(join(workdir, '.codex-pr-url.txt'), 'utf8')).resolves.toContain(
+      'https://github.com/owner/repo/pull/4005',
+    )
+
+    const notifyLogPath = join(workdir, '.codex-implementation-notify.json')
+    const notifyRaw = await readFile(notifyLogPath, 'utf8')
+    const notify = JSON.parse(notifyRaw) as Record<string, unknown>
+    expect(notify.prNumber).toBe(4005)
+    expect(notify.prUrl).toBe('https://github.com/owner/repo/pull/4005')
   }, 40_000)
 
   it('allows implementation runs without PR_URL when CODEX_REQUIRE_PULL_REQUEST is false', async () => {

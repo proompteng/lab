@@ -131,8 +131,7 @@ def _merge_emergency_stop_reasons(raw_reasons: Sequence[str]) -> list[str]:
 
 def _is_recoverable_emergency_stop_reason(reason: str) -> bool:
     return any(
-        reason.startswith(prefix)
-        for prefix in _RECOVERABLE_EMERGENCY_STOP_PREFIXES
+        reason.startswith(prefix) for prefix in _RECOVERABLE_EMERGENCY_STOP_PREFIXES
     )
 
 
@@ -140,6 +139,7 @@ def _coerce_recovery_reason_sequence(raw_reasons: Sequence[str] | None) -> list[
     if not raw_reasons:
         return []
     return _merge_emergency_stop_reasons(raw_reasons)
+
 
 _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
 _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
@@ -207,6 +207,7 @@ def _select_strictest_runtime_uncertainty_gate(
 
 def _clone_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [dict(position) for position in positions]
+
 
 def _normalize_reason_metric(reason: str | None) -> str:
     normalized = reason.strip() if isinstance(reason, str) else ""
@@ -422,6 +423,7 @@ class TradingMetrics:
     )
     no_signal_streak: int = 0
     market_session_open: int = 0
+    trading_shorts_enabled: int = 0
     signal_continuity_actionable: int = 0
     signal_continuity_alert_active: int = 0
     signal_continuity_alert_recovery_streak: int = 0
@@ -2878,7 +2880,9 @@ class TradingPipeline:
         )
         decimal_degrade_threshold = Decimal(str(degrade_threshold))
         decimal_abstain_threshold = Decimal(str(abstain_threshold))
-        return max(decimal_degrade_threshold, decimal_abstain_threshold), decimal_abstain_threshold
+        return max(
+            decimal_degrade_threshold, decimal_abstain_threshold
+        ), decimal_abstain_threshold
 
     def _apply_runtime_uncertainty_gate(
         self,
@@ -4768,6 +4772,42 @@ class TradingScheduler:
         lane = settings.trading_accounts[0]
         return self._build_pipeline_for_account(lane)
 
+    @staticmethod
+    def _coerce_boolean_env_value(env_name: str, value: str) -> bool:
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "t", "yes", "on", "y"}:
+            return True
+        if normalized in {"0", "false", "f", "no", "off", "n"}:
+            return False
+        raise ValueError(
+            f"{env_name} has invalid boolean value: {value!r}; expected one of "
+            "1, true, false, 0, on, off, yes, no"
+        )
+
+    def _assert_trading_shorts_startup_policy(self) -> None:
+        env_name = "TRADING_ALLOW_SHORTS"
+        raw_env_value = os.getenv(env_name)
+        if raw_env_value is None:
+            raise RuntimeError(
+                f"{env_name} must be explicitly set before scheduler startup"
+            )
+
+        configured_env_value = self._coerce_boolean_env_value(env_name, raw_env_value)
+        configured_setting = bool(settings.trading_allow_shorts)
+        if configured_env_value != configured_setting:
+            raise RuntimeError(
+                f"{env_name} resolved to {configured_env_value} but settings value is "
+                f"{configured_setting}; expected a single source of truth"
+            )
+
+        logger.info(
+            "Startup short policy explicit: %s=%s (declared=%s)",
+            env_name,
+            configured_setting,
+            raw_env_value,
+        )
+        self.state.metrics.trading_shorts_enabled = 1 if configured_setting else 0
+
     def _drift_thresholds(self) -> DriftThresholds:
         return DriftThresholds(
             max_required_null_rate=Decimal(
@@ -5149,7 +5189,9 @@ class TradingScheduler:
         ]
         if recoverable_current_reasons:
             self.state.emergency_stop_recovery_streak = 0
-            refreshed = ";".join(_merge_emergency_stop_reasons(recoverable_current_reasons))
+            refreshed = ";".join(
+                _merge_emergency_stop_reasons(recoverable_current_reasons)
+            )
             if refreshed and refreshed != self.state.emergency_stop_reason:
                 self.state.emergency_stop_reason = refreshed
             return
@@ -5232,7 +5274,9 @@ class TradingScheduler:
         self.state.emergency_stop_triggered_at = now
         self.state.emergency_stop_resolved_at = None
         self.state.emergency_stop_recovery_streak = 0
-        self.state.emergency_stop_reason = ";".join(_merge_emergency_stop_reasons(reasons))
+        self.state.emergency_stop_reason = ";".join(
+            _merge_emergency_stop_reasons(reasons)
+        )
         self.state.metrics.signal_continuity_breach_total += 1
         self.state.last_error = (
             f"emergency_stop_triggered reasons={self.state.emergency_stop_reason}"
@@ -5375,6 +5419,7 @@ class TradingScheduler:
     async def start(self) -> None:
         if self._task:
             return
+        self._assert_trading_shorts_startup_policy()
         if not self._pipelines:
             lanes = settings.trading_accounts
             self._pipelines = [self._build_pipeline_for_account(lane) for lane in lanes]

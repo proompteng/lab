@@ -172,6 +172,26 @@ describe('runCodexProgressComment', () => {
     await rm(logDir, { recursive: true, force: true })
   })
 
+  it('ignores parent argv when called programmatically with body', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => [],
+      text: async () => '[]',
+      status: 200,
+      statusText: 'OK',
+    }))
+    global.fetch = fetchMock as unknown as typeof global.fetch
+
+    const originalArgv = process.argv
+    process.argv = ['bun', 'codex-implement.ts', '/tmp/codex-event.json']
+    try {
+      const result = await runCodexProgressComment({ body: '<!-- codex:progress --> body' })
+      expect(result.action).toBe('create')
+    } finally {
+      process.argv = originalArgv
+    }
+  })
+
   it('returns help metadata when invoked with --help', async () => {
     const result = await runCodexProgressComment({ args: ['--help'] })
     expect(result.action).toBe('help')

@@ -142,7 +142,7 @@ spec:
     swarmAgentIdentity: engineer-jangar-implement
     swarmHumanName: engineer
     swarmTeamName: Jangar Engineering
-    objective: grab the system design document, implement high-quality engineering changes, and deliver a production-ready PR
+    objective: grab the system design document, implement high-quality engineering changes, update impacted documentation, and deliver a production-ready PR
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
@@ -206,7 +206,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: merge production-ready Jangar PRs and roll out the merged changes in-cluster via GitOps with health verification
+    objective: merge Jangar PRs only when all checks pass with no failures; if checks fail, fix them first, then roll out merged changes in-cluster via GitOps with health verification
   vcsRef:
     name: github
   vcsPolicy:
@@ -361,7 +361,7 @@ spec:
     swarmAgentIdentity: engineer-torghut-implement
     swarmHumanName: engineer
     swarmTeamName: Torghut Traders
-    objective: grab the system design document, implement high-quality engineering changes, and deliver a production-ready PR
+    objective: grab the system design document, implement high-quality engineering changes, update impacted documentation, and deliver a production-ready PR
     ownerChannel: http://transactor.huly.svc.cluster.local
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
@@ -425,7 +425,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: merge production-ready Torghut PRs and roll out the merged changes in-cluster via GitOps with health verification
+    objective: merge Torghut PRs only when all checks pass with no failures; if checks fail, fix them first, then roll out merged changes in-cluster via GitOps with health verification
   vcsRef:
     name: github
   vcsPolicy:

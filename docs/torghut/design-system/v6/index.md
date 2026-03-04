@@ -51,6 +51,7 @@ This pack is positioned as the next architecture layer above:
 17. `16-emergency-stop-reason-normalization-and-recovery-consistency-2026-03-04.md`
 18. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
 19. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
+20. `19-jangar-symbol-dependency-freshness-and-readiness-guard.md`
 
 ## Recommended Build Order
 
@@ -73,6 +74,7 @@ This pack is positioned as the next architecture layer above:
 17. `16-emergency-stop-reason-normalization-and-recovery-consistency-2026-03-04.md`
 18. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
 19. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
+20. `19-jangar-symbol-dependency-freshness-and-readiness-guard.md`
 
 ## Why This Sequence
 

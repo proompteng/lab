@@ -67,7 +67,7 @@ describe('agents control-plane resource route', () => {
 
     const response = await getPrimitiveResource(
       new Request('http://localhost/api/agents/control-plane/resource?kind=Agent&name=agent-a&namespace=agents'),
-      { kubeClient: kube },
+      { kubeClient: kube as never },
     )
 
     expect(response.status).toBe(200)
@@ -115,7 +115,7 @@ describe('agents control-plane resource route', () => {
 
     const response = await getPrimitiveResource(
       new Request('http://localhost/api/agents/control-plane/resource?kind=Agent&name=agent-a&namespace=agents'),
-      { kubeClient: kube },
+      { kubeClient: kube as never },
     )
 
     expect(response.status).toBe(200)

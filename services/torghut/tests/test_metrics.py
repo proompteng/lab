@@ -561,3 +561,15 @@ class TestTradingMetrics(TestCase):
             'torghut_trading_decision_regime_resolution_fallback_total{reason="hmm_unknown"} 2',
             payload,
         )
+
+    def test_trading_shorts_enabled_metric_is_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.trading_shorts_enabled = 1
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_shorts_enabled{service="torghut"} 1',
+            payload,
+        )
+        self.assertIn("# TYPE torghut_trading_shorts_enabled gauge", payload)
