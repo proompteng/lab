@@ -2404,7 +2404,7 @@ describe('agents controller reconcileAgentRun', () => {
     expect(steps[0]?.phase).toBe('Running')
     expect(steps[1]?.phase).toBe('Pending')
 
-    const firstJobName = (steps[0]?.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+    const firstJobName = (firstSteps[0]?.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
     expect(firstJobName).toBeTruthy()
 
     jobStatuses.set(firstJobName ?? '', {
@@ -2425,8 +2425,9 @@ describe('agents controller reconcileAgentRun', () => {
     )
 
     const secondStatus = getLastStatus(kube)
-    const secondWorkflow = secondStatus.workflow as Record<string, unknown>
-    const secondSteps = (secondWorkflow.steps as Record<string, unknown>[]) ?? []
+    const secondWorkflow = (secondStatus.workflow as Record<string, unknown>) ?? {}
+    const secondSteps =
+      (Array.isArray(secondWorkflow.steps) ? (secondWorkflow.steps as Record<string, unknown>[]) : []) ?? []
     expect(secondSteps[0]?.phase).toBe('Succeeded')
     expect(secondSteps[1]?.phase).toBe('Running')
 
@@ -3570,7 +3571,10 @@ describe('agents controller reconcileAgentRun', () => {
       apply,
       get: vi.fn(async (resource: string, name: string) => {
         if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
         }
         if (resource === RESOURCE_MAP.AgentProvider) {
           return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
