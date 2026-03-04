@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const cacheStoreMocks = vi.hoisted(() => ({
   createControlPlaneCacheStore: vi.fn(),
@@ -66,11 +66,11 @@ describe('agents control-plane resources route', () => {
     const kube = {
       list: vi.fn(async () => ({ items: [] })),
     }
-    kubeClientMocks.createKubernetesClient.mockReturnValue(kube)
+    kubeClientMocks.createKubernetesClient.mockReturnValue(kube as never)
 
     const response = await listPrimitiveResources(
       new Request('http://localhost/api/agents/control-plane/resources?kind=Agent&namespace=agents'),
-      { kubeClient: kube },
+      { kubeClient: kube as never },
     )
 
     expect(response.status).toBe(200)
@@ -110,11 +110,11 @@ describe('agents control-plane resources route', () => {
         items: [{ kind: 'Agent', metadata: { name: 'agent-live' }, spec: {}, status: {} }],
       })),
     }
-    kubeClientMocks.createKubernetesClient.mockReturnValue(kube)
+    kubeClientMocks.createKubernetesClient.mockReturnValue(kube as never)
 
     const response = await listPrimitiveResources(
       new Request('http://localhost/api/agents/control-plane/resources?kind=Agent&namespace=agents'),
-      { kubeClient: kube },
+      { kubeClient: kube as never },
     )
 
     expect(response.status).toBe(200)
@@ -123,7 +123,8 @@ describe('agents control-plane resources route', () => {
     expect(payload.cache).toBeUndefined()
     expect(payload.total).toBe(1)
     expect(Array.isArray(payload.items)).toBe(true)
-    expect((payload.items as Array<Record<string, unknown>>)[0]?.metadata?.name).toBe('agent-live')
+    const firstItem = (payload.items as Array<{ metadata?: { name?: string } }>)[0]
+    expect(firstItem?.metadata?.name).toBe('agent-live')
     expect(kube.list).toHaveBeenCalledTimes(1)
   })
 })

@@ -479,6 +479,105 @@ const readOptionalTextFile = async (path: string, logger: CodexLogger) => {
   }
 }
 
+type PullRequestMetadata = {
+  number: number | null
+  url: string | null
+}
+
+const discoverPullRequestMetadata = async ({
+  repository,
+  headBranch,
+  worktree,
+  logger,
+}: {
+  repository: string
+  headBranch: string
+  worktree: string
+  logger: CodexLogger
+}): Promise<PullRequestMetadata | null> => {
+  try {
+    const result = await runCommand(
+      'gh',
+      [
+        'pr',
+        'list',
+        '--repo',
+        repository,
+        '--head',
+        headBranch,
+        '--state',
+        'all',
+        '--json',
+        'number,url',
+        '--limit',
+        '1',
+      ],
+      { cwd: worktree },
+    )
+    if (result.exitCode !== 0) {
+      logger.warn('Failed to discover pull request metadata via gh pr list', {
+        repository,
+        headBranch,
+        exitCode: result.exitCode,
+        stderr: result.stderr.trim(),
+      })
+      return null
+    }
+
+    const raw = result.stdout.trim()
+    if (!raw) {
+      return null
+    }
+    const parsed = JSON.parse(raw) as Array<{ number?: number; url?: string }>
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return null
+    }
+
+    const first = parsed[0] ?? {}
+    const discoveredNumber =
+      typeof first.number === 'number' && Number.isFinite(first.number) && first.number > 0 ? first.number : null
+    const discoveredUrl = typeof first.url === 'string' && first.url.trim().length > 0 ? first.url.trim() : null
+    if (!discoveredNumber && !discoveredUrl) {
+      return null
+    }
+
+    return {
+      number: discoveredNumber,
+      url: discoveredUrl,
+    }
+  } catch (error) {
+    logger.warn('Failed to discover pull request metadata via gh', error)
+    return null
+  }
+}
+
+const persistDiscoveredPullRequestMetadata = async ({
+  prNumber,
+  prUrl,
+  prNumberPath,
+  prUrlPath,
+  logger,
+}: {
+  prNumber: number | null
+  prUrl: string | null
+  prNumberPath: string
+  prUrlPath: string
+  logger: CodexLogger
+}) => {
+  try {
+    if (prNumber !== null) {
+      await ensureFileDirectory(prNumberPath)
+      await writeFile(prNumberPath, `${prNumber}\n`, 'utf8')
+    }
+    if (prUrl) {
+      await ensureFileDirectory(prUrlPath)
+      await writeFile(prUrlPath, `${prUrl}\n`, 'utf8')
+    }
+  } catch (error) {
+    logger.warn('Failed to persist discovered pull request metadata', error)
+  }
+}
+
 const VALID_STAGES = new Set(['implementation', 'verify', 'review', 'planning', 'research'])
 
 const normalizeStage = (value: string | null | undefined) => {
@@ -2294,10 +2393,36 @@ export const runCodexImplementation = async (eventPath: string) => {
 
     const prNumberRaw = await readOptionalTextFile(prNumberPath, logger)
     const prUrlRaw = await readOptionalTextFile(prUrlPath, logger)
-    const prNumber = prNumberRaw ? parseOptionalPrNumber(prNumberRaw) : null
+    let prNumber = prNumberRaw ? parseOptionalPrNumber(prNumberRaw) : null
     prUrl = prUrlRaw ? prUrlRaw : null
     const pullRequestsEnabled = parseBoolean(process.env.VCS_PULL_REQUESTS_ENABLED, false)
     const requirePullRequest = parseBoolean(process.env.CODEX_REQUIRE_PULL_REQUEST, pullRequestsEnabled)
+    const pullRequestDiscoveryEnabled = parseBoolean(process.env.CODEX_PR_DISCOVERY_ENABLED, true)
+    if (pullRequestDiscoveryEnabled && stage === 'implementation' && requirePullRequest && (!prUrl || !prNumber)) {
+      const discoveredPr = await discoverPullRequestMetadata({
+        repository,
+        headBranch,
+        worktree,
+        logger,
+      })
+      if (discoveredPr) {
+        prNumber = prNumber ?? discoveredPr.number
+        prUrl = prUrl ?? discoveredPr.url
+        await persistDiscoveredPullRequestMetadata({
+          prNumber,
+          prUrl,
+          prNumberPath,
+          prUrlPath,
+          logger,
+        })
+        logger.info('Recovered pull request metadata from GitHub', {
+          prNumber,
+          prUrl,
+          repository,
+          headBranch,
+        })
+      }
+    }
     const pullRequestPolicyDecision = Effect.runSync(
       evaluatePullRequestPolicy({
         stage,

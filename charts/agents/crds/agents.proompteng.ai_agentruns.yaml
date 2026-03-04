@@ -366,7 +366,7 @@ spec:
                           x-kubernetes-validations:
                           - message: workflow step parameters.prompt is not allowed;
                               use ImplementationSpec.spec.text
-                            rule: '!has(self.parameters) || !(''prompt'' in self.parameters)'
+                            rule: '!(''prompt'' in self)'
                         retries:
                           format: int32
                           type: integer
