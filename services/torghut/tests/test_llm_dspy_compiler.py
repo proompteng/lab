@@ -5,12 +5,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from urllib.parse import urlsplit, unquote
 
 from app.trading.llm.dspy_compile.compiler import compile_dspy_program_artifacts
 from app.trading.llm.dspy_compile.hashing import canonical_json
 
 
 class TestLLMDSPyCompiler(TestCase):
+    @staticmethod
+    def _normalize_ref(ref: str) -> str:
+        parsed = urlsplit(ref)
+        if parsed.scheme == "file":
+            return str(Path(unquote(parsed.path)))
+        return ref
+
     def test_compile_artifacts_emit_hashes_and_compiled_uri(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -74,12 +82,12 @@ class TestLLMDSPyCompiler(TestCase):
             )
             self.assertEqual(compile_result_payload["optimizer"], "miprov2")
             self.assertEqual(
-                compile_result_payload["metricBundle"]["metricPolicyRef"],
-                metric_policy_path.resolve().as_uri(),
+                self._normalize_ref(compile_result_payload["metricBundle"]["metricPolicyRef"]),
+                f"{metric_policy_path.resolve()}",
             )
             self.assertEqual(
-                compile_result_payload["metricBundle"]["datasetRef"],
-                dataset_path.resolve().as_uri(),
+                self._normalize_ref(compile_result_payload["metricBundle"]["datasetRef"]),
+                f"{dataset_path.resolve()}",
             )
             self.assertEqual(
                 compile_result_payload["metricBundle"]["rowCountsBySplit"],
@@ -195,8 +203,8 @@ class TestLLMDSPyCompiler(TestCase):
                 from_file_uri.compile_result.artifact_hash,
             )
             self.assertEqual(
-                from_path.compile_result.metric_bundle["datasetRef"],
-                dataset_path.resolve().as_uri(),
+                self._normalize_ref(from_path.compile_result.metric_bundle["datasetRef"]),
+                f"{dataset_path.resolve()}",
             )
 
     def test_compile_rejects_non_local_dataset_ref(self) -> None:
