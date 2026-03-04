@@ -271,6 +271,64 @@ def healthz() -> dict[str, str]:
     return {"status": "ok", "service": "torghut"}
 
 
+def _evaluate_trading_health_payload(
+    session: Session,
+) -> tuple[dict[str, object], int]:
+    """Build shared trading health payload and status code."""
+
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+
+    scheduler_ok = True
+    scheduler_detail = "ok"
+    if settings.trading_enabled and not scheduler.state.running:
+        scheduler_ok = False
+        if scheduler.state.last_run_at is None:
+            scheduler_detail = "trading loop not started"
+        else:
+            scheduler_detail = "trading loop not running"
+
+    postgres_status = _check_postgres(session)
+    if settings.trading_enabled:
+        clickhouse_status = _check_clickhouse()
+        alpaca_status = _check_alpaca()
+    else:
+        clickhouse_status = {"ok": True, "detail": "skipped (trading disabled)"}
+        alpaca_status = {"ok": True, "detail": "skipped (trading disabled)"}
+
+    dependencies = {
+        "postgres": postgres_status,
+        "clickhouse": clickhouse_status,
+        "alpaca": alpaca_status,
+    }
+
+    overall_ok = scheduler_ok and all(dep["ok"] for dep in dependencies.values())
+    status = "ok" if overall_ok else "degraded"
+    status_code = 200 if overall_ok else 503
+
+    return (
+        {
+            "status": status,
+            "scheduler": {"ok": scheduler_ok, "detail": scheduler_detail},
+            "dependencies": dependencies,
+        },
+        status_code,
+    )
+
+
+@app.get("/readyz")
+def readyz(session: Session = Depends(get_session)) -> JSONResponse:
+    """Readiness endpoint with dependency-aware status for rollout safety."""
+
+    payload, status_code = _evaluate_trading_health_payload(session)
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder(payload),
+    )
+
+
 @app.get("/")
 def root() -> dict[str, str]:
     """Surface service identity and build metadata."""
@@ -1240,43 +1298,7 @@ def trading_tca(
 def trading_health(session: Session = Depends(get_session)) -> JSONResponse:
     """Trading loop health including dependency readiness."""
 
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
-    scheduler_ok = True
-    scheduler_detail = "ok"
-    if settings.trading_enabled and not scheduler.state.running:
-        scheduler_ok = False
-        if scheduler.state.last_run_at is None:
-            scheduler_detail = "trading loop not started"
-        else:
-            scheduler_detail = "trading loop not running"
-
-    postgres_status = _check_postgres(session)
-    if settings.trading_enabled:
-        clickhouse_status = _check_clickhouse()
-        alpaca_status = _check_alpaca()
-    else:
-        clickhouse_status = {"ok": True, "detail": "skipped (trading disabled)"}
-        alpaca_status = {"ok": True, "detail": "skipped (trading disabled)"}
-
-    dependencies = {
-        "postgres": postgres_status,
-        "clickhouse": clickhouse_status,
-        "alpaca": alpaca_status,
-    }
-
-    overall_ok = scheduler_ok and all(dep["ok"] for dep in dependencies.values())
-    status = "ok" if overall_ok else "degraded"
-
-    payload = {
-        "status": status,
-        "scheduler": {"ok": scheduler_ok, "detail": scheduler_detail},
-        "dependencies": dependencies,
-    }
-
-    status_code = 200 if overall_ok else 503
+    payload, status_code = _evaluate_trading_health_payload(session)
     return JSONResponse(status_code=status_code, content=jsonable_encoder(payload))
 
 

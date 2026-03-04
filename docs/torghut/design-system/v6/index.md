@@ -47,7 +47,9 @@ This pack is positioned as the next architecture layer above:
 13. `13-production-gap-closure-master-plan-2026-03-03.md`
 14. `14-legacy-gap-disposition-map-2026-03-03.md`
 15. `15-live-execution-quality-and-profitability-recovery-plan-2026-03-04.md`
-16. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
+16. `16-dspy-llm-live-gate-root-cause-and-rollout-2026-03-04.md`
+17. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
+18. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
 
 ## Recommended Build Order
 
@@ -66,7 +68,9 @@ This pack is positioned as the next architecture layer above:
 13. `13-production-gap-closure-master-plan-2026-03-03.md`
 14. `14-legacy-gap-disposition-map-2026-03-03.md`
 15. `15-live-execution-quality-and-profitability-recovery-plan-2026-03-04.md`
-16. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
+16. `16-dspy-llm-live-gate-root-cause-and-rollout-2026-03-04.md`
+17. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
+18. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
 
 ## Why This Sequence
 
