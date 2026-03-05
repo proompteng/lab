@@ -108,6 +108,8 @@ const hulyApiMocks = vi.hoisted(() => ({
     (input: {
       channel: string
       message: string
+      replyToMessageId?: string
+      replyToMessageClass?: string
       workerId?: string
       workerIdentity?: string
       requireWorkerToken?: boolean
@@ -200,6 +202,13 @@ describe('runCodexImplementation', () => {
     delete process.env.CODEX_SYSTEM_PROMPT_PATH
     delete process.env.PR_NUMBER_PATH
     delete process.env.PR_URL_PATH
+    delete process.env.CODEX_MODEL
+    delete process.env.CODEX_MODEL_FALLBACKS
+    delete process.env.CODEX_VERIFY_PR_CHECKS_WITH_GH
+    delete process.env.CODEX_VERIFY_MERGE_WITH_GH
+    delete process.env.CODEX_VERIFY_RELEASE_ROLLOUT_WITH_CLUSTER
+    delete process.env.CODEX_STRICT_ROLE_EVIDENCE
+    delete process.env.CODEX_ALLOW_HEURISTIC_EVIDENCE
     process.env.WORKTREE = workdir
     process.env.LGTM_LOKI_ENDPOINT = 'http://localhost/loki'
     process.env.CHANNEL_SCRIPT = ''
@@ -731,15 +740,17 @@ describe('runCodexImplementation', () => {
         | {
             channel: string
             message: string
+            replyToMessageId?: string
             workerId?: string
             workerIdentity?: string
           }
         | undefined
-      return args?.message?.startsWith('Replying to message')
+      return args?.message?.startsWith('Thanks for the note:')
     })
     expect(replyCall).toBeDefined()
-    expect(replyCall?.[0]?.message).toContain('Replying to message msg-latest')
-    expect(replyCall?.[0]?.message).toContain('decision for jangar issue #42 at stage implementation is completed')
+    expect(replyCall?.[0]?.message).toContain('Thanks for the note:')
+    expect(replyCall?.[0]?.message).toContain('Update for #42: implementation is complete.')
+    expect(replyCall?.[0]?.replyToMessageId).toBe('msg-latest')
     expect(upsertMissionMock).toHaveBeenCalledTimes(1)
     const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
     const notify = JSON.parse(notifyRaw) as {
@@ -794,18 +805,18 @@ describe('runCodexImplementation', () => {
             workerIdentity?: string
           }
         | undefined
-      return args?.message?.includes('Cross-swarm handoff update')
+      return args?.message?.startsWith('Update on owner/repo#42:')
     })
-    expect(ownerMessageCall?.[0]?.message).toContain('Owner-facing status: completed')
+    expect(ownerMessageCall?.[0]?.message).toContain('Update on owner/repo#42: implementation is completed.')
     expect(ownerMessageCall?.[0]?.message).toContain('Validation results:')
     expect(ownerMessageCall?.[0]?.message).toContain(
-      'Acceptance criteria: create issue/chat/doc artifacts; complete handoff',
+      'Acceptance criteria: create issue/chat/doc artifacts; complete handoff.',
     )
 
     const missionDetails = upsertMissionMock.mock.calls[0]?.[0]
     expect(missionDetails?.details).toContain('Acceptance criteria: create issue/chat/doc artifacts; complete handoff')
     expect(missionDetails?.message).toContain('Validation results:')
-    expect(missionDetails?.message).toContain('Owner-facing status: completed')
+    expect(missionDetails?.message).toContain('Update on owner/repo#42: implementation is completed.')
   }, 40_000)
 
   it('posts failure Huly mission handoff artifacts when implementation fails', async () => {
@@ -1236,10 +1247,25 @@ describe('runCodexImplementation', () => {
   }, 40_000)
 
   it('includes PR metadata from artifact files and does not overwrite them', async () => {
+    process.env.CODEX_VERIFY_PR_CHECKS_WITH_GH = 'false'
     const prNumberPath = join(workdir, '.codex-pr-number.txt')
     const prUrlPath = join(workdir, '.codex-pr-url.txt')
     await writeFile(prNumberPath, '456\n', 'utf8')
     await writeFile(prUrlPath, 'https://example.test/pull/456\n', 'utf8')
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Implementation prompt',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        parameters: {
+          checksGreen: true,
+        },
+      }),
+      'utf8',
+    )
 
     await runCodexImplementation(eventPath)
 
@@ -1269,6 +1295,21 @@ describe('runCodexImplementation', () => {
     process.env.VCS_PULL_REQUESTS_ENABLED = 'true'
     delete process.env.CODEX_REQUIRE_PULL_REQUEST
     process.env.CODEX_PR_DISCOVERY_ENABLED = 'true'
+    process.env.CODEX_VERIFY_PR_CHECKS_WITH_GH = 'false'
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Implementation prompt',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        parameters: {
+          checksGreen: true,
+        },
+      }),
+      'utf8',
+    )
 
     const binDir = join(workdir, '.bin')
     await mkdir(binDir, { recursive: true })
@@ -1306,6 +1347,264 @@ exit 1
   it('allows implementation runs without PR_URL when CODEX_REQUIRE_PULL_REQUEST is false', async () => {
     process.env.VCS_PULL_REQUESTS_ENABLED = 'true'
     process.env.CODEX_REQUIRE_PULL_REQUEST = 'false'
+
+    await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
+  }, 40_000)
+
+  it('does not require PR_URL for release-manager/deployer runs', async () => {
+    process.env.VCS_PULL_REQUESTS_ENABLED = 'true'
+    process.env.CODEX_REQUIRE_PULL_REQUEST = 'true'
+    process.env.CODEX_PR_DISCOVERY_ENABLED = 'false'
+
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Implementation prompt',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        issueTitle: 'Release Manager Mission',
+        stage: 'implementation',
+        swarmAgentRole: 'deployer',
+        swarmHumanName: 'release-manager',
+        parameters: {
+          merged: true,
+          rolloutHealthy: true,
+        },
+      }),
+      'utf8',
+    )
+
+    await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
+  }, 40_000)
+
+  it('passes release lane when ArgoCD app health verification is healthy', async () => {
+    const binDir = join(workdir, '.bin-kubectl-ok')
+    await mkdir(binDir, { recursive: true })
+    const kubectlPath = join(binDir, 'kubectl')
+    await writeFile(
+      kubectlPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "get" && "$2" == "applications.argoproj.io" ]]; then
+  echo '{"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}}'
+  exit 0
+fi
+echo "unexpected kubectl invocation: $*" >&2
+exit 1
+`,
+      'utf8',
+    )
+    await chmod(kubectlPath, 0o755)
+    process.env.PATH = `${binDir}:${ORIGINAL_ENV.PATH ?? process.env.PATH ?? ''}`
+
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Release verification run',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        stage: 'implementation',
+        swarmAgentRole: 'deployer',
+        swarmHumanName: 'release-manager',
+        parameters: {
+          merged: true,
+          argocdAppName: 'jangar-control-plane',
+          argocdAppNamespace: 'argocd',
+        },
+      }),
+      'utf8',
+    )
+
+    await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
+  }, 40_000)
+
+  it('fails release lane when ArgoCD app health verification is unhealthy', async () => {
+    const binDir = join(workdir, '.bin-kubectl-bad')
+    await mkdir(binDir, { recursive: true })
+    const kubectlPath = join(binDir, 'kubectl')
+    await writeFile(
+      kubectlPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "get" && "$2" == "applications.argoproj.io" ]]; then
+  echo '{"status":{"sync":{"status":"OutOfSync"},"health":{"status":"Degraded"}}}'
+  exit 0
+fi
+echo "unexpected kubectl invocation: $*" >&2
+exit 1
+`,
+      'utf8',
+    )
+    await chmod(kubectlPath, 0o755)
+    process.env.PATH = `${binDir}:${ORIGINAL_ENV.PATH ?? process.env.PATH ?? ''}`
+
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Release verification run',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        stage: 'implementation',
+        swarmAgentRole: 'deployer',
+        swarmHumanName: 'release-manager',
+        parameters: {
+          merged: true,
+          rolloutHealthy: true,
+          argocdAppName: 'jangar-control-plane',
+          argocdAppNamespace: 'argocd',
+        },
+      }),
+      'utf8',
+    )
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow(
+      'Release run completed without healthy rollout evidence',
+    )
+  }, 40_000)
+
+  it('fails release lane when GH merge verification shows PR is not merged', async () => {
+    process.env.CODEX_VERIFY_RELEASE_ROLLOUT_WITH_CLUSTER = 'false'
+    const prNumberPath = join(workdir, '.codex-pr-number.txt')
+    const prUrlPath = join(workdir, '.codex-pr-url.txt')
+    await writeFile(prNumberPath, '5010\n', 'utf8')
+    await writeFile(prUrlPath, 'https://github.com/owner/repo/pull/5010\n', 'utf8')
+
+    const binDir = join(workdir, '.bin-gh-merge')
+    await mkdir(binDir, { recursive: true })
+    const ghPath = join(binDir, 'gh')
+    await writeFile(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "pr" && "$2" == "view" ]]; then
+  echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null}'
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+`,
+      'utf8',
+    )
+    await chmod(ghPath, 0o755)
+    process.env.PATH = `${binDir}:${ORIGINAL_ENV.PATH ?? process.env.PATH ?? ''}`
+
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Release verification run',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        stage: 'implementation',
+        swarmAgentRole: 'deployer',
+        swarmHumanName: 'release-manager',
+        parameters: {
+          merged: true,
+          rolloutHealthy: true,
+        },
+      }),
+      'utf8',
+    )
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow(
+      'Release run completed without merge evidence (merged PR/commit required)',
+    )
+  }, 40_000)
+
+  it('fails architect lane when repository changes exist without merge evidence', async () => {
+    await mkdir(join(workdir, 'docs', 'agents', 'designs'), { recursive: true })
+    await writeFile(
+      join(workdir, 'docs', 'agents', 'designs', 'architectural-change.md'),
+      '# draft architecture change\n',
+      'utf8',
+    )
+
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Architect planning run',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        stage: 'planning',
+        swarmAgentRole: 'architector',
+      }),
+      'utf8',
+    )
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow(
+      'Architect run changed repository files but did not provide merged PR/commit evidence',
+    )
+  }, 40_000)
+
+  it('passes architect lane merge-evidence gate when merged evidence is explicit', async () => {
+    await mkdir(join(workdir, 'docs', 'agents', 'designs'), { recursive: true })
+    await writeFile(
+      join(workdir, 'docs', 'agents', 'designs', 'architectural-change.md'),
+      '# draft architecture change\n',
+      'utf8',
+    )
+
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Architect planning run',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        stage: 'planning',
+        swarmAgentRole: 'architector',
+        parameters: {
+          merged: true,
+          mergedCommitSha: 'abc1234',
+          mergedPrUrl: 'https://github.com/owner/repo/pull/4001',
+        },
+      }),
+      'utf8',
+    )
+
+    await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
+  }, 40_000)
+
+  it('fails engineer lane when PR checks are not verified green', async () => {
+    process.env.CODEX_VERIFY_PR_CHECKS_WITH_GH = 'false'
+    await writeFile(join(workdir, '.codex-pr-number.txt'), '4010\n', 'utf8')
+    await writeFile(join(workdir, '.codex-pr-url.txt'), 'https://github.com/owner/repo/pull/4010\n', 'utf8')
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow(
+      'Engineer run completed without verified green required checks for the active pull request',
+    )
+  }, 40_000)
+
+  it('passes engineer lane when explicit green checks evidence is provided', async () => {
+    process.env.CODEX_VERIFY_PR_CHECKS_WITH_GH = 'false'
+    await writeFile(join(workdir, '.codex-pr-number.txt'), '4011\n', 'utf8')
+    await writeFile(join(workdir, '.codex-pr-url.txt'), 'https://github.com/owner/repo/pull/4011\n', 'utf8')
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Implementation prompt',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        stage: 'implementation',
+        swarmAgentRole: 'engineer',
+        parameters: {
+          checksGreen: true,
+        },
+      }),
+      'utf8',
+    )
 
     await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
   }, 40_000)
@@ -1530,5 +1829,57 @@ exit 1
     const result = await runCodexImplementation(eventPath)
     expect(result.sessionId).toBe('resume-session-xyz')
     expect(runCodexSessionMock).toHaveBeenCalledTimes(2)
+  }, 40_000)
+
+  it('restarts with a fresh prompt when Codex reports context-window exhaustion', async () => {
+    process.env.CODEX_MAX_SESSION_ATTEMPTS = '2'
+    process.env.CODEX_MAX_PROMPT_CHARS = '320'
+    runCodexSessionMock
+      .mockImplementationOnce(async () => ({
+        agentMessages: [],
+        sessionId: 'context-session-1',
+        exitCode: 1,
+        forcedTermination: false,
+        contextWindowExceeded: true,
+      }))
+      .mockImplementationOnce(async (options) => {
+        expect(options.resumeSessionId).toBeUndefined()
+        expect(options.prompt).toContain('Previous attempt failed because the model context window was exceeded.')
+        expect(options.prompt.length).toBeLessThanOrEqual(320)
+        return {
+          agentMessages: ['final response'],
+          sessionId: 'context-session-2',
+          exitCode: 0,
+          forcedTermination: false,
+        }
+      })
+
+    const result = await runCodexImplementation(eventPath)
+    expect(result.sessionId).toBe('context-session-2')
+    expect(runCodexSessionMock).toHaveBeenCalledTimes(2)
+  }, 40_000)
+
+  it('falls back to secondary model on transient provider quota/rate-limit failures', async () => {
+    process.env.CODEX_MODEL = 'codex-spark'
+    process.env.CODEX_MODEL_FALLBACKS = 'codex'
+    process.env.CODEX_MAX_SESSION_ATTEMPTS = '2'
+
+    runCodexSessionMock
+      .mockRejectedValueOnce(new Error('429 rate limit exceeded for codex-spark'))
+      .mockImplementationOnce(async (options) => {
+        expect(options.resumeSessionId).toBeUndefined()
+        expect(options.prompt).toContain('transient provider throttling/quota constraints')
+        return {
+          agentMessages: ['final response'],
+          sessionId: 'fallback-session',
+          exitCode: 0,
+          forcedTermination: false,
+        }
+      })
+
+    const result = await runCodexImplementation(eventPath)
+    expect(result.sessionId).toBe('fallback-session')
+    expect(runCodexSessionMock).toHaveBeenCalledTimes(2)
+    expect(process.env.CODEX_MODEL).toBe('codex')
   }, 40_000)
 })

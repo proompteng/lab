@@ -25,6 +25,9 @@ export type HulyChannelMessage = {
   channelId?: string
   channelName?: string
   messageId?: string
+  replyToMessageId?: string | null
+  replyToMessageClass?: string
+  collection?: string
 }
 
 export type HulyListChannelMessagesResult = {
@@ -49,6 +52,9 @@ export type HulyPostChannelMessageResult = {
   channelId?: string
   channelName?: string
   messageId?: string
+  replyToMessageId?: string | null
+  replyToMessageClass?: string
+  collection?: string
 }
 
 export type HulyUpsertMissionResult = {
@@ -219,25 +225,37 @@ export const verifyChatAccess = async ({
 export const postChannelMessage = async ({
   channel,
   message,
+  replyToMessageId,
+  replyToMessageClass,
   workerId,
   workerIdentity,
   requireWorkerToken = true,
 }: {
   channel: string
   message: string
+  replyToMessageId?: string
+  replyToMessageClass?: string
   workerId?: string
   workerIdentity?: string
   requireWorkerToken?: boolean
 }) => {
+  const args = [
+    ...withWorkerAuthArgs({ workerId, workerIdentity, requireWorkerToken }),
+    '--channel',
+    channel,
+    '--message',
+    message,
+  ]
+  if (replyToMessageId) {
+    args.push('--reply-to-message-id', replyToMessageId)
+  }
+  if (replyToMessageClass) {
+    args.push('--reply-to-message-class', replyToMessageClass)
+  }
+
   const result = await runHulyApi<HulyPostChannelMessageResult>({
     operation: 'post-channel-message',
-    args: [
-      ...withWorkerAuthArgs({ workerId, workerIdentity, requireWorkerToken }),
-      '--channel',
-      channel,
-      '--message',
-      message,
-    ],
+    args,
   })
   return result
 }
